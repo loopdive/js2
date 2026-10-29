@@ -2583,7 +2583,7 @@ export function compileIrPathFunctions(
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
-      isNativeI32FieldRead: (expr) => irNativeI32SlotRead(ctx, ctx.checker, expr),
+      isNativeI32SlotRead: (expr) => irNativeI32SlotRead(ctx, ctx.checker, expr),
       supportsLiteralStringReplace: true,
       ...(loweringPlans?.fnctorNativeStringBoundaries
         ? {

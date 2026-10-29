@@ -23,6 +23,10 @@
  *   --target <t,…>          standalone,gc (default both)
  *   --workers <n>           compile processes (default min(3, cores-1))
  *   --json                  print the aggregate as JSON
+ *   --blockers <rounds>     (#7143 B1) peel each body-shape/class-member demote's
+ *                           blocker up to <rounds> times and rank the blockers
+ *                           (needs JS2WASM_IR_SHAPE_DIAG=1; output is unchanged)
+ *   --rows <file>           also write every demoted row as JSON lines
  *   --update                write scripts/legacy-reach-baseline.json (full corpus only)
  *   --check                 fail when any kind's `demoted` grew vs. the baseline
  */
@@ -34,6 +38,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compile } from "../src/index.ts";
 import { ts } from "../src/ts-api.js";
+import { KIND_NAMES, PEEL_REASONS, blockerLabel, peelBlocker, rankBlockers } from "./legacy-reach-blockers.mjs";
 import { CORPUS_FAMILIES, REPO_ROOT, loadCorpus } from "./legacy-reach-corpus.mjs";
 
 export const BASELINE_PATH = join(REPO_ROOT, "scripts/legacy-reach-baseline.json");
@@ -42,12 +47,6 @@ const SCHEMA = "js2-legacy-reach-v1";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const ENTRY_TIMEOUT_MS = 120_000;
 const RECYCLE_AFTER = 150; // jobs per worker before a fresh process (bounds compiler-cache growth)
-
-/** SyntaxKind value → canonical name (skips the `First*`/`Last*` range markers). */
-export const KIND_NAMES = new Map();
-for (const [name, value] of Object.entries(ts.SyntaxKind)) {
-  if (typeof value === "number" && !/^(First|Last)/.test(name) && !KIND_NAMES.has(value)) KIND_NAMES.set(value, name);
-}
 
 const lineOf = (sf, node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
 
@@ -96,44 +95,95 @@ const isCompilerUnit = (o) => decodeURIComponent(o.unitId ?? "").includes(":comp
 const reasonOf = (o) =>
   o.kind === "unsupported" ? o.code : o.kind === "invariant" ? `invariant:${o.code}` : "ir-patched-over-legacy";
 
-/** Compile one corpus entry per target; one row per IR outcome, plus compile failures. */
-export async function measureEntry(entry, targets = TARGETS) {
-  const sf = ts.createSourceFile(entry.fileName, entry.source, ts.ScriptTarget.Latest, true);
+/** Compile `source` for one target; each outcome row paired with its unit's AST roots. */
+async function observe(entry, source, target) {
+  const sf = ts.createSourceFile(entry.fileName, source, ts.ScriptTarget.Latest, true);
   const declarations = unitDeclarations(sf);
   const bodyLine = entry.bodyLine ?? 0;
+  let result;
+  try {
+    result = await compile(source, {
+      ...entry.options,
+      fileName: entry.fileName,
+      target,
+      experimentalIR: true,
+      trackIrOutcomes: true,
+      emitWat: false,
+      validate: false,
+    });
+  } catch (error) {
+    return { sf, observed: [], failure: String(error?.message ?? error).slice(0, 200) };
+  }
+  const failure =
+    !result.success || !result.irOutcomes ? (result.errors?.[0]?.message ?? "no irOutcomes").slice(0, 200) : undefined;
+  const observed = [];
+  for (const o of result.irOutcomes ?? []) {
+    const roots = o.file === entry.fileName ? unitRoots(sf, declarations, o, bodyLine) : undefined;
+    if (roots === null) continue;
+    const row = {
+      target,
+      id: entry.id,
+      unit: `${o.unitKind}:${o.displayName}@${o.line}`,
+      demoted: o.legacyBodyEmitted,
+      ...(o.legacyBodyEmitted
+        ? { reason: reasonOf(o), ...(o.detail ? { stage: o.stage, detail: o.detail } : {}) }
+        : {}),
+      ...(roots ? { kinds: countKinds(roots) } : isCompilerUnit(o) ? { synthetic: true } : {}),
+    };
+    observed.push({ row, roots });
+  }
+  return { sf, observed, failure };
+}
+
+/**
+ * (#7143 B1) Peel each `PEEL_REASONS` demote's blocker and recompile until the
+ * unit claims, a peel is refused, or `rounds` is spent; fills `row.blockers`
+ * (labels, in peel order) and `row.peel` (how the list ended).
+ */
+async function peelDemotes(entry, target, first, rounds) {
+  let pending = first.observed.filter(({ row }) => row.demoted && PEEL_REASONS.has(row.reason));
+  for (const { row } of pending) row.blockers = [blockerLabel(row)];
+  let { sf, observed } = first;
+  let source = entry.source;
+  for (let round = 0; round < rounds && pending.length; round++) {
+    const current = new Map(observed.map((o) => [o.row.unit, o]));
+    const peeled = [];
+    for (const unit of pending) {
+      const now = current.get(unit.row.unit);
+      const res = now ? peelBlocker(source, sf, now.roots ?? [], now.row) : { refused: "lost" };
+      if (res.refused) unit.row.peel = `unpeelable:${res.refused}`;
+      else ((source = res.source), peeled.push(unit));
+    }
+    if (!peeled.length) return;
+    ({ sf, observed } = await observe(entry, source, target));
+    const next = new Map(observed.map((o) => [o.row.unit, o.row]));
+    pending = [];
+    for (const unit of peeled) {
+      const after = next.get(unit.row.unit);
+      if (!after) unit.row.peel = "lost";
+      else if (!after.demoted) unit.row.peel = "claimed";
+      else {
+        unit.row.blockers.push(blockerLabel(after));
+        if (PEEL_REASONS.has(after.reason)) pending.push(unit);
+        else unit.row.peel = `non-shape:${after.reason}`;
+      }
+    }
+  }
+  for (const { row } of pending) row.peel = "cap";
+}
+
+/**
+ * Compile one corpus entry per target; one row per IR outcome, plus compile
+ * failures. `peelRounds > 0` adds the B1 blocker lists (needs JS2WASM_IR_SHAPE_DIAG=1).
+ */
+export async function measureEntry(entry, targets = TARGETS, peelRounds = 0) {
   const rows = [];
   const failures = [];
   for (const target of targets) {
-    let result;
-    try {
-      result = await compile(entry.source, {
-        ...entry.options,
-        fileName: entry.fileName,
-        target,
-        experimentalIR: true,
-        trackIrOutcomes: true,
-        emitWat: false,
-        validate: false,
-      });
-    } catch (error) {
-      failures.push({ target, id: entry.id, error: String(error?.message ?? error).slice(0, 200) });
-      continue;
-    }
-    if (!result.success || !result.irOutcomes) {
-      failures.push({ target, id: entry.id, error: (result.errors?.[0]?.message ?? "no irOutcomes").slice(0, 200) });
-    }
-    for (const o of result.irOutcomes ?? []) {
-      const roots = o.file === entry.fileName ? unitRoots(sf, declarations, o, bodyLine) : undefined;
-      if (roots === null) continue;
-      rows.push({
-        target,
-        id: entry.id,
-        unit: `${o.unitKind}:${o.displayName}@${o.line}`,
-        demoted: o.legacyBodyEmitted,
-        ...(o.legacyBodyEmitted ? { reason: reasonOf(o) } : {}),
-        ...(roots ? { kinds: countKinds(roots) } : isCompilerUnit(o) ? { synthetic: true } : {}),
-      });
-    }
+    const first = await observe(entry, entry.source, target);
+    if (first.failure) failures.push({ target, id: entry.id, error: first.failure });
+    if (peelRounds > 0) await peelDemotes(entry, target, first, peelRounds);
+    rows.push(...first.observed.map((o) => o.row));
   }
   return { rows, failures };
 }
@@ -168,7 +218,7 @@ export function aggregate(rows, failures, targets = TARGETS) {
 }
 
 /** Run `measureEntry` over the corpus in `workers` child processes (in-process when ≤ 1). */
-async function measureAll(entries, targets, workers) {
+async function measureAll(entries, targets, workers, peelRounds) {
   const rows = [];
   const failures = [];
   let done = 0;
@@ -178,7 +228,7 @@ async function measureAll(entries, targets, workers) {
     if (++done % 250 === 0) process.stderr.write(`measured ${done}/${entries.length}\n`);
   };
   if (workers <= 1) {
-    for (const entry of entries) take(await measureEntry(entry, targets));
+    for (const entry of entries) take(await measureEntry(entry, targets, peelRounds));
     return { rows, failures };
   }
   let next = 0;
@@ -196,7 +246,7 @@ async function measureAll(entries, targets, workers) {
         if (next >= entries.length || jobs++ >= RECYCLE_AFTER) return void child.kill(); // `exit` respawns or finishes
         current = entries[next++];
         timer = setTimeout(() => child.kill("SIGKILL"), ENTRY_TIMEOUT_MS);
-        child.send({ entry: current, targets });
+        child.send({ entry: current, targets, peelRounds });
       };
       child.on("message", (msg) => (msg.ready ? dispatch() : (take(msg), (current = undefined), dispatch())));
       child.on("exit", () => {
@@ -225,9 +275,14 @@ function parseArgs(argv) {
     else if (arg === "--corpus") opts.corpus = value().split(",").filter(Boolean);
     else if (arg === "--target") opts.targets = value().split(",").filter(Boolean);
     else if (arg === "--workers") opts.workers = Number(value());
+    else if (arg === "--blockers") opts.blockers = Number(value());
+    else if (arg === "--rows") opts.rows = value();
     else if (arg === "--json" || arg === "--update" || arg === "--check") opts[arg.slice(2)] = true;
     else throw new Error(`unknown argument ${arg}`);
   }
+  if (opts.blockers !== undefined && !(opts.blockers > 0)) throw new Error("--blockers needs a peel-round count > 0");
+  if (opts.blockers && process.env.JS2WASM_IR_SHAPE_DIAG !== "1")
+    throw new Error("--blockers needs JS2WASM_IR_SHAPE_DIAG=1 (the selector's reject-arm detail)");
   if (opts.kind && ![...KIND_NAMES.values()].includes(opts.kind)) throw new Error(`unknown SyntaxKind ${opts.kind}`);
   if (opts.targets.some((t) => !TARGETS.includes(t))) throw new Error(`--target must be from ${TARGETS.join(",")}`);
   return opts;
@@ -259,7 +314,7 @@ export function ratchetGrowth(baseline, current) {
   return grown;
 }
 
-function report(opts, summary, result, rows, failures, seconds) {
+function report(opts, summary, result, rows, failures, seconds, blockers) {
   const fam = Object.entries(summary.families)
     .map(([f, n]) => `${f} ${n}`)
     .join(", ");
@@ -291,6 +346,15 @@ function report(opts, summary, result, rows, failures, seconds) {
           .join(", ")}`,
       );
     }
+    const b = blockers?.[target];
+    if (!b) continue;
+    const m = b.multiplicity;
+    console.log(
+      `  blockers: ${b.units} peeled units; claimed after 1 / 2 / 3+ blockers: ${m.one} / ${m.two} / ${m.threePlus}; ` +
+        `open ${m.open} ${JSON.stringify(b.openEnds)}`,
+    );
+    for (const k of b.ranked.slice(0, 25))
+      console.log(`    only ${k.only}  first ${k.first}  any ${k.anywhere}  ${k.label}`);
   }
 }
 
@@ -300,12 +364,23 @@ async function main(argv) {
     throw new Error("--update/--check need the full default corpus and both targets");
   const started = performance.now();
   const entries = await loadCorpus(opts.corpus);
-  const { rows, failures } = await measureAll(entries, opts.targets, opts.workers);
+  const { rows, failures } = await measureAll(entries, opts.targets, opts.workers, opts.blockers ?? 0);
   const summary = corpusSummary(entries, opts.corpus);
   const result = aggregate(rows, failures, opts.targets);
   const seconds = (performance.now() - started) / 1000;
-  if (opts.json) console.log(JSON.stringify({ corpus: summary, targets: result }, null, 2));
-  else report(opts, summary, result, rows, failures, seconds);
+  const blockers = opts.blockers
+    ? Object.fromEntries(opts.targets.map((t) => [t, rankBlockers(rows.filter((r) => r.target === t))]))
+    : undefined;
+  if (opts.json) console.log(JSON.stringify({ corpus: summary, targets: result, blockers }, null, 2));
+  else report(opts, summary, result, rows, failures, seconds, blockers);
+  if (opts.rows)
+    writeFileSync(
+      opts.rows,
+      rows
+        .filter((r) => r.demoted)
+        .map((r) => `${JSON.stringify(r)}\n`)
+        .join(""),
+    );
   if (opts.update) {
     const baseline = {
       schema: SCHEMA,
@@ -328,7 +403,9 @@ async function main(argv) {
 }
 
 if (process.argv.includes("--worker")) {
-  process.on("message", async ({ entry, targets }) => process.send(await measureEntry(entry, targets)));
+  process.on("message", async ({ entry, targets, peelRounds }) =>
+    process.send(await measureEntry(entry, targets, peelRounds)),
+  );
   process.send({ ready: true });
 } else if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_PATH) {
   main(process.argv.slice(2)).then(

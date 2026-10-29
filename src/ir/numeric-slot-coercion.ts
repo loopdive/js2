@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { IrFunctionBuilder } from "./builder.js";
-import { irVal, type IrType, type IrValueId, type IrBinop } from "./nodes.js";
+import { irVal, type IrType, type IrValueId } from "./nodes.js";
 
 const F64 = irVal({ kind: "f64" });
 const i32Zero = (builder: IrFunctionBuilder): IrValueId =>
@@ -55,7 +55,7 @@ export function numericFieldUpdate(
   previous: IrValueId,
   rhs: IrValueId,
   target: IrType,
-  op: IrBinop,
+  emitNumber: (lhs: IrValueId, rhs: IrValueId) => IrValueId,
 ): IrValueId | null {
   if (!isNumericIrSlot(target)) return null;
   const lhsType = builder.typeOf(previous);
@@ -65,6 +65,6 @@ export function numericFieldUpdate(
   const rhsNumber =
     rhsType.kind === "val" && rhsType.val.kind === "f64" ? rhs : coerceIrNumeric(builder, rhs, F64, true);
   if (lhsNumber === null || rhsNumber === null) return null;
-  const value = builder.emitBinary(op, lhsNumber, rhsNumber, F64);
+  const value = emitNumber(lhsNumber, rhsNumber);
   return target.kind === "val" && target.val.kind === "f64" ? value : coerceIrNumeric(builder, value, target, true);
 }
