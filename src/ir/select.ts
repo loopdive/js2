@@ -2620,9 +2620,10 @@ function resolveParamType(p: ts.ParameterDeclaration, mapped: LatticeType | unde
   // members don't participate in propagation (`entry` is undefined there) and
   // must keep the null rejection, not silently become dynamic-claimable.
   // Lattice `union` stays null: #2135's union rows own that shape.
-  // (#4612) …unless the legacy slot already carries a refined fnctor-instance
-  // struct here, in which case `dynamic` is a guaranteed post-claim parity
-  // withdrawal — decline instead. See `dynamicCarrierDivergesFromLegacy`.
+  // (#4612, #7190) …unless the legacy slot already carries a refined
+  // fnctor-instance struct or the call-site-narrowed native string, in which
+  // case `dynamic` is a guaranteed post-claim parity withdrawal — decline
+  // instead. See `dynamicCarrierDivergesFromLegacy`.
   if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) {
     if (currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(p) === true) {
       shapeNo("param-dynamic-carrier-diverges-from-legacy", p);
@@ -7878,11 +7879,9 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
 }
 
 /**
- * A `!` / `&&` / `||` operand whose module influence cannot be misread as a
- * condition: every module-derived value in it is boolean, or the operand as a
- * whole is exactly boolean (a comparison, S1g's certified
- * `__hasOwnProperty(o, k)` alias call), whatever slot the module var behind
- * it was given.
+ * A `!` / `&&` / `||` operand whose module influence cannot be misread: every
+ * module-derived value in it is boolean, or the whole operand is exactly
+ * boolean (a comparison, S1g's `__hasOwnProperty(o, k)` alias call).
  */
 function moduleInfluenceIsExactBoolean(operand: ts.Expression, scope: ReadonlySet<string>): boolean {
   return trackedModuleInfluenceIsBoolean(operand) || declaredExpressionHasExactFamily(operand, "boolean", scope);
@@ -11134,6 +11133,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       return shapeNo("expr-module-value-nullish", expr);
     }
+    // Operands that passed the exact-boolean gate above pass here too; this
+    // refuses module values on the dynamic logical-value path.
     if (binOp === ts.SyntaxKind.AmpersandAmpersandToken || binOp === ts.SyntaxKind.BarBarToken) {
       for (const operand of [expr.left, expr.right]) {
         if (!moduleInfluenceIsExactBoolean(operand, scope)) {

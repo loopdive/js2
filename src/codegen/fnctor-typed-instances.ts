@@ -41,6 +41,7 @@ import ts from "typescript";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
 import { definedFuncAt } from "./func-space.js";
+import { isAnyStringSlot } from "./native-strings-shared.js";
 import { readEnv } from "../env.js";
 
 /**
@@ -127,10 +128,12 @@ export function legacyPositionCarriesFnctorInstance(
   name: string | undefined,
   position: "return" | number,
 ): boolean {
+  return name !== undefined && slotCarriesFnctorInstance(ctx, legacyFunctionSlot(ctx, name, position));
+}
+
+function slotCarriesFnctorInstance(ctx: CodegenContext, slot: ValType | undefined): boolean {
   if (!fnctorTypedInstancesEnabled()) return false;
-  if (!ctx.standalone || name === undefined) return false;
-  if (ctx.fnctorReservedTypeIdx.size === 0) return false;
-  const slot = legacyFunctionSlot(ctx, name, position);
+  if (!ctx.standalone || ctx.fnctorReservedTypeIdx.size === 0) return false;
   if (slot?.kind !== "ref" && slot?.kind !== "ref_null") return false;
   for (const reserved of ctx.fnctorReservedTypeIdx.values()) {
     if (reserved === slot.typeIdx) return true;
@@ -167,27 +170,18 @@ export function legacyParamSlotIsExternref(ctx: CodegenContext, parameter: ts.Pa
 }
 
 /**
- * (#7190) Did legacy narrow this parameter to the native string slot? An
- * implicit-any parameter whose call sites all pass strings
- * (`verifyNotEnumerable(o, "x")`) gets that slot (`inferImplicitAnyParamType`),
- * so a dynamic-carrier claim of its function only ends at the parity guard.
- */
-function legacyParamSlotIsNativeString(ctx: CodegenContext, parameter: ts.ParameterDeclaration): boolean {
-  const slot = legacyParamSlot(ctx, parameter);
-  return (
-    (slot?.kind === "ref" || slot?.kind === "ref_null") &&
-    ctx.nativeStrings &&
-    ctx.anyStrTypeIdx >= 0 &&
-    slot.typeIdx === ctx.anyStrTypeIdx
-  );
-}
-
-/**
- * (#4612) Selector-facing adapter for {@link legacyPositionCarriesFnctorInstance}:
- * takes the AST node the selector is standing on (a parameter, or the owning
- * declaration for the return position) and derives the legacy slot name +
- * ordinal itself, so `select.ts` stays checker- and context-free.
+ * Does the IR's dynamic carrier diverge from the legacy slot at this
+ * position? Takes the AST node the selector is standing on (a parameter, or
+ * the owning declaration for the return position) and reads the legacy slot
+ * itself, so `select.ts` stays checker- and context-free. The slot diverges
+ * when it carries:
  *
+ * - (#4612) a refined fnctor-instance struct ({@link legacyPositionCarriesFnctorInstance});
+ * - (#7190, parameters) the native string type: an implicit-any parameter
+ *   whose call sites all pass strings (`verifyNotEnumerable(o, "x")`) gets
+ *   that slot from `inferImplicitAnyParamType`.
+ *
+ * Either way a dynamic-carrier claim could only end at the parity guard.
  * Only top-level `FunctionDeclaration`s carry a `ctx.funcMap` slot under their
  * source name; class members and unnamed declarations answer `false` (their
  * parity is enforced by the hard `abi-type-index-mismatch` invariant, not by
@@ -196,13 +190,8 @@ function legacyParamSlotIsNativeString(ctx: CodegenContext, parameter: ts.Parame
 export function makeIrDynamicCarrierDivergenceProbe(ctx: CodegenContext): (position: ts.Node) => boolean {
   return (position: ts.Node): boolean => {
     if (ts.isParameter(position)) {
-      const owner = position.parent;
-      if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return false;
-      const index = owner.parameters.indexOf(position);
-      if (index < 0) return false;
-      return (
-        legacyPositionCarriesFnctorInstance(ctx, owner.name.text, index) || legacyParamSlotIsNativeString(ctx, position)
-      );
+      const slot = legacyParamSlot(ctx, position);
+      return slotCarriesFnctorInstance(ctx, slot) || (slot !== undefined && isAnyStringSlot(ctx, slot));
     }
     if (ts.isFunctionDeclaration(position) && position.name !== undefined) {
       return legacyPositionCarriesFnctorInstance(ctx, position.name.text, "return");

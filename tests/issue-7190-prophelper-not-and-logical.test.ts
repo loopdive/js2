@@ -24,7 +24,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import vm from "node:vm";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { compile, type CompileResult } from "../src/index.js";
 import { assembleOriginalHarness } from "./test262-original-harness.js";
@@ -98,6 +98,18 @@ const FIXTURES: Record<string, string> = {
     verifyNotEnumerable(o, "hidden");
     verifyConfigurable(o, "c");
   `,
+  // `||` over two exact-boolean alias calls ships; a dynamic `||` whose
+  // other operand is a numeric module var stays refused.
+  "logical-or": `
+    function hasEither(obj, a, b) { return __hasOwnProperty(obj, a) || __hasOwnProperty(obj, b); }
+    function pick(o) { return o || nonIndexNumericPropertyName; }
+    var s = Symbol("s");
+    var o = { x: 1 };
+    assert.sameValue(hasEither(o, "y", "x"), true);
+    assert.sameValue(hasEither(o, s, s), false);
+    assert.sameValue(pick(0), 4294967295);
+    assert.sameValue(pick("v"), "v");
+  `,
   "absent-property-descriptor-read-throws": `
     var o = {};
     assert.throws(TypeError, function () { verifyNotEnumerable(o, "missing"); });
@@ -147,19 +159,46 @@ function runInNode(path: string): void {
   vm.runInNewContext(assembled(path), {});
 }
 
-async function compileAssembled(path: string): Promise<CompileResult> {
-  const result = await compile(assembled(path), {
-    target: "standalone",
-    allowJs: true,
-    fileName: "test.js",
-    skipSemanticDiagnostics: true,
-    trackIrOutcomes: true,
-    validate: false,
-  } as never);
-  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const demoted = (result.irPostClaimErrors ?? []).map((error) => error.func);
-  expect(demoted.filter((name) => NEVER_WITHDRAWN.includes(name))).toEqual([]);
-  return result;
+type Lane = "standalone" | "gc";
+
+/**
+ * Compiles the assembled test with the reject-arm label (`detail`) recorded.
+ * The selector reads `JS2WASM_IR_SHAPE_DIAG` once at module load, so the
+ * compiler is re-imported with the flag set (as in
+ * tests/issue-7106-prophelper-isenumerable.test.ts).
+ */
+async function compileAssembled(path: string, lane: Lane = "standalone"): Promise<CompileResult> {
+  const previous = process.env.JS2WASM_IR_SHAPE_DIAG;
+  process.env.JS2WASM_IR_SHAPE_DIAG = "1";
+  vi.resetModules();
+  try {
+    const { compile: compileDiag } = await import("../src/index.js");
+    const result = await compileDiag(assembled(path), {
+      ...(lane === "standalone" ? { target: "standalone" } : {}),
+      allowJs: true,
+      fileName: "test.js",
+      skipSemanticDiagnostics: true,
+      trackIrOutcomes: true,
+    } as never);
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const demoted = (result.irPostClaimErrors ?? []).map((error) => error.func);
+    expect(demoted.filter((name) => NEVER_WITHDRAWN.includes(name))).toEqual([]);
+    return result;
+  } finally {
+    if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IR_SHAPE_DIAG");
+    else process.env.JS2WASM_IR_SHAPE_DIAG = previous;
+    vi.resetModules();
+  }
+}
+
+function irBodies(result: CompileResult): string[] {
+  return (result.irOutcomes ?? []).filter((o) => o.irBodyEmitted).map((o) => o.displayName);
+}
+
+function refusal(result: CompileResult, name: string): string | undefined {
+  const outcome = (result.irOutcomes ?? []).find((o) => o.displayName === name);
+  expect(outcome, name).toMatchObject({ kind: "unsupported", stage: "select", irBodyEmitted: false });
+  return (outcome as { detail?: string } | undefined)?.detail;
 }
 
 async function expectPassesLikeNode(path: string): Promise<void> {
@@ -185,24 +224,30 @@ describe("#7190 propertyHelper — `!` over a descriptor read and `&&` over exac
     await new Promise((r) => setImmediate(r));
   });
 
-  it("standalone: the four helpers ship IR bodies when keys are mixed", { timeout: 180_000 }, async () => {
-    const result = await compileAssembled(join(fixtureDir, "mixed-keys.js"));
-    const emitted = (result.irOutcomes ?? []).filter((o) => o.irBodyEmitted).map((o) => o.displayName);
-    expect(emitted).toEqual(expect.arrayContaining(UNLOCKED_UNITS));
-  });
+  for (const lane of ["standalone", "gc"] as const) {
+    it(`${lane}: the four helpers ship IR bodies when keys are mixed`, { timeout: 180_000 }, async () => {
+      const result = await compileAssembled(join(fixtureDir, "mixed-keys.js"), lane);
+      expect(irBodies(result)).toEqual(expect.arrayContaining(UNLOCKED_UNITS));
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+    });
 
-  it("standalone: string-only keys are refused before the claim, not withdrawn", { timeout: 180_000 }, async () => {
-    const result = await compileAssembled(join(fixtureDir, "string-keys.js"));
-    for (const name of ["verifyNotEnumerable", "verifyConfigurable"]) {
-      const outcome = (result.irOutcomes ?? []).find((o) => o.displayName === name);
-      expect(outcome, name).toMatchObject({
-        kind: "unsupported",
-        code: "param-type-not-resolvable",
-        stage: "select",
-        irBodyEmitted: false,
-      });
-    }
-  });
+    it(`${lane}: string-only keys are refused before the claim, not withdrawn`, { timeout: 180_000 }, async () => {
+      const result = await compileAssembled(join(fixtureDir, "string-keys.js"), lane);
+      for (const name of ["verifyNotEnumerable", "verifyConfigurable"]) {
+        expect(refusal(result, name), name).toMatch(/^param-dynamic-carrier-diverges-from-legacy:/);
+      }
+    });
+  }
+
+  it(
+    "standalone: || over exact booleans ships; a numeric module operand stays refused",
+    { timeout: 180_000 },
+    async () => {
+      const result = await compileAssembled(join(fixtureDir, "logical-or.js"));
+      expect(irBodies(result)).toContain("hasEither");
+      expect(refusal(result, "pick")).toMatch(/^expr-module-value-logical:/);
+    },
+  );
 
   for (const name of Object.keys(FIXTURES)) {
     it(`standalone: ${name} passes as in node`, { timeout: 180_000 }, async () => {

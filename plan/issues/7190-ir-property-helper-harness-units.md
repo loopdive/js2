@@ -162,3 +162,32 @@ its own compiler bundle):
 `ir_only_pass` stays 0 in both directories on both sides: ten propertyHelper
 units are still legacy (see the ranking), so no file that includes
 propertyHelper.js reaches zero yet.
+
+## Adversarial review (2026-10-29)
+
+A fresh-context review agent was given the diff and the plan and asked to
+prove the quality goal was not met. Its verdict on the first push was **not
+met**, with one blocking finding. All findings are now resolved:
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 (blocking) | `legacyParamSlotIsNativeString` repeated the native-string slot test word for word (`index.ts` projection, `irFieldTypeMatchesLegacyValType`) | one predicate, `isAnyStringSlot` in `native-strings-shared.ts`, used at all three sites; the other near-copies are listed below |
+| 2 | the probe looked up the parameter's legacy slot twice | the probe reads the slot once; the fnctor test is `slotCarriesFnctorInstance(ctx, slot)` |
+| 3 | stale comments on the probe and in `resolveParamType` | both name the native-string arm |
+| 4 | the `&&`/`\|\|` module check only bites on the dynamic path | comment added |
+| 5 | the tests pinned only the generic refusal code, standalone only, with no `\|\|` case | the tests assert the refusal detail, run gc as well as standalone, add an `\|\|` fixture and a still-refused negative (`o \|\| nonIndexNumericPropertyName`) |
+
+The reviewer found (a), (b) and (c) sound. (a): `&&`/`\|\|` admits only operands
+the checker proves boolean, the same set `!` already admitted. (b): `!` over the
+descriptor read is still gated by `currentDynamicRuntimeBuildable` and the
+`native-own-property-descriptor` capability, and lowers through `dyn.truthy`.
+(c): the probe runs only where the IR would choose the dynamic carrier, so no
+claimed function is lost.
+
+**Left for a separate cleanup:** the same `$AnyString` slot test is open-coded
+in about a dozen more codegen sites (`index.ts` `scriptVarSlotIsStringHome`,
+`regexp-standalone.ts`, `value-tags.ts`, `literals.ts`, …). They can move onto
+`isAnyStringSlot`; that is outside this PR's IR scope.
+
+After the fixes: `tests/issue-7190-*` head 23/23; base fails exactly the 5
+IR-unit checks (standalone and gc), and every runtime check passes on both.
