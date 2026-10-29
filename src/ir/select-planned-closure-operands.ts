@@ -483,9 +483,9 @@ export function plannedClosureOperandRefusal(
       : { arm: "closure-binary-operands", node: expr };
   };
 
-  // (#7113, #7177) A shape main never planned — a closure that mints a joined
-  // carrier (`var r = m ? m : 1`) or a throw-only body (the void plan of an
-  // oracle-`never` return). The carrier reads / calls with a known IR bug are
+  // (#7113, #7177, #7195) A shape main never planned — a call-argument
+  // closure, a closure that mints a joined carrier (`var r = m ? m : 1`) or a
+  // throw-only body (the void plan of an oracle-`never` return). The carrier reads / calls with a known IR bug are
   // kept out of these new claims; the closures main already claims keep their
   // behaviour until #7177 lands.
   let newShape: boolean | undefined;
@@ -501,7 +501,7 @@ export function plannedClosureOperandRefusal(
       statements.length > 0 &&
       ts.isThrowStatement(statements[statements.length - 1]!) &&
       !walk(body!, ts.isReturnStatement);
-    newShape = mintsJoin || throwOnly;
+    newShape = plan.site === "call-argument" || mintsJoin || throwOnly;
     return newShape;
   };
 

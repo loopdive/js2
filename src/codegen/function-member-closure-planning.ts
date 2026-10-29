@@ -4,6 +4,7 @@ import { ts } from "../ts-api.js";
 import type { IrIdentityImportedFunctionResolver } from "../ir/imported-functions.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrFunctionMemberClosurePlan, IrFunctionMemberClosures } from "../ir/function-member-closure-plan.js";
+import type { IrUnitId } from "../ir/identity.js";
 import type { IrClosureSignature, IrType, IrTypeRef } from "../ir/nodes.js";
 import type { TypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -95,8 +96,17 @@ function closedScalarBodyKey(
  * (captures), `yield`/`await` — and a `return <value>` (the ABI has no
  * result). The key records every node plus each identifier's resolved
  * declaration, so `isCurrent` sees a rebinding as staleness.
+ *
+ * (#7195) `identifierCalls: false` also refuses a bare `f()` / `Symbol()`:
+ * a call-argument site brings no callee unit into the component, so
+ * `<module-init>` mints no direct-call plan for it and the build would
+ * withdraw after the claim.
  */
-function openVoidBodyKey(expression: ts.FunctionExpression, oracle: CodegenContext["oracle"]): string | undefined {
+function openVoidBodyKey(
+  expression: ts.FunctionExpression,
+  oracle: CodegenContext["oracle"],
+  identifierCalls: boolean,
+): string | undefined {
   const facts: Array<string | number> = [];
   let ok = true;
   const visit = (node: ts.Node): void => {
@@ -110,7 +120,8 @@ function openVoidBodyKey(expression: ts.FunctionExpression, oracle: CodegenConte
       ts.isClassLike(node) ||
       ts.isYieldExpression(node) ||
       ts.isAwaitExpression(node) ||
-      (ts.isReturnStatement(node) && node.expression !== undefined)
+      (ts.isReturnStatement(node) && node.expression !== undefined) ||
+      (!identifierCalls && ts.isCallExpression(node) && ts.isIdentifier(node.expression))
     ) {
       ok = false;
       return;
@@ -178,29 +189,50 @@ function captureMemberClosureSyntax(expression: ts.FunctionExpression): () => bo
     });
 }
 
-/** Exact raw-versus-logical adapter proof for one same-source member assignment. */
-function planMemberClosure(
+/**
+ * Where the FunctionExpression sits. Its owner unit and the source facts that
+ * make the site current; the ABI and body proofs are site-independent.
+ */
+interface FunctionClosureSite {
+  readonly kind: IrFunctionMemberClosurePlan["site"];
+  readonly ownerUnitId: IrUnitId;
+  isCurrent(): boolean;
+}
+
+/** The exact same-source top-level function a receiver identifier names, or `undefined`. */
+function sameSourceFunctionTarget(
+  ctx: CodegenContext,
+  identity: IrPlanningIdentityContext,
+  resolver: IrIdentityImportedFunctionResolver,
+  receiver: ts.Identifier,
+): ReturnType<IrIdentityImportedFunctionResolver["resolveTopLevelFunctionValueTarget"]> {
+  const target = resolver.resolveTopLevelFunctionValueTarget(receiver);
+  return target &&
+    target.legacyProjection === "unambiguous" &&
+    target.declaration.getSourceFile() === receiver.getSourceFile() &&
+    identity.declarationByUnitId.get(target.targetUnitId) === target.declaration &&
+    !ctx.reassignedFunctionDeclarations?.has(target.declaration)
+    ? target
+    : undefined;
+}
+
+/** The receiver still names the same top-level function unit. */
+function sameTargetAgain(
+  resolver: IrIdentityImportedFunctionResolver,
+  receiver: ts.Identifier,
+  target: NonNullable<ReturnType<typeof sameSourceFunctionTarget>>,
+): boolean {
+  const current = resolver.resolveTopLevelFunctionValueTarget(receiver);
+  return current?.declaration === target.declaration && current.targetUnitId === target.targetUnitId;
+}
+
+/** `F.member = function () {}` at the top level or directly in a top-level function body. */
+function memberAssignmentSite(
   ctx: CodegenContext,
   identity: IrPlanningIdentityContext,
   resolver: IrIdentityImportedFunctionResolver,
   expression: ts.FunctionExpression,
-  operations: FunctionMemberClosureOperations,
-): IrFunctionMemberClosurePlan | undefined {
-  if (
-    identity.sourceFileBySourceId.size !== 1 ||
-    ctx.fast ||
-    !operations.dynamicCarrierIsExternref() ||
-    ctx.targetProfile.semanticProviders !== "native-first" ||
-    !(ctx.standalone || ctx.wasi) ||
-    ctx.runtimeEvalGlobalFunctionBindings === true ||
-    expression.name ||
-    expression.type ||
-    expression.asteriskToken ||
-    expression.typeParameters?.length ||
-    expression.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ||
-    (expression as { symbol?: ts.Symbol }).symbol === undefined
-  )
-    return;
+): FunctionClosureSite | undefined {
   const assignment = expression.parent;
   if (
     !ts.isBinaryExpression(assignment) ||
@@ -224,27 +256,106 @@ function planMemberClosure(
   if (!ts.isSourceFile(statementOwner) && !ownerDeclaration) return;
   const access = assignment.left;
   const receiver = assignment.left.expression;
-  const target = resolver.resolveTopLevelFunctionValueTarget(receiver);
-  const source = expression.getSourceFile();
-  if (
-    !target ||
-    target.legacyProjection !== "unambiguous" ||
-    target.declaration.getSourceFile() !== source ||
-    identity.declarationByUnitId.get(target.targetUnitId) !== target.declaration ||
-    ctx.reassignedFunctionDeclarations?.has(target.declaration)
-  )
-    return;
-  const sourceUnitId = identity.unitIdByDeclaration.get(expression);
-  const sourceUnit = sourceUnitId === undefined ? undefined : identity.unitByUnitId.get(sourceUnitId);
+  const memberName = access.name;
+  const memberText = memberName.text;
+  const target = sameSourceFunctionTarget(ctx, identity, resolver, receiver);
   const ownerUnitId = ownerDeclaration
     ? identity.unitIdByDeclaration.get(ownerDeclaration)
-    : identity.moduleInitUnitIdBySourceFile.get(source);
+    : identity.moduleInitUnitIdBySourceFile.get(expression.getSourceFile());
+  if (!target || !ownerUnitId) return;
+  return {
+    kind: "member-assignment",
+    ownerUnitId,
+    isCurrent: () =>
+      expression.parent === assignment &&
+      assignment.right === expression &&
+      assignment.left === access &&
+      access.expression === receiver &&
+      access.name === memberName &&
+      memberName.text === memberText &&
+      sameTargetAgain(resolver, receiver, target),
+  };
+}
+
+/**
+ * (#7195) `F.m(…, function () {}, …)` as a top-level statement: the closure is
+ * boxed into the dynamic carrier at a call through a same-source function
+ * object's member, whose callee dispatches it by the canonical wrapper type.
+ * Standalone target only: the WASI module-init route is unmeasured, and the
+ * native-first gc lane (which also runs the standalone regime) keeps its output
+ * unchanged.
+ */
+function callArgumentSite(
+  ctx: CodegenContext,
+  identity: IrPlanningIdentityContext,
+  resolver: IrIdentityImportedFunctionResolver,
+  expression: ts.FunctionExpression,
+): FunctionClosureSite | undefined {
+  const call = expression.parent;
+  if (
+    ctx.targetProfile.target !== "standalone" ||
+    !ts.isCallExpression(call) ||
+    call.questionDotToken ||
+    !ts.isPropertyAccessExpression(call.expression) ||
+    call.expression.questionDotToken ||
+    !ts.isIdentifier(call.expression.expression) ||
+    !ts.isExpressionStatement(call.parent) ||
+    !ts.isSourceFile(call.parent.parent)
+  )
+    return;
+  const index = call.arguments.indexOf(expression);
+  const callee = call.expression;
+  const receiver = call.expression.expression;
+  const target = sameSourceFunctionTarget(ctx, identity, resolver, receiver);
+  const ownerUnitId = identity.moduleInitUnitIdBySourceFile.get(expression.getSourceFile());
+  if (index < 0 || !target || !ownerUnitId) return;
+  return {
+    kind: "call-argument",
+    ownerUnitId,
+    isCurrent: () =>
+      expression.parent === call &&
+      call.arguments[index] === expression &&
+      call.expression === callee &&
+      callee.expression === receiver &&
+      sameTargetAgain(resolver, receiver, target),
+  };
+}
+
+/** Exact raw-versus-logical adapter proof for one same-source member assignment or call argument. */
+function planMemberClosure(
+  ctx: CodegenContext,
+  identity: IrPlanningIdentityContext,
+  resolver: IrIdentityImportedFunctionResolver,
+  expression: ts.FunctionExpression,
+  operations: FunctionMemberClosureOperations,
+): IrFunctionMemberClosurePlan | undefined {
+  if (
+    identity.sourceFileBySourceId.size !== 1 ||
+    ctx.fast ||
+    !operations.dynamicCarrierIsExternref() ||
+    ctx.targetProfile.semanticProviders !== "native-first" ||
+    !(ctx.standalone || ctx.wasi) ||
+    ctx.runtimeEvalGlobalFunctionBindings === true ||
+    expression.name ||
+    expression.type ||
+    expression.asteriskToken ||
+    expression.typeParameters?.length ||
+    expression.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ||
+    (expression as { symbol?: ts.Symbol }).symbol === undefined
+  )
+    return;
+  const site =
+    memberAssignmentSite(ctx, identity, resolver, expression) ?? callArgumentSite(ctx, identity, resolver, expression);
+  if (!site) return;
+  const ownerUnitId = site.ownerUnitId;
+  const source = expression.getSourceFile();
+  const sourceUnitId = identity.unitIdByDeclaration.get(expression);
+  const sourceUnit = sourceUnitId === undefined ? undefined : identity.unitByUnitId.get(sourceUnitId);
   if (
     !sourceUnitId ||
     !sourceUnit ||
     sourceUnit.terminal ||
     sourceUnit.kind !== "function-expression" ||
-    !ownerUnitId ||
     sourceUnit.terminalOwnerId !== ownerUnitId ||
     sourceUnit.lexicalOwnerId !== ownerUnitId ||
     identity.declarationByUnitId.get(sourceUnitId) !== expression ||
@@ -264,7 +375,8 @@ function planMemberClosure(
     !oracleSignature ||
     oracleSignature.declaredArity !== expression.parameters.length ||
     oracleSignature.params.length !== expression.parameters.length ||
-    (oracleSignature.returns.kind !== "boolean" && !returnsVoid)
+    (oracleSignature.returns.kind !== "boolean" && !returnsVoid) ||
+    (site.kind === "call-argument" && (!returnsVoid || expression.parameters.length !== 0))
   )
     return;
   const physical = operations.computeSignature(expression);
@@ -309,13 +421,13 @@ function planMemberClosure(
       return;
   }
   const bodyKeyOf = (): string | undefined =>
-    returnsVoid ? openVoidBodyKey(expression, ctx.oracle) : closedScalarBodyKey(expression, ctx.oracle, parameters);
+    returnsVoid
+      ? openVoidBodyKey(expression, ctx.oracle, site.kind === "member-assignment")
+      : closedScalarBodyKey(expression, ctx.oracle, parameters);
   const bodyKey = bodyKeyOf();
   if (bodyKey === undefined) return;
   const sourceText = source.text;
   const syntaxIsCurrent = captureMemberClosureSyntax(expression);
-  const memberName = access.name;
-  const memberText = memberName.text;
   const signature: IrClosureSignature = Object.freeze({
     params: Object.freeze(physical.params.map((type) => operations.valueType(Object.freeze({ ...type })))),
     returnType: physical.returnType === null ? null : operations.valueType(Object.freeze({ ...physical.returnType })),
@@ -325,30 +437,19 @@ function planMemberClosure(
     expression,
     ownerUnitId,
     sourceUnitId,
+    site: site.kind,
     signature,
     dynamicParameterIndices,
     isCurrent() {
       // Refuse stale captured source/target before invoking canonical ABI services.
       if (
-        expression.parent !== assignment ||
-        assignment.right !== expression ||
-        assignment.left !== access ||
-        access.expression !== receiver ||
         source.text !== sourceText ||
-        access.name !== memberName ||
-        memberName.text !== memberText ||
+        !site.isCurrent() ||
         !syntaxIsCurrent() ||
         parameterNames.some(
           ([parameter, name, text], index) =>
             expression.parameters[index] !== parameter || parameter.name !== name || name.text !== text,
         )
-      )
-        return false;
-      const currentTarget = resolver.resolveTopLevelFunctionValueTarget(receiver);
-      if (
-        !currentTarget ||
-        currentTarget.declaration !== target.declaration ||
-        currentTarget.targetUnitId !== target.targetUnitId
       )
         return false;
       const current = planMemberClosure(ctx, identity, resolver, expression, operations);
@@ -363,12 +464,9 @@ function planMemberClosure(
             !ctx.oracle.declarationsOf(name).includes(parameter),
         ) ||
         source.text !== sourceText ||
-        assignment.left !== access ||
-        access.name !== memberName ||
-        memberName.text !== memberText ||
+        !site.isCurrent() ||
         current.ownerUnitId !== ownerUnitId ||
         current.sourceUnitId !== sourceUnitId ||
-        resolver.resolveTopLevelFunctionValueTarget(receiver)?.declaration !== target.declaration ||
         bodyKeyOf() !== bodyKey ||
         current.dynamicParameterIndices.size !== dynamicParameterIndices.size ||
         [...dynamicParameterIndices].some((index) => !current.dynamicParameterIndices.has(index))
