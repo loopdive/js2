@@ -1953,3 +1953,31 @@ selector capability excludes them). **Found on the way (legacy, to file with
 the constants-shadow defect):** with `var Number = function (x) { return 7; }`
 at module level, legacy's by-name `Number(x)` arm still converts (node: 7).
 
+## Follow-ups from the #6970 / #6972 reviews (2026-10-29)
+
+Filed here because a new issue id could not be allocated from the revive
+session (`claim-issue --allocate` needs `gh` for its open-PR scan). Move to
+an issue of its own when one is allocated.
+
+1. **One lane fact, two definitions** (#6970 finding 4). The selector asks
+   the `dynamic-method-call-wrapper` capability (`legality.ts`); lowering asks
+   `irTemplateWrapperLane` (`helpers/template-wrapper.ts`). They agree today
+   (wasmgc, non-fast, standalone/wasi); derive the resolver answer from the
+   capability predicate so they cannot drift.
+2. **A failing template throws after the claim** (#6970 finding 5).
+   `buildTemplateWrapperFamily` throws a plain `Error` when a wrapper's
+   template does not compile. No repro (#6851's sweep over the built-in
+   names × arity 0–3 compiled all but legacy's own `replace`/`replaceAll`
+   refusal); make it a pre-claim refusal or pin the sweep as a test.
+3. **`nativeStrTypeIdx` slot under `--utf8-storage`.** The
+   `dynamicCarrierDivergesFromLegacy` string-slot exception compares against
+   `ctx.anyStrTypeIdx`; add a test for the `--utf8-storage` native-string
+   slot.
+4. **Wrapper naming lives in a family module** (#6972 finding 4).
+   `irWrapperSymbolIsNameable` / `irWrapperSymbol` / `parseIrWrapperSymbol`
+   serve both wrapper families from `ir/dynamic-method-call-names.ts`; move
+   them to `ir/template-wrapper-names.ts`.
+5. **Three sibling borrow arms** (#6972 finding 6) in `select.ts` (move-only
+   scan, `isPhase1Expr` call, method call on a borrow result): fold into one
+   `borrowOperandsAdmitted` beside `ambientArrayPrototypeBorrowCall`.
+

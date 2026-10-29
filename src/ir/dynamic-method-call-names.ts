@@ -24,16 +24,6 @@ export function irWrapperSymbolIsNameable(method: string, arity: number): boolea
   return METHOD_NAME.test(method) && Number.isInteger(arity) && arity >= 0 && arity <= IR_WRAPPER_MAX_ARITY;
 }
 
-/**
- * The admission every template wrapper family shares: the family's own
- * question (`admits` — its lane, or its method list) and the IR contract's
- * nameable (method, arity). One predicate, so a family cannot admit a pair it
- * could not name.
- */
-export function irWrapperAdmitted(admits: boolean, method: string, arity: number): boolean {
-  return admits && irWrapperSymbolIsNameable(method, arity);
-}
-
 /** `<prefix><method>_<arity>`; throws for a pair {@link irWrapperSymbolIsNameable} declines. */
 export function irWrapperSymbol(prefix: string, method: string, arity: number): string {
   if (!irWrapperSymbolIsNameable(method, arity)) {

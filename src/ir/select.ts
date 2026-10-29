@@ -3121,7 +3121,7 @@ function containsCarrierAbiCall(body: ts.Block): boolean {
     if (node !== body && isFunctionLike(node)) return;
     if (
       ts.isCallExpression(node) &&
-      (receiverFirstDynamicMethodPlan(node) !== undefined || ambientArrayPrototypeBorrowCall(node) !== null)
+      (receiverFirstDynamicMethodPlan(node) !== undefined || ambientArrayPrototypeBorrowCall(node, NO_LOCALS) !== null)
     ) {
       found = true;
       return;
@@ -3218,7 +3218,7 @@ function dynamicUsesAreMoveOnly(
       return true;
     }
     // (#7106 compareArray.format) the borrow wrapper answers the dynamic carrier.
-    if (ts.isCallExpression(e) && !dynNames.has("Array") && ambientArrayPrototypeBorrowCall(e) !== null) return true;
+    if (ts.isCallExpression(e) && ambientArrayPrototypeBorrowCall(e, dynNames) !== null) return true;
     // (#7106 item 1) `assert._isSameValue(x, y)`: a member call on a stable
     // top-level function object (Stage 2) lowers through the dynamic closed
     // dispatch and produces a dynamic value.
@@ -3382,7 +3382,7 @@ function dynamicUsesAreMoveOnly(
       }
       // (#7106 compareArray.format) `Array.prototype.<m>.call(recv, …)` → one
       // reflective wrapper call: a dynamic result, every operand a carrier.
-      const arrayBorrow = dynNames.has("Array") ? null : ambientArrayPrototypeBorrowCall(e);
+      const arrayBorrow = ambientArrayPrototypeBorrowCall(e, dynNames);
       if (arrayBorrow !== null) {
         if (!expectDyn || !currentDynamicRuntimeBuildable) return false;
         // A concrete operand is boxed onto the carrier, as the dynamic method call's arguments are.
@@ -8552,16 +8552,22 @@ function ambientObjectToStringTagCall(expr: ts.CallExpression): ts.Expression | 
   return arg;
 }
 
+const NO_LOCALS: ReadonlySet<string> = new Set();
+
 /**
  * (#7106 compareArray.format) The exact `Array.prototype.<m>.call(recv, …)`
  * borrow on the UNSHADOWED ambient `Array`, for a method legacy's borrow
  * compiler builds host-free, on a lane with the template wrappers. Returns
- * the matched shape, else null. A local `Array` binding is the caller's
- * `scope` question; a module-level one is settled by the ambient predicate.
+ * the matched shape, else null. `locals` are the caller's local bindings (a
+ * local `Array` shadows the ambient one); a module-level binding is settled by
+ * the ambient predicate. The syntactic walks with no scope pass none.
  */
-function ambientArrayPrototypeBorrowCall(expr: ts.CallExpression): ArrayPrototypeBorrowCall | null {
+function ambientArrayPrototypeBorrowCall(
+  expr: ts.CallExpression,
+  locals: ReadonlySet<string>,
+): ArrayPrototypeBorrowCall | null {
   const borrow = matchArrayPrototypeBorrowCall(expr);
-  if (borrow === undefined || !selectorSeesAmbientBinding(borrow.root)) return null;
+  if (borrow === undefined || locals.has("Array") || !selectorSeesAmbientBinding(borrow.root)) return null;
   if (currentSelectionOptions?.supportsBackendCapability?.("dynamic-method-call-wrapper") !== true) return null;
   if (
     currentSelectionOptions.arrayPrototypeBorrow?.(expr, borrow.method, borrowResultReachesTypedSlot(expr)) !== true
@@ -11730,7 +11736,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       const objectTagArg = scope.has("Object") ? null : ambientObjectToStringTagCall(expr);
       if (objectTagArg !== null) return isPhase1Expr(objectTagArg, scope, localClasses);
       // (#7106 compareArray.format) `Array.prototype.<m>.call(recv, …)`: borrow-wrapper lanes only.
-      const arrayBorrow = scope.has("Array") ? null : ambientArrayPrototypeBorrowCall(expr);
+      const arrayBorrow = ambientArrayPrototypeBorrowCall(expr, scope);
       if (arrayBorrow !== null) {
         return [arrayBorrow.receiver, ...arrayBorrow.args].every((operand) =>
           isPhase1Expr(operand, scope, localClasses),
@@ -11809,11 +11815,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // (`Array.prototype.map.call(…).join(", ")`): the receiver is the dynamic
       // carrier, whatever the checker types the borrow, so it takes the generic
       // dynamic-receiver call (the move-only scan admits the method).
-      if (
-        ts.isCallExpression(builtinReceiver) &&
-        !scope.has("Array") &&
-        ambientArrayPrototypeBorrowCall(builtinReceiver) !== null
-      ) {
+      if (ts.isCallExpression(builtinReceiver) && ambientArrayPrototypeBorrowCall(builtinReceiver, scope) !== null) {
         if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;
         return expr.arguments.every((arg) => !ts.isSpreadElement(arg) && isPhase1Expr(arg, scope, localClasses));
       }
@@ -13063,7 +13065,7 @@ export function buildLocalCallGraph(
             return;
           }
           // (#7106 compareArray.format) …and `Array.prototype.<m>.call(recv, …)`.
-          const arrayBorrow = ambientArrayPrototypeBorrowCall(node);
+          const arrayBorrow = ambientArrayPrototypeBorrowCall(node, NO_LOCALS);
           if (arrayBorrow !== null) {
             for (const operand of [arrayBorrow.receiver, ...arrayBorrow.args]) visit(operand);
             return;
