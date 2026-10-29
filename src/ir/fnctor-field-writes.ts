@@ -227,8 +227,8 @@ function poisonAllFieldsOf(state: AnalysisState, owner: FieldOwner): void {
   else state.fieldPoisonedOwners.add(owner);
 }
 
-/** Literal property name of a write target, or `undefined` for a dynamic key. */
-function literalFieldName(target: ts.PropertyAccessExpression | ts.ElementAccessExpression): string | undefined {
+/** Literal property name of a member access (`o.x`, `o["x"]`), or `undefined` for a dynamic key. */
+export function literalFieldName(target: ts.PropertyAccessExpression | ts.ElementAccessExpression): string | undefined {
   if (ts.isPropertyAccessExpression(target)) {
     return ts.isPrivateIdentifier(target.name) ? undefined : target.name.text;
   }

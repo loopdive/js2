@@ -33,6 +33,11 @@ assignee: "ttraenkler/claude-c"
 # construct driver) and `analyzeFnctorEscapeGate` (refuse the fnctor struct);
 # `dyn-read.ts` gains the sloppy twin of `__dyn_member_set` beside its strict
 # sibling. No new import edge: the wrappers live in ir-dynamic-construct.ts.
+# 2026-10-22 (compareArray.format): `Array.prototype.<m>.call(recv, …)` lowers
+# as one call to the `__ir_arr_borrow_<m>_<n>` wrapper; integration.ts
+# pre-registers it from `codegen/array/ir-array-prototype-borrow.ts` (one more
+# two-way ir→codegen edge, that module joins the SCC — it imports legacy's
+# borrow compiler and the shared template-wrapper pieces).
 flat-dir-budget-allow:
   - src/codegen/ir-string-carrier.ts # 2026-10-21 (#7106 S1c): the dyn.string_carrier wrapper beside ir-dynamic-construct.ts
   - src/codegen/ir-arguments-length.ts # 2026-10-21 (#7106 S1e): the dyn.arguments_length wrapper beside its two siblings
@@ -41,10 +46,11 @@ flat-dir-budget-allow:
   - src/codegen/ir-dynamic-delete.ts # 2026-10-22 (#7106 propertyHelper arm 3): the dynamic delete wrapper beside ir-dynamic-construct.ts
   - src/codegen/ir-dynamic-instanceof.ts # 2026-10-22 (#7106 dyn.instanceof): the generic dynamic instanceof wrapper beside ir-dynamic-delete.ts
 import-cycles-allow:
-  - ir->codegen: 81 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (module-init lever A): the bridge reads legacy's Math/Number constant table (`codegen/builtin-value-read.ts`); 2026-10-22 (lever B): …and pre-registers the Number(v) provider (`codegen/helpers/ir-number-from-value.ts`)
+  - ir->codegen: 84 # 2026-10-29 (merge-group fix, restated on main's 83 after #6977/#6979 + this borrow wrapper); 2026-10-29 (revive, restated on main's 81 + #7119's wrapper module + this borrow wrapper); 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (module-init lever A): the bridge reads legacy's Math/Number constant table (`codegen/builtin-value-read.ts`); 2026-10-22 (lever B): …and pre-registers the Number(v) provider (`codegen/helpers/ir-number-from-value.ts`); 2026-10-22 (compareArray.format): …and the Array.prototype borrow wrapper
   - codegen->ir: 301 # 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
   - ir->frontend: 8 # 2026-10-22 (#7106 lever B): the bridge builds the source-bound Number-conversion plan (`frontend/builtins/prepare-number-conversion.ts`) for the selector, as program-source.ts does for its resolver
-  - largestSccSize: 728 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it; 2026-10-22 (dyn.instanceof): codegen/ir-dynamic-instanceof.ts joins it the same way; 2026-10-22 (lever B): codegen/helpers/ir-number-from-value.ts joins it
+  - ir->runtime: 10 # 2026-10-29 (#7106 function-object realm members): `ir/select-expression-structure.ts` reads %Function.prototype%'s and %Object.prototype%'s keys from the native realm catalog (`runtime/contracts/native-realm-catalog.ts`, pure data), as `ir/program/native-realm-requirements.ts` already does; a hand copy of those 19 names would duplicate the catalog
+  - largestSccSize: 728 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it; 2026-10-22 (dyn.instanceof): codegen/ir-dynamic-instanceof.ts joins it the same way; 2026-10-22 (lever B): codegen/helpers/ir-number-from-value.ts joins it; 2026-10-22 (compareArray.format): codegen/array/ir-array-prototype-borrow.ts joins it
 # 2026-10-24 (dyn.instanceof Error intrinsic, #6858 quality fix): ambient-intrinsics.ts moved from src/ir/values/ to src/shared/ — it imports only `typescript`, and codegen/ir-dynamic-instanceof.ts now reads it too; keeping it under src/ir/ would have grown the codegen->ir two-way edge count (300 → 301).
 # 2026-10-22 (propertyHelper arm 3): makeFromAstResolver gains the
 # dynamicDeleteSymbol method; isPhase1StatementListInScope gains the dropped
@@ -89,6 +95,9 @@ loc-budget-allow:
   - src/codegen/builtin-value-read.ts
   # 2026-10-22 (lever B): one provider-id set spread in the manifest registry
   - src/ir/runtime/manifest.ts
+  # 2026-10-29 (#6972 merge-queue root cause C): `activeBufferBranched`, the
+  # buffer-end query the shared body-statement lister stops on (from-ast.ts
+  # nets -1: two inline guards folded into it)
   - src/ir/builder.ts
   - src/ir/core/nodes.ts
   - src/ir/core/dialect/js.ts
@@ -1179,6 +1188,77 @@ Found while planning the propertyHelper `isConfigurable` arm.
 `delete (o as any).x` on a typed struct parameter (`o: Point`) leaves `o.x`
 readable. That is the same on the base and on legacy-only compiles.
 
+## Function-object realm members — selector refusal (2026-10-29, measured)
+
+Found in the #6972 merge group: three ES5 rows failed there and pass on main
+`8de8a22511`.
+- `language/statements/function/13.2-22-s.js` and `13.2-19-b-3gs.js` failed
+  with "Expected a TypeError to be thrown but no exception was thrown at all".
+- `built-ins/Function/prototype/bind/15.3.4.5-2-16.js` failed with
+  "TypeError: Value is not callable".
+
+**Root cause (one, not two).** A receiver-only use of a top-level function
+`F` (`F.x(…)`, `F.x = v`, `var v = F.x`, Stage 2 and census arms 3/4) lowers
+to the boxed function object plus a dynamic member operation. That
+operation resolves only `F`'s own expandos. It does not model the members
+the realm defines for every function:
+- on %Function.prototype%: `bind`, `call`, `apply`, `toString`,
+  `constructor`, and the %ThrowTypeError% `caller`/`arguments` accessors;
+- the non-writable own `length`/`name`;
+- on %Object.prototype%: `valueOf`, `hasOwnProperty`, and the rest.
+
+Measured on standalone, PR head `0e95c58ef3`:
+- `F.bind()`, `F.valueOf()`, `F.constructor()` and `F.toString()` threw
+  "not callable".
+- `var v = F.valueOf` (and `hasOwnProperty`, `isPrototypeOf`,
+  `propertyIsEnumerable`, `toLocaleString`, `constructor`) read undefined.
+- On a strict `F`, `F.caller = v` stored instead of throwing, and
+  `var v = F.caller` read instead of throwing.
+
+**Latent on main.** The arms predate #6972. #6972 only made the harness
+`<module-init>` claimable, so test bodies reach them.
+- The harness-free `function testFunc() {}\ntestFunc.bind();` is
+  IR-claimed on main and throws "Value is not callable".
+- So is a plain IR function `export function test() { F.bind(); … }`, and
+  `F.caller = 1` on a strict `F` there does not throw.
+
+**Fix.** `isFunctionObjectReceiverUse` (`select-expression-structure.ts`) now
+also requires `namesFunctionObjectExpando(access)`.
+- That is a literal member name (`literalFieldName`, exported from
+  `fnctor-field-writes.ts` rather than copied) that is not in
+  `FUNCTION_REALM_MEMBER_NAMES`.
+- `FUNCTION_REALM_MEMBER_NAMES` is the string keys of %Function.prototype%
+  and %Object.prototype% in `NATIVE_REALM_CATALOG`, the single source of
+  those names. Hence the `ir->runtime: 10` grant above.
+- The selector, the planner and the prepared revalidation all ask this one
+  predicate. Calls, writes, reads and chained writes therefore refuse
+  together, at select, with no claim-then-demote.
+- A dynamic key (`F[k](…)`) is refused too: it may name any realm member.
+- `F.prototype` (an own property, not a realm key) and ordinary expandos
+  (`F.helper = function…; F.helper(2)`, the harness's `assert.*`,
+  `compareArray.format`, `Test262Error.prototype.toString = …`) still claim.
+
+**Rejected alternative.** Adding `bind` to the `call`/`apply`
+invocation-method refusal in `select.ts` fixes only the call of 15.3.4.5-2-16.
+The reads, the other realm methods and the poisoned writes stay wrong.
+
+**Validation.**
+- All three rows pass through `runTest262File(…, "standalone")`.
+- Over the 320 test262 files where a top-level `function X` is the receiver
+  of a realm member or a computed access, standalone goes from 297 to 300 and
+  nothing flips to fail.
+- The arm also runs on gc (`ctx.standalone` is the native regime there), so
+  gc output changes for exactly these units. On the same 320 files the host
+  lane goes from 254 to 255 (15.3.4.5-2-16) and nothing flips to fail.
+- `tests/issue-7106-function-object-realm-members.test.ts` checks every
+  verdict against node. It fails 7 of 8 cases on `0e95c58ef3`.
+
+**Still wrong on legacy (not changed here; legacy-owned units, standalone).**
+- `typeof F.valueOf()` does not answer `"function"`.
+- A sloppy `F.caller` reads undefined, not null (also on main).
+- `F["helper"] = fn` followed by `F["helper"](…)` throws a TypeError (the
+  element store is refused at `body-elemstore-recv` on `0e95c58ef3` too).
+
 ## Harness unit blocker census (2026-10-21)
 
 Measured by session D on main `2ea607da3f` merged locally with #6821
@@ -1804,6 +1884,76 @@ for (let k = 1; k <= 12; k++) {
 
 </details>
 
+## `compareArray.format` — the `Array.prototype.<m>.call(recv, …)` arm (built 2026-10-22)
+
+The integrated census above names one blocker in 238 of 266 compiled tests:
+assert.js:179, `Array.prototype.map.call(arrayLike, String).join(", ")`. The
+layer-by-layer measurement reduced it to a single question — the IR has no
+exact value for `Array.prototype.map` (#7123) — and the plan's second candidate
+is what is built: the whole borrow is ONE reflective call, and the method value
+is never materialized.
+
+**Modules (one concern each, no duplicated AST walk).**
+
+| piece | module | reuse |
+| --- | --- | --- |
+| shape + naming contract (`matchArrayPrototypeBorrowCall`, `__ir_arr_borrow_<m>_<n>`) | `src/ir/array-prototype-borrow-call.ts` | the per-(method, arity) symbol helpers now shared with the #7119 wrapper (`irWrapperSymbol` / `parseIrWrapperSymbol`, lifted out of `dynamic-method-call-names.ts`) |
+| wrapper builder | `src/codegen/array/ir-array-prototype-borrow.ts` | the helper context and its publication are main's `helperFunctionContext` / `publishHelperFunction` (`codegen/helpers/ir-helper-function.ts`, revive 2026-10-29); the template mechanics `parseDetachedTemplate` / `compileTemplateExpressionAs` are one module, `codegen/helpers/template-wrapper.ts`, which the #7119 wrapper (`object-model/ir-dynamic-method-call.ts`) imports too (its inline parse removed) |
+| admission | `irArrayPrototypeBorrowAdmitted(ctx, call, method, resultReachesTypedSlot)` answers the selector option `arrayPrototypeBorrow` (the lane is the `dynamic-method-call-wrapper` capability; the nameable pair is the IR's own shape match in `matchArrayPrototypeBorrowCall`, so codegen does not re-check it): legacy's `arrayPrototypeBorrowCompilesHostFree` (its `ARRAY_METHODS` minus its standalone refusals) and, where the selector says the value reaches a typed slot (anything but a member receiver or a discarded statement value), legacy's own typing of the borrow — `resolveWasmType` of the call's checker type through the shared `carrierOf` (`struct-carrier-inhabits.ts`), plus the oracle's `void` fact — must be one the IR's dynamic carrier reaches (externref, f64, i32, the lane's string carrier). The from-ast resolver re-reads only the lane (`irArrayPrototypeBorrowWrapperLane`); finalize's `ensureIrArrayPrototypeBorrowHelper` re-reads it again and builds — a method the lane excludes is legacy's loud refusal, never a template error, so the builder keeps no error-truncating branch | no second method list, no second typing: the ABI question is asked of the same `resolveWasmType` legacy's signature derivation uses |
+| selector | `ambientArrayPrototypeBorrowCall` beside `ambientObjectToStringTagCall`; the same three sites (move-only scan, Phase-1, external-call walk) plus `isDynShaped` (the result is the carrier) and one Phase-1 arm so a method call ON the result is a dynamic-receiver call, whatever the checker types the borrow | the #7119 wrapper carries `.join` on the result |
+| from-ast | `lowerArrayPrototypeBorrowCall`, intercepted before receiver lowering like the `Object.prototype.toString.call` arm; argument boxing shared with the dynamic method call through the new `lowerDynamicOperands` (one loop, was two) | — |
+
+**Semantics.** The wrapper is legacy's `compileArrayPrototypeCall` over the
+template `Array.prototype.<m>.call(recv, a0, …)` with externref parameters, so
+the receiver takes the `any`-receiver arm — the array-like loop a legacy site
+with an untyped receiver takes. A shadowed `Array` (parameter, local, module
+binding) never reaches the arm: the identifier must be the unshadowed ambient
+binding (`selectorSeesAmbientBinding` + scope, as the toString-tag arm).
+
+**Measured (standalone, `tests/issue-7106-ir-array-prototype-borrow.test.ts`,
+compared with node):** `map`+`String`-shaped callback then `.join`, `join`,
+`reduce` with an initial value, `filter` then `.join`, `some` through `String(…)`
+— IR bodies calling `__ir_arr_borrow_{map_1,join_1,reduce_2,filter_1,some_1}`,
+answers equal to node for an array-like, a real array, `[]` and the harness's
+own row shape `[1, "a", undefined]` → `"[1, a, undefined]"` (with the callback
+as a parameter; the harness's `String`-as-value callback is item 3 below).
+
+**gc delta (byte-identity).** A gc/web/node build of a program WITHOUT the
+admitted shape is byte-identical to #6851; one WITH it is not — under the
+native-regime projection (#5385) the function becomes an IR body there too,
+as every IR admission on that lane does.
+
+**Left out, on purpose.** (1) `push` and the standalone-refused borrows (legacy
+refuses them loudly; the wrapper would turn that diagnostic into an integration
+error). (2) A member READ off the result (`….length`) keeps the checker's typing
+of the borrow (`any[]`), so from-ast's `+` demotes it (`string/number`) — a
+safe demote, measured, not a miscompile; the harness unit only calls `.join`.
+(3) The real `compareArray.format` also needs `String` as a value (#7118,
+#6846) — this branch carries the arm and its test; the harness measurement is
+on the integrated stack. (4) **A borrow whose value reaches a typed slot while
+legacy types it past the carrier** (review round 2). Legacy types the enclosing
+function's ABI from the checker's type of the borrow; the IR returns the
+carrier. In return position that is `any[]` → `ref_null __vec_externref` for
+slice / splice / reverse / sort / fill / flat / with / copyWithin / map /
+filter / concat / flatMap / toReversed / toSorted / toSpliced, and `void` → no
+result slot for forEach: each claimed, built, and demoted at finalize
+(`abi-signature-parity`, 16 of the admitted methods, measured standalone), with
+the unit's `__ir_arr_borrow_<m>_<n>` wrapper left in the module unreferenced
+(the #6768 reachability sweep stubs it to one `unreachable` on standalone;
+physical removal is deliberately not done, see that pass). The selector now
+refuses these before any claim (`tests/issue-7106-ir-array-prototype-borrow.test.ts`
+asserts the post-claim ledger stays empty and no `__ir_arr_borrow_` symbol is
+published); as a member receiver (`….join(", ")`, `…[0]`) or a discarded
+statement value the same methods stay admitted — the harness's own
+`Array.prototype.map.call(arrayLike, String).join(", ")` shape. Methods whose
+result legacy types as `any` (pop / shift / at / find / findLast / reduce /
+reduceRight), `string` (join), `boolean` / `number`, or a host iterator
+(keys / entries / values → externref) stay admitted in every position. Still
+open, pre-existing and not the borrow's: a function whose *parameter* legacy
+infers from such a call site (`g(Array.prototype.slice.call(a))` types `g`'s
+`x` as `any[]`) demotes `g` through the same parity guard (#3536 class), as it
+does for any `any[]`-typed argument.
+
 ## `<module-init>` lever A — ambient `Number.<CONST>` / `Math.<CONST>` fold (built 2026-10-22)
 
 Arm A of the plan in #6876 (the 80-file census on the integrated stack:
@@ -1878,3 +2028,175 @@ selector capability excludes them). **Found on the way (legacy, to file with
 the constants-shadow defect):** with `var Number = function (x) { return 7; }`
 at module level, legacy's by-name `Number(x)` arm still converts (node: 7).
 
+## Follow-ups from the #6970 / #6972 reviews (2026-10-29)
+
+Filed here because a new issue id could not be allocated from the revive
+session (`claim-issue --allocate` needs `gh` for its open-PR scan). Move to
+an issue of its own when one is allocated.
+
+1. **One lane fact, two definitions** (#6970 finding 4). The selector asks
+   the `dynamic-method-call-wrapper` capability (`legality.ts`); lowering asks
+   `irTemplateWrapperLane` (`helpers/template-wrapper.ts`). They agree today
+   (wasmgc, non-fast, standalone/wasi); derive the resolver answer from the
+   capability predicate so they cannot drift.
+2. **A failing template throws after the claim** (#6970 finding 5).
+   `buildTemplateWrapperFamily` throws a plain `Error` when a wrapper's
+   template does not compile. No repro (#6851's sweep over the built-in
+   names × arity 0–3 compiled all but legacy's own `replace`/`replaceAll`
+   refusal); make it a pre-claim refusal or pin the sweep as a test. The
+   borrow family reaches the same throw (#6972 delta review, nit 2):
+   `ensureIrArrayPrototypeBorrowHelper` answers `undefined` when
+   `resolveSliceDeps` misses an object-runtime helper, which the
+   standalone/wasi lanes that admit the wrapper always define.
+3. **`nativeStrTypeIdx` slot under `--utf8-storage`.** The
+   `dynamicCarrierDivergesFromLegacy` string-slot exception compares against
+   `ctx.anyStrTypeIdx`; add a test for the `--utf8-storage` native-string
+   slot.
+4. **Wrapper naming lives in a family module** (#6972 finding 4).
+   `irWrapperSymbolIsNameable` / `irWrapperSymbol` / `parseIrWrapperSymbol`
+   serve both wrapper families from `ir/dynamic-method-call-names.ts`; move
+   them to `ir/template-wrapper-names.ts`.
+5. **Three sibling borrow arms** (#6972 finding 6) in `select.ts` (move-only
+   scan, `isPhase1Expr` call, method call on a borrow result): fold into one
+   `borrowOperandsAdmitted` beside `ambientArrayPrototypeBorrowCall`.
+6. **A post-claim `<module-init>` failure is a compile error, not a demote**
+   (#6972 + #6973 integration census, 2026-10-29). When the claimed
+   initializer failed (`unknown exact function import env.RegExp_new`), the
+   retained `<module-init>__closure_0` still referenced a type that was never
+   emitted ("references non-function or missing type 0", `success: false`)
+   instead of falling back to legacy. The RegExp literal is now refused at
+   select, so this path is latent; any other post-claim module-init failure
+   that lifts closures still reaches it.
+   **Fixed 2026-10-29** (#6972 merge group, run 40856238364: one unclassified
+   standalone row). main + #6977 made the harness initializer claimable, and a
+   body calling a declaration whose claim withdraws on a typeIdx parity
+   mismatch (`function foo(await) { return await; }`,
+   `language/expressions/await/await-in-function.js`) cascade-withdrew it,
+   leaving eight untyped closure slots. `stubIfOrphanedEmpty` now types an
+   orphaned placeholder slot with its lowered signature, or `() -> ()`
+   (`tests/issue-7106-module-init-orphaned-closure-slots.test.ts`).
+7. **Legacy-only borrows answer on a nullish parameter receiver** (#6972
+   delta review, nit 3; pre-existing on main). The IR borrow wrapper throws
+   the step-1 TypeError, but a legacy-only function such as
+   `function h(x) { return Array.prototype.indexOf.call(x, 1); }` still
+   answers for `h(undefined)`: legacy refuses only a *literal* nullish
+   receiver at the call site. Affects `indexOf`, `lastIndexOf`, `includes`
+   and `concat`; `tests/issue-7106-borrow-nullish-receiver.test.ts` pins the
+   gap as the IR-vs-legacy exception.
+
+## Dead code after break/continue in a nested statement list (2026-10-29, #6972 merge-queue root cause C)
+
+**Symptom.** ES5 rows `S12.14_A9_T5` / `S12.14_A10_T5`
+(`catch (e) { c -= 1; continue; throw new Test262Error(…); } finally { … }`
+in a loop) failed to compile on standalone with `br.label must be the last
+instruction in its buffer`, once #6972 put their `<module-init>` on IR.
+
+**Root cause: a latent producer bug, not module-init specific.** The verifier
+requires `br.label` to end its buffer, and `lowerStmt` honoured that only for
+a direct `break`/`continue` in a block or switch clause, by statement kind.
+Two gaps on main, both reachable from ordinary IR-claimed function bodies
+(compile error on gc and standalone alike, measured on `8de8a22511`):
+
+- try / catch / finally bodies had no guard at all;
+- a break/continue inside a plain block is lowered inline into the enclosing
+  buffer, so the enclosing list kept emitting after it
+  (`{ f += 1; continue; } i += 100;`, a `case 1: { …; break; } …` clause).
+
+**Fix.** `lowerBodyStatements` (from-ast.ts) is the one nested-list lowerer
+for blocks, `with` bodies, switch clauses and try/catch/finally bodies. It
+stops when `builder.activeBufferBranched()` reports that the buffer already
+ends in `br.label`. Reading the emitted instruction instead of the statement
+kind covers the inline-block case, and it folds the two inline guards into the
+one helper. Only programs that previously failed verification change output.
+`tests/issue-7106-break-continue-dead-code.test.ts` covers both test262 shapes
+(IR `<module-init>`, counters matched against node) and seven function-body
+shapes on standalone and host.
+
+## #6972 merge group: ES5 rows lost to a claimed `<module-init>` (2026-10-29)
+
+Each row passes on main `8de8a22511` and failed to compile at the #6972 head
+`0e95c58ef3`, once the harness initializer became claimable on standalone.
+
+- **String position arguments** (`String/prototype/{charAt,slice,substring}`
+  `S15.5.4.{4,13,15}_A1_T7.js`). The string-method arm lowers a position
+  (`charAt(pos)`, `slice(start, end)`) under the f64 hint and truncates it. It
+  has no ToNumber and no "an undefined end is the length" rule, so
+  `charAt(undefined)` handed `i32.trunc_sat_f64_s` the dynamic carrier (a
+  verifier failure) and `slice("e")` a string (invalid Wasm the verifier does
+  not see). The selector now requires `expressionIsProvenNumber` for every
+  argument of a `positional` method in `IR_STRING_METHOD_SURFACE`, the
+  proof Math.* and `String.fromCharCode` arguments already need. The unit stays
+  legacy, which owns ToIntegerOrInfinity. The same refusal fixes the
+  function-body form, which failed to compile on gc and standalone on main
+  too, and a silent miscompile on both lanes: `void 0` lowered to NaN and
+  truncated to 0, so `slice(1, void 0)` answered `""` and
+  `substring(1, void 0)` `"l"`. On the gc lane 6 of the 470 harness-assembled
+  files measured (`String.prototype` position methods, `statements/for`,
+  `expressions/assignment`) change bytes: five were claimed and then demoted
+  post-claim, one (`charAt(void 0)`) moves from IR to legacy.
+  `tests/issue-7106-module-init-string-position-args.test.ts`.
+- **A value-position write to a dynamic module binding**
+  (`language/statements/for/head-init-expr-check-empty-inc-empty-syntax.js`,
+  `for (count = 0; ; )`). `isPhase1Expr` admitted `x = v` as a value whenever
+  `x` is a dynamic module binding (added with #4259), but no builder arm
+  lowers a value-position assignment: `lowerBinary`'s capability table defers
+  `=`, so the claim ended in "internal capability violation". Statement, tail,
+  chained and for-update writes are admitted and lowered by their own arms, so
+  the admission had no consumer that could lower it. It is removed: the
+  for-head initializer, a call argument and every other value position now
+  refuse at select. `tests/issue-7106-module-init-value-assignment.test.ts`.
+
+### Review of the #6972 merge-group fixes (2026-10-29)
+
+Fresh-context adversarial review of `e6f6408c64`, `700ba4bcc4`, `323e679e61`
+and `e021b56210`: REQUEST CHANGES, no blockers. It probed each fix for
+remaining claim-then-fail shapes and for over-refusal (14 ordinary TS
+string-position shapes, `F.helper()` / `F.prototype`, runtime-added
+`Function.prototype` members, statement and for-update module writes all stay
+IR) and found the fixes correct and narrow.
+
+**Code-quality acceptance criterion:** each fix is either a correct lowering
+in the one shared lowerer (`lowerBodyStatements`) or a select-time refusal
+through one predicate shared by every arm that needs it
+(`namesFunctionObjectExpando`, `unprovenStringMethodPosition`); no new
+post-claim demote, no copied table.
+
+Fixed in the PR:
+1. `IR_STRING_METHOD_SURFACE` admitted calls no backend's `stringMethodPlan`
+   lowers (`startsWith` / `endsWith`, two-argument `indexOf` / `includes`), so
+   `"abc".endsWith("c")` claimed and demoted after the claim. The table is now
+   the planned surface, and its third column is a `positional` flag.
+2. `functionObjectMemberCallIsBuildable` audited an element-access key that
+   `namesFunctionObjectExpando` now guarantees is a string literal (dead
+   check, removed); its comments still documented `F[k] = G`.
+
+Left, as follow-ups of this issue:
+3. **Search-argument proof.** `"a1b".includes(1)` / `"undefined".indexOf(undefined)`
+   still claim and reach #7014's post-claim demote in `from-ast.ts`
+   (`needs ToString`). Refuse a search argument without a checker-proven string
+   at select; `expressionIsProvenHostEvalString` is the predicate to generalise.
+4. **Two numeric proofs for one position.** `from-ast`'s `charAt` /
+   `charCodeAt` `proveAdditiveOperand` demote duplicates the selector's
+   `expressionIsProvenNumber` with a different predicate; unify them, then make
+   the lowering check a #4502 producer-promise invariant.
+5. **`literalFieldName` placement.** `select-expression-structure.ts` imports it
+   from the fnctor field-write analysis; it has a duplicate in
+   `fnctor-string-producers.ts` (`literalKeyText` / `propertyWriteName`) and a
+   near-duplicate in `shared/ambient-intrinsics.ts` (`staticMemberName`). Move it
+   to a structural module and fold the duplicates.
+6. **`ir->runtime` edge.** `FUNCTION_REALM_MEMBER_NAMES` could be derived beside
+   `ir/program/native-realm-requirements.ts`, which already imports the catalog,
+   instead of adding the 10th `ir->runtime` edge.
+7. **Active-buffer encodings in `builder.ts`.** `activeBufferBranched`,
+   `pushInstr` and the block-close path each name the active buffer; one private
+   `activeInstrs()` would serve all three.
+8. **`lowerBodyStatements` adoption.** Its doc comment lists callers; the
+   module-init top-level loop still has its own loop and a "no guard needed"
+   comment and could call it.
+9. **Test helpers.** `compileHarnessBody` / `moduleInit` / `runModuleInit` are
+   copied between the string-position and value-assignment tests; move them to
+   `tests/helpers/`.
+10. **Legacy, out of scope:** a typed `var` declared after `continue` in a loop is
+    not `undefined` after the loop on the selector-rejected path; sloppy `F.caller`
+    reads `undefined` instead of `null`; `F["helper"] = fn; F["helper"]()`
+    throws.

@@ -98,6 +98,11 @@ import {
   IR_DYN_STRING_REPLACE_FN,
 } from "../codegen/dyn-ops.js";
 import { irDynamicMethodCallHelperName, irDynamicMethodCallNeedsWrapper } from "./dynamic-method-call-names.js";
+import {
+  type ArrayPrototypeBorrowCall,
+  irArrayPrototypeBorrowHelperName,
+  matchArrayPrototypeBorrowCall,
+} from "./array-prototype-borrow-call.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "../codegen/ir-native-map.js"; // (#4461) native $Map adapter ABI
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
@@ -897,6 +902,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * wrapper (host-free, non-fast lanes).
    */
   dynamicMethodCallWrapper?(method: string, arity: number): boolean;
+  /**
+   * (#7106 compareArray.format) True when this lane lowers
+   * `Array.prototype.<method>.call(recv, …)` through the
+   * `__ir_arr_borrow_<m>_<n>` wrapper built from legacy's borrow compiler.
+   */
+  arrayPrototypeBorrowWrapper?(method: string): boolean;
   /** (#7106 module-init lever A) The constant a `Number.<CONST>` / `Math.<CONST>` read folds to, else undefined. */
   ambientNamespaceConstant?(expr: ts.PropertyAccessExpression): number | undefined;
   /**
@@ -9204,6 +9215,42 @@ function lowerMethodCallWithSourcePlan(
   return lowerMethodCall(expr, cx, statementPosition);
 }
 
+/**
+ * Lower `operands` for a runtime call whose every parameter is the dynamic
+ * carrier: a dynamic value passes through, a concrete one is boxed.
+ */
+function lowerDynamicOperands(operands: readonly ts.Expression[], cx: LowerCtx, what: string): IrValueId[] {
+  return operands.map((operand) => {
+    const value = lowerExpr(operand, cx, irDynamic());
+    const valueType = cx.builder.typeOf(value);
+    const dynamicValue = valueType.kind === "dynamic" ? value : boxConcreteToDynamic(value, valueType, operand, cx);
+    if (dynamicValue === null) {
+      throw new IrUnsupportedError(
+        "operand-coercion-unsupported",
+        "build",
+        `ir/from-ast: ${what} cannot be boxed (${cx.funcName})`,
+      );
+    }
+    return dynamicValue;
+  });
+}
+
+/**
+ * (#7106 compareArray.format) `Array.prototype.<m>.call(recv, …)` on the
+ * ambient `Array`: one reflective call to the per-(method, arity) borrow
+ * wrapper, receiver first, every operand the dynamic carrier.
+ */
+function lowerArrayPrototypeBorrowCall(borrow: ArrayPrototypeBorrowCall, cx: LowerCtx): IrValueId {
+  const target = irArrayPrototypeBorrowHelperName(borrow.method, borrow.args.length);
+  const operands = lowerDynamicOperands([borrow.receiver, ...borrow.args], cx, `${target} operand`);
+  const result = cx.builder.emitCall(irRuntimeFuncRef(target), operands, irDynamic());
+  if (result === null) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+    throw new Error(`ir/from-ast: ${target} produced no result in ${cx.funcName}`);
+  }
+  return result;
+}
+
 function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (!ts.isPropertyAccessExpression(expr.expression)) {
     demoteToLegacy("method-call-unsupported", `ir/from-ast: malformed method call in ${cx.funcName}`);
@@ -9530,6 +9577,18 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   );
   if (consoleResult !== undefined) return consoleResult;
 
+  // (#7106 compareArray.format) `Array.prototype.<m>.call(recv, …)` on the
+  // ambient `Array`, intercepted before receiver lowering: `Array.prototype.<m>`
+  // has no IR value (#7123); the wrapper runs legacy's borrow over the carrier.
+  const arrayBorrow = matchArrayPrototypeBorrowCall(expr);
+  if (
+    arrayBorrow !== undefined &&
+    cx.scope.get("Array") === undefined &&
+    cx.resolver?.isAmbientBinding?.(arrayBorrow.root) !== false &&
+    cx.resolver?.arrayPrototypeBorrowWrapper?.(arrayBorrow.method) === true
+  ) {
+    return lowerArrayPrototypeBorrowCall(arrayBorrow, cx);
+  }
   // (#7106 S1c) `Object.prototype.toString.call(v)` on the ambient `Object`:
   // the operand must already be the dynamic carrier (the selector admits no
   // statically primitive operand); the classifier runs in the lane's runtime.
@@ -9778,19 +9837,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const dynamicArgs: IrValueId[] = wrapped
       ? [recv]
       : [recv, cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JS_TAG_IDS.String))];
-    for (const argument of expr.arguments) {
-      const value = lowerExpr(argument, cx, irDynamic());
-      const valueType = cx.builder.typeOf(value);
-      const dynamicValue = valueType.kind === "dynamic" ? value : boxConcreteToDynamic(value, valueType, argument, cx);
-      if (dynamicValue === null) {
-        throw new IrUnsupportedError(
-          "operand-coercion-unsupported",
-          "build",
-          `ir/from-ast: dynamic method argument cannot be boxed (${cx.funcName})`,
-        );
-      }
-      dynamicArgs.push(dynamicValue);
-    }
+    dynamicArgs.push(...lowerDynamicOperands(expr.arguments, cx, "dynamic method argument"));
     const target = wrapped
       ? irDynamicMethodCallHelperName(methodName, arity)
       : arity === 0
@@ -12864,13 +12911,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
   }
   if (ts.isBlock(stmt)) {
     const childCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
-    for (const s of stmt.statements) {
-      lowerStmt(s, childCx);
-      // #2952 slice 2 — a break/continue terminates its buffer (the
-      // verifier requires br.label to be last); statements after it are
-      // dead code — skip them rather than emit unreachable instrs.
-      if (ts.isBreakStatement(s) || ts.isContinueStatement(s)) break;
-    }
+    lowerBodyStatements(stmt.statements, childCx);
     joinScopeStringEncodingFacts(cx.scope, [childCx.scope]);
     return;
   }
@@ -13001,6 +13042,19 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
 }
 
 /**
+ * #2952 slice 2 — lower a nested statement list (block, `with` body, switch
+ * clause, try/catch/finally body) into the active buffer. A break/continue
+ * ends the buffer in `br.label`, which the verifier requires to be last, and
+ * the statements after it are dead, so lowering stops there (#7106).
+ */
+function lowerBodyStatements(statements: readonly ts.Statement[], cx: LowerCtx): void {
+  for (const s of statements) {
+    lowerStmt(s, cx);
+    if (cx.builder.activeBufferBranched()) return;
+  }
+}
+
+/**
  * #4206 first IR slice: a closed inline object literal plus an ordinary
  * synchronous function expression. Each literal field becomes a `withField`
  * scope binding backed by the one receiver SSA value. A closure captures that
@@ -13034,7 +13088,7 @@ function lowerWithStatement(stmt: ts.WithStatement, cx: LowerCtx): void {
       type: field.type,
     });
   }
-  for (const bodyStatement of stmt.statement.statements) lowerStmt(bodyStatement, bodyCx);
+  lowerBodyStatements(stmt.statement.statements, bodyCx);
 }
 
 /**
@@ -13244,14 +13298,7 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
     } else {
       tests.push(null);
     }
-    bodies.push(
-      cx.builder.collectBodyInstrs(() => {
-        for (const s of clause.statements) {
-          lowerStmt(s, switchCx);
-          if (ts.isBreakStatement(s) || ts.isContinueStatement(s)) break; // dead code after an abrupt exit
-        }
-      }),
-    );
+    bodies.push(cx.builder.collectBodyInstrs(() => lowerBodyStatements(clause.statements, switchCx)));
   }
   cx.builder.emitSwitch({ disc: discRaw, discSlot, tests, bodies, breakLabel });
   joinScopeStringEncodingFacts(cx.scope, [switchCx.scope]);
@@ -17525,11 +17572,7 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
   // ── Try body ────────────────────────────────────────────────────────
   const tryScope = new Map(cx.scope);
   const tryCx: LowerCtx = { ...cx, scope: tryScope, noEarlyReturn: regionBarsEarlyReturn };
-  const tryBody = cx.builder.collectBodyInstrs(() => {
-    for (const s of stmt.tryBlock.statements) {
-      lowerStmt(s, tryCx);
-    }
-  });
+  const tryBody = cx.builder.collectBodyInstrs(() => lowerBodyStatements(stmt.tryBlock.statements, tryCx));
 
   // ── Catch handler ───────────────────────────────────────────────────
   let catchClause: { payloadSlot: number; body: readonly IrInstr[] } | undefined;
@@ -17565,11 +17608,9 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
       demoteToLegacy("body-shape-rejected", `ir/from-ast: destructuring catch param not in slice 9 (${cx.funcName})`);
     }
     const catchCx: LowerCtx = { ...cx, scope: catchScope, noEarlyReturn: regionBarsEarlyReturn };
-    const catchBody = cx.builder.collectBodyInstrs(() => {
-      for (const s of stmt.catchClause!.block.statements) {
-        lowerStmt(s, catchCx);
-      }
-    });
+    const catchBody = cx.builder.collectBodyInstrs(() =>
+      lowerBodyStatements(stmt.catchClause!.block.statements, catchCx),
+    );
     // Include writes on catch paths that throw before normal completion;
     // those paths still enter `finally` and must not retain narrower facts.
     catchScopeOut = conservativeStringEncodingScope(stmt.catchClause.block, {
@@ -17589,11 +17630,7 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
   if (stmt.finallyBlock) {
     const finallyScope = new Map(joinedTryScope);
     const finallyCx: LowerCtx = { ...cx, scope: finallyScope, noEarlyReturn: true };
-    finallyBody = cx.builder.collectBodyInstrs(() => {
-      for (const s of stmt.finallyBlock!.statements) {
-        lowerStmt(s, finallyCx);
-      }
-    });
+    finallyBody = cx.builder.collectBodyInstrs(() => lowerBodyStatements(stmt.finallyBlock!.statements, finallyCx));
     continuationScope = finallyScope;
   }
 

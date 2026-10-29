@@ -36,17 +36,20 @@
  * callable test is emitted directly (`__is_callable`): legacy folds a template
  * `typeof` on a detached node statically (measured: `i32.const 0`).
  */
-import { ts } from "../../ts-api.js";
+import type { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import type { CodegenContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
-import { compileExpression, flushLateImportShifts } from "../shared.js";
-import { coerceType } from "../type-coercion.js";
-import { emitUndefined, ensureLateImport } from "../expressions/late-imports.js";
+import { flushLateImportShifts } from "../shared.js";
+import { ensureLateImport } from "../expressions/late-imports.js";
 import { emitThrowTypeError } from "../js-errors.js";
 import { captureReceiverSequence } from "../ir-dynamic-construct.js";
 import { helperFunctionContext, publishHelperFunction } from "../helpers/ir-helper-function.js";
-import { irTemplateWrapperLane } from "../helpers/template-wrapper.js";
+import {
+  compileTemplateExpressionAs as compileAs,
+  irTemplateWrapperLane,
+  parseDetachedTemplate,
+} from "../helpers/template-wrapper.js";
 import { ensureObjectRuntime, WRAPPER_PRIMITIVE_KEY } from "../object-runtime.js";
 import { nativeStringLiteralInstrs } from "../native-strings.js";
 // The bridge reads the lane through this module, its one codegen edge for the wrapper.
@@ -124,24 +127,8 @@ function template(method: string, arity: number): Template {
     `  ${RECEIVER}.${method}(${args.join(", ")});\n` +
     `  ${METHOD_VALUE} === undefined;\n` +
     `}`;
-  const file = ts.createSourceFile("__ir_dyn_mcall.js", text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS);
-  const fn = file.statements[0];
-  const statements = fn && ts.isFunctionDeclaration(fn) ? fn.body?.statements : undefined;
-  const expressions = (statements ?? []).flatMap((statement) =>
-    ts.isExpressionStatement(statement) ? [statement.expression] : [],
-  );
-  const [read, own, branded, missing] = expressions;
-  if (!read || !own || !branded || !missing || expressions.length !== 4) {
-    throw new Error(`ir/dynamic-method-call: template did not parse for ${method}/${arity}`);
-  }
-  return { read, own, branded, missing };
-}
-
-/** Compile one template expression as a value of `type` onto `helper.body`. */
-function compileAs(ctx: CodegenContext, helper: FunctionContext, expression: ts.Expression, type: ValType): void {
-  const result = compileExpression(ctx, helper, expression, type);
-  if (result === null) emitUndefined(ctx, helper);
-  else if (result.kind !== type.kind) coerceType(ctx, helper, result, type);
+  const [read, own, branded, missing] = parseDetachedTemplate("__ir_dyn_mcall.js", text, 4);
+  return { read: read!, own: own!, branded: branded!, missing: missing! };
 }
 
 /**
