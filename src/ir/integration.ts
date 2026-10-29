@@ -100,7 +100,7 @@ import {
   buildModuleInitPrologueCall, // (#7106) GDI prologue replay — see module-init-prologue-patch.ts
   moduleInitPrologueMayEmit,
   retireModuleInitPrologueHelper,
-  isNativeI32FieldRead,
+  irNativeI32SlotRead,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
@@ -2588,7 +2588,7 @@ export function compileIrPathFunctions(
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
-      isNativeI32SlotRead: (expr) => isNativeI32FieldRead(ctx.checker, expr),
+      isNativeI32SlotRead: (expr) => irNativeI32SlotRead(ctx, ctx.checker, expr),
       supportsLiteralStringReplace: true,
       ...(loweringPlans?.fnctorNativeStringBoundaries
         ? {
@@ -7306,6 +7306,8 @@ function makeFromAstResolver(
     nativeConsoleOutputAvailable(): boolean {
       return nativeConsoleOutputAvailable(ctx);
     },
+    // `hostFreeEnvironment(ctx)`, read in place: a value import of codegen/context/types grows the import SCC.
+    nativeNumericDomains: () => ctx.targetProfile.environment !== "javascript",
     // (#2955 slice 5) String for-of strategy — the LAST from-ast mode read,
     // relocated. Native strings iterate via the `__str_charAt` counter loop;
     // host strings feed the `__iterator` host protocol (already

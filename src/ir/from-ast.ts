@@ -35,6 +35,12 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import {
+  coerceIrNumeric,
+  numericFieldSourceValue,
+  isNumericIrSlot,
+  numericFieldUpdate,
+} from "./numeric-slot-coercion.js";
 import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
@@ -556,6 +562,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * target without an output provider defers before claiming a call.
    */
   nativeConsoleOutputAvailable?(): boolean;
+  /** (#7137) No-host lanes recover native i32/u32 class-field domains; gc keeps its bytes. */
+  nativeNumericDomains?(): boolean;
   /**
    * (#2955 slice 5) Strategy query: how does this mode iterate a
    * `string`-typed for-of iterable? `"char-loop"` = the native fast path
@@ -4600,9 +4608,9 @@ function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId,
     }
     const v =
       sourceType.kind === "class"
-        ? cx.builder.emitClassGet(source, propName, field.type)
+        ? numericFieldSourceValue(cx.builder, cx.builder.emitClassGet(source, propName, field.type))
         : cx.builder.emitObjectGet(source, propName, field.type);
-    cx.scope.set(localName, { kind: "local", value: v, type: field.type });
+    cx.scope.set(localName, { kind: "local", value: v, type: cx.builder.typeOf(v) });
   }
 }
 
@@ -4700,48 +4708,10 @@ function isPrimitiveTypeNode(node: ts.TypeNode): boolean {
   );
 }
 
-/**
- * (#3673) Bridge a plain numeric SSA value to a plain numeric target type.
- *
- * A native type annotation (`pos: i32`, `#323`) makes a class field or a local
- * a Wasm `i32` while the surrounding JS-typed expressions still produce `f64`.
- * `this.pos = 0` therefore hands an `f64` const to an `i32` field, which the
- * assignment sites used to reject outright — so an `i32`-annotated class threw
- * out of `from-ast` and (under the #2138 IR-first gate) failed the compile.
- *
- * This inserts exactly the conversion the LEGACY path inserts at the same seam
- * (`coerceType` in `codegen/type-coercion.ts`): saturating truncation when
- * narrowing, signed/unsigned widening when widening. It deliberately handles
- * ONLY unbranded i32/f32/f64 scalars — a `boolean`/`symbol`-branded i32 keeps
- * its brand-specific boxing rules and must not be silently reinterpreted, and
- * every non-`val` type (string/object/closure/…) still falls through to the
- * caller's mismatch error.
- *
- * Returns `null` when no sound conversion applies, so callers keep their
- * existing "reject and fall back" behaviour.
- */
-function coerceIrNumeric(value: IrValueId, target: IrType, cx: LowerCtx): IrValueId | null {
-  const from = cx.builder.typeOf(value);
-  if (from.kind !== "val" || target.kind !== "val") return null;
-  const f = from.val;
-  const t = target.val;
-  // Brands are load-bearing at the box seam — never coerce across them.
-  if (f.kind === "i32" && (f.boolean || f.symbol)) return null;
-  if (t.kind === "i32" && (t.boolean || t.symbol)) return null;
-  if (f.kind === t.kind) return null; // caller's equality check already covers this
-  if (f.kind === "f64" && t.kind === "i32") {
-    return cx.builder.emitUnary("i32.trunc_sat_f64_s", value, irVal({ kind: "i32" }));
-  }
-  if (f.kind === "i32" && t.kind === "f64") {
-    // `signed === false` marks the uint32 domain (#1126). Widening it needs
-    // `f64.convert_i32_u`, which the IR unop set does not carry — bail rather
-    // than emit the signed conversion, which would read `-1 >>> 0` back as -1
-    // instead of 2^32-1 (`tests/issue-1817`).
-    if (from.signed === false) return null;
-    return cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
-  }
-  return null;
-}
+const nativeNumericDomains = (cx: LowerCtx): boolean => cx.resolver?.nativeNumericDomains?.() === true;
+/** Compound field updates take native i32/u32 slots only where the lane recovers their domains. */
+const laneNumericSlot = (type: IrType, cx: LowerCtx): boolean =>
+  nativeNumericDomains(cx) ? isNumericIrSlot(type) : asVal(type)?.kind === "f64";
 
 /** Short debug string for IrType, used in error messages. */
 function describeIrType(t: IrType): string {
@@ -6472,7 +6442,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
         `ir/from-ast: class ${recvType.shape.className} has no field "${propName}" in ${cx.funcName}`,
       );
     }
-    return cx.builder.emitClassGet(recv, propName, field.type);
+    return numericFieldSourceValue(cx.builder, cx.builder.emitClassGet(recv, propName, field.type));
   }
 
   if (recvType.kind === "extern") {
@@ -10708,7 +10678,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
     const rawValue = lowerExpr(expr.right, cx, fieldType);
     const newValue = irTypeEquals(cx.builder.typeOf(rawValue), fieldType)
       ? rawValue
-      : (coerceIrNumeric(rawValue, fieldType, cx) ?? rawValue);
+      : (coerceIrNumeric(cx.builder, rawValue, fieldType, nativeNumericDomains(cx)) ?? rawValue);
     const newValueType = cx.builder.typeOf(newValue);
     if (!irTypeEquals(newValueType, fieldType)) {
       demoteToLegacy(
@@ -10791,7 +10761,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
  *  - `++`/`--` in statement position is the same lowering with a synthetic
  *    `1` RHS — the discarded result makes prefix and postfix identical.
  *
- * Restricted to PLAIN f64 fields on object / class shapes. Accessor-backed
+ * Restricted to plain numeric fields on object / class shapes. Accessor-backed
  * properties and extern receivers turn the read and the write into CALLS whose
  * re-entrancy this desugaring does not model, so they demote TYPED (the
  * function falls back to the legacy body rather than being approximated).
@@ -10834,11 +10804,11 @@ function lowerPropertyCompound(
     );
   }
   const fieldType = field.type;
-  if (asVal(fieldType)?.kind !== "f64") {
+  if (!laneNumericSlot(fieldType, cx)) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
-      `ir/from-ast: compound property write to non-f64 field ".${fieldName}" (${describeIrType(fieldType)}) in ${cx.funcName}`,
+      `ir/from-ast: compound property write to non-numeric field ".${fieldName}" (${describeIrType(fieldType)}) in ${cx.funcName}`,
     );
   }
   // (2) READ — strictly before the RHS.
@@ -10847,23 +10817,23 @@ function lowerPropertyCompound(
       ? cx.builder.emitClassGet(recv, fieldName, fieldType)
       : cx.builder.emitObjectGet(recv, fieldName, fieldType);
   // (3) RHS — a synthetic `1` for `++`/`--`.
-  const rhsValue =
-    rhs === null ? cx.builder.emitConst({ kind: "f64", value: 1 }, IR_F64) : lowerExpr(rhs, cx, fieldType);
-  if (asVal(cx.builder.typeOf(rhsValue))?.kind !== "f64") {
+  const rhsValue = rhs === null ? cx.builder.emitConst({ kind: "f64", value: 1 }, IR_F64) : lowerExpr(rhs, cx, IR_F64);
+  if (!laneNumericSlot(cx.builder.typeOf(rhsValue), cx)) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
-      `ir/from-ast: compound property write RHS must be f64 (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
+      `ir/from-ast: compound property write RHS must be numeric (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
     );
   }
-  // (4) binop — `++`/`--` has no RHS node — then (5) the write tail.
-  const result = emitNumberBinary(op, oldValue, rhsValue, lhs, rhs, cx);
-  if (!irTypeEquals(cx.builder.typeOf(result), fieldType)) {
+  // (4) binop in source Number space — `++`/`--` has no RHS node — then (5) the write tail.
+  const result = numericFieldUpdate(cx.builder, oldValue, rhsValue, fieldType, (left, right) =>
+    emitNumberBinary(op, left, right, lhs, rhs, cx),
+  );
+  if (result === null) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
-      `ir/from-ast: compound property result ${describeIrType(cx.builder.typeOf(result))} does not match field ` +
-        `${describeIrType(fieldType)} in ${cx.funcName}`,
+      `ir/from-ast: compound property result cannot convert to ${describeIrType(fieldType)} in ${cx.funcName}`,
     );
   }
   if (recvType.kind === "class") cx.builder.emitClassSet(recv, fieldName, result);
@@ -11125,7 +11095,7 @@ function lowerCheckedClassFieldSet(
   // JavaScript expressions remain number-valued at the source boundary.
   const newValue = irTypeEquals(cx.builder.typeOf(rawValue), field.type)
     ? rawValue
-    : (coerceIrNumeric(rawValue, field.type, cx) ?? rawValue);
+    : (coerceIrNumeric(cx.builder, rawValue, field.type, nativeNumericDomains(cx)) ?? rawValue);
   const newValueType = cx.builder.typeOf(newValue);
   if (!irTypeEquals(newValueType, field.type)) {
     demoteToLegacy(
@@ -11385,7 +11355,7 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
         return cx.builder.emitIntrinsic("js.number.unbox", [value]);
       }
     }
-    return value;
+    return (nativeNumericDomains(cx) ? coerceIrNumeric(cx.builder, value, declared, true) : null) ?? value;
   }
   // Only the externref (TS `any`) declared-result case can mismatch here;
   // native scalar / matching-ref returns already line up via the hint.
