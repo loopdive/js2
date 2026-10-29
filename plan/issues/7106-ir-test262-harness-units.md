@@ -49,6 +49,7 @@ import-cycles-allow:
   - ir->codegen: 84 # 2026-10-29 (merge-group fix, restated on main's 83 after #6977/#6979 + this borrow wrapper); 2026-10-29 (revive, restated on main's 81 + #7119's wrapper module + this borrow wrapper); 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (module-init lever A): the bridge reads legacy's Math/Number constant table (`codegen/builtin-value-read.ts`); 2026-10-22 (lever B): …and pre-registers the Number(v) provider (`codegen/helpers/ir-number-from-value.ts`); 2026-10-22 (compareArray.format): …and the Array.prototype borrow wrapper
   - codegen->ir: 301 # 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
   - ir->frontend: 8 # 2026-10-22 (#7106 lever B): the bridge builds the source-bound Number-conversion plan (`frontend/builtins/prepare-number-conversion.ts`) for the selector, as program-source.ts does for its resolver
+  - ir->runtime: 10 # 2026-10-29 (#7106 function-object realm members): `ir/select-expression-structure.ts` reads %Function.prototype%'s and %Object.prototype%'s keys from the native realm catalog (`runtime/contracts/native-realm-catalog.ts`, pure data), as `ir/program/native-realm-requirements.ts` already does; a hand copy of those 19 names would duplicate the catalog
   - largestSccSize: 728 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it; 2026-10-22 (dyn.instanceof): codegen/ir-dynamic-instanceof.ts joins it the same way; 2026-10-22 (lever B): codegen/helpers/ir-number-from-value.ts joins it; 2026-10-22 (compareArray.format): codegen/array/ir-array-prototype-borrow.ts joins it
 # 2026-10-24 (dyn.instanceof Error intrinsic, #6858 quality fix): ambient-intrinsics.ts moved from src/ir/values/ to src/shared/ — it imports only `typescript`, and codegen/ir-dynamic-instanceof.ts now reads it too; keeping it under src/ir/ would have grown the codegen->ir two-way edge count (300 → 301).
 # 2026-10-22 (propertyHelper arm 3): makeFromAstResolver gains the
@@ -1183,6 +1184,77 @@ Found while planning the propertyHelper `isConfigurable` arm.
 **Still wrong on the direct path (not changed here).** Legacy's
 `delete (o as any).x` on a typed struct parameter (`o: Point`) leaves `o.x`
 readable. That is the same on the base and on legacy-only compiles.
+
+## Function-object realm members — selector refusal (2026-10-29, measured)
+
+Found in the #6972 merge group: three ES5 rows failed there and pass on main
+`8de8a22511`.
+- `language/statements/function/13.2-22-s.js` and `13.2-19-b-3gs.js` failed
+  with "Expected a TypeError to be thrown but no exception was thrown at all".
+- `built-ins/Function/prototype/bind/15.3.4.5-2-16.js` failed with
+  "TypeError: Value is not callable".
+
+**Root cause (one, not two).** A receiver-only use of a top-level function
+`F` (`F.x(…)`, `F.x = v`, `var v = F.x`, Stage 2 and census arms 3/4) lowers
+to the boxed function object plus a dynamic member operation. That
+operation resolves only `F`'s own expandos. It does not model the members
+the realm defines for every function:
+- on %Function.prototype%: `bind`, `call`, `apply`, `toString`,
+  `constructor`, and the %ThrowTypeError% `caller`/`arguments` accessors;
+- the non-writable own `length`/`name`;
+- on %Object.prototype%: `valueOf`, `hasOwnProperty`, and the rest.
+
+Measured on standalone, PR head `0e95c58ef3`:
+- `F.bind()`, `F.valueOf()`, `F.constructor()` and `F.toString()` threw
+  "not callable".
+- `var v = F.valueOf` (and `hasOwnProperty`, `isPrototypeOf`,
+  `propertyIsEnumerable`, `toLocaleString`, `constructor`) read undefined.
+- On a strict `F`, `F.caller = v` stored instead of throwing, and
+  `var v = F.caller` read instead of throwing.
+
+**Latent on main.** The arms predate #6972. #6972 only made the harness
+`<module-init>` claimable, so test bodies reach them.
+- The harness-free `function testFunc() {}\ntestFunc.bind();` is
+  IR-claimed on main and throws "Value is not callable".
+- So is a plain IR function `export function test() { F.bind(); … }`, and
+  `F.caller = 1` on a strict `F` there does not throw.
+
+**Fix.** `isFunctionObjectReceiverUse` (`select-expression-structure.ts`) now
+also requires `namesFunctionObjectExpando(access)`.
+- That is a literal member name (`literalFieldName`, exported from
+  `fnctor-field-writes.ts` rather than copied) that is not in
+  `FUNCTION_REALM_MEMBER_NAMES`.
+- `FUNCTION_REALM_MEMBER_NAMES` is the string keys of %Function.prototype%
+  and %Object.prototype% in `NATIVE_REALM_CATALOG`, the single source of
+  those names. Hence the `ir->runtime: 10` grant above.
+- The selector, the planner and the prepared revalidation all ask this one
+  predicate. Calls, writes, reads and chained writes therefore refuse
+  together, at select, with no claim-then-demote.
+- A dynamic key (`F[k](…)`) is refused too: it may name any realm member.
+- `F.prototype` (an own property, not a realm key) and ordinary expandos
+  (`F.helper = function…; F.helper(2)`, the harness's `assert.*`,
+  `compareArray.format`, `Test262Error.prototype.toString = …`) still claim.
+
+**Rejected alternative.** Adding `bind` to the `call`/`apply`
+invocation-method refusal in `select.ts` fixes only the call of 15.3.4.5-2-16.
+The reads, the other realm methods and the poisoned writes stay wrong.
+
+**Validation.**
+- All three rows pass through `runTest262File(…, "standalone")`.
+- Over the 320 test262 files where a top-level `function X` is the receiver
+  of a realm member or a computed access, standalone goes from 297 to 300 and
+  nothing flips to fail.
+- The arm also runs on gc (`ctx.standalone` is the native regime there), so
+  gc output changes for exactly these units. On the same 320 files the host
+  lane goes from 254 to 255 (15.3.4.5-2-16) and nothing flips to fail.
+- `tests/issue-7106-function-object-realm-members.test.ts` checks every
+  verdict against node. It fails 7 of 8 cases on `0e95c58ef3`.
+
+**Still wrong on legacy (not changed here; legacy-owned units, standalone).**
+- `typeof F.valueOf()` does not answer `"function"`.
+- A sloppy `F.caller` reads undefined, not null (also on main).
+- `F["helper"] = fn` followed by `F["helper"](…)` throws a TypeError (the
+  element store is refused at `body-elemstore-recv` on `0e95c58ef3` too).
 
 ## Harness unit blocker census (2026-10-21)
 

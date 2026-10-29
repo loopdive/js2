@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
 import { forEachChild, ts } from "../ts-api.js";
+import { literalFieldName } from "./fnctor-field-writes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 
 export function unwrapTypeErasedExpression(expr: ts.Expression): ts.Expression | undefined {
@@ -79,16 +81,18 @@ function resolveFunctionObjectReceiver(
  * a member call `F.x(…)`, a member write `F.x = v`, a member read
  * `var v = F.x` (`isFunctionObjectMemberRead`) or, with `chainedWrite`, a
  * chained write `F.p.x = v`? Each lowers to the boxed function object followed
- * by a dynamic member operation. An optional access or call is never one. The
- * selector, the planner and the prepared revalidation all ask this one
- * question; the revalidation does not admit chained writes.
+ * by a dynamic member operation, so the member must be one of the object's own
+ * expandos ({@link namesFunctionObjectExpando}). An optional access or call is
+ * never one. The selector, the planner and the prepared revalidation all ask
+ * this one question; the revalidation does not admit chained writes.
  */
 export function isFunctionObjectReceiverUse(node: ts.Identifier, opts: { readonly chainedWrite: boolean }): boolean {
   const access = node.parent;
   if (
     !(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) ||
     access.expression !== node ||
-    access.questionDotToken !== undefined
+    access.questionDotToken !== undefined ||
+    !namesFunctionObjectExpando(access)
   )
     return false;
   const use = access.parent;
@@ -98,6 +102,33 @@ export function isFunctionObjectReceiverUse(node: ts.Identifier, opts: { readonl
     (opts.chainedWrite && isFunctionObjectChainedWrite(access)) ||
     (ts.isPropertyAccessExpression(access) && isFunctionObjectMemberRead(access))
   );
+}
+
+/**
+ * The string keys the realm defines along an ordinary function's prototype
+ * chain: %Function.prototype%'s (`bind`, `call`, the %ThrowTypeError%
+ * `caller`/`arguments` accessors, and `length`/`name`, which every function
+ * also owns as non-writable built-ins) and %Object.prototype%'s (`valueOf`,
+ * `hasOwnProperty`, …).
+ */
+const FUNCTION_REALM_MEMBER_NAMES: ReadonlySet<string> = new Set(
+  NATIVE_REALM_CATALOG.intrinsics
+    .filter(({ id }) => id === "%Function.prototype%" || id === "%Object.prototype%")
+    .flatMap(({ properties }) => properties.flatMap(({ key }) => (key.kind === "string" ? [key.value] : []))),
+);
+
+/**
+ * (#7106) Does `access` name an own expando of the function object: a literal
+ * name the realm does not define for a function? The boxed function object's
+ * dynamic member operations do not resolve a realm member (measured on
+ * standalone): `F.bind()` and `F.valueOf()` throw "not callable",
+ * `var v = F.valueOf` reads undefined, and a strict function's `F.caller = v`
+ * stores where the %ThrowTypeError% setter must throw. Legacy owns those
+ * members. A dynamic key may name any of them.
+ */
+function namesFunctionObjectExpando(access: ts.PropertyAccessExpression | ts.ElementAccessExpression): boolean {
+  const name = literalFieldName(access);
+  return name !== undefined && !FUNCTION_REALM_MEMBER_NAMES.has(name);
 }
 
 /**
