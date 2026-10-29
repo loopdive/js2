@@ -160,6 +160,37 @@ export function storedObjectStaticAliasMethod(
   return alias?.form === "stored-static" ? alias.method : undefined;
 }
 
+/**
+ * (#7106 propertyHelper) `alias(obj, name)` where `alias` is the immutable
+ * stored `Object.getOwnPropertyDescriptor`: exactly two plain arguments.
+ */
+export function isStoredObjectDescriptorAliasCall(
+  call: ts.CallExpression,
+  shadowed: (name: string) => boolean,
+): boolean {
+  return (
+    call.arguments.length === 2 &&
+    !call.questionDotToken &&
+    !call.arguments.some(ts.isSpreadElement) &&
+    storedObjectStaticAliasMethod(call.expression, shadowed) === "getOwnPropertyDescriptor"
+  );
+}
+
+/**
+ * (#7190) `alias(obj, name).<attribute>`: a named member read off the stored
+ * descriptor alias call — a dynamic carrier (`undefined` when absent), never a
+ * module storage slot.
+ */
+export function isStoredObjectDescriptorMemberRead(expr: ts.Expression, shadowed: (name: string) => boolean): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    !expr.questionDotToken &&
+    ts.isIdentifier(expr.name) &&
+    ts.isCallExpression(expr.expression) &&
+    isStoredObjectDescriptorAliasCall(expr.expression, shadowed)
+  );
+}
+
 function objectAliasOf(callee: ts.Expression, shadowed: (name: string) => boolean): ObjectAlias | undefined {
   if (!ts.isIdentifier(callee) || shadowed(callee.text)) return undefined;
   const sourceFile = callee.getSourceFile();

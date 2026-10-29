@@ -57,7 +57,11 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
-import { storedObjectStaticAliasMethod, uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
+import {
+  isStoredObjectDescriptorAliasCall,
+  isStoredObjectDescriptorMemberRead,
+  uncurriedObjectAliasMethod,
+} from "./uncurried-object-alias.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
 import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
@@ -3057,20 +3061,6 @@ function receiverFirstDynamicMethodPlan(call: ts.CallExpression): { readonly ari
   return (
     currentModuleBindingResolver?.retainedFunctionMethodPlan(call) ??
     currentModuleBindingResolver?.fnctorArrayMethodPlan(call)
-  );
-}
-
-/**
- * (#7106 propertyHelper) `alias(obj, name)` where `alias` is propertyHelper's
- * immutable stored `Object.getOwnPropertyDescriptor` (see
- * `uncurried-object-alias.ts`): exactly two plain arguments.
- */
-function isStoredObjectDescriptorAliasCall(call: ts.CallExpression, shadowed: (name: string) => boolean): boolean {
-  return (
-    call.arguments.length === 2 &&
-    !call.questionDotToken &&
-    !call.arguments.some(ts.isSpreadElement) &&
-    storedObjectStaticAliasMethod(call.expression, shadowed) === "getOwnPropertyDescriptor"
   );
 }
 
@@ -7887,6 +7877,17 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
   return false;
 }
 
+/**
+ * A `!` / `&&` / `||` operand whose module influence cannot be misread as a
+ * condition: every module-derived value in it is boolean, or the operand as a
+ * whole is exactly boolean (a comparison, S1g's certified
+ * `__hasOwnProperty(o, k)` alias call), whatever slot the module var behind
+ * it was given.
+ */
+function moduleInfluenceIsExactBoolean(operand: ts.Expression, scope: ReadonlySet<string>): boolean {
+  return trackedModuleInfluenceIsBoolean(operand) || declaredExpressionHasExactFamily(operand, "boolean", scope);
+}
+
 /** Exact checker-owned module Map method, excluding conditional/nullish receivers. */
 function exactModuleMapMethod(expr: ts.CallExpression): string | undefined {
   const callee = unwrapPhase1Parens(expr.expression);
@@ -11039,14 +11040,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   if (ts.isPrefixUnaryExpression(expr)) {
     if (!isPhase1PrefixOp(expr.operator))
       return shapeNo(`expr-prefix-op-${ts.tokenToString(expr.operator) ?? expr.operator}`, expr);
-    // An operand the exact-family check already proves boolean (a comparison,
-    // a `!`, S1g's certified `__hasOwnProperty(o, k)` alias call) is not a
-    // module-value influence the boolean `!` could misread, whatever slot the
-    // script var behind it was given.
+    // `!` is ToBoolean of any value, so a dynamic carrier operand (`dyn.truthy`)
+    // carries no module representation to misread.
     if (
       expr.operator === ts.SyntaxKind.ExclamationToken &&
-      !trackedModuleInfluenceIsBoolean(expr.operand) &&
-      !declaredExpressionHasExactFamily(expr.operand, "boolean", scope)
+      !moduleInfluenceIsExactBoolean(expr.operand, scope) &&
+      !isStoredObjectDescriptorMemberRead(unwrapPhase1Parens(expr.operand), (name) => scope.has(name))
     ) {
       return shapeNo("expr-module-value-not", expr);
     }
@@ -11137,7 +11136,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     if (binOp === ts.SyntaxKind.AmpersandAmpersandToken || binOp === ts.SyntaxKind.BarBarToken) {
       for (const operand of [expr.left, expr.right]) {
-        if (!trackedModuleInfluenceIsBoolean(operand)) {
+        if (!moduleInfluenceIsExactBoolean(operand, scope)) {
           return shapeNo("expr-module-value-logical", expr);
         }
       }

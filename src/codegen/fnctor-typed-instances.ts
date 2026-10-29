@@ -130,19 +130,56 @@ export function legacyPositionCarriesFnctorInstance(
   if (!fnctorTypedInstancesEnabled()) return false;
   if (!ctx.standalone || name === undefined) return false;
   if (ctx.fnctorReservedTypeIdx.size === 0) return false;
-  const funcIdx = ctx.funcMap.get(name);
-  if (funcIdx === undefined) return false;
-  const legacyFunction = definedFuncAt(ctx, funcIdx);
-  if (legacyFunction === undefined) return false;
-  const signature = ctx.mod.types[legacyFunction.typeIdx];
-  if (signature?.kind !== "func") return false;
-  const slot = position === "return" ? signature.results[0] : signature.params[position];
-  if (slot === undefined) return false;
-  if (slot.kind !== "ref" && slot.kind !== "ref_null") return false;
+  const slot = legacyFunctionSlot(ctx, name, position);
+  if (slot?.kind !== "ref" && slot?.kind !== "ref_null") return false;
   for (const reserved of ctx.fnctorReservedTypeIdx.values()) {
     if (reserved === slot.typeIdx) return true;
   }
   return false;
+}
+
+/**
+ * The registered legacy slot at `position` of the top-level declaration
+ * `name` (`ctx.funcMap` → `ctx.mod.types`, the artifact the parity guard
+ * compares against); `undefined` when it is not registered (IR-first
+ * ordering, bare selector).
+ */
+function legacyFunctionSlot(ctx: CodegenContext, name: string, position: "return" | number): ValType | undefined {
+  const funcIdx = ctx.funcMap.get(name);
+  if (funcIdx === undefined) return undefined;
+  const legacyFunction = definedFuncAt(ctx, funcIdx);
+  if (legacyFunction === undefined) return undefined;
+  const signature = ctx.mod.types[legacyFunction.typeIdx];
+  if (signature?.kind !== "func") return undefined;
+  return position === "return" ? signature.results[0] : signature.params[position];
+}
+
+function legacyParamSlot(ctx: CodegenContext, parameter: ts.ParameterDeclaration): ValType | undefined {
+  const owner = parameter.parent;
+  if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return undefined;
+  const index = owner.parameters.indexOf(parameter);
+  return index < 0 ? undefined : legacyFunctionSlot(ctx, owner.name.text, index);
+}
+
+/** (#7106 item 1) Is the registered legacy slot of this parameter plain externref? */
+export function legacyParamSlotIsExternref(ctx: CodegenContext, parameter: ts.ParameterDeclaration): boolean {
+  return legacyParamSlot(ctx, parameter)?.kind === "externref";
+}
+
+/**
+ * (#7190) Did legacy narrow this parameter to the native string slot? An
+ * implicit-any parameter whose call sites all pass strings
+ * (`verifyNotEnumerable(o, "x")`) gets that slot (`inferImplicitAnyParamType`),
+ * so a dynamic-carrier claim of its function only ends at the parity guard.
+ */
+function legacyParamSlotIsNativeString(ctx: CodegenContext, parameter: ts.ParameterDeclaration): boolean {
+  const slot = legacyParamSlot(ctx, parameter);
+  return (
+    (slot?.kind === "ref" || slot?.kind === "ref_null") &&
+    ctx.nativeStrings &&
+    ctx.anyStrTypeIdx >= 0 &&
+    slot.typeIdx === ctx.anyStrTypeIdx
+  );
 }
 
 /**
@@ -156,26 +193,6 @@ export function legacyPositionCarriesFnctorInstance(
  * parity is enforced by the hard `abi-type-index-mismatch` invariant, not by
  * this soft pre-claim decline).
  */
-/**
- * (#7106 item 1) Is the registered legacy slot for parameter `index` of the
- * top-level declaration `name` plain externref? Reads `ctx.funcMap` →
- * `ctx.mod.types`, the artifact the parity guard compares against. `false`
- * when the slot is not registered (IR-first ordering, bare selector).
- */
-export function legacyParamSlotIsExternref(ctx: CodegenContext, parameter: ts.ParameterDeclaration): boolean {
-  const owner = parameter.parent;
-  if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return false;
-  const index = owner.parameters.indexOf(parameter);
-  if (index < 0) return false;
-  const funcIdx = ctx.funcMap.get(owner.name.text);
-  if (funcIdx === undefined) return false;
-  const legacyFunction = definedFuncAt(ctx, funcIdx);
-  if (legacyFunction === undefined) return false;
-  const signature = ctx.mod.types[legacyFunction.typeIdx];
-  if (signature?.kind !== "func") return false;
-  return signature.params[index]?.kind === "externref";
-}
-
 export function makeIrDynamicCarrierDivergenceProbe(ctx: CodegenContext): (position: ts.Node) => boolean {
   return (position: ts.Node): boolean => {
     if (ts.isParameter(position)) {
@@ -183,7 +200,9 @@ export function makeIrDynamicCarrierDivergenceProbe(ctx: CodegenContext): (posit
       if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return false;
       const index = owner.parameters.indexOf(position);
       if (index < 0) return false;
-      return legacyPositionCarriesFnctorInstance(ctx, owner.name.text, index);
+      return (
+        legacyPositionCarriesFnctorInstance(ctx, owner.name.text, index) || legacyParamSlotIsNativeString(ctx, position)
+      );
     }
     if (ts.isFunctionDeclaration(position) && position.name !== undefined) {
       return legacyPositionCarriesFnctorInstance(ctx, position.name.text, "return");
