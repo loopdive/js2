@@ -1,0 +1,66 @@
+# Physical snapshot review boundary
+
+Original base: `61b1b07d2b5666b6ebb84fbbe93ee8a07655d090` (upstream main). The
+branch has since merged main `3b6489436318e8f863ef474e41797b48911eac59` (see
+"Main refresh" below) and, for the replacement PR, main
+`cb3ff519ad`. Logs in this directory were recorded on the original and first
+refreshed bases. The raw `.log` files are no longer in this tree: `.gitattributes`
+routes `*.log` through LFS, and they were committed as raw blobs. They remain
+reachable from the original review head, e.g.
+`git show 746d2fcaec:plan/log/3527-physical-snapshot-review-20261026/snapshot-receipt-repair.log`.
+
+Review production `src/wasm/physical/data-snapshot.ts` and its only consumer,
+`src/wasm/physical/module-reservations.ts`. The extraction preserves the existing
+filled-function traversal, including eager Set construction, sibling capture
+before child descent, and complete child visitation after a mismatch. All other
+ledger domains retain the exact pinned textual algorithm. No audit is removed.
+
+Run the checked-in regression selection from the repository root:
+
+```sh
+node node_modules/vitest/vitest.mjs run --config plan/log/3527-physical-snapshot-review-20261026/vitest.review.config.mjs
+node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+```
+
+The original baseline and extraction each had 315 passes and one failure out of
+316: a stale declaration-hash pin. History traces it to commit
+`2d0610751954975e0ec634ab83b181a28530454f`, which added `FieldDef.optional?: true`
+and its documentation. Removing those six lines restores the old receipt. The
+corrected pin retains all existing controls and adds independent field-type and
+documentation mutations; the final selection passes **316/316**. Original
+failures remain in the historical logs. See `snapshot-receipt-repair.log` and
+`result.json`. Follow-up read-only review found no actionable findings.
+The six intrinsic mutation controls pass on both production variants. Three default compiler samples
+(arithmetic, strings, closure/object) have identical binaries and WAT in both
+arms; this is bounded compatibility evidence, not full IR runtime qualification.
+
+## Rejected broadening
+
+`rejected-broadening.patch` extends structural matching to descriptor, type,
+global, publication and recgroup records. It is evidence, not an adopted patch.
+To reproduce in a disposable checkout of this branch, apply that patch and run
+`tests/issue-3527-snapshot-intrinsic-observations.test.ts`: all six controls fail.
+Restore the checkout afterwards. The committed controls and raw failure log show
+that live getters replacing map, freeze, stringify, toString, padStart or join
+change the accepted/rejected result. No scope exemption has been granted.
+
+C review question: what explicit ownership/capture boundary can make recursive
+validation cheaper while retaining detection of transient mutation/restoration?
+Caching successful checks or removing intermediate observations is not justified
+by the final closing audit. This branch provides the physical boundary and its
+counterexamples; it does not contain the complete uncommitted recursive-owner
+integration graph or claim to resolve its timeout failures.
+
+## Main refresh for C review
+
+The refreshed tree incorporates main
+`3b6489436318e8f863ef474e41797b48911eac59`. Both appended issue sections are
+preserved; production source merged without conflict. Current regression logs
+record 316/316 snapshot controls and 38/38 realm layout/completion controls.
+The original logs remain historical evidence. PR 6925 is held for C's verdict.
+
+Read-only merge review (`snapshot_extraction_review`) found no actionable
+findings: both issue sections survive exactly once, the extracted runtime
+comparator bodies match main, and the realm audit and its six controls are
+retained verbatim. The reviewer did not rerun tests; external C review remains
+outstanding.
