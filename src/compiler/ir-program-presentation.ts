@@ -126,6 +126,8 @@ interface DeclarationCapture {
   readonly name?: string;
   readonly exported: boolean;
   readonly fulfillment?: "number" | "boolean" | "void";
+  /** `internal`: a non-exported synchronous helper with non-primitive slots; it has no host boundary. */
+  readonly boundary: "host" | "internal";
 }
 const numeric = (type: ValType): boolean => ["i32", "i64", "f32", "f64"].includes(type.kind);
 function booleanCarrier(type: ValType): boolean {
@@ -320,6 +322,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
     }
     const visit = (node: ts.Node): void => {
       if (ts.isFunctionDeclaration(node) && node.body) {
+        const exported = node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true;
         const signature = input.checker.getSignatureFromDeclaration(node);
         const params: PresentationSlot[] = [];
         let unsupportedParam = false;
@@ -340,7 +343,11 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
           : returnType && classify(returnType);
         const synchronous =
           !node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) && !node.asteriskToken;
-        if (!signature || unsupportedParam || !result || (!synchronous && (result !== "promise" || node.asteriskToken)))
+        const internal = !exported && synchronous && (!signature || unsupportedParam || !result);
+        if (
+          !internal &&
+          (!signature || unsupportedParam || !result || (!synchronous && (result !== "promise" || node.asteriskToken)))
+        )
           gap(
             "declaration",
             "non-numeric-boundary",
@@ -353,7 +360,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
               sourceFile: source.fileName,
               start: node.getStart(source),
               end: node.end,
-              params: Object.freeze(params),
+              params: Object.freeze(internal ? [] : params),
               ...(options.wit
                 ? {
                     witParamNames: Object.freeze(
@@ -361,11 +368,12 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
                     ),
                   }
                 : {}),
-              results: Object.freeze(result === "void" ? [] : [result]),
+              results: Object.freeze(internal || result === "void" ? [] : [result!]),
               synchronous,
               name: node.name?.text,
-              exported: node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true,
+              exported,
               ...(fulfillment ? { fulfillment } : {}),
+              boundary: internal ? "internal" : "host",
             }),
           );
       }
@@ -442,7 +450,7 @@ function checkAbiExports(
         plan.intent.kind === "callable" &&
         plan.intent.origin === "source" &&
         plan.intent.unitId &&
-        captures.has(plan.intent.unitId)
+        captures.get(plan.intent.unitId)?.boundary === "host"
       ) {
         const declaration = captures.get(plan.intent.unitId)!;
         if (
@@ -536,7 +544,7 @@ function checkAbiExports(
     if (
       !target ||
       target.contract.kind !== "callable" ||
-      !declaration ||
+      declaration?.boundary !== "host" ||
       !slot ||
       slot.space !== "function" ||
       exports.length !== 1 ||
