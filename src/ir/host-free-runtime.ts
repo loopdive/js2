@@ -12,6 +12,7 @@
  * therefore never learns whether the module has native strings, a host import,
  * or neither.
  */
+import { CONSOLE_METHOD_NAMES as IR_CONSOLE_METHODS } from "../shared/contracts/console-output.js";
 import { ts } from "../ts-api.js";
 
 /**
@@ -40,7 +41,6 @@ export {
  * argument and appends it to the sink. `console.log`-family only — anything
  * else (`table`, `group`, `time`, …) has no lowering in either lane.
  */
-import { CONSOLE_METHOD_NAMES as IR_CONSOLE_METHODS } from "../shared/contracts/console-output.js";
 export { IR_CONSOLE_METHODS };
 
 /**

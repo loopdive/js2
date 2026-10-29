@@ -15154,6 +15154,32 @@ function lowerPreparedAsyncConcat(expr: ts.BinaryExpression, cx: LowerCtx): IrVa
   return result;
 }
 
+/**
+ * Whether a binary operand representation mismatch is a stable capability gap
+ * (demote to legacy) rather than a broken producer promise (invariant throw).
+ */
+function binaryRepresentationGap(
+  expr: ts.BinaryExpression,
+  ltVal: ValType | null,
+  rtVal: ValType | null,
+  cx: LowerCtx,
+): boolean {
+  if (checkerProvesBinarySourceCapabilityGap(expr.left, expr.right, cx)) return true;
+  // (#3727) A PACKED operand (`i8`/`i16`) is a stable capability gap, not a
+  // broken producer promise. Packed kinds are storage-only — WasmGC has no
+  // i8/i16 value type, and the binary emitter rejects one in a value position
+  // ("a packed type leaked"). So the IR simply cannot carry, say, a
+  // `Uint8Array` element into f64 arithmetic
+  // (`for (const v of xs) sum = sum + v`) today, however the operands are
+  // coerced. Classifying it `invariant` made that a HARD compile error and
+  // took the whole function down; the legacy backend lowers this shape fine.
+  if (ltVal?.kind === "i8" || ltVal?.kind === "i16" || rtVal?.kind === "i8" || rtVal?.kind === "i16") return true;
+  // (#7136) A native `i32` slot (`v: i32`, #323) meeting an f64 is the same
+  // kind of gap: legacy computes `c.v + 1` in wrapping i32 arithmetic, while
+  // widening to f64 and storing back would saturate instead.
+  return (ltVal?.kind === "i32" && rtVal?.kind === "f64") || (ltVal?.kind === "f64" && rtVal?.kind === "i32");
+}
+
 function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrValueId {
   const op = expr.operatorToken.kind;
   const preparedConcat = lowerPreparedAsyncConcat(expr, cx);
@@ -15441,19 +15467,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     // producer's promise and must remain an invariant backstop. The Set
     // iterator numeric-value path exercises that distinction.
     const detail = `ir/from-ast: Phase 1 requires matching operand types for '${ts.tokenToString(op)}' in ${cx.funcName}`;
-    if (checkerProvesBinarySourceCapabilityGap(expr.left, expr.right, cx)) {
-      throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
-    }
-    // (#3727) A PACKED operand (`i8`/`i16`) is a stable capability gap, not a
-    // broken producer promise. Packed kinds are storage-only — WasmGC has no
-    // i8/i16 value type, and the binary emitter rejects one in a value position
-    // ("a packed type leaked"). So the IR simply cannot carry, say, a
-    // `Uint8Array` element into f64 arithmetic
-    // (`for (const v of xs) sum = sum + v`) today, however the operands are
-    // coerced. Classifying it `invariant` made that a HARD compile error and
-    // took the whole function down; the legacy backend lowers this shape fine.
-    // Demote to the unsupported channel so the function falls back instead.
-    if (ltVal?.kind === "i8" || ltVal?.kind === "i16" || rtVal?.kind === "i8" || rtVal?.kind === "i16") {
+    if (binaryRepresentationGap(expr, ltVal, rtVal, cx)) {
       throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
     }
     throw new Error(detail);
