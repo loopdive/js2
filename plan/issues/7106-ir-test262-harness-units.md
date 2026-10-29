@@ -1980,4 +1980,11 @@ an issue of its own when one is allocated.
 5. **Three sibling borrow arms** (#6972 finding 6) in `select.ts` (move-only
    scan, `isPhase1Expr` call, method call on a borrow result): fold into one
    `borrowOperandsAdmitted` beside `ambientArrayPrototypeBorrowCall`.
-
+6. **A post-claim `<module-init>` failure is a compile error, not a demote**
+   (#6972 + #6973 integration census, 2026-10-29). When the claimed
+   initializer failed (`unknown exact function import env.RegExp_new`), the
+   retained `<module-init>__closure_0` still referenced a type that was never
+   emitted ("references non-function or missing type 0", `success: false`)
+   instead of falling back to legacy. The RegExp literal is now refused at
+   select, so this path is latent; any other post-claim module-init failure
+   that lifts closures still reaches it.

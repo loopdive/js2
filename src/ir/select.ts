@@ -8552,6 +8552,16 @@ function ambientObjectToStringTagCall(expr: ts.CallExpression): ts.Expression | 
   return arg;
 }
 
+/**
+ * Is the host RegExp (`env.RegExp_new`, the `RegExp` extern class) unavailable
+ * on this lane? Every RegExp construct the IR would lower through it — a
+ * literal, `new RegExp(…)`, a method on a RegExp value — refuses then. An
+ * absent capability seam (bare selector) is not a refusal.
+ */
+function hostRegExpUnavailable(): boolean {
+  return currentSelectionOptions?.supportsBackendCapability?.("host-regexp-constructor") === false;
+}
+
 const NO_LOCALS: ReadonlySet<string> = new Set();
 
 /**
@@ -10912,11 +10922,7 @@ function phase1NewExpression(
     }
     return true;
   }
-  if (
-    ctorName === "RegExp" &&
-    isAmbientConstructor &&
-    currentSelectionOptions?.supportsBackendCapability?.("host-regexp-constructor") === false
-  ) {
+  if (ctorName === "RegExp" && isAmbientConstructor && hostRegExpUnavailable()) {
     return capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr);
   }
   if (!isLocalClass && isKnownExternClass(ctorName) && !isAmbientConstructor) {
@@ -11089,10 +11095,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // `RegExp_new(pattern, flags)` host call). Pattern + flags are
   // string-literal globals, already pre-registered by the legacy
   // `collectStringLiterals` pass (see
-  // `src/codegen/index.ts:3274-3278`). Selector accepts the shape
-  // unconditionally; the lowerer enforces the resolver carries
-  // metadata for the "RegExp" extern class.
-  if (expr.kind === ts.SyntaxKind.RegularExpressionLiteral) return true;
+  // `src/codegen/index.ts:3274-3278`). Only the host-RegExp lane registers
+  // `env.RegExp_new`; elsewhere legacy's native engine owns the literal.
+  if (expr.kind === ts.SyntaxKind.RegularExpressionLiteral) {
+    return hostRegExpUnavailable() ? capabilityNo("regexp-constructor-unsupported", "expr-regexp-literal", expr) : true;
+  }
   // Slice 1 (issue #1168): claim string literals and `null` so that
   // `typeof x === "string"` / `x === null` / `x == null` patterns can
   // compose out of Phase-1 primitives. Actual lowering for non-f64/bool
@@ -11695,7 +11702,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       if (
         (expr.expression.name.text === "test" || expr.expression.name.text === "exec") &&
         currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
-        currentSelectionOptions.supportsBackendCapability?.("host-regexp-constructor") === false
+        hostRegExpUnavailable()
       ) {
         // #3791 — host-free `.test` is claimable only for an exact stable
         // top-level static RegExp whose real legacy externref carrier can be
@@ -11724,7 +11731,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // that refusal; claimed, it hit from-ast's capability-violation assert.
       if (
         currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
-        currentSelectionOptions.supportsBackendCapability?.("host-regexp-constructor") === false
+        hostRegExpUnavailable()
       ) {
         return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
       }
