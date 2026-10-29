@@ -134,6 +134,17 @@ planner; no sibling copy.
 - `IrFunctionMemberClosurePlan` now also plans call-argument closures. Rename
   it once the arrow site lands.
 
+## Review (adversarial, fresh context, 2026-10-29)
+
+No blocking finding. The member-assignment site behaves exactly as before, and
+`site` / `isNewShape` are correct and minimal. Nits fixed:
+
+- the duplicated `source.text` / `site.isCurrent()` re-check in `isCurrent`;
+- the impossible `index < 0` branch;
+- `IrIdentityResolvedFunctionTarget` instead of a derived `ReturnType`;
+- the zero-parameter rule moved into `callArgumentSite`;
+- a long comment line reflowed.
+
 ## Test Results (S1, base origin/main c5f5cf5b)
 
 - **Census.** The 1/60 standalone sample (original harness, compile-only) has

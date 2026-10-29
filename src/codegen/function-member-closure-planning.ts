@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
-import type { IrIdentityImportedFunctionResolver } from "../ir/imported-functions.js";
+import type { IrIdentityImportedFunctionResolver, IrIdentityResolvedFunctionTarget } from "../ir/imported-functions.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrFunctionMemberClosurePlan, IrFunctionMemberClosures } from "../ir/function-member-closure-plan.js";
 import type { IrUnitId } from "../ir/identity.js";
@@ -205,7 +205,7 @@ function sameSourceFunctionTarget(
   identity: IrPlanningIdentityContext,
   resolver: IrIdentityImportedFunctionResolver,
   receiver: ts.Identifier,
-): ReturnType<IrIdentityImportedFunctionResolver["resolveTopLevelFunctionValueTarget"]> {
+): IrIdentityResolvedFunctionTarget | undefined {
   const target = resolver.resolveTopLevelFunctionValueTarget(receiver);
   return target &&
     target.legacyProjection === "unambiguous" &&
@@ -220,7 +220,7 @@ function sameSourceFunctionTarget(
 function sameTargetAgain(
   resolver: IrIdentityImportedFunctionResolver,
   receiver: ts.Identifier,
-  target: NonNullable<ReturnType<typeof sameSourceFunctionTarget>>,
+  target: IrIdentityResolvedFunctionTarget,
 ): boolean {
   const current = resolver.resolveTopLevelFunctionValueTarget(receiver);
   return current?.declaration === target.declaration && current.targetUnitId === target.targetUnitId;
@@ -278,7 +278,8 @@ function memberAssignmentSite(
 }
 
 /**
- * (#7195) `F.m(…, function () {}, …)` as a top-level statement: the closure is
+ * (#7195) `F.m(…, function () {}, …)` as a top-level statement: a
+ * zero-parameter closure (its result must be void, checked with the oracle) is
  * boxed into the dynamic carrier at a call through a same-source function
  * object's member, whose callee dispatches it by the canonical wrapper type.
  * Standalone target only: the WASI module-init route is unmeasured, and the
@@ -294,6 +295,7 @@ function callArgumentSite(
   const call = expression.parent;
   if (
     ctx.targetProfile.target !== "standalone" ||
+    expression.parameters.length !== 0 ||
     !ts.isCallExpression(call) ||
     call.questionDotToken ||
     !ts.isPropertyAccessExpression(call.expression) ||
@@ -308,7 +310,7 @@ function callArgumentSite(
   const receiver = call.expression.expression;
   const target = sameSourceFunctionTarget(ctx, identity, resolver, receiver);
   const ownerUnitId = identity.moduleInitUnitIdBySourceFile.get(expression.getSourceFile());
-  if (index < 0 || !target || !ownerUnitId) return;
+  if (!target || !ownerUnitId) return;
   return {
     kind: "call-argument",
     ownerUnitId,
@@ -376,7 +378,7 @@ function planMemberClosure(
     oracleSignature.declaredArity !== expression.parameters.length ||
     oracleSignature.params.length !== expression.parameters.length ||
     (oracleSignature.returns.kind !== "boolean" && !returnsVoid) ||
-    (site.kind === "call-argument" && (!returnsVoid || expression.parameters.length !== 0))
+    (site.kind === "call-argument" && !returnsVoid)
   )
     return;
   const physical = operations.computeSignature(expression);
@@ -463,8 +465,6 @@ function planMemberClosure(
             ctx.oracle.valueDeclarationOf(name) !== parameter ||
             !ctx.oracle.declarationsOf(name).includes(parameter),
         ) ||
-        source.text !== sourceText ||
-        !site.isCurrent() ||
         current.ownerUnitId !== ownerUnitId ||
         current.sourceUnitId !== sourceUnitId ||
         bodyKeyOf() !== bodyKey ||
