@@ -2124,7 +2124,7 @@ Each row passes on main `8de8a22511` and failed to compile at the #6972 head
   `charAt(undefined)` handed `i32.trunc_sat_f64_s` the dynamic carrier (a
   verifier failure) and `slice("e")` a string (invalid Wasm the verifier does
   not see). The selector now requires `expressionIsProvenNumber` for every
-  position argument (the third column of `IR_STRING_METHOD_SURFACE`), the
+  argument of a `positional` method in `IR_STRING_METHOD_SURFACE`, the
   proof Math.* and `String.fromCharCode` arguments already need. The unit stays
   legacy, which owns ToIntegerOrInfinity. The same refusal fixes the
   function-body form, which failed to compile on gc and standalone on main
@@ -2145,3 +2145,58 @@ Each row passes on main `8de8a22511` and failed to compile at the #6972 head
   the admission had no consumer that could lower it. It is removed: the
   for-head initializer, a call argument and every other value position now
   refuse at select. `tests/issue-7106-module-init-value-assignment.test.ts`.
+
+### Review of the #6972 merge-group fixes (2026-10-29)
+
+Fresh-context adversarial review of `e6f6408c64`, `700ba4bcc4`, `323e679e61`
+and `e021b56210`: REQUEST CHANGES, no blockers. It probed each fix for
+remaining claim-then-fail shapes and for over-refusal (14 ordinary TS
+string-position shapes, `F.helper()` / `F.prototype`, runtime-added
+`Function.prototype` members, statement and for-update module writes all stay
+IR) and found the fixes correct and narrow.
+
+**Code-quality acceptance criterion:** each fix is either a correct lowering
+in the one shared lowerer (`lowerBodyStatements`) or a select-time refusal
+through one predicate shared by every arm that needs it
+(`namesFunctionObjectExpando`, `unprovenStringMethodPosition`); no new
+post-claim demote, no copied table.
+
+Fixed in the PR:
+1. `IR_STRING_METHOD_SURFACE` admitted calls no backend's `stringMethodPlan`
+   lowers (`startsWith` / `endsWith`, two-argument `indexOf` / `includes`), so
+   `"abc".endsWith("c")` claimed and demoted after the claim. The table is now
+   the planned surface, and its third column is a `positional` flag.
+2. `functionObjectMemberCallIsBuildable` audited an element-access key that
+   `namesFunctionObjectExpando` now guarantees is a string literal (dead
+   check, removed); its comments still documented `F[k] = G`.
+
+Left, as follow-ups of this issue:
+3. **Search-argument proof.** `"a1b".includes(1)` / `"undefined".indexOf(undefined)`
+   still claim and reach #7014's post-claim demote in `from-ast.ts`
+   (`needs ToString`). Refuse a search argument without a checker-proven string
+   at select; `expressionIsProvenHostEvalString` is the predicate to generalise.
+4. **Two numeric proofs for one position.** `from-ast`'s `charAt` /
+   `charCodeAt` `proveAdditiveOperand` demote duplicates the selector's
+   `expressionIsProvenNumber` with a different predicate; unify them, then make
+   the lowering check a #4502 producer-promise invariant.
+5. **`literalFieldName` placement.** `select-expression-structure.ts` imports it
+   from the fnctor field-write analysis; it has a duplicate in
+   `fnctor-string-producers.ts` (`literalKeyText` / `propertyWriteName`) and a
+   near-duplicate in `shared/ambient-intrinsics.ts` (`staticMemberName`). Move it
+   to a structural module and fold the duplicates.
+6. **`ir->runtime` edge.** `FUNCTION_REALM_MEMBER_NAMES` could be derived beside
+   `ir/program/native-realm-requirements.ts`, which already imports the catalog,
+   instead of adding the 10th `ir->runtime` edge.
+7. **Active-buffer encodings in `builder.ts`.** `activeBufferBranched`,
+   `pushInstr` and the block-close path each name the active buffer; one private
+   `activeInstrs()` would serve all three.
+8. **`lowerBodyStatements` adoption.** Its doc comment lists callers; the
+   module-init top-level loop still has its own loop and a "no guard needed"
+   comment and could call it.
+9. **Test helpers.** `compileHarnessBody` / `moduleInit` / `runModuleInit` are
+   copied between the string-position and value-assignment tests; move them to
+   `tests/helpers/`.
+10. **Legacy, out of scope:** a typed `var` declared after `continue` in a loop is
+    not `undefined` after the loop on the selector-rejected path; sloppy `F.caller`
+    reads `undefined` instead of `null`; `F["helper"] = fn; F["helper"]()`
+    throws.

@@ -59,6 +59,19 @@ describe("#7106 — String position arguments without a numeric proof stay legac
     }, 60_000);
   }
 
+  // No backend plans these under native strings, so the selector's surface
+  // omits them: refused at selection, never a claim that demotes post-build.
+  for (const [name, body] of Object.entries({
+    'endsWith("c")': `assert.sameValue("abc".endsWith("c"), true);`,
+    'includes("b", 1)': `assert.sameValue("abc".includes("b", 1), true);`,
+  })) {
+    it(`refuses an unplanned String method ${name} at selection (standalone)`, async () => {
+      const result = await compileHarnessBody(body);
+      expect(moduleInit(result)).toMatchObject({ stage: "select", code: "string-method-unsupported" });
+      await runModuleInit(result);
+    }, 60_000);
+  }
+
   it("keeps a numerically proven position on the IR (standalone)", async () => {
     const result = await compileHarnessBody(`assert.sameValue(String("lego").slice(1, 3), "eg");`);
     expect(moduleInit(result)?.irBodyEmitted).toBe(true);

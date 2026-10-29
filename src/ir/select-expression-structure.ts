@@ -235,7 +235,7 @@ export function functionObjectReadLocals(
 }
 
 /**
- * (#7106 census arm 3) `F.x = G` / `F[k] = G`: a stable top-level function `G`
+ * (#7106 census arm 3) `F.x = G` / `F["x"] = G`: a stable top-level function `G`
  * stored on a function-object receiver `F`. The value is boxed into the dynamic
  * carrier and written through the receiver's dynamic member write — like a
  * receiver-only use it never reads `G`'s signature, so it needs no evidence.
@@ -254,7 +254,7 @@ export function isFunctionObjectStoredValue(
 
 /**
  * The receiver identifier `F` when `node` is the stored value of `F.x = node`,
- * `F[k] = node` or the chained `F.p.x = node` (see
+ * `F["x"] = node` or the chained `F.p.x = node` (see
  * {@link isFunctionObjectChainedWrite}); otherwise `undefined`. Syntax only —
  * the selector and the planner each apply their own resolver to `F` and `node`.
  */
@@ -292,8 +292,6 @@ export function functionObjectMemberCallIsBuildable(
       : undefined;
   if (target && (ts.isPropertyAccessExpression(functionAccess) || ts.isElementAccessExpression(functionAccess))) {
     if (functionAccess.questionDotToken || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement))
-      return false;
-    if (ts.isElementAccessExpression(functionAccess) && !isExpressionBuildable(functionAccess.argumentExpression))
       return false;
     return expr.arguments.every((argument) => isExpressionBuildable(argument));
   }

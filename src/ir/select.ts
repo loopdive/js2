@@ -9029,31 +9029,30 @@ function isLiteralStringReplaceCall(expr: ts.CallExpression): boolean {
 }
 
 // #3529 P1 — exact String producer surface mirrored from from-ast's
-// STRING_METHOD_TABLE. This selector table intentionally stores only arity and
-// where the position arguments start; lowering remains the owner of
+// STRING_METHOD_TABLE, narrowed to the calls some backend's `stringMethodPlan`
+// lowers: with native strings (every IR lane since #6979) `startsWith` /
+// `endsWith` and a two-argument `indexOf` / `includes` have no plan, so
+// admitting them only demoted after the claim. Lowering remains the owner of
 // representation-specific argument plans.
 //
-// (#7106) Every argument from `firstPosition` on is a ToIntegerOrInfinity
-// position (`charAt(pos)`, `slice(start, end)`, `includes(s, pos)`). The
-// lowering truncates a value that is already a number and nothing else: it has
-// no ToNumber and no "an undefined end is the length" rule, so a claimed
-// `charAt(undefined)` or `slice("e")` reached `i32.trunc_sat_f64_s` with a
-// dynamic or string operand. As for Math.* and String.fromCharCode, selection
-// requires the numeric proof.
-const IR_STRING_METHOD_SURFACE: Readonly<Record<string, readonly [min: number, max: number, firstPosition: number]>> =
+// (#7106) `positional` methods take only ToIntegerOrInfinity positions
+// (`charAt(pos)`, `slice(start, end)`). The lowering truncates a value that is
+// already a number and nothing else: it has no ToNumber and no "an undefined
+// end is the length" rule, so a claimed `charAt(undefined)` or `slice("e")`
+// reached `i32.trunc_sat_f64_s` with a dynamic or string operand. As for
+// Math.* and String.fromCharCode, selection requires the numeric proof.
+const IR_STRING_METHOD_SURFACE: Readonly<Record<string, readonly [min: number, max: number, positional: boolean]>> =
   Object.freeze({
-    toUpperCase: [0, 0, 0],
-    toLowerCase: [0, 0, 0],
-    trim: [0, 0, 0],
-    charAt: [0, 1, 0],
-    slice: [1, 2, 0],
-    substring: [0, 2, 0],
-    charCodeAt: [0, 1, 0],
-    indexOf: [1, 2, 1],
-    includes: [1, 2, 1],
-    startsWith: [1, 2, 1],
-    endsWith: [1, 2, 1],
-    replace: [2, 2, 2],
+    toUpperCase: [0, 0, false],
+    toLowerCase: [0, 0, false],
+    trim: [0, 0, false],
+    charAt: [0, 1, true],
+    slice: [1, 2, true],
+    substring: [0, 2, true],
+    charCodeAt: [0, 1, true],
+    indexOf: [1, 1, false],
+    includes: [1, 1, false],
+    replace: [2, 2, false],
   });
 
 function stringMethodHasSupportedArity(name: string, args: readonly ts.Expression[]): boolean {
@@ -9064,10 +9063,10 @@ function stringMethodHasSupportedArity(name: string, args: readonly ts.Expressio
   return args.length >= min && args.length <= max && !args.some(ts.isSpreadElement);
 }
 
-/** The first position argument of an arity-checked call that is not a proven number. */
+/** The first argument of an arity-checked positional call that is not a proven number. */
 function unprovenStringMethodPosition(name: string, args: readonly ts.Expression[]): ts.Expression | undefined {
-  const [, , firstPosition] = IR_STRING_METHOD_SURFACE[name]!;
-  return args.slice(firstPosition).find((arg) => !expressionIsProvenNumber(arg));
+  const [, , positional] = IR_STRING_METHOD_SURFACE[name]!;
+  return positional ? args.find((arg) => !expressionIsProvenNumber(arg)) : undefined;
 }
 
 function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
