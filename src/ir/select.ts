@@ -97,6 +97,7 @@ import {
   unwrapTypeErasedExpression,
   identifierIsValueReference,
   isFunctionObjectReceiver,
+  functionObjectReadLocals,
   isFunctionObjectStoredValue,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
@@ -108,7 +109,7 @@ import {
 export {
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
-  isFunctionObjectChainedWrite,
+  isFunctionObjectReceiverUse,
   functionObjectStoreRoot,
 } from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
@@ -6414,10 +6415,29 @@ function switchAllPathsTerminate(stmt: ts.SwitchStatement): boolean {
 // (#7106 Stage 4) The planned member closure's dynamic parameter names
 // (empty outside a planned member closure, or when its plan has none).
 let currentClosureDynamicParamNames: ReadonlySet<string> = new Set();
+// (#7106 Stage 4) The planned member closure's `var x = F.member;` locals: each
+// holds the dynamic carrier for its whole life (one declaration, never stored).
+let currentClosureFunctionObjectReadLocals: ReadonlySet<string> = new Set();
+// Computed once per plan: the shape walk and the #7144 operand walk both read it.
+const closureReadLocalsByPlan = new WeakMap<
+  import("./function-member-closure-plan.js").IrFunctionMemberClosurePlan,
+  ReadonlySet<string>
+>();
+function closureFunctionObjectReadLocals(
+  plan: import("./function-member-closure-plan.js").IrFunctionMemberClosurePlan,
+): ReadonlySet<string> {
+  let locals = closureReadLocalsByPlan.get(plan);
+  if (locals === undefined) {
+    locals = functionObjectReadLocals(plan.expression, currentSelectionOptions?.functionObjectValues);
+    closureReadLocalsByPlan.set(plan, locals);
+  }
+  return locals;
+}
 
 /**
  * (#7106 Stage 4) `func()` — a bare call through one of the planned member
- * closure's dynamic parameters (assert.throws' `func()`), lowered through the
+ * closure's dynamic parameters (assert.throws' `func()`) or its
+ * function-object read locals (assert.compareArray's `format(actual)`), lowered through the
  * native IsCallable + `__apply_closure` runtime with an undefined receiver.
  * The shared runtime does not restore `__current_this` when the callee throws
  * inside a try (legacy does), which is observable only by a caller that reads
@@ -6442,7 +6462,8 @@ let currentClosureDynamicParamNames: ReadonlySet<string> = new Set();
 function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
   const callee = expr.expression;
   if (!ts.isIdentifier(callee) || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) return false;
-  if (!currentClosureDynamicParamNames.has(callee.text)) return false;
+  if (!currentClosureDynamicParamNames.has(callee.text) && !currentClosureFunctionObjectReadLocals.has(callee.text))
+    return false;
   return currentDynamicRuntimeBuildable;
 }
 
@@ -7147,6 +7168,18 @@ function isPhase1ClosureLiteral(
   const plan = ts.isFunctionExpression(expr)
     ? currentSelectionOptions?.functionMemberClosures?.resolve(expr)
     : undefined;
+  // (#7106 Stage 4) `this` is read through `dyn.current_this` (legacy's ladder);
+  // a string result recovers a dynamic return through `dyn.string_carrier`.
+  if (
+    plan?.thisStrict !== undefined &&
+    currentSelectionOptions?.supportsBackendCapability?.("native-current-this") !== true
+  )
+    return shapeNo("closure-member-this", expr);
+  if (
+    plan?.signature.returnType?.kind === "string" &&
+    currentSelectionOptions?.supportsBackendCapability?.("native-string-carrier-coercion") !== true
+  )
+    return shapeNo("closure-member-string-result", expr);
   const buildable = closureLiteralIsBuildable(expr, scope, localClasses, allowNumericDefaultSuffix, plan, {
     shapeNo,
     annotationToResolvedKind,
@@ -7183,6 +7216,7 @@ function isPhase1ClosureLiteral(
     nativeDynamicLooseEquality:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-loose-equality") === true,
     isGlobalUndefined: (expression) => isUnshadowedUndefinedIdentifier(expression, scope),
+    functionObjectReadLocals: closureFunctionObjectReadLocals(plan),
   });
   return refusal === null || capabilityNo("operand-coercion-unsupported", refusal.arm, refusal.node);
 }
@@ -7232,6 +7266,8 @@ function withFunctionMemberClosureState<T>(
   // subject's (module-init's) proof never covers the closure body.
   const outerSafeVarLists = currentIrSafeVarDeclarationLists;
   const outerClosureDynamicNames = currentClosureDynamicParamNames;
+  const outerClosureReadLocals = currentClosureFunctionObjectReadLocals;
+  currentClosureFunctionObjectReadLocals = closureFunctionObjectReadLocals(plan);
   currentClosureDynamicParamNames = new Set(
     [...plan.dynamicParameterIndices].flatMap((index) => {
       const { name } = plan.expression.parameters[index]!;
@@ -7244,7 +7280,9 @@ function withFunctionMemberClosureState<T>(
   );
   const outerInPlannedClosure = currentInPlannedMemberClosure;
   currentInPlannedMemberClosure = true;
-  currentSubjectReturnsBoolean = plan.signature.returnType !== null;
+  // Only an i32 (boolean) plan returns booleans; a string plan returns strings.
+  currentSubjectReturnsBoolean =
+    plan.signature.returnType?.kind === "val" && plan.signature.returnType.val.kind === "i32";
   currentFnIsGenerator = currentFnIsVoidReturn = currentFnIsDynamicReturn = currentFnIsAsync = false;
   currentFnIsVoidReturn = plan.signature.returnType === null;
   currentDynMemberEqualitySubject = null;
@@ -7286,6 +7324,7 @@ function withFunctionMemberClosureState<T>(
     [earlyReturnLoopDepth, earlyReturnBarrierDepth] = outerEarlyReturn;
     currentIrSafeVarDeclarationLists = outerSafeVarLists;
     currentClosureDynamicParamNames = outerClosureDynamicNames;
+    currentClosureFunctionObjectReadLocals = outerClosureReadLocals;
     currentInPlannedMemberClosure = outerInPlannedClosure;
     currentMutableSlotNames = mutableSlots;
   }

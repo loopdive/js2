@@ -46,6 +46,8 @@ export function closureLiteralIsBuildable<Projection>(
   if (!plan && (!expr.type || host.annotationToResolvedKind(expr.type) === null))
     return host.shapeNo("closure-return-type", expr.type ?? expr);
   const inner = new Set(plan ? [] : scope);
+  // (#7106 Stage 4) A planned closure that reads its own `this` binds it at entry.
+  if (plan?.thisStrict !== undefined) inner.add("this");
   if (ts.isFunctionExpression(expr) && expr.name) {
     if (inner.has(expr.name.text)) return host.shapeNo("closure-name-shadow", expr.name);
     inner.add(expr.name.text);
