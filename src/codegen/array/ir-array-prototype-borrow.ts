@@ -31,6 +31,7 @@ import {
 } from "../helpers/template-wrapper.js";
 import { carrierOf } from "../struct-carrier-inhabits.js";
 import { arrayPrototypeBorrowCompilesHostFree, isStringCarrier } from "../array-prototype-borrow.js";
+import { requireObjectCoercible, resolveSliceDeps } from "../array-slice-native.js";
 
 const BORROW_RECEIVER = "__ir_apb_recv";
 const borrowArgumentName = (index: number): string => `__ir_apb_arg${index}`;
@@ -93,6 +94,12 @@ function borrowResultReachesCarrier(ctx: CodegenContext, call: ts.CallExpression
  * lanes. Legacy's borrow compiler reports an error only for the methods
  * {@link irArrayPrototypeBorrowWrapperLane} already excludes, so the template
  * compiles clean by admission.
+ *
+ * The wrapper opens with §23.1.3's `ToObject(this value)` TypeError. Legacy
+ * raises it by refusing a literal `null`/`undefined` receiver at the call site
+ * (its fallback throws), a check the template's parameter receiver never
+ * meets, and the array-like search loop reads length 0 from a nullish
+ * receiver and answers instead of throwing.
  */
 export function ensureIrArrayPrototypeBorrowHelper(
   ctx: CodegenContext,
@@ -103,6 +110,8 @@ export function ensureIrArrayPrototypeBorrowHelper(
   if (!irArrayPrototypeBorrowWrapperLane(ctx, method)) return undefined;
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
+  const deps = resolveSliceDeps(ctx);
+  if (deps === undefined) return undefined;
 
   const externref: ValType = { kind: "externref" };
   const params = [BORROW_RECEIVER, ...Array.from({ length: arity }, (_, index) => borrowArgumentName(index))];
@@ -116,6 +125,7 @@ export function ensureIrArrayPrototypeBorrowHelper(
     `function __ir_apb(${params.join(", ")}) {\n  Array.prototype.${method}.call(${params.join(", ")});\n}`,
     1,
   );
+  helper.body.push(...requireObjectCoercible(ctx, deps, 0, method));
   compileTemplateExpressionAs(ctx, helper, borrow!, externref);
   flushLateImportShifts(ctx, helper);
   return publishHelperFunction(ctx, helper);
