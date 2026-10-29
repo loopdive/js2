@@ -1968,7 +1968,11 @@ an issue of its own when one is allocated.
    `buildTemplateWrapperFamily` throws a plain `Error` when a wrapper's
    template does not compile. No repro (#6851's sweep over the built-in
    names × arity 0–3 compiled all but legacy's own `replace`/`replaceAll`
-   refusal); make it a pre-claim refusal or pin the sweep as a test.
+   refusal); make it a pre-claim refusal or pin the sweep as a test. The
+   borrow family reaches the same throw (#6972 delta review, nit 2):
+   `ensureIrArrayPrototypeBorrowHelper` answers `undefined` when
+   `resolveSliceDeps` misses an object-runtime helper, which the
+   standalone/wasi lanes that admit the wrapper always define.
 3. **`nativeStrTypeIdx` slot under `--utf8-storage`.** The
    `dynamicCarrierDivergesFromLegacy` string-slot exception compares against
    `ctx.anyStrTypeIdx`; add a test for the `--utf8-storage` native-string
@@ -1996,3 +2000,11 @@ an issue of its own when one is allocated.
    leaving eight untyped closure slots. `stubIfOrphanedEmpty` now types an
    orphaned placeholder slot with its lowered signature, or `() -> ()`
    (`tests/issue-7106-module-init-orphaned-closure-slots.test.ts`).
+7. **Legacy-only borrows answer on a nullish parameter receiver** (#6972
+   delta review, nit 3; pre-existing on main). The IR borrow wrapper throws
+   the step-1 TypeError, but a legacy-only function such as
+   `function h(x) { return Array.prototype.indexOf.call(x, 1); }` still
+   answers for `h(undefined)`: legacy refuses only a *literal* nullish
+   receiver at the call site. Affects `indexOf`, `lastIndexOf`, `includes`
+   and `concat`; `tests/issue-7106-borrow-nullish-receiver.test.ts` pins the
+   gap as the IR-vs-legacy exception.
