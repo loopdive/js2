@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-10-25
+updated: 2026-10-29
 priority: high
 horizon: l
 feasibility: hard
@@ -115,6 +115,13 @@ loc-budget-allow:
   - src/codegen/dyn-read.ts
   - src/codegen/fnctor-escape-gate.ts
   - src/codegen/expressions/new-super.ts
+  # 2026-10-29 (script `var` reference homes): the `f64-vec` binding kind's
+  # resolver arm and its two helpers live beside the #7125 string arm they
+  # generalise (module-bindings.ts, +9); select.ts (+28; isPhase1Expr +3 and
+  # isPhase1StatementListInScope +2, granted above), integration.ts (+4) and
+  # from-ast.ts (+3) carry its refusals, storage arm and slot widening, each
+  # beside its siblings
+  - src/ir/module-bindings.ts
 ---
 
 ## Problem
@@ -2200,3 +2207,212 @@ Left, as follow-ups of this issue:
     not `undefined` after the loop on the selector-rejected path; sloppy `F.caller`
     reads `undefined` instead of `null`; `F["helper"] = fn; F["helper"]()`
     throws.
+
+## Script `var` reference homes (2026-10-29)
+
+An independent implementation of the "script `var` reference homes" lever.
+Another session holds an unpushed, unreachable commit for the same lever
+(`ba959239`, "ir-script-var-ref-homes"); this one was written without it, and
+the lead reconciles the two if that commit surfaces.
+
+### Problem
+
+A script `var` whose legacy `__mod_<name>` slot holds a reference is refused by
+the module-binding resolver, so the selector refuses the whole `<module-init>`
+as `vardecl-module-storage-unrepresentable` (`src/ir/select.ts`). #7105, #7106
+and #7125 admit only a number/boolean slot, the `externref` dynamic home and
+the native-string slot.
+
+### Measured: legacy slot per shape
+
+Standalone, `emitWat`, on `dd6a239d3b`. "IR producer" is what the selector or
+builder does with the initializer today.
+
+| shape | legacy `__mod_` slot | IR producer for the initializer | decision |
+| --- | --- | --- | --- |
+| `var a = [1, 2, 3]` | `(ref null $__vec_f64)` | array literal → `vec<f64>`, the same registered struct | **admit** as `f64-vec` |
+| `var a = ["x", "y"]` | `(ref null $__vec_ref_<AnyString>)` | `vec<string>`; agreement not measured | refuse (follow-up) |
+| `var a = [Float64Array, Float32Array]` (testTypedArray.js) | `(ref null $__vec_externref)` holding legacy's `$__ta_ctor_singleton_*` structs | none: `Float64Array` as a value is `expr-ident-not-in-scope` | refuse |
+| `var e = []` | `(ref null $__vec_externref)` | empty-array inference | refuse |
+| `var o = { x: 1, y: 2 }` | `(ref null $__anon_N)`: source field order plus `$$shape` / `$$shapeBrand` fields | IR object shape: name-sorted fields, no shape fields | refuse: the structs differ |
+| `var obj = {}` | `externref` (dynamic home); legacy builds a closed expando struct or a `__new_plain_object` | zero-field struct, claimed only unreferenced (`objectlit-empty`) | refuse: #7128 |
+| `var c = new C()` (untyped JS class) | `(ref null $C)` | `class-projection-unsupported` | refuse |
+| `var d = new Date(0)` | `(ref null $__Date)` | `expr-new-date-target` | refuse |
+| `var m = new Map()` | `(ref null $Map)` | the `native-map` producer exists, but see below | refuse (follow-up) |
+| `new WeakMap()`, `new Set()`, `new WeakSet()` | `(ref null $Map)` | none | refuse |
+| `var s = Symbol("1")` | `i32` | none | refuse |
+| `var re = /x/u` | `externref` (dynamic home) | `regexp-constructor-unsupported` on standalone | refuse |
+
+`new Map()` is left out on purpose. Its IR adapter
+(`tryLowerNativeMapMethodCall`) is number-keyed, but the selector's
+`exactModuleMapMethod` arm admits any key, so
+`let m = new Map(); m.set("k", 1)` already claims and then demotes after the
+claim on main. Admitting script `var` maps would spread that. The selector
+gap comes first.
+
+### Census
+
+On a deterministic 1/60 sample (893 files, 775 compiled; every
+`<module-init>` refusal recorded with `JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`),
+a storage refusal appears in 385 files and is the only refusal in 23. Grouped
+by initializer (files carrying the family):
+
+| family | files |
+| --- | --- |
+| harness statements (temporalHelpers.js ×3, the runner's `$262`, `print`, testTypedArray.js, regExpUtils.js) | 135 |
+| object literals (data and method) | 96 |
+| call results (`a = [1].map(f)`, `Object.keys(o)`) | 75 |
+| user class / constructor instances | 56 |
+| other arrays (constructors, objects, mixed) | 40 |
+| string arrays | 27 |
+| builtin constructions (Date, WeakMap, Set, Proxy, TypedArray) | 25 |
+| empty objects / empty arrays | 24 / 23 |
+| number-array literals | 23 |
+
+None of the harness statements has an IR producer for its initializer. In the
+whole corpus, a top-level `var x = [<numbers>]` appears in 1129 files (385 of
+them `built-ins/Array/prototype`), `var x = {}` in 3364 (#7128), `var x = []`
+in 956, `var x = [<strings>]` in 328 and `new Map()` in 72.
+
+### Implementation Plan
+
+- **Where.**
+  - Codegen's slot classifier, `scriptVarHome` (`src/codegen/index.ts`).
+  - The module-binding resolver's value-kind resolution
+    (`src/ir/module-bindings.ts`); the new kind is declared in
+    `module-binding-value-kinds.ts`.
+  - Its storage arm in `resolveModuleBindingGlobal` (`integration.ts`).
+  - The slot widening in `moduleStorageCompatible` (`from-ast.ts`).
+  - The selector's consumer discipline (`select.ts`).
+- **Reuse.**
+  - The pre-registered `$__vec_f64`.
+  - `irTypeAssignable`'s non-null-into-nullable vector widening.
+  - The provenance-following primitive classifier, which the `string` arm
+    already uses to prove a written value.
+  - `expressionIsProvenNumber`.
+  - The existing checker-typed array arms as the binding's consumers.
+- **Removes.**
+  - Codegen's three predicates (`scriptVarSlotIsSoleHome`,
+    `scriptVarSlotIsDynamicHome`, `scriptVarSlotIsStringHome`) and the three
+    resolver options become one classifier and one option. Each predicate
+    looked up the same slot again.
+  - `isScriptStringHome`, `moduleStringStorageAdmitted` and
+    `isScriptDynamicHome` fold into `scriptVarHomeOf` and
+    `scriptVarReferenceKind`.
+  - `makeStaticNumericArrayPlan`'s inline "number elements" type test becomes
+    `hasNumberElements`, which the new kind shares.
+  - The harness compile helpers copied between two #7106 tests move to
+    `tests/helpers/harness-module-init.ts` (follow-up 9 of the #6972 review).
+- **Code-quality acceptance criterion.** One classifier and one resolver
+  helper decide every script-`var` home. A new carrier is one classifier arm
+  plus one `scriptVarReferenceKind` case. No new parallel predicate. Every new
+  refusal fires at selection, never as a post-claim demote. gc output is
+  byte-identical, because the vector home is classified only in a host-free
+  environment.
+
+### Change
+
+- `scriptVarHome(ctx, declaration)` classifies the sole-home slot:
+  - `externref` → `dynamic`, off fast mode;
+  - `(ref null $AnyString)` → `string`;
+  - `(ref null $__vec_f64)` → `f64-vec`, only where `hostFreeEnvironment(ctx)`
+    holds. `ctx.standalone` is the native regime and is also true on the gc
+    lane, so it is the wrong test;
+  - any other slot → `typed`.
+- New value kind `f64-vec`. A script `var` in that slot whose checker type has
+  number elements (`hasNumberElements`, i.e. `number[]`) binds as the
+  nullable `vec<f64>`.
+  - Its one producer, for the initializer and every write, is a non-empty
+    array literal whose elements the classifier proves numbers.
+  - Holes, spreads and computed arrays refuse (`vardecl-module-value-flow`,
+    `body-module-assign-incompatible`).
+- The selector treats the kind as neither scalar nor extern
+  (`isIrModuleScalarValueKind`). Reads flow through the ordinary array arms.
+  A bare vector binding is refused where no vector lowering exists:
+  - as an operator operand (`arr === undefined`, `+arr`):
+    `expr-module-vector-op`;
+  - as a property-write receiver (`arr.length = 0`, `arr.length++`):
+    `expr-module-vector-property-write`;
+  - as an element store of an unproven number:
+    `expr-module-vector-element-value`. This one is es5id `15.4.5.1-5-2`,
+    `a[4294967295] = "…"`.
+- `tests/issue-7106-script-var-reference-homes.test.ts` covers:
+  - the admitted shapes, IR against node;
+  - every refused shape, at select with no post-claim error;
+  - a function-unit length write;
+  - the gc lane.
+
+### Measured result (2026-10-29, standalone unless noted)
+
+Probes are in `.tmp/` (not committed). Before is `dd6a239d3b`, after is this
+change; both were run by hand in this worktree. A unit is legacy when it has
+`kind !== "non-executable" && !irBodyEmitted`.
+
+| population | measure | before | after |
+| --- | --- | --- | --- |
+| all 1129 files with a top-level `var x = [<numbers>]` (compile only) | first-wins `<module-init>` storage refusal | 811 | 289 |
+| same | `<module-init>` on IR / zero-legacy compiles | 0 / 0 | 3 / 1 |
+| same | files with a post-claim error | 30 | 30, the same files: pre-existing propertyHelper.js `verifyEqualTo` typeIdx parity mismatches |
+| same | binaries changed | — | 3 (the three new IR `<module-init>`s); 1126 byte-identical |
+| 1/6 of them, run (189 files) | pass / fail / CE / skip | 158 / 25 / 2 / 4 | 158 / 25 / 2 / 4, no flips |
+| same | zero-legacy passes | 0 | 1 (`annexB/language/comments/single-line-html-close-asi.js`) |
+| the 144 es5id-tagged files among the 1129, run | pass | 144 | 144, no flips |
+| 1/10 of the 2080 testTypedArray.js tests, run (208) | pass / fail | 153 / 55 | 153 / 55; 208 binaries identical |
+| 1/60 corpus census (893 files, all `<module-init>` refusals) | files with a number-array storage refusal | 23 | 5 |
+| same | storage as the only refusal | 23 | 19 |
+| same | zero-legacy compiles / IR `<module-init>`s | 14 / 15 | 14 / 15 |
+| gc lane, the 397 files of both run samples | binaries changed | — | 0 of 396 compiled |
+
+The lever is real but narrow:
+
+- It removes the storage refusal for number arrays. The `<module-init>`s it
+  reaches mostly stop at the next blocker:
+  - `vardecl-let-closure` (202 of the 1129);
+  - computed array writes (`var r = a.filter(cb)`, 81);
+  - class expressions (89);
+  - array methods (88).
+- Their callbacks are usually legacy units anyway (`call-graph-closure`,
+  `param-type-not-resolvable`).
+- The five number-array refusals left in the census sample are:
+  - lexical `let a = [1]`, which is not a script `var`;
+  - `var a = […]` that a later `Object.defineProperty(a, …)` gives a second,
+    expando declaration.
+
+### Follow-ups
+
+1. **Native Map script `var`s.** First make the selector refuse a non-number
+   key or value for a `native-map` receiver. `exactModuleMapMethod`'s arm
+   admits any argument, but `tryLowerNativeMapMethodCall` is number-keyed, so
+   `let m = new Map(); m.set("k", 1)` claims and then demotes after the claim
+   on main. After that fix, `native-map` is one more `scriptVarHome` arm and
+   one more `scriptVarReferenceKind` case.
+2. **String vectors.** `var a = ["x"]` (328 corpus files) sits in
+   `$__vec_ref_<AnyString>`. Measure `vec<string>` agreement before adding the
+   kind.
+3. **Local-vector consumers that claim and then demote on main.** A
+   function-local `[1, 2, 3]` has no selector-side vector fact, so these build
+   and then demote after the claim on both lanes:
+   - `a.length = n`;
+   - `a === undefined`;
+   - `a[i] = "s"`;
+   - `function same(p, q) { return p === q; } same(a, a)`.
+
+   The module binding has its kind, so this change refuses it at select; the
+   local needs the same fact.
+4. **`a++` on a script `var` array.** The #4208 update-retype resolves it as
+   `dynamic`, its slot is the vector, and the build demotes after the claim
+   (on main too).
+5. **testTypedArray.js.** `floatArrayConstructors` stays refused. Two things
+   are missing:
+   - TypedArray constructors as IR values, keeping identity with legacy's
+     `$__ta_ctor_singleton_*` structs;
+   - an externref-vector kind.
+
+   Even then the harness `<module-init>` has 18 more refusals
+   (`Float16Array`/`BigInt64Array` guards, `Object.getPrototypeOf`, a logical
+   value, `ArrayBuffer`, function-valued vars).
+6. **Object literals and user class instances** (96 and 56 files in the
+   census) need struct agreement:
+   - legacy keeps source field order and adds `$$shape` / `$$shapeBrand`;
+   - the IR sorts fields by name;
+   - untyped JS constructors are `class-projection-unsupported`.

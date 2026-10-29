@@ -588,7 +588,12 @@ export function makeIrPrimitiveExpressionClassifier(
 }
 
 export type IrModuleBindingValueKind = bindingValue.IrModuleBindingValueKind;
-export { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-binding-value-kinds.js";
+export type IrScriptVarHome = bindingValue.IrScriptVarHome;
+export {
+  isIrModuleMapValueKind,
+  isIrModuleReferenceValueKind,
+  isIrModuleScalarValueKind,
+} from "./module-binding-value-kinds.js";
 // (#7108) Re-exported so the codegen driver reaches it over its existing edge to this module.
 export { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
 
@@ -843,24 +848,14 @@ export interface IrModuleBindingResolverOptions {
    * allocates the same `__mod_<name>` slot for a script `var` as for a module
    * one, so the #2949 scalar capability extends to scripts — but only where
    * the direct frontend keeps that slot as the binding's single home. The
-   * predicate is codegen's: it answers `false` when the slot was widened for
-   * runtime eval, when a bare read resolves through the global-object
-   * environment instead, or when the allocator has not placed the slot yet.
-   * Absent ⇒ scripts stay excluded (the pre-#7105 rule).
+   * classifier is codegen's: it answers `undefined` when the slot was widened
+   * for runtime eval, when a bare read resolves through the global-object
+   * environment instead, or when the allocator has not placed the slot yet;
+   * otherwise it names the slot's carrier, and the binding resolves only
+   * through the value kind of that carrier. Absent ⇒ scripts stay excluded
+   * (the pre-#7105 rule).
    */
-  readonly admitScriptVar?: (declaration: ts.VariableDeclaration) => boolean;
-  /**
-   * (#7106) Codegen's companion predicate for a script `var` whose sole-home
-   * slot legacy allocated as the IR dynamic carrier (`externref` off fast
-   * mode). Such a binding resolves as `dynamic` whatever its checker type.
-   */
-  readonly scriptVarDynamicHome?: (declaration: ts.VariableDeclaration) => boolean;
-  /**
-   * (#7125) Codegen's predicate for a script `var` whose sole-home slot is the
-   * native-string carrier `(ref null $AnyString)`. Such a string-typed binding
-   * resolves as `string`, the exact storage the `string` arm resolves.
-   */
-  readonly scriptVarStringHome?: (declaration: ts.VariableDeclaration) => boolean;
+  readonly scriptVarHome?: (declaration: ts.VariableDeclaration) => IrScriptVarHome | undefined;
 }
 
 const selectedTopLevelAccessorUnitIdsByContext = new WeakMap<IrPlanningIdentityContext, ReadonlySet<IrUnitId>>();
@@ -959,7 +954,7 @@ function uniqueTopLevelVariableDeclaration(
 function directTopLevelDeclaration(
   node: ts.Identifier,
   checker: ts.TypeChecker,
-  scriptVar?: Pick<IrModuleBindingResolverOptions, "admitScriptVar" | "scriptVarDynamicHome" | "scriptVarStringHome">,
+  scriptVar?: Pick<IrModuleBindingResolverOptions, "scriptVarHome">,
 ): ts.VariableDeclaration | undefined {
   const sourceFile = node.getSourceFile();
   const script = !ts.isExternalModule(sourceFile);
@@ -977,16 +972,16 @@ function directTopLevelDeclaration(
   // source-owned capability.
   //
   // (#7105) …and a SCRIPT-goal `var` is the same slot, admitted only when
-  // codegen's predicate confirms the direct frontend reads and writes it
-  // through that slot alone (see `IrModuleBindingResolverOptions.admitScriptVar`).
-  const dynamicHome = script && scriptVar?.scriptVarDynamicHome?.(declaration) === true;
-  if (script && !dynamicHome && scriptVar?.admitScriptVar?.(declaration) !== true) return undefined;
+  // codegen's classifier names it the binding's sole home (see
+  // `IrModuleBindingResolverOptions.scriptVarHome`).
+  const home = script ? scriptVarHomeOf(declaration, scriptVar) : undefined;
+  if (script && home === undefined) return undefined;
   const declaredType = checker.getTypeAtLocation(declaration.name);
   if (
-    !dynamicHome &&
+    home !== "dynamic" &&
     (declaredType.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) === 0 &&
     !updateRetypesModuleBinding(checker, declaration) &&
-    !(script && isScriptStringHome(declaration, declaredType, checker, scriptVar))
+    scriptVarReferenceKind(declaration, declaredType, checker, scriptVar) === undefined
   ) {
     return undefined;
   }
@@ -1007,47 +1002,47 @@ function directTopLevelDeclaration(
   return script && allDirectVars ? declaration : undefined;
 }
 
-/** (#7125) A string-typed script `var` in codegen's native-string sole-home
- * slot: exactly the `string` arm's storage, so the binding resolves as one. */
-function isScriptStringHome(
+/** (#7105) Codegen's carrier for a SCRIPT `var`'s sole-home slot; `undefined`
+ * for a lexical, an ES-module `var`, or a slot the IR may not share. */
+function scriptVarHomeOf(
+  declaration: ts.VariableDeclaration,
+  options: Pick<IrModuleBindingResolverOptions, "scriptVarHome"> | undefined,
+): IrScriptVarHome | undefined {
+  if ((declaration.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0) return undefined;
+  if (ts.isExternalModule(declaration.getSourceFile())) return undefined;
+  return options?.scriptVarHome?.(declaration);
+}
+
+/**
+ * (#7125/#7106) The value kind a script `var` in a reference-carrier home binds
+ * as. Such a slot was not widened (every legacy arm that widens a `var` slot
+ * widens it to `externref`, the dynamic home), so it binds through the kind
+ * whose storage `resolveModuleBindingGlobal` names for exactly that carrier —
+ * and only when the checker type agrees, so the selector's checker-typed
+ * consumers and the slot describe the same value. A `dynamic` home needs no
+ * such agreement (any value fits the carrier) and a `typed` one resolves
+ * through `scalarKind`.
+ */
+function scriptVarReferenceKind(
   declaration: ts.VariableDeclaration,
   declaredType: ts.Type,
   checker: ts.TypeChecker,
-  options: Pick<IrModuleBindingResolverOptions, "scriptVarStringHome"> | undefined,
-): boolean {
-  return (
-    (declaration.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0 &&
-    !ts.isExternalModule(declaration.getSourceFile()) &&
-    isModuleStringStorageType(declaredType, checker) &&
-    options?.scriptVarStringHome?.(declaration) === true
-  );
+  options: Pick<IrModuleBindingResolverOptions, "scriptVarHome"> | undefined,
+): IrModuleBindingValueKind | undefined {
+  switch (scriptVarHomeOf(declaration, options)) {
+    case "string":
+      return isModuleStringStorageType(declaredType, checker) ? { kind: "string" } : undefined;
+    case "f64-vec":
+      return hasNumberElements(declaredType) ? { kind: "f64-vec" } : undefined;
+    default:
+      return undefined;
+  }
 }
 
-/** (#3523 R4-M1) `let`/`const` only — every legacy arm that widens a string
- * `var` slot widens it to `externref` — except (#7125) a SCRIPT `var` whose
- * slot codegen confirmed is the native-string carrier itself: no widening
- * happened, so `resolveModuleBindingGlobal`'s agreement check cannot disagree. */
-function moduleStringStorageAdmitted(
-  declaration: ts.VariableDeclaration,
-  declaredType: ts.Type,
-  checker: ts.TypeChecker,
-  options: IrModuleBindingResolverOptions,
-  isModuleVar: boolean,
-): boolean {
-  return isModuleVar
-    ? isScriptStringHome(declaration, declaredType, checker, options)
-    : isModuleStringStorageType(declaredType, checker);
-}
-
-/** (#7106) A script `var` in codegen's externref sole-home slot is the dynamic
- * carrier by construction, whatever its checker type. */
-function isScriptDynamicHome(declaration: ts.VariableDeclaration, options: IrModuleBindingResolverOptions): boolean {
-  const list = declaration.parent;
-  return (
-    (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0 &&
-    !ts.isExternalModule(declaration.getSourceFile()) &&
-    options.scriptVarDynamicHome?.(declaration) === true
-  );
+/** A number-indexed type whose elements are numbers: the checker side of `number[]`. */
+function hasNumberElements(type: ts.Type): boolean {
+  const element = type.getNumberIndexType();
+  return element !== undefined && (element.flags & ts.TypeFlags.NumberLike) !== 0;
 }
 
 function isJsExpandoTarget(candidate: ts.Declaration): boolean {
@@ -1553,7 +1548,7 @@ function writeValueMatches(
   const valueExpr = unwrapParens(value);
   // (#7106) The script dynamic home accepts any value: the IR lowers it to the
   // dynamic carrier or refuses the unit when it has no boxing producer.
-  if (targetKind.kind === "dynamic" && options.scriptVarDynamicHome?.(declaration) === true) return true;
+  if (targetKind.kind === "dynamic" && options.scriptVarHome?.(declaration) === "dynamic") return true;
   if (targetKind.kind === "dynamic") {
     // The current IR boxing producer accepts exactly the three primitive
     // families. Object/wrapper initializers still receive the same widened
@@ -1564,6 +1559,22 @@ function writeValueMatches(
   if (targetKind.kind === "native-map") {
     // The native `$Map` carrier has exactly one producer in this slice.
     return isNativeMapConstruction(checker, valueExpr);
+  }
+  if (targetKind.kind === "f64-vec") {
+    // (#7106) The `vec<f64>` carrier's one producer: a non-empty array literal
+    // whose every element the provenance-following classifier proves a
+    // number, as the `string` arm below proves its value. Holes, spreads and
+    // computed arrays (`a.concat(b)`, `new Array(n)`) stay legacy.
+    return (
+      ts.isArrayLiteralExpression(valueExpr) &&
+      valueExpr.elements.length > 0 &&
+      valueExpr.elements.every(
+        (element) =>
+          !ts.isSpreadElement(element) &&
+          !ts.isOmittedExpression(element) &&
+          classifyPrimitiveExpression(element) === "number",
+      )
+    );
   }
   if (targetKind.kind === "string") {
     // (#3523 R4-M1) REPRESENTATION agreement only, exactly like the `dynamic`
@@ -2184,9 +2195,7 @@ function makeStaticNumericArrayPlan(
   ) {
     return undefined;
   }
-  const type = checker.getTypeAtLocation(declaration.name);
-  const element = type.getNumberIndexType();
-  return element && (element.flags & ts.TypeFlags.NumberLike) !== 0 ? { declaration } : undefined;
+  return hasNumberElements(checker.getTypeAtLocation(declaration.name)) ? { declaration } : undefined;
 }
 
 export function makeIrLegacyModuleBindingResolver(
@@ -2232,10 +2241,10 @@ export function makeIrLegacyModuleBindingResolver(
     // allocation currently widens these globals to externref, so it stays on
     // direct codegen until that ABI is unified.
     let valueKind =
-      isScriptDynamicHome(declaration, options) ||
+      scriptVarHomeOf(declaration, options) === "dynamic" ||
       (options.numberStorage === "f64" && updateRetypesModuleBinding(checker, declaration))
         ? ({ kind: "dynamic" } as const)
-        : scalarKind(declaredType, options);
+        : (scalarKind(declaredType, options) ?? scriptVarReferenceKind(declaration, declaredType, checker, options));
     if (!valueKind && !isModuleVar && options.allowHostExterns) {
       const className = externClassNameForType(declaredType, checker, options);
       if (className) {
@@ -2263,7 +2272,7 @@ export function makeIrLegacyModuleBindingResolver(
     // native lane is NOT the string carrier. That disagreement is only
     // reportable as a hard Program ABI invariant, never as a demote, so the
     // arm is excluded by construction rather than re-derived here.
-    if (!valueKind && moduleStringStorageAdmitted(declaration, declaredType, checker, options, isModuleVar)) {
+    if (!valueKind && !isModuleVar && isModuleStringStorageType(declaredType, checker)) {
       valueKind = { kind: "string" } as const;
     }
     // (#5289) An `any`/`unknown` module binding. ONE kind for both lanes,
