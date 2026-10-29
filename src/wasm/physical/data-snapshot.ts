@@ -1,4 +1,17 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * Snapshot observation contract for filled physical data.
+ *
+ * A snapshot observes exactly what `Object.entries` returns: own, enumerable,
+ * string-keyed properties. A match therefore does NOT detect:
+ * - prototype-inherited properties (e.g. `Object.setPrototypeOf(instr, { else: [...] })`
+ *   changes what the emitter reads through the prototype, yet still matches);
+ * - non-enumerable own properties or symbol keys;
+ * - Map, Set and non-`Uint8Array` typed-array contents, which are compared as
+ *   plain objects (their entries are not own enumerable properties).
+ * Well-formed physical data is plain arrays, records and `Uint8Array` bytes, so
+ * these limits only matter for data outside that shape.
+ */
 export type PhysicalDataSnapshot =
   | string
   | bigint

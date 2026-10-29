@@ -46,7 +46,7 @@
   },
   "typecheck": {
     "configuredTs7": "exit 0",
-    "rawDefaultTsconfigAttempt": "failed: omitted explicit Node types; see types-full.log",
+    "rawDefaultTsconfigAttempt": "failed: omitted explicit Node types (mis-invoked; log dropped)",
     "targetedIncludingNewTests": "exit 0"
   },
   "integrationRepair": {

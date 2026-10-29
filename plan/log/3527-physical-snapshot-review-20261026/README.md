@@ -1,6 +1,13 @@
 # Physical snapshot review boundary
 
-Base: `61b1b07d2b5666b6ebb84fbbe93ee8a07655d090` (upstream main).
+Original base: `61b1b07d2b5666b6ebb84fbbe93ee8a07655d090` (upstream main). The
+branch has since merged main `3b6489436318e8f863ef474e41797b48911eac59` (see
+"Main refresh" below) and, for the replacement PR, main
+`cb3ff519ad`. Logs in this directory were recorded on the original and first
+refreshed bases. The raw `.log` files are no longer in this tree: `.gitattributes`
+routes `*.log` through LFS, and they were committed as raw blobs. They remain
+reachable from the original review head, e.g.
+`git show 746d2fcaec:plan/log/3527-physical-snapshot-review-20261026/snapshot-receipt-repair.log`.
 
 Review production `src/wasm/physical/data-snapshot.ts` and its only consumer,
 `src/wasm/physical/module-reservations.ts`. The extraction preserves the existing
