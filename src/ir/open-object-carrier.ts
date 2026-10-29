@@ -9,8 +9,8 @@
 
 import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
-import { JS_TAG_IDS } from "./js-tag-domain.js";
-import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
+import { irVal, type IrType, type IrValueId } from "./nodes.js";
+import { emitThrowTypeErrorIf } from "./throw-type-error.js";
 
 /** A fresh open-hash `$Object` from `__new_plain_object`, typed `type`. */
 export function emitNewPlainObject(builder: IrFunctionBuilder, type: IrType): IrValueId {
@@ -51,15 +51,10 @@ export function emitOpenCarrierDefine(
   );
   // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (result === null) throw new Error("ir/open-object-carrier: Object.defineProperty applier produced no result");
-  const rejected = builder.collectBodyInstrs(() => {
-    const message = builder.emitBox(
-      builder.emitStringConst("Cannot define property, object is not extensible or index is invalid"),
-      irDynamic(JS_TAG_IDS.String),
-    );
-    const error = builder.emitCall(irRuntimeFuncRef("__new_TypeError"), [message], externref);
-    if (error === null) throw new Error("ir/open-object-carrier: TypeError constructor returned no value");
-    builder.emitThrow(error);
-  });
-  builder.emitIfStmt({ cond: builder.emitRefIsNull(result), then: rejected, else: [] });
+  emitThrowTypeErrorIf(
+    builder,
+    builder.emitRefIsNull(result),
+    "Cannot define property, object is not extensible or index is invalid",
+  );
   return result;
 }

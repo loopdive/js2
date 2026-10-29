@@ -82,7 +82,9 @@ export function emptyObjectLiteralBinding(
  *     and node see the `Object.prototype` method.
  *
  * Any other reference — a write, a method call, passing `o` on, an alias — keeps
- * the literal on legacy.
+ * the literal on legacy. This test is per reference and owner-blind: a read
+ * inside a nested function passes it, and the capture is refused instead by the
+ * selector's free-variable scope check.
  */
 export function isOpenCarrierUse(
   reference: ts.Identifier,

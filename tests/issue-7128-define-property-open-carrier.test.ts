@@ -94,10 +94,38 @@ const REFUSED: Record<string, string> = {
   "chained read throws TypeError": `export function f() { var o = {}; try { var t = o.x.y; return 1; } catch (e) { return e instanceof TypeError ? 2 : 3; } }`,
   "optional chain on a read": `export function f() { var o = {}; return o.x?.y === undefined ? 1 : 0; }`,
   "element read of a read": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: "ab" }); return o.x[0] === "a" ? 1 : 0; }`,
+  // Round 2, through a dynamic parameter (an exported call passes no argument,
+  // so legacy is the reference here, not node).
+  "dynamic parameter == null": `export function f(p) { return p == null ? 1 : 0; }`,
+  "switch on a dynamic parameter": `export function f(p) { switch (p) { case 3: return 1; } return 0; }`,
   "shadowed Object": `export function f() { var Object = { defineProperty: function (a, b, c) { return a; } }; var o = {}; Object.defineProperty(o, "x", { value: 1 }); return o.x === undefined ? 1 : 0; }`,
 };
 
+// Round-2 review repros (PR #6957): shapes the dynamic-value scan used to claim
+// and from-ast then demoted after the claim. Each is now refused at select time
+// and must match node with no post-claim error. REFUSED's last two entries reach
+// the same gap through a dynamic parameter.
+const REFUSED_AT_SELECT: Record<string, string> = {
+  "read == null": `export function f() { var o = {}; return o.y == null ? 1 : 0; }`,
+  "read != null after a define": `export function f() { var o = {}; Object.defineProperty(o, "y", { value: 1 }); return o.y != null ? 1 : 0; }`,
+  "null == read": `export function f() { var o = {}; return null == o.y ? 1 : 0; }`,
+  "local from a read, then == null": `export function f() { var o = {}; Object.defineProperty(o, "y", { value: 1 }); var v = o.y; return v == null ? 1 : 0; }`,
+  "switch on a local from a read": `export function f() { var o = {}; var v = o.y; switch (v) { case 3: return 1; } return 0; }`,
+};
+
 describe("#7128 S1 — standalone open-carrier Object.defineProperty", () => {
+  for (const [name, source] of Object.entries(REFUSED_AT_SELECT)) {
+    it(`refuses before the claim and matches legacy and node: ${name}`, async () => {
+      const ir = await build(source, "standalone", true);
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
+      expect(irBodies(ir)).not.toContain("f");
+      const legacy = await build(source, "standalone", false);
+      const expected = runInNode(source);
+      expect(await run(legacy.binary)).toBe(expected);
+      expect(await run(ir.binary)).toBe(expected);
+    });
+  }
+
   for (const [name, source] of Object.entries(CLAIMED)) {
     it(`claims and matches legacy and node: ${name}`, async () => {
       const ir = await build(source, "standalone", true);

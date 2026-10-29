@@ -3011,14 +3011,15 @@ function dynamicMemberEqualityOperandIsBuildable(candidate: ts.Expression): bool
   );
 }
 
-function concreteDynamicEqualityOperandIsBuildable(candidate: ts.Expression, allowVoidZero = false): boolean {
+// `null` / `void 0` only under STRICT equality: from-ast demotes `<dynamic> == null` post-claim (#7128).
+function concreteDynamicEqualityOperandIsBuildable(candidate: ts.Expression, strict: boolean): boolean {
   return (
     ts.isNumericLiteral(candidate) ||
     ts.isStringLiteralLike(candidate) ||
     candidate.kind === ts.SyntaxKind.TrueKeyword ||
     candidate.kind === ts.SyntaxKind.FalseKeyword ||
-    candidate.kind === ts.SyntaxKind.NullKeyword ||
-    (allowVoidZero &&
+    (strict && candidate.kind === ts.SyntaxKind.NullKeyword) ||
+    (strict &&
       ts.isVoidExpression(candidate) &&
       ts.isNumericLiteral(candidate.expression) &&
       Number(candidate.expression.text) === 0) ||
@@ -3949,8 +3950,9 @@ function dynamicUsesAreMoveOnly(
     // `dyn.typeof`); clause bodies are ordinary statements. This is the
     // assert.js `formatIdentityFreeValue` shape, which until now fell into
     // the conservative tail and reported `param-type-not-resolvable`.
+    // (#7128) A dynamic discriminant is refused: from-ast demotes it post-claim.
     if (ts.isSwitchStatement(s)) {
-      if (!scanExpr(s.expression, isDynShaped(s.expression))) return false;
+      if (isDynShaped(s.expression) || !scanExpr(s.expression, false)) return false;
       for (const clause of s.caseBlock.clauses) {
         if (ts.isCaseClause(clause) && !scanExpr(clause.expression, isDynShaped(clause.expression))) return false;
         for (const inner of clause.statements) if (!scanStmt(inner)) return false;
