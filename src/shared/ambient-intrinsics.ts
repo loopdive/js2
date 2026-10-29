@@ -55,8 +55,10 @@ export function isAmbientIntrinsicName(name: string): boolean {
  *     `function Error() {}` the checker reports the lib declarations alone
  *     (measured, TypeScript 5.9), so the file is checked as well;
  *   - the value reaches only opaque uses — see {@link isOpaqueIntrinsicUse} —
- *     or, once the module's builtin-prototype companion is seeded, is the
- *     receiver of an exact `<Receiver>.prototype.<method>` value read (#7127,
+ *     or is the receiver of an exact `<Namespace>.<staticMethod>` value read
+ *     (#7189, {@link isExactStaticMethodValueRead}), or, once the module's
+ *     builtin-prototype companion is seeded, of an exact
+ *     `<Receiver>.prototype.<method>` value read (#7127,
  *     {@link isExactProtoMethodValueRead}).
  */
 export function isAmbientIntrinsicValueUse(
@@ -69,6 +71,7 @@ export function isAmbientIntrinsicValueUse(
     isLibOnlyBinding(node) &&
     !declaredNames(node.getSourceFile()).has(node.text) &&
     (isOpaqueIntrinsicUse(node) ||
+      isExactStaticMethodValueRead(node) ||
       (seed?.builtinProtoCompanionSeeded?.() === true && isExactProtoMethodValueRead(node)))
   );
 }
@@ -124,9 +127,13 @@ const OPAQUE: UsePosition = { kind: "opaque" };
 const MEMBER: UsePosition = { kind: "member" };
 const OTHER: UsePosition = { kind: "other" };
 
-const EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+const STRICT_EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.EqualsEqualsEqualsToken,
   ts.SyntaxKind.ExclamationEqualsEqualsToken,
+]);
+
+const EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ...STRICT_EQUALITY_OPERATORS,
   ts.SyntaxKind.EqualsEqualsToken,
   ts.SyntaxKind.ExclamationEqualsToken,
 ]);
@@ -370,13 +377,15 @@ const PROTO_METHOD_NAMES: ReadonlySet<string> = new Set([
 
 type MemberAccess = ts.PropertyAccessExpression | ts.ElementAccessExpression;
 
+/** `node` with every parenthesis that wraps it: the position its value is used in. */
+function outermostParenthesized(node: ts.Node): ts.Node {
+  while (node.parent && ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  return node;
+}
+
 function memberAccessOf(node: ts.Expression): MemberAccess | undefined {
-  let child: ts.Node = node;
-  let parent = node.parent;
-  while (parent && ts.isParenthesizedExpression(parent)) {
-    child = parent;
-    parent = parent.parent;
-  }
+  const child = outermostParenthesized(node);
+  const parent = child.parent;
   return parent !== undefined &&
     (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
     parent.expression === child
@@ -391,11 +400,9 @@ function staticMemberName(access: MemberAccess): string | undefined {
 
 /**
  * (#7127) The intrinsic itself (never an alias) is the receiver of
- * `<Receiver>.prototype.<method>`, read as a plain VALUE: not called (the
- * receiver would become `this`), not read further (`.call(x)` keeps the S1c
- * `Object.prototype.toString.call` arm and the legacy call paths), not a
- * write, `delete` or update target. The method value itself is an ordinary
- * function, so where it flows afterwards needs no tracking.
+ * `<Receiver>.prototype.<method>`, read as a plain value
+ * ({@link isPlainMethodValue}; not read further, so `.call(x)` keeps the S1c
+ * `Object.prototype.toString.call` arm and the legacy call paths).
  */
 function isExactProtoMethodValueRead(node: ts.Identifier): boolean {
   const protoAccess = memberAccessOf(node);
@@ -403,23 +410,79 @@ function isExactProtoMethodValueRead(node: ts.Identifier): boolean {
   if (staticMemberName(protoAccess) !== "prototype") return false;
   const methodAccess = memberAccessOf(protoAccess);
   const method = methodAccess && staticMemberName(methodAccess);
-  if (methodAccess === undefined || method === undefined || !PROTO_METHOD_NAMES.has(method)) return false;
+  return (
+    methodAccess !== undefined &&
+    method !== undefined &&
+    PROTO_METHOD_NAMES.has(method) &&
+    isPlainMethodValue(methodAccess)
+  );
+}
+
+/**
+ * (#7189) Static methods measured exact as `<Namespace>.<m>` values through
+ * the realm read (`dyn.member_get` off `dyn.global_object`): typeof, `name`
+ * and `length` of the value and its identity across reads answer as node on
+ * standalone and gc, and legacy's own `globalThis.<Namespace>.<m>` is
+ * identical to its static `<Namespace>.<m>` read for every entry. Left out:
+ * `Object.create` (legacy answers its `length` wrongly), data members
+ * (`Array.prototype` is #7127's) and unmeasured methods.
+ */
+const STATIC_METHOD_NAMES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["Array", new Set(["isArray", "from", "of"])],
+  [
+    "Object",
+    new Set([
+      "defineProperty",
+      "defineProperties",
+      "getOwnPropertyDescriptor",
+      "getOwnPropertyNames",
+      "getPrototypeOf",
+      "setPrototypeOf",
+      "keys",
+      "values",
+      "entries",
+      "assign",
+      "is",
+      "hasOwn",
+      "isExtensible",
+      "preventExtensions",
+      "seal",
+      "isSealed",
+      "freeze",
+      "isFrozen",
+    ]),
+  ],
+]);
+
+/**
+ * (#7189) The intrinsic itself is the receiver of `<Namespace>.<staticMethod>`
+ * read as a plain value (`var __isArray = Array.isArray`, propertyHelper.js).
+ * A CALL keeps legacy's static builtin arms (`Object.getPrototypeOf(x)` there
+ * is type-directed; the dynamic route answers primitives wrongly).
+ */
+function isExactStaticMethodValueRead(node: ts.Identifier): boolean {
+  const methods = STATIC_METHOD_NAMES.get(node.text);
+  if (methods === undefined) return false;
+  const methodAccess = memberAccessOf(node);
+  const method = methodAccess && staticMemberName(methodAccess);
+  return methodAccess !== undefined && method !== undefined && methods.has(method) && isPlainMethodValue(methodAccess);
+}
+
+/**
+ * The method read sits in a measured value position: a `var` initializer, a
+ * `typeof` / `!` operand or a strict-equality operand — where its typeof,
+ * identity, `name` and `length` were measured exact. Anything else is refused
+ * rather than reasoned about, including the right side of `=` (from-ast takes
+ * `=` only as a statement), loose equality (#7194: the carrier's `==` traps on
+ * a function operand) and coercions such as `"" + f`.
+ */
+function isPlainMethodValue(methodAccess: MemberAccess): boolean {
   if (memberAccessOf(methodAccess) !== undefined) return false;
-  let use: ts.Node = methodAccess;
-  while (use.parent && ts.isParenthesizedExpression(use.parent)) use = use.parent;
+  const use = outermostParenthesized(methodAccess);
   const parent = use.parent;
   if (parent === undefined) return false;
-  if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === use) return false;
-  if (ts.isTaggedTemplateExpression(parent) && parent.tag === use) return false;
-  if (ts.isDeleteExpression(parent) || ts.isPostfixUnaryExpression(parent)) return false;
+  if (ts.isTypeOfExpression(parent)) return true;
   if (ts.isPrefixUnaryExpression(parent)) return parent.operator === ts.SyntaxKind.ExclamationToken;
-  if (
-    ts.isBinaryExpression(parent) &&
-    parent.left === use &&
-    parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-    parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-  ) {
-    return false;
-  }
-  return !(ts.isForInStatement(parent) || ts.isForOfStatement(parent)) || parent.expression === use;
+  if (ts.isVariableDeclaration(parent)) return parent.initializer === use;
+  return ts.isBinaryExpression(parent) && STRICT_EQUALITY_OPERATORS.has(parent.operatorToken.kind);
 }

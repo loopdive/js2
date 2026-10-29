@@ -23,7 +23,8 @@ import {
   additiveOperandsProvable,
   binaryOperandsAdmissible,
   carrierHelperCall,
-  carrierHelperOperator,
+  carrierInReceiver,
+  carrierLooseOperator,
   carrierLooseEqualityAdmissible,
   carrierMethodCallAdmissible,
   carrierMemberReadAdmissible,
@@ -55,11 +56,11 @@ export interface PlannedClosureFamilySources {
   ) => "number" | "boolean" | "string" | "reference" | "nullish" | undefined;
   /** The checker's declared primitive family (a call to a JSDoc-typed function, a module binding, …). */
   readonly declaredFamily?: (expr: ts.Expression) => IrDeclaredPrimitiveExpressionFamily | undefined;
-  /** (#7113) The lane binds the carrier's loose-equality / `in` helpers in a prepared component. */
+  /** (#7113, #7193) The lane binds the carrier's `String` / `in` helpers in a prepared component. */
   readonly preparedDynamicHelpers?: boolean;
   /** (#7113, #7177) The lane's dynamic member read handles string and vec receivers. */
   readonly nativeDynamicMemberRead?: boolean;
-  /** (#7113, #7178) The lane's loose equality ToPrimitives an object carrier without trapping. */
+  /** (#7113, #7193) The lane admits a carrier loose `==` / `!=` in a planned closure. */
   readonly nativeDynamicLooseEquality?: boolean;
   /** (#7113) The lane plans a direct call to a module function from a planned closure. */
   readonly directCalls?: boolean;
@@ -437,8 +438,7 @@ export function plannedClosureOperandRefusal(
       return compoundWriteAdmissible(op, slot, value) ? null : { arm: "closure-compound-write", node: expr };
     }
     if (op === ts.SyntaxKind.InKeyword) {
-      return sources.preparedDynamicHelpers ||
-        !carrierHelperOperator(op, operandProof(expr.left).family, operandProof(expr.right).family)
+      return sources.preparedDynamicHelpers || !carrierInReceiver(operandProof(expr.right).family)
         ? null
         : { arm: "closure-carrier-helper-operator", node: expr };
     }
@@ -470,18 +470,10 @@ export function plannedClosureOperandRefusal(
     const right = unwrapParens(expr.right);
     const leftProof = operandProof(left);
     const rightProof = operandProof(right);
-    if (!sources.preparedDynamicHelpers && carrierHelperOperator(op, leftProof.family, rightProof.family)) {
+    if (!sources.nativeDynamicLooseEquality && carrierLooseOperator(op, leftProof.family, rightProof.family)) {
       return { arm: "closure-carrier-helper-operator", node: expr };
     }
-    if (
-      !carrierLooseEqualityAdmissible(
-        op,
-        leftProof.family,
-        rightProof.family,
-        sources.nativeDynamicLooseEquality === true,
-      ) &&
-      isNewShape()
-    ) {
+    if (!carrierLooseEqualityAdmissible(op, leftProof.family, rightProof.family) && isNewShape()) {
       return { arm: "closure-carrier-loose-equality", node: expr };
     }
     if (op === ts.SyntaxKind.PlusToken && !additiveOperandsProvable(leftProof.additive, rightProof.additive)) {
@@ -492,11 +484,11 @@ export function plannedClosureOperandRefusal(
       : { arm: "closure-binary-operands", node: expr };
   };
 
-  // (#7113, #7177) A shape main never planned — a closure that mints a joined
-  // carrier (`var r = m ? m : 1`) or a throw-only body (the void plan of an
-  // oracle-`never` return). The carrier reads / calls with a known IR bug are
-  // kept out of these new claims; the closures main already claims keep their
-  // behaviour until #7177 lands.
+  // (#7113, #7177, #7195) A shape main never planned — a call-argument
+  // closure, a closure that mints a joined carrier (`var r = m ? m : 1`) or a
+  // throw-only body (the void plan of an oracle-`never` return). The carrier
+  // reads / calls with a known IR bug are kept out of these new claims; the
+  // closures main already claims keep their behaviour until #7177 lands.
   let newShape: boolean | undefined;
   const isNewShape = (): boolean => {
     if (newShape !== undefined) return newShape;
@@ -510,7 +502,7 @@ export function plannedClosureOperandRefusal(
       statements.length > 0 &&
       ts.isThrowStatement(statements[statements.length - 1]!) &&
       !walk(body!, ts.isReturnStatement);
-    newShape = mintsJoin || throwOnly;
+    newShape = plan.site === "call-argument" || mintsJoin || throwOnly;
     return newShape;
   };
 

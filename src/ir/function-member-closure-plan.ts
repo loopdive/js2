@@ -9,6 +9,8 @@ export interface IrFunctionMemberClosurePlan {
   readonly expression: ts.FunctionExpression;
   readonly ownerUnitId: IrUnitId;
   readonly sourceUnitId: IrUnitId;
+  /** (#7195) `F.m = function () {}`, or a callback argument of a top-level `F.m(…)` call. */
+  readonly site: "member-assignment" | "call-argument";
   /** Actual canonical wrapper ABI, including raw externref user slots. */
   readonly signature: IrClosureSignature;
   /** Only these exact raw parameters acquire logical dynamic SSA at entry. */

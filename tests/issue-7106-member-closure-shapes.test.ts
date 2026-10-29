@@ -587,12 +587,6 @@ export function run() {
       1,
     ],
     [
-      "`in` on the dynamic parameter",
-      `function (m) { if ("a" in m) throw "i"; throw m; }`,
-      `try { subject.f({ a: 1 }); } catch (e) { if (e === "i") n += 1; }`,
-      1,
-    ],
-    [
       "a regex literal",
       `function (m) { var re = /a/; throw m; }`,
       `try { subject.f(2); } catch (e) { if (e === 2) n += 1; }`,
@@ -789,15 +783,11 @@ export function run() { var n = 0; ${inputs
     expect(await runOnLane(result, "wasi")).toBe(node(source));
   }, 60_000);
 
-  it("refuses `String(<carrier>)` at select on standalone and gc", async () => {
+  it("claims `String(<carrier>)` on standalone and gc (#7193)", async () => {
     const source = program(`var r = m ? m : 1; throw String(r);`, [...ARRAYS, ...STRINGS]);
     for (const lane of ["standalone", "gc"] as const) {
       const result = await compile(source, { ...OPTIONS, target: lane });
-      expect(initRow(result)).toMatchObject({
-        irBodyEmitted: false,
-        stage: "select",
-        code: "operand-coercion-unsupported",
-      });
+      expect(initRow(result)).toMatchObject({ irBodyEmitted: true, legacyBodyEmitted: false });
       expect(await runOnLane(result, lane)).toBe(node(source));
     }
   }, 60_000);

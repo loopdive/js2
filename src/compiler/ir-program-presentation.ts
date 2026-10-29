@@ -31,6 +31,7 @@ import {
   irNumberRemainderCallableDeclaration,
 } from "../ir/runtime/number-remainder-callables.js";
 import type { RuntimeProviderDefinition } from "../ir/runtime/contracts/manifest.js";
+import { releaseOwnedFunctions } from "../wasm/physical/owned-function-data.js";
 
 export interface IrProgramPresentationRequest {
   readonly preparation: IrWholeProgramPreparationInput;
@@ -1539,7 +1540,7 @@ export function beginPreparedPresentationFinalization(
   const { plan, original } = record;
   for (const row of original) verifyDataObservation(row);
   if (emittedPhysicalSetupPlan(presentation.emission) !== plan) finalizationFailure("invalid-presentation");
-  const outputModule = copyModuleData(presentation.emission.module);
+  const outputModule = copyModuleData(releaseOwnedFunctions(presentation.emission.module));
   const token = Object.freeze({ outputModule });
   finalizations.set(token, {
     presentation,

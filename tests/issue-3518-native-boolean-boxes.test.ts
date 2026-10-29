@@ -224,11 +224,16 @@ describe("native Boolean BOX preserves the signed legacy recipe", () => {
     const s = fill();
     expect(() => fillNativeBooleanBoxResources(s.tx, s.pack)).toThrow("duplicate");
   });
-  it("rejects altered completed body", () => {
+  it("prevents altering the completed owned body", () => {
     const s = fill();
     complete(s);
-    s.pack.boxBoolean.object.body[0] = { op: "i32.const", value: 0 };
-    expect(() => complete(s)).toThrow("altered");
+    const before = emitBinary(s.module);
+    expect(() => {
+      s.pack.boxBoolean.object.body[0] = { op: "i32.const", value: 0 };
+    }).toThrow(TypeError);
+    complete(s);
+    expect(emitBinary(s.module)).toEqual(before);
+    expect(Object.isFrozen(s.pack.boxBoolean.object.body)).toBe(true);
   });
   for (const part of ["init", "mutable", "type"] as const)
     it(`rejects altered completed ${part} of Boolean singleton`, () => {

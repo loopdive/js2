@@ -51,8 +51,10 @@ import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { compileStringLiteral } from "./string-ops.js";
 
+import { CONSOLE_METHODS as STANDALONE_CONSOLE_METHODS } from "../shared/contracts/console-output.js";
+
 /** The console methods the direct-call lowering (`compileConsoleCall`) serves. */
-export const STANDALONE_CONSOLE_METHODS = ["log", "warn", "error", "info", "debug"] as const;
+export { STANDALONE_CONSOLE_METHODS };
 
 const METHOD_FN = "__standalone_console_method";
 const OBJECT_FN = "__standalone_console_object";
