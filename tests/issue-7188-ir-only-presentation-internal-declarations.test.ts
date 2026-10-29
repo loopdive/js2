@@ -57,14 +57,19 @@ describe("#7188 S1 internal declarations in the strict prepared presentation", (
     expect(messages(result)).toContain("complete synchronous numeric or Boolean function declarations are required");
   });
 
-  it("refuses an export that targets an internal declaration", async () => {
-    const result = await compile("function id(x) { return x; }\nexport { id };\n", {
-      ...options,
-      fileName: "entry.ts",
-    });
-    expect(result.success).toBe(false);
-    expect(requiredPreparedEmission(result)).toBeUndefined();
-  });
+  it.each(["export { u };", "export { u as alias };", "export default u;"])(
+    "refuses an export that targets an internal declaration: %s",
+    async (exportClause) => {
+      forbidDirectGenerators();
+      const result = await compile(
+        `function u() { return undefined; }\nexport function main(): number { u(); return 1; }\n${exportClause}\n`,
+        { ...options, fileName: "entry.ts" },
+      );
+      expect(result.success).toBe(false);
+      expect(messages(result)).toContain("source unit, export ABI and actual function-space export must join exactly");
+      expect(requiredPreparedEmission(result)).toBeUndefined();
+    },
+  );
 
   it("leaves numeric-only programs on the host contract", async () => {
     forbidDirectGenerators();

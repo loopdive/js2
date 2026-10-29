@@ -17,11 +17,14 @@ sprint: current
 parent: 7106
 related: [7142, 3518, 3525, 3527]
 loc-budget-allow:
-  # 2026-10-29 (#7188 S1): +8 lines in a file already over the threshold
-  # (1,604). The `boundary` field and its doc line, the hoisted `exported`,
-  # the `internal` predicate and prettier's wrap of the existing refusal
-  # condition. The internal capture reuses the existing declaration push and
-  # both join guards are one-for-one line swaps, so nothing here can move out.
+  # 2026-10-29 (#7188 S1, after review): +4 lines in a file already over the
+  # threshold (1,604). `DeclarationCapture` becomes a `PrimitiveDeclaration |
+  # InternalDeclaration` union (two doc lines, the internal arm, the union
+  # alias) plus the shared `promiseResult` predicate; the capture, the two
+  # join guards and the readers were narrowed in place and two existing gap
+  # objects collapsed, which pays for most of it. The union is the review's
+  # point (the type checker forces every slot reader to narrow), so it cannot
+  # move out of the file that owns the capture.
   - src/compiler/ir-program-presentation.ts
 ---
 
@@ -65,7 +68,7 @@ Fast repro loop: the strict wrapper `compile` in
 
 - **S1 — internal declarations (this PR).** A synchronous non-exported
   function whose slots are not number/Boolean has no host boundary. Capture it
-  as `boundary: "internal"` (no slots); the slot/ABI join skips it; an export
+  as `slots: "none"` (no slot fields at all); the slot/ABI join skips it; an export
   that targets it is refused at the export join, so the gate stays fail-closed.
   Exported declarations keep the primitive host contract unchanged.
 - **S2 — untyped parameter contracts.** `src/ir/program-source.ts:1432`
@@ -84,13 +87,26 @@ boundary; no parallel presentation path, no second classifier.
 
 ## S1 result (2026-10-29)
 
-- `ir-program-presentation.ts`: `DeclarationCapture.boundary` (`host` |
-  `internal`), the capture branch, the signature-join and export-join guards.
-- `tests/issue-7188-ir-only-presentation-internal-declarations.test.ts` 4/4:
+- `ir-program-presentation.ts`: `DeclarationCapture` is a discriminated union
+  on `slots`. `"primitive"` (`PrimitiveDeclaration`) carries `params`,
+  `results`, `witParamNames?`, `fulfillment?`; `"none"`
+  (`InternalDeclaration`) carries only the source location and name, so every
+  slot reader (signature join, export join, `booleanExportSignature`,
+  `captureWitExport`, `promiseContractMatches`, `mixed`, `checkMixedDemand`)
+  must narrow before it can read a slot. A non-exported all-number helper is
+  `"primitive"`.
+- `tests/issue-7188-ir-only-presentation-internal-declarations.test.ts` 6/6:
   an untyped helper behind a numeric export is presented and **runs**
   (`main() === 4`) with every direct generator forbidden; an exported untyped
-  function is still refused; `export { id }` of an internal helper is refused;
-  a numeric-only program is unchanged.
+  function is still refused; `export { u }`, `export { u as alias }` and
+  `export default u` of an internal helper that `main` calls are refused at
+  the export join with its exact message (mutation-checked: reverting that
+  guard to `!declaration` fails all three); a numeric-only program is
+  unchanged.
+- Residual (pre-existing, not changed here): the `exported` predicate is true
+  for `export function` inside a `namespace`, so such a member is refused as
+  if it were a module export. That fails closed, but S4 must not reuse the
+  predicate as written for top-level `var` exports.
 - Probe programs: `function id(x){return x}` + numeric export goes from refused
   to prepared (126 B). The next refusals are S2/S3 above.
 
