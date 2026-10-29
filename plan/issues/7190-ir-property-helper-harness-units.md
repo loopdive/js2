@@ -149,3 +149,16 @@ Per-unit census, standalone, `built-ins/Boolean/prop-desc.js`:
 
 `tests/issue-7190-*`: head 19/19; base fails exactly the two IR-unit checks,
 all runtime checks pass on both.
+
+Scoped standalone test262 A/B (`TEST262_TARGET=standalone`, one chunk per
+directory, base = `origin/main` `cb3ff519`, head = this branch; each side with
+its own compiler bundle):
+
+| dir | files | pass base → head | pass→fail | Σ `ir_legacy_units` base → head | files with fewer / more legacy units |
+| --- | --- | --- | --- | --- | --- |
+| `built-ins/Boolean` | 51 | 49 → 49 | 0 | 175 → 148 | 7 / 0 |
+| `built-ins/Math` | 327 | 308 → 308 | 0 | 2012 → 1530 | 121 / 0 |
+
+`ir_only_pass` stays 0 in both directories on both sides: ten propertyHelper
+units are still legacy (see the ranking), so no file that includes
+propertyHelper.js reaches zero yet.
