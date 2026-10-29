@@ -1975,11 +1975,7 @@ export function lowerFunctionAstToIr(
   if (cx.argumentsLength) cx.argumentsLength.value = builder.emitDynArgumentsLength(fn.parameters.length);
   // (#7106 S3c) OrdinaryCallBindThis binds `this` once, at entry.
   if (options.ambientThisStrict !== undefined && ts.isFunctionDeclaration(fn) && !options.moduleInitUnit) {
-    scope.set("this", {
-      kind: "local",
-      value: builder.emitDynCurrentThis(options.ambientThisStrict),
-      type: irDynamic(),
-    });
+    bindEntryThis(scope, builder, options.ambientThisStrict);
   }
   if (stmts.length === 0 && emptyVoidBody) terminateImplicitSourceReturn(cx, []);
   else lowerStatementList(stmts, cx);
@@ -2933,6 +2929,15 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
  *     route through the slot — this preserves the cross-iteration value
  *     semantics without requiring SSA phi nodes.
  */
+/**
+ * (#7106) OrdinaryCallBindThis: bind `this` once at entry through
+ * `dyn.current_this` — the receiver the caller installed, else legacy's
+ * unbound answer for this strictness.
+ */
+function bindEntryThis(scope: Map<string, ScopeBinding>, builder: IrFunctionBuilder, strict: boolean): void {
+  scope.set("this", { kind: "local", value: builder.emitDynCurrentThis(strict), type: irDynamic() });
+}
+
 type ScopeBinding =
   | { kind: "local"; value: IrValueId; type: IrType; stringEncoding?: Encoding }
   | {
@@ -15074,6 +15079,11 @@ function peelParensExpr(e: ts.Expression): ts.Expression {
 
 function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   const candidate = peelParensExpr(expr);
+  // (#7106 Stage 4) A `this` bound through `dyn.current_this` is the carrier.
+  if (candidate.kind === ts.SyntaxKind.ThisKeyword) {
+    const binding = cx.scope.get("this");
+    return binding?.kind === "local" && binding.type.kind === "dynamic";
+  }
   if (ts.isIdentifier(candidate)) {
     const binding = cx.scope.get(candidate.text);
     if (!binding) return false;
@@ -15086,6 +15096,9 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   }
   if (ts.isCallExpression(candidate)) {
     if (ts.isIdentifier(candidate.expression)) {
+      // (#7106 Stage 4) A call THROUGH a dynamic binding (`format(actual)`)
+      // returns whatever the called value returns: the carrier.
+      if (cx.scope.has(candidate.expression.text)) return expressionProducesDynamic(candidate.expression, cx);
       return cx.calleeTypes?.get(candidate.expression.text)?.returnType?.kind === "dynamic";
     }
     return (
@@ -17186,6 +17199,13 @@ function liftClosureBody(
       };
       if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, bindParameter);
       else bindParameter();
+    }
+    // (#7106 Stage 4) The lifted closure binds its own `this` at entry too.
+    const thisStrict = functionMemberClosure.thisStrict;
+    if (thisStrict !== undefined) {
+      const bindThis = (): void => bindEntryThis(scope, builder, thisStrict);
+      if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", expr, bindThis);
+      else bindThis();
     }
     // (#7106 Stage 4) A reassigned parameter (`message += ' '` in assert.js's
     // `sameValue`) reads through mutable storage, seeded from its entry value
