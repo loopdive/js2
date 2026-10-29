@@ -61,6 +61,18 @@ the duplicates #4495 did not fold.
    - Some variants also strip TS wrappers (`as`, `!`, `<T>`), so they are
      two helpers, not one.
 
+3. **Nested patterns under a non-literal source over-widen** (round-3 review, nit 3).
+   - `pushTarget` collapses a nested pattern under a non-literal source to
+     `unknown` (`collectPatternWrites(…, source.kind === "value" ? … : undefined)`
+     in `binding-writes.ts`).
+   - So an unannotated `.ts` local `var x=0; var aa=[[1]]; [[x]]=aa` widens
+     from f64 to externref. The standalone binary grows from 32,985 B to
+     92,676 B, because the dynamic runtime gets linked in.
+   - This is the 2/2,033 census case #4495 acknowledged.
+   - **Fix:** carry an index path on the `element` / `property` source, e.g.
+     `{ kind: "element", iterable, depth }`, so that `identifierWriteFact`
+     descends through `array` / `tuple` facts.
+
 ## Implementation Plan (sketch)
 
 - **Where.** A generic AST helper module in `src/shared/`, for example

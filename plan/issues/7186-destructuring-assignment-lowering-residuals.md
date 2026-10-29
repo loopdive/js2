@@ -35,11 +35,25 @@ function, with node as the oracle.
 | E: rest from a tuple source | `var s='s', q='q'; [[s], ...q] = [[1], 2]; q[0]` | `2` | wrong, 4/4 |
 | E: rest element type from the pattern | `var a='a', r=[]; [a, ...r] = [1, 'x', true]; r[0]` | `x` | `NaN`, 4/4 |
 | E: numeric slot, short source | `var a=1, b=2; [a, b] = [3]; ''+b` | `undefined` | `NaN`, 4/4 |
+| C: object-pattern default | `var r='r'; ({r=5}={}); r===5` | `true` | wrong, 4/4 |
+| D: parenthesised target (plain JS) | `var r='r'; [(r)]=[id(1)]; typeof r` | `number` | wrong, 4/4 |
+| E: object rest into a primitive slot | `var r='r'; ({...r}=id({a:1})); typeof r` (also `var r=1`) | `object` | wrong, 4/4 |
+| E: object rest, literal source | `var r='r'; ({...r}={a:1}); typeof r` | `object` | illegal cast, 4/4 |
+| E: spread source with element and rest | `var a=0,b=[]; [a,...b]=[...[1,2],3]; b.length` | `2` | wrong, 4/4 |
 | hole marker ToString | `var x=[1,,]; var b=x[1]; ''+b` | `undefined` | wrong at module scope |
 
+- **Round-3 additions.** These rows came from the round-3 review (nit 1).
+  They are wrong on base and head alike.
+  - **C, object form:** probably the same root cause as the array form.
+    Acceptance covers both.
+  - **D, parentheses:** the write enumerator sees through them
+    (`skipOuterExpressions`), but the lowering does not.
+  - **E, object rest:** the analysis tags the write `rest` (object) and
+    widens, so the gap is in the store or the read.
+  - **E, spread source:** the same pattern without the spread is right.
 - **C.** The default expression is compiled against the pattern's element
   type, not the target's slot.
-- **D.** The `!` and `as` wrappers are not unwrapped when the write target is resolved.
+- **D.** The `!`, `as` and parenthesis wrappers are not unwrapped when the write target is resolved.
 - **E, tuple rest.** `compileArrayDestructuringAssignment` skips a rest from
   a tuple source ("Rest on tuples is not supported").
 - **E, rest element type.** `destructuring-source-literal.ts` deliberately

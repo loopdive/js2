@@ -44,6 +44,12 @@ global, such as from a function, sees the initializer:
   `resolveModuleAwareIdentifierWriteTarget` / `currentSourceModuleGlobalIndex`.
   That is the resolution destructuring assignment already uses (`assignment.ts`).
   Do not allocate a fresh local.
+- **One resolution order (round-3 review, nit 6).** After #4495, the rest arm in
+  `assignment.ts` resolves the local first, then the module global; before, it
+  took the durable global first inside `moduleInitChunk`. At module scope a
+  stray `__module_init` local, such as the for-of head's, would win. That does
+  not happen today. Settle on one order for every destructuring target when
+  this lands.
 - **Reuse.** Use the shared write-target resolver; do not add a module-global
   special case in the loop lowering.
 - **Acceptance.**

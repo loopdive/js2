@@ -227,6 +227,11 @@ export function moduleGlobalIsDynamicButStaticallyPrimitive(ctx: CodegenContext,
  * externref slot keeps its initializer's checker type just the same, so a
  * static `typeof x` fold would report that type forever. A local a closure
  * writes lives in a ref cell; its slot is the cell's value type.
+ *
+ * The local branch does not consult the checker type: every carrier the
+ * mixed-assignment analysis left on externref outgrows it, whether that type
+ * is a primitive or an object (an object carrier's closed struct type is just
+ * as stale), so dispatching on it is exactly as unsafe.
  */
 export function slotIsDynamicButStaticallyPrimitive(
   ctx: CodegenContext,
