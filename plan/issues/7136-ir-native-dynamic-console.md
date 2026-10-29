@@ -20,6 +20,20 @@ import-cycles-allow:
 loc-budget-allow:
   # 2026-10-22: +1 import, shared five-method demand contract.
   - src/codegen/wasi.ts
+  # 2026-10-29 (review, #6961): the pre-claim native-i32 operand refusal. The
+  # predicate lives in ir/analysis/operand-admissibility.ts; what stays is the
+  # selection option (select.ts: doc + field, the 3-line arm, the import) and
+  # its codegen wiring (index.ts: import, re-export, option line). The option
+  # and the arm belong to the selector and the planner that owns its options.
+  - src/ir/select.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  # 2026-10-29 (review, #6961): +3 for the refusal arm in the expression walk,
+  # and +1 per selection-option builder for `isNativeI32FieldRead` (the
+  # production planner and its compatibility twin must offer the same table).
+  - src/ir/select.ts::isPhase1Expr
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
 ---
 
 ## Problem
@@ -175,16 +189,25 @@ files pass 84/84; the six console-touching equivalence files pass 92/92. The two
 
 ## Review round, 2026-10-29
 
-- **Claim never turns legacy-compilable into a CE.** With the WASI console
-  claim, `type i32 = number; class C { v: i32 = … } … c.v = c.v + 1` reached
-  `lowerBinary` with an `i32` field read against an `f64` literal and threw the
-  "Phase 1 requires matching operand types" invariant. Widening the `i32` to
-  f64 is not a fix: legacy computes it in wrapping i32 arithmetic
-  (`-2147483648`), while f64-add-then-store saturates (`2147483647`). The
-  i32-vs-f64 mismatch now demotes to legacy as a capability gap, like the
-  packed i8/i16 case beside it. Witness: `issue-7136` "falls back, rather than
-  failing" on standalone and WASI. Native i32 arithmetic in the IR is the
-  open follow-up.
+- **Claim never turns legacy-compilable into a CE — refused before the claim.**
+  With the WASI console claim, `type i32 = number; class C { v: i32 = … } …
+  c.v = c.v + 1` reached `lowerBinary` with an `i32` field read against an
+  `f64` literal and threw the "Phase 1 requires matching operand types"
+  invariant. The selector now judges a native-i32 class-field read
+  (`isNativeI32FieldRead`, checker-backed via `nativeTypeOfDeclaration`) as an
+  `int32` operand through the shared `binaryOperandsAdmissible`
+  (`nativeI32OperandsAdmissible`), so `+ - * / %` against a number, and any
+  mixed equality/relational, stay on legacy before any claim (no post-claim
+  demotion; the general binary gate keeps its invariant). Widening to f64 is
+  not a fix: legacy computes `c.v + 1` in wrapping i32 arithmetic
+  (`-2147483648`) and f64-add-then-store saturates (`2147483647`). Witness:
+  `issue-7136` "refuses a native i32 field read inside f64 arithmetic before
+  the claim" (wasi + standalone; empty `irPostClaimErrors`). Native i32
+  arithmetic in the IR is the follow-up.
+- **gc change disclosed:** `class C { v: i32 = 5; inc(): i32 { return this.v
+  + 1; } }` was a gc compile error (IR claimed `C_inc`, then threw); the
+  pre-claim refusal now leaves it on legacy, so it compiles. Every other probe
+  and playground example is gc byte-identical.
 - **Byte changes, restated:** gc is identical; standalone and WASI change
   wherever a dynamic `console.log(v: any)` is newly claimed (not only WASI
   `classes.ts`/`algorithms.ts`). Every changed binary the review ran prints the

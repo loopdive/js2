@@ -182,12 +182,13 @@ for (const target of ["standalone", "wasi"] as const) {
       expect(stdout).toBe("4294967295\n");
     });
 
-    it("falls back, rather than failing, for a native i32 field read inside f64 arithmetic", async () => {
+    it("refuses a native i32 field read inside f64 arithmetic before the claim", async () => {
       const source = `type i32 = number; class C { v: i32 = 2147483647; }
         export function main(): void { const c = new C(); c.v = c.v + 1; console.log(c.v); }`;
       const legacy = await execute(source, target, false, "main");
       const ir = await execute(source, target, true, "main");
       expect(ir.result.irOutcomes?.find((o) => o.displayName === "main")).toMatchObject({ irBodyEmitted: false });
+      expect(ir.result.irPostClaimErrors ?? []).toEqual([]);
       expect(ir.stdout).toBe(legacy.stdout);
       expect(ir.stdout).toBe("-2147483648\n");
     });
