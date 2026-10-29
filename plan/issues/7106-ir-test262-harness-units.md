@@ -94,6 +94,9 @@ loc-budget-allow:
   - src/codegen/builtin-value-read.ts
   # 2026-10-22 (lever B): one provider-id set spread in the manifest registry
   - src/ir/runtime/manifest.ts
+  # 2026-10-29 (#6972 merge-queue root cause C): `activeBufferBranched`, the
+  # buffer-end query the shared body-statement lister stops on (from-ast.ts
+  # nets -1: two inline guards folded into it)
   - src/ir/builder.ts
   - src/ir/core/nodes.ts
   - src/ir/core/dialect/js.ts
@@ -2008,3 +2011,31 @@ an issue of its own when one is allocated.
    receiver at the call site. Affects `indexOf`, `lastIndexOf`, `includes`
    and `concat`; `tests/issue-7106-borrow-nullish-receiver.test.ts` pins the
    gap as the IR-vs-legacy exception.
+
+## Dead code after break/continue in a nested statement list (2026-10-29, #6972 merge-queue root cause C)
+
+**Symptom.** ES5 rows `S12.14_A9_T5` / `S12.14_A10_T5`
+(`catch (e) { c -= 1; continue; throw new Test262Error(…); } finally { … }`
+in a loop) failed to compile on standalone with `br.label must be the last
+instruction in its buffer`, once #6972 put their `<module-init>` on IR.
+
+**Root cause: a latent producer bug, not module-init specific.** The verifier
+requires `br.label` to end its buffer, and `lowerStmt` honoured that only for
+a direct `break`/`continue` in a block or switch clause, by statement kind.
+Two gaps on main, both reachable from ordinary IR-claimed function bodies
+(compile error on gc and standalone alike, measured on `8de8a22511`):
+
+- try / catch / finally bodies had no guard at all;
+- a break/continue inside a plain block is lowered inline into the enclosing
+  buffer, so the enclosing list kept emitting after it
+  (`{ f += 1; continue; } i += 100;`, a `case 1: { …; break; } …` clause).
+
+**Fix.** `lowerBodyStatements` (from-ast.ts) is the one nested-list lowerer
+for blocks, `with` bodies, switch clauses and try/catch/finally bodies. It
+stops when `builder.activeBufferBranched()` reports that the buffer already
+ends in `br.label`. Reading the emitted instruction instead of the statement
+kind covers the inline-block case, and it folds the two inline guards into the
+one helper. Only programs that previously failed verification change output.
+`tests/issue-7106-break-continue-dead-code.test.ts` covers both test262 shapes
+(IR `<module-init>`, counters matched against node) and seven function-body
+shapes on standalone and host.
