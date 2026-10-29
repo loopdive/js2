@@ -65,6 +65,8 @@ export interface PlannedClosureFamilySources {
   readonly directCalls?: boolean;
   /** (#7113) `undefined` here is the global (no module or enclosing binding shadows it). */
   readonly isGlobalUndefined?: (expr: ts.Expression) => boolean;
+  /** (#7115) The never-written `var x = F.member;` locals: each holds the carrier for its whole life. */
+  readonly functionObjectReadLocals?: ReadonlySet<string>;
 }
 
 /** The refused operator / write; selection reports it as `operand-coercion-unsupported`. */
@@ -274,7 +276,7 @@ export function plannedClosureOperandRefusal(
       if (dynamicParameterNames.has(name)) return DYNAMIC;
       return numericParameterNames.has(name) ? NUMBER : UNKNOWN;
     }
-    if (local === "carrier" || local === null) return DYNAMIC;
+    if (local === "carrier" || local === null || sources.functionObjectReadLocals?.has(name)) return DYNAMIC;
     if (resolving.has(name)) return UNKNOWN;
     resolving.add(name);
     try {
@@ -300,9 +302,18 @@ export function plannedClosureOperandRefusal(
     }
   };
 
+  // A call through a dynamic parameter or function-object read local
+  // (`dynamicValueCallTarget`): its arguments are boxed and its result is the
+  // carrier (`expressionProducesDynamic` follows the callee binding).
+  const callsThroughCarrier = (name: string): boolean =>
+    (parameterNames.has(name) || sources.functionObjectReadLocals?.has(name) === true) &&
+    slotProof(name).family === "dynamic";
+
   const operandProof = (raw: ts.Expression): OperandProof => {
     const expr = unwrapParens(raw);
     if (ts.isIdentifier(expr) && isClosureSlot(expr.text)) return slotProof(expr.text);
+    // (#7115) A plan whose body reads `this` binds it at entry through `dyn.current_this`.
+    if (expr.kind === ts.SyntaxKind.ThisKeyword) return DYNAMIC;
     // (#7113) The unshadowed global `undefined` lowers to the carrier's
     // `dyn.undefined` on the host-free lanes that mint a plan.
     if (ts.isIdentifier(expr) && expr.text === "undefined" && isGlobalUndefined(expr)) {
@@ -351,14 +362,10 @@ export function plannedClosureOperandRefusal(
     }
     if (ts.isCallExpression(expr)) {
       const callee = unwrapParens(expr.expression);
-      // A method call on the carrier is the carrier; a call THROUGH a dynamic
-      // value is a carrier the `+` proof cannot see (`expressionProducesDynamic`
-      // reads only a planned callee's return type).
+      // A method call on the carrier, or a call through it, is the carrier.
       if (ts.isPropertyAccessExpression(callee) && operandProof(callee.expression).additive === "dynamic")
         return DYNAMIC;
-      if (ts.isIdentifier(callee) && slotProof(callee.text).family === "dynamic" && parameterNames.has(callee.text)) {
-        return { family: "dynamic", additive: "unprovable" };
-      }
+      if (ts.isIdentifier(callee) && callsThroughCarrier(callee.text)) return DYNAMIC;
       return declared(expr);
     }
     if (
@@ -532,7 +539,7 @@ export function plannedClosureOperandRefusal(
     }
     const throughCarrier = ts.isPropertyAccessExpression(callee)
       ? operandProof(callee.expression).family === "dynamic"
-      : ts.isIdentifier(callee) && parameterNames.has(callee.text) && slotProof(callee.text).family === "dynamic";
+      : ts.isIdentifier(callee) && callsThroughCarrier(callee.text);
     if (!throughCarrier) return null;
     const argument = expr.arguments.find((arg) => !dynamicCallArgumentAdmissible(operandProof(arg).family));
     return argument === undefined ? null : { arm: "closure-dynamic-call-argument", node: argument };
