@@ -1,7 +1,8 @@
 ---
 id: 7193
 title: "IR: bind the carrier's String / in helpers in prepared components on standalone (prepared-dynamic-helper-abi)"
-status: in-progress
+status: done
+completed: 2026-10-29
 sprint: current
 created: 2026-10-29
 updated: 2026-10-29
@@ -12,13 +13,8 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 parent: 7106
-related: [7113, 5297]
+related: [7113, 5297, 7194]
 assignee: "ttraenkler/js2-17"
-# 2026-10-29 (#7193): select.ts +3 — the `prepared-carrier-loose-equality`
-# member of the inline capability union (kept independent of legality.ts by
-# design, #3529 P1) and the one selection-option read beside its sibling.
-loc-budget-allow:
-  - src/ir/select.ts
 ---
 
 # IR: bind the carrier's String / in helpers in prepared components on standalone
@@ -85,11 +81,19 @@ arm performs:
 - `[2] != "2"` answers `true`.
 
 The same bug exists on origin/main for an ordinary standalone IR function
-(`function g(m: any) { return m == 2 }` traps). So loose equality gets its own
-capability, `prepared-carrier-loose-equality`, which stays WASI-only (exactly
-the old behaviour). The walk reads it at the only site a loose operator reaches
-(`in` returns earlier). No `__extern_loose_eq` binding is added: nothing would
-reach it.
+(`function g(m: any) { return m == 2 }` traps). Review measured the WASI helper
+unsound as well ([#7194](./7194-carrier-loose-equality-toprimitive.md)). So
+carrier loose equality stays exactly as on main, under ONE capability: the
+existing `native-dynamic-loose-equality`, re-scoped to WASI-only with a comment
+that states it is unsound on every lane. It now drives the loose refusal in the
+walk, which was previously driven by `prepared-dynamic-helper-abi`.
+
+Standalone keeps refusing, and WASI keeps its claim and its string-only rule.
+That rule is in `carrierLooseEqualityAdmissible`, which drops the flag
+parameter: on standalone the flag was `true` but unreachable. No
+`__extern_loose_eq` binding is added, because nothing would reach it. The
+shared `carrierHelperOperator` predicate splits into `carrierInReceiver` and
+`carrierLooseOperator`, one per gate.
 
 **Duplicate removed.** The `Undefined`-only tag.test branch is replaced by the
 table; no new predicate or arm is added.
@@ -107,16 +111,13 @@ table; no new predicate or arm is added.
 - Code quality: no new arm, no new helper, no dead parameter. One table
   replaces a special case.
 
-## Follow-ups (need ids — `claim-issue.mjs --allocate` had no open-PR scan in this container)
+## Follow-ups
 
-1. Standalone `__extern_loose_eq` must ToPrimitive an object operand like
-   legacy's inline loose equality (`src/codegen/any-helpers.ts`
-   `ensureExternLooseEqHelper`). Once fixed, flip
-   `prepared-carrier-loose-equality` (and re-check
-   `native-dynamic-loose-equality`, whose standalone claim is false today).
-2. IR `"" + <carrier holding a Symbol>` answers `"Symbol()"` instead of
+1. [#7194](./7194-carrier-loose-equality-toprimitive.md): carrier loose
+   `==` / `!=` skips ToPrimitive on standalone and WASI.
+2. (no id yet) IR `"" + <carrier holding a Symbol>` answers `"Symbol()"` instead of
    throwing a TypeError (pre-existing on origin/main; legacy throws).
-3. Cleanup (review nit): `exactPreparedDynamicHelperRef` and its helper-name
+3. (no id yet) Cleanup (review nit): `exactPreparedDynamicHelperRef` and its helper-name
    union live in `compiler-timer-shim-preparation.ts` with a timer-shim name
    (`PreparedTimerDynamicHelperName`) but serve every prepared dynamic unit.
    Move them next to `prepared-dynamic-support.ts`. That is its own change,

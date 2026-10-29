@@ -186,7 +186,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
     let nameable = true;
     const bindExact = (
       instr: IrInstr,
-      name: Parameters<typeof exactPreparedDynamicHelperRef>[2],
+      name: PreparedDynamicHelperName,
       params: readonly ValType[],
       results: readonly ValType[],
     ): void => {
@@ -208,7 +208,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             carrierValType.kind === "externref" &&
             instr.kind === "dyn.arguments_length"
           ) {
-            bindExact(instr, "__ir_arguments_length", [{ kind: "i32" }], [{ kind: "f64" }]);
+            bindExact(instr, "__ir_arguments_length", [I32], [{ kind: "f64" }]);
             return;
           }
           // The certified function-object producer uses the existing native
@@ -326,7 +326,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
               // and uses __box_number. The conversion itself calls no helper.
               const boolean = instr.toType.tag === JS_TAG_IDS.Boolean;
               const name = boolean ? "__box_boolean" : "__box_number";
-              bindExact(instr, name, [{ kind: boolean ? "i32" : "f64" }], [{ kind: "externref" }]);
+              bindExact(instr, name, [boolean ? I32 : { kind: "f64" }], [EXTERNREF]);
               return;
             }
             if (ctx.fast) {
@@ -340,7 +340,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
           }
           const name = exactHostHelperName(instr, types);
           if (name === null) nameable = false;
-          else bindExact(instr, name, [{ kind: "f64" }], [{ kind: "externref" }]);
+          else bindExact(instr, name, [{ kind: "f64" }], [EXTERNREF]);
         });
       }
     if (!nameable) {

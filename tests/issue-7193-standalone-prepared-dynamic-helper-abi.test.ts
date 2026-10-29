@@ -2,13 +2,13 @@
 //
 // #7193 — `prepared-dynamic-helper-abi` on standalone. A planned member
 // closure inside a prepared `<module-init>` component that applies
-// `String(<carrier>)`, a loose `==` / `!=` on the carrier, or `in` on a
-// carrier receiver is claimed on standalone (and on the native-first gc lane,
-// which projects as standalone): `prepared-dynamic-support.ts` names the exact
-// physical helper each host-carrier `makeDynamicLowering` arm calls
-// (`__extern_toString`, `__extern_loose_eq`, `__typeof_object` /
-// `__typeof_function`), so the component prepares with no withdrawal.
-// Every shape agrees with node and with the legacy compiler.
+// `String(<carrier>)` or `in` on a carrier receiver is claimed on standalone
+// (and `String` on the native-first gc lane, which projects as standalone):
+// `prepared-dynamic-support.ts` names the exact physical helper each
+// host-carrier `makeDynamicLowering` arm calls (`__extern_toString`,
+// `__typeof_object` / `__typeof_function`), so the component prepares with no
+// withdrawal. Every claimed shape agrees with node and with legacy. A loose
+// `==` / `!=` on the carrier stays refused, exactly as on main (#7194).
 
 import { describe, expect, it } from "vitest";
 import { compile, type CompileResult } from "../src/index.js";
@@ -68,8 +68,8 @@ const CLAIMED: readonly [name: string, body: string, inputs: readonly string[]][
   ],
 ];
 
-// Standalone's `__extern_loose_eq` skips legacy's ToPrimitive step, so these
-// stay refused at select there (`prepared-carrier-loose-equality`).
+// The carrier's loose equality skips ToPrimitive (#7194), so these stay
+// refused at select on standalone (`native-dynamic-loose-equality`).
 const MIXED = [...PRIMITIVES, ...OBJECTS, ...ARRAYS];
 const LOOSE: readonly [name: string, body: string, inputs: readonly string[]][] = [
   ["a loose `==` on the parameter", `if (m == 2) throw "e"; throw "o";`, MIXED],

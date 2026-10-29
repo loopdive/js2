@@ -375,17 +375,21 @@ export function throwOperandAdmissible(family: OperandFamily): boolean {
 }
 
 /**
- * (#7113) The operators whose lowering over the boxed-any carrier calls a
- * dynamic-runtime helper that a prepared component (a planned member closure
- * inside `<module-init>`) must bind by Program ABI identity: a loose `==` /
- * `!=` with a carrier operand (an `undefined` / `null` operand has its own
- * fold) and `in` on a carrier receiver. A lane without that binding
- * (`prepared-dynamic-helper-abi` for `in`, `prepared-carrier-loose-equality`
- * for `==` / `!=`) withdraws or miscompiles them after the claim, so the
- * selector refuses them there instead.
+ * (#7113, #7193) `in` on a carrier receiver calls dynamic-runtime helpers a
+ * prepared component (a planned member closure inside `<module-init>`) must
+ * bind by Program ABI identity; a lane without `prepared-dynamic-helper-abi`
+ * withdraws it after the claim, so the selector refuses it there instead.
  */
-export function carrierHelperOperator(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
-  if (op === ts.SyntaxKind.InKeyword) return right === "dynamic";
+export function carrierInReceiver(receiver: OperandFamily): boolean {
+  return receiver === "dynamic";
+}
+
+/**
+ * (#7113, #7193) A loose `==` / `!=` with a carrier operand (an `undefined` /
+ * `null` operand has its own fold). The carrier helpers miscompile an object
+ * operand, so a lane without `native-dynamic-loose-equality` refuses it.
+ */
+export function carrierLooseOperator(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
   const loose = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
   return loose && (left === "dynamic" || right === "dynamic");
 }
@@ -412,19 +416,12 @@ export function carrierMemberReadAdmissible(
 }
 
 /**
- * (#7113, #7178) A loose `==` / `!=` with a carrier operand. WASI's loose
- * equality ToPrimitives an object / array carrier by an illegal cast and
- * traps (`r == 1` with `r = [1, 2]`); only a string other side takes the
- * string arm. `nativeLooseEquality` is the lane's
- * `native-dynamic-loose-equality` capability.
+ * (#7113, #7178) A loose `==` / `!=` with a carrier operand, on a lane that
+ * admits one at all: the carrier helper ToPrimitives an object / array by an
+ * illegal cast and traps (`r == 1` with `r = [1, 2]`); only a string other
+ * side takes the string arm.
  */
-export function carrierLooseEqualityAdmissible(
-  op: ts.SyntaxKind,
-  left: OperandFamily,
-  right: OperandFamily,
-  nativeLooseEquality: boolean,
-): boolean {
-  if (nativeLooseEquality) return true;
+export function carrierLooseEqualityAdmissible(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
   if (op !== ts.SyntaxKind.EqualsEqualsToken && op !== ts.SyntaxKind.ExclamationEqualsToken) return true;
   if (left !== "dynamic" && right !== "dynamic") return true;
   return (left === "dynamic" ? right : left) === "string";
@@ -443,7 +440,7 @@ export function carrierMethodCallAdmissible(receiver: OperandFamily): boolean {
 /**
  * (#7113) `String(v)` over the carrier calls a dynamic-runtime helper that a
  * prepared component binds by Program ABI identity, like
- * {@link carrierHelperOperator} (`prepared-dynamic-helper-abi`): a lane
+ * {@link carrierInReceiver} (`prepared-dynamic-helper-abi`): a lane
  * without it withdraws at preparation (`late-preparation-unsupported`).
  */
 export function carrierHelperCall(callee: string, argument: OperandFamily): boolean {

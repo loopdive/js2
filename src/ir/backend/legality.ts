@@ -35,7 +35,6 @@ export type IrBackendTargetCapability =
   | "native-own-property-descriptor"
   | "native-number-conversion"
   | "prepared-dynamic-helper-abi"
-  | "prepared-carrier-loose-equality"
   | "native-dynamic-member-read"
   | "planned-closure-direct-call"
   | "native-dynamic-loose-equality";
@@ -150,10 +149,6 @@ export function supportsIrBackendTargetCapability(
     // a planned member closure. WASI's IR read has no string or vec
     // receiver arm and answers `undefined` (`.length`, `[i]`), so only the
     // standalone regime (native gc projects as standalone) is admitted.
-    case "native-dynamic-loose-equality":
-    // (#7113, #7178) Loose `==` / `!=` on the carrier against a non-string:
-    // WASI's helper ToPrimitives an object / array operand by an illegal
-    // cast and traps.
     case "planned-closure-direct-call":
       // (#7113) A direct call to a module function from a planned member
       // closure: WASI mints no AST-site call plan for it and withdraws
@@ -169,12 +164,13 @@ export function supportsIrBackendTargetCapability(
         profile.fast !== true &&
         (profile.target === "standalone" || profile.target === "wasi")
       );
-    case "prepared-carrier-loose-equality":
-      // (#7113, #7193) A loose `==` / `!=` on the carrier in that closure.
-      // The binding exists on standalone too, but standalone's
-      // `__extern_loose_eq` classifies an object operand without legacy's
-      // ToPrimitive step, so `{ valueOf() { return 2 } } == 2` traps on an
-      // illegal cast and `[2] != "2"` answers true.
+    case "native-dynamic-loose-equality":
+      // (#7113, #7178, #7193) A loose `==` / `!=` on the carrier in that
+      // closure. Unsound on EVERY lane: no carrier loose-equality helper
+      // ToPrimitives an object operand (`{ valueOf() { return 2 } } == 2`
+      // traps; `[2] != "2"` differs from node — #7194). WASI stays admitted
+      // only to keep main's output, and only against a string other side
+      // (`carrierLooseEqualityAdmissible`, new shapes); standalone is refused.
       return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "wasi";
     case "native-number-conversion":
       // (#7106 module-init lever B) `Number(v)` through the host-free

@@ -23,7 +23,8 @@ import {
   additiveOperandsProvable,
   binaryOperandsAdmissible,
   carrierHelperCall,
-  carrierHelperOperator,
+  carrierInReceiver,
+  carrierLooseOperator,
   carrierLooseEqualityAdmissible,
   carrierMethodCallAdmissible,
   carrierMemberReadAdmissible,
@@ -57,11 +58,9 @@ export interface PlannedClosureFamilySources {
   readonly declaredFamily?: (expr: ts.Expression) => IrDeclaredPrimitiveExpressionFamily | undefined;
   /** (#7113, #7193) The lane binds the carrier's `String` / `in` helpers in a prepared component. */
   readonly preparedDynamicHelpers?: boolean;
-  /** (#7193) The lane's carrier loose `==` / `!=` is sound in a prepared component (`in` reads the flag above). */
-  readonly preparedLooseEquality?: boolean;
   /** (#7113, #7177) The lane's dynamic member read handles string and vec receivers. */
   readonly nativeDynamicMemberRead?: boolean;
-  /** (#7113, #7178) The lane's loose equality ToPrimitives an object carrier without trapping. */
+  /** (#7113, #7193) The lane admits a carrier loose `==` / `!=` in a planned closure. */
   readonly nativeDynamicLooseEquality?: boolean;
   /** (#7113) The lane plans a direct call to a module function from a planned closure. */
   readonly directCalls?: boolean;
@@ -430,8 +429,7 @@ export function plannedClosureOperandRefusal(
       return compoundWriteAdmissible(op, slot, value) ? null : { arm: "closure-compound-write", node: expr };
     }
     if (op === ts.SyntaxKind.InKeyword) {
-      return sources.preparedDynamicHelpers ||
-        !carrierHelperOperator(op, operandProof(expr.left).family, operandProof(expr.right).family)
+      return sources.preparedDynamicHelpers || !carrierInReceiver(operandProof(expr.right).family)
         ? null
         : { arm: "closure-carrier-helper-operator", node: expr };
     }
@@ -463,18 +461,10 @@ export function plannedClosureOperandRefusal(
     const right = unwrapParens(expr.right);
     const leftProof = operandProof(left);
     const rightProof = operandProof(right);
-    if (!sources.preparedLooseEquality && carrierHelperOperator(op, leftProof.family, rightProof.family)) {
+    if (!sources.nativeDynamicLooseEquality && carrierLooseOperator(op, leftProof.family, rightProof.family)) {
       return { arm: "closure-carrier-helper-operator", node: expr };
     }
-    if (
-      !carrierLooseEqualityAdmissible(
-        op,
-        leftProof.family,
-        rightProof.family,
-        sources.nativeDynamicLooseEquality === true,
-      ) &&
-      isNewShape()
-    ) {
+    if (!carrierLooseEqualityAdmissible(op, leftProof.family, rightProof.family) && isNewShape()) {
       return { arm: "closure-carrier-loose-equality", node: expr };
     }
     if (op === ts.SyntaxKind.PlusToken && !additiveOperandsProvable(leftProof.additive, rightProof.additive)) {
