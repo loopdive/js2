@@ -29,7 +29,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { coerceType, compileExpression } from "./shared.js";
-import { getOrRegisterPromiseType, isStandalonePromiseActive } from "./async-scheduler.js";
+import { getOrRegisterPromiseType } from "./async-scheduler.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
 import {
   buildCustomCapabilityExecutorInstrs,
@@ -93,7 +93,6 @@ export function emitClassReceiverSettle(
   valueArg: ts.Expression | undefined,
   settle: "resolve" | "reject",
 ): ValType | undefined {
-  if (!isStandalonePromiseActive(ctx)) return undefined;
   // (#5197 r3 Step 5) …or an ordinary function `C` whose closure ABI D1 could not use (held as an
   // externref value, e.g. once the module reads `Function.prototype`): Construct(C, «executor»)
   // through the same driver, whose ordinary tail runs the function with a fresh `this`.

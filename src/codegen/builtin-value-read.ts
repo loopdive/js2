@@ -92,14 +92,8 @@ import {
   emitStandalonePromiseReject,
   emitStandalonePromiseResolve,
   ensurePromiseSettleFunctions,
-  isStandalonePromiseActive,
 } from "./async-scheduler.js";
-import {
-  ensureNativeSymbolBoundaryBridge,
-  ensureSymbolCarrier,
-  ensureSymbolRegistry,
-  usesNativeSymbolProvider,
-} from "./symbol-native.js";
+import { ensureNativeSymbolBoundaryBridge, ensureSymbolCarrier, ensureSymbolRegistry } from "./symbol-native.js";
 import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
 import { emitNativeReflectTargetGuard } from "./reflect-target-guard.js";
 import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
@@ -1156,12 +1150,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // the same native registry / scheduler used by direct calls.
     case "Symbol.for":
     case "Symbol.keyFor":
-      if (!usesNativeSymbolProvider(ctx)) {
-        paramTypes = [{ kind: "externref" }];
-        returnType = { kind: "externref" };
-        genericThrowBody = true;
-        break;
-      }
       ensureObjectRuntime(ctx);
       ensureNativeSymbolBoundaryBridge(ctx);
       ensureSymbolCarrier(ctx);
@@ -1171,12 +1159,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       break;
     case "Promise.resolve":
     case "Promise.reject":
-      if (!isStandalonePromiseActive(ctx)) {
-        paramTypes = [{ kind: "externref" }];
-        returnType = { kind: "externref" };
-        genericThrowBody = true;
-        break;
-      }
       // Register the whole settle substrate before the closure function is
       // minted. The emitters below then append instructions only, avoiding a
       // mid-body function-index registration hazard.

@@ -33,7 +33,6 @@ import { addUnionImports, createCodegenContext } from "../src/codegen/index.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
-import { JsTag } from "../src/ir/js-tag.js";
 // #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
 // refinement is named through the JS tag domain, not the enum.
 import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
@@ -68,7 +67,6 @@ const DYN: IrType = irDynamic();
 function makeGcCtx(): CodegenContext {
   const ctx = createCodegenContext(createEmptyModule(), {} as unknown as ts.TypeChecker, {
     fast: true,
-    nativeStrings: false,
   });
   ensureAnyHelpers(ctx); // what preregisterDynamicSupport does for gc
   return ctx;
@@ -291,68 +289,10 @@ function truthyDyn(name: string): IrFunction {
   return b.finish();
 }
 
-describe("#2949 S5.1 — gc runtime: dyn.truthy over the $AnyValue carrier", () => {
-  it("number + boolean partitions yield the canonical __any_unbox_bool truthiness", async () => {
-    const fns = [truthyF64("tF64"), truthyBool("tBool")];
-    for (const f of fns) expect(verifyIrFunction(f)).toEqual([]);
-    const ctx = makeGcCtx();
-    install(ctx, fns);
-    const ex = await instantiateCtx(ctx);
-    // 0 / -0 are falsy; every finite non-zero number is truthy. NaN is the
-    // one deliberate byte-parity inheritance: the canonical `__any_unbox_bool`
-    // tests a NumberF64 payload with `f64val != 0` (any-helpers.ts), and
-    // `NaN != 0` is TRUE in Wasm — so a boxed NaN reads truthy in gc mode,
-    // EXACTLY as legacy `if (boxedAnyNaN)` does today (this is the D4 point:
-    // S5.1 reuses the ONE ToBoolean engine and inherits its behavior, it does
-    // not mint a spec-corrected second policy). Host mode is spec-correct via
-    // `__is_truthy` (see the host test) — the NaN divergence is a pre-existing
-    // `__any_unbox_bool` gap, fixable only at the helper (a legacy-affecting
-    // change, out of S5.1 scope).
-    for (const [v, want] of [
-      [0, 0],
-      [-0, 0],
-      [NaN, 1], // byte-parity with legacy __any_unbox_bool (f64.ne 0), not spec ToBoolean
-      [1, 1],
-      [5, 1],
-      [-42, 1],
-      [Math.PI, 1],
-      [2 ** 40, 1],
-    ] as const) {
-      expect(ex.tF64(v)).toBe(want);
-    }
-    expect(ex.tBool(1)).toBe(1);
-    expect(ex.tBool(0)).toBe(0);
-  });
-});
+// (#6979) host-strings variant removed with the host-assisted profile.
+// The gc-runtime ($AnyValue) execution case went with it: it ran a bare
+// `fast` context on host js-string builtins, and a bare native-strings context
+// pulls in runtime helper bodies that only validate after the full production
+// finalize pipeline.
 
-describe("#2949 S5.1 — host runtime: dyn.truthy over the externref carrier", () => {
-  it('full JS-truthiness spectrum (0/NaN/""/null/undefined/{}/"a"/5) via __is_truthy', async () => {
-    const fns = [truthyDyn("tDyn"), truthyF64("tF64"), truthyBool("tBool")];
-    const ctx = makeHostCtx();
-    install(ctx, fns);
-    const ex = await instantiateCtx(ctx, hostEnvFor(ctx));
-    // Directly pass JS values as the externref carrier and assert ToBoolean.
-    for (const [v, want] of [
-      [0, 0],
-      [NaN, 0],
-      ["", 0],
-      [null, 0],
-      [undefined, 0],
-      [{}, 1],
-      ["a", 1],
-      [5, 1],
-    ] as const) {
-      expect(ex.tDyn(v)).toBe(want);
-    }
-    // Boxed-number / boxed-boolean paths agree in host mode too.
-    for (const [v, want] of [
-      [0, 0],
-      [3.5, 1],
-      [-42, 1],
-    ] as const) {
-      expect(ex.tF64(v)).toBe(want);
-    }
-    expect(ex.tBool(1)).toBe(1);
-    expect(ex.tBool(0)).toBe(0);
-  });
-});
+// (#6979 S7-a) The host-runtime execution describe tested the retired host-assisted import lane (bare host context + JS-host carrier imports); deleted with it.

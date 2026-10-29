@@ -62,12 +62,13 @@ describe("nativeStrings flag (standalone, no fast mode)", () => {
     expect(result.wat).not.toContain("wasm:js-string");
   });
 
-  it("non-fast non-nativeStrings mode uses externref strings", async () => {
+  // (#6979 S7-a) The default profile used to fall back to host externref
+  // strings; with host-assisted gone it is the native regime, which uses
+  // native strings without being asked.
+  it("the default (non-fast) profile uses native strings", async () => {
     const result = await compile(`export function test(): string { return "hello"; }`);
     expect(result.success).toBe(true);
-    expect(result.wat).toContain("externref");
-    expect(result.wat).toContain("string_constants");
-    expect(result.wat).not.toContain("NativeString");
+    expect(result.wat).toContain("NativeString");
   });
 
   it("string equality compiles without wasm:js-string", async () => {
@@ -107,16 +108,18 @@ describe("nativeStrings flag (standalone, no fast mode)", () => {
     expect(result.wat).not.toContain("string_indexOf");
   });
 
-  it("nativeStrings: false explicitly disables even with fast", async () => {
-    // When nativeStrings is explicitly set to false, it should take
-    // precedence over fast mode's default
-    const result = await compile(`export function test(): string { return "hello"; }`, {
-      fast: true,
-      nativeStrings: false,
-    });
-    expect(result.success).toBe(true);
-    // Explicitly disabled native strings, so should use externref
-    expect(result.wat).not.toContain("NativeString");
-    expect(result.wat).toContain("string_constants");
+  it("nativeStrings: false with fast is rejected on the JS target (#6979)", async () => {
+    // nativeStrings: false used to select the host-assisted profile (host
+    // `wasm:js-string` strings), which #6979 removed — the compile now fails.
+    await expect(
+      (async () => {
+        const result = await compile(`export function test(): string { return "hello"; }`, {
+          fast: true,
+          nativeStrings: false,
+        });
+        if (!result.success) throw new Error(result.errors.map((e) => e.message).join("\n"));
+        return result;
+      })(),
+    ).rejects.toThrow(/nativeStrings: false selected the host-assisted semantic profile, which #6979 removed/);
   });
 });

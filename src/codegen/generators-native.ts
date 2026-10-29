@@ -51,7 +51,6 @@ import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext, NativeGeneratorInfo } from "./context/types.js";
 import { reportError } from "./context/errors.js";
 import { nativeStringType } from "./native-strings.js";
-import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -2052,7 +2051,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       case "string":
         return ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 ? nativeStringType(ctx) : { kind: "externref" };
       case "bigint":
-        return usesHostBigIntCarrier(ctx) ? { kind: "externref" } : { kind: "i64", bigint: true };
+        return { kind: "i64", bigint: true };
       case "symbol":
         return { kind: "i32", symbol: true };
       case "undefined":

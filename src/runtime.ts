@@ -4841,7 +4841,7 @@ export function buildCompiledAdapterImports(
   return buildImports(imports, deps, frozenManifest.stringPool, {
     ...options,
     ...authority,
-    ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders !== "native-first",
+    ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders === "backend-defined",
     hostAccelerators: options.hostAccelerators ?? targetProfile.accelerators,
   });
 }
@@ -13919,15 +13919,6 @@ assert._isSameValue = isSameValue;
       if (name === "__throw_reference_error")
         return (msg: any) => {
           throw new ReferenceError(msg == null ? "" : String(msg));
-        };
-      // (#5247) Export-boundary rethrow: the export wrapper
-      // (codegen/export-throw-boundary.ts) catches its own `__exn` tag and hands
-      // the payload here so this JS frame raises it by identity, instead of the
-      // caller seeing a bare `WebAssembly.Exception`. Deliberately NO coercion
-      // to Error — a compiled `throw { name, message }` must cross unchanged.
-      if (name === "__rethrow_host_exception")
-        return (payload: any): never => {
-          throw payload;
         };
       // __to_primitive: full ToPrimitive per ECMA-262 §7.1.1 (#1090)
       // Takes (externref obj, externref hint_string) → externref primitive

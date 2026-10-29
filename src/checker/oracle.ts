@@ -168,6 +168,22 @@ export interface TypeOracle {
    * declaration syntax such as `var` versus `let`/`const`.
    */
   variableDeclarationOf(id: ts.Node): ts.VariableDeclaration | undefined;
+  /**
+   * (#7156) The string keys a `for (k in <expr>)` over a CLOSED static shape
+   * enumerates, in enumeration order — the key list the static for-in unroll
+   * emits. A receiver that is provably a `new C(…)` of a simple class chain
+   * yields only its own fields (parameter properties, then fields, base class
+   * first, integer-index keys ahead); private names, methods, accessors and
+   * statics are dropped. An object literal with a spread is ordered as the
+   * literal builds it (`{...a, z}` is `a`'s keys, then `z`). Everything else
+   * keeps the checker's property list and order. `sourceFiles` is the whole
+   * compilation (default: the receiver's file): a method name written anywhere
+   * in it may be an own property, so its chain keeps the checker's list, and a
+   * write with a non-static key or source to a possible instance makes every
+   * class chain keep it.
+   * `undefined` when this backend cannot answer.
+   */
+  forInStaticKeysOf(expr: ts.Expression, sourceFiles?: readonly ts.SourceFile[]): readonly string[] | undefined;
 }
 
 /** Builtins with first-class compiler handling (mirrors type-mapper's set —
@@ -409,6 +425,95 @@ export class TsCheckerOracle implements TypeOracle {
     return this.variableDeclarationOf(id)?.initializer;
   }
 
+  forInStaticKeysOf(expr: ts.Expression, sourceFiles?: readonly ts.SourceFile[]): readonly string[] | undefined {
+    try {
+      const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [expr.getSourceFile()];
+      const writes: WriteScan = { names: new Set(), poisoned: false };
+      for (const sf of files) {
+        const scan = writeScanOf(this.checker, sf);
+        for (const name of scan.names) writes.names.add(name);
+        writes.poisoned ||= scan.poisoned;
+      }
+      return this.forInKeysOfExpr(expr, 0, writes);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private forInKeysOfExpr(expr: ts.Expression, depth: number, writes: WriteScan): readonly string[] {
+    let e = expr;
+    while (ts.isParenthesizedExpression(e)) e = e.expression;
+    const typeKeys = (): readonly string[] => {
+      const type = this.checker.getTypeAtLocation(expr);
+      const provable = this.isProvableNewInstance(e, type.getNonNullableType());
+      return forInKeysOfType(this.checker, type, provable && !writes.poisoned, writes.names);
+    };
+    if (depth > 8) return typeKeys();
+    const literal = ts.isIdentifier(e) ? this.constInitializerOf(e) : e;
+    if (!literal || !ts.isObjectLiteralExpression(literal) || !literal.properties.some(ts.isSpreadAssignment)) {
+      return typeKeys();
+    }
+    // `{...a, z}`: the checker's spread type lists the literal's own members
+    // first, but the object is built left to right and a redefined key keeps
+    // its first position. Use that order when every member name is static and
+    // the resulting set is exactly the checker's; otherwise keep the checker's.
+    const keys: string[] = [];
+    for (const prop of literal.properties) {
+      const names = ts.isSpreadAssignment(prop)
+        ? this.forInKeysOfExpr(prop.expression, depth + 1, writes)
+        : [staticMemberName(prop.name)];
+      for (const name of names) {
+        if (name === undefined) return typeKeys();
+        if (!keys.includes(name)) keys.push(name);
+      }
+    }
+    const checkerKeys = typeKeys();
+    if (keys.length !== checkerKeys.length || !checkerKeys.every((k) => keys.includes(k))) return checkerKeys;
+    return keys;
+  }
+
+  /**
+   * (#7156) Is this receiver provably an object built by its class's own
+   * constructor? A `new X(…)` whose callee resolves to the class itself, or a
+   * `const` bound to one with no type annotation or an annotation of exactly
+   * the constructed type. A class-TYPED value proves nothing: TypeScript
+   * accepts an object literal, or a subclass that turns a method into a field,
+   * for a class type — and so does a constructor-typed `K: typeof C`.
+   */
+  private isProvableNewInstance(e: ts.Expression, type: ts.Type): boolean {
+    const unwrap = (x: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(x) ? unwrap(x.expression) : x);
+    if (ts.isNewExpression(e)) return this.newCalleeIsClassOf(e, type);
+    if (!ts.isIdentifier(e)) return false;
+    const init = this.constInitializerOf(e);
+    const created = init && unwrap(init);
+    if (!created || !ts.isNewExpression(created) || !this.newCalleeIsClassOf(created, type)) return false;
+    const decl = this.variableDeclarationOf(e);
+    if (!decl) return false;
+    return !decl.type || this.checker.getTypeAtLocation(decl.type) === this.checker.getTypeAtLocation(init);
+  }
+
+  /**
+   * (#7156) Does `new X(…)` name the class of `type` directly? `X` is followed
+   * through parentheses and un-annotated `const X = C` aliases to a class
+   * declaration or class expression, which must be the instance type's own.
+   */
+  private newCalleeIsClassOf(expr: ts.NewExpression, type: ts.Type): boolean {
+    const classDecls = classTargetOf(type)?.symbol?.declarations ?? [];
+    let callee: ts.Expression = expr.expression;
+    for (let hops = 0; hops < 8; hops++) {
+      while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
+      if (ts.isClassExpression(callee)) return classDecls.includes(callee);
+      if (!ts.isIdentifier(callee)) return false;
+      const decl = this.valueDeclarationOf(callee);
+      if (decl && ts.isClassDeclaration(decl)) return classDecls.includes(decl);
+      if (!decl || !ts.isVariableDeclaration(decl) || decl.type) return false;
+      const init = this.constInitializerOf(callee);
+      if (!init) return false;
+      callee = init;
+    }
+    return false;
+  }
+
   variableDeclarationOf(id: ts.Node): ts.VariableDeclaration | undefined {
     try {
       const decl = this.valueDeclarationOf(id);
@@ -559,6 +664,480 @@ export class TsCheckerOracle implements TypeOracle {
     }
     return { kind: "unresolvable" };
   }
+}
+
+/** (#7156) A member name that is a plain identifier or string literal. */
+function staticMemberName(name: ts.Node | undefined): string | undefined {
+  return name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) ? name.text : undefined;
+}
+
+/** (#7156) Does this function body `return` an expression (nested functions excluded)? */
+function returnsAValue(body: ts.Node): boolean {
+  const visit = (node: ts.Node): boolean => {
+    if (ts.isReturnStatement(node)) return node.expression !== undefined;
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return false;
+    return ts.forEachChild(node, visit) ?? false;
+  };
+  return ts.forEachChild(body, visit) ?? false;
+}
+
+/** (#7156) What a compilation may write to objects, as far as for-in keys go. */
+interface WriteScan {
+  /** Property names that may be written (literal keys, over-approximated). */
+  names: Set<string>;
+  /**
+   * A write whose key or source is not statically known (`this[k] = …`,
+   * `Object.assign(this, opts)`, `setPrototypeOf`) to a target that may be a
+   * class instance. Any method could then be an own property, so every class
+   * chain keeps the checker's key list.
+   */
+  poisoned: boolean;
+}
+
+const writeScanCache = new WeakMap<ts.TypeChecker, WeakMap<ts.SourceFile, WriteScan>>();
+
+const unwrapExpr = (x: ts.Expression): ts.Expression =>
+  ts.isParenthesizedExpression(x) ||
+  ts.isAsExpression(x) ||
+  ts.isNonNullExpression(x) ||
+  ts.isTypeAssertionExpression(x) ||
+  ts.isSatisfiesExpression(x)
+    ? unwrapExpr(x.expression)
+    : x;
+
+const TYPED_ARRAY_NAMES = new Set([
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+]);
+
+/**
+ * (#7156) May a value of this type be a class instance whose keys an unknown
+ * write could change? Exempt only what certainly is not: primitives, arrays,
+ * tuples, typed arrays, and types that are nothing but an index signature
+ * (`Record<string, T>`). Everything else — `any`, `unknown`, `object`, `{}`,
+ * type parameters, class/interface/anonymous object types, unions holding one
+ * — counts.
+ */
+function mayBeInstanceType(checker: ts.TypeChecker, t: ts.Type, depth = 0): boolean {
+  if (depth > 8) return true;
+  const f = t.flags;
+  if (f & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive | ts.TypeFlags.TypeParameter)) {
+    return true;
+  }
+  if (t.isUnionOrIntersection()) return t.types.some((p) => mayBeInstanceType(checker, p, depth + 1));
+  if (!(f & ts.TypeFlags.Object)) return false;
+  const c = checker as ts.TypeChecker & { isArrayType?(t: ts.Type): boolean; isTupleType?(t: ts.Type): boolean };
+  if (c.isArrayType?.(t) || c.isTupleType?.(t)) return false;
+  if (t.symbol && TYPED_ARRAY_NAMES.has(t.symbol.name)) return false;
+  // An index-signature-only type is exempt only when its values cannot be
+  // anything: a class instance converts to `Record<string, any>` implicitly.
+  const indexTypes = [t.getStringIndexType(), t.getNumberIndexType()].filter((x): x is ts.Type => !!x);
+  if (t.getProperties().length > 0 || indexTypes.length === 0) return true;
+  return !indexTypes.every(isPrimitiveValueType);
+}
+
+/**
+ * (#7156) Can a value of this type never be a method? Primitives and their
+ * literals (number, string, boolean, bigint, symbol, null, undefined), or a
+ * union made only of them. A cast instance passed as `Record<string, Function>`
+ * / `Record<string, object>` / `Record<string, V>` can have methods written.
+ */
+function isPrimitiveValueType(t: ts.Type): boolean {
+  if (t.isUnion()) return t.types.every(isPrimitiveValueType);
+  const primitive =
+    ts.TypeFlags.NumberLike |
+    ts.TypeFlags.StringLike |
+    ts.TypeFlags.BooleanLike |
+    ts.TypeFlags.BigIntLike |
+    ts.TypeFlags.ESSymbolLike |
+    ts.TypeFlags.Null |
+    ts.TypeFlags.Undefined;
+  return (t.flags & primitive) !== 0;
+}
+
+/** (#7156) Members of `Object` / `Reflect` that write keys or change a prototype. */
+const OBJECT_WRITERS = new Set(["assign", "defineProperty", "defineProperties", "setPrototypeOf"]);
+const REFLECT_WRITERS = new Set(["set", "defineProperty", "setPrototypeOf"]);
+
+/**
+ * (#7156) Is this expression the `Object` constructor or the `Reflect`
+ * namespace — by its checker type, so `globalThis.Object` and `const O =
+ * Object` are seen — or a value whose type is unknown (`any`)?
+ */
+function writerOwnerOf(checker: ts.TypeChecker, expr: ts.Expression): "Object" | "Reflect" | "any" | undefined {
+  const x = unwrapExpr(expr);
+  if (ts.isIdentifier(x) && (x.text === "Object" || x.text === "Reflect")) return x.text;
+  const t = checker.getTypeAtLocation(x);
+  if (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return "any";
+  const name = t.symbol?.name;
+  return name === "ObjectConstructor" ? "Object" : name === "Reflect" ? "Reflect" : undefined;
+}
+
+/** (#7156) Is `name` a key-writing member of this owner? */
+function isWriterMember(owner: "Object" | "Reflect" | "any" | undefined, name: string): boolean {
+  if (owner === "Object") return OBJECT_WRITERS.has(name);
+  if (owner === "Reflect") return REFLECT_WRITERS.has(name);
+  return owner === "any" && (OBJECT_WRITERS.has(name) || REFLECT_WRITERS.has(name));
+}
+
+/**
+ * (#7156) Scan a source file for writes that can make a method name an own
+ * property. Collects every literal key written — assignment, compound
+ * assignment and `++`/`--` targets, destructuring-assignment and
+ * `for (x.m of/in …)` targets, `Object.defineProperty`/`Reflect.defineProperty`
+ * /`Reflect.set`/`__defineGetter__`/`__defineSetter__` literal keys, and the
+ * literal keys of `Object.defineProperties`/`Object.assign` sources; a `const
+ * k = "m"` key counts as `"m"`. Any such write whose key or source is not
+ * static, and any prototype change, poisons the scan when its target may be a
+ * class instance (`mayBeInstanceType`, or `this`). Private names are skipped.
+ */
+function writeScanOf(checker: ts.TypeChecker, sf: ts.SourceFile): WriteScan {
+  let perChecker = writeScanCache.get(checker);
+  if (!perChecker) writeScanCache.set(checker, (perChecker = new WeakMap()));
+  const cached = perChecker.get(sf);
+  if (cached) return cached;
+  const scan: WriteScan = { names: new Set(), poisoned: false };
+  const keyOf = (e: ts.Expression): string | undefined => {
+    const k = unwrapExpr(e);
+    if (ts.isStringLiteralLike(k)) return k.text;
+    if (ts.isNumericLiteral(k)) return String(Number(k.text));
+    const t = checker.getTypeAtLocation(k);
+    return t.isStringLiteral() ? t.value : t.isNumberLiteral() ? String(t.value) : undefined;
+  };
+  const poisonIfInstance = (target: ts.Expression | undefined): void => {
+    if (scan.poisoned || !target) return;
+    const x = unwrapExpr(target);
+    if (x.kind === ts.SyntaxKind.ThisKeyword || mayBeInstanceType(checker, checker.getTypeAtLocation(x))) {
+      scan.poisoned = true;
+    }
+  };
+  const addKey = (key: string | undefined, target: ts.Expression | undefined): void => {
+    if (key === undefined || key === "__proto__") poisonIfInstance(target);
+    else scan.names.add(key);
+  };
+  const addObjectLiteralKeys = (src: ts.Expression | undefined, target: ts.Expression | undefined): void => {
+    const lit = src && unwrapExpr(src);
+    if (!lit || !ts.isObjectLiteralExpression(lit)) {
+      poisonIfInstance(target);
+      return;
+    }
+    for (const prop of lit.properties) {
+      if (ts.isSpreadAssignment(prop) || !prop.name) poisonIfInstance(target);
+      else if (ts.isComputedPropertyName(prop.name)) addKey(keyOf(prop.name.expression), target);
+      else if (!ts.isPrivateIdentifier(prop.name)) addKey(staticMemberKey(prop.name), target);
+    }
+  };
+  const addTarget = (target: ts.Expression): void => {
+    const t = unwrapExpr(target);
+    if (ts.isPropertyAccessExpression(t)) {
+      if (!ts.isPrivateIdentifier(t.name)) addKey(t.name.text, t.expression);
+    } else if (ts.isElementAccessExpression(t)) {
+      addKey(keyOf(t.argumentExpression), t.expression);
+    } else if (ts.isObjectLiteralExpression(t)) {
+      for (const prop of t.properties) {
+        if (ts.isPropertyAssignment(prop)) addTarget(stripDefault(prop.initializer));
+        else if (ts.isSpreadAssignment(prop)) addTarget(prop.expression);
+      }
+    } else if (ts.isArrayLiteralExpression(t)) {
+      for (const el of t.elements) addTarget(ts.isSpreadElement(el) ? el.expression : stripDefault(el));
+    }
+  };
+  const visitCall = (node: ts.CallExpression): void => {
+    if (!ts.isPropertyAccessExpression(node.expression)) return;
+    const recv = unwrapExpr(node.expression.expression);
+    const method = node.expression.name.text;
+    const [a0, a1, a2] = node.arguments;
+    if (method === "__defineGetter__" || method === "__defineSetter__") {
+      addKey(a0 && keyOf(a0), recv);
+      return;
+    }
+    const owner = writerOwnerOf(checker, recv);
+    if (!isWriterMember(owner, method)) return;
+    // A receiver of unknown type (`O.assign(…)` with `O: any`) cannot be analysed.
+    if (owner === "any") {
+      scan.poisoned = true;
+      return;
+    }
+    if (method === "defineProperty" || (owner === "Reflect" && method === "set")) addKey(a1 && keyOf(a1), a0);
+    else if (method === "defineProperties") addObjectLiteralKeys(a1, a0);
+    else if (method === "assign" && owner === "Object")
+      for (const src of [a1, a2, ...node.arguments.slice(3)]) {
+        if (src) addObjectLiteralKeys(src, a0);
+      }
+    else if (method === "setPrototypeOf") poisonIfInstance(a0);
+  };
+  // A key-writing `Object`/`Reflect` member used other than as a direct call
+  // (`const assign = Object.assign`, `.call`/`.apply`, `Reflect.apply(…)`,
+  // `Object["assign"]`, `const { assign } = Object`) cannot be analysed.
+  const visitWriterReference = (node: ts.Node): void => {
+    if (scan.poisoned) return;
+    if (ts.isPropertyAccessExpression(node)) {
+      const isDirectCallee = ts.isCallExpression(node.parent) && node.parent.expression === node;
+      const name = node.name.text;
+      const named = OBJECT_WRITERS.has(name) || REFLECT_WRITERS.has(name);
+      if (named && !isDirectCallee && isWriterMember(writerOwnerOf(checker, node.expression), name)) {
+        scan.poisoned = true;
+      }
+    } else if (ts.isElementAccessExpression(node)) {
+      const owner = writerOwnerOf(checker, node.expression);
+      if (owner === "Object" || owner === "Reflect") {
+        scan.poisoned = true;
+      }
+    } else if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer) {
+      const owner = writerOwnerOf(checker, node.initializer);
+      if (owner === "Object" || owner === "Reflect") scan.poisoned = true;
+    } else if (ts.isParameter(node) && ts.isObjectBindingPattern(node.name)) {
+      // `function f({ assign }: ObjectConstructor)`: destructured from the parameter's type.
+      const t = checker.getTypeAtLocation(node.name);
+      const name = t.symbol?.name;
+      if (name === "ObjectConstructor" || name === "Reflect") scan.poisoned = true;
+    } else if (ts.isWithStatement(node)) {
+      // A sloppy-mode `with (o) { m = 5 }` writes `o.m` through a bare name.
+      scan.poisoned = true;
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isObjectLiteralExpression(unwrapExpr(node.left))
+    ) {
+      const owner = writerOwnerOf(checker, node.right);
+      if (owner === "Object" || owner === "Reflect") scan.poisoned = true;
+    }
+  };
+  // Code run from a string (`eval(…)`, `new Function(…)`) can write any key and
+  // cannot be scanned: a VALUE reference to the global `eval` / `Function`
+  // (not a local of that name, not a type annotation) falls back globally.
+  const visitCodeFromString = (id: ts.Identifier): void => {
+    if (scan.poisoned) return;
+    for (let p: ts.Node | undefined = id.parent, i = 0; p && i < 8; p = p.parent, i++) {
+      if (ts.isTypeNode(p) || ts.isHeritageClause(p)) return;
+      if (ts.isStatement(p)) break;
+    }
+    const sym = checker.getSymbolAtLocation(id);
+    const decls = sym?.declarations ?? [];
+    if (decls.every((d) => d.getSourceFile().isDeclarationFile)) scan.poisoned = true;
+  };
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      addTarget(node.left);
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      addTarget(node.operand);
+    } else if (
+      (ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
+      !ts.isVariableDeclarationList(node.initializer)
+    ) {
+      addTarget(node.initializer);
+    } else if (ts.isCallExpression(node)) {
+      visitCall(node);
+    }
+    visitWriterReference(node);
+    if (ts.isIdentifier(node) && (node.text === "eval" || node.text === "Function")) visitCodeFromString(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  perChecker.set(sf, scan);
+  return scan;
+}
+
+/** (#7156) `x = dflt` inside a destructuring pattern targets `x`. */
+function stripDefault(e: ts.Expression): ts.Expression {
+  return ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.EqualsToken ? e.left : e;
+}
+
+/** (#7156) A plain, string or numeric member name's key. */
+function staticMemberKey(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) return name.text;
+  return ts.isNumericLiteral(name) ? String(Number(name.text)) : undefined;
+}
+
+/** (#7156) A canonical array-index key: "0".."4294967294", no leading zeros. */
+function isArrayIndexKey(key: string): boolean {
+  const n = Number(key);
+  return Number.isInteger(n) && n >= 0 && n < 2 ** 32 - 1 && String(n) === key;
+}
+
+/** (#7156) The class (interface) type behind a class-instance type, else undefined. */
+function classTargetOf(t: ts.Type): ts.InterfaceType | undefined {
+  const objectFlags = (t as ts.ObjectType).objectFlags ?? 0;
+  const target = objectFlags & ts.ObjectFlags.Reference ? (t as ts.TypeReference).target : t;
+  return ((target as ts.ObjectType).objectFlags ?? 0) & ts.ObjectFlags.Class ? (target as ts.InterfaceType) : undefined;
+}
+
+const hasModifier = (node: ts.Node, kind: ts.SyntaxKind): boolean =>
+  ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === kind);
+
+/**
+ * (#7156) The property key a member name denotes, when it is fully understood:
+ * a plain, string or numeric name, a `#private` name, or a computed key that is
+ * a string/numeric literal or an identifier whose type is a string literal
+ * (`const K = "k"`). `undefined` for anything else.
+ */
+function simpleMemberKey(checker: ts.TypeChecker, name: ts.PropertyName | ts.BindingName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteral(name)) return name.text;
+  if (ts.isNumericLiteral(name)) return String(Number(name.text));
+  if (!ts.isComputedPropertyName(name)) return undefined;
+  const e = name.expression;
+  if (ts.isStringLiteralLike(e)) return e.text;
+  if (ts.isNumericLiteral(e)) return String(Number(e.text));
+  if (!ts.isIdentifier(e)) return undefined;
+  const t = checker.getTypeAtLocation(e);
+  return t.isStringLiteral() ? t.value : undefined;
+}
+
+/**
+ * (#7156) The member kinds a SIMPLE class may declare, classified as an
+ * own-property `"field"` (a plain field or a parameter property), a
+ * prototype-or-nothing `"other"` (method, accessor, auto-`accessor`, `#private`
+ * member), or `undefined` when the member is not understood (`declare` or
+ * `abstract` fields, non-literal computed keys).
+ */
+function simpleMemberKind(checker: ts.TypeChecker, member: ts.ClassElement): "field" | "other" | "static" | undefined {
+  if (hasModifier(member, ts.SyntaxKind.StaticKeyword) || ts.isClassStaticBlockDeclaration(member)) return "static";
+  if (
+    ts.isConstructorDeclaration(member) ||
+    ts.isSemicolonClassElement(member) ||
+    ts.isIndexSignatureDeclaration(member)
+  ) {
+    return "other";
+  }
+  if (member.name && simpleMemberKey(checker, member.name) === undefined) return undefined;
+  if (member.name && ts.isPrivateIdentifier(member.name)) return "other";
+  if (ts.isMethodDeclaration(member) || ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) {
+    return "other";
+  }
+  if (!ts.isPropertyDeclaration(member)) return undefined;
+  if (hasModifier(member, ts.SyntaxKind.DeclareKeyword) || hasModifier(member, ts.SyntaxKind.AbstractKeyword))
+    return undefined;
+  return hasModifier(member, ts.SyntaxKind.AccessorKeyword) ? "other" : "field";
+}
+
+/**
+ * (#7156) The own-field declarations of a SIMPLE class chain, base class first,
+ * each class's parameter properties before its fields — or `undefined` when the
+ * chain is not simple. Simple means: every class is a plain class declaration
+ * (no interface/namespace merge), the chain ends at no base (not a builtin,
+ * mixin or other non-class), every member is one `simpleMemberKind`
+ * understands, no name is a field in one class and a method/accessor in
+ * another (a base field under a derived getter is still own at runtime), and no
+ * method/accessor name is a property-assignment target anywhere in the
+ * compilation (`writeScanOf`).
+ */
+function simpleChainFieldDeclarations(
+  checker: ts.TypeChecker,
+  t: ts.Type,
+  assigned: ReadonlySet<string>,
+): ts.Declaration[] | undefined {
+  const perClass: ts.Declaration[][] = [];
+  const kindOf = new Map<string, "field" | "other">();
+  let cur: ts.Type | undefined = t;
+  for (let depth = 0; cur; depth++) {
+    const target = classTargetOf(cur);
+    const decls = target?.symbol?.declarations ?? [];
+    const decl = decls[0];
+    if (!target || depth >= 32 || decls.length !== 1 || !decl || !ts.isClassLike(decl)) return undefined;
+    const fields: ts.Declaration[] = [];
+    const params: ts.Declaration[] = [];
+    for (const member of decl.members) {
+      const kind = simpleMemberKind(checker, member);
+      if (kind === undefined) return undefined;
+      if (kind === "static") continue;
+      if (ts.isConstructorDeclaration(member) && member.body) {
+        // `return <object>` from a constructor replaces the instance.
+        if (returnsAValue(member.body)) return undefined;
+        for (const param of member.parameters) if (ts.isParameterPropertyDeclaration(param, member)) params.push(param);
+      }
+      if (kind === "field") fields.push(member);
+      if (!member.name || ts.isConstructorDeclaration(member)) continue;
+      const key = simpleMemberKey(checker, member.name)!;
+      // A method/accessor name that is assigned anywhere (`this.m = this.m.bind(this)`,
+      // `p.m = …`, `Object.defineProperty(_, "m", …)`) may be an own property.
+      if (kind === "other" && assigned.has(key)) return undefined;
+      if (kindOf.get(key) !== undefined && kindOf.get(key) !== kind) return undefined;
+      kindOf.set(key, kind);
+    }
+    for (const param of params as ts.ParameterDeclaration[]) {
+      const key = simpleMemberKey(checker, param.name);
+      if (key === undefined) return undefined;
+      if (kindOf.get(key) === "other") return undefined;
+      kindOf.set(key, "field");
+    }
+    perClass.unshift([...params, ...fields]);
+    cur = checker.getBaseTypes(target)[0];
+  }
+  return perClass.flat();
+}
+
+/**
+ * (#7156) Static for-in keys of a checker type. A PROVABLE instance (see
+ * `isProvableNewInstance`) whose whole class chain is simple
+ * (`simpleChainFieldDeclarations`) enumerates exactly its own fields:
+ * parameter properties, then fields, base class first, a redeclared field
+ * keeping the base position; methods, accessors, statics and `#private` names
+ * are dropped, names come from the checker's symbols so computed literal keys
+ * keep their place, and integer-index keys go first in ascending order. ANY
+ * other receiver or type, or a class chain with a member that is not
+ * understood, keeps the checker's property list and order, exactly as before
+ * #7156.
+ */
+function forInKeysOfType(
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  provableInstance: boolean,
+  assigned: ReadonlySet<string>,
+): readonly string[] {
+  const t = type.getNonNullableType();
+  const props = t.getProperties();
+  const checkerKeys = props.map((p) => p.name);
+  if (!provableInstance || !classTargetOf(t)) return checkerKeys;
+  const fieldDecls = simpleChainFieldDeclarations(checker, t, assigned);
+  if (!fieldDecls) return checkerKeys;
+  const fieldDeclSet = new Set<ts.Declaration>(fieldDecls);
+  // Every checker property must be fully explained by the chain's members: a
+  // field (kept) or a member that is not own (dropped). Anything else — a JS
+  // `this.x = …` assignment, a lib member — keeps the checker's list.
+  const nameOfDecl = new Map<ts.Declaration, string>();
+  for (const p of props) {
+    for (const d of p.declarations ?? []) nameOfDecl.set(d, p.name);
+  }
+  for (let cur: ts.Type | undefined = t; cur; ) {
+    const target = classTargetOf(cur);
+    if (!target) break;
+    for (const p of cur.getProperties()) for (const d of p.declarations ?? []) nameOfDecl.set(d, p.name);
+    cur = checker.getBaseTypes(target)[0];
+  }
+  const ordered: string[] = [];
+  for (const d of fieldDecls) {
+    const name = nameOfDecl.get(d);
+    if (name === undefined || name.startsWith("__@")) return checkerKeys;
+    if (!ordered.includes(name)) ordered.push(name);
+  }
+  for (const p of props) {
+    const decls = p.declarations ?? [];
+    if (decls.length === 0) return checkerKeys;
+    const isField = decls.some((d) => fieldDeclSet.has(d));
+    if (isField !== ordered.includes(p.name)) return checkerKeys;
+    if (!isField && !decls.every((d) => ts.isClassElement(d) || ts.isParameter(d))) return checkerKeys;
+  }
+  if (!ordered.every((name) => checkerKeys.includes(name))) return checkerKeys;
+  // OrdinaryOwnPropertyKeys: integer-index keys first, ascending, then the
+  // string keys in creation order.
+  const indices = ordered.filter(isArrayIndexKey).sort((x, y) => Number(x) - Number(y));
+  return [...indices, ...ordered.filter((k) => !isArrayIndexKey(k))];
 }
 
 /**

@@ -93,6 +93,18 @@ export function peelExpr(e: ts.Expression): ts.Expression {
 }
 
 /** `expr` is an integer literal that fits in a signed 32-bit int. */
+/**
+ * (#7144) `x | 0` / `x ^ 0` is the identity on the ToInt32 bit pattern, so
+ * the operator disappears when `x` is i32-lowerable — from-ast's fused-i32 arm
+ * and the selector's planned-closure walk both read this one spelling.
+ * Returns `x`, or `null` for any other shape.
+ */
+export function i32IdentityBitwiseOperand(expr: ts.BinaryExpression): ts.Expression | null {
+  const op = expr.operatorToken.kind;
+  if (op !== ts.SyntaxKind.BarToken && op !== ts.SyntaxKind.CaretToken) return null;
+  return i32LiteralValue(expr.right) === 0 ? expr.left : null;
+}
+
 export function i32LiteralValue(e: ts.Expression): number | null {
   const inner = peelExpr(e);
   if (ts.isNumericLiteral(inner)) {

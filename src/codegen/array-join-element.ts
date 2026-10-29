@@ -32,7 +32,8 @@
  * disagreeing about how an object stringifies.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { allocLocal } from "./context/locals.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { ts } from "../ts-api.js";
 
@@ -94,6 +95,45 @@ export function buildJoinBoxedElementToString(
       blockType: { kind: "val", type: anyStrRef },
       then: [...nativeStringLiteralInstrs(ctx, ""), { op: "ref.cast", typeIdx: anyStrTypeIdx }],
       else: [{ op: "local.get", index: emptyElem.elemLocal }, ...toStrPath],
+    },
+  ];
+}
+
+/**
+ * (#7165) Does `receiver`'s string-element vec hold null elements? A
+ * `(string | undefined)[]` lowers to a nullable `$AnyString`-ref vec that
+ * stores `undefined` as null, so its consumers must not `ref.as_non_null` an
+ * element. A plain `string[]` answers false and keeps its bytes.
+ */
+export function stringVecElementIsNullable(ctx: CodegenContext, receiver: ts.Expression, elemType: ValType): boolean {
+  if (elemType.kind !== "ref_null") return false;
+  const fact = ctx.oracle.elementFactOf(receiver);
+  return fact.kind === "union" && (fact.undefinable || fact.nullable);
+}
+
+/**
+ * String element (on the stack, a `(ref null $NativeString)`) → `(ref
+ * $AnyString)` for the native join: a non-null cast — or, for a vec that can
+ * hold null (#7165), a null element (undefined) joins as "" (§23.1.3.18 step
+ * 4.b). A plain `string[]` keeps the bare `ref.as_non_null`.
+ */
+export function stringJoinElement(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+  elemType: ValType,
+  resultType: ValType,
+): Instr[] {
+  if (!stringVecElementIsNullable(ctx, receiver, elemType)) return [{ op: "ref.as_non_null" }];
+  const elem = allocLocal(fctx, `__njoin_s_${fctx.locals.length}`, elemType);
+  return [
+    { op: "local.tee", index: elem },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: resultType },
+      then: [...nativeStringLiteralInstrs(ctx, ""), { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx }],
+      else: [{ op: "local.get", index: elem }, { op: "ref.as_non_null" }],
     },
   ];
 }

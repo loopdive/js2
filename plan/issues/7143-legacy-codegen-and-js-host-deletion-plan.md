@@ -1,9 +1,10 @@
 ---
 id: 7143
 title: "Deletion plan: retire the legacy (direct AST→Wasm) twins kind by kind as the IR arm is promoted, and delete the JS-host-mode-specific code once nothing consumes it"
-status: ready
+status: in-progress
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-28
+assignee: ttraenkler/opus-7143-b0
 priority: high
 horizon: xl
 feasibility: hard
@@ -259,3 +260,124 @@ flips it to `ir-owned`.
   and A1 and the D3/D4 decisions.
 - Every slice PR body: the measurement it rests on (number + command), the gc
   byte-identity statement, and the gate exit codes run bare.
+
+## B0 — legacy-reach measurement (Opus, 2026-10-28)
+
+Landed: `scripts/measure-legacy-reach.mjs` (the tool, `pnpm run
+measure:legacy-reach -- …`), `scripts/legacy-reach-corpus.mjs` (corpus +
+vitest-body extractor), `scripts/legacy-reach-baseline.json` (written by
+`--update`), `tests/issue-7143-legacy-reach.test.ts` (pins the tool on
+`tests/fixtures/legacy-reach/`). Measured on `origin/main` = `df57a0e8e6`.
+
+**What it counts.** Every source is compiled with `experimentalIR: true,
+trackIrOutcomes: true` for `standalone` and `gc` (native-first). Each IR
+outcome row is a unit; it is joined to its AST (the function/class node at
+the row's line:column; for `<module-init>`, the top-level statements that
+are not function or class declarations). For kind X: `units` = rows whose
+unit lexically contains X, `demoted` = those with `legacyBodyEmitted`,
+`reasons` = demoted rows by unsupported code (`invariant:<code>` for
+invariants, `ir-patched-over-legacy` for rows where both bodies were
+emitted). Nested closures count toward the enclosing unit.
+
+**§1.3 reproduced** (`--corpus playground --target standalone`): 73 units, 14
+demoted — 12 `host-surface-unavailable`, 1 `call-graph-closure`, 1
+`body-shape-rejected`. Match. `PostfixUnaryExpression` 4 demoted units, ×4
+nodes (match). Not reproduced: `ReturnStatement` is 6 demoted units, not 5
+(5 `host-surface-unavailable` + `bcrd`, `call-graph-closure`).
+`StringLiteral` is 93 nodes in demoted units, not 79. §1.3 names no command
+for those two sub-counts.
+
+**Full corpus** (1,880 sources after de-duplication: playground 13,
+equivalence 1,514 extracted literals, test262 353 `language/` files the root
+tests cite; the 5 cutover-manifest sources are all playground duplicates):
+
+| target | units | demoted | top reasons | compile failures |
+| --- | --- | --- | --- | --- |
+| standalone | 4,232 | 2,042 | body-shape-rejected 1,160 · class-member-unsupported 141 · ir-patched-over-legacy 78 · call-graph-closure 71 | 30 |
+| gc | 4,232 | 2,050 | body-shape-rejected 1,166 · class-member-unsupported 141 · call-graph-closure 85 · ir-patched-over-legacy 69 | 30 |
+
+§3.5 rows 1–9 on standalone (units / demoted): ThrowStatement 138 / 137 ·
+WhileStatement 26 / 12 · RegularExpressionLiteral 21 / 21 · IfStatement
+244 / 187 · ConditionalExpression 353 / 292 · TypeOfExpression 72 / 60 ·
+DeleteExpression 24 / 24 · PostfixUnaryExpression 154 / 87 ·
+ReturnStatement 2,195 / 1,574. **No §3.5 kind is at zero on the full corpus.**
+The 13-example sample's "0 hits" for rows 1–7 does not hold once
+equivalence and test262 sources are in. Most demotes are whole-unit
+`body-shape-rejected`, so a twin's count falls only as the units around it
+are claimed.
+
+**Runtime**: 717.7 s and 737.6 s (two full runs, identical counts), 3 worker
+processes on a 4-core box with load average ~10 from other agents. That is
+under the 15-minute bar, with little margin on a loaded box.
+
+Caveats:
+- The test262 harness prefix is excluded: units at or above the assembly's
+  `bodyLineOffset`, and module-init statements above it. `negative` and
+  `flags: [module]` files are skipped.
+- The equivalence extractor takes literal first arguments of compile-helper
+  calls, plus a `const` that is initialised with a literal and passed by
+  name. Template literals with substitutions are skipped.
+- Some of the 30 compile failures are extractor false positives:
+  `array-push-reentrancy.test.ts` passes function bodies to a local `run`
+  wrapper. Failed compiles still contribute whatever outcome rows they
+  produced.
+- `--check` fails when the demoted count of any kind, or of a target's
+  total, grows. It is not wired into CI: a full run takes about 12 minutes.
+
+## A1 — standalone-arm ratchet (Opus, 2026-10-28)
+
+Landed: `scripts/check-standalone-arms.mjs` (`pnpm run check:standalone-arms`),
+`scripts/standalone-arms-baseline.json` (per-directory, per-token), the
+`quality` step "Standalone-arm ratchet (#7143 A1)" in `.github/workflows/ci.yml`,
+and `tests/issue-7143-standalone-arms.test.ts`.
+
+**What it counts.** Source lines under `src/**/*.ts` matching each token, the
+`rg -c` unit of §1.1: `ctx.standalone`, `!ctx.standalone`, `noJsHost(`,
+`ctx.wasi`. Measured on `origin/main` = `df57a0e8e6`:
+
+| Token | Lines (§1.1, 10-25) | Lines (10-28) |
+| --- | --- | --- |
+| `ctx.standalone` | 1,728 | 1,685 |
+| `!ctx.standalone` | 604 | 590 |
+| `noJsHost(` | 282 | 275 |
+| `ctx.wasi` | 987 | 951 |
+
+The baseline equals the 10-28 column. The counts fell between 10-25 and 10-28,
+so that column, not §1.1, is the starting floor.
+
+**How it gates.** The default run is change-scoped and net per token, the same
+mechanism as `check-coercion-sites.mjs`. Each changed src file is counted at
+the base blob and in the working tree, and the run fails only when the
+change-set's net count of some token grew. Moving an arm between files nets to
+zero and passes. A reviewed one-off is granted with a `standalone-arms-allow:`
+list in the PR's own issue file. `--all` compares the whole tree with the
+committed baseline, and `--update` / `--update-on-decrease` write it.
+
+**Acceptance check, run by hand.** One synthetic line
+`export const __syntheticArm = (ctx: { standalone: boolean }) => ctx.standalone;`
+appended to `src/codegen/peephole.ts` gives
+`standalone-arms gate FAILED — this change-set adds ctx.standalone +1 on net`,
+exit 1. The unchanged tree passes with exit 0.
+
+**Not done here.** The committed baseline is not yet refreshed by main's
+post-merge sync (`baseline-summary-sync.yml`). The PR-path gate does not read
+it, so only `--all` can go stale. Wiring `--update-on-decrease` into that sync
+is a one-line follow-up for whoever owns it.
+
+**Refinement (2026-10-28): tokens match whole words.** The first cut matched
+`ctx.wasi` / `ctx.standalone` as substrings, so a provider-state field read
+(`ctx.wasiFdWriteIdx`, `ctx.standaloneGlobalThisImport`) counted as an arm. On
+main `f3b5b1a00f` that is 95 `ctx.wasi…` and 46 `ctx.standalone…` field lines:
+
+| token | substring | whole word |
+| --- | --- | --- |
+| `ctx.standalone` | 1,685 | 1,639 |
+| `!ctx.standalone` | 590 | 584 |
+| `ctx.wasi` | 953 | 858 |
+
+The over-match failed #7136's native console helper, which selects its sink by
+the registered `fd_write` provider rather than by `ctx.wasi`. That is the
+capability form #6708 asks for, and it was being punished, which pushes
+authors toward dodging the regex. The committed baseline keeps the substring
+counts; `--all` only reports decreases against it, so it cannot false-fail.
+Re-measure with `node scripts/check-standalone-arms.mjs --all`.

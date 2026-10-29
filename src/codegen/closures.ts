@@ -22,7 +22,6 @@ import { ts, forEachChild } from "../ts-api.js";
 import { isLexicalBindingWrite } from "../shared/binding-writes.js";
 import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
-import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
 import {
   emitEagerAsyncPromiseWrap,
   parkedAsyncClosureWrapsPromise,
@@ -31,7 +30,7 @@ import {
 import { widenAsyncThenableResult } from "./async-thenable-return.js"; // (#5371)
 import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
 import { hoistParameterEvalVars } from "./expressions/eval-param-scope-hoist.js"; // (#6774 S7)
-import { applyNullableElemParamOverride } from "./array-hof-nullable-elem-param.js"; // (#6602) nullable vec element at the HOF callback boundary
+import { hofElemParamType } from "./array-hof-nullable-elem-param.js"; // (#6602) nullable vec element at the HOF callback boundary
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./program-abi-source-callable-planning.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3b) manual import-shift must skip stable handles
@@ -2079,11 +2078,7 @@ export function computeClosureWrapperSig(
             // nullability lie. Any other pair is returned unchanged, so no
             // other callback shape can move a byte. `map` never reaches here:
             // its unconditional override above already fired.
-            applyNullableElemParamOverride(
-              resolveWasmType(ctx, paramType),
-              ctx.arrayHofNullableElemParamOverride,
-              runtimeIndex,
-            );
+            hofElemParamType(ctx, resolveWasmType(ctx, paramType), runtimeIndex, arrow);
     // JSDoc optional parameters (for example `@param {number=} size`) are
     // commonly exported from JavaScript modules and called from a different
     // source file. The local call-site scan cannot see those callers, so a
@@ -2228,7 +2223,7 @@ export function computeClosureWrapperSig(
     if (isAsync) {
       retType = unwrapPromiseType(retType, ctx.checker);
     }
-    if (!isAsync && isStandalonePromiseActive(ctx) && isPromiseType(retType)) {
+    if (!isAsync && isPromiseType(retType)) {
       closureReturnType = { kind: "externref" };
     }
     if (closureReturnType === null && !isVoidType(retType) && !(retType.flags & ts.TypeFlags.Never)) {

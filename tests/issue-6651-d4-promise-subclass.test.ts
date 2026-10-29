@@ -148,19 +148,6 @@ export function test(): number {
     expect(value).toBe(8);
   });
 
-  it("control: host-assisted keeps the host Promise-subclass constructor and never names the native helper", async () => {
-    const result = await compile(
-      `class S extends Promise<any> { constructor(e: any) { super(e); } }
-export function test(): number { const p: any = Promise.resolve.call(S); return p instanceof S ? 1 : 0; }`,
-      { fileName: "issue-6651-d4-gc.ts", semanticProviders: "host-assisted" },
-    );
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    const text = new TextDecoder("latin1").decode(result.binary);
-    expect(text.includes("__promise_subclass_ctor")).toBe(true);
-    expect(text.includes("__promise_proto_instanceof")).toBe(false);
-  });
-
   it("control: a standalone module with no Promise subclass never names the new helper", async () => {
     const binary = await compileStandalone(`
 class K { constructor(e: any) { e(function (): void {}, function (): void {}); } }
