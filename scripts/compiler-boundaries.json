@@ -14328,6 +14328,11 @@
       "layer": "wasm-physical"
     },
     {
+      "path": "src/wasm/physical/owned-function-data.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
       "path": "src/wit-generator.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
