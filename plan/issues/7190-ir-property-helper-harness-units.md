@@ -234,3 +234,42 @@ Soundness questions:
 | 4 | "non-null" holds only at selection time; the emitted WAT shows `ref null` | the comment says so |
 | 5 | no test for where the `!` exemption stops | `not-boundary` fixture: `!__getOwnPropertyDescriptor(obj, k)` stays `expr-module-value-not` |
 | 6 | the refusal-provider setup is copied across test files | test-only, left |
+
+## Next slice — measured blocker chains (2026-10-29, merged head)
+
+Measured on the real harness (`includes: [propertyHelper.js]`, standalone),
+peeling one blocker at a time with local stubs (not shipped):
+
+- **isWritable**, in order:
+  1. `var unlikelyValue = __isArray(obj) && name === "length" ? nonIndexNumericPropertyName : "unlikelyValue"`.
+     A module f64 and an uncertified `Array.isArray` alias flow into a local
+     (`vardecl-module-binding-alias`).
+  2. `var hadValue = __hasOwnProperty(obj, name)`, the same rule on a certified
+     exact-boolean alias call.
+  3. `var oldValue = obj[name]`, a dynamic element read into a local the scan
+     treats as concrete (`move-only[concrete]`).
+  4. Still behind those, not yet peeled: `arguments.length < 4`,
+     `newValue === oldValue`, `newValue + "2"`, `obj[name] = newValue` inside
+     `try` with an `instanceof TypeError` catch, and
+     `isSameValue(obj[verifyProp || name], newValue)`.
+- **verifyProperty:**
+  1. `var originalDesc = __getOwnPropertyDescriptor(obj, name)`
+     (`vardecl-module-binding-alias`).
+  2. `var names = __getOwnPropertyNames(desc)`. That alias is not certified;
+     `uncurried-object-alias.ts` certifies only `getOwnPropertyDescriptor` among
+     the stored statics.
+  3. Then the `names.length` / `names[i]` reads, `__push`, and `__join`.
+
+**Arm tried:** exempt a local whose initializer is a certified alias call
+(`uncurriedObjectAliasMethod` or `isStoredObjectDescriptorAliasCall`) from
+`vardecl-module-binding-alias`. It clears isWritable step 2 and verifyProperty
+step 1 with no post-claim error, but ships no unit on its own, so it waits to
+land with the next blocker of either chain.
+
+**Plan for the next slice:** dynamic-carrier locals. A `var` initialized from a
+dynamic producer (alias call, `obj[name]`) gets the carrier slot, and reads of
+it join the move-only scan's dynamic names (the #2949 `dynNames` set).
+- That covers isWritable steps 2–3 and verifyProperty step 1 in one arm.
+- isWritable step 1 then needs the `Array.isArray` stored-static certification
+  in `uncurried-object-alias.ts` (beside `getOwnPropertyDescriptor`) and a
+  carrier-typed conditional.
