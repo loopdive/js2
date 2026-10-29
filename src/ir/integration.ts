@@ -5873,24 +5873,42 @@ export function compileIrPathFunctions(
     // only on a path that actually enters the orphaned artifact. Empty VOID
     // bodies are already valid Wasm (fall-through) — leave those as-is rather
     // than converting today's silent no-op into a trap.
-    const stubIfOrphanedEmpty = (unitId: IrUnitId, terminalOwnerUnitId: IrUnitId, funcIdx: number): void => {
+    //
+    // (#7106) A fresh slot still carries its allocation placeholder (`typeIdx:
+    // 0`, not a func type) until its patch installs, so an orphaned one has no
+    // signature at all and the final ABI planner rejects the whole module. It
+    // takes the signature its lowered body would have installed, or `() -> ()`
+    // when its owner failed before lowering it. Patches run first so a lowered
+    // slot keeps its real signature.
+    const stubIfOrphanedEmpty = (
+      unitId: IrUnitId,
+      terminalOwnerUnitId: IrUnitId,
+      funcIdx: number,
+      loweredTypeIdx?: number,
+    ): void => {
       const orphan = definedFuncAt(ctx, funcIdx);
       if (!orphan || orphan.body.length > 0) return;
       const typeDef = ctx.mod.types[orphan.typeIdx];
-      if (!typeDef || typeDef.kind !== "func" || typeDef.results.length === 0) return;
+      if (typeDef?.kind === "func" && typeDef.results.length === 0) return;
       replaceUnitCallableAt(unitId, terminalOwnerUnitId, funcIdx, orphan, {
         ...orphan,
+        typeIdx: typeDef?.kind === "func" ? orphan.typeIdx : (loweredTypeIdx ?? addFuncType(ctx, [], [])),
         body: [{ op: "unreachable" }],
       });
     };
+    for (const patch of pendingPatches) {
+      if (!options?.deferPreparedPublication && (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId))) {
+        stubIfOrphanedEmpty(
+          patch.entry.artifactUnitId,
+          patch.entry.terminalOwnerUnitId,
+          patch.funcIdx,
+          patch.wasmFunc.typeIdx,
+        );
+      }
+    }
     for (const slot of freshSlots) {
       if (!options?.deferPreparedPublication && (atomicAborted || failedOwners.has(slot.terminalOwnerUnitId))) {
         stubIfOrphanedEmpty(slot.artifactUnitId, slot.terminalOwnerUnitId, slot.funcIdx);
-      }
-    }
-    for (const patch of pendingPatches) {
-      if (!options?.deferPreparedPublication && (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId))) {
-        stubIfOrphanedEmpty(patch.entry.artifactUnitId, patch.entry.terminalOwnerUnitId, patch.funcIdx);
       }
     }
 
