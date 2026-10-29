@@ -37,7 +37,8 @@ export type IrBackendTargetCapability =
   | "prepared-dynamic-helper-abi"
   | "native-dynamic-member-read"
   | "planned-closure-direct-call"
-  | "native-dynamic-loose-equality";
+  | "native-dynamic-loose-equality"
+  | "dynamic-method-call-wrapper";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -172,6 +173,11 @@ export function supportsIrBackendTargetCapability(
       // only to keep main's output, and only against a string other side
       // (`carrierLooseEqualityAdmissible`, new shapes); standalone is refused.
       return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "wasi";
+    case "dynamic-method-call-wrapper":
+    // (#7106 Stage 4, #7119) `recv.m(…)` on a dynamic receiver through the
+    // per-(method, arity) `__ir_dyn_mcall_<m>_<n>` wrapper: the call's
+    // [[Get]], then legacy's own any-receiver brand dispatch (host-free
+    // lanes; the native `__extern_method_call` serves open `$Object` only).
     case "native-number-conversion":
       // (#7106 module-init lever B) `Number(v)` through the host-free
       // `js.number.from-value` provider (legacy's emitter over a template).

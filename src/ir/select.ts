@@ -72,7 +72,7 @@ export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
-import { BUILTIN_PROTOTYPE_METHOD_NAMES } from "./core/builtin-method-names.js";
+import { irDynamicMethodCallIsNameable, irDynamicMethodCallNeedsWrapper } from "./dynamic-method-call-names.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
@@ -131,7 +131,7 @@ export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
-import { isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
+import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
 import type {
@@ -156,6 +156,7 @@ import {
   isEqualityOperator,
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
+  nativeI32OperandsAdmissible,
 } from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
@@ -607,13 +608,15 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   /** Backend owns bounded-literal f64.toFixed → abstract-string formatting. */
   readonly supportsNumberToFixed?: boolean;
   /**
-   * (#4462) The active backend has the HOST-FREE console sink (#3469's
-   * `__stdout_acc` rope + `__stdout_append`), so `console.<m>(arg)` has
+   * The active backend has native console output (standalone rope or WASI
+   * fd_write), so the supported `console.<m>(arg)` shape has
    * something to lower to without a JS host. Read together with
    * {@link isHostFreeConsoleCallReceiver} — availability alone is not a claim
    * licence; the call shape must also be one the builder lowers.
    */
-  readonly supportsStandaloneConsoleSink?: boolean;
+  readonly supportsNativeConsoleOutput?: boolean;
+  /** (#7136) Checker proof that an operand reads a native-i32 class field (an i32 IR slot). */
+  readonly isNativeI32SlotRead?: (expr: ts.Expression) => boolean;
   /**
    * True when the active backend explicitly supports the selector's exact
    * literal-string `String.replace(search, replacement)` slice. Backends
@@ -768,7 +771,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "prepared-dynamic-helper-abi"
       | "native-dynamic-member-read"
       | "planned-closure-direct-call"
-      | "native-dynamic-loose-equality",
+      | "native-dynamic-loose-equality"
+      | "dynamic-method-call-wrapper",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -1487,18 +1491,22 @@ let earlyReturnBarrierDepth = 0;
 let currentInPlannedMemberClosure = false;
 
 /**
- * (#7106 Stage 4 / #7117) A planned member closure's receivers are dynamic
- * carriers, so `recv.m(…)` there is the IR's generic dynamic method call and
- * {@link dynamicMethodCallIsExact} decides it (`list.join(", ")`,
- * `n.toString()`, `sym.toString()` measured `undefined` off the host lane). A
- * refused call keeps the closure legacy; a string-literal receiver keeps its
- * native string method.
+ * (#7106 Stage 4) A planned member closure's receivers are dynamic carriers.
+ * A method call on one has an exact lowering only where
+ * {@link dynamicMethodCallIsAdmitted} says so: the generic
+ * `__ir_dyn_method_call_N` answers `undefined` for a primitive or vec receiver
+ * off the host lane (`list.join(", ")`, `n.toString()`, `sym.toString()` —
+ * measured), and the `__ir_dyn_mcall_<m>_<n>` wrapper supplies legacy's brand
+ * dispatch there. Any other call stays legacy; a string-literal receiver keeps
+ * its native string method.
  */
 function plannedClosureDynamicMethodCall(expr: ts.CallExpression): boolean {
   if (!currentInPlannedMemberClosure || !ts.isPropertyAccessExpression(expr.expression)) return false;
   let receiver: ts.Expression = expr.expression.expression;
   while (ts.isParenthesizedExpression(receiver)) receiver = receiver.expression;
-  return !ts.isStringLiteralLike(receiver) && !dynamicMethodCallIsExact(expr.expression.name.text);
+  if (ts.isStringLiteralLike(receiver)) return false;
+  if (expr.arguments.some(ts.isSpreadElement)) return true;
+  return !dynamicMethodCallIsAdmitted(expr.expression.name.text, expr.arguments.length);
 }
 let currentFnIsGenerator = false;
 let currentFnIsVoidReturn = false;
@@ -1675,15 +1683,15 @@ function namesDeferredHostSurface(expr: ts.Identifier, localClasses: ReadonlySet
  * has always been able to print through the #3469 sink — legacy does it today.
  *
  * Three conjuncts, each load-bearing:
- *   1. the backend actually minted the sink (`supportsStandaloneConsoleSink`) —
+ *   1. the backend can materialize output (`supportsNativeConsoleOutput`) —
  *      a standalone module without native strings has no sink and must defer;
  *   2. the identifier really is the ambient global, per the same checker-backed
  *      resolver + `localClasses` shadow rule the ACCEPT arm above uses;
  *   3. the call shape is the one the builder lowers, so the claim cannot become
  *      a post-claim demote.
  */
-function namesHostFreeConsoleSurface(expr: ts.Identifier, localClasses: ReadonlySet<string>): boolean {
-  if (currentSelectionOptions?.supportsStandaloneConsoleSink !== true) return false;
+function namesHostFreeConsoleSurface(expr: ts.Identifier, localClasses: Pick<ReadonlySet<string>, "has">): boolean {
+  if (currentSelectionOptions?.supportsNativeConsoleOutput !== true) return false;
   if (expr.text !== "console" || localClasses.has("console")) return false;
   if (currentDeferredHostGlobalResolver === null || currentDeferredHostGlobalResolver(expr) === undefined) return false;
   return isHostFreeConsoleCallReceiver(expr);
@@ -3028,20 +3036,28 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
 }
 
 /**
- * (#7117) Is a generic dynamic method call `recv.<name>(…)` exact on this lane?
- * On the host lane `__extern_method_call` is the real JS call. Off it, the
- * native object runtime dispatches open-`$Object` / instance / closure methods
- * but answers `undefined` for a primitive or vec receiver (`list.join(", ")`
- * measured), where legacy dispatches by brand. So a BUILT-IN prototype method
- * name is refused there — except `charCodeAt`, the string runtime's exact fast
- * path. The cut is by NAME, so a user method that shares one (`c.get(k)`,
- * `o.add(x)`, `it.next()`) is refused too; only an uncolliding user name
- * (`o.inc()`) keeps its open dispatch. #6851's per-(method, arity) wrapper
- * lifts this.
+ * (#7117) Has `recv.<name>(…arity args)` on a dynamic receiver an exact
+ * lowering on this lane? A user method name with at most one argument takes
+ * the generic `__ir_dyn_method_call_N` → `__extern_method_call` (open
+ * `$Object` / instance / closure dispatch). Off the host lanes a built-in
+ * prototype method name — and any wider call — needs brand dispatch: the
+ * native runtime answers `undefined` for a primitive or vec receiver
+ * (`list.join(", ")` measured), so it takes the per-(method, arity) wrapper
+ * built from legacy's emitters. A host lane keeps its generic JS call
+ * (`host-dynamic-method-call`) for at most one argument.
  */
-function dynamicMethodCallIsExact(name: string): boolean {
-  if (name === "charCodeAt" || !BUILTIN_PROTOTYPE_METHOD_NAMES.has(name)) return true;
-  return currentSelectionOptions?.supportsBackendCapability?.("host-dynamic-method-call") === true;
+function dynamicMethodCallIsAdmitted(name: string, arity: number): boolean {
+  if (!irDynamicMethodCallNeedsWrapper(name, arity) || dynamicMethodCallTakesWrapper(name, arity)) return true;
+  return arity <= 1 && currentSelectionOptions?.supportsBackendCapability?.("host-dynamic-method-call") === true;
+}
+
+/** (#7119) Does `recv.<name>(…arity args)` on a dynamic receiver lower through the brand-dispatch wrapper? */
+function dynamicMethodCallTakesWrapper(name: string, arity: number): boolean {
+  return (
+    irDynamicMethodCallNeedsWrapper(name, arity) &&
+    irDynamicMethodCallIsNameable(name, arity) &&
+    currentSelectionOptions?.supportsBackendCapability?.("dynamic-method-call-wrapper") === true
+  );
 }
 
 /**
@@ -3365,10 +3381,10 @@ function dynamicUsesAreMoveOnly(
           e.arguments[0]!.getText() === "/_/g" &&
           ts.isStringLiteralLike(e.arguments[1]!) &&
           e.arguments[1]!.text === "";
-        if (!currentDynMemberReadBuildable || !expectDyn || (e.arguments.length > 1 && !narrowStringReplace)) {
+        if (!currentDynMemberReadBuildable || !expectDyn) return false;
+        if (!narrowStringReplace && !dynamicMethodCallIsAdmitted(e.expression.name.text, e.arguments.length)) {
           return false;
         }
-        if (!narrowStringReplace && !dynamicMethodCallIsExact(e.expression.name.text)) return false;
         if (!scanExpr(e.expression.expression, true)) return false;
         if (narrowStringReplace) {
           return scanExpr(e.arguments[0]!, false) && scanExpr(e.arguments[1]!, false);
@@ -3381,10 +3397,10 @@ function dynamicUsesAreMoveOnly(
         }
         return true;
       }
-      // (#7106 S1) `String(<dynamic>)` → `dyn.to_string`: a concrete string
-      // result, lowered through the lane's `__extern_toString`; a concrete
-      // operand folds inline. Not on the fast $AnyValue strategy.
-      const toStringArg = dynNames.has("String") ? null : ambientStringToStringCall(e);
+      // String conversion and native console rendering consume one carrier.
+      const toStringArg =
+        hostFreeConsoleArgument(e, (id) => namesHostFreeConsoleSurface(id, currentLocalClassDeclarations)) ??
+        (dynNames.has("String") ? null : ambientStringToStringCall(e));
       if (toStringArg !== null) {
         if (expectDyn) return false;
         if (isDynShaped(toStringArg)) return currentDynamicRuntimeBuildable && scanExpr(toStringArg, true);
@@ -7213,6 +7229,7 @@ function isPhase1ClosureLiteral(
     nativeDynamicLooseEquality:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-loose-equality") === true,
     isGlobalUndefined: (expression) => isUnshadowedUndefinedIdentifier(expression, scope),
+    wrappedMethodCall: dynamicMethodCallTakesWrapper,
     functionObjectReadLocals: closureFunctionObjectReadLocals(plan),
   });
   return refusal === null || capabilityNo("operand-coercion-unsupported", refusal.arm, refusal.node);
@@ -11151,6 +11168,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (binOp === ts.SyntaxKind.CommaToken) {
       if (selectorValuePositionComma(expr, scope, localClasses)) return true;
       return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
+    }
+    if (!nativeI32OperandsAdmissible(expr, currentSelectionOptions)) {
+      return capabilityNo("operand-coercion-unsupported", "expr-native-i32-operand", expr);
     }
     if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
       const dynamicModuleWrite = currentModuleBindingResolver?.(expr.left, expr.right);

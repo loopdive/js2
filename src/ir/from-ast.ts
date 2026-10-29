@@ -35,6 +35,7 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
 import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./select-expression-structure.js";
@@ -90,6 +91,7 @@ import {
   IR_DYN_METHOD_CALL_1_FN,
   IR_DYN_STRING_REPLACE_FN,
 } from "../codegen/dyn-ops.js";
+import { irDynamicMethodCallHelperName, irDynamicMethodCallNeedsWrapper } from "./dynamic-method-call-names.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "../codegen/ir-native-map.js"; // (#4461) native $Map adapter ABI
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
@@ -231,7 +233,7 @@ import {
   stringElementReadLowerable,
 } from "./capability.js";
 import type { IrStandaloneDomOperation } from "./dom-capability.js";
-import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
+import { IR_CONSOLE_METHODS, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import type { IrLowerResolver, IrVecLowering } from "./lower.js";
 import {
   allocateLiftedFunctionArtifact,
@@ -549,13 +551,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   nativeNumberToFixedAvailable?(): boolean;
   /**
-   * (#4462) Does this lane have the host-free console sink (#3469's
-   * `__stdout_append`)? Consulted by the console capability row
+   * Does this lane have native console output? Consulted by its capability row
    * (`consoleSurfaceCapability`) on BOTH sides of the claim boundary, so a
-   * standalone module that never minted the sink defers rather than claiming a
-   * call with nothing to lower to.
+   * target without an output provider defers before claiming a call.
    */
-  standaloneConsoleSinkAvailable?(): boolean;
+  nativeConsoleOutputAvailable?(): boolean;
   /**
    * (#2955 slice 5) Strategy query: how does this mode iterate a
    * `string`-typed for-of iterable? `"char-loop"` = the native fast path
@@ -883,6 +883,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * unbox. Fast AnyValue carriers return false.
    */
   dynamicCarrierIsExternref?(): boolean;
+  /**
+   * (#7106 Stage 4) True when this lane lowers `recv.<method>(…arity args)` on
+   * a dynamic receiver through the `__ir_dyn_mcall_<m>_<n>` brand-dispatch
+   * wrapper (host-free, non-fast lanes).
+   */
+  dynamicMethodCallWrapper?(method: string, arity: number): boolean;
   /** (#7106 module-init lever A) The constant a `Number.<CONST>` / `Math.<CONST>` read folds to, else undefined. */
   ambientNamespaceConstant?(expr: ts.PropertyAccessExpression): number | undefined;
   /**
@@ -8821,62 +8827,12 @@ function lowerNativeNumberToString(value: IrValueId, funcName: string, cx: Lower
   return r;
 }
 
-/**
- * (#4462) Render one already-lowered `console.<m>` argument to `IrType.string`
- * for the host-free sink.
- *
- * Dispatch is on the LOWERED IR type, not the checker type — deliberately, and
- * for the same reason `emitStandaloneStdoutAppendValue` dispatches on the
- * compiled ValType (#3469): the static type of a `console.log` argument can be
- * `any` while the value that actually arrives is a native string. Carriers with
- * no host-free rendering demote through the typed UNSUPPORTED channel rather
- * than silently printing nothing.
- */
-function lowerHostFreeConsoleArgument(value: IrValueId, cx: LowerCtx, methodName: string): IrValueId {
-  const valueType = cx.builder.typeOf(value);
-  if (valueType.kind === "string") return value;
-  if (valueType.kind === "val" && valueType.val.kind === "f64") {
-    if (cx.resolver?.nativeNumberToStringAvailable?.() !== true) {
-      throw new IrUnsupportedError(
-        "primitive-method-unsupported",
-        "build",
-        `ir/from-ast: console.${methodName} numeric argument needs a host-free number formatter (${cx.funcName})`,
-      );
-    }
-    return lowerNativeNumberToString(value, cx.funcName, cx);
-  }
-  if (irTypeIsBoolean(valueType)) return lowerBooleanToString(cx.builder, value);
-  // A number that propagation narrowed to i32 is still a number; widen and use
-  // the same formatter so `console.log(x|0)` prints what `x.toString()` would.
-  if (valueType.kind === "val" && valueType.val.kind === "i32" && valueType.val.boolean !== true) {
-    const widened = cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
-    return lowerHostFreeConsoleArgument(widened, cx, methodName);
-  }
-  throw new IrUnsupportedError(
-    "method-call-unsupported",
-    "build",
-    `ir/from-ast: console.${methodName} argument of type ${describeIrType(valueType)} has no host-free rendering (${cx.funcName})`,
-  );
-}
-
-/**
- * (#4462) `console.<m>(arg)` with NO JS host: render the argument to the native
- * string carrier and append it to the in-module `__stdout_acc` rope — #3469's
- * sink, the one legacy already uses at `--target standalone`, kept host-free so
- * #2961's import-leak gate stays green.
- *
- * The trailing newline is CONCATENATED rather than appended by a second call, so
- * one console call produces one rope node. Output is identical to legacy's
- * append-arg-then-append-"\n" either way; this just costs one call instead of
- * two. Statement-position only, so there is no value to return.
- */
+/** Evaluate the source once; native rendering and newline/channel emission share one module. */
 function lowerHostFreeConsoleCall(argExpr: ts.Expression, cx: LowerCtx, methodName: string): null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== argExpr)
     return withNodeSourceSite(cx, argExpr, () => lowerHostFreeConsoleCall(argExpr, cx, methodName));
-  const argVal = lowerExpr(argExpr, cx, { kind: "string" });
-  const rendered = lowerHostFreeConsoleArgument(argVal, cx, methodName);
-  const line = cx.builder.emitStringConcat(rendered, cx.builder.emitStringConst("\n"));
-  cx.builder.emitCall(irRuntimeFuncRef(IR_CONSOLE_SINK_APPEND_FN), [line], null);
+  const value = lowerExpr(argExpr, cx, { kind: "string" });
+  lowerNativeConsoleLine(cx.builder, value, methodName, cx.resolver?.nativeNumberToStringAvailable?.() === true);
   return null;
 }
 
@@ -8968,7 +8924,7 @@ function tryLowerConsoleMethodCall(
     cx.resolver?.consoleArgVariant !== undefined
   ) {
     const jsHost = cx.resolver?.jsHostExterns?.() === true;
-    const hostFreeSink = cx.resolver?.standaloneConsoleSinkAvailable?.() === true;
+    const hostFreeSink = cx.resolver?.nativeConsoleOutputAvailable?.() === true;
     assertNotDeferred(consoleSurfaceCapability(jsHost, hostFreeSink), `console.${methodName}`, cx.funcName);
     if (!statementPosition) {
       demoteToLegacy(
@@ -9827,15 +9783,31 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       }
       return result;
     }
-    if (expr.arguments.length > 1 || expr.arguments.some(ts.isSpreadElement)) {
+    if (expr.arguments.some(ts.isSpreadElement)) {
       throw new IrUnsupportedError(
         "method-call-unsupported",
         "build",
-        `ir/from-ast: dynamic method .${methodName}(...) supports at most one non-spread argument (${cx.funcName})`,
+        `ir/from-ast: dynamic method .${methodName}(...) has a spread argument (${cx.funcName})`,
       );
     }
-    const key = cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JS_TAG_IDS.String));
-    const dynamicArgs: IrValueId[] = [recv, key];
+    const arity = expr.arguments.length;
+    // (#7106 Stage 4) Off the host lanes a built-in method name (and any wider
+    // call) takes the call's [[Get]] plus legacy's brand dispatch, wrapped per
+    // (method, arity). The selector admits a built-in on the generic call only
+    // where `host-dynamic-method-call` holds.
+    const wrapped =
+      irDynamicMethodCallNeedsWrapper(methodName, arity) &&
+      cx.resolver?.dynamicMethodCallWrapper?.(methodName, arity) === true;
+    if (!wrapped && arity > 1) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: dynamic method .${methodName}/${arity} has no brand-dispatch wrapper on this lane (${cx.funcName})`,
+      );
+    }
+    const dynamicArgs: IrValueId[] = wrapped
+      ? [recv]
+      : [recv, cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JS_TAG_IDS.String))];
     for (const argument of expr.arguments) {
       const value = lowerExpr(argument, cx, irDynamic());
       const valueType = cx.builder.typeOf(value);
@@ -9849,7 +9821,11 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       }
       dynamicArgs.push(dynamicValue);
     }
-    const target = expr.arguments.length === 0 ? IR_DYN_METHOD_CALL_0_FN : IR_DYN_METHOD_CALL_1_FN;
+    const target = wrapped
+      ? irDynamicMethodCallHelperName(methodName, arity)
+      : arity === 0
+        ? IR_DYN_METHOD_CALL_0_FN
+        : IR_DYN_METHOD_CALL_1_FN;
     const result = cx.builder.emitCall(irRuntimeFuncRef(target), dynamicArgs, irDynamic());
     if (result === null) {
       // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.

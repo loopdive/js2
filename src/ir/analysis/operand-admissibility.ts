@@ -221,6 +221,33 @@ export function binaryOperandsAdmissible(op: ts.SyntaxKind, left: OperandFamily,
 }
 
 /**
+ * (#7136) The selector's {@link binaryOperandsAdmissible} for an operator with
+ * a native-i32 class-field operand (`v: i32`, #323). That field is an i32
+ * slot, an `int32` operand rather than the `number` its checker type says, so
+ * an operator `lowerBinary` cannot lower (`c.v + 1`) is refused before claim.
+ */
+export function nativeI32OperandsAdmissible(
+  expr: ts.BinaryExpression,
+  evidence:
+    | {
+        readonly isNativeI32SlotRead?: (operand: ts.Expression) => boolean;
+        readonly classifyPrimitiveExpression?: (operand: ts.Expression) => string | undefined;
+      }
+    | undefined,
+): boolean {
+  const op = expr.operatorToken.kind;
+  const isNativeI32 = evidence?.isNativeI32SlotRead;
+  if (!isNativeI32 || !isTypedBinaryOperator(op) || (!isNativeI32(expr.left) && !isNativeI32(expr.right))) return true;
+  const family = (operand: ts.Expression): OperandFamily =>
+    isNativeI32(operand)
+      ? "int32"
+      : evidence.classifyPrimitiveExpression?.(operand) === "number"
+        ? "number"
+        : "unknown";
+  return binaryOperandsAdmissible(op, family(expr.left), family(expr.right));
+}
+
+/**
  * `tryFoldNullCompare`: an equality against the `null` literal is lowered for
  * a dynamic or externref operand only when STRICT (one tag / `ref.is_null`
  * test — loose equality also matches `undefined`), and constant-folded for a
@@ -454,13 +481,14 @@ export function carrierLooseEqualityAdmissible(op: ts.SyntaxKind, left: OperandF
 }
 
 /**
- * (#7113, #7177) A method call `v.m(…)` on the boxed-any carrier: the IR
- * dynamic method call answers a value when `v` is `null` / `undefined` or has
- * no callable `m`, where JS throws a TypeError (`m.g()` on `null` or on an
- * array, standalone and WASI alike).
+ * (#7113, #7177) A method call `v.m(…)` on the boxed-any carrier: the IR's
+ * generic dynamic method call answers a value when `v` is `null` / `undefined`
+ * or has no callable `m`, where JS throws a TypeError (`m.g()` on `null` or on
+ * an array, standalone and WASI alike). A call `wrapped` by the #7119
+ * brand-dispatch wrapper performs the [[Get]] and throws that TypeError itself.
  */
-export function carrierMethodCallAdmissible(receiver: OperandFamily): boolean {
-  return receiver !== "dynamic";
+export function carrierMethodCallAdmissible(receiver: OperandFamily, wrapped: boolean): boolean {
+  return wrapped || receiver !== "dynamic";
 }
 
 /**

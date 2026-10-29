@@ -1,9 +1,11 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { nativeConsoleOutputAvailable } from "./helpers/ir-native-console.js";
+import { isNativeI32FieldRead } from "./native-type-annotations.js";
 import {
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
   ensureGlobalEnvironmentOperation,
 } from "./global-environment.js";
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
 import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
 import { irDynamicInstanceOfAtLegacyParity } from "./ir-dynamic-instanceof.js"; // (#7106) generic dynamic instanceof
@@ -663,7 +665,6 @@ import {
   flatStringType,
   nativeStringType,
   nativeStringTypeNullable,
-  standaloneConsoleSinkAvailable,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
@@ -850,6 +851,7 @@ installObjectModelPorts(() => ({
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
+  isNativeI32FieldRead,
   hasExportModifier,
   hasDeclareModifier,
   hasAsyncModifier,
@@ -3318,7 +3320,8 @@ function planIrOverlay(
       // so this only adds the native-string lanes.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
-      supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
+      supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
+      isNativeI32SlotRead: (expr) => isNativeI32FieldRead(ast.checker, expr),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
@@ -4262,9 +4265,10 @@ function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclarat
     return undefined;
   }
   if (ctx.sloppyImplicitGlobals.has(name)) return undefined;
-  // (#7106) `var g` merged with `function g`: the checker gives the script
-  // `var` its own symbol, but the binding (and its slot) is the function's.
-  if (ctx.funcMap.has(name) || ctx.liveFuncBindingGlobals?.has(name)) return undefined;
+  // (#7106) `var g` merged with `function g` owns the function's slot; (#7189) a same-named object-runtime
+  // helper (`__getOwnPropertyNames`) is not that `function` and can enter `funcMap` after selection.
+  const helperOnly = omObjectRuntime.OBJECT_RUNTIME_HELPER_NAMES.has(name) && !ctx.topLevelFunctionNames.has(name);
+  if ((ctx.funcMap.has(name) && !helperOnly) || ctx.liveFuncBindingGlobals?.has(name)) return undefined;
   const globalIdx = ctx.moduleGlobals.get(name);
   const global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
   return global?.name === `__mod_${name}` ? global : undefined;
