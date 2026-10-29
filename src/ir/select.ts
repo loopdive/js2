@@ -9029,29 +9029,45 @@ function isLiteralStringReplaceCall(expr: ts.CallExpression): boolean {
 }
 
 // #3529 P1 — exact String producer surface mirrored from from-ast's
-// STRING_METHOD_TABLE. This selector table intentionally stores only arity;
-// lowering remains the owner of representation-specific argument plans.
-const IR_STRING_METHOD_ARITY: Readonly<Record<string, readonly [min: number, max: number]>> = Object.freeze({
-  toUpperCase: [0, 0],
-  toLowerCase: [0, 0],
-  trim: [0, 0],
-  charAt: [0, 1],
-  slice: [1, 2],
-  substring: [0, 2],
-  charCodeAt: [0, 1],
-  indexOf: [1, 2],
-  includes: [1, 2],
-  startsWith: [1, 2],
-  endsWith: [1, 2],
-  replace: [2, 2],
-});
+// STRING_METHOD_TABLE. This selector table intentionally stores only arity and
+// where the position arguments start; lowering remains the owner of
+// representation-specific argument plans.
+//
+// (#7106) Every argument from `firstPosition` on is a ToIntegerOrInfinity
+// position (`charAt(pos)`, `slice(start, end)`, `includes(s, pos)`). The
+// lowering truncates a value that is already a number and nothing else: it has
+// no ToNumber and no "an undefined end is the length" rule, so a claimed
+// `charAt(undefined)` or `slice("e")` reached `i32.trunc_sat_f64_s` with a
+// dynamic or string operand. As for Math.* and String.fromCharCode, selection
+// requires the numeric proof.
+const IR_STRING_METHOD_SURFACE: Readonly<Record<string, readonly [min: number, max: number, firstPosition: number]>> =
+  Object.freeze({
+    toUpperCase: [0, 0, 0],
+    toLowerCase: [0, 0, 0],
+    trim: [0, 0, 0],
+    charAt: [0, 1, 0],
+    slice: [1, 2, 0],
+    substring: [0, 2, 0],
+    charCodeAt: [0, 1, 0],
+    indexOf: [1, 2, 1],
+    includes: [1, 2, 1],
+    startsWith: [1, 2, 1],
+    endsWith: [1, 2, 1],
+    replace: [2, 2, 2],
+  });
 
 function stringMethodHasSupportedArity(name: string, args: readonly ts.Expression[]): boolean {
   // Own-property lookup is deliberate: `toString` / `valueOf` must not hit
   // Object.prototype through a plain Record index.
-  if (!Object.prototype.hasOwnProperty.call(IR_STRING_METHOD_ARITY, name)) return false;
-  const range = IR_STRING_METHOD_ARITY[name]!;
-  return args.length >= range[0] && args.length <= range[1] && !args.some(ts.isSpreadElement);
+  if (!Object.prototype.hasOwnProperty.call(IR_STRING_METHOD_SURFACE, name)) return false;
+  const [min, max] = IR_STRING_METHOD_SURFACE[name]!;
+  return args.length >= min && args.length <= max && !args.some(ts.isSpreadElement);
+}
+
+/** The first position argument of an arity-checked call that is not a proven number. */
+function unprovenStringMethodPosition(name: string, args: readonly ts.Expression[]): ts.Expression | undefined {
+  const [, , firstPosition] = IR_STRING_METHOD_SURFACE[name]!;
+  return args.slice(firstPosition).find((arg) => !expressionIsProvenNumber(arg));
 }
 
 function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
@@ -11254,12 +11270,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (!nativeI32OperandsAdmissible(expr, currentSelectionOptions)) {
       return capabilityNo("operand-coercion-unsupported", "expr-native-i32-operand", expr);
     }
-    if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
-      const dynamicModuleWrite = currentModuleBindingResolver?.(expr.left, expr.right);
-      if (dynamicModuleWrite?.valueKind.kind === "dynamic") {
-        return isPhase1Expr(expr.right, scope, localClasses);
-      }
-    }
     if (binOp === ts.SyntaxKind.AmpersandAmpersandToken || binOp === ts.SyntaxKind.BarBarToken) {
       if (
         (!declaredExpressionHasExactFamily(expr.left, "boolean", scope) ||
@@ -11868,6 +11878,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       if (isStringReceiver) {
         if (!stringMethodHasSupportedArity(expr.expression.name.text, expr.arguments)) {
           return capabilityNo("string-method-unsupported", "expr-string-method-surface", expr);
+        }
+        const unprovenPosition = unprovenStringMethodPosition(expr.expression.name.text, expr.arguments);
+        if (unprovenPosition !== undefined) {
+          return capabilityNo("string-method-unsupported", "expr-string-method-position", unprovenPosition);
         }
         if (expr.expression.name.text === "replace") {
           if (currentSelectionOptions?.fnctorNativeStringReplace?.(expr) === true) {
