@@ -19,16 +19,10 @@ import type { CodegenContext } from "../context/types.js";
 import { IR_NUMBER_FROM_VALUE_NATIVE_FN } from "../../ir/runtime/number-conversion-callable.js";
 import { compileExpression, flushLateImportShifts } from "../shared.js";
 import { coerceType } from "../type-coercion.js";
-import { noJsHost } from "../js-errors.js";
 import { helperFunctionContext, publishHelperFunction } from "./ir-helper-function.js";
-import { parseDetachedTemplate } from "./template-wrapper.js";
+import { irTemplateWrapperLane, parseDetachedTemplate } from "./template-wrapper.js";
 
 const VALUE_PARAM = "__ir_nfv_value";
-
-/** The lanes with this provider: host-free, non-fast (legacy's `any` is externref there). */
-export function irNumberFromValueProviderLane(ctx: CodegenContext): boolean {
-  return noJsHost(ctx) && !ctx.fast;
-}
 
 /**
  * Reserve the provider once. Returns its function index, or undefined off the
@@ -36,7 +30,7 @@ export function irNumberFromValueProviderLane(ctx: CodegenContext): boolean {
  * (its diagnostics are dropped).
  */
 export function ensureIrNumberFromValueHelper(ctx: CodegenContext): number | undefined {
-  if (!irNumberFromValueProviderLane(ctx)) return undefined;
+  if (!irTemplateWrapperLane(ctx)) return undefined;
   const existing = ctx.funcMap.get(IR_NUMBER_FROM_VALUE_NATIVE_FN);
   if (existing !== undefined) return existing;
 

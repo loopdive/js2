@@ -66,6 +66,8 @@ export interface PlannedClosureFamilySources {
   readonly directCalls?: boolean;
   /** (#7113) `undefined` here is the global (no module or enclosing binding shadows it). */
   readonly isGlobalUndefined?: (expr: ts.Expression) => boolean;
+  /** (#7119) `recv.<name>(…arity args)` on the carrier takes the brand-dispatch wrapper on this lane. */
+  readonly wrappedMethodCall?: (name: string, arity: number) => boolean;
   /** (#7115) The never-written `var x = F.member;` locals: each holds the carrier for its whole life. */
   readonly functionObjectReadLocals?: ReadonlySet<string>;
 }
@@ -510,7 +512,10 @@ export function plannedClosureOperandRefusal(
     const callee = unwrapParens(expr.expression);
     if (
       ts.isPropertyAccessExpression(callee) &&
-      !carrierMethodCallAdmissible(operandProof(callee.expression).family) &&
+      !carrierMethodCallAdmissible(
+        operandProof(callee.expression).family,
+        sources.wrappedMethodCall?.(callee.name.text, expr.arguments.length) === true,
+      ) &&
       isNewShape()
     ) {
       return { arm: "closure-carrier-method-call", node: expr };
