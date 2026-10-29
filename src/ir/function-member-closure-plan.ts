@@ -15,6 +15,11 @@ export interface IrFunctionMemberClosurePlan {
   readonly signature: IrClosureSignature;
   /** Only these exact raw parameters acquire logical dynamic SSA at entry. */
   readonly dynamicParameterIndices: ReadonlySet<number>;
+  /**
+   * (#7106 Stage 4) The body reads its own `this`: bound once at entry through
+   * `dyn.current_this` with this strictness. Absent → the body never reads it.
+   */
+  readonly thisStrict?: boolean;
   /** Rechecks original AST, checker, source inventory, receiver and physical ABI. */
   isCurrent(): boolean;
 }
