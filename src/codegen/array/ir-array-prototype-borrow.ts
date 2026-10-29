@@ -24,8 +24,11 @@ import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { flushLateImportShifts } from "../shared.js";
 import { helperFunctionContext, publishHelperFunction } from "../helpers/ir-helper-function.js";
-import { irDynamicMethodCallWrapperLane } from "../object-model/ir-dynamic-method-call.js";
-import { compileTemplateExpressionAs, parseDetachedTemplate } from "../helpers/template-wrapper.js";
+import {
+  compileTemplateExpressionAs,
+  irTemplateWrapperLane,
+  parseDetachedTemplate,
+} from "../helpers/template-wrapper.js";
 import { carrierOf } from "../struct-carrier-inhabits.js";
 import { arrayPrototypeBorrowCompilesHostFree, isStringCarrier } from "../array-prototype-borrow.js";
 
@@ -38,7 +41,7 @@ const borrowArgumentName = (index: number): string => `__ir_apb_arg${index}`;
  * host-free.
  */
 export function irArrayPrototypeBorrowWrapperLane(ctx: CodegenContext, method: string): boolean {
-  return irDynamicMethodCallWrapperLane(ctx) && arrayPrototypeBorrowCompilesHostFree(method);
+  return irTemplateWrapperLane(ctx) && arrayPrototypeBorrowCompilesHostFree(method);
 }
 
 /**

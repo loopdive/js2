@@ -102,7 +102,7 @@ import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
 import {
   ensureIrDynamicMethodCallHelper,
-  irDynamicMethodCallWrapperLane,
+  irTemplateWrapperLane,
 } from "../codegen/object-model/ir-dynamic-method-call.js";
 import { irWrapperAdmitted, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
 import { parseIrArrayPrototypeBorrowHelperName } from "./array-prototype-borrow-call.js";
@@ -7030,7 +7030,7 @@ function makeFromAstResolver(
       return !ctx.fast;
     },
     dynamicMethodCallWrapper(method: string, arity: number) {
-      return irWrapperAdmitted(irDynamicMethodCallWrapperLane(ctx), method, arity);
+      return irWrapperAdmitted(irTemplateWrapperLane(ctx), method, arity);
     },
     arrayPrototypeBorrowWrapper(method: string) {
       return irArrayPrototypeBorrowWrapperLane(ctx, method);

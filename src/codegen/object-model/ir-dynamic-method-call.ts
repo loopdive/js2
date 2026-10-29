@@ -42,26 +42,22 @@ import type { CodegenContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { flushLateImportShifts } from "../shared.js";
 import { ensureLateImport } from "../expressions/late-imports.js";
-import { emitThrowTypeError, noJsHost } from "../js-errors.js";
+import { emitThrowTypeError } from "../js-errors.js";
 import { captureReceiverSequence } from "../ir-dynamic-construct.js";
 import { helperFunctionContext, publishHelperFunction } from "../helpers/ir-helper-function.js";
-import { compileTemplateExpressionAs as compileAs, parseDetachedTemplate } from "../helpers/template-wrapper.js";
+import {
+  compileTemplateExpressionAs as compileAs,
+  irTemplateWrapperLane,
+  parseDetachedTemplate,
+} from "../helpers/template-wrapper.js";
+// The bridge reads the lane through this module, its one codegen edge for the wrapper.
+export { irTemplateWrapperLane };
 
 const RECEIVER = "__ir_dmc_recv";
 const METHOD_VALUE = "__ir_dmc_fn";
 const argumentName = (index: number): string => `__ir_dmc_arg${index}`;
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
-
-/**
- * The host-free lanes whose dynamic carrier is legacy's `any` externref (the
- * selector's `dynamic-method-call-wrapper` capability). A host lane's adapter
- * may refuse a legacy import the emitters reach (`__js_array_new` under the
- * native-first kill switch, measured), so it keeps the generic call.
- */
-export function irDynamicMethodCallWrapperLane(ctx: CodegenContext): boolean {
-  return noJsHost(ctx) && !ctx.fast;
-}
 
 interface Template {
   /** `recv.m` */
@@ -101,7 +97,7 @@ export function ensureIrDynamicMethodCallHelper(
   method: string,
   arity: number,
 ): number | undefined {
-  if (!irDynamicMethodCallWrapperLane(ctx)) return undefined;
+  if (!irTemplateWrapperLane(ctx)) return undefined;
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
 
