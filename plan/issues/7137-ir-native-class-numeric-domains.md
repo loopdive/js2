@@ -236,3 +236,36 @@ Qualification on the integrated head:
 - With `JS2WASM_IR_I32_DOMAIN=1`, they pass 142/142.
 - The six console-touching equivalence files and 6798 pass 98/98.
 - The remaining failures in the related suites match `b6250f09f8` row for row.
+
+## Review round, 2026-10-29: gc kept byte-identical
+
+The review found that the shared `buildIrClassShapes` field typing and the
+shared IR coercions changed gc (JS-host) output: a `u32` field printed `-1`
+on gc instead of main's `2147483647`, and i32-field methods went from a compile
+error to running. The issue's "15 gc identical" corpus had no `u32` field read
+on gc. Every #7137 behaviour is now scoped to the no-host lanes by the existing
+`hostFreeEnvironment` predicate:
+
+- `irNativeNumericFieldType` and `irNativeSignatureDiverges` return
+  `null`/`false` on gc.
+- The IR reads the same predicate through the resolver
+  (`nativeNumericDomains()`): the int32/uint32 branches of `coerceIrNumeric`,
+  the return-value widening, and the compound-update slot check
+  (`laneNumericSlot`) keep their pre-#7137 behaviour on gc.
+
+Evidence: gc sha1 identical to `claude/takeover-6872` (itself gc-identical to
+main) on the 13 playground examples, the review's six class numeric-domain
+probes (rebuilt: u32 field, u32 subclass, i32 field `+`, u32 constructor, u32
+method, i32 method), and six more (f64 → i32 field store, compound, `++`,
+destructuring, number return of an i32 field, u32 destructuring). Standalone
+and WASI keep the fix (`issue-7137` 72/72).
+
+Residuals:
+- **i32 field in f64 arithmetic** (`c.v = c.v + 1`): no longer a compile
+  error, but demotes to legacy (#6961), because legacy wraps in i32
+  arithmetic. Native i32 arithmetic in the IR is the follow-up.
+- **Constructors with native parameters** still hard-error, now at
+  `C_new: class-method typeIdx parity mismatch`: `irNativeSignatureDiverges`
+  does not yet cover the `constructor` member.
+- gc keeps main's wrong `u32` field value (`2147483647`); the JS-host lane is
+  being sunset, so no gc fix is planned.

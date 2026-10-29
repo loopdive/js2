@@ -202,7 +202,7 @@ import {
   getOrRegisterRefCellType,
   getOrRegisterVecType,
 } from "../codegen/registry/types.js";
-import type { CodegenContext, FunctionContext } from "../codegen/context/types.js";
+import { hostFreeEnvironment, type CodegenContext, type FunctionContext } from "../codegen/context/types.js";
 import { applyIrTailCalls } from "../codegen/ir-tail-call.js";
 import { parseInlineOptions } from "../codegen/ir-inline.js";
 import { lowerPreparedIrAsyncFunction } from "../codegen/ir-async-frame.js";
@@ -7296,6 +7296,7 @@ function makeFromAstResolver(
     nativeConsoleOutputAvailable(): boolean {
       return nativeConsoleOutputAvailable(ctx);
     },
+    nativeNumericDomains: () => hostFreeEnvironment(ctx),
     // (#2955 slice 5) String for-of strategy — the LAST from-ast mode read,
     // relocated. Native strings iterate via the `__str_charAt` counter loop;
     // host strings feed the `__iterator` host protocol (already
