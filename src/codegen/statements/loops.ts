@@ -1,5 +1,4 @@
 import { isStringType } from "../../checker/type-mapper.js";
-import { isStandalonePromiseActive } from "../async-scheduler.js";
 import type { Instr, ValType } from "../../ir/types.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
@@ -46,13 +45,7 @@ import { flatStringType, stringConstantExternrefInstrs } from "../native-strings
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { ensureObjVecBuilders, ensureObjectRuntime } from "../object-runtime.js";
 import { coercionInstrs, defaultValueInstrs } from "../type-coercion.js";
-import {
-  addForInImports,
-  addImport,
-  addStringConstantGlobal,
-  ensureExnTag,
-  localGlobalIdx,
-} from "../registry/imports.js";
+import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -2917,7 +2910,7 @@ function compileForOfDirectIterator(
   // extra label level, mirroring the __iterator path's +3 (#851).
   const isForAwait = !!stmt.awaitModifier;
   const wrapForAwaitClose = isForAwait && returnMethodIdx !== undefined;
-  const carrierAwait = isForAwait && valueFieldType.kind === "externref" && isStandalonePromiseActive(ctx);
+  const carrierAwait = isForAwait && valueFieldType.kind === "externref";
   const forAwaitDepth = wrapForAwaitClose ? 3 : 2;
   const capLocal = initForAwaitStepCap(fctx, isForAwait);
 
@@ -3360,7 +3353,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   // twin above; here the existing #1347 try/catch_all wrapper already provides
   // close-on-throw, so the rejection rethrow needs no extra structure.
   const isForAwaitIter = !!stmt.awaitModifier;
-  const carrierAwaitIter = isForAwaitIter && isStandalonePromiseActive(ctx);
+  const carrierAwaitIter = isForAwaitIter;
   const capLocalIter = initForAwaitStepCap(fctx, isForAwaitIter);
 
   // Build loop body
@@ -3829,22 +3822,15 @@ function emitArrayForIn(
   // host helper, driven by the shared `__for_in_len`/`__for_in_get` loop. The
   // pure-native index loop below (kept for standalone / wasi, where the sidecar
   // is unavailable) only emits the integer indices and drops the string keys.
-  const useHostKeys = ctx.targetProfile.semanticProviders !== "native-first" && !ctx.standalone && !ctx.wasi;
   const NUM_FMT = "number_toString";
-  if (useHostKeys) {
-    addForInImports(ctx);
-  }
+
   if (ctx.standalone || ctx.wasi || ctx.nativeStrings) {
     emitNativeNumberFormat(ctx, new Set([NUM_FMT]));
-  } else if (!useHostKeys && ctx.funcMap.get(NUM_FMT) === undefined) {
+  } else if (ctx.funcMap.get(NUM_FMT) === undefined) {
     ensureLateImport(ctx, NUM_FMT, [{ kind: "f64" }], [{ kind: "externref" }]);
   }
   flushLateImportShifts(ctx, fctx);
   const numToStrIdx = ctx.funcMap.get(NUM_FMT);
-  const arrayKeysIdx = useHostKeys ? ctx.funcMap.get("__array_forin_keys") : undefined;
-  const forInLenIdx = useHostKeys ? ctx.funcMap.get("__for_in_len") : undefined;
-  const forInGetIdx = useHostKeys ? ctx.funcMap.get("__for_in_get") : undefined;
-  const hostKeys = useHostKeys && arrayKeysIdx !== undefined && forInLenIdx !== undefined && forInGetIdx !== undefined;
 
   // Compile the array expression into a vec ref local. A null/undefined receiver
   // would throw in JS; for-in over null/undefined is spec'd as a no-op (§13.7.5.1
@@ -3913,23 +3899,10 @@ function emitArrayForIn(
   // `__array_forin_keys(vec, vecLen)`. The vec length is read above and passed in
   // (the opaque vec has no host-reachable length). A null vec → null externref +
   // len 0 → the helper returns `[]` → 0 iterations.
-  const keysLocal = hostKeys ? allocLocal(fctx, `__forin_keys_${fctx.locals.length}`, { kind: "externref" }) : -1;
-  if (hostKeys) {
-    fctx.body.push({ op: "local.get", index: vecLocal });
-    fctx.body.push({ op: "extern.convert_any" });
-    fctx.body.push({ op: "local.get", index: vecLenLocal });
-    fctx.body.push({ op: "call", funcIdx: arrayKeysIdx! });
-    fctx.body.push({ op: "local.set", index: keysLocal });
-  }
 
   // Iteration count = keys.length (host, indices + string keys) | vecLen (native).
   const lenLocal = allocLocal(fctx, `__forin_len_${fctx.locals.length}`, { kind: "i32" });
-  if (hostKeys) {
-    fctx.body.push({ op: "local.get", index: keysLocal });
-    fctx.body.push({ op: "call", funcIdx: forInLenIdx! });
-  } else {
-    fctx.body.push({ op: "local.get", index: vecLenLocal });
-  }
+  fctx.body.push({ op: "local.get", index: vecLenLocal });
   fctx.body.push({ op: "local.set", index: lenLocal });
 
   // Counter i = 0
@@ -3963,16 +3936,10 @@ function emitArrayForIn(
   loopBody.push({ op: "br_if", depth: 1 });
 
   // key = keys[i] (host) | <decimal formatter>(f64(i)) (native) → keyLocal
-  if (hostKeys) {
-    loopBody.push({ op: "local.get", index: keysLocal });
-    loopBody.push({ op: "local.get", index: iLocal });
-    loopBody.push({ op: "call", funcIdx: forInGetIdx! });
-  } else {
-    loopBody.push({ op: "local.get", index: iLocal });
-    loopBody.push({ op: "f64.convert_i32_s" });
-    if (numToStrIdx !== undefined) {
-      loopBody.push({ op: "call", funcIdx: numToStrIdx });
-    }
+  loopBody.push({ op: "local.get", index: iLocal });
+  loopBody.push({ op: "f64.convert_i32_s" });
+  if (numToStrIdx !== undefined) {
+    loopBody.push({ op: "call", funcIdx: numToStrIdx });
   }
   loopBody.push({ op: "local.set", index: keyLocal });
 
@@ -3993,8 +3960,7 @@ function emitArrayForIn(
   // `for…in` + `hasOwnProperty` and compares it against `Object.keys`, so once
   // `Object.keys` learned about holes the row failed on the DISAGREEMENT until
   // `for…in` learned too.
-  const forInHasIdx =
-    !hostKeys && (overlayRouteActive(ctx) || f64HolesActive(ctx)) ? ctx.funcMap.get("__extern_has_idx") : undefined;
+  const forInHasIdx = overlayRouteActive(ctx) || f64HolesActive(ctx) ? ctx.funcMap.get("__extern_has_idx") : undefined;
   // (#4491) `[[Enumerable]]` joins the SAME gate. §14.7.5.10 EnumerateObject-
   // Properties yields only own ENUMERABLE keys, and since #3251 an array index
   // can carry `enumerable: false` — `Object.defineProperties(arr, {"0": {value:
@@ -4005,7 +3971,7 @@ function emitArrayForIn(
   // `keyLocal` must actually hold the decimal key STRING for the native to look
   // it up: without `number_toString` the native lane leaves a raw f64 there, so
   // the gate would be a type error rather than a wrong answer. Decline instead.
-  const forInEnumIdx = hostKeys || numToStrIdx === undefined ? undefined : reserveVecIndexEnumerable(ctx);
+  const forInEnumIdx = numToStrIdx === undefined ? undefined : reserveVecIndexEnumerable(ctx);
   const skipGate: Instr[] = [];
   if (forInHasIdx !== undefined) {
     skipGate.push(
@@ -4344,10 +4310,7 @@ function compileForInStatementInner(ctx: CodegenContext, fctx: FunctionContext, 
   let getIdx = ctx.funcMap.get("__for_in_get");
   let hasIdx = ctx.funcMap.get("__for_in_has");
 
-  if (
-    (keysIdx === undefined || lenIdx === undefined || getIdx === undefined) &&
-    (ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first")
-  ) {
+  if (keysIdx === undefined || lenIdx === undefined || getIdx === undefined) {
     // No-JS-host target: the `__for_in_*` host imports are intentionally not registered (#2572, declarations.ts).
     // A receiver that lowers to the dynamic `$Object` representation (an `any`/index-signature object whose keys are
     // determined at runtime), route through the native object runtime:

@@ -4,7 +4,7 @@ title: "IR: function-object member reads and string/`this` member closures (harn
 status: in-review
 sprint: current
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-29
 priority: high
 horizon: m
 feasibility: hard
@@ -21,6 +21,17 @@ assignee: "ttraenkler/session-d"
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/select.ts
+# 2026-10-29 (revive onto main): the #7144 walk learns the two carrier sources
+# this slice adds to from-ast (`this`, a call through a dynamic slot).
+  - src/ir/select-planned-closure-operands.ts
+# 2026-10-22 (re-merge after #6829 landed): this PR's scan-arm growth was granted
+# by the #7106 issue file while #6829 sat in its diff; restated here (stranded grants).
+func-budget-allow:
+  - src/ir/select.ts::scanExprInner
+# 2026-10-29 (revive onto main): +5 in the #7144 walk for the two carrier
+# sources (`this`, a call through a read local) and the shared
+# `callsThroughCarrier` predicate its two call arms now read.
+  - src/ir/select-planned-closure-operands.ts::plannedClosureOperandRefusal
 ---
 
 # IR: function-object member reads, string and `this` member closures
@@ -143,11 +154,27 @@ With both lines stubbed (`message = String(message);` and
   with incomplete Program-ABI dependencies, for void plans as well. The
   harness does not take that route.
 
+## Revive onto main (2026-10-29)
+
+Main landed #7112/#7113 in a reworked form and #7144's operand walk. On the
+merge:
+- `dynamicValueCallTarget` is main's closure-only version (the subject arm and
+  the `native-dynamic-value-call` capability were cut in #7112's review); this
+  slice adds only its function-object read locals to it.
+- `plannedClosureOperandRefusal` (#7144) mirrors this slice's from-ast change:
+  `this` in a `this`-plan and a call through a dynamic parameter or read local
+  are the carrier (additive `dynamic`). Without it the walk refused
+  `"Test262Error: " + this.message` (`closure-additive-operands`).
+- The harness census stubs assert.compareArray's three `String(message)`
+  calls as well: #7113 refuses `String(carrier)` in a closure that mints a
+  carrier join on standalone (`closure-carrier-helper-call`; the helper needs
+  `prepared-dynamic-helper-abi`, wasi-only).
+
 ## Acceptance
 
 `tests/issue-7106-harness-member-rows.test.ts`:
 - Row 1 and row 3 shapes are IR `<module-init>` bodies and match node.
 - An approved-fnctor prototype method stays legacy.
 - On the honest harness, `<module-init>` stays legacy (the two refused lines).
-- With both lines stubbed, every unit is IR, the run agrees with node, and a
+- With the refused lines stubbed, every unit is IR, the run agrees with node, and a
   wrong expectation still throws.

@@ -6,7 +6,7 @@
  * wrapper; codegen builds it from legacy's own any-receiver call emitter
  * (`codegen/object-model/ir-dynamic-method-call.ts`).
  */
-import { BUILTIN_PROTOTYPE_METHOD_NAMES } from "./builtin-method-names.js";
+import { BUILTIN_PROTOTYPE_METHOD_NAMES } from "./core/builtin-method-names.js";
 
 const IR_DYN_MCALL_PREFIX = "__ir_dyn_mcall_";
 /** Small fixed arity range: one wrapper per (method, arity) actually used. */

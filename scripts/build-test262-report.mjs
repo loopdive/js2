@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { parseTest262SemanticProviders } from "./test262-lane.mjs";
 import {
   parseTest262CompilerPath,
   requireTest262CompilerPath,
@@ -1070,11 +1069,14 @@ async function main() {
       status: record.status,
       compilerAttempts: record.compilerAttempts,
       preparedExecutionReport: record.preparedExecutionReport,
+      frontendPathVerified: record.frontendPathVerified,
+      preparedFrontendReport: record.preparedFrontendReport,
       compilerPathFailureKind: record.compilerPathFailureKind,
     });
-    const rowProviders = parseTest262SemanticProviders(record.semantic_providers);
-    if (semanticProviders !== undefined && semanticProviders !== rowProviders) {
-      throw new Error("Cannot merge test262 rows from different semantic providers");
+    // (#6979) Rows from the removed host-assisted control lane cannot be merged.
+    const rowProviders = record.semantic_providers ?? "auto";
+    if (rowProviders !== "auto") {
+      throw new Error(`Cannot merge test262 rows from the removed semantic-provider lane ${rowProviders}`);
     }
     semanticProviders = rowProviders;
     if (typeof record.oracle_version === "number") {
@@ -1108,11 +1110,13 @@ async function main() {
     );
   }
 
+  const normalizedCompilerCases = [];
   for (const rawRecord of recordsByFile.values()) {
     // Defense in depth for old JSONL or alternate runners: a host-satisfied
     // result can never contribute a standalone pass, even if it arrived with
     // the legacy `status: "pass"` verdict.
     const record = normalizeStandaloneVerdict(rawRecord, target);
+    normalizedCompilerCases.push(record);
     const status = record.status;
     const scope = record.scope ?? "standard";
     const scopeOfficial = record.scope_official ?? scope !== "proposal";
@@ -1212,8 +1216,18 @@ async function main() {
   const officialSummaryBuilt = buildSummary(officialStatuses, target);
   const fullSummaryBuilt = buildSummary(statuses, target);
 
+  // Preserve every input row's route contradictions, but count completed cases
+  // from the same worst-status, normalized per-file population as the report.
+  const pathHistory = summarizeTest262CompilerPaths(compilerPathRows, args.compilerPath);
+  const caseIdentity = summarizeTest262CompilerPaths(normalizedCompilerCases, args.compilerPath);
+  const allExecutionsVerified = pathHistory.compilerPathVerified && caseIdentity.compilerPathVerified;
   const report = {
-    ...summarizeTest262CompilerPaths(compilerPathRows, args.compilerPath),
+    ...caseIdentity,
+    compilerPath: pathHistory.compilerPath,
+    configuredCompilerPath: pathHistory.configuredCompilerPath,
+    compilerPathVerified: allExecutionsVerified,
+    executionCompilerPath: allExecutionsVerified ? "ir" : "unknown",
+    measurementState: pathHistory.measurementState === "unavailable" ? "unavailable" : caseIdentity.measurementState,
     timestamp: new Date().toISOString(),
     baseline_generated_at: args.baselineGeneratedAt || new Date().toISOString(),
     baseline_sha: args.baselineSha || "",
@@ -1313,6 +1327,7 @@ async function main() {
     compileErrorCases: report.compileErrorCases,
     compileTimeoutCases: report.compileTimeoutCases,
     verifiedExecutionCases: report.verifiedExecutionCases,
+    verifiedFrontendCases: report.verifiedFrontendCases,
     unverifiedExecutionCases: report.unverifiedExecutionCases,
     timestamp: report.timestamp,
     baseline_generated_at: report.baseline_generated_at,

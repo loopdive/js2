@@ -442,6 +442,18 @@ test("IR shards keep the actual dynamic full-corpus harness and completion bound
   }
 });
 
+test("IR merge validates each shard manifest as its own --manifest", () => {
+  // 2026-10-26: the merge wrote all 102 manifests into one JSON array and passed
+  // that file once; the validator read it as a single malformed manifest
+  // ("Expected 102 shard manifests but found 1") and the weekly measurement
+  // never published. Pass the per-shard files, as the other lanes do.
+  const merge = workflow.slice(workflow.indexOf("  merge-ir-measurement:"));
+  const validate = merge.slice(0, merge.indexOf("      - name: Build requested IR report"));
+  assert.match(validate, /for manifest in ir-shards\/\*\.complete\.json; do\s+manifests\+=\(--manifest "\$manifest"\)/);
+  assert.match(validate, /"\$\{manifests\[@\]\}" --expected-shards 102/);
+  assert.doesNotMatch(validate, /completion\.json'?, JSON\.stringify\(files\.map/);
+});
+
 test("complete IR producer publishes even when an unrelated workflow job failed", () => {
   const result = retrieveMeasurements(
     [{ id: 100, expired: false, workflow_run: { id: 42, head_branch: "main" } }],

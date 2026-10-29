@@ -74,7 +74,6 @@ import {
   PROMISE_STATE_REJECTED,
   ensureAsyncDriveRuntime,
   getOrRegisterPromiseType,
-  isStandalonePromiseActive,
 } from "./async-scheduler.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
@@ -112,25 +111,6 @@ import {
   type AsyncFrameHandler,
   type AsyncFrameStateBody,
 } from "../runtime/wasmgc/async/frame-engine.js";
-
-/**
- * Is the host-free async **drive layer** (#2895 PATH B) active for this module?
- *
- * Gated on the host-free targets — `--target standalone` and `--target wasi` —
- * where the JS-host async-CPS imports (`Promise_resolve`/`Promise_then2`/
- * `__make_callback`) are unavailable, so a genuinely-suspending async function
- * must be driven by the native `$Promise` + microtask substrate instead. The
- * JS-host path keeps its existing CPS state machine (`async-cps.ts`).
- *
- * NOTE: this is the *drive-layer* gate (does this fn get a real resumable
- * frame), distinct from {@link import("./async-scheduler.js").isStandalonePromiseActive}
- * (the *carrier* gate: does `await`/`Promise.resolve` use the native `$Promise`).
- * The carrier gate stays `wasi`-only until this drive layer makes a native async
- * result observable to the `flags:[async]` harness — see the file header.
- */
-export function isAsyncDriveActive(ctx: CodegenContext): boolean {
-  return ctx.standalone === true || ctx.wasi === true;
-}
 
 /**
  * (#1042) Stable funcMap indices of the six JS-host imports the **host settle
@@ -203,88 +183,6 @@ export function resolveHostAsyncImports(ctx: CodegenContext): HostAsyncImports |
     settleRejectIdx,
     ...(then2FrameIdx !== undefined ? { then2FrameIdx } : {}),
   };
-}
-
-/**
- * (#1042 July re-scope) JS-host drive-layer eligibility — the host-lane
- * analogue of {@link asyncFnNeedsDrive}. Routes a genuinely-suspending async
- * function whose body is a LINEAR (multi-)await shape through the SAME #2906
- * N-state resume machine, with **host-Promise settle adapters** (reactions via
- * `Promise_resolve`/`__make_callback`/`Promise_then2`, settle via
- * `Promise_new_pending`/`Promise_settle_*`) instead of the native `$Promise`
- * callback list. One lowering engine, two settle primitives.
- *
- * **(#2967 slice 1 — engine convergence)** This predicate now claims EVERY
- * linear shape `planLinearAwaits` can drive, including the single-tail-await
- * population the CPS lane (`asyncFnNeedsCps`) used to own exclusively — the
- * #1042 `!asyncFnNeedsCps` disjointness exclusion is dropped. Single-await is
- * the N=1 case of the N-state machine, so one engine drives both.
- *
- * (#2967 slice 2 status) The two slice-1 carve-outs are now migrated:
- * closures were admitted in slice 2a (`planAsyncClosureActivation`, with the
- * #2873 park-fix hazard gate), and binding-pattern params in slice 2b-2 —
- * their prologue-derived locals ride the frame as live-initialized spill
- * fields (see `emitAsyncFrameStateMachine`). The only remaining CPS re-lanes
- * are hazard DECLINES (cell-boxed spills / cell-boxed derived params), not
- * population carve-outs. Pre-#2967 host-drive shapes (multi-await,
- * try/finally-across-await) are unaffected — for them `asyncFnNeedsCps` was
- * already false.
- */
-export function asyncFnNeedsHostDrive(
-  ctx: CodegenContext,
-  fn: ts.FunctionLikeDeclaration,
-  plan: AsyncCpsPlan,
-): boolean {
-  if (!ASYNC_CPS_ENABLED) return false;
-  if (ctx.wasi === true || ctx.standalone === true) return false; // host lane only
-  if (plan.awaitPoints.length === 0) return false;
-  // (#6780) No all-awaits-statically-resolved decline: `await null` still yields
-  // a microtask turn (§27.7.5.3), so only a ZERO-await body may run synchronously.
-  // (#2967 slice 2b-2) Binding-pattern params are DRIVEN: the entry fn's
-  // destructuring prologue has already derived the bound locals by the time
-  // the activation emits (maybeActivateAsync / the closure body emit both run
-  // AFTER the param prologue), so `emitAsyncFrameStateMachine` captures them
-  // into the frame as LIVE-INITIALIZED spill fields (initialized from the
-  // entry locals at struct.new, restored on every resume, stored back at
-  // every suspend — which also preserves the CPS lane's
-  // mutation-before-the-await semantics). Rest params never needed a
-  // carve-out at all: an identifier rest param IS a raw wasm param (the
-  // caller builds the vec — ctx.funcRestParams), captured by name like any
-  // other param. (#2967 phase 3a) A derived binding that a nested
-  // function-like captures mutably is FORCE-BOXED into a cell-typed frame
-  // field (buildAsyncFrameInfo `spillCellInfo`) — no pattern-shape decline
-  // remains.
-  const linear = planLinearAwaits(fn, plan, { checker: ctx.checker, allowSpilledCall: spilledCallLaneSupported(ctx) });
-  if (linear === null) {
-    // (#3587) try/catch-across-await — the #2906 3c CFG machine (catch regions
-    // as states + routed dispatcher) drives this shape on the HOST settle
-    // backend too: rejection delivery is backend-agnostic (the reject step
-    // adapter stashes ERROR + MODE_THROW, the resume prelude re-throws, the
-    // route enters the catch chain). Before this, the shape fell to the legacy
-    // synchronous pass-through, which CANNOT deliver an awaited rejection —
-    // execution continued straight past the rejected await and the catch never
-    // ran (the exact construct signalling "I care about this rejection" was
-    // what disabled rejection handling). Same widened spill-safe rule as the
-    // native lane.
-    const tc = computeTryCatchSpills(ctx, fn, plan);
-    if (tc !== null) return tc.spillTypes.every(isSpillSafeType);
-    return false;
-  }
-  // (#5367) The former "lone `await Promise.all(...)` stays on the legacy
-  // identity path" carve-out is GONE here: with a resume binding that path
-  // delivered the un-awaited Promise object coerced into the STATIC awaited
-  // type (a default-initialised tuple struct / an empty vec) and never
-  // suspended, so pending continuations never ran. Its other rationale (#2028
-  // host-method marshaling) is fixed. `asyncFnNeedsDrive` (wasi) keeps its gate.
-  // Type gate: a resume binding spilled across a later await needs a spill-safe
-  // type (same rule as the wasi drive layer).
-  for (let k = 0; k < linear.segments.length; k++) {
-    const rb = linear.segments[k]!.resumeBinding;
-    if (!rb) continue;
-    if (!bindingLiveAcrossLaterAwait(rb.name, k, plan)) continue;
-    if (!isSpillSafeType(resumeBindingValType(ctx, rb))) return false;
-  }
-  return true;
 }
 
 /**
@@ -1732,11 +1630,7 @@ function planAsyncResumeCfg(
   if (!info.decl) return null;
   if (info.asyncGen) {
     // #2570: keep delegate mode on the same carrier split as admission.
-    return planAsyncGenCfg(
-      info.decl,
-      isStandalonePromiseActive(ctx) ? { oracle: ctx.oracle } : null,
-      asyncGenDelegatesForPlan(ctx, info.decl, isStandalonePromiseActive(ctx) ? "carrier" : "awaitFree"),
-    );
+    return planAsyncGenCfg(info.decl, { oracle: ctx.oracle }, asyncGenDelegatesForPlan(ctx, info.decl, "carrier"));
   }
   if (!plan) return null;
   // #3587: both settlement backends admit try/catch across await; host still
@@ -3135,14 +3029,6 @@ export function isAsyncGenDriveCandidate(ctx: CodegenContext, decl: ts.FunctionL
   // FIRST frame struct — and trap on `ref.cast`. Correct-or-legacy: reject it.
   const registered = ctx.asyncGenProducers?.get(sanitizeTypeName(asyncFnName(decl)));
   if (registered !== undefined && registered.decl !== decl) return false;
-  // (#2865) Own body locals become frame spills — every spill field must have a
-  // spill-safe type (an inert `struct.new` default), or the layout is invalid.
-  const spillsSafe = (): boolean => {
-    for (const node of asyncGenOwnLocalDecls(decl).values()) {
-      if (!isSpillSafeType(resolveSpillBindingValType(ctx, node) ?? { kind: "externref" })) return false;
-    }
-    return true;
-  };
   // Under the native-`$Promise` CARRIER (`isStandalonePromiseActive`): the full
   // bounded shape, awaited yields included — the awaited operand lowers to a
   // native `$Promise` the suspend arm can assimilate. Identical to
@@ -3154,27 +3040,7 @@ export function isAsyncGenDriveCandidate(ctx: CodegenContext, decl: ts.FunctionL
   // (#2570) Both arms additionally require every `yield* <call>` delegate's
   // inner producer to have ACTUALLY emitted driven (registry-verified) —
   // vacuous for non-delegating bodies.
-  if (isStandalonePromiseActive(ctx)) {
-    return asyncGenDrivableUnderCarrier(ctx, decl) && asyncGenDelegatesRegistered(ctx, decl);
-  }
-  // (#2865) `--target standalone` with the carrier gate still OFF (#2980):
-  // drive the producer host-free ONLY for await-free bodies. With the carrier
-  // off an awaited operand does not lower to a native `$Promise`, so
-  // `yield await P` would deliver the un-awaited promise object (wrong value)
-  // — those bodies keep the legacy path (correct-or-legacy, #680 CE) until the
-  // measured carrier widen. An await-free body is carrier-independent: every
-  // promise the machine touches is minted by `__async_gen_next_<name>` itself.
-  // (#3120: a Promise-typed plain `yield P` deliberately stays PLAIN — and
-  // driven, byte-identically — on this lane; its implicit-await value gap is
-  // the carrier widen's to close. See ImplicitYieldAwaitMode in async-cps.ts.)
-  if (isAsyncDriveActive(ctx)) {
-    return (
-      isAwaitFreeAsyncGenBody(decl, asyncGenDelegatesForGate(ctx, decl, "awaitFree")) &&
-      spillsSafe() &&
-      asyncGenDelegatesRegistered(ctx, decl)
-    );
-  }
-  return false;
+  return asyncGenDrivableUnderCarrier(ctx, decl) && asyncGenDelegatesRegistered(ctx, decl);
 }
 
 /**

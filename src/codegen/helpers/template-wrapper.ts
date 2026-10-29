@@ -6,10 +6,8 @@
  * it answer "unknown" — the facts of an `any` site — and its emitters take
  * their dynamic arms), and one template expression compiled as a value of the
  * wrapper's carrier type. The helper `FunctionContext` and its publication
- * are `receiverHelperContext` / `publishReceiverHelper` in
- * `ir-dynamic-construct.ts`. Wrappers: the dynamic method-call wrapper
- * (#7119, `object-model/ir-dynamic-method-call.ts`) and the Array.prototype
- * borrow wrapper (`array/ir-array-prototype-borrow.ts`).
+ * are `ir-helper-function.ts`'s (`helperFunctionContext` /
+ * `publishHelperFunction`), shared with every IR wrapper.
  */
 import { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";

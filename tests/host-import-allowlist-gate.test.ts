@@ -44,15 +44,11 @@ describe("#1524 — strict --no-host-imports gate", () => {
       expect(envImportNames(result.wat)).toEqual([]);
     });
 
-    it("non-WASI host-assisted targets do NOT enable strict mode", async () => {
-      // Regression guard for the compatibility profile: adding the gate must
-      // not reject the JS-host path. The omitted-option default is native-first
-      // after #6708, so name the legacy-importing profile this test observes.
+    it("non-WASI targets use the native JSON implementation", async () => {
       const src = `export function f(o: object): string { return JSON.stringify(o); }`;
-      const result = await compile(src, { semanticProviders: "host-assisted" });
+      const result = await compile(src);
       expect(result.success).toBe(true);
-      // The explicit JS-host compatibility target requests JSON_stringify.
-      expect(envImportNames(result.wat)).toContain("JSON_stringify");
+      expect(envImportNames(result.wat)).not.toContain("JSON_stringify");
     });
   });
 

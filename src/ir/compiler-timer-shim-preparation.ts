@@ -46,6 +46,7 @@ interface PreparedCompilerTimerShimDynamicShape {
 
 type PreparedTimerDynamicHelperName =
   | "__box_number"
+  | "__ir_arguments_length"
   | "__unbox_number"
   | "__to_primitive"
   | "__to_number"
@@ -109,7 +110,9 @@ export function isDynamicInstruction(instr: IrInstr): boolean {
     instr.kind === "dyn.string_carrier" ||
     instr.kind === "dyn.arguments_length" ||
     instr.kind === "dyn.current_this" ||
+    instr.kind === "dyn.global_object" ||
     instr.kind === "dyn.instanceof_fn" ||
+    instr.kind === "dyn.instanceof" ||
     instr.kind === "dyn.publish_argc" ||
     instr.kind === "dyn.own_property" ||
     instr.kind === "dyn.to_number" ||

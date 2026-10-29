@@ -37,7 +37,6 @@ import {
   emitThrowReferenceError,
   emitThrowTypeError,
   noJsHost,
-  usesNativeJsErrors,
 } from "../js-errors.js";
 export {
   buildThrowJsErrorInstrs,
@@ -46,7 +45,6 @@ export {
   emitThrowReferenceError,
   emitThrowTypeError,
   noJsHost,
-  usesNativeJsErrors,
 };
 export type { JsErrorKind } from "../js-errors.js";
 

@@ -4,7 +4,7 @@ title: "IR: dynamic method calls answer `undefined` off the host lane — keep t
 status: in-review
 sprint: current
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-25
 priority: high
 horizon: s
 feasibility: medium
@@ -60,15 +60,36 @@ object-literal receiver was right.
 There is a new backend capability, `host-dynamic-method-call` (wasmgc with
 host imports). Without it, the scan's dynamic method arm refuses any call
 whose method name is a **built-in prototype method name**
-(`BUILTIN_PROTOTYPE_METHOD_NAMES`, `src/ir/builtin-method-names.ts`: a fixed
+(`BUILTIN_PROTOTYPE_METHOD_NAMES`, `src/ir/core/builtin-method-names.ts`, a clean
+`ir-core` leaf: a fixed
 189-name source list, never read from the compiling host). Such a function
 stays legacy. Three forms stay admitted:
-- a user method name (`o.inc()`, `o.label()`), which the open-`$Object` /
-  instance / closure dispatch serves exactly;
+- a user method name that collides with no built-in (`o.inc()`, `o.label()`),
+  which the open-`$Object` / instance / closure dispatch serves exactly;
 - `charCodeAt`, through the string runtime's exact fast path;
 - the narrow literal `replace(/_/g, "")`, which has its own native helper.
 
-The host lane is unchanged.
+**What the name-based cut loses.** The gate reads only the method NAME, so a
+user method whose name is also a built-in's — `c.get(k)`, `o.set(k, v)`,
+`o.add(x)`, `o.has(k)`, `it.next()`, `o.push(x)`, `o.then(f)`, `o.delete(k)`,
+… (about 190 names) — is refused too, and its function goes legacy where main
+claimed it and ran it correctly (measured: `function get(c, k) { return
+c.get(k); }` on object literals, standalone — main IR + correct, this PR
+legacy + correct). That is a claim loss, not a wrong result. #6851's
+per-(method, arity) runtime wrapper (`irDynamicMethodCallNeedsWrapper`)
+dispatches by brand at run time and lifts the name cut.
+
+The same predicate also decides the planned member-closure arm (#7110's
+`plannedClosureDynamicMethodCall`), which used to refuse EVERY dynamic method
+call on every lane. A planned closure calling an uncolliding user method
+(`o.label()`) is now an IR body on standalone and correct (probed); built-in
+names there stay legacy as before.
+
+The host lane (`semanticProviders: "host-assisted"`, host imports allowed) is
+byte-identical: the capability holds, so the predicate always answers true. A
+DEFAULT build is the native-first regime, projected as standalone, so the gate
+fires there too — those functions go legacy and return the node-correct
+value where main returned 101010.
 
 The first cut refused every dynamic method name off the host lane. The
 required guard suite caught it: `tests/issue-4780-devirtualization-routes.test.ts`
@@ -91,6 +112,9 @@ same way. Measured: `j([1, 2])` returns `undefined`-shaped.
 `tests/issue-7117-ir-dynamic-method-call-host-free.test.ts`:
 - On standalone, `t`, `u` and `k` are not IR bodies and `run()` equals node
   (111111).
-- On the host lane, the same source still runs to 111111.
+- On the host lane (`semanticProviders: "host-assisted"`), `t`, `u` and `k`
+  stay IR bodies and `run()` is 111111.
+- On a default (native-first) build, `t`, `u` and `k` are not IR bodies and
+  `run()` is 111111.
 - A user method name (`o.label()`) stays an IR body on standalone and is correct.
 - The required guard suite (`scripts/run-guard-suite.mjs`) passes.

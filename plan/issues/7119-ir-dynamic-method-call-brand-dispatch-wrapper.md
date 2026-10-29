@@ -4,7 +4,7 @@ title: "IR: brand-dispatch wrapper for method calls on dynamic receivers (host-f
 status: in-review
 sprint: current
 created: 2026-10-22
-updated: 2026-10-24
+updated: 2026-10-29
 priority: high
 horizon: m
 feasibility: hard
@@ -23,6 +23,10 @@ loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/select.ts
   - src/ir/backend/legality.ts
+# 2026-10-29 (revive onto main): #7113's carrier-method-call cut learns that a
+# wrapped call throws its own TypeError (the walk's source hook + predicate).
+  - src/ir/select-planned-closure-operands.ts
+  - src/ir/analysis/operand-admissibility.ts
 func-budget-allow:
   - src/ir/integration.ts::makeFromAstResolver
   - src/ir/integration.ts::preregisterDynamicSupport
@@ -32,8 +36,8 @@ func-budget-allow:
 # src/codegen/object-model/ir-dynamic-method-call.ts, which integration imports
 # like the S3a/S3c wrapper module; the module joins the codegen SCC.
 import-cycles-allow:
-  - largestSccSize: 726 # 2026-10-24 (#7119): object-model/ir-dynamic-method-call.ts joins the SCC through integration
-  - ir->codegen: 80 # 2026-10-24 (#7119): integration imports the method-call wrapper module
+  - largestSccSize: 725 # 2026-10-29 (#7119, restated on main's 724): object-model/ir-dynamic-method-call.ts joins the SCC through integration
+  - ir->codegen: 82 # 2026-10-29 (#7119, restated on main's 81): integration imports the method-call wrapper module
 ---
 
 # IR: brand-dispatch wrapper for method calls on dynamic receivers
@@ -163,3 +167,23 @@ node:
 - **Legacy's own typed paths.** `function j(x, s) { return x.join(s); }` with x
   typed `number[] | {join}` is wrong for the vec. That function is legacy (the
   selector refuses `param-type-not-resolvable`), so it is not affected here.
+
+## Revive onto main (2026-10-29)
+
+Main merged #7117 (#6845) in its final form, #7113's operand walk (#7144) and
+`helpers/ir-helper-function.ts`. On the merge:
+- The #7117 stopgap `dynamicMethodCallIsExact` is deleted: this issue's
+  `dynamicMethodCallIsAdmitted` lifts it (main's `host-dynamic-method-call`
+  capability is kept for the host lanes).
+- `receiverHelperContext` / `publishReceiverHelper` are dropped in favour of
+  main's `helperFunctionContext` / `publishHelperFunction`; only the `park`
+  option of `captureReceiverSequence` stays.
+- The `dynamic-method-call-wrapper` capability shares the
+  `native-number-conversion` lane predicate (one fall-through arm).
+- #7113's `closure-carrier-method-call` cut refused `message.toString()` in
+  assert.compareArray (the carrier join makes it a new shape). Its defect
+  (#7177: the generic call answers a value where JS throws) does not apply to
+  a wrapped call, which throws TypeError for a nullish receiver or a
+  non-callable member. `carrierMethodCallAdmissible(receiver, wrapped)` now
+  admits it; a user method name on the generic call stays refused.
+

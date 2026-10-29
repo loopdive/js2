@@ -78,12 +78,12 @@ export interface PreparedFramePlan {
 }
 
 interface PreparedFrameCommonRuntime {
-  readonly fulfill: PreparedFrameFunction;
   readonly reject: PreparedFrameFunction;
 }
 export type PreparedFrameRuntime =
   | (PreparedFrameCommonRuntime & {
       readonly kind: "host";
+      readonly fulfill: PreparedFrameFunction;
       readonly create: PreparedFrameFunction;
       readonly resolve: PreparedFrameFunction;
       readonly react: PreparedFrameFunction;
@@ -94,6 +94,8 @@ export type PreparedFrameRuntime =
     })
   | (PreparedFrameCommonRuntime & {
       readonly kind: "native";
+      /** Complete assimilating PromiseResolve, never the direct fulfillment helper. */
+      readonly resolveValue: PreparedFrameFunction;
       readonly promise: PreparedFrameHandle<StructTypeDef>;
       readonly reaction: PreparedFrameHandle<StructTypeDef>;
       readonly enqueue: PreparedFrameFunction;

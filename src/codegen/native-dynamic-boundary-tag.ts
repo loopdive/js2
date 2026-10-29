@@ -66,12 +66,7 @@ export function ensureNativeDynamicBoundaryTag(ctx: CodegenContext): void {
 
 /** Promise<void> needs only the tag probe on the exact standalone-native lane. */
 export function prepareStandaloneNativePromiseUndefinedBoundary(ctx: CodegenContext): void {
-  if (
-    ctx.standalone &&
-    ctx.nativeStrings &&
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    ctx.targetProfile.environment === "none"
-  ) {
+  if (ctx.standalone && ctx.nativeStrings && ctx.targetProfile.environment === "none") {
     ensureNativeDynamicBoundaryTag(ctx);
   }
 }

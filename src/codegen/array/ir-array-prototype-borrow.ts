@@ -23,7 +23,7 @@ import type { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { flushLateImportShifts } from "../shared.js";
-import { publishReceiverHelper, receiverHelperContext } from "../ir-dynamic-construct.js";
+import { helperFunctionContext, publishHelperFunction } from "../helpers/ir-helper-function.js";
 import { irDynamicMethodCallWrapperLane } from "../object-model/ir-dynamic-method-call.js";
 import { compileTemplateExpressionAs, parseDetachedTemplate } from "../helpers/template-wrapper.js";
 import { carrierOf } from "../struct-carrier-inhabits.js";
@@ -103,7 +103,7 @@ export function ensureIrArrayPrototypeBorrowHelper(
 
   const externref: ValType = { kind: "externref" };
   const params = [BORROW_RECEIVER, ...Array.from({ length: arity }, (_, index) => borrowArgumentName(index))];
-  const helper = receiverHelperContext(
+  const helper = helperFunctionContext(
     name,
     params.map((param) => ({ name: param, type: externref })),
     externref,
@@ -115,5 +115,5 @@ export function ensureIrArrayPrototypeBorrowHelper(
   );
   compileTemplateExpressionAs(ctx, helper, borrow!, externref);
   flushLateImportShifts(ctx, helper);
-  return publishReceiverHelper(ctx, helper, [externref]);
+  return publishHelperFunction(ctx, helper);
 }

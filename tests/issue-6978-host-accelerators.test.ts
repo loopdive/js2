@@ -71,15 +71,13 @@ describe("#6978 host accelerator selection", () => {
         hostAccelerators: ["date"],
       }),
     ).toThrow("strictNoHostImports forbids");
-    // The host-assisted profile already uses every host provider. (`host-assisted`
-    // is the explicit spelling once #6708 slice A lands; before it, any
-    // non-native-first selection resolves to host-assisted on gc.)
+    // (#6979) The host-assisted profile itself is a compile error now.
     expect(() =>
       resolveCompileTargetProfile({
         semanticProviders: "host-assisted" as unknown as "native-first",
         hostAccelerators: ["regexp"],
       }),
-    ).toThrow("only apply to the native-first semantic regime");
+    ).toThrow("#6979 removed");
   });
 
   it("rejects the families whose host path does not work under the regime yet", () => {

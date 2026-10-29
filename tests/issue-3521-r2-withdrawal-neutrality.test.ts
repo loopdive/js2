@@ -46,7 +46,7 @@ async function tracked(source: string, fileName: string, options: CompileOptions
 const NEUTRALITY_LANES: readonly (readonly [string, CompileOptions])[] = [
   ["host", {}],
   ["fast", { fast: true }],
-  ["fast-hostStr", { fast: true, nativeStrings: false }],
+  // (#6979) host-strings variant removed with the host-assisted profile.
   ["native", { nativeStrings: true }],
   ["standalone", { target: "standalone" }],
   ["wasi", { target: "wasi" }],

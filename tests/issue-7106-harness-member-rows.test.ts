@@ -8,12 +8,14 @@
 //   - row 3, sta.js's `Test262Error.prototype.toString = function () { return
 //     "Test262Error: " + this.message; }`: the chained `F.p.x = fn` store, a
 //     STRING result and a closure that binds its own `this` at entry.
-// Every result is checked against node. One harness line is still a selector
-// refusal, and the honest harness census below pins it: row 2
-// (`compareArray.format`'s `Array.prototype.map.call(…)` body). assert.js's
-// `message = message.toString();`, a method call on a dynamic receiver, was
-// the other until the #7106 Stage 4 brand-dispatch wrapper
-// (`__ir_dyn_mcall_<m>_<n>`) gave the IR legacy's primitive/vec arms.
+// Every result is checked against node. Row 2 (`compareArray.format`'s
+// `Array.prototype.map.call(…)` body) ships IR through the borrow wrapper
+// (#6874), and assert.js's `message = message.toString();` through the
+// brand-dispatch wrapper (`__ir_dyn_mcall_<m>_<n>`). The one harness refusal
+// left, pinned by the census below, is assert.compareArray's `String(message)`:
+// #7113's standalone `closure-carrier-helper-call` cut (`String(carrier)` in a
+// closure that mints a carrier join needs `prepared-dynamic-helper-abi`,
+// wasi-only).
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 
@@ -141,14 +143,16 @@ assert.notSameValue(1, 2);
 `;
   const ROW_2 = `return "[" + Array.prototype.map.call(arrayLike, String).join(", ") + "]";`;
   const SYMBOL_MESSAGE = `message = message.toString();`;
+  const STRING_MESSAGE = `+ String(message)`;
 
-  /** `stub` replaces the refused harness line (row 2) with an IR-buildable twin. */
+  /** `stub` replaces the refused harness line (`String(message)`) with an IR-buildable twin. */
   function assemble(source: string, stub: boolean): string {
     const assembled = assembleOriginalHarness(source, parseMeta(source) as never).primary.source;
+    // Not stubbed: the borrow and method-call wrappers lower them (IR below).
     expect(assembled).toContain(ROW_2);
-    // No longer stubbed: the wrapper lowers it (and it ships IR below).
     expect(assembled).toContain(SYMBOL_MESSAGE);
-    return stub ? assembled.replace(ROW_2, `return "[" + String(arrayLike) + "]";`) : assembled;
+    expect(assembled).toContain(STRING_MESSAGE);
+    return stub ? assembled.replaceAll(STRING_MESSAGE, `+ message`) : assembled;
   }
 
   async function compileHarness(source: string) {
@@ -172,18 +176,16 @@ assert.notSameValue(1, 2);
     exports.test?.();
   }
 
-  it("the unstubbed harness keeps <module-init> legacy, on row 2 alone", async () => {
+  it("the unstubbed harness keeps <module-init> legacy, on `String(message)` alone", async () => {
     const result = await compileHarness(assemble(BODY, false));
     expect(result.success).toBe(true);
-    // Row 2 is `Array.prototype.map.call(arrayLike, String).join(", ")`. The
-    // borrow arm (#6874) lifted its `.join`-on-`any[]` refusal
-    // (`array-method-unsupported`); what stops the row now is `String` read as
-    // a VALUE (`expr-ident-not-in-scope «String»`, #7118 / #6846). The stubbed
-    // run below is unchanged: with row 2 gone every unit ships an IR body.
-    expect(initRow(result)).toMatchObject({ irBodyEmitted: false, code: "body-shape-rejected" });
+    // Row 2 (`Array.prototype.map.call(arrayLike, String).join(", ")`) is IR
+    // since the borrow arm (#6874) and `String` as a value (#6846): only the
+    // `String(message)` calls are left.
+    expect(initRow(result)).toMatchObject({ irBodyEmitted: false, code: "operand-coercion-unsupported" });
   }, 60_000);
 
-  it("with row 2 stubbed, every harness unit and <module-init> ship IR bodies and agree with node", async () => {
+  it("with `String(message)` stubbed, every harness unit and <module-init> ship IR bodies and agree with node", async () => {
     const assembled = assemble(BODY, true);
     vm.runInContext(assembled, vm.createContext({ console }));
     const result = await compileHarness(assembled);

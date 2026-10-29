@@ -1228,31 +1228,29 @@ function emitObjectRestAssignment(
   const restValueIdx = allocLocal(fctx, `__rest_value_${fctx.locals.length}`, { kind: "externref" });
   // Collect excluded names, including statically-resolvable computed keys (e.g. `{ [a]: b, ...rest }`).
   const excludedKeys = collectObjectRestExcludedKeys(ctx, target);
-  if (ctx.targetProfile.semanticProviders === "native-first") {
-    const emitted = emitNativeObjectRest(
+  const emitted = emitNativeObjectRest(
+    ctx,
+    fctx,
+    () => {
+      fctx.body.push({ op: "local.get", index: tmpLocal });
+      if (!materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
+        fctx.body.push({ op: "extern.convert_any" });
+      }
+    },
+    excludedKeys,
+    restValueIdx,
+  );
+  if (emitted) {
+    fctx.body.push({ op: "local.get", index: restValueIdx });
+    emitResolvedIdentifierWriteFromStack(
       ctx,
       fctx,
-      () => {
-        fctx.body.push({ op: "local.get", index: tmpLocal });
-        if (!materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
-          fctx.body.push({ op: "extern.convert_any" });
-        }
-      },
-      excludedKeys,
-      restValueIdx,
+      prop.expression,
+      { kind: "externref" },
+      restLocalIdx,
+      moduleGlobalIdx,
     );
-    if (emitted) {
-      fctx.body.push({ op: "local.get", index: restValueIdx });
-      emitResolvedIdentifierWriteFromStack(
-        ctx,
-        fctx,
-        prop.expression,
-        { kind: "externref" },
-        restLocalIdx,
-        moduleGlobalIdx,
-      );
-      return;
-    }
+    return;
   }
   // Host-assisted compatibility ABI: comma-joined exclusion keys.
   let restObjIdx = ctx.funcMap.get("__extern_rest_object");

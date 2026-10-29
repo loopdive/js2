@@ -45,7 +45,6 @@ import {
   buildAccessorClosure,
   ensureStructAccessorGlobal,
 } from "./struct-accessor-closure.js";
-import { emitUndefined } from "./expressions/late-imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { compileNativeStringLiteral, compileStringLiteral } from "./string-ops.js";
 import { getVecInfo } from "./type-coercion.js";
@@ -195,30 +194,6 @@ function markRuntimeDefinedProperty(ctx: CodegenContext, objArg: ts.Expression, 
   recordSidecarPropertyOwner(ctx, sidecarKey, objArg);
 }
 
-function emitDescriptorUndefinedSidecars(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  descLocal: number,
-  fields: readonly string[],
-): void {
-  if (fields.length === 0) return;
-  const setIdx = ensureLateImport(
-    ctx,
-    "__extern_set",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [],
-  );
-  flushLateImportShifts(ctx, fctx);
-  if (setIdx === undefined) return;
-  for (const field of fields) {
-    fctx.body.push({ op: "local.get", index: descLocal });
-    addStringConstantGlobal(ctx, field);
-    for (const instr of stringConstantExternrefInstrs(ctx, field)) fctx.body.push(instr);
-    emitUndefined(ctx, fctx);
-    fctx.body.push({ op: "call", funcIdx: setIdx });
-  }
-}
-
 /**
  * (#2372) Reify a typed WasmGC descriptor struct (already on the stack) into a
  * fresh open-hash `$Object`, so the native `__obj_define_from_desc` applier —
@@ -342,11 +317,7 @@ export function emitDefinePropertyDescRuntime(
   // passed through unchanged: no double-wrap. The native semantic-provider
   // policy uses this same path in JavaScript and host-free environments.
   const descStructTypeIdx =
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    descType &&
-    (descType.kind === "ref" || descType.kind === "ref_null")
-      ? descType.typeIdx
-      : undefined;
+    descType && (descType.kind === "ref" || descType.kind === "ref_null") ? descType.typeIdx : undefined;
   const reifyStructName = descStructTypeIdx !== undefined ? ctx.typeIdxToStructName.get(descStructTypeIdx) : undefined;
   const reifyFields = reifyStructName ? ctx.structFields.get(reifyStructName) : undefined;
   // (#4180) …but ONLY for a struct that is plausibly a descriptor RECORD. Any
@@ -396,30 +367,11 @@ export function emitDefinePropertyDescRuntime(
   // host-side `__descriptor_undefined` presence sidecar is not used standalone
   // (the native helper reads presence directly via `__hasOwnProperty`), so the
   // undefined-fields sidecar emission is host-only.
-  if (ctx.targetProfile.semanticProviders === "native-first") {
-    ensureObjectRuntime(ctx);
-    fctx.body.push({ op: "local.get", index: descLocal });
-    const nativeIdx = ctx.funcMap.get("__obj_define_from_desc");
-    if (nativeIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: nativeIdx });
-    } else {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    return { kind: "externref" };
-  }
-
-  emitDescriptorUndefinedSidecars(ctx, fctx, descLocal, undefinedFields);
+  ensureObjectRuntime(ctx);
   fctx.body.push({ op: "local.get", index: descLocal });
-
-  const dpDescIdx = ensureLateImport(
-    ctx,
-    "__defineProperty_desc",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-  );
-  flushLateImportShifts(ctx, fctx);
-  if (dpDescIdx !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: dpDescIdx });
+  const nativeIdx = ctx.funcMap.get("__obj_define_from_desc");
+  if (nativeIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: nativeIdx });
   } else {
     fctx.body.push({ op: "ref.null.extern" });
   }

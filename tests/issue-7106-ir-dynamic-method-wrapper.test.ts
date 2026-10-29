@@ -187,6 +187,47 @@ ${calls.map((call, i) => `  try { ${call}; n += ${2 ** i}; } catch (e) { n += 0;
     expect(wrong(calls, got, node(source))).toEqual([]);
   }, 60_000);
 
+  it("admits a wrapped carrier call in a closure that mints a carrier join (#7113's new shape)", async () => {
+    // assert.compareArray's shape: the join makes the closure a new shape, where
+    // #7113 refuses a GENERIC carrier method call (it answers a value where JS
+    // throws); the wrapper throws, so a wrapped call is admitted.
+    const members = `/** @returns {number} */ function subject() { return 0; }
+subject.msg = function (message, expected) {
+  message = message === undefined ? "" : message;
+  if (message.toString() !== expected) throw "msg";
+};
+subject.label = function (message) {
+  message = message === undefined ? "" : message;
+  return message.label();
+};`;
+    const calls = [
+      `subject.msg(undefined, "")`,
+      `subject.msg(5, "5")`,
+      `subject.msg(Symbol("s"), "Symbol(s)")`,
+      `subject.msg([1, 2], "1,2")`,
+    ];
+    const throwing = `  var nullReceiver = 0;
+  try { subject.msg(null, ""); } catch (e) { nullReceiver = e instanceof TypeError ? 1 : 2; }
+`;
+    const checks = [
+      ...calls.map((call) => `(function () { try { ${call}; return true; } catch (e) { return false; } })()`),
+      `nullReceiver === 1`,
+    ];
+    const source = program(members, checks, throwing);
+    const expected = node(source);
+    expect(expected).toBe(2 ** checks.length - 1);
+    const result = await compileOn(source, "standalone", { deferTopLevelInit: true });
+    expect(row(result, "<module-init>")?.irBodyEmitted).toBe(false);
+    // A user method name stays the generic call, which #7113 still refuses there.
+    const withoutLabel = source.replace(/subject\.label = [\s\S]*?\n\};/, "");
+    const admitted = await compileOn(withoutLabel, "standalone", { deferTopLevelInit: true });
+    expect(row(admitted, "<module-init>")?.irBodyEmitted).toBe(true);
+    expect(admitted.wat ?? "").toContain("(func $__ir_dyn_mcall_toString_0 ");
+    const instance = await instantiate(admitted, "standalone");
+    (instance.exports.__module_init as () => void)();
+    expect(wrong(checks, (instance.exports.run as () => number)(), expected)).toEqual([]);
+  }, 60_000);
+
   it("throws TypeError for a non-callable or nullish receiver property and reads a getter once", async () => {
     // The getter is on `push`, not `join`: a `{ join: 1 }` literal in the same
     // module makes legacy's any-receiver read of an accessor `join` answer a

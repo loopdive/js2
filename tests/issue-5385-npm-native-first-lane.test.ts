@@ -7,18 +7,19 @@ import {
 } from "../scripts/lib/npm-compat-perf.mjs";
 import { buildNpmCompatPerfDriver, getNpmCompatPerfSpec } from "./dogfood/npm-compat-perf-specs.mjs";
 
+// (#6979 S7) The JS-host lane IS the native regime; the S6 `jsHostNative`
+// alias record and the `jsHostAssisted` control lane are gone.
 describe("native-first npm performance evidence", () => {
-  it("uses the identical runtime-input driver in both JavaScript semantic profiles", () => {
+  it("the JS-host driver takes runtime input and carries no standalone benchmark", () => {
     for (const name of ["react", "hono", "redux"]) {
       const spec = getNpmCompatPerfSpec(name);
-      const native = buildNpmCompatPerfDriver(spec, "./package/index.js", "js-host-native");
-      expect(native).toBe(buildNpmCompatPerfDriver(spec, "./package/index.js", "js-host"));
-      expect(native).toContain("export function __npmCompatPerf(input)");
-      expect(native).not.toContain("export function __npmCompatStandaloneBenchmark");
+      const driver = buildNpmCompatPerfDriver(spec, "./package/index.js", "js-host");
+      expect(driver).toContain("export function __npmCompatPerf(input)");
+      expect(driver).not.toContain("export function __npmCompatStandaloneBenchmark");
     }
   });
 
-  it("keeps measured profiles distinct in charts and history", () => {
+  it("charts and history carry the jsHost and standalone lanes only", () => {
     const measured = (ratio: number) => ({
       status: "measured",
       ratio,
@@ -31,22 +32,18 @@ describe("native-first npm performance evidence", () => {
       jsHostNative: { ...measured(3), semanticProviders: "native-first" },
     });
     const packages = [{ name: "pkg", entryFile: "index.js", perf }];
-    expect(npmPerfRows(packages).map((row) => row.path)).toEqual(["index.js#jsHost", "index.js#jsHostNative"]);
+    expect(npmPerfRows(packages).map((row) => row.path)).toEqual(["index.js#jsHost"]);
     expect(npmPerfHistoryPoint(packages, "2026-09-07").packages.pkg).toEqual({
       jsHost: { dynamic: 2 },
-      jsHostNative: { dynamic: 3 },
       standalone: {},
     });
     expect(perf.ratio).toBe(2);
   });
 
-  it("retains native failures without manufacturing timing bars", () => {
-    const failure = {
-      ...failedPerfLane("js-host", "compile-error", "string_constants forbidden"),
-      semanticProviders: "native-first",
-    };
-    const perf = packagePerfRecord("op", null, null, { jsHostNative: failure });
-    expect(perf.lanes.jsHostNative).toEqual(failure);
+  it("retains JS-host failures without manufacturing timing bars", () => {
+    const failure = failedPerfLane("js-host", "compile-error", "string_constants forbidden");
+    const perf = packagePerfRecord("op", failure, null);
+    expect(perf.lanes.jsHost).toEqual(failure);
     expect(npmPerfRows([{ name: "pkg", perf }])).toEqual([]);
     expect(npmPerfHistoryPoint([{ name: "pkg", perf }], "2026-09-07").packages).toEqual({});
   });
