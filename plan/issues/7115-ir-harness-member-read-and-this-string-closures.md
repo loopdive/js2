@@ -28,6 +28,10 @@ loc-budget-allow:
 # by the #7106 issue file while #6829 sat in its diff; restated here (stranded grants).
 func-budget-allow:
   - src/ir/select.ts::scanExprInner
+# 2026-10-29 (revive onto main): +5 in the #7144 walk for the two carrier
+# sources (`this`, a call through a read local) and the shared
+# `callsThroughCarrier` predicate its two call arms now read.
+  - src/ir/select-planned-closure-operands.ts::plannedClosureOperandRefusal
 ---
 
 # IR: function-object member reads, string and `this` member closures
