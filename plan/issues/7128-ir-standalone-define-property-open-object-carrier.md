@@ -424,6 +424,13 @@ front of it, so S1 is groundwork and must not be tuned for a pass count.
      `function g(p) { return p.x + 1 === 4 ? 1 : 0; }` claims and then
      demotes. **No tracking issue exists for this gap yet**; it is named here
      until one is filed.
+   - Two siblings of that gap are now closed in the shared dynamic-value scan
+     (round-2 review, PR #6957), on both lanes and for dynamic parameters
+     too: a `null` operand is buildable only under strict equality (loose
+     `<dynamic> == null` demoted post-claim), and a dynamic `switch`
+     discriminant is refused (it demoted with "switch disc must lower to
+     i32/f64"). Both reached the carrier through `o.k == null` and through
+     the `var v = o.k` alias.
    - Descriptor values are number, string and boolean literals only;
      `undefined` and `null` are deferred.
 6. **The admission is per subject.**
