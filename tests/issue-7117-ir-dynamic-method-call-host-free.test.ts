@@ -91,21 +91,9 @@ export function run() {
     expect(await run(result, false)).toBe(11);
   }, 35_000);
 
-  it("leaves the host lane, whose __extern_method_call is the real JS call, unchanged", async () => {
-    // `semanticProviders: "host-assisted"` IS the host lane (allowHostImports).
-    // A default build is the native-first regime, projected as standalone —
-    // that case is below.
-    const result = await compile(SOURCE, {
-      fileName: "test.js",
-      allowJs: true,
-      semanticProviders: "host-assisted",
-      skipSemanticDiagnostics: true,
-      trackIrOutcomes: true,
-    } as Parameters<typeof compile>[1]);
-    for (const name of ["t", "u", "k"]) expect(emitted(result, name), name).toBe(true);
-    expect(await run(result, true)).toBe(111111);
-  }, 35_000);
-
+  // The JS target's only semantic profile is the native-first regime since
+  // #6979 removed `semanticProviders: "host-assisted"` (now a compile error),
+  // so the old host-lane case has no subject left; the default lane is it.
   it("matches node on the default JS lane (the native regime, which takes the wrapper too)", async () => {
     const result = await compile(SOURCE, {
       fileName: "test.js",
