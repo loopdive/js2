@@ -190,12 +190,14 @@ export function makeIrDynamicCarrierDivergenceProbe(ctx: CodegenContext): (posit
       if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return false;
       const index = owner.parameters.indexOf(position);
       if (index < 0) return false;
-      // (#7119) Off the fast lane the dynamic carrier IS externref, so a
-      // registered legacy slot of any other type (a vec or string inferred
-      // from the call sites, `ask([1, 2])`) is the same guaranteed parity
-      // withdrawal as a fnctor-instance slot.
+      // (#7119) Off the fast lane the dynamic carrier is externref, and the
+      // IR reconciles it with legacy's native-string slot but not with any
+      // other reference slot inferred from the call sites (a vec for
+      // `ask([1, 2])`, a typed array): the same guaranteed parity withdrawal
+      // as a fnctor-instance slot.
       const slot = legacyParamSlot(ctx, position);
-      if (!ctx.fast && slot !== undefined && slot.kind !== "externref") return true;
+      if (!ctx.fast && (slot?.kind === "ref" || slot?.kind === "ref_null") && slot.typeIdx !== ctx.anyStrTypeIdx)
+        return true;
       return legacyPositionCarriesFnctorInstance(ctx, owner.name.text, index);
     }
     if (ts.isFunctionDeclaration(position) && position.name !== undefined) {
