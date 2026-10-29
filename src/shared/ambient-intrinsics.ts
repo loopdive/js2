@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import ts from "typescript";
 
+import { isWriteTarget } from "./binding-writes.js";
+
 /**
  * (#7106) Ambient intrinsics the IR reads as VALUES — `assert.throws(TypeError,
  * fn)`, `typeof Symbol`. Each is a property of the realm's
@@ -373,13 +375,15 @@ const PROTO_METHOD_NAMES: ReadonlySet<string> = new Set([
 
 type MemberAccess = ts.PropertyAccessExpression | ts.ElementAccessExpression;
 
+/** `node` with every parenthesis that wraps it: the position its value is used in. */
+function outermostParenthesized(node: ts.Node): ts.Node {
+  while (node.parent && ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  return node;
+}
+
 function memberAccessOf(node: ts.Expression): MemberAccess | undefined {
-  let child: ts.Node = node;
-  let parent = node.parent;
-  while (parent && ts.isParenthesizedExpression(parent)) {
-    child = parent;
-    parent = parent.parent;
-  }
+  const child = outermostParenthesized(node);
+  const parent = child.parent;
   return parent !== undefined &&
     (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
     parent.expression === child
@@ -404,9 +408,12 @@ function isExactProtoMethodValueRead(node: ts.Identifier): boolean {
   if (staticMemberName(protoAccess) !== "prototype") return false;
   const methodAccess = memberAccessOf(protoAccess);
   const method = methodAccess && staticMemberName(methodAccess);
-  return methodAccess !== undefined && method !== undefined && PROTO_METHOD_NAMES.has(method)
-    ? isPlainMethodValue(methodAccess)
-    : false;
+  return (
+    methodAccess !== undefined &&
+    method !== undefined &&
+    PROTO_METHOD_NAMES.has(method) &&
+    isPlainMethodValue(methodAccess)
+  );
 }
 
 /**
@@ -452,36 +459,27 @@ const STATIC_METHOD_NAMES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
  * is type-directed; the dynamic route answers primitives wrongly).
  */
 function isExactStaticMethodValueRead(node: ts.Identifier): boolean {
+  const methods = STATIC_METHOD_NAMES.get(node.text);
+  if (methods === undefined) return false;
   const methodAccess = memberAccessOf(node);
   const method = methodAccess && staticMemberName(methodAccess);
-  return methodAccess !== undefined && method !== undefined && STATIC_METHOD_NAMES.get(node.text)?.has(method) === true
-    ? isPlainMethodValue(methodAccess)
-    : false;
+  return methodAccess !== undefined && method !== undefined && methods.has(method) && isPlainMethodValue(methodAccess);
 }
 
 /**
  * The method read is used as a plain VALUE: not called (the receiver would
- * become `this`), not read further, not a write, `delete` or update target.
+ * become `this`), not read further, not a `delete` or numeric-unary operand,
+ * and not written — `isWriteTarget` follows destructuring and for-in/of heads.
  * The method value itself is an ordinary function, so where it flows
  * afterwards needs no tracking.
  */
 function isPlainMethodValue(methodAccess: MemberAccess): boolean {
-  if (memberAccessOf(methodAccess) !== undefined) return false;
-  let use: ts.Node = methodAccess;
-  while (use.parent && ts.isParenthesizedExpression(use.parent)) use = use.parent;
+  if (memberAccessOf(methodAccess) !== undefined || isWriteTarget(methodAccess)) return false;
+  const use = outermostParenthesized(methodAccess);
   const parent = use.parent;
   if (parent === undefined) return false;
   if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === use) return false;
   if (ts.isTaggedTemplateExpression(parent) && parent.tag === use) return false;
-  if (ts.isDeleteExpression(parent) || ts.isPostfixUnaryExpression(parent)) return false;
-  if (ts.isPrefixUnaryExpression(parent)) return parent.operator === ts.SyntaxKind.ExclamationToken;
-  if (
-    ts.isBinaryExpression(parent) &&
-    parent.left === use &&
-    parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-    parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-  ) {
-    return false;
-  }
-  return !(ts.isForInStatement(parent) || ts.isForOfStatement(parent)) || parent.expression === use;
+  if (ts.isDeleteExpression(parent)) return false;
+  return !ts.isPrefixUnaryExpression(parent) || parent.operator === ts.SyntaxKind.ExclamationToken;
 }

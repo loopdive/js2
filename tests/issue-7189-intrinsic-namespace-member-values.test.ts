@@ -8,42 +8,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { intrinsicUseVerdicts, lane, runModuleInit, TARGETS, type Target } from "./helpers/ambient-intrinsic-probe.js";
 
-const OPTIONS = {
-  fileName: "issue-7189-namespace-members.js",
-  allowJs: true,
-  skipSemanticDiagnostics: true,
-  inferModuleStrictArguments: false,
-  scriptGoal: true,
-  deferTopLevelInit: true,
-  trackIrOutcomes: true,
-} as const;
-
-const TARGETS = ["standalone", undefined] as const;
-const lane = (target: (typeof TARGETS)[number]): string => target ?? "gc";
-
-interface Run {
-  readonly claimed: boolean;
-  readonly threw: boolean;
-  readonly errors: number;
-}
-
-async function run(target: (typeof TARGETS)[number], source: string, experimentalIR = true): Promise<Run> {
-  const result = await compile(source, { ...OPTIONS, experimentalIR, ...(target ? { target } : {}) });
-  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
-  let threw = false;
-  try {
-    (instance.exports.__module_init as (() => void) | undefined)?.();
-  } catch {
-    threw = true;
-  }
-  const init = (result.irOutcomes ?? []).find((o) => o.displayName === "<module-init>");
-  return { claimed: init?.irBodyEmitted === true, threw, errors: result.errors.length };
-}
+const run = (target: Target, source: string, experimentalIR = true) =>
+  runModuleInit(target, source, { fileName: "issue-7189-namespace-members.js", experimentalIR });
 
 const STATIC_METHODS: Record<string, Record<string, number>> = {
   Array: { isArray: 1, from: 1, of: 0 },
@@ -115,15 +83,15 @@ describe("#7189 — static method values off ambient namespace intrinsics", () =
     it(`node agrees: ${name}`, () => {
       expect(() => new Function(source)()).not.toThrow();
     });
-    it(`${name} claims <module-init> with no errors and runs (standalone)`, async () => {
-      expect(await run("standalone", source)).toEqual({ claimed: true, threw: false, errors: 0 });
-    });
-    it(`${name} answers as legacy (standalone, IR off)`, async () => {
-      expect(await run("standalone", source, false)).toEqual({ claimed: false, threw: false, errors: 0 });
-    });
-    it(`${name} answers as node (gc)`, async () => {
-      expect((await run(undefined, source)).threw).toBe(false);
-    });
+    // gc is the native-first lane, projected as standalone (#7118 claims there too).
+    for (const target of TARGETS) {
+      it(`${name} claims <module-init> with no errors and runs (${lane(target)})`, async () => {
+        expect(await run(target, source)).toEqual({ claimed: true, threw: false });
+      });
+      it(`${name} answers as legacy (${lane(target)}, IR off)`, async () => {
+        expect(await run(target, source, false)).toEqual({ claimed: false, threw: false });
+      });
+    }
   }
 
   for (const [name, source] of Object.entries(REFUSED)) {
@@ -132,17 +100,38 @@ describe("#7189 — static method values off ambient namespace intrinsics", () =
     });
     for (const target of TARGETS) {
       it(`${name} stays legacy and answers as node does (${lane(target)})`, async () => {
-        expect(await run(target, source)).toEqual({ claimed: false, threw: false, errors: 0 });
+        expect(await run(target, source)).toEqual({ claimed: false, threw: false });
       });
     }
   }
+
+  // The predicate itself: only the plain value read of a listed static method
+  // admits; a call, a further read and every write form — destructuring and a
+  // for-of head included — refuse.
+  describe("isAmbientIntrinsicValueUse on static-method reads", () => {
+    it("admits a listed static method read as a plain value", () => {
+      expect(intrinsicUseVerdicts(`var f = Array.isArray; var g = (Array).from;`, "Array")).toEqual([true, true]);
+    });
+    it.each([
+      ["a call", `Array.isArray(1);`],
+      ["a further read", `var n = Array.isArray.length;`],
+      ["an unlisted member", `var f = Array.fromAsync;`],
+      ["an assignment target", `Array.isArray = null;`],
+      ["an array destructuring target", `[Array.isArray] = [1];`],
+      ["an object destructuring target", `({ a: Array.of } = { a: 1 });`],
+      ["a for-of head", `for (Array.from of []) {}`],
+      ["a delete operand", `delete Array.isArray;`],
+      ["a numeric unary operand", `var n = -Array.isArray;`],
+    ])("refuses %s", (_label, source) => {
+      expect(intrinsicUseVerdicts(source, "Array")).toEqual([false]);
+    });
+  });
 
   // A failing check still throws from the IR body.
   it("a failing static-value check throws from the IR body (standalone)", async () => {
     expect(await run("standalone", `var f = Array.isArray; if (f.name !== "from") { throw "#neg"; }`)).toEqual({
       claimed: true,
       threw: true,
-      errors: 0,
     });
   });
 });

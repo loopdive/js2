@@ -107,6 +107,38 @@ IR vs legacy vs node:
     and in the same shape; the shared plain-value tail replaces the
     duplicated one; no new IR node, lowering arm or selector branch.
 
+## Adversarial review (fresh context, 2026-10-29)
+
+First pass: **NOT MET**. Findings and what was done about them:
+
+1. **Fixed.** `isPlainMethodValue` re-implemented the write-target test and
+   missed destructuring targets (`[Array.isArray] = xs`,
+   `({ a: Object.keys } = o)`, `for ([Array.of] of xs)`).
+   - It now calls the shared `isWriteTarget` (`src/shared/binding-writes.ts`),
+     extracted from `isLexicalBindingWrite`. That function's body is
+     unchanged; it now delegates.
+   - The four hand-rolled branches (assignment, postfix, update, for-in/of
+     head) are gone, and #7127's arm gains the same coverage.
+2. **Fixed.** Two parenthesis climbs became one `outermostParenthesized`.
+3. **Fixed.** Both arms now end in plain `&&` instead of `cond ? … : false`.
+   The new arm checks its receiver table before it walks the AST, as the
+   #7127 sibling does.
+4. **Rebutted.** `STATIC_METHOD_NAMES` repeats names from codegen's
+   `BUILTIN_STATIC_METHOD_ARITY`, but `src/shared` cannot import codegen. The
+   table is also deliberately a measured subset (`Object.create` is left out).
+5. **Rebutted.** The test's arity map copies codegen's values. The "node
+   agrees" cases are the independent oracle, which is the point of writing
+   the values out by hand.
+6. **Fixed for #7118/#7189; rest left (see Left).** The module-init `run` and
+   the predicate probe are now one `tests/helpers/ambient-intrinsic-probe.ts`,
+   shared by both test files.
+7. **Fixed.** The gc lane now asserts `claimed` as well. gc is the native-first
+   lane, projected as standalone (#7118 claims there too), and IR = legacy =
+   node holds on it.
+8. **Fixed.** Direct predicate tests now cover a call, a further read, an
+   unlisted member, an assignment, array and object destructuring, a for-of
+   head, `delete` and a numeric unary.
+
 ## Found, not fixed
 
 `var __getOwnPropertyDescriptor = 1;` (and the same for
@@ -128,6 +160,13 @@ Owner: the #7106 propertyHelper lane.
 - `Object.getPrototypeOf(x)` (52) and `Object.getOwnPropertyDescriptor(x, k)`
   (15) calls: both need an exact producer for legacy's type-directed static
   arm.
+- Test-harness duplication (review finding 6): at least seven more
+  `tests/issue-71*` files carry their own module-init `run` copy, for example
+  `issue-7106-ir-number-conversion`, `issue-7117-*`, `issue-7122-*` and
+  `issue-7125-*`. They can move onto `tests/helpers/ambient-intrinsic-probe.ts`.
+  This needs its own cleanup issue; the id could not be allocated from this
+  container (`claim-issue --allocate`: the open-PR scan is unavailable without
+  `gh` auth).
 - `Array.isArray(x)` over a dynamic operand: `__extern_is_array` is exact, but
   it is worth admitting only once module-init can express array / object
   arguments.
