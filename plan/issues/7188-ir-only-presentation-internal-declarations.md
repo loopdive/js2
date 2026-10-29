@@ -93,3 +93,28 @@ boundary; no parallel presentation path, no second classifier.
   a numeric-only program is unchanged.
 - Probe programs: `function id(x){return x}` + numeric export goes from refused
   to prepared (126 B). The next refusals are S2/S3 above.
+
+## S2 probe (2026-10-29, not in this PR)
+
+One-line change in `prepareSourceFunctionSignatures`
+(`src/ir/program-source.ts` ~1424): when the propagated parameter type lowers
+to nothing (`{ kind: "unknown" }` for helpers called only from module-init, as
+every test262 harness helper is), fall through to `checkerScalar` and then
+`checkerAny` (the existing dynamic carrier). The parameter contract then
+resolves, and the refusal moves to two deeper gates:
+
+- **Physical carrier.** `wasmgc:host physical setup cannot be materialized:
+  body ignore params carries non-scalar IR type dynamic; physical carrier
+  materialization is not available` — the prepared physical layer has no
+  dynamic (externref/anyref) carrier outside host async. This is the #3527
+  physical-ledger area (#6925/#6928) and gates S2.
+- **Operand lowering.** `ir/from-ast: Phase 1 requires matching operand types
+  for '===' in isTrue` — a dynamic `===` against a Boolean is not lowered in
+  the prepared path.
+- Separately, call sites inside a function propagate a union and hit `arg 0 of
+  call to weight is i32, expected union<f64,i32>` (argument coercion into a
+  union parameter).
+
+Order: physical dynamic carrier first (it gates every harness helper), then
+the S2 fallback, then operand lowering.
+
