@@ -84,8 +84,33 @@ function exactHostHelperName(instr: IrInstr, types: ReadonlyMap<IrValueId, IrTyp
   return operand !== undefined && asVal(operand)?.kind === "f64" ? "__box_number" : null;
 }
 
+type PreparedDynamicHelperName = Parameters<typeof exactPreparedDynamicHelperRef>[2];
+const EXTERNREF: ValType = { kind: "externref" };
+const I32: ValType = { kind: "i32" };
+
+/**
+ * The single call each host-carrier arm of `makeDynamicLowering` emits
+ * (`emitToBoolean`, `emitTypeof`, `emitToString`, `emitStrictEq`). The
+ * native-string re-tag after `__typeof` / `__extern_toString` calls nothing.
+ */
+const HOST_CARRIER_HELPERS: Readonly<
+  Record<
+    "dyn.truthy" | "dyn.typeof" | "dyn.to_string" | "dyn.eq",
+    {
+      readonly name: PreparedDynamicHelperName;
+      readonly params: readonly ValType[];
+      readonly results: readonly ValType[];
+    }
+  >
+> = {
+  "dyn.truthy": { name: "__is_truthy", params: [EXTERNREF], results: [I32] },
+  "dyn.typeof": { name: "__typeof", params: [EXTERNREF], results: [EXTERNREF] },
+  "dyn.to_string": { name: "__extern_toString", params: [EXTERNREF], results: [EXTERNREF] },
+  "dyn.eq": { name: "__extern_strict_eq", params: [EXTERNREF, EXTERNREF], results: [I32] },
+};
+
 /** The callable each host-carrier `emitTagTest` partition arm calls. */
-const TAG_TEST_HELPERS: ReadonlyMap<number, "__typeof_undefined" | "__typeof_object" | "__typeof_function"> = new Map([
+const TAG_TEST_HELPERS: ReadonlyMap<number, PreparedDynamicHelperName> = new Map([
   [JS_TAG_IDS.Undefined, "__typeof_undefined"],
   [JS_TAG_IDS.Object, "__typeof_object"],
   [JS_TAG_IDS.Function, "__typeof_function"],
@@ -213,24 +238,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
               instr.kind === "dyn.to_string" ||
               (instr.kind === "dyn.eq" && !instr.loose))
           ) {
-            // The host-carrier arms of `makeDynamicLowering` (`emitToBoolean`,
-            // `emitTypeof`, `emitToString`, `emitStrictEq`): one call each;
-            // the native-string re-tag after `__typeof` / `__extern_toString`
-            // calls nothing.
-            const name =
-              instr.kind === "dyn.truthy"
-                ? "__is_truthy"
-                : instr.kind === "dyn.typeof"
-                  ? "__typeof"
-                  : instr.kind === "dyn.to_string"
-                    ? "__extern_toString"
-                    : "__extern_strict_eq";
-            const params: readonly ValType[] =
-              instr.kind === "dyn.eq" ? [{ kind: "externref" }, { kind: "externref" }] : [{ kind: "externref" }];
-            const results: readonly ValType[] =
-              instr.kind === "dyn.typeof" || instr.kind === "dyn.to_string"
-                ? [{ kind: "externref" }]
-                : [{ kind: "i32" }];
+            const { name, params, results } = HOST_CARRIER_HELPERS[instr.kind];
             bindExact(instr, name, params, results);
             return;
           }
@@ -257,7 +265,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
               nameable = false;
               return;
             }
-            bindExact(instr, name, [{ kind: "externref" }], [{ kind: "i32" }]);
+            bindExact(instr, name, [EXTERNREF], [I32]);
             return;
           }
           // (#7106 Stage 4) `var x;` / missing-member reads produce the

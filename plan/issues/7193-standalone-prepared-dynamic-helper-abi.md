@@ -116,6 +116,25 @@ table; no new predicate or arm is added.
    `native-dynamic-loose-equality`, whose standalone claim is false today).
 2. IR `"" + <carrier holding a Symbol>` answers `"Symbol()"` instead of
    throwing a TypeError (pre-existing on origin/main; legacy throws).
+3. Cleanup (review nit): `exactPreparedDynamicHelperRef` and its helper-name
+   union live in `compiler-timer-shim-preparation.ts` with a timer-shim name
+   (`PreparedTimerDynamicHelperName`) but serve every prepared dynamic unit.
+   Move them next to `prepared-dynamic-support.ts`. That is its own change,
+   because the timer-shim import graph moves with it.
+
+## Review (adversarial, fresh context, 2026-10-29)
+
+No blocking findings. The helper names match the `makeDynamicLowering` arms,
+the capability split is consistent at every read site, and there is no
+fail-open path (a missing binding withdraws at preparation). Nits fixed:
+
+- the host-carrier arm's nested ternaries became the `HOST_CARRIER_HELPERS`
+  table, the same shape as `TAG_TEST_HELPERS`;
+- the table value types reuse `exactPreparedDynamicHelperRef`'s name type.
+
+Module-placement nit: filed as follow-up 3. The "gc changes" point is
+intended: the native-first gc lane projects as standalone and now claims
+`String(<carrier>)`.
 
 ## Test Results (2026-10-29, base origin/main 95648287)
 
