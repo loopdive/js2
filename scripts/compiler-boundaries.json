@@ -2285,6 +2285,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/console-output.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-unit-inventory.ts",
       "state": "clean",
       "layer": "foundation"
@@ -5041,6 +5046,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/ir-native-numeric-field.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7137",
+      "nextBoundary": "Source-qualified native numeric field projection and member-signature ABI deferral; move with exact class-layout preparation."
+    },
+    {
       "path": "src/codegen/declarations/reassigned-function-binding-widening.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -6798,7 +6811,7 @@
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "The detached template parse of the template-built IR wrappers (#7106)."
+      "nextBoundary": "Shared mechanics of the template-built IR wrappers (#7106): the detached template parse and a template expression compiled as the wrapper's carrier."
     },
     {
       "path": "src/codegen/helpers/arguments-registration.ts",
@@ -7271,6 +7284,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/ir-native-console.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7136",
+      "nextBoundary": "Move native console provider materialization with Program ABI preparation; formatting and output kernels remain shared."
     },
     {
       "path": "src/codegen/ir-native-map.ts",
@@ -8575,6 +8596,14 @@
       "destination": "backend-wasmgc",
       "owner": "7128",
       "nextBoundary": "IR open-object carrier support (#7128 S1): legacy's open-$Object binding query the selector asks; moves with the object-shape widening pre-pass."
+    },
+    {
+      "path": "src/codegen/array/ir-array-prototype-borrow.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "IR Array.prototype borrow wrapper (#7106): legacy's borrow compiler over a detached template; moves with the array-prototype-borrow backend split."
     },
     {
       "path": "src/codegen/object-proto-tostring.ts",
@@ -12215,6 +12244,14 @@
       "nextBoundary": "Pure TypeScript-AST fold shared by the selector and from-ast (#7106 S1b); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/numeric-slot-coercion.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7137",
+      "nextBoundary": "Producer numeric slot/domain conversions reuse canonical bitwise IR; move with source-language lowering."
+    },
+    {
       "path": "src/ir/boolean-brand.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12397,6 +12434,22 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/dynamic-method-call-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Naming and routing contract for the per-(method, arity) dynamic method-call wrappers; move with the other IR runtime-symbol contracts when ir-core is split from frontend inventory."
+    },
+    {
+      "path": "src/ir/array-prototype-borrow-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Shape and naming contract for the per-(method, arity) Array.prototype borrow wrappers (`Array.prototype.<m>.call(recv, …)`); moves with the dynamic method-call naming contract."
     },
     {
       "path": "src/ir/dynamic-number-lowering.ts",
@@ -12629,6 +12682,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/console-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7136",
+      "nextBoundary": "Native console producer emits logical strings and symbolic provider calls; keep physical provider selection outside the IR."
     },
     {
       "path": "src/ir/host-free-runtime.ts",
@@ -14340,6 +14401,11 @@
       "layer": "wasm-physical"
     },
     {
+      "path": "src/wasm/physical/data-snapshot.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
       "path": "src/wasm/physical/function-handles.ts",
       "state": "clean",
       "layer": "wasm-physical"
@@ -14351,6 +14417,11 @@
     },
     {
       "path": "src/wasm/physical/module-reservations.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/owned-function-data.ts",
       "state": "clean",
       "layer": "wasm-physical"
     },
@@ -15061,6 +15132,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/object-model/ir-dynamic-method-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "IR runtime wrapper built from legacy's any-receiver emitters over a fixed template; replace with a native brand-dispatch runtime when the backend owns method dispatch."
     },
     {
       "path": "src/codegen/builtin-subclass-receiver.ts",

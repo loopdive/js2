@@ -45,6 +45,10 @@ files:
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/codegen/ir-prepared-free-functions.ts
+  # 2026-10-29 (#3527 owned-fill finalization): +3 / +1 wiring lines (import and
+  # one releaseOwnedFunctions call); the logic lives in wasm/physical/owned-function-data.ts.
+  - src/compiler.ts
+  - src/compiler/ir-program-presentation.ts
 func-budget-allow:
   - src/ir/from-ast.ts::lowerExpr
 import-cycles-allow:
@@ -2510,8 +2514,182 @@ space-free temporary directory pass. Initial failure logs are retained locally.
 No baseline, test expectation, CI workflow or global architecture rule was
 weakened for these environment failures.
 
+
+
+### 2026-10-26 — readable physical-validation review boundary
+
+Implementation plan: extract the existing filled-function snapshot traversal from
+`src/wasm/physical/module-reservations.ts` into the physical-layer module
+`src/wasm/physical/data-snapshot.ts`. Reuse the pinned historical textual oracle
+through `tests/helpers/physical-snapshot-oracle.ts`; remove its duplicate from
+the filled-function comparison tests. Preserve every ledger observation and
+keep the other descriptor/global/publication/recgroup domains on their original
+textual algorithm. Quality acceptance: one function snapshot implementation,
+one shared test oracle, no validation cache or new ownership layer.
+
+The initial isolated candidate broadened structural matching to the remaining
+domains. Public global-initializer controls disproved equivalent behavior when
+a getter replaces map, freeze, stringify, numeric toString, padStart, or join.
+All six fail on the rejected candidate. The extraction-only candidate and the
+exact upstream ledger pass those controls. The broader optimization is rejected;
+its patch and raw failures are retained in
+`plan/log/3527-physical-snapshot-review-20261026/` for C's review.
+
+The 316-case baseline and candidate runs each pass 315 and fail the same existing
+canonical module-record declaration hash assertion. Neither arm changes that
+file; the failure is preserved, not rebaselined, at this stage (the receipt
+repair below later corrects the stale pin). The first isolation run
+also exposed test fixtures calling integration-only batch methods; those tests
+now use the upstream scalar authentication boundary. No native integration
+speedup, complete producer population, both-backend qualification, or frontend
+retirement is claimed. Recursive owner validation still requires architectural
+work after this independently readable observation contract is reviewed.
+
+
+Final extraction-only run after shared-oracle cleanup, before the receipt
+repair: 315/316, with the same baseline declaration-hash failure. The three default-compiler binary/WAT
+controls pass 3/3 in both arms with exact equality. Fresh-context read-only
+review (`snapshot_extraction_review`) reports no actionable findings in the
+final production extraction; it independently confirms unchanged traversal and
+oracle literal. C's broader recursive-validation architecture review remains open.
+
+### 2026-10-26 — repair the canonical declaration receipt with provenance
+
+Read-only history audit identifies commit
+`2d0610751954975e0ec634ab83b181a28530454f` as the sole cause of the preserved
+canonical declaration pin failure: it adds `FieldDef.optional?: true` plus its
+five-line documentation. The current module-records file is byte-identical to
+that commit, and removing exactly those six added lines restores its entire
+parent file and the old receipt. Refresh the pinned receipt to that authorized
+schema, retaining all existing declaration/order/type/documentation controls
+and adding negative controls for the optional field type and its documentation.
+This repairs the known baseline test; it does not broaden the snapshot matcher
+or grant an exemption from live mutation observation.
+
+The repaired eight-file selection passes 316/316. Follow-up read-only review
+confirms all previous assertions remain intact and both new mutations have
+unique target checks; no actionable findings. Historical 315/316 failures
+remain preserved alongside the final log in the review evidence directory.
+
+### 2026-10-26 — refresh the physical snapshot review head
+
+Merge upstream main `3b6489436318e8f863ef474e41797b48911eac59` into the
+physical snapshot extraction branch. The sole conflict was the independent
+append-only evidence sections in this issue; preserve both, including the
+realm comparison closing audit that has now landed. No source conflict or
+additional algorithm change was needed. The refreshed tree passes 316/316
+snapshot controls and 38/38 realm layout/completion controls. All five source
+ratchets pass against this exact main base; the dead-export gate proves only
+preservation, not full closure or retirement. PR 6925 retains `hold` pending
+C's independent review of the refreshed head.
+
+### 2026-10-29 — replacement PR on loopdive/js2
+
+The fork-only head of PR 6925 is replaced by a PR from `claude/takeover-6925`,
+merged with main `cb3ff519ad`. It removes the review `.log` files, which
+were committed as raw blobs although `.gitattributes` routes `*.log` through
+LFS (they stay reachable from review head `746d2fcaec`; see the evidence
+README), and documents the snapshot observation limits in the
+`data-snapshot.ts` header.
+No behaviour or sha256 pin changes.
+
 ## Implementation Plan — close realm completion comparison mutation window (2026-10-26)
 
 Canonical initializer comparison may invoke Proxy traps after an earlier realm anchor has been compared. Reaudit the completed source initializer through the existing physical ledger before returning the layout owner; this checks every completed resource, including both anchors. Keep the existing checks, layout and emitted bodies unchanged. Add genuine filling/sealed controls using the existing realm fixture: healthy transparent Proxy, late realm-anchor mutation and late function-prototype-anchor mutation. Prove the defect against unchanged main, then run the layout regression and targeted type/lint checks. Quality criterion: one existing audit call, no new validator, cache, ABI or producer. This is a bounded integrity correction, not complete runtime or IR migration qualification.
 
 Validation: unchanged main `61b1b07d2b5666b6ebb84fbbe93ee8a07655d090` fails the four late-mutation cases and passes both healthy controls; the corrected source passes all 38 cases (six new controls plus 32 existing layout regressions). Targeted TS7, Biome lint, Prettier and all five source ratchets pass. A fresh-context review found no actionable defect in the bounded post-comparison physical-ledger check. Three default-compiler programs (numeric loop, string slice/concat, captured object) have byte-identical Wasm and exact matching WAT before/after; this is scoped output preservation, not full backend equivalence. The first baseline probe armed too early and passed all six cases; its log is retained, and only the corrected trigger establishes the defect. Full IR migration and the separate integration candidate remain open.
+
+### Implementation Plan — isolated owned-function publication (2026-10-26)
+
+Add the explicit detached-copy path in wasm/physical/owned-function-data.ts and
+PhysicalModuleReservations.fillOwnedFunction. Reuse the existing function snapshot
+algorithm at this main baseline; do not import unrelated ledger changes from the
+integration worktree. Preserve caller-owned legacy fillFunction behavior and all
+layout/closing audits. Freeze copied plain records and dense private-prototype
+arrays, lock publication fields and retain full recursive audits for mutable byte
+payloads. Immutable payloads can use the existing shell comparison after capture.
+
+Adopt in the four producers present on main: native string output, BigInt number,
+number classifier, and Boolean. Numeric validators require private-copy provenance
+in addition to their existing recursive descriptor/canonical checks. The ToBoolean
+producer is integration-only and remains a subsequent adoption, not bundled here.
+Quality: one copy implementation, explicit opt-in, no generic prototype exemption,
+no new validation cache, no changes to legacy textual descriptor observations.
+Validate original and adapted owner controls, actual binary/WAT and Wasm execution,
+callback/intrinsic mutation witnesses, TS7 and five ratchets. Fresh adversarial
+review precedes any hold release. The broader source/realm adoption and dynamic
+ToNumber owner/resolver remain required for complete IR migration.
+
+Isolation preflight: unchanged main producer tests pass 485/485. The old ledger
+declaration receipt fails identically on exact main and candidate (148/149 each);
+carry the already provenance-backed FieldDef.optional receipt repair from PR6925,
+including type and documentation mutation witnesses. Its baseline failure remains
+in the evidence. One copied owned test called an integration-only batch method;
+use two existing single-token checks while retaining detection of legacy function
+corruption through the owned sibling. No batch API is added by this publication.
+
+Fresh-review correction: copied byte views remained extensible. Hidden own length
+and iterator callbacks could alter real output while restoring indexed bytes
+before the next full audit. Lock the copied view's shape/prototype, publish a fixed
+non-enumerable length and captured iterator, and retain mutable indexed bytes plus
+full content audits. Cover both concrete emitters and prototype substitution. This
+is an owned-path correction; legacy caller-owned bytes remain unchanged.
+
+### 2026-10-29 — replacement PR: release owned payloads to output finalization
+
+The fork-only head of PR 6928 is replaced by a PR from `claude/takeover-6928`,
+stacked on the PR 6925 replacement (`FunctionSnapshot` is now
+`PhysicalDataSnapshot`) and merged with main.
+
+Review blocker: frozen owned bodies crashed the in-place output finalizers —
+`widenNonDefaultableTypes` assigns `local.type` and `blockType.type`;
+`stampAllocationOwners` assigns `fn.body` and pushes locals — and
+`copyModuleData` rejects the private array prototype. Fix at the consumer
+boundary, not in the ledger: `releaseOwnedFunctions(module)`
+(`owned-function-data.ts`) returns a view in which each owned function is a
+plain mutable clone (`Array.prototype` arrays, `Object.prototype` records,
+fresh `Uint8Array` bytes, shared references preserved) and every other function
+object is shared unchanged; it never mutates its input. `finalizePipelineModule`
+runs on that view, and `beginPreparedPresentationFinalization` copies it.
+Releasing at `seal()` was rejected: the ledger and producers keep auditing after
+seal (`assertCompletedReservation` in the `requireCompleted*` receipts and
+`emittedSupportFunctionReceipts`), the producer tests pin that owned
+`locals`/`body` stay non-writable and non-configurable for the ledger's whole
+life, and making them writable would trade that lock for a weaker
+identity-only audit. Legacy functions keep their in-place finalization.
+`tests/issue-3527-owned-function-finalization.test.ts` drives the real
+`runPreparedIrPipelinePresentation` with every ledger fill routed through
+`fillOwnedFunction`, and requires binary, WAT and WIT equal to the legacy fill
+in three cases: standalone allocation-owner stamp plus widening, prepared WIT,
+and the detached mixed finalization (`copyModuleData`). Each production call
+site is load-bearing: removing the release in `finalizePipelineModule` fails
+the first two cases ("Cannot assign to read only property"), removing it before
+`copyModuleData` fails the third (`unsupported-prototype`).
+
+Follow-up review of `c63605e2` (REQUEST CHANGES) found the prepared WIT path
+broken by the released view: `preparedPresentationWitView` checks module
+identity, so it now receives the emitted module (`foreign module` before; the
+WIT case above covers it). Owned bodies are now marked in a dedicated
+`ownedBodies` set at publication instead of reusing the copy-provenance
+predicate, and the release is a single indexed pass. The separate `thaw`
+traversal stays: it copies already-validated ledger data to plain objects,
+while `copyOwnedFunctionDefinition` validates hostile input and hardens it, so
+sharing one walker would put both contracts behind flags.
+
+Also fixed: the doubled "physical module reservations:" error prefix (with a
+test); the duplicated fill preconditions, now one private helper shared with
+`fillFunction`; and the review directory's raw `.log` blobs plus `base-inputs/`
+source copies, removed from the tree. LFS upload is not reachable from the
+session, so they were not renormalized; they stay reachable from `11ad93a464`.
+
+Documented residuals (review nits 2–4, not addressed here):
+
+- **Non-plain data inside the ledger.** Owned payloads are frozen,
+  private-prototype arrays and null-prototype records, so `instanceof Array`,
+  `hasOwnProperty` and the `getPrototypeOf(x) === Array.prototype` validators
+  do not hold for them; only `releaseOwnedFunctions` output is plain.
+- **Two fill mechanisms.** `fillOwnedFunction` (4 producers) and `fillFunction`
+  (~85 sites) coexist with no stated end state; `native-bigint-number.ts` still
+  deep-captures and re-compares its own bodies.
+- **Audit cost.** An owned fill runs five layout audits against one for a legacy
+  fill, which contradicts the "cheaper audits" motivation.

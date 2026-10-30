@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
 import { forEachChild, ts } from "../ts-api.js";
+import { literalFieldName } from "./fnctor-field-writes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 
 export function unwrapTypeErasedExpression(expr: ts.Expression): ts.Expression | undefined {
@@ -69,21 +71,83 @@ function resolveFunctionObjectReceiver(
   node: ts.Identifier,
   resolver: IrImportedFunctionResolver | undefined,
 ): IrResolvedFunctionTarget | undefined {
+  return isFunctionObjectReceiverUse(node, { chainedWrite: true })
+    ? resolver?.resolveTopLevelFunctionValue(node)
+    : undefined;
+}
+
+/**
+ * (#7106) Is `node` used only as the receiver of a function object's member:
+ * a member call `F.x(…)`, a member write `F.x = v`, a member read
+ * `var v = F.x` (`isFunctionObjectMemberRead`) or, with `chainedWrite`, a
+ * chained write `F.p.x = v`? Each lowers to the boxed function object followed
+ * by a dynamic member operation, so the member must be one of the object's own
+ * expandos ({@link namesFunctionObjectExpando}). An optional access or call is
+ * never one. The selector, the planner and the prepared revalidation all ask
+ * this one question; the revalidation does not admit chained writes.
+ */
+export function isFunctionObjectReceiverUse(node: ts.Identifier, opts: { readonly chainedWrite: boolean }): boolean {
   const access = node.parent;
   if (
     !(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) ||
     access.expression !== node ||
-    access.questionDotToken !== undefined
+    access.questionDotToken !== undefined ||
+    !namesFunctionObjectExpando(access)
   )
-    return;
+    return false;
   const use = access.parent;
-  if (
-    !(ts.isCallExpression(use) && use.expression === access) &&
-    !(ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken) &&
-    !isFunctionObjectChainedWrite(access)
-  )
-    return;
-  return resolver?.resolveTopLevelFunctionValue(node);
+  return (
+    (ts.isCallExpression(use) && use.expression === access && !use.questionDotToken) ||
+    (ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken) ||
+    (opts.chainedWrite && isFunctionObjectChainedWrite(access)) ||
+    (ts.isPropertyAccessExpression(access) && isFunctionObjectMemberRead(access))
+  );
+}
+
+/**
+ * The string keys the realm defines along an ordinary function's prototype
+ * chain: %Function.prototype%'s (`bind`, `call`, the %ThrowTypeError%
+ * `caller`/`arguments` accessors, and `length`/`name`, which every function
+ * also owns as non-writable built-ins) and %Object.prototype%'s (`valueOf`,
+ * `hasOwnProperty`, …).
+ */
+const FUNCTION_REALM_MEMBER_NAMES: ReadonlySet<string> = new Set(
+  NATIVE_REALM_CATALOG.intrinsics
+    .filter(({ id }) => id === "%Function.prototype%" || id === "%Object.prototype%")
+    .flatMap(({ properties }) => properties.flatMap(({ key }) => (key.kind === "string" ? [key.value] : []))),
+);
+
+/**
+ * (#7106) Does `access` name an own expando of the function object: a literal
+ * name the realm does not define for a function? The boxed function object's
+ * dynamic member operations do not resolve a realm member (measured on
+ * standalone): `F.bind()` and `F.valueOf()` throw "not callable",
+ * `var v = F.valueOf` reads undefined, and a strict function's `F.caller = v`
+ * stores where the %ThrowTypeError% setter must throw. Legacy owns those
+ * members. A dynamic key may name any of them.
+ */
+function namesFunctionObjectExpando(access: ts.PropertyAccessExpression | ts.ElementAccessExpression): boolean {
+  const name = literalFieldName(access);
+  return name !== undefined && !FUNCTION_REALM_MEMBER_NAMES.has(name);
+}
+
+/**
+ * (#7106 Stage 4) `var format = compareArray.format;` — a function object's
+ * member READ as the whole initializer of a `var`. Like a member call or write
+ * it is a receiver-only use: the boxed function object, then a dynamic member
+ * get. Only the declaration-initializer position: an update/delete operand or
+ * a destructuring target is not a plain read.
+ */
+export function isFunctionObjectMemberRead(access: ts.PropertyAccessExpression): boolean {
+  const declaration = access.parent;
+  return (
+    ts.isIdentifier(access.name) &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer === access &&
+    ts.isIdentifier(declaration.name) &&
+    ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+  );
 }
 
 /**
@@ -124,7 +188,54 @@ export function isFunctionObjectReceiver(
 }
 
 /**
- * (#7106 census arm 3) `F.x = G` / `F[k] = G`: a stable top-level function `G`
+ * (#7106 Stage 4) The `var` locals of `fn`'s own body initialized by a
+ * function-object member read (`var format = compareArray.format;`) and never
+ * written again — no second declaration, assignment or update (a nested
+ * function, which could capture one, is refused by every member-closure plan).
+ * Each holds the dynamic carrier for its whole life.
+ */
+export function functionObjectReadLocals(
+  fn: ts.FunctionExpression,
+  resolver: IrImportedFunctionResolver | undefined,
+): ReadonlySet<string> {
+  const candidates = new Map<string, number>();
+  const written = new Set<string>();
+  const parameters = new Set(fn.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : [])));
+  const visit = (node: ts.Node): void => {
+    if (node !== fn.body && ts.isFunctionLike(node)) return;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const read =
+        node.initializer !== undefined &&
+        ts.isPropertyAccessExpression(node.initializer) &&
+        ts.isIdentifier(node.initializer.expression) &&
+        isFunctionObjectReceiver(node.initializer.expression, resolver);
+      candidates.set(node.name.text, read ? (candidates.get(node.name.text) ?? 0) + 1 : Number.POSITIVE_INFINITY);
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      ts.isIdentifier(node.left)
+    )
+      written.add(node.left.text);
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(node.operand)
+    )
+      written.add(node.operand.text);
+    forEachChild(node, visit);
+  };
+  visit(fn.body);
+  return new Set(
+    [...candidates].flatMap(([name, count]) =>
+      count === 1 && !written.has(name) && !parameters.has(name) ? [name] : [],
+    ),
+  );
+}
+
+/**
+ * (#7106 census arm 3) `F.x = G` / `F["x"] = G`: a stable top-level function `G`
  * stored on a function-object receiver `F`. The value is boxed into the dynamic
  * carrier and written through the receiver's dynamic member write — like a
  * receiver-only use it never reads `G`'s signature, so it needs no evidence.
@@ -143,7 +254,7 @@ export function isFunctionObjectStoredValue(
 
 /**
  * The receiver identifier `F` when `node` is the stored value of `F.x = node`,
- * `F[k] = node` or the chained `F.p.x = node` (see
+ * `F["x"] = node` or the chained `F.p.x = node` (see
  * {@link isFunctionObjectChainedWrite}); otherwise `undefined`. Syntax only —
  * the selector and the planner each apply their own resolver to `F` and `node`.
  */
@@ -181,8 +292,6 @@ export function functionObjectMemberCallIsBuildable(
       : undefined;
   if (target && (ts.isPropertyAccessExpression(functionAccess) || ts.isElementAccessExpression(functionAccess))) {
     if (functionAccess.questionDotToken || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement))
-      return false;
-    if (ts.isElementAccessExpression(functionAccess) && !isExpressionBuildable(functionAccess.argumentExpression))
       return false;
     return expr.arguments.every((argument) => isExpressionBuildable(argument));
   }

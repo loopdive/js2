@@ -1,14 +1,31 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 /**
- * (#7106) The detached template every template-built IR wrapper parses: its
- * own source file, so legacy's checker queries on it answer "unknown" — the
- * facts of an `any` site — and its emitters take their dynamic arms. The
- * helper `FunctionContext` and its publication are `ir-helper-function.ts`'s
- * (`helperFunctionContext` / `publishHelperFunction`), shared with every IR
- * wrapper.
+ * (#7106) The template mechanics every template-built IR wrapper shares: a
+ * detached template parsed into its own file (so legacy's checker queries on
+ * it answer "unknown" — the facts of an `any` site — and its emitters take
+ * their dynamic arms), and one template expression compiled as a value of the
+ * wrapper's carrier type. The helper `FunctionContext` and its publication
+ * are `ir-helper-function.ts`'s (`helperFunctionContext` /
+ * `publishHelperFunction`), shared with every IR wrapper.
  */
 import { ts } from "../../ts-api.js";
+import type { ValType } from "../../ir/types.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { compileExpression } from "../shared.js";
+import { coerceType } from "../type-coercion.js";
+import { emitUndefined } from "../expressions/late-imports.js";
+import { noJsHost } from "../js-errors.js";
+
+/**
+ * The lanes every template-built IR wrapper serves: host-free and non-fast,
+ * where legacy's `any` (the template's parameter type) is the IR's externref
+ * carrier. A host lane's adapter may refuse a legacy import the emitters reach
+ * (`__js_array_new` under the native-first kill switch, measured, #7119).
+ */
+export function irTemplateWrapperLane(ctx: CodegenContext): boolean {
+  return noJsHost(ctx) && !ctx.fast;
+}
 
 /**
  * Parse a template function `text` in its own detached file and return the
@@ -25,4 +42,16 @@ export function parseDetachedTemplate(fileName: string, text: string, count: num
   if (expressions.length !== count)
     throw new Error(`ir/template: ${fileName} did not parse (${expressions.length}/${count})`);
   return expressions;
+}
+
+/** Compile one template expression as a value of `type` onto `helper.body` (undefined for a void result). */
+export function compileTemplateExpressionAs(
+  ctx: CodegenContext,
+  helper: FunctionContext,
+  expression: ts.Expression,
+  type: ValType,
+): void {
+  const result = compileExpression(ctx, helper, expression, type);
+  if (result === null) emitUndefined(ctx, helper);
+  else if (result.kind !== type.kind) coerceType(ctx, helper, result, type);
 }

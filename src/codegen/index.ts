@@ -1,9 +1,15 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  irNativeI32SlotRead,
+  irNativeNumericFieldType,
+  irNativeSignatureDiverges,
+} from "./declarations/ir-native-numeric-field.js";
+import { nativeConsoleOutputAvailable } from "./helpers/ir-native-console.js";
 import {
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
   ensureGlobalEnvironmentOperation,
 } from "./global-environment.js";
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
 import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
 import { irDynamicInstanceOfAtLegacyParity } from "./ir-dynamic-instanceof.js"; // (#7106) generic dynamic instanceof
@@ -85,6 +91,7 @@ import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
+import { irArrayPrototypeBorrowAdmitted } from "./array/ir-array-prototype-borrow.js"; // (#7106 compareArray.format)
 import {
   compileIrPathFunctions,
   irAmbientNamespaceConstant, // (#7106 module-init lever A)
@@ -664,7 +671,6 @@ import {
   flatStringType,
   nativeStringType,
   nativeStringTypeNullable,
-  standaloneConsoleSinkAvailable,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
@@ -851,6 +857,7 @@ installObjectModelPorts(() => ({
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
+  irNativeI32SlotRead,
   hasExportModifier,
   hasDeclareModifier,
   hasAsyncModifier,
@@ -1879,7 +1886,7 @@ function buildIrClassShapes(
       else return; // computed / string-literal / numeric names → leave to ValType path
       if (astFieldIr.has(mangled)) return;
       const tsType = ctx.checker.getTypeAtLocation(tsNode);
-      const ir = tsTypeToClassPositionIr(ctx, tsType, lookup);
+      const ir = irNativeNumericFieldType(ctx, tsNode) ?? tsTypeToClassPositionIr(ctx, tsType, lookup);
       if (ir) astFieldIr.set(mangled, ir);
     };
     // #3000-E: the legacy `structFields` for a subclass is `[...parentFields,
@@ -1964,7 +1971,7 @@ function buildIrClassShapes(
       if (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name) && computedMethodName === undefined) {
         continue;
       }
-      if (member.asteriskToken) continue; // generators → defer
+      if (member.asteriskToken || irNativeSignatureDiverges(ctx, member)) continue; // generators, native ABI → defer
       const methodName = ts.isPrivateIdentifier(member.name)
         ? privateMemberMangledName(member.name)
         : ts.isComputedPropertyName(member.name)
@@ -2022,7 +2029,7 @@ function buildIrClassShapes(
     // filter on `memberKind`, so these never leak into `class.call`
     // resolution.
     for (const member of stmt.members) {
-      if (!member.name) continue;
+      if (!member.name || (ts.isFunctionLike(member) && irNativeSignatureDiverges(ctx, member))) continue;
       const placement = placementFor(member);
       const placementTerminal = placement ? identityContext.terminalByUnitId.get(placement.unitId) : undefined;
       const nestedAccessorPlacement = placementTerminal?.containingTerminalOwnerId !== undefined;
@@ -3276,6 +3283,8 @@ function planIrOverlay(
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
+      // (#7106 compareArray.format)
+      arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
       dynamicInstanceOfAtLegacyParity: (site) => irDynamicInstanceOfAtLegacyParity(ctx, site), // (#7106)
       ...irOpenObjectSelectionOption(ctx), // (#7128 S1)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
@@ -3320,7 +3329,8 @@ function planIrOverlay(
       // so this only adds the native-string lanes.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
-      supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
+      supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
+      isNativeI32SlotRead: (expr) => irNativeI32SlotRead(ctx, ast.checker, expr),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
@@ -4264,9 +4274,10 @@ function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclarat
     return undefined;
   }
   if (ctx.sloppyImplicitGlobals.has(name)) return undefined;
-  // (#7106) `var g` merged with `function g`: the checker gives the script
-  // `var` its own symbol, but the binding (and its slot) is the function's.
-  if (ctx.funcMap.has(name) || ctx.liveFuncBindingGlobals?.has(name)) return undefined;
+  // (#7106) `var g` merged with `function g` owns the function's slot; (#7189) a same-named object-runtime
+  // helper (`__getOwnPropertyNames`) is not that `function` and can enter `funcMap` after selection.
+  const helperOnly = omObjectRuntime.OBJECT_RUNTIME_HELPER_NAMES.has(name) && !ctx.topLevelFunctionNames.has(name);
+  if ((ctx.funcMap.has(name) && !helperOnly) || ctx.liveFuncBindingGlobals?.has(name)) return undefined;
   const globalIdx = ctx.moduleGlobals.get(name);
   const global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
   return global?.name === `__mod_${name}` ? global : undefined;

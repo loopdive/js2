@@ -9,38 +9,10 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { makeIrAmbientBindingPredicate } from "../src/ir/module-bindings.js";
-import { isAmbientIntrinsicValueUse } from "../src/shared/ambient-intrinsics.js";
 import { buildImports } from "../src/runtime.js";
-import { ts } from "../src/ts-api.js";
+import { intrinsicUseVerdicts, lane, runModuleInit, TARGETS, type Target } from "./helpers/ambient-intrinsic-probe.js";
 
-const OPTIONS = {
-  fileName: "issue-7118-intrinsics.js",
-  allowJs: true,
-  skipSemanticDiagnostics: true,
-  inferModuleStrictArguments: false,
-  scriptGoal: true,
-  deferTopLevelInit: true,
-  trackIrOutcomes: true,
-} as const;
-
-const TARGETS = ["standalone", undefined] as const;
-const lane = (target: (typeof TARGETS)[number]): string => target ?? "gc";
-
-async function run(target: (typeof TARGETS)[number], source: string): Promise<{ claimed: boolean; threw: boolean }> {
-  const result = await compile(source, { ...OPTIONS, ...(target ? { target } : {}) });
-  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
-  let threw = false;
-  try {
-    (instance.exports.__module_init as (() => void) | undefined)?.();
-  } catch {
-    threw = true;
-  }
-  const init = (result.irOutcomes ?? []).find((o) => o.displayName === "<module-init>");
-  return { claimed: init?.irBodyEmitted === true, threw };
-}
+const run = (target: Target, source: string) => runModuleInit(target, source, { fileName: "issue-7118-intrinsics.js" });
 
 // Every name on the allowlist that claims (a bare `Function` value pulls the
 // runtime-eval provider and stays legacy).
@@ -200,29 +172,7 @@ describe("#7118 — ambient intrinsics as IR values", () => {
 
   // The admission predicate itself, against a real checker with the lib loaded.
   describe("isAmbientIntrinsicValueUse", () => {
-    function intrinsicUses(source: string): boolean[] {
-      const fileName = "/issue-7118-predicate.js";
-      const options: ts.CompilerOptions = { allowJs: true, target: ts.ScriptTarget.ES2022, noResolve: true };
-      const sourceFile = ts.createSourceFile(fileName, source, options.target!, true, ts.ScriptKind.JS);
-      const host = ts.createCompilerHost(options, true);
-      const { fileExists, readFile, getSourceFile } = host;
-      host.fileExists = (name) => name === fileName || fileExists.call(host, name);
-      host.readFile = (name) => (name === fileName ? source : readFile.call(host, name));
-      host.getSourceFile = (name, ...rest) =>
-        name === fileName ? sourceFile : getSourceFile.call(host, name, ...rest);
-      host.writeFile = () => {};
-      const checker = ts.createProgram([fileName], options, host).getTypeChecker();
-      const libOnly = makeIrAmbientBindingPredicate(checker, "every");
-      const verdicts: boolean[] = [];
-      const visit = (node: ts.Node): void => {
-        if (ts.isIdentifier(node) && node.text === "Error" && !ts.isFunctionDeclaration(node.parent)) {
-          verdicts.push(isAmbientIntrinsicValueUse(node, libOnly));
-        }
-        ts.forEachChild(node, visit);
-      };
-      visit(sourceFile);
-      return verdicts;
-    }
+    const intrinsicUses = (source: string): boolean[] => intrinsicUseVerdicts(source, "Error");
 
     it("admits a lib-only value use", () => {
       expect(intrinsicUses(`var c = Error; if (typeof c !== "function") { throw 1; }`)).toEqual([true]);

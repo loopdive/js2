@@ -65,6 +65,7 @@ import { forEachChild, ts } from "../../ts-api.js";
 import type { IrBinop } from "../nodes.js";
 import { collectI32CoercedLocals } from "./i32-coerced-locals.js";
 import { detectI32LoopVar } from "./loop-shape.js";
+import { numberCompoundBinaryOperator } from "./operand-admissibility.js";
 
 const I32_MIN = -2147483648;
 const I32_MAX = 2147483647;
@@ -393,13 +394,7 @@ function writeShapesAreLowerable(
         if (!(isProvenCounter && isCounterStepAssignment(node.right, name))) {
           if (!isCanonI32Lowerable(node.right, promoted)) ok = false;
         }
-      } else if (
-        k === ts.SyntaxKind.AmpersandEqualsToken ||
-        k === ts.SyntaxKind.BarEqualsToken ||
-        k === ts.SyntaxKind.CaretEqualsToken ||
-        k === ts.SyntaxKind.LessThanLessThanEqualsToken ||
-        k === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken
-      ) {
+      } else if (compoundBitwiseToken(k) !== undefined) {
         // Bitwise compound assignment always yields an exact int32.
       } else if (
         (k === ts.SyntaxKind.PlusEqualsToken || k === ts.SyntaxKind.MinusEqualsToken) &&
@@ -609,24 +604,19 @@ export function makePlannedI32Probe(slots: ReadonlySet<ts.VariableDeclaration>):
 // Pure token/op tables shared with `from-ast.ts`'s emitter
 // ---------------------------------------------------------------------------
 
+/** The `js.bit*` IrBinop of each bitwise operator token. */
+export const JS_BITWISE_BINOPS = {
+  [ts.SyntaxKind.AmpersandToken]: "js.bitand",
+  [ts.SyntaxKind.BarToken]: "js.bitor",
+  [ts.SyntaxKind.CaretToken]: "js.bitxor",
+  [ts.SyntaxKind.LessThanLessThanToken]: "js.shl",
+  [ts.SyntaxKind.GreaterThanGreaterThanToken]: "js.shr_s",
+  [ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken]: "js.shr_u",
+} as const satisfies Partial<Record<ts.SyntaxKind, IrBinop>>;
+
 /** The `js.bit*` IrBinop for a bitwise operator token, or null. */
 export function jsBitwiseBinop(k: ts.SyntaxKind): IrBinop | null {
-  switch (k) {
-    case ts.SyntaxKind.AmpersandToken:
-      return "js.bitand";
-    case ts.SyntaxKind.BarToken:
-      return "js.bitor";
-    case ts.SyntaxKind.CaretToken:
-      return "js.bitxor";
-    case ts.SyntaxKind.LessThanLessThanToken:
-      return "js.shl";
-    case ts.SyntaxKind.GreaterThanGreaterThanToken:
-      return "js.shr_s";
-    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken:
-      return "js.shr_u";
-    default:
-      return null;
-  }
+  return JS_BITWISE_BINOPS[k as keyof typeof JS_BITWISE_BINOPS] ?? null;
 }
 
 /** Signed native i32 magnitude compare for a relational operator token. */
@@ -638,16 +628,14 @@ export const I32_COMPARE_BINOPS = {
 } as const satisfies Partial<Record<ts.SyntaxKind, IrBinop>>;
 
 /**
- * The plain bitwise operator a bitwise COMPOUND assignment desugars to.
- * `>>>=` is absent for the same reason `>>>` is absent from `isBitwiseToken`.
+ * The plain bitwise operator a bitwise COMPOUND assignment desugars to, or
+ * `undefined`. `>>>=` is absent for the same reason `>>>` is absent from
+ * `isBitwiseToken`.
  */
-export const COMPOUND_TO_BITWISE_TOKEN = {
-  [ts.SyntaxKind.AmpersandEqualsToken]: ts.SyntaxKind.AmpersandToken,
-  [ts.SyntaxKind.BarEqualsToken]: ts.SyntaxKind.BarToken,
-  [ts.SyntaxKind.CaretEqualsToken]: ts.SyntaxKind.CaretToken,
-  [ts.SyntaxKind.LessThanLessThanEqualsToken]: ts.SyntaxKind.LessThanLessThanToken,
-  [ts.SyntaxKind.GreaterThanGreaterThanEqualsToken]: ts.SyntaxKind.GreaterThanGreaterThanToken,
-} as const satisfies Partial<Record<ts.SyntaxKind, ts.SyntaxKind>>;
+export function compoundBitwiseToken(k: ts.SyntaxKind): ts.SyntaxKind | undefined {
+  const op = numberCompoundBinaryOperator(k);
+  return op !== undefined && isBitwiseToken(op) ? op : undefined;
+}
 
 /**
  * Does `e` read at least one i32-promoted slot? This is the gate that keeps

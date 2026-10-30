@@ -37,7 +37,8 @@ export type IrBackendTargetCapability =
   | "prepared-dynamic-helper-abi"
   | "native-dynamic-member-read"
   | "planned-closure-direct-call"
-  | "native-dynamic-loose-equality";
+  | "native-dynamic-loose-equality"
+  | "dynamic-method-call-wrapper";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -149,22 +150,34 @@ export function supportsIrBackendTargetCapability(
     // a planned member closure. WASI's IR read has no string or vec
     // receiver arm and answers `undefined` (`.length`, `[i]`), so only the
     // standalone regime (native gc projects as standalone) is admitted.
-    case "native-dynamic-loose-equality":
-    // (#7113, #7178) Loose `==` / `!=` on the carrier against a non-string:
-    // WASI's helper ToPrimitives an object / array operand by an illegal
-    // cast and traps.
     case "planned-closure-direct-call":
       // (#7113) A direct call to a module function from a planned member
       // closure: WASI mints no AST-site call plan for it and withdraws
       // ("direct call … has no exact AST-site plan").
       return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "standalone";
     case "prepared-dynamic-helper-abi":
-      // (#7113) A planned member closure inside a prepared `<module-init>`
-      // component binds the carrier's loose-equality / `in` helpers by
-      // Program ABI identity on WASI. Standalone and the native-first gc lane
-      // (projected as standalone) have no symbolic ref for them yet and
-      // withdraw at preparation (`implicit-support-reference-unavailable`).
+      // (#7113, #7193) A planned member closure inside a prepared
+      // `<module-init>` component binds the carrier's `String` / `in` helpers
+      // by Program ABI identity (`prepared-dynamic-support.ts` names the exact
+      // physical symbols). The native-first gc lane projects as standalone.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
+    case "native-dynamic-loose-equality":
+      // (#7113, #7178, #7193) A loose `==` / `!=` on the carrier in that
+      // closure. Unsound on EVERY lane: no carrier loose-equality helper
+      // ToPrimitives an object operand (`{ valueOf() { return 2 } } == 2`
+      // traps; `[2] != "2"` differs from node — #7194). WASI stays admitted
+      // only to keep main's output, and only against a string other side
+      // (`carrierLooseEqualityAdmissible`, new shapes); standalone is refused.
       return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "wasi";
+    case "dynamic-method-call-wrapper":
+    // (#7106 Stage 4, #7119) `recv.m(…)` on a dynamic receiver through the
+    // per-(method, arity) `__ir_dyn_mcall_<m>_<n>` wrapper: the call's
+    // [[Get]], then legacy's own any-receiver brand dispatch (host-free
+    // lanes; the native `__extern_method_call` serves open `$Object` only).
     case "native-number-conversion":
       // (#7106 module-init lever B) `Number(v)` through the host-free
       // `js.number.from-value` provider (legacy's emitter over a template).
