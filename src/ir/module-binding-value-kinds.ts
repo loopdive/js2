@@ -93,13 +93,13 @@ export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind
 }
 
 /**
- * What codegen allocated as a SCRIPT `var`'s sole-home `__mod_<name>` slot
- * (`scriptVarHome`, `src/codegen/index.ts`), and so the one value kind the
- * resolver may bind the declaration as:
+ * The carrier codegen allocated as a SCRIPT `var`'s sole-home `__mod_<name>`
+ * slot (`scriptVarHome`, `src/codegen/index.ts`). The resolver's value kind
+ * follows from this carrier together with the checker type:
  *   - `dynamic`: `externref` off fast mode, exactly `resolveIrDynamicCarrierType`;
  *   - `string`: `(ref null $AnyString)`, the native-string carrier;
- *   - `typed`: an `f64` or `i32` slot, which the checker type must describe
- *     (`number` → f64, `boolean` → i32).
+ *   - `typed`: an `f64` or `i32` slot; only a `number` / `boolean` checker type
+ *     binds (an `i32` slot also holds a `Symbol`, which stays refused).
  * Any other slot (a vector, a struct, `$Map`, `externref` in fast mode) is no
  * home: no value kind's storage is exactly that carrier.
  */

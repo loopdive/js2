@@ -2322,12 +2322,20 @@ The review also flagged these; the change below fixes them or they are moot:
   - `string`: `(ref null $AnyString)`.
   - `typed`: an `f64` or `i32` slot.
   - Every other slot is `undefined`. Before, any non-`externref` slot was
-    admitted and only the checker-type gate refused it.
+    admitted and the checker-type and #4208 update-retype gates refused it. So
+    `++` on a script var whose slot is fixed before widening (a generator, a
+    standalone typed-array view) is now not direct: binaries are unchanged
+    (legacy owns the unit either way), but the refusal reason moves from
+    `vardecl-module-value-flow` to `vardecl-module-storage-unrepresentable`.
 - **Removes.**
   - Three predicates and three options become one classifier and one option.
   - `isScriptStringHome`, `moduleStringStorageAdmitted` and
     `isScriptDynamicHome` fold into two helpers.
-  - The home is computed once per inspection.
+  - Every consumer reads the home through one guarded helper
+    (`scriptVarHomeOf`). `writeValueMatches` used the raw option and skipped
+    the lexical guard, so a script `let o; … o = { a: 1 }` claimed and then
+    demoted (`got object{a:f64}`); it now refuses at select. The home is still
+    looked up per consumer, not threaded through.
   - The `ctx.nativeStrings` guard goes. `anyStrTypeIdx` is `≥ 0` only after
     `registerNativeStringTypes`, which `createCodegenContext` runs only under
     `nativeStrings`, and nothing resets `nativeStrings`.
@@ -2417,9 +2425,12 @@ fail on both lanes for a function-local `[1, 2, 3]`:
 - `a === undefined`;
 - `function same(p, q) { return p === q; } same(a, a)`.
 
-**(f) `a++` on a script `var` array.** The #4208 update-retype resolves it as
-`dynamic`, its slot is the vector, and the build demotes after the claim on
-main.
+**(f) `++` on a script `var` with a reference initializer.** `var a = [1]; a++`,
+`var o = {x: 1}; o++` and `var m = new Map(); m++`: the #4208 update-retype
+widens the slot to `externref` (the `dynamic` home), and the build demotes
+after the claim on main because the initializer has no dynamic carrier
+("proven dynamic binding … initializer has no supported carrier"). Refuse at
+select until an object-to-dynamic producer exists.
 
 **(g) testTypedArray.js.** `floatArrayConstructors` needs two things:
 

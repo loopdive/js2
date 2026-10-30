@@ -6,10 +6,6 @@
 // reference with no matching value kind — the `$__vec_f64` of `[1, 2, 3]`, a
 // constructor or string array, `$Map`, an object struct — keeps the harness
 // `<module-init>` on legacy: refused at selection, never claimed and demoted.
-// The `f64-vec` binding kind was withdrawn after review: IR local vectors
-// still miscompile out-of-bounds, hole, negative and huge-index accesses, and
-// a deny-list of vector consumers left claim-then-demote shapes (see the
-// #7106 issue section "Script `var` reference homes").
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
@@ -50,5 +46,23 @@ assert.sameValue(o.x, 1);`,
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.irPostClaimErrors ?? []).toEqual([]);
     expect(moduleInit(result)).toMatchObject({ kind: "unsupported", stage: "select" });
+  }, 60_000);
+
+  // `writeValueMatches` reads the home through the guarded `scriptVarHomeOf`:
+  // a script `let` is not a script-var home, so an object written to it from
+  // a function refuses that function at selection instead of claiming it.
+  it("refuses a function writing an object to a script `let` at selection (standalone)", async () => {
+    const result = await compile(`let o; function f() { o = { a: 1 }; return 1; } f();`, {
+      fileName: "test.js",
+      allowJs: true,
+      target: "standalone",
+      skipSemanticDiagnostics: true,
+      trackIrOutcomes: true,
+      deferTopLevelInit: true,
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    const f = (result.irOutcomes ?? []).find((outcome) => outcome.displayName === "f");
+    expect(f).toMatchObject({ irBodyEmitted: false, stage: "select" });
   }, 60_000);
 });

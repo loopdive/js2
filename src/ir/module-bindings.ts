@@ -968,7 +968,7 @@ function directTopLevelDeclaration(
   // (#7105) …and a SCRIPT-goal `var` is the same slot, admitted only when
   // codegen's classifier names it the binding's sole home (see
   // `IrModuleBindingResolverOptions.scriptVarHome`).
-  const home = script ? scriptVarHomeOf(declaration, scriptVar) : undefined;
+  const home = scriptVarHomeOf(declaration, scriptVar);
   if (script && home === undefined) return undefined;
   const declaredType = checker.getTypeAtLocation(declaration.name);
   if (
@@ -996,7 +996,10 @@ function directTopLevelDeclaration(
   return script && allDirectVars ? declaration : undefined;
 }
 
-/** (#7105) Codegen's home for a SCRIPT `var`; `undefined` for a lexical or an ES-module `var`. */
+/**
+ * (#7105) Codegen's home for a SCRIPT `var`; `undefined` for a lexical or an
+ * ES-module `var`, and wherever codegen names no home for the slot.
+ */
 function scriptVarHomeOf(
   declaration: ts.VariableDeclaration,
   options: Pick<IrModuleBindingResolverOptions, "scriptVarHome"> | undefined,
@@ -1525,7 +1528,7 @@ function writeValueMatches(
   const valueExpr = unwrapParens(value);
   // (#7106) The script dynamic home accepts any value: the IR lowers it to the
   // dynamic carrier or refuses the unit when it has no boxing producer.
-  if (targetKind.kind === "dynamic" && options.scriptVarHome?.(declaration) === "dynamic") return true;
+  if (targetKind.kind === "dynamic" && scriptVarHomeOf(declaration, options) === "dynamic") return true;
   if (targetKind.kind === "dynamic") {
     // The current IR boxing producer accepts exactly the three primitive
     // families. Object/wrapper initializers still receive the same widened
@@ -2227,7 +2230,8 @@ export function makeIrLegacyModuleBindingResolver(
     // `(ref null $AnyString)`), and `resolveModuleBindingGlobal` resolves the
     // ACTIVE one against the slot legacy actually allocated.
     //
-    // `let`/`const` only, deliberately excluding `var`. Every legacy arm that
+    // `let`/`const` only, deliberately excluding `var` (a script `var` in the
+    // native-string slot binds through `scriptVarReferenceKind` above). Every legacy arm that
     // widens a module slot away from the checker-inferred type for a
     // STRING-typed declaration is `var`-specific — a `with`-body hoisted
     // binding that may never be written, and a `var` whose pre-initialization
