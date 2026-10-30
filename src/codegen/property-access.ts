@@ -9,6 +9,7 @@
 
 import { ts } from "../ts-api.js";
 import { builtinSubclassReceiverType } from "./builtin-subclass-receiver.js"; // (#6651 C5) inherited builtin members
+import { memberReceiverStaticType, receiverStaticJsType } from "./declarations/heterogeneous-scalar-var-widening.js"; // (#4495)
 import { carrierNameForAccess } from "./carrier-name-fallback.js"; // (#5187)
 import { isAccessorReceiver } from "./accessor-object-literal.js";
 import {
@@ -2847,10 +2848,13 @@ export function receiverIsNativeStringValType(
  * native-string mode only (host/gc mode's generic `__extern_get`
  * already returns the correct length from the real JS value).
  */
-export function receiverMayBeNativeStringAtRuntime(ctx: CodegenContext, recv: ts.Expression): boolean {
+export function receiverMayBeNativeStringAtRuntime(
+  ctx: CodegenContext,
+  recv: ts.Expression,
+  t: ts.Type = ctx.checker.getTypeAtLocation(recv),
+): boolean {
   if (!(ctx.wasi || ctx.standalone)) return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
-  const t = ctx.checker.getTypeAtLocation(recv);
   return (
     (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
     (t.isUnion() && t.types.some((part) => (part.flags & ts.TypeFlags.StringLike) !== 0))
@@ -4073,7 +4077,7 @@ export function compilePropertyAccess(
   if (linU8Len !== null) return linU8Len;
 
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
-  const objType = builtinSubclassReceiverType(ctx, ctx.checker.getTypeAtLocation(expr.expression), propName); // (#6651 C5)
+  const objType = builtinSubclassReceiverType(ctx, memberReceiverStaticType(ctx, fctx, expr.expression), propName); // (#6651 C5)
 
   // (#6651 F4) proxy receiver → generic `__extern_get`; proxy-receiver-generic-read.ts
   const __f4p = tryProxyReceiverPropertyRead(ctx, fctx, expr, propName);
@@ -5374,9 +5378,9 @@ export function compileElementAccess(
   // string is identity per §7.1.1 step 1, so the wrapper slot-read doubles as
   // a pass-through).
   if (ctx.standalone && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
-    const recvWrapTsType = ctx.checker.getTypeAtLocation(expr.expression);
+    const recvWrapTsType = memberReceiverStaticType(ctx, fctx, expr.expression); // (#4495)
     if (
-      (isStringWrapperType(recvWrapTsType) || ctx.oracle.staticJsTypeOf(expr.expression) === "string") &&
+      (isStringWrapperType(recvWrapTsType) || receiverStaticJsType(ctx, fctx, expr.expression) === "string") &&
       isNumericIndexExpression(ctx, expr.argumentExpression, fctx) &&
       !isObjectAssignPrimitiveResultBinding(ctx, expr.expression) // (#6770 S1) checker type is `T & U`, runtime is ToObject(T)
     ) {
@@ -5402,7 +5406,7 @@ export function compileElementAccess(
     // `moduleUsesDynTaView` deferral are documented in string-element-read.ts.
     if (
       isNumericIndexExpression(ctx, expr.argumentExpression, fctx) &&
-      receiverMayBeNativeStringAtRuntime(ctx, expr.expression)
+      receiverMayBeNativeStringAtRuntime(ctx, expr.expression, recvWrapTsType)
     ) {
       const guarded = emitGuardedNativeStringElementGet(ctx, fctx, expr.expression, expr.argumentExpression);
       if (guarded) {

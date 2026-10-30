@@ -11,7 +11,7 @@ import { typeofOperandIsDeclared } from "./expressions/typeof-import-binding.js"
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { elementReadOfRebindWidenedArray } from "./declarations/array-rebind-element-widening.js";
-import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { slotIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
 import {
   emitUninitialisedFieldTypeofComparison,
@@ -1938,9 +1938,9 @@ export function compileTypeofExpression(
     if (runtimeEvalMayRebindIdentifier(ctx, fctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
-    // (#4204) Slot is externref, checker still says primitive — folding
+    // (#4204/#4495) Slot is externref, checker still says primitive — folding
     // `typeof x` would report the initializer's type forever.
-    if (ts.isIdentifier(bareTdz) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, bareTdz)) {
+    if (ts.isIdentifier(bareTdz) && slotIsDynamicButStaticallyPrimitive(ctx, fctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
     if (isReturnOverrideMemberRead(ctx, bareTdz)) forceRuntimeTypeof = true; // (#6772 S2)
@@ -2341,7 +2341,7 @@ export function compileTypeofComparison(
     staticTypeof = null;
   }
   // (#4204) Same unsound-fold guard as compileTypeofExpression.
-  if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
+  if (staticTypeof !== null && ts.isIdentifier(operand) && slotIsDynamicButStaticallyPrimitive(ctx, fctx, operand)) {
     staticTypeof = null;
   }
   // (#6772 S2) the receiver may be a constructor's foreign override object.

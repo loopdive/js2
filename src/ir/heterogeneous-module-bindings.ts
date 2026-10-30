@@ -14,17 +14,21 @@
  * usable by both checker and in-house oracle lanes without importing codegen
  * into IR.
  */
-import { TsCheckerOracle, type JsTag, type TypeOracle } from "../checker/oracle.js";
+import { identifierWriteTag, TsCheckerOracle, type JsTag, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
+import { identifierWritesOf, type IdentifierWrite } from "../shared/binding-writes.js";
 
-type HeterogeneousBindingOracle = Pick<TypeOracle, "staticJsTypeOf" | "variableDeclarationOf">;
+type HeterogeneousBindingOracle = Pick<
+  TypeOracle,
+  "staticJsTypeOf" | "typeFactOf" | "propertyFactOf" | "variableDeclarationOf"
+>;
 type HeterogeneousBindingQuerySource = ts.TypeChecker | HeterogeneousBindingOracle;
 
 const checkerOracles = new WeakMap<ts.TypeChecker, HeterogeneousBindingOracle>();
 const analysisCache = new WeakMap<object, WeakMap<ts.SourceFile, ReadonlySet<string>>>();
 
 function queryOracle(source: HeterogeneousBindingQuerySource): HeterogeneousBindingOracle {
-  if ("staticJsTypeOf" in source && "variableDeclarationOf" in source) return source;
+  if ("staticJsTypeOf" in source && "propertyFactOf" in source && "variableDeclarationOf" in source) return source;
   let oracle = checkerOracles.get(source);
   if (!oracle) {
     oracle = new TsCheckerOracle(source);
@@ -62,10 +66,17 @@ function isModuleScoped(node: ts.Node): boolean {
   return true;
 }
 
-/** Whether `assigned` can outgrow the specialized slot selected for `declTag`. */
-function assignmentWidens(oracle: HeterogeneousBindingOracle, declTag: JsTag, assigned: ts.Expression): boolean {
-  if (assigned.kind === ts.SyntaxKind.ThisKeyword) return true;
-  const assignedTag = oracle.staticJsTypeOf(assigned);
+/** Whether `write` can outgrow the specialized slot selected for `declTag`. */
+function assignmentWidens(
+  oracle: HeterogeneousBindingOracle,
+  declaration: ts.VariableDeclaration,
+  declTag: JsTag,
+  write: IdentifierWrite,
+): boolean {
+  const annotated = declaration.type !== undefined;
+  if (!annotated && write.kind === "value" && write.expr.kind === ts.SyntaxKind.ThisKeyword) return true;
+  // (#4495) Shared with the function-local analysis: what the write stores.
+  const assignedTag = identifierWriteTag(oracle, write, declTag, annotated);
   // `mixed` is unconstrainable, not evidence that the value keeps declTag.
   return assignedTag === "mixed" || assignedTag !== declTag;
 }
@@ -76,19 +87,6 @@ function isSyntacticVoidPlaceholder(expression: ts.Expression): boolean {
   while (ts.isParenthesizedExpression(current)) current = current.expression;
   return ts.isVoidExpression(current);
 }
-
-/**
- * Assignment operators that store into their left operand.
- *
- * The logical forms store conditionally, but "conditionally an object" is the
- * same representation question as "always an object" for a Wasm slot.
- */
-const WIDENING_ASSIGNMENT_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set<ts.SyntaxKind>([
-  ts.SyntaxKind.EqualsToken,
-  ts.SyntaxKind.BarBarEqualsToken,
-  ts.SyntaxKind.QuestionQuestionEqualsToken,
-  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
-]);
 
 /** True when `node` sits in the dynamically-resolved body of a `with`. */
 function isInsideWithBody(node: ts.Node): boolean {
@@ -145,17 +143,10 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
     const cachedTag = declTagCache.get(declaration);
     if (cachedTag !== undefined) return cachedTag;
     let tag: JsTag | "none" = "none";
-    if (
-      declaration.type === undefined &&
-      declaration.initializer &&
-      ts.isIdentifier(declaration.name) &&
-      isModuleScoped(declaration)
-    ) {
-      // An explicit TypeScript annotation is the representation contract. The
-      // diagnostics-off compiler consistently treats an assignment that
-      // violates it as user error; widening from the initializer would make
-      // codegen disagree with the checker-backed IR binding ABI. JavaScript
-      // and inferred TypeScript declarations remain fully flow-widened.
+    if (declaration.initializer && ts.isIdentifier(declaration.name) && isModuleScoped(declaration)) {
+      // An explicit annotation constrains only the writes TypeScript checked
+      // against it (see `identifierWriteTag`); an `any` / `unknown` value still
+      // widens, as in the function-local analysis.
       const candidate = oracle.staticJsTypeOf(declaration.initializer);
       if (candidate !== "mixed" && HETEROGENEOUS_PRIMITIVE_SLOT_TAGS.has(candidate)) tag = candidate;
       // A SYNTACTIC `void 0` is the downlevelled shape of an unassigned `let`
@@ -183,43 +174,50 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
     return ts.isIdentifier(current) ? current : undefined;
   };
 
+  // (#4495) Every identifier store counts — plain and logical assignment (the
+  // logical forms store conditionally, but "conditionally an object" is the
+  // same representation question as "always an object" for a Wasm slot),
+  // compound assignment, destructuring, for-in/for-of heads and `var`
+  // re-declarations. `++`/`--` are left to update-retyped-bindings.ts
+  // (#4208 S2), whose IR-owned module init this analysis would otherwise demote.
   const visit = (node: ts.Node): void => {
-    if (
-      ts.isBinaryExpression(node) &&
-      WIDENING_ASSIGNMENT_OPERATORS.has(node.operatorToken.kind) &&
-      ts.isIdentifier(node.left) &&
-      !widened.has(node.left.text)
-    ) {
-      const declaration = oracle.variableDeclarationOf(node.left);
-      if (declaration !== undefined && declaration.getSourceFile() === sourceFile) {
-        const declTag = initializerTagOf(declaration);
-        if (declTag !== "none") {
-          if (assignmentWidens(oracle, declTag, node.right)) widened.add(node.left.text);
-          const rhs = unwrapIdentifier(node.right);
-          if (rhs !== undefined) {
-            const rhsDeclaration = oracle.variableDeclarationOf(rhs);
-            if (
-              rhsDeclaration !== undefined &&
-              ts.isIdentifier(rhsDeclaration.name) &&
-              rhsDeclaration.getSourceFile() === sourceFile &&
-              isModuleScoped(rhsDeclaration)
-            ) {
-              const targets = propagationEdges.get(rhsDeclaration.name.text) ?? [];
-              targets.push(node.left.text);
-              propagationEdges.set(rhsDeclaration.name.text, targets);
-            }
+    for (const write of identifierWritesOf(node, { updates: false })) recordWrite(write);
+    ts.forEachChild(node, visit);
+  };
+  const recordWrite = (write: IdentifierWrite): void => {
+    const target = write.target;
+    if (widened.has(target.text)) return;
+    const declaration = oracle.variableDeclarationOf(target);
+    // A declarator's own initializer is its slot's tag, not a later write.
+    if (declaration?.name === target) return;
+    if (declaration !== undefined && declaration.getSourceFile() === sourceFile) {
+      const declTag = initializerTagOf(declaration);
+      if (declTag !== "none") {
+        if (assignmentWidens(oracle, declaration, declTag, write)) widened.add(target.text);
+        // A checked write into an annotated binding stores its declared type.
+        const rhs = write.kind === "value" && declaration.type === undefined ? unwrapIdentifier(write.expr) : undefined;
+        if (rhs !== undefined) {
+          const rhsDeclaration = oracle.variableDeclarationOf(rhs);
+          if (
+            rhsDeclaration !== undefined &&
+            ts.isIdentifier(rhsDeclaration.name) &&
+            rhsDeclaration.getSourceFile() === sourceFile &&
+            isModuleScoped(rhsDeclaration)
+          ) {
+            const targets = propagationEdges.get(rhsDeclaration.name.text) ?? [];
+            targets.push(target.text);
+            propagationEdges.set(rhsDeclaration.name.text, targets);
           }
         }
-      } else if (declaration === undefined && moduleVarsByName.size > 0 && isInsideWithBody(node.left)) {
-        // `with` can dynamically resolve the target to the object environment,
-        // so only an unresolved identifier may use this deliberately name-keyed
-        // fallback. A normally resolved local or cross-file binding of the same
-        // name cannot widen it.
-        const named = moduleVarsByName.get(node.left.text);
-        if (named !== undefined && initializerTagOf(named) !== "none") widened.add(node.left.text);
       }
+    } else if (declaration === undefined && moduleVarsByName.size > 0 && isInsideWithBody(target)) {
+      // `with` can dynamically resolve the target to the object environment,
+      // so only an unresolved identifier may use this deliberately name-keyed
+      // fallback. A normally resolved local or cross-file binding of the same
+      // name cannot widen it.
+      const named = moduleVarsByName.get(target.text);
+      if (named !== undefined && initializerTagOf(named) !== "none") widened.add(target.text);
     }
-    ts.forEachChild(node, visit);
   };
   visit(sourceFile);
 
