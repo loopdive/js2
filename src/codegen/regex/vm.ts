@@ -279,9 +279,14 @@ export function runAt(
  * (#2723) When an attempt exhausts the step budget and the program is
  * linear-safe, the rest of the search — from that start position on — runs on
  * the linear PikeVM instead of throwing. Its answer is the one backtracking
- * would have produced with unbounded steps, and it is O(|prog|·|input|), so
- * the whole search stays linear in the subject. Programs the PikeVM cannot run
- * (backreferences, lookarounds, nullable-body loops) keep the RangeError.
+ * would have produced with unbounded steps. For a fixed compiled pattern,
+ * that remaining linear scan is linear in the input, including capture-copy
+ * and class-predicate costs. The per-attempt budget does not bound the sum of
+ * earlier backtracking attempts: a non-sticky /a*b/ search over only `a`s can
+ * remain quadratic without any one attempt exhausting its budget. This is a
+ * budget-exhaustion fallback, not universal whole-search ReDoS immunity.
+ * Programs the PikeVM cannot run (backreferences, lookarounds, nullable-body
+ * loops) keep the RangeError.
  */
 export function search(
   prog: number[],

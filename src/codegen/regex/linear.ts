@@ -18,7 +18,12 @@
  * only on its state and position, never on its captures. When a thread
  * reaches MATCH every lower-priority thread is dropped, so the result is the
  * leftmost match the backtracker would report, with the same captures. Time is
- * O(|prog| · |input|) per search: no step cap is needed and none exists.
+ * O(|prog| · |input|) admitted states. SAVE/CLEAR copy the capture-slot array,
+ * and class predicates search their range tables, so that is not a uniform
+ * O(|prog| · |input|) time bound when the pattern also varies. For a fixed
+ * compiled pattern this matcher is linear in the remaining input; it needs
+ * no step cap. Earlier backtracking attempts in the hybrid search are outside
+ * that bound (see `vm.ts` search).
  *
  * The program must be linear-safe ({@link isLinearSafe}). Excluded, and kept
  * on the backtracking VM with its step cap:

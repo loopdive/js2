@@ -556,3 +556,50 @@ no test262 row was expected to flip; see the PR for the scoped RegExp run.
    `match-units.ts`) are test-only like `vm.ts`'s, so `check:dead-exports`
    flags them; banking them needs `audit-legacy-reachability.mjs --update`,
    which this PR deliberately did not run (baseline edits need sign-off).
+
+
+---
+
+## 2026-10-30 — Adversarial review: exact fallback and complexity scope
+
+This receiving review preserves the authored history above, but supersedes the
+2026-10-28 statements that total hybrid-search work is one step budget plus
+O(|prog|·|s|), or that Slice A establishes universal ReDoS immunity for every
+linear-safe search. Those claims are not the contract implemented by this
+budget-triggered fallback.
+
+The implementation preserves the backtracking fast path. If one anchored attempt
+exhausts its per-attempt budget and the whole bytecode program is linear-safe,
+the remaining scan starts again at that attempt's index on the PikeVM, honouring
+sticky and capture priority. The spurious step-limit RangeError is thereby
+removed for that supported handoff. Earlier start positions already tried by the
+backtracker are not included in the remaining-scan bound. Searches that never
+exhaust a single-attempt budget retain the original backtracking algorithm.
+
+A concrete source-level counterexample to a whole-hybrid linear bound is
+non-sticky `/a*b/` over an all-`a` subject: each anchored attempt scans its suffix
+in linear work, staying below `1_000_000 + 50 * min(subject.length, 20_000_000)`
+through the unsaturated range, while the start-position loop retries every
+suffix. The sum is quadratic without entering the PikeVM. This is not a new
+measured timing result or a wrong-answer regression introduced by Slice A.
+
+The PikeVM admits O(|prog|·|remaining input|) states. Its current SAVE/CLEAR
+operations copy all capture slots and its class predicates binary-search range
+tables. Thus its execution is linear in input for a fixed compiled pattern,
+but the implementation does not establish the paper's uniform O(|prog|·|s|)
+time bound when pattern/capture/class-table size also varies. The shared/clocked
+capture representations discussed in the historical plan remain future work.
+
+The issue's original acceptance criteria are a hybrid feasibility decision and
+an explicit slice ladder; they do not make a first slice equivalent to completion
+of all conformance, capture-cost and ReDoS goals. This PR's source-reviewed slice
+is the bounded handoff above. Universal whole-search ReDoS immunity, nullable
+loops, lookarounds and a uniform pattern-size bound remain unfulfilled goals;
+they must not be marked achieved or silently made optional. No default-router
+change or broader matcher implementation is proposed in this correction.
+
+The independent review found no concrete priority/capture/Unicode/sticky/native
+handoff wrong-answer blocker in the delivered source. That source judgment is
+separate from the actual retained 55-case receiving qualification and normal
+hook results, and is not a new test execution or universal regex-conformance
+claim. Historical author measurements above retain their original epochs.
