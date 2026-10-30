@@ -55,6 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import { storedObjectStaticAliasMethod, uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
@@ -6956,7 +6957,13 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     // `const` (no `let` arrow rebinding in slice 3). The closure
     // shape-check enforces the slice-3 surface (every param + return
     // annotated, body is a Phase-1 tail, no generator/async/named).
-    if (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer)) {
+    if (
+      (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer)) &&
+      !(
+        directModuleBinding?.valueKind.kind === "dynamic" &&
+        isPlannedScriptVarClosure(currentSelectionOptions?.functionMemberClosures, d.initializer)
+      )
+    ) {
       if (!isConst) return shapeNo("vardecl-let-closure", d.initializer);
       // Permit an explicit closure type annotation (like `: (n: number) => number`)
       // — it's a shape-only signal, not a primitive type. Since the IR doesn't
