@@ -145,7 +145,7 @@ describe("source-bound logical vectors without physical resolution", () => {
     expect(f.physical).not.toHaveBeenCalled();
   });
 
-  it("retains receiver → length → effectful argument → growth → returned length exactly once", () => {
+  it("retains receiver → effectful argument → length → growth → returned length exactly once", () => {
     const f = fixture(
       "function values(): number[] { return [20]; } function next(): number { return 22; } function f(): number { return values().push(next()); }",
     );
@@ -155,9 +155,10 @@ describe("source-bound logical vectors without physical resolution", () => {
     const calls = rows.filter((row) => row.kind === "call");
     expect(calls.map((row) => row.target.name)).toEqual(["values", "next", "__ir_vec_elem_set_f64"]);
     const length = rows.find((row) => row.kind === "vec.len")!;
-    expect(rows.indexOf(calls[0]!)).toBeLessThan(rows.indexOf(length));
-    expect(rows.indexOf(length)).toBeLessThan(rows.indexOf(calls[1]!));
-    expect(rows.indexOf(calls[1]!)).toBeLessThan(rows.indexOf(calls[2]!));
+    // Arguments are evaluated before the call; `push` reads the length after them.
+    expect(rows.indexOf(calls[0]!)).toBeLessThan(rows.indexOf(calls[1]!));
+    expect(rows.indexOf(calls[1]!)).toBeLessThan(rows.indexOf(length));
+    expect(rows.indexOf(length)).toBeLessThan(rows.indexOf(calls[2]!));
     expect(rows.at(-1)).toMatchObject({ kind: "binary", op: "f64.add" });
     expect(rows.some((row) => row.kind === "vec.set" || row.kind === "vec.set_length")).toBe(false);
     expect(f.physical).not.toHaveBeenCalled();
