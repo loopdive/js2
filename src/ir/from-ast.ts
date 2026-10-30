@@ -298,7 +298,7 @@ import {
 // `JsTag` enum import this file used to carry is gone: the producer names its
 // partitions through `JS_TAG_IDS` throughout.
 import { JS_TAG_IDS } from "./js-tag-domain.js";
-import { storedObjectStaticAliasMethod, uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
+import { isStoredObjectDescriptorAliasCall, uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
 import {
   exactClosureLiftedName,
   tryLowerPromiseDelayCall,
@@ -7848,12 +7848,11 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // both operands as carriers, then the object runtime's native provider — a
   // dynamic descriptor (or undefined), exactly legacy's
   // `tryCompileStoredObjectBuiltinCall` lowering.
-  const descriptorAlias =
-    expr.arguments.length === 2
-      ? storedObjectStaticAliasMethod(expr.expression, (name) => cx.scope.has(name))
-      : undefined;
-  if (descriptorAlias !== undefined && cx.resolver?.stringIsExternref?.() !== true) {
-    const carriers = lowerAliasCarrierOperands(expr.arguments, descriptorAlias, cx);
+  if (
+    isStoredObjectDescriptorAliasCall(expr, (name) => cx.scope.has(name)) &&
+    cx.resolver?.stringIsExternref?.() !== true
+  ) {
+    const carriers = lowerAliasCarrierOperands(expr.arguments, "getOwnPropertyDescriptor", cx);
     const descriptor = cx.builder.emitCall(irRuntimeFuncRef("__getOwnPropertyDescriptor"), carriers, irDynamic());
     if (descriptor === null) {
       // invariant (producer-promise): a runtime helper declared non-void returned no SSA value — #4502.

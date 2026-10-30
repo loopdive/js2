@@ -152,7 +152,7 @@ export function uncurriedObjectAliasMethod(
  * The `Object` static `callee` is an immutable module-level stored alias of
  * (`var x = Object.getOwnPropertyDescriptor;`, no other write), or undefined.
  */
-export function storedObjectStaticAliasMethod(
+function storedObjectStaticAliasMethod(
   callee: ts.Expression,
   shadowed: (name: string) => boolean,
 ): StoredObjectStaticAliasMethod | undefined {

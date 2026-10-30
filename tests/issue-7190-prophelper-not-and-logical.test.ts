@@ -13,9 +13,12 @@
 //
 // Each fixture is compiled against the LITERAL upstream harness
 // (`runTest262File`, standalone) and run in node against the same assembled
-// source, so both the passing and the throwing paths of each helper are
-// compared on real descriptors: data (enumerable / not, configurable / not),
-// accessor, symbol-keyed and absent properties.
+// source. The helper-path fixtures also make one symbol-keyed call to each
+// helper (`CARRIER_KEYS`), so legacy keeps `name` on the carrier slot and the
+// IR bodies are what run: the passing and throwing paths of each helper are
+// compared on real descriptors (data, accessor, symbol-keyed and absent
+// properties). The upstream self-tests are runtime parity only — most call a
+// helper with string keys alone, where it stays legacy.
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,6 +43,27 @@ import { resetTest262RuntimeEvalProviderForTest } from "../scripts/test262-impor
 const HARNESS_TESTS = join(__dirname, "..", "test262", "test", "harness");
 
 const HEADER = "/*---\nincludes: [propertyHelper.js]\n---*/\n";
+
+// A symbol-keyed call to each helper (all passing), appended to the
+// helper-path fixtures.
+const CARRIER_KEYS = `
+  var carrierKey = Symbol("carrier");
+  var carrierShown = {};
+  carrierShown[carrierKey] = 1;
+  var carrierFixed = {};
+  Object.defineProperty(carrierFixed, carrierKey, { value: 1, enumerable: false, configurable: false });
+  verifyEnumerable(carrierShown, carrierKey);
+  verifyNotEnumerable(carrierFixed, carrierKey);
+  verifyNotConfigurable(carrierFixed, carrierKey);
+`;
+
+const HELPER_PATH_FIXTURES = new Set([
+  "not-enumerable-data-and-accessor",
+  "not-enumerable-throws-on-enumerable",
+  "not-configurable-and-throws-on-configurable",
+  "enumerable-symbol-and-throws-on-hidden",
+  "absent-property-descriptor-read-throws",
+]);
 
 // One fixture per helper path: each must run to completion in node.
 const FIXTURES: Record<string, string> = {
@@ -219,7 +243,10 @@ describe("#7190 propertyHelper — `!` over a descriptor read and `&&` over exac
   beforeAll(async () => {
     await ensureRefusalProviderCached();
     fixtureDir = mkdtempSync(join(tmpdir(), "issue-7190-"));
-    for (const [name, body] of Object.entries(FIXTURES)) writeFileSync(join(fixtureDir, `${name}.js`), HEADER + body);
+    for (const [name, body] of Object.entries(FIXTURES)) {
+      const carrier = HELPER_PATH_FIXTURES.has(name) ? CARRIER_KEYS : "";
+      writeFileSync(join(fixtureDir, `${name}.js`), HEADER + body + carrier);
+    }
   }, 600_000);
 
   // Yield between the synchronous standalone runs (see #4003 in
@@ -261,6 +288,10 @@ describe("#7190 propertyHelper — `!` over a descriptor read and `&&` over exac
 
   for (const name of Object.keys(FIXTURES)) {
     it(`standalone: ${name} passes as in node`, { timeout: 180_000 }, async () => {
+      if (HELPER_PATH_FIXTURES.has(name)) {
+        const result = await compileAssembled(join(fixtureDir, `${name}.js`));
+        expect(irBodies(result)).toEqual(expect.arrayContaining(UNLOCKED_UNITS));
+      }
       await expectPassesLikeNode(join(fixtureDir, `${name}.js`));
     });
   }

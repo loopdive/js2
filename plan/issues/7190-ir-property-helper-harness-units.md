@@ -273,3 +273,29 @@ it join the move-only scan's dynamic names (the #2949 `dynNames` set).
 - isWritable step 1 then needs the `Array.isArray` stored-static certification
   in `uncurried-object-alias.ts` (beside `getOwnPropertyDescriptor`) and a
   carrier-typed conditional.
+
+## Adversarial review 3 — merged head after #6972 (2026-10-30)
+
+This was a fresh-context agent, given the diff against main (`18a52f07e0`) and the plan.
+**Verdict: quality goal met, no blocking items.**
+
+Soundness (a)–(d) held:
+- **(a)** #6972's value-position `=` (`(flag = true) && b > 1`) is still refused
+  (`expr-module-value-representation-mismatch`), on this branch and on main.
+- **(c)** Compared on 13 harness files against a `git archive origin/main` copy:
+  - every unit main ships, this branch ships too;
+  - post-claim errors are identical;
+  - small string-only cases that main claims and then withdraws are refused
+    before the claim here.
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 (should-fix) | the helper-path fixtures used string keys alone, so `name` stayed in the legacy string slot and the tests ran legacy bodies | each helper-path fixture now appends a symbol-keyed call to each helper (`CARRIER_KEYS`) and asserts the four units ship IR before running. The accessor and absent-property (TypeError) paths now run the IR `!desc.attr` lowering. The header says the upstream self-tests are runtime parity only. |
+| 2 | the `declarations.ts:1523` twin of `isAnyStringSlot` | left for the cleanup above |
+| 3 | from-ast's descriptor arm tested `storedObjectStaticAliasMethod(…) !== undefined` inline | it reuses `isStoredObjectDescriptorAliasCall` (same predicate as the selector); `storedObjectStaticAliasMethod` is now module-private |
+| 4 | the probe comment narrated history and re-checked the ref kinds | one sentence of why; kinds checked once before the string test |
+| 5 | the `&&`/`\|\|` module gate only bites on the dynamic path | left: the comment says so; merging the two blocks would move #6972-era code |
+
+Found, not fixed (also on main): `function f(s){return s;} function w(){return
+f("a");} var r = w();` fails to compile standalone with "IR path failed for
+<module-init>: alloc-provenance check failed (#1586)". It needs its own issue.
