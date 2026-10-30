@@ -96,6 +96,7 @@ import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imp
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
 import {
   isAffineThreeDeepElementAccess,
+  isConstantNonVecIndexKey,
   unwrapTypeErasedExpression,
   identifierIsValueReference,
   isFunctionObjectReceiver,
@@ -4116,7 +4117,21 @@ function isPhase1MutableMemberTarget(
   ) {
     return false;
   }
-  return isPhase1Expr(target.argumentExpression, scope, localClasses);
+  return isPhase1ElementKey(target.argumentExpression, scope, localClasses);
+}
+
+/**
+ * (#7106) Shape gate for the key of every element read and write: Phase-1, and
+ * not a constant that names no vec element (`isConstantNonVecIndexKey`). Such a
+ * key keeps the whole function on legacy, whose named-key route owns it.
+ */
+function isPhase1ElementKey(
+  key: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (isConstantNonVecIndexKey(key, (name) => scope.has(name))) return shapeNo("element-key-not-vec-index", key);
+  return isPhase1Expr(key, scope, localClasses);
 }
 
 /**
@@ -4607,7 +4622,7 @@ function isPhase1StatementListInScope(
         ) {
           return shapeNo("nontail-elemstore-recv", lhs.expression);
         }
-        if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses))
+        if (!isPhase1ElementKey(lhs.argumentExpression, scope, localClasses))
           return shapeNo("nontail-elemstore-idx", lhs.argumentExpression);
         if (!isPhase1Expr(s.expression.right, scope, localClasses))
           return shapeNo("nontail-elemstore-rhs", s.expression.right);
@@ -5942,7 +5957,7 @@ function isPhase1BodyStatement(
           ) {
             return shapeNo("body-elemstore-recv", lhs.expression);
           }
-          if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses)) return false;
+          if (!isPhase1ElementKey(lhs.argumentExpression, scope, localClasses)) return false;
           return isPhase1Expr(stmt.expression.right, scope, localClasses);
         }
       }
@@ -6254,7 +6269,7 @@ function isPhase1Tail(
       const lhs = expr.left;
       if (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text))
         return shapeNo("tail-elemstore-recv", lhs.expression);
-      if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses))
+      if (!isPhase1ElementKey(lhs.argumentExpression, scope, localClasses))
         return shapeNo("tail-elemstore-idx", lhs.argumentExpression);
       return isPhase1Expr(expr.right, scope, localClasses);
     }
@@ -12273,7 +12288,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       return capabilityNo("array-method-unsupported", "expr-affine-3deep-vector-index", expr);
     }
     return (
-      isPhase1Expr(expr.expression, scope, localClasses) && isPhase1Expr(expr.argumentExpression, scope, localClasses)
+      isPhase1Expr(expr.expression, scope, localClasses) &&
+      isPhase1ElementKey(expr.argumentExpression, scope, localClasses)
     );
   }
   // #1804 — fixed-length, non-spread, non-sparse array literals are now

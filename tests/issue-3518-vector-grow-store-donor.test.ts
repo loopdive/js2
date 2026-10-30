@@ -15,7 +15,8 @@ import {
   getOrRegisterVecType,
   getOrRegisterHoleyArrayType,
 } from "../src/codegen/registry/types.js";
-import { HOLE_F64_BITS } from "../src/codegen/value-tags.js";
+import { HOLE_F64_BITS, UNDEF_F64_BITS } from "../src/codegen/value-tags.js";
+import { SPARSE_INDEX_CEILING } from "../src/codegen/vec-sparse-index.js";
 import { inversePreparedSourceForward } from "./helpers/prepared-source-forward-receipts.js";
 import {
   buildVectorGrowStoreBody,
@@ -295,7 +296,8 @@ const ORIGINAL_DECLARATIONS = {
 } as const;
 
 const ADAPTER_SHAPES = [
-  ["donor", "ensureVecElemSet", "781a2474556a4b472851f6c92325d560549d2572272e08e713e5e44fa5940df2"],
+  // (#7106) the unbacked-index no-op guard ahead of the grow-store body.
+  ["donor", "ensureVecElemSet", "0d20764b229abfa21357d07a94f398ac43c8c43567054f0a3e21c11bdf5c074d"],
   ["registry", "getOrRegisterArrayType", "ef19d0d5b623d517dff2b5e517dcae50ca866a6215133b35ae8722ab460d8b22"],
   ["registry", "getOrRegisterVecBaseType", "8da164e7abf6ca79052b8d96e4e30149440d9b6d853c3aae464048511015319f"],
   ["registry", "getOrRegisterVecType", "c5a11ee88d8c7c7d341146708fbf5d9b212f05a0501af93381cb74f2e6282f47"],
@@ -714,7 +716,8 @@ describe("complete donor/registry preservation", () => {
     );
     expect(rows).toHaveLength(2);
     expect(rows.map((s) => sha(s.getText(sf)))).toEqual([
-      "41a7364246c28fb754a95e6b3f203a32209be89a64e18460d19551d8f71b8d93",
+      // (#7106) an f64 gap holds the undefined marker on every lane when absence is not tracked.
+      "0817b6ba5188339c3e91f15cb292bc1b21766dcc4412543fbbc51248f1baf81f",
       "23960d6e026071292017b91ab91979116cfcddc0ffd6b09185f471a76675dd06",
     ]);
     expect(read("donor")).not.toContain("currentFunc");
@@ -742,6 +745,17 @@ describe("complete donor/registry preservation", () => {
     expect(normalizedFunction(changed, name)).not.toBe(normalizedFunction(source, name));
   });
 });
+
+const UNBACKED_INDEX_GUARD = [
+  { op: "local.get", index: 1 },
+  { op: "i32.const", value: SPARSE_INDEX_CEILING },
+  { op: "i32.gt_u" },
+  { op: "local.get", index: 0 },
+  { op: "ref.is_null" },
+  { op: "i32.eqz" },
+  { op: "i32.and" },
+  { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+];
 
 function context(standalone = true) {
   return createCodegenContext(createEmptyModule(), ts.createProgram([], {}).getTypeChecker(), { standalone });
@@ -772,8 +786,13 @@ describe("real legacy adapters retain dense and hole behavior", () => {
           ? { kind: "hole-global" as const, globalIndex: ctx.holeGlobalIdx! }
           : kind === "f64-hole"
             ? { kind: "f64-hole" as const, bits: HOLE_F64_BITS }
-            : { kind: "default" as const };
-      expect({ body: fn.body, locals: fn.locals }).toEqual(
+            : kind === "dense-f64"
+              ? { kind: "f64-hole" as const, bits: UNDEF_F64_BITS }
+              : { kind: "default" as const };
+      // (#7106) An index above the backed ceiling (every negative one too) is a
+      // no-op for a non-null receiver, ahead of the shared grow-store body.
+      expect(fn.body.slice(0, UNBACKED_INDEX_GUARD.length)).toEqual(UNBACKED_INDEX_GUARD);
+      expect({ body: fn.body.slice(UNBACKED_INDEX_GUARD.length), locals: fn.locals }).toEqual(
         buildVectorGrowStoreBody({
           carrierTypeIndex: kind === "hole-global" ? carrier.superTypeIdx! : index,
           arrayTypeIndex: data.typeIdx,

@@ -202,7 +202,12 @@ describe("source-bound logical vectors without physical resolution", () => {
       expect(rows.filter((row) => row.kind === "binary" && row.op === "i32.lt_u")).toHaveLength(1);
       expect(rows.filter((row) => row.kind === "if")).toHaveLength(1);
       expect(rows.filter((row) => row.kind === "vec.get")).toHaveLength(1);
+      // (#7106) The truncated index survives only when it is exact; a
+      // non-integer key selects -1, which the unsigned bounds check rejects.
+      expect(rows.filter((row) => row.kind === "binary" && row.op === "f64.eq")).toHaveLength(1);
+      expect(rows.filter((row) => row.kind === "select")).toHaveLength(1);
       expect(rows.filter((row) => row.kind === "const")).toMatchObject([
+        { value: { kind: "i32", value: -1 } },
         element === f64 ? { value: { kind: "f64", value: NaN } } : { value: { kind: "null" } },
       ]);
       expect(f.physical).not.toHaveBeenCalled();

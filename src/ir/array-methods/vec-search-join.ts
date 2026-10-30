@@ -29,6 +29,7 @@
  */
 
 import { ts } from "../../ts-api.js";
+import { isF64Hole } from "../array-element-lowering.js";
 import type { IrFunctionBuilder } from "../builder.js";
 import { irBool } from "../boolean-brand.js";
 import { irIntrinsicFuncRef } from "../callable-bindings.js";
@@ -42,12 +43,7 @@ export const IR_VEC_SEARCH_JOIN_METHODS: ReadonlySet<string> = new Set(["indexOf
 
 const I32: IrType = irVal({ kind: "i32" });
 const F64: IrType = irVal({ kind: "f64" });
-const I64: IrType = irVal({ kind: "i64" });
 const STRING: IrType = { kind: "string" };
-/** Legacy f64 `undefined` marker (`UNDEF_F64_BITS`, codegen/value-tags.ts). */
-const F64_UNDEFINED_BITS = 0x7ff00000deadc0den;
-/** Legacy f64 absence marker (`HOLE_F64_BITS`, #4491 T11). */
-const F64_HOLE_BITS = 0x7ff00000deadc01en;
 
 /** What the caller already resolved about the receiver vec. */
 export interface IrVecSearchJoinReceiver {
@@ -117,14 +113,6 @@ function stringElementNullable(receiver: IrVecSearchJoinReceiver): boolean {
 /** Read element `index` (in `[0, length)` by construction) as its logical type. */
 function readElement(receiver: IrVecSearchJoinReceiver, kind: ElementKind, index: IrValueId, b: IrFunctionBuilder) {
   return b.emitVecGet(receiver.recv, index, kind === "string" ? STRING : irVal(receiver.elementValType));
-}
-
-/** An f64 element holding legacy's `undefined` or absence marker. */
-function isF64Hole(value: IrValueId, b: IrFunctionBuilder): IrValueId {
-  const bits = b.emitUnary("i64.reinterpret_f64", value, I64);
-  const isUndefined = b.emitBinary("i64.eq", bits, b.emitConst({ kind: "i64", value: F64_UNDEFINED_BITS }, I64), I32);
-  const isAbsent = b.emitBinary("i64.eq", bits, b.emitConst({ kind: "i64", value: F64_HOLE_BITS }, I64), I32);
-  return b.emitBinary("i32.or", isUndefined, isAbsent, I32);
 }
 
 /** Lower the search value to the element family's carrier (f64 or string). */

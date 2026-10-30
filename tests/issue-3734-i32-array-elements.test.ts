@@ -111,11 +111,12 @@ describe("#3734 — i32 array elements (shape)", () => {
     expect(body).toContain("i32.lt_u");
     expect(body).toContain("array.get");
     // The two remaining truncations ground the incoming `number` parameter
-    // and consume it as an index. The two widens are the loop carrier and
-    // in-bounds element. The removed vec-length round-trip would make these
-    // counts three and three.
+    // and consume it as an index. The three widens are the loop carrier, the
+    // in-bounds element and (#7106) the index exactness test that keeps
+    // `arr[0.5]` from reading `arr[0]`. The removed vec-length round-trip would
+    // make these counts three and four.
     expect(body.match(/i32\.trunc_sat_f64_s/g) ?? []).toHaveLength(2);
-    expect(body.match(/f64\.convert_i32_s/g) ?? []).toHaveLength(2);
+    expect(body.match(/f64\.convert_i32_s/g) ?? []).toHaveLength(3);
     expect(r.irOutcomes?.find((outcome) => outcome.displayName === "read")).toMatchObject({
       kind: "emitted",
       legacyBodyEmitted: false,
@@ -128,6 +129,7 @@ describe("#3734 — i32 array elements (shape)", () => {
     const read = instance.exports.read as (index: number) => number;
     expect(read(3)).toBe(3);
     expect(read(99)).toBeNaN();
+    expect(read(0.5)).toBeNaN();
   });
 
   it("a narrowed store costs one conversion FEWER per iteration than the f64 layout", async () => {

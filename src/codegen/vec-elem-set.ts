@@ -8,15 +8,24 @@
 // DEFINED function appended at mint time, never an import, so no existing
 // funcIdx shifts).
 //
-// Semantics — EXACT legacy parity (JS `arr[i] = v` on a growable vec):
+// Semantics — legacy parity (JS `arr[i] = v` on a growable vec):
 //   1. Null receiver → throw TypeError (`ref.null.extern` payload on the
 //      shared `__exn` tag) — the legacy null-guard shape (#441).
-//   2. idx >= capacity → grow the backing array to
+//   2. (#7106) idx above SPARSE_INDEX_CEILING, read unsigned → no-op. That
+//      covers every negative idx, including the -1 the IR passes for a key
+//      that is not an array index, and every index no backing array may grow
+//      to hold; growing to it trapped ("array element access out of bounds").
+//      Legacy's inline store skips the same element write; it also moves
+//      `length` for a large valid index, which this helper does not, because
+//      the IR's reads bound by `length` alone.
+//   3. idx >= capacity → grow the backing array to
 //      `max(idx + 1, oldCap * 2, 4)`, copy the old contents, and point the
 //      vec's `data` field at the new array (legacy grow sequence,
-//      assignment.ts:4094-4178).
-//   3. `data[idx] = val`.
-//   4. idx + 1 > vec.length → vec.length = idx + 1 (JS length update on
+//      assignment.ts:4094-4178). An f64 grow gap holds the absence marker
+//      when the module can ask presence questions, else the undefined marker
+//      (legacy's #4491 T8/T11 choice), so it never reads back as `0`.
+//   4. `data[idx] = val`.
+//   5. idx + 1 > vec.length → vec.length = idx + 1 (JS length update on
 //      OOB writes).
 //
 // The helper is pure WasmGC — no host import — so it works identically in
@@ -29,7 +38,8 @@ import { ensureExnTag } from "./registry/imports.js";
 import { ensureHoleType, holeSentinelInstrs } from "./array-holes.js";
 import { buildVectorGrowStoreBody, type VectorGrowStoreGapFill } from "../runtime/wasmgc/values/vector-grow-store.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js";
-import { HOLE_F64_BITS } from "./value-tags.js";
+import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
+import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js";
 
 /** Reserved name prefix; the suffix is the vec STRUCT typeIdx. */
 export const VEC_ELEM_SET_PREFIX = "__vec_elem_set_";
@@ -170,17 +180,19 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
   if (elem.kind === "i8" || elem.kind === "i16") return null;
 
   const holeyCarrier = isHoleyArrayType(ctx, vecTypeIdx) && elem.kind === "externref";
-  // Standalone f64 vectors use the same absence marker as sparse literals.
-  // Without this, an indexed write past capacity grows the backing array with
-  // f64 zeroes, materializing every intervening index as an own property.
-  // Mark the carrier here as well as in literal lowering: a module can first
-  // encounter a sparse indexed write before it emits a f64 literal marker.
-  const f64HoleCarrier = ctx.standalone && elem.kind === "f64" && f64HolesActive(ctx);
-  if (f64HoleCarrier) ctx.f64HoleMarkerEmitted = true;
+  // An f64 grow gap holds a marker on every lane, exactly as legacy's inline
+  // store fills it (#4491 T8/T11): the absence marker where the module can ask
+  // presence questions, else the undefined marker. Without one, an indexed
+  // write past capacity grows the backing array with f64 zeroes, so the gap
+  // reads back as `0`. Mark the carrier here as well as in literal lowering: a
+  // module can first encounter a sparse indexed write before it emits a f64
+  // literal marker.
+  const f64Absence = elem.kind === "f64" && f64HolesActive(ctx);
+  if (f64Absence) ctx.f64HoleMarkerEmitted = true;
   const gapFill: VectorGrowStoreGapFill = holeyCarrier
     ? { kind: "hole-global", globalIndex: ensureHoleType(ctx) }
-    : f64HoleCarrier
-      ? { kind: "f64-hole", bits: HOLE_F64_BITS }
+    : elem.kind === "f64"
+      ? { kind: "f64-hole", bits: f64Absence ? HOLE_F64_BITS : UNDEF_F64_BITS }
       : { kind: "default" };
   // (#4430) The branded sparse carrier is a FINAL subtype of the ordinary
   // externref vec, and BOTH fields this helper touches (`length`, `data`) are
@@ -213,7 +225,19 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
     name,
     typeIdx: sigIdx,
     locals,
-    body,
+    body: [
+      // Step 2: `if (idx >u SPARSE_INDEX_CEILING && vec !== null) return`
+      // (param 0 = vec, 1 = idx). A null receiver still reaches the TypeError.
+      { op: "local.get", index: 1 },
+      { op: "i32.const", value: SPARSE_INDEX_CEILING },
+      { op: "i32.gt_u" },
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      { op: "i32.and" },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+      ...body,
+    ],
     exported: false,
   };
   pushDefinedFunc(ctx, funcIdx, fn);

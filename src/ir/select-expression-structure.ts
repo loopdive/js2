@@ -14,6 +14,50 @@ export function unwrapTypeErasedExpression(expr: ts.Expression): ts.Expression |
     : undefined;
 }
 
+/** The largest index the vec lane's i32 index carrier holds exactly. */
+const MAX_VEC_INDEX = 0x7fffffff;
+
+/**
+ * (#7106) A constant element key that names no vec element: a number that is
+ * not an integer in `[0, 2^31)` (`a[0.5]`, `a[-1]`, `a[4294967295]`), or
+ * `true` / `false` / `null` / `void …` / an unshadowed `undefined` / `NaN` /
+ * `Infinity`. ToPropertyKey makes each a NAMED property (or, at 2^31 and above,
+ * an index no dense vec backs), which legacy's named-key route (#4247, #4556)
+ * reads and writes; the IR vec lane would read it as absent and drop the store.
+ * The selector therefore leaves such an access to legacy. `isLocal` reports
+ * whether a name is shadowed by a local binding.
+ */
+export function isConstantNonVecIndexKey(key: ts.Expression, isLocal: (name: string) => boolean): boolean {
+  let inner = key;
+  for (;;) {
+    const next = ts.isParenthesizedExpression(inner) ? inner.expression : unwrapTypeErasedExpression(inner);
+    if (next === undefined) break;
+    inner = next;
+  }
+  if (
+    inner.kind === ts.SyntaxKind.TrueKeyword ||
+    inner.kind === ts.SyntaxKind.FalseKeyword ||
+    inner.kind === ts.SyntaxKind.NullKeyword ||
+    ts.isVoidExpression(inner)
+  ) {
+    return true;
+  }
+  if (ts.isIdentifier(inner)) {
+    return (inner.text === "undefined" || inner.text === "NaN" || inner.text === "Infinity") && !isLocal(inner.text);
+  }
+  let sign = 1;
+  if (
+    ts.isPrefixUnaryExpression(inner) &&
+    (inner.operator === ts.SyntaxKind.MinusToken || inner.operator === ts.SyntaxKind.PlusToken)
+  ) {
+    sign = inner.operator === ts.SyntaxKind.MinusToken ? -1 : 1;
+    inner = inner.operand;
+  }
+  if (!ts.isNumericLiteral(inner)) return false;
+  const value = sign * Number(inner.text.replace(/_/g, ""));
+  return !(Number.isInteger(value) && value >= 0 && value <= MAX_VEC_INDEX);
+}
+
 /** Reject affine three-deep indices whose IR widening is costlier than legacy i32 induction. */
 export function isAffineThreeDeepElementAccess(expr: ts.ElementAccessExpression): boolean {
   let enclosingForDepth = 0;

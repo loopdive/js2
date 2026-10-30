@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-10-25
+updated: 2026-10-30
 priority: high
 horizon: l
 feasibility: hard
@@ -81,6 +81,8 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerTypeOf
   - src/ir/select.ts::dynamicUsesAreMoveOnly
   - src/ir/select.ts::scanExpr
+  # 2026-10-30 (vector element keys): +1 line, the element-read arm calls the
+  # shared key gate `isPhase1ElementKey` (prettier splits the `&&`)
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select.ts::collectCallGraph
   - src/ir/select.ts::whyNotIrClaimable
@@ -105,6 +107,9 @@ loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/lower-generic.ts
   - src/ir/runtime/verify.ts
+  # 2026-10-30 (vector element keys): +16, `isPhase1ElementKey`, the one key
+  # gate the element read, store and compound arms share; it needs
+  # `isPhase1Expr` and `shapeNo`, which are private to the selector
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
@@ -2200,3 +2205,152 @@ Left, as follow-ups of this issue:
     not `undefined` after the loop on the selector-rejected path; sloppy `F.caller`
     reads `undefined` instead of `null`; `F["helper"] = fn; F["helper"]()`
     throws.
+
+## IR vector element keys: out-of-range, hole and non-index keys (2026-10-30)
+
+Follow-up (a) of "Script `var` reference homes". It is recorded here, not in
+its own issue: `claim-issue.mjs --allocate` refused (exit 6) because the
+open-PR id scan could not run (the `gh` token is invalid), and an allocation
+without that scan must not be forced.
+
+### Problem (measured on main `fcd27b7492`, standalone and gc alike)
+
+Harness body `function f() { … } f();`, with `f` IR-claimed:
+
+| body of `f` | node | legacy | IR before | root cause |
+|---|---|---|---|---|
+| `var a = [1]; assert.sameValue(a[5], undefined)` | pass | pass | throws | the bounds-checked read answers f64 NaN, and the dynamic consumer boxes it as a number |
+| `var a = [1]; assert.sameValue(a[0.5], undefined)` | pass | pass | throws | `i32.trunc_sat_f64_s` turns the key into index 0 |
+| `var a = [1]; a[3] = 9; assert.sameValue(a[2], undefined)` | pass | throws | throws | the grow-store helper zero-fills an f64 gap (gc, and standalone without an elision); the read boxes the raw slot |
+| `var a = [0,1,2]; a[4294967295] = 5; …length === 3` | pass | pass | trap | the key saturates to 2^31−1 and the helper grows to 2^31 slots |
+| `var a = [0,1,2]; a[-1] = 5; …length === 3` | pass | pass | trap | `-1 >= capacity` is false signed, so `array.set` runs at -1 |
+| `a[a.length]` / `a[-1]` read | pass | pass | throws | as the first row |
+
+Function bodies showed the same causes without the harness: a number-typed
+runtime key `0.5` wrote `a[0]`, `-1` and `4294967295` trapped, and
+`a[0.5] + 1` read `a[0]`.
+
+### Measurement
+
+A census of the IR vec element accesses in claimed functions (temporary
+instrumentation, not committed):
+
+- the 13 playground examples, gc and standalone: 39 accesses. 15 proven reads,
+  16 unproven reads (all with a numeric hint: `quicksort`, `binarySearch`,
+  calendar's `fdow`), 8 unproven stores (`quicksort`'s swaps), no read with a
+  dynamic hint;
+- a test262 sample of 1,180 files (every 10th `built-ins/Array` file and every
+  `es5id` file with an element access): no access reaches the IR vec arms.
+  Test bodies index module bindings or dynamic receivers.
+
+So refusing every unproven key would push `quicksort` off the IR for nothing,
+and the dynamic-consumer read costs nothing on the measured corpora.
+
+### Implementation Plan (as built)
+
+Lower with JS semantics where the vec lane can hold the answer; refuse at
+select where only legacy's named-key route can.
+
+1. **A constant non-index key is refused at select.** `isConstantNonVecIndexKey`
+   (`select-expression-structure.ts`, beside `isAffineThreeDeepElementAccess`)
+   matches a numeric literal (optional `+`/`-`) that is not an integer in
+   `[0, 2^31)`, `true`, `false`, `null`, `void …`, and an unshadowed
+   `undefined` / `NaN` / `Infinity`. `isPhase1ElementKey` (`select.ts`) is the
+   one key gate for the element read arm, the three `=` store arms and the
+   compound target, replacing five direct `isPhase1Expr(key)` calls. Legacy's
+   #4247/#4556 route reads and writes those named properties; the vec lane
+   cannot.
+2. **A runtime key goes through `emitVecIndex`** (`array-element-lowering.ts`):
+   truncate, keep the result only if converting it back is exact, else -1. -1
+   fails every unsigned bounds check and every vec store helper drops it.
+   `lowerElementIndex` (`from-ast.ts`) lowers the key once for the read, store,
+   compound and logical-vector arms (four inline copies folded into one). The
+   runtime test is skipped for a key proven integral: the counted-loop pair or
+   `isI32PureExprIR`.
+3. **A dynamic consumer gets `undefined`.** For a dynamic hint on a numeric vec
+   (f64, or #3734 narrowed i32), `emitUndefinedAwareVecGet` yields the boxed
+   element, or `undefined` out of range and for an f64 marker slot. Numeric
+   consumers keep the NaN read, the legacy-matching answer.
+4. **The store helper never traps** (`codegen/vec-elem-set.ts`). An index above
+   `SPARSE_INDEX_CEILING`, unsigned (so every negative index too), is a no-op
+   for a non-null receiver: the element skip legacy's inline store makes
+   (#4491 wave 4). The f64 grow gap gets legacy's marker on every lane (absence
+   where presence is tracked, else undefined) instead of zero on gc.
+
+Reuse, and duplicates removed:
+
+- `UNDEF_F64_BITS` / `HOLE_F64_BITS` move to
+  `shared/contracts/f64-value-markers.ts`; `codegen/value-tags.ts` re-exports
+  them. The IR's private copies (`from-ast.ts`'s
+  `LEGACY_EXPRESSION_DEFAULT_F64_SENTINEL_BITS`, `vec-search-join.ts`'s two
+  constants) are gone. `shared/` keeps the ir↔runtime two-way edge count flat.
+- `isF64Hole` moves from `vec-search-join.ts` to `array-element-lowering.ts`;
+  the search/join lowering and the new read share it.
+- `emitIfElseValue` (module-local) replaces the collect/collect/`emitIfElse`
+  boilerplate of the two bounds-checked reads and serves the new read.
+- The stale orphan doc comment above `lowerElementStore` is replaced by
+  `lowerElementIndex`.
+
+**Code-quality acceptance criterion:** one key gate in the selector, one key
+lowering in `from-ast.ts`, one marker definition and one marker predicate; no
+post-claim demote added; `from-ast.ts` shrinks (−28 lines).
+
+### Results
+
+- `tests/issue-7106-vector-index-semantics.test.ts` (31 cases, standalone and
+  gc): every row above, IR = node or refused at select with no post-claim
+  error; a counted `a[i]` loop stays IR; runtime store keys `0.5`, `-1`, `NaN`,
+  `4294967295`, `2147483648` never trap; runtime read keys `0.5`, `-1`, `NaN`,
+  `4294967295` read NaN; a grow gap reads NaN; an `any` parameter sees
+  `undefined` for an out-of-range or gap read. 22 of the 31 fail on main.
+- Pinned receipts updated for the intended change:
+  `issue-3518-vector-grow-store-donor` (the `ensureVecElemSet` shape and gap-fill
+  selection hashes, the helper body now starts with the guard),
+  `issue-3518-logical-vector-lowering` (the exactness test's `f64.eq`, `select`
+  and `-1`), `issue-3734-i32-array-elements` (one more `f64.convert_i32_s` for
+  the exactness test, plus `read(0.5)` is NaN). Their other failures are
+  identical on main.
+- test262, standalone, `runTest262File(…, 20000, "standalone")`, same files
+  before and after: 1,180-file sample 1,068 pass / 82 fail / 30 CE before and
+  after, zero status flips (309 `built-ins/Array` files 238/61/10; 877 ES5
+  element-access files 836/21/20). The 69 files with a constant non-index key
+  (`built-ins/Array`, `Object`, `String`, `language`): 65 pass / 4 fail before
+  and after, zero flips.
+- Playground binaries (13 examples × gc/standalone, compared function by
+  function in the WAT): 9 identical, 17 changed. Every changed function is one
+  of three kinds, and no other function changes:
+  - an IR vec store helper `__vec_elem_set_*` (in 16 of the 17 binaries) gains
+    the 8-instruction guard, and its f64 instance the gap-fill block: about
+    +120 bytes per binary;
+  - `__extern_set` (`benchmarks.ts` on both lanes, `benchmarks/array.ts`
+    standalone), which inlines one such helper;
+  - `quicksort` (`js/algorithms.ts`) and `fdow` (`dom/calendar.ts`), whose
+    unproven keys gain the exactness test (`f64.convert_i32_s`, `f64.eq`,
+    `select` against -1). `binarySearch`'s `arr[mid]` does not: `mid` is
+    int32-valued.
+
+### Left as follow-ups
+
+1. **f64 carriers cannot hold `undefined`.** Without a dynamic hint, an
+   out-of-range read still answers NaN where the value is observed later or by
+   a non-numeric operator: stored into a number-typed local, array literal or
+   object field (`var x = a[5]; x === undefined`), passed to a parameter the
+   fixpoint specialised to number, `a[5] == null` (folds to false), `${a[5]}`
+   (renders `"NaN"`), `typeof a[5]` (`"number"`). Pre-existing; legacy gets all
+   but `typeof` right because its f64 carriers and observers keep
+   `UNDEF_F64_BITS`. Needs a maybe-undefined f64 carrier in the IR. Refusing
+   these consumers at select is not an option: `const tmp = arr[i]` is
+   `quicksort`'s swap.
+2. **A runtime non-index key** (`a[i]` with `i = 0.5`) reads as absent and a
+   store to it is dropped; JavaScript reads and writes the named property.
+   Legacy's store truncates the key and writes `a[0]`. Needs a runtime
+   named-property path for vecs.
+3. A valid index above the backed ceiling (2^24 for a store, 2^31 for any key)
+   is dropped rather than stored as a sparse length.
+4. **#3734 narrowed i32 vecs zero-fill a grow gap**
+   (`const a: number[] = []; a[0] = 1; a[3] = 3; a[1]` reads 0): the narrowing
+   gate admits a plain store without proving it gap-free.
+5. `a[i] === undefined` on an unproven read still demotes after claim
+   (`tryLowerUndefinedCompare`); the undefined-aware read could lower it.
+6. A boolean *variable* key reads index 0 or 1 (literal `true`/`false` keys are
+   refused at select).

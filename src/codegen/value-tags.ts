@@ -25,6 +25,7 @@
 import { isBigIntType, isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
+import { HOLE_F64_BITS, UNDEF_F64_BITS } from "../shared/contracts/f64-value-markers.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
 /**
@@ -77,38 +78,11 @@ export function jsStaticType(t: ts.Type | undefined): JsStaticType {
 }
 
 /**
- * The de-facto undefined-in-f64 sentinel, named once here (14 ad-hoc sites
- * elsewhere predate this module). It is a SIGNALING NaN — JS arithmetic only
- * ever produces the quiet NaN `0x7FF8000000000000`, so this bit pattern can
- * carry "undefined" through an f64 carrier without colliding with a computed
- * NaN. Observers in unsound contexts (`=== undefined`, `??`, `typeof`,
- * ToString) test for it; sound contexts (arithmetic, relational, ToBoolean)
- * ignore it because it already behaves as NaN. P3 (#2106) wires the observers;
- * Phase 1 only centralizes the constant + emit helpers.
+ * The f64 `undefined` and absence markers. The IR lowering reads the same bit
+ * patterns, so they live in `shared/contracts/f64-value-markers.ts` (#7106);
+ * re-exported here so every legacy import site is unchanged.
  */
-export const UNDEF_F64_BITS = 0x7ff00000deadc0den;
-
-/**
- * (#4491 T11) The **absence** twin of {@link UNDEF_F64_BITS}: a second,
- * distinct signaling-NaN payload meaning *this index is not present*, as
- * opposed to *this index holds the value `undefined`*.
- *
- * The two must be distinct because they answer PRESENCE differently:
- * `[0, , 2]` and `[0, undefined, 2]` agree on every VALUE question (`x[1]` is
- * `undefined` for both, `join` renders `""` for both) and disagree on every
- * PRESENCE question (`1 in x`, `x.hasOwnProperty("1")`, `Object.keys(x)`, and
- * the §23.1.3 HOF hole-skip). One payload cannot carry both answers.
- *
- * Same signaling-NaN exponent as `UNDEF_F64_BITS`, so the same "JS arithmetic
- * only ever produces the QUIET NaN `0x7FF8000000000000`" argument applies: the
- * pattern cannot collide with a computed value.
- *
- * **Invariant** (inherited from `array-holes.ts`): a hole is never observed AS
- * the marker. Every value-producing read of a slot that may hold it maps
- * `HOLE → UNDEF` at the read boundary (`vec-f64-hole-presence.ts`), so the ~28
- * existing `UNDEF_F64_BITS` observers keep working unchanged.
- */
-export const HOLE_F64_BITS = 0x7ff00000deadc01en;
+export { HOLE_F64_BITS, UNDEF_F64_BITS };
 
 /** Push the undefined-f64 sentinel onto the stack (`i64.const` + reinterpret). */
 export function pushUndefF64(body: Instr[]): void {
