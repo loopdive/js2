@@ -30,8 +30,8 @@ func-budget-allow:
   - src/ir/select.ts::scanExprInner
   - src/codegen/index.ts::planIrOverlay
 import-cycles-allow:
-  - largestSccSize: 725 # 2026-10-28 (#7128 S1): src/codegen/declarations/ir-open-object-binding.ts asks legacy's var-slot typing (statements/variables.ts) and is read by codegen/index.ts, so it joins the SCC exactly as its sibling ir-dynamic-construct.ts does
-  - ir->runtime: 10 # 2026-10-28 (#7128 S1, review of PR #6957): src/ir/empty-object-literal.ts reads Object.prototype's own keys from runtime/contracts/native-realm-catalog.ts, the pure-data spec catalog ir/program/native-realm-requirements.ts already imports; the alternative is a second hand-written copy of that key list
+  - largestSccSize: 729 # 2026-10-28, restated 2026-10-30 against main at 728 (#7128 S1): src/codegen/declarations/ir-open-object-binding.ts asks legacy's var-slot typing (statements/variables.ts) and is read by codegen/index.ts, so it joins the SCC exactly as its sibling ir-dynamic-construct.ts does
+  - ir->runtime: 11 # 2026-10-28, restated 2026-10-30 against main at 10 (#7128 S1, review of PR #6957): src/ir/empty-object-literal.ts reads Object.prototype's own keys from runtime/contracts/native-realm-catalog.ts, the pure-data spec catalog ir/program/native-realm-requirements.ts already imports; the alternative is a second hand-written copy of that key list
 ---
 
 # #7128 — IR: standalone `Object.defineProperty` via an open-object carrier
