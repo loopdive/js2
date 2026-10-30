@@ -7,8 +7,6 @@
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
-import { literalElementKey } from "../shared/array-index-key.js";
-import { skipTransparentExpressions } from "../shared/transparent-expressions.js";
 import * as bindingValue from "./module-binding-value-kinds.js";
 import { updateRetypesModuleBinding } from "./update-retyped-bindings.js";
 import { isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
@@ -418,52 +416,19 @@ function makeIrArrayExpressionPredicate(checker: ts.TypeChecker): (expr: ts.Expr
 }
 
 /**
- * (#7106) Build a checker-backed reader of an expression's number literal type
- * (`const k = 0.5; a[k]` → 0.5), for the selector's refusal of a key that
- * names a property (`isLegacyOnlyVecKey`). Narrowing makes the type wrong
- * after a call that changes the value, so only a refusal may rest on it.
+ * (#7106) Build a checker-backed reader of an unwrapped key's number literal
+ * type (`const k = 0.5; a[k]` → 0.5), the selector's reader for
+ * `staticElementKey`, which says why only a refusal may rest on it.
  */
 function makeIrNumberLiteralTypeValue(checker: ts.TypeChecker): (expr: ts.Expression) => number | undefined {
   return (expr) => {
     try {
-      const type = checker.getTypeAtLocation(unwrapParens(expr));
+      const type = checker.getTypeAtLocation(expr);
       return type.isNumberLiteral() ? type.value : undefined;
     } catch {
       return undefined;
     }
   };
-}
-
-/**
- * (#7106) Build a reader of the number a `const` binding holds when its
- * initializer spells one, directly or through another such binding
- * (`const K = 2147483648; a[K]`): the element lowering's static key
- * (`lowerElementIndex`). The value cannot change after the declaration. A
- * binding's literal TYPE is not enough: `const k = o.k` copies the narrowed
- * type of `o.k`, which a call can have made wrong.
- */
-export function makeIrConstNumberValue(checker: ts.TypeChecker): (expr: ts.Expression) => number | undefined {
-  const constValue = (expr: ts.Expression, seen: Set<ts.VariableDeclaration>): number | undefined => {
-    const inner = skipTransparentExpressions(expr);
-    // Every name counts as shadowed: the initializer's scope is not the key's,
-    // and a global `NaN` / `Infinity` is no array index anyway.
-    const literal = literalElementKey(inner, () => true);
-    if (literal !== undefined) return typeof literal.value === "number" ? literal.value : undefined;
-    if (!ts.isIdentifier(inner)) return undefined;
-    const declaration = checker.getSymbolAtLocation(inner)?.valueDeclaration;
-    if (
-      !declaration ||
-      !ts.isVariableDeclaration(declaration) ||
-      !declaration.initializer ||
-      (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
-      seen.has(declaration)
-    ) {
-      return undefined;
-    }
-    seen.add(declaration);
-    return constValue(declaration.initializer, seen);
-  };
-  return (expr) => constValue(expr, new Set());
 }
 
 /**
@@ -508,11 +473,12 @@ function makeIrRegExpExpressionPredicate(checker: ts.TypeChecker): (expr: ts.Exp
  * declaration-file ones: `"some"` (the default) is the ambient test;
  * `"every"` (#7118) is the stricter lib-only test — a script's
  * `function Number() {}` merges with the lib's `declare var Number`, so
- * "some" calls it ambient and "every" does not.
+ * "some" calls it ambient and "every" does not. `"no-user"` (#7106) also
+ * accepts a symbol with no declaration at all, the intrinsic `undefined`.
  */
 export function makeIrAmbientBindingPredicate(
   checker: ts.TypeChecker,
-  quantifier: "some" | "every" = "some",
+  quantifier: "some" | "every" | "no-user" = "some",
 ): (node: ts.Identifier) => boolean {
   return (node) => {
     try {
@@ -522,7 +488,8 @@ export function makeIrAmbientBindingPredicate(
         (declaration): declaration is ts.Declaration => declaration !== undefined,
       );
       const isLib = (declaration: ts.Declaration): boolean => declaration.getSourceFile().isDeclarationFile;
-      return quantifier === "some" ? declarations.some(isLib) : declarations.length > 0 && declarations.every(isLib);
+      if (quantifier === "some") return declarations.some(isLib);
+      return (quantifier === "no-user" || declarations.length > 0) && declarations.every(isLib);
     } catch {
       return false;
     }
@@ -653,6 +620,7 @@ export function makeIrCheckerSelectionOptions(
   | "isArrayExpression"
   | "isRegExpExpression"
   | "numberLiteralTypeValue"
+  | "isGlobalBinding"
 > {
   return {
     classifyPrimitiveExpression: makeIrPrimitiveExpressionClassifier(checker),
@@ -660,6 +628,7 @@ export function makeIrCheckerSelectionOptions(
     isArrayExpression: makeIrArrayExpressionPredicate(checker),
     isRegExpExpression: makeIrRegExpExpressionPredicate(checker),
     numberLiteralTypeValue: makeIrNumberLiteralTypeValue(checker),
+    isGlobalBinding: makeIrAmbientBindingPredicate(checker, "no-user"),
   };
 }
 

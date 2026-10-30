@@ -567,12 +567,15 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * while preserving same-named methods on local classes.
    */
   readonly isArrayExpression?: (expr: ts.Expression) => boolean;
-  /**
-   * (#7106) The value of an expression's number literal type (`const k = 0.5`
-   * → 0.5), else `undefined`. Narrowing can make it wrong, so it only refuses
-   * a key (`isLegacyOnlyVecKey`).
-   */
+  /** (#7106) An unwrapped element key's number literal type value (`const k = 0.5` → 0.5); see `staticElementKey`. */
   readonly numberLiteralTypeValue?: (expr: ts.Expression) => number | undefined;
+  /**
+   * (#7106) Checker proof that an identifier resolves to no user declaration:
+   * the realm's own `NaN` / `Infinity` / `undefined`, not a module's
+   * `const NaN = 1`, which the selector's local scope cannot see. Absent ⇒
+   * the local scope alone decides.
+   */
+  readonly isGlobalBinding?: (node: ts.Identifier) => boolean;
   /** (#7108) Checker element family of an array receiver; absent ⇒ no array search/join claims. */
   readonly classifyArrayElementFamily?: (expr: ts.Expression) => IrArrayElementFamily | undefined;
   /** Exact pre-scanned sized-Array constructor sites for the sparse carrier. */
@@ -4153,9 +4156,11 @@ function isPhase1ElementKey(
   localClasses: ReadonlySet<string>,
 ): boolean {
   const key = access.argumentExpression;
+  const isShadowed = (id: ts.Identifier): boolean =>
+    scope.has(id.text) || currentSelectionOptions?.isGlobalBinding?.(id) === false;
   if (
     currentSelectionOptions?.isArrayExpression?.(access.expression) === true &&
-    isLegacyOnlyVecKey(key, (name) => scope.has(name), currentSelectionOptions)
+    isLegacyOnlyVecKey(key, isShadowed, currentSelectionOptions)
   ) {
     return shapeNo("element-key-not-vec-index", key);
   }

@@ -14,7 +14,11 @@
 // An f64 grow gap that reads 0 is the separate gap-fill change.
 import { describe, expect, it } from "vitest";
 
+import { analyzeSource } from "../src/checker/index.js";
+import { TsCheckerOracle } from "../src/checker/oracle.js";
 import { compile } from "../src/index.js";
+import { constBindingNumber } from "../src/shared/array-index-key.js";
+import { ts } from "../src/ts-api.js";
 import { assembleOriginalHarness } from "./test262-original-harness.js";
 import { parseMeta } from "./test262-runner.js";
 
@@ -264,6 +268,8 @@ describe("#7106 — IR vector element keys in function bodies", () => {
     it(`skips a store at a negative int32 key instead of trapping, and guards no static index (${target})`, async () => {
       const result = await compileTs(
         `export function constant(): number { const a: number[] = [10, 20, 30]; a[4] = 1; return a.length; }
+        const FOUR = 4;
+        export function constBound(): number { const K = FOUR; const a: number[] = [10, 20, 30]; a[K] = 1; return a.length; }
         export function store(k: number): number { const a: number[] = [10, 20, 30]; a[k | 0] = 1; return a.length * 100 + a[0]; }
         export function compound(k: number): number { const a: number[] = [10, 20, 30]; a[k | 0] += 1; return a.length * 100 + a[0]; }
         export function increment(k: number): number { const a: number[] = [10, 20, 30]; a[k | 0]++; return a.length * 100 + a[0]; }
@@ -274,14 +280,17 @@ describe("#7106 — IR vector element keys in function bodies", () => {
         }`,
         target,
       );
-      for (const name of ["constant", "store", "compound", "increment", "loop"]) {
+      for (const name of ["constant", "constBound", "store", "compound", "increment", "loop"]) {
         expect(outcomeOf(result, name)?.irBodyEmitted, name).toBe(true);
       }
-      // The store guard is `i32.ge_s index 0`; a static index needs none.
-      expect(functionWat(result.wat!, "constant")).not.toContain("i32.ge_s");
+      // The store guard is `i32.ge_s index 0`; a static index (a literal, or a
+      // `const` chain to one, read through the oracle) needs none.
+      for (const name of ["constant", "constBound"])
+        expect(functionWat(result.wat!, name), name).not.toContain("i32.ge_s");
       expect(functionWat(result.wat!, "store")).toContain("i32.ge_s");
       const exports = (await instantiate(result)).exports as Record<string, (k?: number) => number>;
       expect(exports.constant!()).toBe(5);
+      expect(exports.constBound!()).toBe(5);
       // Main's IR trapped ("array element access out of bounds") on every row.
       for (const name of ["store", "compound", "increment"]) expect(exports[name]!(-1), name).toBe(310);
       expect(exports.loop!()).toBe(321);
@@ -372,5 +381,53 @@ describe("#7106 — IR vector element keys in function bodies", () => {
       expect((exports.probe as () => number)()).toBe(110);
       expect((exports.counted as () => number)()).toBe(0);
     }, 60_000);
+
+    it(`reads a module binding that shadows NaN or Infinity as that binding (${target})`, async () => {
+      // The selector's local scope cannot see a module-level `const NaN = 1`;
+      // the checker's binding decides, so the key is not refused as the global
+      // `NaN` (legacy then gave 330 and NaN; main's IR, node and here 317, 20).
+      const body = `const a: number[] = [10, 20, 30];`;
+      const modules = {
+        constNaN: [`const NaN = 1;`, `${body} a[NaN] = 7; return a.length * 100 + a[0] + a[1];`, 317],
+        letInfinity: [`let Infinity = 1;`, `${body} a[Infinity] = 7; return a.length * 100 + a[0] + a[1];`, 317],
+        readInfinity: [`const Infinity = 1;`, `${body} return a[Infinity];`, 20],
+      } as const;
+      for (const [name, [binding, fn, expected]] of Object.entries(modules)) {
+        const result = await compileTs(`${binding}\nexport function f(): number { ${fn} }`, target);
+        expect(outcomeOf(result, "f")?.irBodyEmitted, name).toBe(true);
+        expect(((await instantiate(result)).exports.f as () => number)(), name).toBe(expected);
+      }
+    }, 60_000);
   }
+});
+
+describe("#7106 — the const binding behind a static element key", () => {
+  it("follows a const chain to its number, through casts, and nothing ambient or mutable", () => {
+    const { sourceFile, checker } = analyzeSource(
+      `export {};
+      const J = 2147483648;
+      const K = J as number;
+      const NaN = 2;
+      const N = NaN;
+      declare const D = 1;
+      const C = D;
+      let L = 1;
+      const Half = 0.5;
+      K; N; D; C; L; Half;`,
+      "issue-7106-const-key.ts",
+    );
+    const oracle = new TsCheckerOracle(checker);
+    const keys = sourceFile.statements
+      .filter(ts.isExpressionStatement)
+      .map((statement) => statement.expression)
+      .filter(ts.isIdentifier);
+    expect(Object.fromEntries(keys.map((key) => [key.text, constBindingNumber(key, oracle)]))).toEqual({
+      K: 2147483648,
+      N: 2,
+      D: undefined,
+      C: undefined,
+      L: undefined,
+      Half: 0.5,
+    });
+  });
 });

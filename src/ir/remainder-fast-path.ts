@@ -2,6 +2,7 @@
 import type { RemainderFastPathPlan } from "./analysis/remainder-fast-path.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irVal, type IrFuncRef, type IrValueId } from "./nodes.js";
+import { emitF64IsIntegral } from "./numeric-slot-coercion.js";
 
 const I64_MIN = -(2 ** 63);
 const I64_MAX_EXCLUSIVE = 2 ** 63;
@@ -40,7 +41,7 @@ export function emitNumberRemainder(
     condition = condition === undefined ? clause : builder.emitBinary("i32.and", condition, clause, i32);
   };
   const addIntegerRangeGuard = (value: IrValueId): void => {
-    const integral = builder.emitBinary("f64.eq", builder.emitUnary("f64.trunc", value, f64), value, i32);
+    const integral = emitF64IsIntegral(builder, value);
     const lower = builder.emitBinary("f64.ge", value, builder.emitConst({ kind: "f64", value: I64_MIN }, f64), i32);
     const upper = builder.emitBinary(
       "f64.lt",

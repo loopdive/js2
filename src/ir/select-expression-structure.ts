@@ -13,13 +13,9 @@ import type { IrSelectionOptions } from "./select.js";
  * a property, not an element: a static value that is not an array index
  * (`staticElementKey`: `a[0.5]`, `a[-1]`, `a[null]`, `a[true]`,
  * `const k = 0.5`), or any boolean. ToPropertyKey makes it a NAMED property,
- * which only legacy's named-key route reads and writes (#4247, #4556).
- *
- * The static value here includes the key's number literal TYPE, which
- * narrowing can get wrong (`o.k === 1` narrows `o.k`, and a call may then
- * change it). Refusing on it is still safe: legacy's key lowering reads no
- * types, so a key whose type is wrong is handled from its runtime value. The
- * lowering never trusts the type (`lowerElementIndex`).
+ * which only legacy's named-key route reads and writes (#4247, #4556). The
+ * static value includes the key's number literal TYPE, which only a refusal
+ * may rest on (`staticElementKey`).
  *
  * A static array index of any size stays on the vec lane, reads and writes
  * alike. Past the i32 range the lowering saturates it, so a write traps in the
@@ -29,12 +25,13 @@ import type { IrSelectionOptions } from "./select.js";
  */
 export function isLegacyOnlyVecKey(
   key: ts.Expression,
-  isShadowed: (name: string) => boolean,
+  isShadowed: (id: ts.Identifier) => boolean,
   options: Pick<IrSelectionOptions, "classifyDeclaredPrimitiveExpression" | "numberLiteralTypeValue">,
 ): boolean {
-  const known = staticElementKey(key, isShadowed, options.numberLiteralTypeValue);
+  const inner = skipTransparentExpressions(key);
+  const known = staticElementKey(inner, isShadowed, options.numberLiteralTypeValue);
   if (known !== undefined) return !isStaticArrayIndex(known);
-  return options.classifyDeclaredPrimitiveExpression?.(skipTransparentExpressions(key)) === "boolean";
+  return options.classifyDeclaredPrimitiveExpression?.(inner) === "boolean";
 }
 
 /** Reject affine three-deep indices whose IR widening is costlier than legacy i32 induction. */

@@ -45,8 +45,8 @@ import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
 import { expressionIsDefinitelyBoolean } from "./select-expression-structure.js";
-import { unwrapTypeErasedExpression } from "../shared/transparent-expressions.js";
-import { isStaticArrayIndex, staticElementKey } from "../shared/array-index-key.js";
+import { skipTransparentExpressions, unwrapTypeErasedExpression } from "../shared/transparent-expressions.js";
+import { constBindingNumber, isStaticArrayIndex, staticElementKey } from "../shared/array-index-key.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -294,7 +294,6 @@ import {
 import { openCarrierDefinePlan } from "./empty-object-literal.js";
 import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
 import {
-  makeIrConstNumberValue,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrPrimitiveExpressionClassifier,
   type IrPrimitiveExpressionFamily,
@@ -1953,7 +1952,6 @@ export function lowerFunctionAstToIr(
     generatorBufferSlot,
     checker: options.checker,
     oracle: options.oracle,
-    constNumberValue: options.checker && makeIrConstNumberValue(options.checker),
     // #4177 — outer function only; lifted-closure contexts deliberately omit
     // it (see the LowerCtx field doc).
     latticeParamFacts: collectLatticeParamFacts(fn, params),
@@ -3199,8 +3197,6 @@ interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLow
   readonly checker?: ts.TypeChecker;
   /** (#4218) Backend-selected oracle threaded from AstToIrOptions (see there). */
   readonly oracle?: TypeOracle;
-  /** (#7106) The number a `const` binding holds (`makeIrConstNumberValue`): built once per function, shared by nested bodies. */
-  readonly constNumberValue?: (expr: ts.Expression) => number | undefined;
   /**
    * #4177 — the enclosing function's OWN never-written parameter facts from
    * the SAME signature resolution selection claimed the function with,
@@ -6883,12 +6879,11 @@ interface ElementSlot {
  * negative for a key that names no element), together with the counted-loop
  * proof that lets the caller read or write unchecked. The key needs no runtime
  * exactness test when that proof holds, it is int32-valued (`isI32PureExprIR`),
- * or it is a static array index: a literal, or a `const` bound to one
- * (`constNumberValue`). Not a number literal TYPE, which the selector refuses
- * on: narrowing makes it wrong after a call that changes the value. An index
- * past the i32 range saturates either way, so its write traps in the
- * grow-store, as on main. The selector already refused a key that names a
- * property (`isLegacyOnlyVecKey`).
+ * or it is a static array index: a literal, or a `const` bound to one through
+ * the oracle (`constBindingNumber`; `staticElementKey` says why not the
+ * literal type). An index past the i32 range saturates either way, so its
+ * write traps in the grow-store, as on main. The selector already refused a
+ * key that names a property (`isLegacyOnlyVecKey`).
  */
 function lowerElementIndex(
   access: ts.ElementAccessExpression,
@@ -6900,8 +6895,13 @@ function lowerElementIndex(
   const scalar = asVal(keyType)?.kind;
   if (scalar !== "f64" && scalar !== "i32") rejectKey(`index must be number or bool (got ${describeIrType(keyType)})`);
   const proven = isProvenInBoundsIr(access, cx);
+  const oracle = cx.oracle;
   const staticIndex = isStaticArrayIndex(
-    staticElementKey(access.argumentExpression, (name) => cx.scope.has(name), cx.constNumberValue),
+    staticElementKey(
+      skipTransparentExpressions(access.argumentExpression),
+      (id) => cx.scope.has(id.text),
+      oracle && ((inner) => constBindingNumber(inner, oracle)),
+    ),
   );
   const integral =
     proven || staticIndex || isI32PureExprIR(access.argumentExpression, cx.i32PureNames, cx.provenCharReads);
@@ -17094,7 +17094,6 @@ function liftNestedFunction(
     funcKind: "regular",
     checker: cx.checker,
     oracle: cx.oracle,
-    constNumberValue: cx.constNumberValue,
     numericLocalScalarForDecl: cx.numericLocalScalarForDecl,
     allocRegistry: cx.allocRegistry,
   };
@@ -17292,7 +17291,6 @@ function liftClosureBody(
     funcKind: "regular",
     checker: cx.checker,
     oracle: cx.oracle,
-    constNumberValue: cx.constNumberValue,
     numericLocalScalarForDecl: cx.numericLocalScalarForDecl,
     allocRegistry: cx.allocRegistry,
   };

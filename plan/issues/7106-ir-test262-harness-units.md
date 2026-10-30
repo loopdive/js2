@@ -67,8 +67,6 @@ func-budget-allow:
   - src/ir/select.ts::isPhase1StatementListInScope
   - src/ir/from-ast.ts::lowerPropertyAccess
   - src/ir/select.ts::scanExprInner
-  # 2026-10-30 (vector element keys, review round 5): +1, the `const` key
-  # reader built once per function (`constNumberValue`)
   - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/lower-generic.ts::emitInstrTree
@@ -113,11 +111,12 @@ loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/lower-generic.ts
   - src/ir/runtime/verify.ts
-  # 2026-10-30 (vector element keys, review rounds 1-5): +26,
+  # 2026-10-30 (vector element keys, review rounds 1-6): +31,
   # `isPhase1ElementKey`, the one key gate the element read, store and compound
   # arms share (it needs `isPhase1Expr`, `shapeNo` and the selection options,
-  # private to the selector), and the `numberLiteralTypeValue` option it reads,
-  # whose doc says only a refusal may rest on a narrowed type (round 5)
+  # private to the selector), the `numberLiteralTypeValue` option it reads, and
+  # the `isGlobalBinding` option that lets a module's `const NaN = 1` shadow
+  # the global in the key (round 6)
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
@@ -128,14 +127,13 @@ loc-budget-allow:
   - src/codegen/dyn-read.ts
   - src/codegen/fnctor-escape-gate.ts
   - src/codegen/expressions/new-super.ts
-  # 2026-10-30 (vector element keys, review rounds 2-5): +76,
+  # 2026-10-30 (vector element keys, review rounds 2-6): +45,
   # `makeIrCheckerSelectionOptions`, the one factory every IR selection planner
   # spreads (it replaced four hand-built option sets, so `codegen/index.ts`,
-  # `ir/integration.ts` and the linear backend shrink), and two key readers
-  # beside its sibling checker factories: the literal TYPE the selector refuses
-  # on (`numberLiteralTypeValue`) and, from round 5, the number a `const`
-  # binding holds, the only value the element lowering trusts
-  # (`makeIrConstNumberValue`)
+  # `ir/integration.ts` and the linear backend shrink), the key's literal TYPE
+  # reader the selector refuses on (`numberLiteralTypeValue`) beside its
+  # sibling checker factories, and the ambient predicate's `"no-user"` mode
+  # behind `isGlobalBinding` (round 6)
   - src/ir/module-bindings.ts
 ---
 
@@ -2520,16 +2518,18 @@ select where only legacy's named-key route can.
    select.** `staticElementKey` (`src/shared/array-index-key.ts`) reads the
    key's value before runtime: a literal (`literalElementKey`, beside it: a
    numeric literal under unary `+`/`-`, `true`, `false`, `null`, `void …`, an
-   unshadowed `undefined` / `NaN` / `Infinity`), else, through type-erased
-   casts, what the caller's `(expr) => number | undefined` reader gives. The
-   selector's reader is the number literal type (`numberLiteralTypeValue`,
-   `const k = 0.5`). `isLegacyOnlyVecKey` refuses a static value that is not
-   an array index, and any boolean (`classifyDeclaredPrimitiveExpression`): a
-   NAMED property, which only legacy's #4247/#4556 named-key route reads and
-   writes. Narrowing can make the type wrong (`if (o.k === 1) { o.set(); a[o.k] }`),
-   but a refusal on it is safe: legacy's key lowering reads no types, so it
-   handles such a key from its runtime value. A static array index of any size
-   stays, for reads and writes alike (point 2).
+   unshadowed `undefined` / `NaN` / `Infinity`), else what the caller's
+   `(key) => number | undefined` reader gives; the caller unwraps the key's
+   type-erased casts once. The selector's reader is the number literal type
+   (`numberLiteralTypeValue`, `const k = 0.5`), and a name is the global only
+   when the checker finds no user declaration for it (`isGlobalBinding`, so a
+   module's `const NaN = 1` shadows it). `isLegacyOnlyVecKey` refuses a static
+   value that is not an array index, and any boolean
+   (`classifyDeclaredPrimitiveExpression`): a NAMED property, which only
+   legacy's #4247/#4556 named-key route reads and writes. Narrowing can make
+   the type wrong, but a refusal on it is safe (`staticElementKey`'s doc says
+   why). A static array index of any size stays, for reads and writes alike
+   (point 2).
    `isPhase1ElementKey` (`select.ts`) applies it only when the checker-backed
    `isArrayExpression` says the receiver is an Array or tuple, and is the one
    key gate for the element read arm, the three `=` store arms and the compound
@@ -2547,15 +2547,15 @@ select where only legacy's named-key route can.
    branch). Its cold arm (`inexactVecIndex`) keeps the saturated index for an
    integer key below 2^32 − 1: 2^31 − 1 for an array index past the i32 range,
    so a read misses and a store traps in the grow-store as on main, and −2^31
-   below it, negative like the -1 every other key gets. The
-   test is skipped for a key proven integral: the counted-loop pair,
-   `isI32PureExprIR`, or a static array index. Static here means a literal or
-   a `const` bound to one, directly or through another such `const`
-   (`makeIrConstNumberValue`, `module-bindings.ts`, built once per function as
-   `LowerCtx.constNumberValue`). Never the literal type: a call can change a
-   narrowed value, and `const k = o.k` copies the narrowed type.
-   `i32.trunc_sat_f64_s` saturates a static index past the i32 range, so its
-   write traps in the grow-store exactly as on main.
+   below it, negative like the -1 every other key gets. The test is skipped
+   for a key proven integral: the counted-loop pair, `isI32PureExprIR`, or a
+   static array index. Static here means a literal or a `const` bound to one,
+   directly or through another such `const`, never an ambient
+   `declare const` (`constBindingNumber`, beside `staticElementKey`, which
+   walks the chain through the type oracle's `constInitializerOf`). Never the
+   literal type: a call can change a narrowed value, and `const k = o.k`
+   copies the narrowed type. `i32.trunc_sat_f64_s` saturates a static index
+   past the i32 range, so its write traps in the grow-store exactly as on main.
 3. **A dynamic consumer gets `undefined`.** For a dynamic hint on a numeric vec
    (f64, or #3734 narrowed i32), `emitUndefinedAwareVecGet` yields the boxed
    element, or `undefined` out of range and for an f64 marker slot. The
@@ -2623,6 +2623,12 @@ Reuse, and duplicates removed:
   a literal or a literal type, and `lowerElementIndex` skips the runtime test
   and the store guard on a literal or a `const` bound to one. The record type
   is named once, `ElementKeyValue`.
+- The `const` chain walk (`constBindingNumber`) reads the type oracle's
+  `constInitializerOf` (#869) instead of a third raw-checker `seen`-set walker
+  in `module-bindings.ts`, so the selected oracle backend answers it.
+- `emitF64IsIntegral` (`numeric-slot-coercion.ts`) is the one f64
+  integrality test: the cold arm and `remainder-fast-path.ts`'s integer-range
+  guard share it, with the same instructions as before.
 - The stale orphan doc comment above `lowerElementStore` is replaced by
   `lowerElementIndex`.
 
@@ -2793,7 +2799,42 @@ A fresh delta review of `226655b496` asked for changes, no blockers:
    `literalElementKey` in `src/shared/array-index-key.ts`, with a plain
    `(expr) => number | undefined` reader; the record type is named once,
    `ElementKeyValue`. The lowering's reader is built once per function
-   (`LowerCtx.constNumberValue`), not per element access.
+   (`LowerCtx.constNumberValue`), not per element access (replaced in round
+   6).
+
+### Review round 6 (PR #6989, 2026-10-30)
+
+A fresh review of `37ebe46954`, merged with main as `9593662a2f`, approved
+with nits; correctness clean:
+
+1. **The `const` reader duplicated the oracle.** `makeIrConstNumberValue`
+   re-walked `checker.getSymbolAtLocation` where the type oracle already
+   answers `constInitializerOf`, past the selected oracle backend, as the
+   third `seen`-set const walker in `module-bindings.ts`; and
+   `LowerCtx.constNumberValue` bought nothing (stateless, a fresh set per
+   call) for a context field, two lift-site copies and a line in
+   `lowerFunctionAstToIr`. Now `constBindingNumber` beside `staticElementKey`
+   walks the chain through `cx.oracle`, and the factory, the field and its
+   copies are gone. It refuses an ambient `declare const K = 1`: the oracle's
+   checker backend hands that initializer back (measured), although its doc
+   excludes ambient consts.
+2. **A module's `const NaN = 1` was read as the global.** The selector's
+   shadowing test saw only local names, so `a[NaN]` with a module-level
+   `const NaN = 1` (or `const` / `let Infinity = 1`) was refused as the global
+   `NaN`, and legacy then answered the stores with 330 and the `a[Infinity]`
+   read with NaN, where node and main's IR give 317 and 20. A name now counts
+   as the global only when the checker finds no
+   user declaration for it (`isGlobalBinding`, the ambient predicate's new
+   `"no-user"` mode, which also covers the declaration-less `undefined`).
+3. **Perf restated** with the review's reproduction ("Results, review round
+   5").
+4. **Round 5's follow-up 13 folded:** `emitF64IsIntegral` is the one
+   integrality test; the remainder guard emits the same instructions as before
+   (bytes below). Follow-up 13 now records the oracle's ambient gap (point 1).
+5. **One explanation:** why only a refusal may rest on the literal type is
+   now in `staticElementKey`'s doc alone; the other four places point to it.
+   The key is unwrapped once by the caller, and `literalElementKey` /
+   `staticElementKey` take it unwrapped (a unary operand is unwrapped inside).
 
 ### Results
 
@@ -2867,6 +2908,38 @@ sites).
   post-claim demotes on main and here alike. Both are outside this change; the
   string case is follow-up 6.
 
+### Results, review round 6 (base: main `a3d9b0c766`; measured 2026-10-30)
+
+- `tests/issue-7106-vector-index-semantics.test.ts`: 53 cases. New this
+  round: a module-level `const NaN = 1`, `let Infinity = 1` and
+  `const Infinity = 1` key is IR-claimed and gives node's 317, 317 and 20 on
+  both lanes; a `const` chain to a literal index skips the store guard like
+  the literal does; and `constBindingNumber` follows a chain through casts and
+  a user `const NaN = 2`, and gives nothing for `declare const`, a `const`
+  bound to it, or a `let`.
+- The review's probes (`.tmp/review6`: `c1`–`c4`, `k1`, `p1`–`p10`; 926 rows)
+  rerun on this tree against the review's own run of `9593662a2f`: the eight
+  module-shadowing rows (`c1`, `c2`) go from worse than main to node's answer;
+  nothing else changes. The rows still worse than main are the follow-up 2
+  class the review accepted: `k1`'s runtime `NaN` store read back, and `p10`'s
+  `Half` read-back.
+- Byte identity: against main, 197 of 197 identical under
+  `experimentalIR: false` on both lanes, and with the IR on 195 of 197, the
+  two changed compiles changing only `fdow` and `quicksort`. Against
+  `9593662a2f` with the IR on, 197 of 197 identical on both lanes; a module
+  with a guarded `%` on both operands and a cold-arm key is byte-identical
+  too, so folding the integrality test changed no instruction.
+- test262, the element-access subset (920 files: the 877 ES5 and 69
+  non-index-key files), main `a3d9b0c766` against this tree, no flips on
+  either lane: 875 pass / 25 fail / 20 compile errors on standalone and on gc
+  (877 ES5: 836 / 21 / 20; 69 non-index: 65 / 4 / 0).
+- Gates, run bare with `LOC_GATE_BASE` at main `a3d9b0c766`: LOC, function,
+  coercion sites, oracle, import cycles, the boundaries inventory, issue ids,
+  lint, format, typecheck, IR fallbacks and dead exports all pass.
+  `test:changed-root`: the four changed root test files, 175 cases, pass.
+  Equivalence was not rerun: nothing outside the element-key path changed
+  but the remainder guard's integrality test, whose output is byte-identical.
+
 ### Results, review round 5 (base: main `a514946a34`; measured 2026-10-30)
 
 - `tests/issue-7106-vector-index-semantics.test.ts`: 50 cases, standalone and
@@ -2920,15 +2993,20 @@ sites).
 
   | Ratio | gc, `-O0` | standalone, `-O0` | gc, `-O4` | standalone, `-O4` |
   |---|---|---|---|---|
-  | this change / main | 1.22–1.35 | 1.25 | 1.14–1.22 | 1.16–1.29 |
-  | without the runtime key test / main | 0.98–1.09 | 0.95–1.01 | 0.92–1.01 | 0.95–1.08 |
+  | this change / main (round-6 review, 2–3 runs) | 1.23–1.24 | 1.23–1.27 | 1.23–1.25 | 1.24–1.30 |
+  | this change / main (these runs) | 1.22–1.35 | 1.25 | 1.14–1.22 | 1.16–1.29 |
+  | without the runtime key test / main (round-6 review) | 0.98–1.01 | 0.98–1.02 | 1.02–1.08 | 1.00–1.10 |
+  | without the runtime key test / main (these runs) | 0.98–1.09 | 0.95–1.01 | 0.92–1.01 | 0.95–1.08 |
   | `226655b496` (`select`) / main | 1.35–1.43 | 1.36–1.40 | 1.27–1.46 | 1.34–1.45 |
   | this change / `226655b496` | 0.91–0.95 | 0.89–0.92 | 0.84–0.90 | 0.86–0.89 |
 
+  In short: `quicksort` runs about 1.23–1.30× main's time at `-O4` on both
+  lanes, and the runtime key test is about 24 % of it on this benchmark (this
+  change against the test-free variant: 1.14–1.26× in the review's runs).
   "Without the runtime key test" is this tree with `integral` forced true in
   `lowerElementIndex`. The branch removes 17–55 % of `226655b496`'s overhead
-  (30–50 % in most runs); the review measured 35–45 % and a test-free bound of
-  0.88–1.06×. Follow-up 12 records the proofs that would remove the rest.
+  (30–50 % in most runs; the round-5 review measured 35–45 %). Follow-up 12
+  records the proofs that would remove the rest.
 
 - Equivalence, four shards: 20 failing / 2,455 passing, all in the baseline
   (as in rounds 3 and 4). `test:changed-root`: the four changed root test
@@ -3147,8 +3225,8 @@ sites).
 12. **The runtime key test costs hot loops.** An unproven f64 key pays
     `i32.trunc_sat_f64_s`, `f64.convert_i32_s`, `f64.eq` and a branch (the
     cold arm runs only for a key that is no int32); `quicksort` has ten such
-    keys and runs 1.14–1.35× main's time, 0.92–1.09× without the test (see
-    "Results, review round 5"). A simple counted loop pays nothing:
+    keys and runs about 1.23–1.30× main's time at `-O4`, about 24 % of it the
+    test (see "Results, review round 5"). A simple counted loop pays nothing:
     `for (let i = 0; i < n; i++)` reads and stores `a[i]` with no test, whether
     `n` is a parameter or `a.length` (measured, both lanes): the counter is
     int32 (`isI32PureExprIR`) or proven in bounds. Integrality proofs would
@@ -3160,10 +3238,8 @@ sites).
     pays nothing (measured). The proof has to cover the seed, a parameter here,
     so it needs a caller-side fact or a one-time entry check that switches to
     the unchecked body.
-13. **One f64 "integer below a bound" test, spelled twice.**
-    `inexactVecIndex` (`array-element-lowering.ts`, round 5) and
-    `remainder-fast-path.ts`'s `addIntegerRangeGuard` both emit `f64.trunc` /
-    `f64.eq` / `f64.lt` (the remainder adds `f64.ge`) for an integer below a
-    bound. One helper would serve both, but it reorders the `i32.and`s of a
-    `%` that guards both operands, which changes that IR output, so it is a
-    change of its own.
+13. The type oracle's `constInitializerOf` doc excludes ambient consts, but
+    its checker backend returns `declare const K = 1`'s initializer (measured
+    round 6); `constBindingNumber` refuses ambient declarations itself. Fixing
+    the oracle changes what legacy's const folds read, so it is a change of
+    its own.

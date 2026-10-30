@@ -20,6 +20,7 @@ import type { I32PureNames } from "./i32-pure-bitwise.js";
 import { JS_TAG_IDS } from "./js-tag-domain.js";
 import type { IrVecLowering } from "./lower.js";
 import { asVal, irDynamic, irTypeEquals, irVal, irVec, type IrConst, type IrType, type IrValueId } from "./nodes.js";
+import { emitF64IsIntegral } from "./numeric-slot-coercion.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import type { ValType } from "./types.js";
 import { irVecElemSetSymbol } from "./vector-runtime.js";
@@ -592,7 +593,7 @@ export function emitVecIndex(
  * 2^32 − 1 and up) is -1.
  */
 function inexactVecIndex(key: IrValueId, index: IrValueId, b: IrFunctionBuilder): IrValueId {
-  const integral = b.emitBinary("f64.eq", b.emitUnary("f64.trunc", key, IR_F64), key, IR_I32);
+  const integral = emitF64IsIntegral(b, key);
   const limit = b.emitConst({ kind: "f64", value: MAX_ARRAY_INDEX_EXCLUSIVE }, IR_F64);
   const belowLimit = b.emitBinary("f64.lt", key, limit, IR_I32);
   const none = b.emitConst({ kind: "i32", value: -1 }, IR_I32);

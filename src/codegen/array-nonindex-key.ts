@@ -185,7 +185,7 @@ function resolveNumericKey(ctx: CodegenContext, fctx: FunctionContext, raw: ts.E
   const key = skipTransparentExpressions(raw);
 
   // A numeric literal (under unary `+`/`-`) and the unshadowed `NaN` / `Infinity`.
-  const literal = literalElementKey(key, (name) => !isUnshadowedGlobal(fctx, name))?.value;
+  const literal = literalElementKey(key, (id) => !isUnshadowedGlobal(fctx, id.text))?.value;
   if (typeof literal === "number") return literal;
 
   if (ts.isPrefixUnaryExpression(key)) {
@@ -292,7 +292,7 @@ export function nonArrayIndexNumericKey(
   // the STRING `"true"`, `"null"`, …, never index 1 or 0. The vec lane coerced
   // them to i32 and wrote a real element (`x[null] = 0` made `x[0]` 0 and
   // `x["null"]` undefined; test262 `built-ins/Array/S15.4_A1.1_T5`).
-  const literal = literalElementKey(inner, (name) => !isUnshadowedGlobal(fctx, name));
+  const literal = literalElementKey(inner, (id) => !isUnshadowedGlobal(fctx, id.text));
   if (literal !== undefined && typeof literal.value !== "number") return String(literal.value);
   // (#4556) `new Boolean(<const>)` — the wrapper twin of the `new Number` /
   // `new String` arms in the key resolvers: ToPropertyKey runs ToPrimitive
