@@ -62,6 +62,7 @@ import {
 import { resolveConstantExpression } from "./literals.js";
 import { isRangeProvenArrayIndex, tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { highArrayIndexLiteralI32 } from "./vec-sparse-index.js";
+import { isArrayIndexNumber, literalElementKey, MAX_ARRAY_INDEX_EXCLUSIVE } from "../shared/array-index-key.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 import { VEC_PROP_GET, VEC_PROP_SET } from "./vec-props.js";
 import { emitToNumber } from "./coercion-engine.js";
@@ -137,19 +138,6 @@ export function isDynamicPropertyKeyExpression(
   return ts.isStringLiteral(inner) && !isArrayIndexString(inner.text) && !isNamedNumericOrBooleanSpelling(inner.text);
 }
 
-/** 2^32 − 1 — the exclusive upper bound on array indices (§10.4.2.2). */
-const MAX_ARRAY_INDEX_EXCLUSIVE = 4294967295;
-
-/**
- * `true` when `n`'s property key (`ToString(n)`) is an array index.
- *
- * `-0` counts: `ToString(-0)` is `"0"`, and `0` is an index. `Number.isInteger`
- * accepts `-0` and `-0 >= 0` holds, so the plain arithmetic is already right.
- */
-function isArrayIndexNumber(n: number): boolean {
-  return Number.isInteger(n) && n >= 0 && n < MAX_ARRAY_INDEX_EXCLUSIVE;
-}
-
 /**
  * (#2593, relocated verbatim from `expressions/assignment.ts` by #4247)
  * Recover the typed-array VIEW NAME of an element-access receiver from its TS
@@ -192,7 +180,9 @@ function isUnshadowedGlobal(fctx: FunctionContext, name: string): boolean {
 function resolveNumericKey(ctx: CodegenContext, fctx: FunctionContext, raw: ts.Expression): number | undefined {
   const key = skipTransparentExpressions(raw);
 
-  if (ts.isNumericLiteral(key)) return Number(key.text);
+  // A numeric literal (under unary `+`/`-`) and the unshadowed `NaN` / `Infinity`.
+  const literal = literalElementKey(key, (name) => !isUnshadowedGlobal(fctx, name))?.value;
+  if (typeof literal === "number") return literal;
 
   if (ts.isPrefixUnaryExpression(key)) {
     const inner = resolveNumericKey(ctx, fctx, key.operand);
@@ -200,11 +190,6 @@ function resolveNumericKey(ctx: CodegenContext, fctx: FunctionContext, raw: ts.E
     if (key.operator === ts.SyntaxKind.MinusToken) return -inner;
     if (key.operator === ts.SyntaxKind.PlusToken) return inner;
     return undefined;
-  }
-
-  if (ts.isIdentifier(key) && isUnshadowedGlobal(fctx, key.text)) {
-    if (key.text === "NaN") return NaN;
-    if (key.text === "Infinity") return Infinity;
   }
 
   if (
@@ -311,21 +296,12 @@ export function nonArrayIndexNumericKey(
   // `true as any` must decide identically to the bare `true` the equivalent JS
   // writes.
   const inner = skipTransparentExpressions(key);
-  if (inner.kind === ts.SyntaxKind.TrueKeyword) return "true";
-  if (inner.kind === ts.SyntaxKind.FalseKeyword) return "false";
-  // (#4556) `null` / `undefined` element keys. ToPropertyKey(null) is the
-  // STRING `"null"`, not index 0 — but the vec lane coerced them to i32 and
-  // wrote element 0 (`x[null] = 0` made `x[0]` 0 and `x["null"]` undefined;
-  // test262 `built-ins/Array/S15.4_A1.1_T5`). Same failure shape as the
-  // boolean-literal arm directly above, same fix.
-  if (inner.kind === ts.SyntaxKind.NullKeyword) return "null";
-  if (
-    inner.kind === ts.SyntaxKind.UndefinedKeyword ||
-    ts.isVoidExpression(inner) ||
-    (ts.isIdentifier(inner) && inner.text === "undefined" && isUnshadowedGlobal(fctx, "undefined"))
-  ) {
-    return "undefined";
-  }
+  // `true` / `false`, and (#4556) `null` / `undefined` / `void …`: the key is
+  // the STRING `"true"`, `"null"`, …, never index 1 or 0. The vec lane coerced
+  // them to i32 and wrote a real element (`x[null] = 0` made `x[0]` 0 and
+  // `x["null"]` undefined; test262 `built-ins/Array/S15.4_A1.1_T5`).
+  const literal = literalElementKey(inner, (name) => !isUnshadowedGlobal(fctx, name));
+  if (literal !== undefined && typeof literal.value !== "number") return String(literal.value);
   // (#4556) `new Boolean(<const>)` — the wrapper twin of the `new Number` /
   // `new String` arms in the key resolvers: ToPropertyKey runs ToPrimitive
   // first, so the key is `"true"` / `"false"` (`S15.4_A1.1_T6`).

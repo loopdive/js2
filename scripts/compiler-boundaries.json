@@ -16827,6 +16827,22 @@
       "path": "src/runtime/wasmgc/promise/promise-layout.ts",
       "state": "clean",
       "layer": "native-runtime"
+    },
+    {
+      "path": "src/shared/array-index-key.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/shared/transparent-expressions.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     }
   ]
 }

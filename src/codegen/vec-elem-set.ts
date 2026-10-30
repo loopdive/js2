@@ -8,16 +8,25 @@
 // DEFINED function appended at mint time, never an import, so no existing
 // funcIdx shifts).
 //
+// Not IR-only: legacy reaches the same helper for rest-parameter collection
+// (`codegen/index.ts`), the overlay stores (`vec-overlay.ts`), the vec arm of
+// `__extern_set` (`object-runtime.ts`) and self-hosted stdlib bodies
+// (`stdlib-selfhost.ts`), on both lanes. Steps 2 and 3 below therefore apply to
+// those callers too: a negative index no longer traps there either, and an
+// f64 grow gap holds a marker on gc as well, exactly what legacy's inline
+// store writes there. The host bridge's `__vec_get` maps both markers to
+// `undefined` (#3315, #4491 T11), and the flag gating its absence-marker arm
+// (`f64HoleMarkerEmitted`) is set at finalize for every module with an f64 vec
+// BEFORE `__vec_get` is built (`vec-access-exports.ts`), so a helper
+// materialized later cannot leave a marker the bridge does not map.
+//
 // Semantics — legacy parity (JS `arr[i] = v` on a growable vec):
 //   1. Null receiver → throw TypeError (`ref.null.extern` payload on the
 //      shared `__exn` tag) — the legacy null-guard shape (#441).
-//   2. (#7106) idx above SPARSE_INDEX_CEILING, read unsigned → no-op. That
-//      covers every negative idx, including the -1 the IR passes for a key
-//      that is not an array index, and every index no backing array may grow
-//      to hold; growing to it trapped ("array element access out of bounds").
-//      Legacy's inline store skips the same element write; it also moves
-//      `length` for a large valid index, which this helper does not, because
-//      the IR's reads bound by `length` alone.
+//   2. (#7106) A negative idx is a no-op: the -1 the IR passes for a key that
+//      is not an array index, and every negative int32. Growing for it trapped
+//      ("array element access out of bounds"). The linear and Porffor `set`
+//      runtimes drop a negative index the same way.
 //   3. idx >= capacity → grow the backing array to
 //      `max(idx + 1, oldCap * 2, 4)`, copy the old contents, and point the
 //      vec's `data` field at the new array (legacy grow sequence,
@@ -38,7 +47,6 @@ import { ensureExnTag } from "./registry/imports.js";
 import { ensureHoleType, holeSentinelInstrs } from "./array-holes.js";
 import { buildVectorGrowStoreBody, type VectorGrowStoreGapFill } from "../runtime/wasmgc/values/vector-grow-store.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js";
-import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js";
 
 /** Reserved name prefix; the suffix is the vec STRUCT typeIdx. */
@@ -226,11 +234,11 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
     typeIdx: sigIdx,
     locals,
     body: [
-      // Step 2: `if (idx >u SPARSE_INDEX_CEILING && vec !== null) return`
-      // (param 0 = vec, 1 = idx). A null receiver still reaches the TypeError.
+      // Step 2: `if (idx < 0 && vec !== null) return` (param 0 = vec,
+      // 1 = idx). A null receiver still reaches the TypeError.
       { op: "local.get", index: 1 },
-      { op: "i32.const", value: SPARSE_INDEX_CEILING },
-      { op: "i32.gt_u" },
+      { op: "i32.const", value: 0 },
+      { op: "i32.lt_s" },
       { op: "local.get", index: 0 },
       { op: "ref.is_null" },
       { op: "i32.eqz" },

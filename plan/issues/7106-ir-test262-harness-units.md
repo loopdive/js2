@@ -100,6 +100,9 @@ loc-budget-allow:
   # 2026-10-29 (#6972 merge-queue root cause C): `activeBufferBranched`, the
   # buffer-end query the shared body-statement lister stops on (from-ast.ts
   # nets -1: two inline guards folded into it)
+  # 2026-10-30 (vector element keys, review round): +17, `emitIfElseValue`, the
+  # value-producing `if` four sites shared as copies (two element reads,
+  # `vec-search-join.ts`, `boolean-brand.ts`); those copies are deleted
   - src/ir/builder.ts
   - src/ir/core/nodes.ts
   - src/ir/core/dialect/js.ts
@@ -107,9 +110,9 @@ loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/lower-generic.ts
   - src/ir/runtime/verify.ts
-  # 2026-10-30 (vector element keys): +16, `isPhase1ElementKey`, the one key
-  # gate the element read, store and compound arms share; it needs
-  # `isPhase1Expr` and `shapeNo`, which are private to the selector
+  # 2026-10-30 (vector element keys): +20, `isPhase1ElementKey`, the one
+  # key gate the element read, store and compound arms share; it needs
+  # `isPhase1Expr`, `shapeNo` and the selection options, private to the selector
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
@@ -2499,31 +2502,45 @@ and the dynamic-consumer read costs nothing on the measured corpora.
 Lower with JS semantics where the vec lane can hold the answer; refuse at
 select where only legacy's named-key route can.
 
-1. **A constant non-index key is refused at select.** `isConstantNonVecIndexKey`
-   (`select-expression-structure.ts`, beside `isAffineThreeDeepElementAccess`)
-   matches a numeric literal (optional `+`/`-`) that is not an integer in
-   `[0, 2^31)`, `true`, `false`, `null`, `void …`, and an unshadowed
-   `undefined` / `NaN` / `Infinity`. `isPhase1ElementKey` (`select.ts`) is the
-   one key gate for the element read arm, the three `=` store arms and the
-   compound target, replacing five direct `isPhase1Expr(key)` calls. Legacy's
-   #4247/#4556 route reads and writes those named properties; the vec lane
-   cannot.
+1. **On an Array or tuple receiver, a constant key the vec lane does not own is
+   refused at select.** `literalElementKey` (`src/shared/array-index-key.ts`)
+   reads the value of a key spelled as a literal: a numeric literal under unary
+   `+`/`-`, `true`, `false`, `null`, `void …`, and an unshadowed `undefined` /
+   `NaN` / `Infinity`. `isConstantNonVecIndexKey`
+   (`select-expression-structure.ts`) refuses any such value that is not an
+   array index up to `SPARSE_INDEX_CEILING` (2^24): a non-index is a named
+   property, and above the ceiling legacy keeps a valid index sparse (only
+   `length` moves) instead of growing the backing array. `isPhase1ElementKey`
+   (`select.ts`) applies it only when the selector's checker-backed
+   `isArrayExpression` says the receiver is an Array or tuple, and is the one
+   key gate for the element read arm, the three `=` store arms and the compound
+   target. Legacy's #4247/#4556 named-key route and its sparse tail own the
+   refused accesses; any other receiver keeps the key, because the dynamic arm
+   reads a named key itself.
 2. **A runtime key goes through `emitVecIndex`** (`array-element-lowering.ts`):
-   truncate, keep the result only if converting it back is exact, else -1. -1
-   fails every unsigned bounds check and every vec store helper drops it.
-   `lowerElementIndex` (`from-ast.ts`) lowers the key once for the read, store,
-   compound and logical-vector arms (four inline copies folded into one). The
-   runtime test is skipped for a key proven integral: the counted-loop pair or
-   `isI32PureExprIR`.
+   truncate, keep the result only if converting it back is exact, else -1. A
+   boolean-branded key is -1 outright: `a[true]` is the property `"true"`, not
+   element 1. -1 fails every unsigned bounds check, and every vec store helper
+   drops it as a negative index. `lowerElementIndex` (`from-ast.ts`) lowers the
+   key once for the read, store, compound and logical-vector arms (four inline
+   copies folded into one) and returns the counted-loop proof with it, so no
+   caller recomputes `isProvenInBoundsIr`. The runtime test is skipped for a
+   key proven integral: the counted-loop pair or `isI32PureExprIR`.
 3. **A dynamic consumer gets `undefined`.** For a dynamic hint on a numeric vec
    (f64, or #3734 narrowed i32), `emitUndefinedAwareVecGet` yields the boxed
-   element, or `undefined` out of range and for an f64 marker slot. Numeric
+   element, or `undefined` out of range and for an f64 marker slot. The
+   logical-vector read arm uses the same read for an f64 element. Numeric
    consumers keep the NaN read, the legacy-matching answer.
-4. **The store helper never traps** (`codegen/vec-elem-set.ts`). An index above
-   `SPARSE_INDEX_CEILING`, unsigned (so every negative index too), is a no-op
-   for a non-null receiver: the element skip legacy's inline store makes
-   (#4491 wave 4). The f64 grow gap gets legacy's marker on every lane (absence
-   where presence is tracked, else undefined) instead of zero on gc.
+4. **The store helper never traps** (`codegen/vec-elem-set.ts`). A negative
+   index is a no-op for a non-null receiver, as in the linear and Porffor `set`
+   runtimes. Any other runtime index still grows the backing array, as on main,
+   so `a[n] = v` with `n = 2^24 + 1` makes `length` `n + 1`. The f64 grow gap
+   gets legacy's marker on every lane (absence where presence is tracked, else
+   undefined) instead of zero on gc. The helper is shared with legacy callers
+   (rest-parameter collection, `vec-overlay.ts`, the vec arm of `__extern_set`,
+   self-hosted stdlib bodies); the module header says so and why the bridge's
+   `__vec_get` cannot miss the marker (`f64HoleMarkerEmitted` is set at
+   finalize for every module with an f64 vec, before `__vec_get` is built).
 
 Reuse, and duplicates removed:
 
@@ -2534,14 +2551,54 @@ Reuse, and duplicates removed:
   constants) are gone. `shared/` keeps the ir↔runtime two-way edge count flat.
 - `isF64Hole` moves from `vec-search-join.ts` to `array-element-lowering.ts`;
   the search/join lowering and the new read share it.
-- `emitIfElseValue` (module-local) replaces the collect/collect/`emitIfElse`
-  boilerplate of the two bounds-checked reads and serves the new read.
+- `IrFunctionBuilder.emitIfElseValue` replaces the collect/collect/`emitIfElse`
+  boilerplate of the two bounds-checked reads, serves the new read, and folds
+  the same boilerplate in `vec-search-join.ts` (nullable string match) and
+  `boolean-brand.ts` (`lowerBooleanToString`); both byte-identical.
+- The literal key classifier is one function, `literalElementKey`, which
+  legacy's `array-nonindex-key.ts` (`resolveNumericKey`,
+  `nonArrayIndexNumericKey`) and the selector both call. The bounds stay
+  explicit beside it in `src/shared/array-index-key.ts`:
+  `MAX_ARRAY_INDEX_EXCLUSIVE`, `isArrayIndexNumber` (both moved from
+  `array-nonindex-key.ts`) and `SPARSE_INDEX_CEILING` (moved from
+  `vec-sparse-index.ts`, which re-exports it). `skipTransparentExpressions`
+  moves to `src/shared/transparent-expressions.ts` so the classifier can use it
+  without an ir→codegen edge; `codegen/shared.ts` re-exports it for its many
+  legacy importers. The selector's private `MAX_VEC_INDEX` is gone.
 - The stale orphan doc comment above `lowerElementStore` is replaced by
   `lowerElementIndex`.
 
 **Code-quality acceptance criterion:** one key gate in the selector, one key
-lowering in `from-ast.ts`, one marker definition and one marker predicate; no
-post-claim demote added; `from-ast.ts` shrinks (−28 lines).
+lowering in `from-ast.ts`, one literal key classifier and one set of index
+bounds shared by legacy and the IR, one marker definition and one marker
+predicate, one value-producing `if` helper; no post-claim demote added;
+`from-ast.ts` shrinks.
+
+### Review round (PR #6989, 2026-10-30)
+
+The adversarial review asked for changes; each finding and its fix:
+
+1. **Blocker: `a[20000000] = 3` left `length` at 1.** The first cut refused
+   only non-index constants and made the store helper drop every index above
+   `SPARSE_INDEX_CEILING`. Now the bound is the one shared constant: a
+   constant index above it is refused at select (legacy's sparse tail gives
+   `length` 20000001), and the helper's runtime guard drops only negative
+   indices (`i32.lt_s idx 0`), so a runtime index above the ceiling grows the
+   array as on main.
+2. **A boolean variable key wrote element 1 or 0.** `emitVecIndex` maps a
+   boolean-branded key to -1. `t(b)` below returns 1020 for both values.
+3. **Over-refusal.** `isPhase1ElementKey` refused a non-index constant on every
+   receiver; it now applies only to Array and tuple receivers, so
+   `function g(o) { return o[1.5]; }` stays IR.
+4. **Two classifiers.** Both legacy and the IR call `literalElementKey`; the
+   bounds live beside it (see "Reuse").
+5. `emitIfElseValue` is a builder method; the `vec-search-join.ts` and
+   `boolean-brand.ts` copies are folded into it.
+6. `lowerElementIndex` returns `{ index, proven }`.
+7. The logical-vector read arm gets the undefined-aware read for a dynamic
+   hint.
+8. `vec-elem-set.ts` documents its legacy callers; the `__vec_get` /
+   `f64HoleMarkerEmitted` order was checked and cannot desync (point 4 above).
 
 ### Results
 
@@ -2577,6 +2634,41 @@ post-claim demote added; `from-ast.ts` shrinks (−28 lines).
     `select` against -1). `binarySearch`'s `arr[mid]` does not: `mid` is
     int32-valued.
 
+### Results, review round (base: main `11dbff00a4`, measured 2026-10-30)
+
+- `tests/issue-7106-vector-index-semantics.test.ts`: 39 cases, standalone and
+  gc, 26 of them fail on main. New this round:
+  - a constant `a[20000000] = 3` is refused at select, and `length` is
+    20000001. Main also gave 20000001, but only by growing the backing array
+    densely to that size; the first cut gave 1;
+  - a runtime `a[n] = 3` with `n = 2^24 + 1` stays IR, and `length` is `n + 1`;
+  - with a boolean key, `t(b)` returns 1020 for both values (main: 1005 and
+    520), and `a[b]` reads NaN;
+  - `function g(o) { return o[1.5]; }` stays IR and reads the property `"1.5"`.
+- `issue-3518-logical-vector-lowering`: the logical arm's dynamic read. It
+  fails with the new arm removed.
+- `issue-3518-vector-grow-store-donor`: the guard pin is now
+  `i32.const 0; i32.lt_s`, and the `ensureVecElemSet` source hash is re-pinned.
+- test262 standalone (`runTest262File(…, 20000, "standalone")`), base sources
+  swapped in from main, same 1,220 files:
+  - 1,180-file sample: 1,068 pass / 82 fail / 30 CE, before and after;
+  - 877 ES5 element-access files: 836 / 21 / 20, before and after;
+  - 69 non-index-key files: 65 / 4, before and after;
+  - zero status flips.
+- test262 gc (`target` unset) on the 69 non-index-key files: 65 / 4 before and
+  after, zero flips.
+- Playground (13 examples × gc/standalone): 9 binaries identical, 17 changed,
+  compared function by function in the WAT. The changes are the same three
+  kinds as the first cut:
+  - `__vec_elem_set_*` gains the guard, now `local.get 1; i32.const 0;
+    i32.lt_s` (plus the f64 gap fill), +108 bytes per binary;
+  - `__extern_set` inlines one such helper;
+  - `quicksort` and `fdow` gain the key exactness test.
+- `a[b] + 1` with a boolean `b` and `return s[k]` into `any` on a string are
+  post-claim demotes on main and here alike. Both are outside this change; the
+  string case is follow-up 6.
+
+
 ### Left as follow-ups
 
 1. **f64 carriers cannot hold `undefined`.** Without a dynamic hint, an
@@ -2589,16 +2681,22 @@ post-claim demote added; `from-ast.ts` shrinks (−28 lines).
    `UNDEF_F64_BITS`. Needs a maybe-undefined f64 carrier in the IR. Refusing
    these consumers at select is not an option: `const tmp = arr[i]` is
    `quicksort`'s swap.
-2. **A runtime non-index key** (`a[i]` with `i = 0.5`) reads as absent and a
-   store to it is dropped; JavaScript reads and writes the named property.
-   Legacy's store truncates the key and writes `a[0]`. Needs a runtime
-   named-property path for vecs.
-3. A valid index above the backed ceiling (2^24 for a store, 2^31 for any key)
-   is dropped rather than stored as a sparse length.
+2. **A runtime non-index key** (`a[i]` with `i = 0.5`, or a boolean `b`) reads
+   as absent and a store to it is dropped; JavaScript reads and writes the
+   named property, so `a[b] = 5; a[b]` reads `undefined` where JavaScript reads
+   5. Legacy's store truncates a numeric key and writes `a[0]`; it routes a
+   boolean key through the property-key dispatch. Needs a runtime
+   named-property path for vecs, or a checker-backed boolean-key refusal in the
+   selector.
+3. A runtime index of 2^31 or more is dropped rather than stored as a sparse
+   length (`i32` carries the index).
 4. **#3734 narrowed i32 vecs zero-fill a grow gap**
    (`const a: number[] = []; a[0] = 1; a[3] = 3; a[1]` reads 0): the narrowing
    gate admits a plain store without proving it gap-free.
 5. `a[i] === undefined` on an unproven read still demotes after claim
    (`tryLowerUndefinedCompare`); the undefined-aware read could lower it.
-6. A boolean *variable* key reads index 0 or 1 (literal `true`/`false` keys are
-   refused at select).
+6. A string receiver read with a dynamic hint (`function f(s: string): any {
+   return s[k]; }`) demotes after claim for every key, `s[1]` and `s[i]` too
+   ("element access on string … not in slice 12"). Pre-existing on main and
+   independent of the key; the first cut's select refusal hid it only for
+   non-index constants, and the review scoped that refusal to the vec lane.

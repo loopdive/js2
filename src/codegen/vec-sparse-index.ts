@@ -56,15 +56,15 @@ import type { Instr } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
+import { MAX_ARRAY_INDEX_EXCLUSIVE, SPARSE_INDEX_CEILING } from "../shared/array-index-key.js";
 
 /**
  * Largest index whose element the store path will grow the backing `$data`
- * array to hold. Mirrors `SAFE_GROW_CEILING` in array-length-define.ts.
+ * array to hold. Mirrors `SAFE_GROW_CEILING` in array-length-define.ts. Defined
+ * in `shared/array-index-key.ts` (#7106), so the IR selector reads the same
+ * bound; re-exported for the legacy import sites.
  */
-export const SPARSE_INDEX_CEILING = 16777216;
-
-/** 2^32 - 1 — the one uint32 that is NOT an array index (§10.4.2.1). */
-const MAX_ARRAY_INDEX_EXCLUSIVE = 4294967295;
+export { SPARSE_INDEX_CEILING };
 
 /**
  * Allocate and set an i32 flag local: 1 when `idxLocal`, read as u32, names an

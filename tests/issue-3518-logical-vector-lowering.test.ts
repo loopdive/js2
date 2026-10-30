@@ -10,7 +10,15 @@ import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
 import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
 import { irUnitFuncRef, irRuntimeFuncRef } from "../src/ir/callable-bindings.js";
 import type { IrDirectCallLoweringPlan } from "../src/ir/ast-lowering-plans.js";
-import { forEachInstrDeep, irVal, irVec, type IrFunction, type IrInstr, type IrType } from "../src/ir/nodes.js";
+import {
+  forEachInstrDeep,
+  irDynamic,
+  irVal,
+  irVec,
+  type IrFunction,
+  type IrInstr,
+  type IrType,
+} from "../src/ir/nodes.js";
 import { IR_ASYNC_PROMISE_ALL_NATIVE_FN } from "../src/ir/async-semantic-runtime.js";
 
 type Vec = Extract<IrType, { kind: "vec" }>;
@@ -213,6 +221,19 @@ describe("source-bound logical vectors without physical resolution", () => {
       ]);
       expect(f.physical).not.toHaveBeenCalled();
     });
+
+  it("hands a dynamic consumer undefined for an out-of-range or marker read (#7106)", () => {
+    const f = fixture("function f(values: number[], index: number): any { return values[index]; }");
+    f.bind("values");
+    const rows = instructions(f.lower({ returnTypeOverride: irDynamic() }));
+    // Bounds test, then the marker test, then the boxed element or `undefined`.
+    expect(rows.filter((row) => row.kind === "binary" && row.op === "i32.lt_u")).toHaveLength(1);
+    expect(rows.filter((row) => row.kind === "unary" && row.op === "i64.reinterpret_f64")).toHaveLength(1);
+    expect(rows.filter((row) => row.kind === "box")).toHaveLength(1);
+    expect(rows.filter((row) => row.kind === "dyn.undefined")).toHaveLength(2);
+    expect(rows.filter((row) => row.kind === "vec.get")).toHaveLength(1);
+    expect(f.physical).not.toHaveBeenCalled();
+  });
 
   it("retains the proven counted-loop fast read without unchecked fallback elsewhere", () => {
     const f = fixture(

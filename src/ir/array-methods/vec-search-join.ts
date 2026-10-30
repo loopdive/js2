@@ -143,22 +143,12 @@ function emitMatch(
   if (kind === "string") {
     if (!stringElementNullable(receiver)) return b.emitStringEq(raw, needle, false);
     const isNull = b.emitUnary("ref.is_null", raw, I32);
-    let eq!: IrValueId;
-    const whenPresent = b.collectBodyInstrs(() => {
-      eq = b.emitStringEq(raw, needle, false);
-    });
-    let no!: IrValueId;
-    const whenHole = b.collectBodyInstrs(() => {
-      no = i32Const(b, 0);
-    });
-    return b.emitIfElse({
-      cond: isNull,
-      then: whenHole,
-      thenValue: no,
-      else: whenPresent,
-      elseValue: eq,
-      resultType: I32,
-    });
+    return b.emitIfElseValue(
+      isNull,
+      () => i32Const(b, 0),
+      () => b.emitStringEq(raw, needle, false),
+      I32,
+    );
   }
   const element = kind === "i32" ? b.emitUnary("f64.convert_i32_s", raw, F64) : raw;
   const eq = b.emitBinary("f64.eq", element, needle, I32);

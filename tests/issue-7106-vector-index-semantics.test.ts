@@ -8,8 +8,9 @@
 // `a[4294967295] = 5` trapped ("array element access out of bounds").
 //
 // Now every row either lowers with JS semantics or stays legacy from the
-// selector (a constant key that is not an array index takes legacy's named-key
-// route), and no runtime key reaches the grow-store helper as a truncation.
+// selector (on an array, a constant key that is not an array index up to the
+// sparse ceiling takes legacy's named-key or sparse route), and no runtime key
+// reaches the grow-store helper as a truncation.
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
@@ -110,6 +111,26 @@ describe("#7106 — IR vector element keys in function bodies", () => {
   }
 
   for (const target of TARGETS) {
+    it(`keeps a non-index constant key on a non-array receiver on the IR (${target})`, async () => {
+      // The select-time refusal is for the vec lane only: the dynamic arm reads
+      // the named property `"1.5"` itself.
+      const result = await compile(
+        `export function g(o) { return o[1.5]; }
+        export function h() { return (g({ "1.5": 7 }) === 7 ? 10 : 0) + (g({}) === undefined ? 1 : 0); }`,
+        {
+          fileName: "test.js",
+          allowJs: true,
+          skipSemanticDiagnostics: true,
+          trackIrOutcomes: true,
+          ...targetOptions(target),
+        },
+      );
+      expect(outcomeOf(result, "g")?.irBodyEmitted).toBe(true);
+      expect(((await instantiate(result)).exports.h as () => number)()).toBe(11);
+    }, 60_000);
+  }
+
+  for (const target of TARGETS) {
     it(`keeps a counted numeric loop over a[i] on the IR (${target})`, async () => {
       const result = await compileTs(
         `export function sum(a: number[]): number {
@@ -143,6 +164,42 @@ describe("#7106 — IR vector element keys in function bodies", () => {
       // A valid index the dense vec cannot back is dropped rather than
       // trapping; JavaScript would make `length` 2147483649 here.
       expect(store(2147483648)).toBe(102);
+    }, 60_000);
+
+    it(`keeps JS length for a constant index above the sparse ceiling, refused at select (${target})`, async () => {
+      // Legacy keeps a constant index above SPARSE_INDEX_CEILING sparse (only
+      // `length` moves); the vec lane would have to back every slot below it.
+      const result = await compileTs(
+        `export function f(): number { const a: number[] = [1]; a[20000000] = 3; return a.length; }`,
+        target,
+      );
+      expect(outcomeOf(result, "f")).toMatchObject({ kind: "unsupported", stage: "select" });
+      expect(postClaimErrorsOf(result, "f")).toEqual([]);
+      expect(((await instantiate(result)).exports.f as () => number)()).toBe(20000001);
+    }, 60_000);
+
+    it(`grows to a runtime index above the sparse ceiling (${target})`, async () => {
+      const result = await compileTs(
+        `export function f(n: number): number { const a: number[] = [1]; a[n] = 3; return a.length; }`,
+        target,
+      );
+      expect(outcomeOf(result, "f")?.irBodyEmitted).toBe(true);
+      expect(((await instantiate(result)).exports.f as (n: number) => number)(16777217)).toBe(16777218);
+    }, 60_000);
+
+    it(`never writes element 1 or 0 for a boolean key (${target})`, async () => {
+      const result = await compileTs(
+        `export function t(b: boolean): number { const a: number[] = [10, 20]; a[b] = 5; return a[0] * 100 + a[1]; }
+        export function read(b: boolean): number { const a: number[] = [10, 20]; const v: number = a[b]; return v; }`,
+        target,
+      );
+      for (const name of ["t", "read"]) expect(outcomeOf(result, name)?.irBodyEmitted).toBe(true);
+      const exports = (await instantiate(result)).exports as Record<string, (b: boolean) => number>;
+      // Was 1005 for `true` and 520 for `false`: the key wrote element 1 / 0.
+      for (const key of [true, false]) {
+        expect(exports.t!(key)).toBe(1020);
+        expect(exports.read!(key)).toBeNaN();
+      }
     }, 60_000);
 
     it(`reads a runtime non-index key as absent, not truncated (${target})`, async () => {

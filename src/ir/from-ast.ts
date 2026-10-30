@@ -6886,23 +6886,24 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
 
 /**
  * (#7106) Lower an element access's key ONCE to its vec index (`emitVecIndex`:
- * -1 for a key that names no element). The key needs no runtime exactness test
- * when the counted-loop pair proves it in bounds or it is int32-valued
- * (`isI32PureExprIR`). The selector already refused a constant key that is not
- * a vec index (`isConstantNonVecIndexKey`), so legacy's named-key route owns it.
+ * -1 for a key that names no element), together with the counted-loop proof
+ * (`isProvenInBoundsIr`) that lets the caller read or write unchecked. The key
+ * needs no runtime exactness test when that proof holds or it is int32-valued
+ * (`isI32PureExprIR`). The selector already refused a constant key the vec lane
+ * does not own (`isConstantNonVecIndexKey`), so legacy's routes own it.
  */
 function lowerElementIndex(
   access: ts.ElementAccessExpression,
   cx: LowerCtx,
   rejectKey: (detail: string) => never,
-): IrValueId {
+): { readonly index: IrValueId; readonly proven: boolean } {
   const key = lowerExpr(access.argumentExpression, cx, IR_F64);
   const keyType = cx.builder.typeOf(key);
   const scalar = asVal(keyType)?.kind;
   if (scalar !== "f64" && scalar !== "i32") rejectKey(`index must be number or bool (got ${describeIrType(keyType)})`);
-  const integral =
-    isProvenInBoundsIr(access, cx) || isI32PureExprIR(access.argumentExpression, cx.i32PureNames, cx.provenCharReads);
-  return emitVecIndex(key, integral, cx);
+  const proven = isProvenInBoundsIr(access, cx);
+  const integral = proven || isI32PureExprIR(access.argumentExpression, cx.i32PureNames, cx.provenCharReads);
+  return { index: emitVecIndex(key, integral, cx), proven };
 }
 
 /**
@@ -7019,7 +7020,7 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
       `ir/from-ast: element store into '${elem.kind}' vec not in IR scope (${cx.funcName})`,
     );
   }
-  const idxI32 = lowerElementIndex(lhs, cx, (detail) =>
+  const { index: idxI32, proven } = lowerElementIndex(lhs, cx, (detail) =>
     demoteToLegacy("element-store-unsupported", `ir/from-ast: element-store ${detail} in ${cx.funcName}`),
   );
   // Value — lower with the element-type hint, then coerce. Invariant W for a
@@ -7028,7 +7029,7 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   // source semantics wrap).
   if (narrowedI32) {
     const narrowVal = lowerNarrowedI32Element(rhs, cx);
-    if (isProvenInBoundsIr(lhs, cx)) {
+    if (proven) {
       cx.builder.emitVecSet(recv, idxI32, narrowVal);
       return;
     }
@@ -7053,7 +7054,7 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   // The helper name embeds the vec STRUCT typeIdx; the lower-time resolver
   // intercepts the prefix and materializes the helper on demand (name-based
   // resolution — funcIdx-shift safe by construction).
-  if (isProvenInBoundsIr(lhs, cx)) {
+  if (proven) {
     cx.builder.emitVecSet(recv, idxI32, val);
     return;
   }
@@ -7156,11 +7157,10 @@ function lowerElementCompound(
     );
   }
   // (2) Index — ONCE; the same i32 SSA id feeds the read and the write.
-  const idxI32 = lowerElementIndex(lhs, cx, (detail) =>
+  const { index: idxI32, proven } = lowerElementIndex(lhs, cx, (detail) =>
     demoteToLegacy("element-store-unsupported", `ir/from-ast: compound element ${detail} in ${cx.funcName}`),
   );
   // (3) READ — strictly before the RHS.
-  const proven = isProvenInBoundsIr(lhs, cx);
   const oldValue = proven
     ? cx.builder.emitVecGet(recv, idxI32, resolvedVec.elementType)
     : emitSafeVecGet(recv, idxI32, vec.elementValType, cx);
@@ -7220,8 +7220,12 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx, hint
   const recvType = cx.builder.typeOf(recv);
   if (cx.logicalVectorTypes !== undefined && recvType.kind === "vec") {
     requireLogicalVector(expr.expression, cx);
-    const index = lowerElementIndex(expr, cx, (detail) => logicalVectorMismatch(cx.funcName, detail));
-    if (isProvenInBoundsIr(expr, cx)) return cx.builder.emitVecGet(recv, index, recvType.elementType);
+    const { index, proven } = lowerElementIndex(expr, cx, (detail) => logicalVectorMismatch(cx.funcName, detail));
+    // (#7106) The same undefined-aware read as the physical arm below.
+    if (hint.kind === "dynamic" && asVal(recvType.elementType)?.kind === "f64") {
+      return emitUndefinedAwareVecGet(recv, index, { proven, narrowedI32: false }, cx);
+    }
+    if (proven) return cx.builder.emitVecGet(recv, index, recvType.elementType);
     // No backend default lookup: retain the existing numeric NaN / externref
     // null out-of-bounds carriers using the layout-free vector element type.
     return emitSafeVecGet(recv, index, asVal(recvType.elementType)!, { builder: cx.builder, funcName: cx.funcName });
@@ -7269,7 +7273,7 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx, hint
     if (resolvedVec) {
       const vec = resolvedVec.lowering;
       const scalarVecReceiver = resolvedVec.valueType.kind === "i32" && vectorExpression;
-      const idxI32 = lowerElementIndex(expr, cx, (detail) =>
+      const { index: idxI32, proven } = lowerElementIndex(expr, cx, (detail) =>
         demoteToLegacy("element-access-unsupported", `ir/from-ast: element-access ${detail} in ${cx.funcName}`),
       );
       const elemIr = resolvedVec.elementType;
@@ -7280,7 +7284,7 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx, hint
         // silently pick one representation: until shared IR has an explicit
         // undefined carrier, only lower reads covered by the existing counted-
         // loop bounds proof.
-        if (!isProvenInBoundsIr(expr, cx)) {
+        if (!proven) {
           demoteToLegacy(
             "element-access-unsupported",
             `ir/from-ast: inferred linear vector read is not proven in bounds (${cx.funcName})`,
@@ -7298,7 +7302,6 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx, hint
       // linear lane) never reaches here: that lane cannot register an i32 vec,
       // so `isNarrowedI32Vec` is false for it by construction.
       const narrowedI32 = isNarrowedI32Vec(vec, expr.expression, cx);
-      const proven = isProvenInBoundsIr(expr, cx);
       // (#7106) A consumer that observes `undefined` (a dynamic hint) gets it
       // for an out-of-range or hole read; the numeric reads below answer NaN.
       if (hint.kind === "dynamic" && (narrowedI32 || vec.elementValType.kind === "f64")) {

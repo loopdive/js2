@@ -14,6 +14,7 @@ import {
   type ExactInt32Proof,
 } from "./array-element-inference.js";
 import { IrFunctionBuilder } from "./builder.js";
+import { irTypeIsBoolean } from "./boolean-brand.js";
 import { irIntrinsicFuncRef } from "./callable-bindings.js";
 import type { I32PureNames } from "./i32-pure-bitwise.js";
 import { JS_TAG_IDS } from "./js-tag-domain.js";
@@ -540,25 +541,6 @@ export function emitForwardingAwareLinearVecLen(
   return host.builder.emitUnary("f64.convert_i32_s", lenI32, IR_F64);
 }
 
-/** `cond ? then() : orElse()` as one `if` value; each arm's instructions stay inside its branch. */
-function emitIfElseValue(
-  builder: IrFunctionBuilder,
-  cond: IrValueId,
-  then: () => IrValueId,
-  orElse: () => IrValueId,
-  resultType: IrType,
-): IrValueId {
-  let thenValue!: IrValueId;
-  const thenBody = builder.collectBodyInstrs(() => {
-    thenValue = then();
-  });
-  let elseValue!: IrValueId;
-  const elseBody = builder.collectBodyInstrs(() => {
-    elseValue = orElse();
-  });
-  return builder.emitIfElse({ cond, then: thenBody, thenValue, else: elseBody, elseValue, resultType });
-}
-
 /**
  * (#7106) The vec index of an element key, or -1 when the key names no element
  * a vec slot can hold.
@@ -567,11 +549,12 @@ function emitIfElseValue(
  * and an integer of 2^31 or more is an index no dense vec backs, so truncating
  * the key (`a[0.5]` reading `a[0]`, `a[-1] = v` trapping in the grow-store) is
  * never right. The f64 key truncates with `i32.trunc_sat_f64_s` and keeps the
- * result only when converting it back is exact. -1 is out of range for every
- * bounds-checked read (`i32.lt_u` against the length) and dropped by every vec
- * store helper (the WasmGC grow-store above its backed ceiling, the linear and
- * Porffor runtimes as a negative index), so a non-index key reads as absent and
- * never writes or traps. An i32 key keeps its value.
+ * result only when converting it back is exact. A boolean key is the named
+ * property `"true"` / `"false"`, never element 1 or 0, so it is -1 outright.
+ * -1 is out of range for every bounds-checked read (`i32.lt_u` against the
+ * length) and dropped by every vec store helper as a negative index (the WasmGC
+ * grow-store, the linear and Porffor runtimes), so a non-index key reads as
+ * absent and never writes or traps. Any other i32 key keeps its value.
  *
  * `integral` is the caller's static proof that the f64 key is an integer (the
  * counted-loop pair, an int32-valued expression); it skips the runtime test.
@@ -582,7 +565,9 @@ export function emitVecIndex(
   host: Pick<ArrayElementLoweringHost, "builder">,
 ): IrValueId {
   const b = host.builder;
-  if (asVal(b.typeOf(key))?.kind === "i32") return key;
+  const keyType = b.typeOf(key);
+  if (irTypeIsBoolean(keyType)) return b.emitConst({ kind: "i32", value: -1 }, IR_I32);
+  if (asVal(keyType)?.kind === "i32") return key;
   const index = b.emitUnary("i32.trunc_sat_f64_s", key, IR_I32);
   if (integral) return index;
   const exact = b.emitBinary("f64.eq", b.emitUnary("f64.convert_i32_s", index, IR_F64), key, IR_I32);
@@ -624,11 +609,11 @@ export function emitUndefinedAwareVecGet(
       return boxNumber(b.emitUnary("f64.convert_i32_s", b.emitVecGet(recv, index, IR_I32), IR_F64));
     }
     const value = b.emitVecGet(recv, index, IR_F64);
-    return emitIfElseValue(b, isF64Hole(value, b), undefinedValue, () => boxNumber(value), irDynamic());
+    return b.emitIfElseValue(isF64Hole(value, b), undefinedValue, () => boxNumber(value), irDynamic());
   };
   if (slot.proven) return element();
   const inRange = b.emitBinary("i32.lt_u", index, b.emitVecLenI32(recv), IR_I32);
-  return emitIfElseValue(b, inRange, element, undefinedValue, irDynamic());
+  return b.emitIfElseValue(inRange, element, undefinedValue, irDynamic());
 }
 
 /**
@@ -642,8 +627,7 @@ export function emitSafeNarrowedI32VecGet(
 ): IrValueId {
   const b = host.builder;
   const inRange = b.emitBinary("i32.lt_u", idxI32, b.emitVecLenI32(recv), IR_I32);
-  return emitIfElseValue(
-    b,
+  return b.emitIfElseValue(
     inRange,
     () => b.emitUnary("f64.convert_i32_s", b.emitVecGet(recv, idxI32, IR_I32), IR_F64),
     () => b.emitConst({ kind: "f64", value: NaN }, IR_F64),
@@ -700,5 +684,5 @@ export function emitSafeVecGet(
 
   const b = host.builder;
   const inRange = b.emitBinary("i32.lt_u", idxI32, b.emitVecLenI32(recv), IR_I32);
-  return emitIfElseValue(b, inRange, () => b.emitVecGet(recv, idxI32, elemIr), makeOobDefault!, elemIr);
+  return b.emitIfElseValue(inRange, () => b.emitVecGet(recv, idxI32, elemIr), makeOobDefault!, elemIr);
 }
