@@ -110,7 +110,13 @@ import {
   ensureIrDynamicMethodCallHelper,
   irTemplateWrapperLane,
 } from "../codegen/object-model/ir-dynamic-method-call.js";
-import { irDynamicMethodCallIsNameable, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
+import { irWrapperSymbolIsNameable, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
+import { parseIrArrayPrototypeBorrowHelperName } from "./array-prototype-borrow-call.js";
+import {
+  ensureIrArrayPrototypeBorrowHelper,
+  irArrayPrototypeBorrowAdmitted,
+  irArrayPrototypeBorrowWrapperLane,
+} from "../codegen/array/ir-array-prototype-borrow.js"; // (#7106 compareArray.format)
 import {
   ensureIrArgumentsLengthHelper,
   ensureIrPublishArgcHelper,
@@ -2578,6 +2584,8 @@ export function compileIrPathFunctions(
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
+      // (#7106 compareArray.format)
+      arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       implicitParamUsesNumericVecAbi,
@@ -5865,24 +5873,42 @@ export function compileIrPathFunctions(
     // only on a path that actually enters the orphaned artifact. Empty VOID
     // bodies are already valid Wasm (fall-through) — leave those as-is rather
     // than converting today's silent no-op into a trap.
-    const stubIfOrphanedEmpty = (unitId: IrUnitId, terminalOwnerUnitId: IrUnitId, funcIdx: number): void => {
+    //
+    // (#7106) A fresh slot still carries its allocation placeholder (`typeIdx:
+    // 0`, not a func type) until its patch installs, so an orphaned one has no
+    // signature at all and the final ABI planner rejects the whole module. It
+    // takes the signature its lowered body would have installed, or `() -> ()`
+    // when its owner failed before lowering it. Patches run first so a lowered
+    // slot keeps its real signature.
+    const stubIfOrphanedEmpty = (
+      unitId: IrUnitId,
+      terminalOwnerUnitId: IrUnitId,
+      funcIdx: number,
+      loweredTypeIdx?: number,
+    ): void => {
       const orphan = definedFuncAt(ctx, funcIdx);
       if (!orphan || orphan.body.length > 0) return;
       const typeDef = ctx.mod.types[orphan.typeIdx];
-      if (!typeDef || typeDef.kind !== "func" || typeDef.results.length === 0) return;
+      if (typeDef?.kind === "func" && typeDef.results.length === 0) return;
       replaceUnitCallableAt(unitId, terminalOwnerUnitId, funcIdx, orphan, {
         ...orphan,
+        typeIdx: typeDef?.kind === "func" ? orphan.typeIdx : (loweredTypeIdx ?? addFuncType(ctx, [], [])),
         body: [{ op: "unreachable" }],
       });
     };
+    for (const patch of pendingPatches) {
+      if (!options?.deferPreparedPublication && (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId))) {
+        stubIfOrphanedEmpty(
+          patch.entry.artifactUnitId,
+          patch.entry.terminalOwnerUnitId,
+          patch.funcIdx,
+          patch.wasmFunc.typeIdx,
+        );
+      }
+    }
     for (const slot of freshSlots) {
       if (!options?.deferPreparedPublication && (atomicAborted || failedOwners.has(slot.terminalOwnerUnitId))) {
         stubIfOrphanedEmpty(slot.artifactUnitId, slot.terminalOwnerUnitId, slot.funcIdx);
-      }
-    }
-    for (const patch of pendingPatches) {
-      if (!options?.deferPreparedPublication && (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId))) {
-        stubIfOrphanedEmpty(patch.entry.artifactUnitId, patch.entry.terminalOwnerUnitId, patch.funcIdx);
       }
     }
 
@@ -7025,7 +7051,10 @@ function makeFromAstResolver(
       return !ctx.fast;
     },
     dynamicMethodCallWrapper(method: string, arity: number) {
-      return irTemplateWrapperLane(ctx) && irDynamicMethodCallIsNameable(method, arity);
+      return irTemplateWrapperLane(ctx) && irWrapperSymbolIsNameable(method, arity);
+    },
+    arrayPrototypeBorrowWrapper(method: string) {
+      return irArrayPrototypeBorrowWrapperLane(ctx, method);
     },
     // (#7106) the selector's `dynamicInstanceOfAtLegacyParity`, asked again per site.
     dynamicInstanceOfAtLegacyParity: (site: ts.BinaryExpression) => irDynamicInstanceOfAtLegacyParity(ctx, site),
@@ -9119,6 +9148,31 @@ function admitFunctionPrototypeCall(
   observeNativeRuntimeProvider(ctx, arm.symbol);
 }
 
+/** The (method, arity) a per-pair template wrapper symbol was named for. */
+type TemplateWrapperPair = { readonly method: string; readonly arity: number };
+
+/**
+ * Build every wrapper of one template family a unit calls, in symbol order,
+ * register each as a native provider, and settle the import shift once for
+ * the batch. A wrapper the lane cannot build is an invariant breach: the
+ * selector admitted the call only where codegen said it would build it.
+ */
+function buildTemplateWrapperFamily(
+  ctx: CodegenContext,
+  wrappers: ReadonlyMap<string, TemplateWrapperPair>,
+  ensure: (ctx: CodegenContext, symbol: string, method: string, arity: number) => number | undefined,
+  family: string,
+): void {
+  if (wrappers.size === 0) return;
+  for (const [symbol, { method, arity }] of [...wrappers].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    if (ensure(ctx, symbol, method, arity) === undefined) {
+      throw new Error(`ir/integration: ${symbol} has no host-free ${family} wrapper (#7106)`);
+    }
+    observeNativeRuntimeProvider(ctx, symbol);
+  }
+  flushLateImportShifts(ctx, null);
+}
+
 function preregisterDynamicSupport(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
@@ -9182,7 +9236,9 @@ function preregisterDynamicSupport(
   // (#7106 S3a) `dyn.construct` calls the per-arity construct driver wrapper.
   const dynConstructArities = new Set<number>();
   // (#7106 Stage 4) dynamic-receiver method calls through the brand-dispatch wrappers.
-  const dynamicMethodCallWrappers = new Map<string, { readonly method: string; readonly arity: number }>();
+  const dynamicMethodCallWrappers = new Map<string, TemplateWrapperPair>();
+  // (#7106 compareArray.format) `Array.prototype.<m>.call(…)` borrows through the template wrappers.
+  const arrayPrototypeBorrowWrappers = new Map<string, TemplateWrapperPair>();
   // (#7106 S1c) `dyn.string_carrier` calls the checked carrier-recovery wrapper.
   let usesDynStringCarrier = false;
   // (#7106 S1e) `dyn.arguments_length` calls the argc-protocol wrapper.
@@ -9282,6 +9338,8 @@ function preregisterDynamicSupport(
             if (dynamicNeed !== undefined) dynamicRuntimeNeeds.add(dynamicNeed);
             const methodWrapper = parseIrDynamicMethodCallHelperName(symbol);
             if (methodWrapper !== undefined) dynamicMethodCallWrappers.set(symbol, methodWrapper);
+            const borrowWrapper = parseIrArrayPrototypeBorrowHelperName(symbol);
+            if (borrowWrapper !== undefined) arrayPrototypeBorrowWrappers.set(symbol, borrowWrapper);
             switch (symbol) {
               case "__extern_set_strict":
                 usesFunctionMemberStrictSet = true;
@@ -9462,18 +9520,16 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
   }
-  if (dynamicMethodCallWrappers.size > 0) {
-    // (#7106 Stage 4) One wrapper per (method, arity), built from legacy's own
-    // any-receiver call emitter, so its closed-dispatch reservations are
-    // shared with legacy sites and filled at finalize like theirs.
-    for (const [symbol, { method, arity }] of [...dynamicMethodCallWrappers].sort(([a], [b]) => (a < b ? -1 : 1))) {
-      if (ensureIrDynamicMethodCallHelper(ctx, symbol, method, arity) === undefined) {
-        throw new Error(`ir/integration: ${symbol} has no host-free brand-dispatch wrapper (#7106 Stage 4)`);
-      }
-      observeNativeRuntimeProvider(ctx, symbol);
-    }
-    flushLateImportShifts(ctx, null);
-  }
+  // (#7106 Stage 4 / compareArray.format) One wrapper per (method, arity),
+  // each family built from legacy's own emitters over a template, so their
+  // reservations are shared with legacy sites and filled at finalize like theirs.
+  buildTemplateWrapperFamily(ctx, dynamicMethodCallWrappers, ensureIrDynamicMethodCallHelper, "brand-dispatch");
+  buildTemplateWrapperFamily(
+    ctx,
+    arrayPrototypeBorrowWrappers,
+    ensureIrArrayPrototypeBorrowHelper,
+    "Array.prototype borrow",
+  );
   if (usesNumberFromValue) {
     // (#7106 module-init lever B) legacy's `Number(v)` emission over a template,
     // registered now so no Phase-3 body drives a late-import index shift.
