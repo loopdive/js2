@@ -4787,9 +4787,6 @@ function moduleStorageCompatible(actual: IrType, expected: IrType): boolean {
   // physical carrier. A `dynamic<tag:String>` initializer and the unrefined
   // dynamic module global therefore use the same slot.
   if (actual.kind === "dynamic" && expected.kind === "dynamic") return true;
-  // (#7106) An array literal's non-null `vec<f64>` fills the nullable vector
-  // slot, the direct-call argument widening.
-  if (expected.kind === "vec") return irTypeAssignable(actual, expected);
   if (expected.kind !== "extern") return false;
   if (actual.kind === "extern") return true;
   return asVal(actual)?.kind === "externref";

@@ -4212,40 +4212,31 @@ function compileMultiIrOverlaySource(
 }
 
 /**
- * (#7105) What a SCRIPT-goal top-level `var`'s `__mod_<name>` slot is, when the
- * IR may share it as the binding's sole home. Legacy allocates that slot for
- * scripts exactly as for modules, and a plain read/write is
- * `global.get`/`global.set` on it — measured 2026-10-20 on the standalone
- * target (`var called = 0; function cb(v) { called = called + 1; … }` compiles
- * `cb` to `global.get 9 … global.set 9`). Three script-only arms move the
- * binding's home away from the slot, and each answers `undefined` here:
+ * (#7105) The carrier of a SCRIPT-goal top-level `var`'s `__mod_<name>` slot
+ * (`IrScriptVarHome`) when the IR may share that slot as the binding's sole
+ * home. Legacy allocates it for scripts exactly as for modules, and a plain
+ * read or write is `global.get`/`global.set` on it. Three script-only arms
+ * move the binding's home away from the slot, and each answers `undefined`:
  *   - a runtime-eval consumer widens every script `var` to `externref`
  *     (`registerReassignedFunctionGlobals`), so the slot's type no longer
  *     matches the checker type the IR would resolve;
  *   - a name in `sloppyImplicitGlobals` (an undeclared `p = v` or a top-level
  *     `this.p = v`) resolves bare reads through the global-environment object;
  *   - a slot the declaration collector has not placed is not a home at all.
- * Otherwise the slot's carrier names the IR value kind (`IrScriptVarHome`):
- *   - `externref` off fast mode (`var o = new Object()`, `var n;`, a
- *     function-valued `var`) is exactly `resolveIrDynamicCarrierType` (#7106);
- *     fast mode's dynamic carrier is `$AnyValue`, so there it is no home;
- *   - `(ref null $AnyString)` (`var data = "data"` on standalone) is the
- *     `string` arm's storage (#7125);
- *   - `(ref null $__vec_f64)` (`var arr = [1, 2]`) is the `f64-vec` kind's
- *     storage (#7106), in a host-free environment only: the JS-host lane is
- *     being sunset and keeps its byte-identical legacy ownership;
- *   - any other slot is `typed`, which the checker type must describe.
- * Scripts are the entire test262 corpus: every top-level `var` read inside a
- * test function was `expr-ident-not-in-scope` before #7105 (e.g. the `kValue`
- * callbacks in `built-ins/Array/prototype/map`, 15/216 tests).
  */
 export function scriptVarHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): IrScriptVarHome | undefined {
   const type = scriptVarHomeSlot(ctx, declaration)?.type;
-  if (type === undefined) return undefined;
-  if (type.kind === "externref") return ctx.fast ? undefined : "dynamic";
-  if (type.kind !== "ref_null") return "typed";
-  if (ctx.nativeStrings && type.typeIdx === ctx.anyStrTypeIdx) return "string";
-  return hostFreeEnvironment(ctx) && type.typeIdx === ctx.vecTypeMap.get("f64") ? "f64-vec" : "typed";
+  switch (type?.kind) {
+    case "externref":
+      return ctx.fast ? undefined : "dynamic";
+    case "ref_null":
+      return type.typeIdx === ctx.anyStrTypeIdx ? "string" : undefined;
+    case "f64":
+    case "i32":
+      return "typed";
+    default:
+      return undefined;
+  }
 }
 
 function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclaration) {

@@ -351,7 +351,6 @@ import {
   forEachInstrDeep, // (#2949 slice 3) deep instr walk for preregisterDynamicSupport
   irDynamic,
   irVal,
-  irVec,
   irTypeEquals,
   mapNestedBuffers,
   type IrClassMemberKind,
@@ -6177,13 +6176,6 @@ function resolveModuleBindingGlobal(
       type = { kind: "val", val: storageType };
       break;
     }
-    case "f64-vec":
-      // (#7106) The pre-registered `$__vec_f64` (`createCodegenContext`) that
-      // legacy allocated the script `var` slot as. The logical IR type is the
-      // nullable `vec<f64>`: the slot is `null` until the initializer runs.
-      storageType = { kind: "ref_null", typeIdx: ctx.vecTypeMap.get("f64")! };
-      type = irVec(irVal({ kind: "f64" }), true);
-      break;
     case "string": {
       // (#3523 R4-M1 / #679) The dual-backend arm. The IR type stays the
       // backend-AGNOSTIC `string` — the same marker `IrLowerResolver.

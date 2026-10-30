@@ -29,12 +29,6 @@ export type IrModuleBindingValueKind =
   // carrier — `(ref null $Map)` vs `externref` — so it remains distinct from
   // both ambient and capability-authenticated externref storage.
   | { readonly kind: "native-map"; readonly className: "Map" }
-  // (#7106) A script `var` whose sole-home slot is the registered number
-  // vector `(ref null $__vec_f64)` (`var arr = [1, 2, 3]`). It binds as the
-  // IR's logical `vec<f64>`, the type an array literal of numbers lowers to,
-  // so its consumers are the ordinary checker-typed array arms: neither a
-  // scalar nor an opaque extern (see `isIrModuleScalarValueKind`).
-  | { readonly kind: "f64-vec" }
   // (#3523 R4-M1) A `string` module binding. Deliberately ONE kind for both
   // string backends (#679): the source-level fact is "this slot holds a JS
   // string", and the physical carrier — `externref` under host strings,
@@ -99,27 +93,17 @@ export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind
 }
 
 /**
- * (#7106) True for the kinds the selector's scalar module-value guards police
- * (unboxed `throw`, scalar method calls, template substitution): f64, boolean
- * i32 and the `dynamic` retype carrier. A `f64-vec` is the third family —
- * neither scalar nor reference — whose consumers are the checker-typed array
- * arms a local `number[]` already uses.
- */
-export function isIrModuleScalarValueKind(valueKind: IrModuleBindingValueKind): boolean {
-  return valueKind.kind === "f64" || valueKind.kind === "i32" || valueKind.kind === "dynamic";
-}
-
-/**
- * (#7105/#7106/#7125) What codegen allocated as a SCRIPT `var`'s sole-home
- * `__mod_<name>` slot (`scriptVarHome`, `src/codegen/index.ts`); the resolver
- * binds the declaration only through the value kind that names that carrier.
- *   - `dynamic`: `externref` off fast mode, the IR dynamic carrier;
- *   - `string`: `(ref null $AnyString)` on a native-string lane;
- *   - `f64-vec`: `(ref null $__vec_f64)` in a host-free environment;
- *   - `typed`: any other slot, which the checker type must describe
+ * What codegen allocated as a SCRIPT `var`'s sole-home `__mod_<name>` slot
+ * (`scriptVarHome`, `src/codegen/index.ts`), and so the one value kind the
+ * resolver may bind the declaration as:
+ *   - `dynamic`: `externref` off fast mode, exactly `resolveIrDynamicCarrierType`;
+ *   - `string`: `(ref null $AnyString)`, the native-string carrier;
+ *   - `typed`: an `f64` or `i32` slot, which the checker type must describe
  *     (`number` → f64, `boolean` → i32).
+ * Any other slot (a vector, a struct, `$Map`, `externref` in fast mode) is no
+ * home: no value kind's storage is exactly that carrier.
  */
-export type IrScriptVarHome = "dynamic" | "string" | "f64-vec" | "typed";
+export type IrScriptVarHome = "dynamic" | "string" | "typed";
 
 export function isCapabilityExternKind(
   valueKind: IrModuleBindingValueKind,

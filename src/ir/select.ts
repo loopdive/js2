@@ -134,7 +134,7 @@ import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
-import { isIrModuleMapValueKind, isIrModuleReferenceValueKind, isIrModuleScalarValueKind } from "./module-bindings.js";
+import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
   IrLegacyLocalClassExpressionResolver,
@@ -4106,7 +4106,7 @@ function isPhase1MutableMemberTarget(
     // read-modify-write desugaring does not model. Refuse at selection.
     if (standaloneDomOperation(target) !== undefined) return false;
     if (expressionIsModuleExternAccessChain(target.expression)) return false;
-    if (!preflightPropertyWrite(target, scope)) return false;
+    if (!preflightClassPropertyWrite(target, scope)) return false;
     return isPhase1Expr(target.expression, scope, localClasses);
   }
   if (
@@ -4579,7 +4579,7 @@ function isPhase1StatementListInScope(
         if (!moduleExternPropertyWriteIsProven(s.expression.left, s.expression.right)) {
           return shapeNo("nontail-module-extern-assign-value", s.expression.right);
         }
-        if (!preflightPropertyWrite(s.expression.left, scope)) return false;
+        if (!preflightClassPropertyWrite(s.expression.left, scope)) return false;
         if (!isPhase1Expr(s.expression.left.expression, scope, localClasses))
           return shapeNo("nontail-assign-recv", s.expression.left.expression);
         // RHS: any Phase-1 expression.
@@ -4608,8 +4608,6 @@ function isPhase1StatementListInScope(
         }
         if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses))
           return shapeNo("nontail-elemstore-idx", lhs.argumentExpression);
-        if (moduleVectorElementValueIsUnproven(lhs, s.expression.right))
-          return shapeNo("expr-module-vector-element-value", s.expression.right);
         if (!isPhase1Expr(s.expression.right, scope, localClasses))
           return shapeNo("nontail-elemstore-rhs", s.expression.right);
         continue;
@@ -5923,7 +5921,7 @@ function isPhase1BodyStatement(
           if (!moduleExternPropertyWriteIsProven(stmt.expression.left, stmt.expression.right)) {
             return shapeNo("body-module-extern-assign-value", stmt.expression.right);
           }
-          if (!preflightPropertyWrite(stmt.expression.left, scope)) return false;
+          if (!preflightClassPropertyWrite(stmt.expression.left, scope)) return false;
           if (!isPhase1Expr(stmt.expression.left.expression, scope, localClasses)) return false;
           return isPhase1Expr(stmt.expression.right, scope, localClasses);
         }
@@ -5944,8 +5942,6 @@ function isPhase1BodyStatement(
             return shapeNo("body-elemstore-recv", lhs.expression);
           }
           if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses)) return false;
-          if (moduleVectorElementValueIsUnproven(lhs, stmt.expression.right))
-            return shapeNo("expr-module-vector-element-value", stmt.expression.right);
           return isPhase1Expr(stmt.expression.right, scope, localClasses);
         }
       }
@@ -6242,7 +6238,7 @@ function isPhase1Tail(
       if (!moduleExternPropertyWriteIsProven(expr.left, expr.right)) {
         return shapeNo("tail-module-extern-assign-value", expr.right);
       }
-      if (!preflightPropertyWrite(expr.left, scope)) return false;
+      if (!preflightClassPropertyWrite(expr.left, scope)) return false;
       if (!isPhase1Expr(expr.left.expression, scope, localClasses))
         return shapeNo("tail-assign-recv", expr.left.expression);
       return isPhase1Expr(expr.right, scope, localClasses);
@@ -6259,8 +6255,6 @@ function isPhase1Tail(
         return shapeNo("tail-elemstore-recv", lhs.expression);
       if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses))
         return shapeNo("tail-elemstore-idx", lhs.argumentExpression);
-      if (moduleVectorElementValueIsUnproven(lhs, expr.right))
-        return shapeNo("expr-module-vector-element-value", expr.right);
       return isPhase1Expr(expr.right, scope, localClasses);
     }
     return isPhase1Expr(expr, scope, localClasses);
@@ -7665,22 +7659,6 @@ function moduleExternBinding(expr: ts.Expression): ReturnType<IrLegacyModuleBind
   return binding !== undefined && isIrModuleReferenceValueKind(binding.valueKind) ? binding : undefined;
 }
 
-/**
- * (#7106) A bare `f64-vec` module binding: a vector by its slot, whatever the
- * consumer. It enters an expression only through the array arms; as the
- * operand of an operator (`arr === undefined`, `+arr`) or the receiver of a
- * property write (`arr.length = 0`) it has no vector lowering, so those arms
- * refuse it here, before the claim, as they refuse a module extern.
- */
-function isModuleVectorBinding(expr: ts.Expression): boolean {
-  return moduleBinding(expr)?.valueKind.kind === "f64-vec";
-}
-
-/** (#7106) The f64 element store lowers only a proven number (`arr[i] = "s"` does not). */
-function moduleVectorElementValueIsUnproven(target: ts.ElementAccessExpression, value: ts.Expression): boolean {
-  return isModuleVectorBinding(target.expression) && !expressionIsProvenNumber(value);
-}
-
 /** True only for the one module representation whose IR value is a JS boolean. */
 function isDirectBooleanModuleBinding(expr: ts.Expression): boolean {
   const binding = moduleBinding(expr);
@@ -7750,14 +7728,14 @@ function expressionTouchesBooleanModuleBinding(expr: ts.Expression): boolean {
   return touched;
 }
 
-/** True when an expression contains an f64/boolean/dynamic module-storage read. */
+/** True when an expression contains an f64/boolean module-storage read. */
 function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
   let touched = false;
   const visit = (node: ts.Node): void => {
     if (touched) return;
     if (ts.isIdentifier(node)) {
       const binding = moduleBinding(node);
-      const scalarBinding = binding && isIrModuleScalarValueKind(binding.valueKind);
+      const scalarBinding = binding && !isIrModuleReferenceValueKind(binding.valueKind);
       if (scalarBinding || moduleScalarAliasFamily(node) !== undefined) {
         touched = true;
         return;
@@ -9546,11 +9524,8 @@ function classPropertyWriteHasKnownProjectionGap(className: string, propertyName
   return true;
 }
 
-function preflightPropertyWrite(expression: ts.PropertyAccessExpression, scope: ReadonlySet<string>): boolean {
+function preflightClassPropertyWrite(expression: ts.PropertyAccessExpression, scope: ReadonlySet<string>): boolean {
   if (!ts.isIdentifier(expression.name)) return true;
-  if (isModuleVectorBinding(expression.expression)) {
-    return capabilityNo("array-method-unsupported", "expr-module-vector-property-write", expression);
-  }
   const receiverClass = localClassNameForExpression(expression.expression, scope);
   if (receiverClass === null) return true;
   if (localClassHasKnownProjectionGap(receiverClass)) {
@@ -11265,7 +11240,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (expressionMayBeModuleExtern(expr.operand)) {
       return shapeNo("expr-module-extern-prefix", expr);
     }
-    if (isModuleVectorBinding(expr.operand)) return shapeNo("expr-module-vector-op", expr);
     if (expr.operator === ts.SyntaxKind.TildeToken && !expressionIsProvenNumber(expr.operand)) {
       return shapeNo("expr-tilde-nonnumeric", expr.operand);
     }
@@ -11368,8 +11342,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // does not model for module externs in this slice.
       return shapeNo("expr-module-extern-binary", expr);
     }
-    if (isModuleVectorBinding(expr.left) || isModuleVectorBinding(expr.right))
-      return shapeNo("expr-module-vector-op", expr);
     // (#2856 C3) STRICT undefined-compare — `hit !== undefined` /
     // `x === undefined`. The `undefined` identifier isn't in scope, so the
     // generic operand recursion would reject it; accept it specially as one
