@@ -58,7 +58,11 @@ import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
-import { storedObjectStaticAliasMethod, uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
+import {
+  isStoredObjectDescriptorAliasCall,
+  isStoredObjectDescriptorMemberRead,
+  uncurriedObjectAliasMethod,
+} from "./uncurried-object-alias.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
 import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
@@ -2638,9 +2642,10 @@ function resolveParamType(p: ts.ParameterDeclaration, mapped: LatticeType | unde
   // members don't participate in propagation (`entry` is undefined there) and
   // must keep the null rejection, not silently become dynamic-claimable.
   // Lattice `union` stays null: #2135's union rows own that shape.
-  // (#4612) …unless the legacy slot already carries a refined fnctor-instance
-  // struct here, in which case `dynamic` is a guaranteed post-claim parity
-  // withdrawal — decline instead. See `dynamicCarrierDivergesFromLegacy`.
+  // (#4612, #7119) …unless the legacy slot already carries a refined
+  // fnctor-instance struct or another call-site-inferred reference, in which
+  // case `dynamic` is a guaranteed post-claim parity withdrawal — decline
+  // instead. See `dynamicCarrierDivergesFromLegacy`.
   if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) {
     if (currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(p) === true) {
       shapeNo("param-dynamic-carrier-diverges-from-legacy", p);
@@ -3095,20 +3100,6 @@ function receiverFirstDynamicMethodPlan(call: ts.CallExpression): { readonly ari
   return (
     currentModuleBindingResolver?.retainedFunctionMethodPlan(call) ??
     currentModuleBindingResolver?.fnctorArrayMethodPlan(call)
-  );
-}
-
-/**
- * (#7106 propertyHelper) `alias(obj, name)` where `alias` is propertyHelper's
- * immutable stored `Object.getOwnPropertyDescriptor` (see
- * `uncurried-object-alias.ts`): exactly two plain arguments.
- */
-function isStoredObjectDescriptorAliasCall(call: ts.CallExpression, shadowed: (name: string) => boolean): boolean {
-  return (
-    call.arguments.length === 2 &&
-    !call.questionDotToken &&
-    !call.arguments.some(ts.isSpreadElement) &&
-    storedObjectStaticAliasMethod(call.expression, shadowed) === "getOwnPropertyDescriptor"
   );
 }
 
@@ -7993,6 +7984,15 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
   return false;
 }
 
+/**
+ * A `!` / `&&` / `||` operand whose module influence cannot be misread: every
+ * module-derived value in it is boolean, or the whole operand is exactly
+ * boolean (a comparison, S1g's `__hasOwnProperty(o, k)` alias call).
+ */
+function moduleInfluenceIsExactBoolean(operand: ts.Expression, scope: ReadonlySet<string>): boolean {
+  return trackedModuleInfluenceIsBoolean(operand) || declaredExpressionHasExactFamily(operand, "boolean", scope);
+}
+
 /** Exact checker-owned module Map method, excluding conditional/nullish receivers. */
 function exactModuleMapMethod(expr: ts.CallExpression): string | undefined {
   const callee = unwrapPhase1Parens(expr.expression);
@@ -11248,14 +11248,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   if (ts.isPrefixUnaryExpression(expr)) {
     if (!isPhase1PrefixOp(expr.operator))
       return shapeNo(`expr-prefix-op-${ts.tokenToString(expr.operator) ?? expr.operator}`, expr);
-    // An operand the exact-family check already proves boolean (a comparison,
-    // a `!`, S1g's certified `__hasOwnProperty(o, k)` alias call) is not a
-    // module-value influence the boolean `!` could misread, whatever slot the
-    // script var behind it was given.
+    // A member read off the certified descriptor alias is a dynamic carrier
+    // (`dyn.truthy`), not a module slot; uncertified operands stay refused.
     if (
       expr.operator === ts.SyntaxKind.ExclamationToken &&
-      !trackedModuleInfluenceIsBoolean(expr.operand) &&
-      !declaredExpressionHasExactFamily(expr.operand, "boolean", scope)
+      !moduleInfluenceIsExactBoolean(expr.operand, scope) &&
+      !isStoredObjectDescriptorMemberRead(unwrapPhase1Parens(expr.operand), (name) => scope.has(name))
     ) {
       return shapeNo("expr-module-value-not", expr);
     }
@@ -11333,9 +11331,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       return shapeNo("expr-module-value-nullish", expr);
     }
+    // Refuses a module value on the dynamic logical-value path
+    // (`o || moduleNumber`); typed boolean operands pass.
     if (binOp === ts.SyntaxKind.AmpersandAmpersandToken || binOp === ts.SyntaxKind.BarBarToken) {
       for (const operand of [expr.left, expr.right]) {
-        if (!trackedModuleInfluenceIsBoolean(operand)) {
+        if (!moduleInfluenceIsExactBoolean(operand, scope)) {
           return shapeNo("expr-module-value-logical", expr);
         }
       }
@@ -12831,7 +12831,7 @@ export function assessModuleInit(
   // unrelated modules retain the existing conservative `var` demotion.
   // (#7106) A SCRIPT opens it unconditionally: every test262 body is a script
   // whose top-level `var`s live in the same `__mod_<name>` slots, and the
-  // resolver (with codegen's `admitScriptVar` predicate) still refuses each
+  // resolver (with codegen's `scriptVarHome` classifier) still refuses each
   // declaration it cannot place as `vardecl-module-storage-unrepresentable`.
   const scriptVarGate = currentModuleBindingResolver !== null && !ts.isExternalModule(sourceFile);
   let hasDynamicModuleUpdate = false;

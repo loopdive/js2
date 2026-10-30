@@ -1,0 +1,301 @@
+---
+id: 7190
+title: "IR: ship test262's propertyHelper.js harness units on the standalone lane"
+status: in-progress
+sprint: current
+created: 2026-10-29
+updated: 2026-10-29
+priority: high
+horizon: m
+feasibility: medium
+reasoning_effort: high
+task_type: implementation
+area: ir
+goal: ir-full-coverage
+parent: 7106
+assignee: "ttraenkler/js2-17"
+---
+
+# IR: ship test262's propertyHelper.js harness units
+
+## Problem
+
+`summary.ir_only_pass` counts standalone test262 passes whose compile has no
+legacy unit (`scripts/build-test262-report.mjs`, the `ir_legacy_units == 0`
+filter). About 12 % of test262 includes `harness/propertyHelper.js`. Each of
+its helpers is a separate unit, so one legacy helper keeps the whole file out
+of the count.
+
+The sta.js / assert.js rows are another lane's (#7106 and its PRs). This issue
+covers only propertyHelper.js.
+
+## Census on main (2026-10-29, `cb3ff519`)
+
+Standalone, `built-ins/Boolean/prop-desc.js`, literal harness,
+`JS2WASM_IR_SHAPE_DIAG=1`. 14 legacy units:
+
+| unit | refusal |
+| --- | --- |
+| verifyNotWritable, verifyNotEnumerable, verifyNotConfigurable | `expr-module-value-not` on `!__getOwnPropertyDescriptor(obj, name).<attr>` |
+| isEnumerable | `expr-module-value-logical` on `stringCheck && __hasOwnProperty(obj, name) && __propertyIsEnumerable(obj, name)` |
+| verifyEnumerable | `call-graph-closure` (calls isEnumerable) |
+| verifyWritable | `call-graph-closure` (calls isWritable) |
+| isWritable | `vardecl-module-binding-alias` on `__isArray(obj) && name === "length" ? … : …` |
+| verifyProperty | `vardecl-module-binding-alias` on `var originalDesc = __getOwnPropertyDescriptor(obj, name)` |
+| verifyPrimordialCallableProperty, verifyPrimordialAccessorProperty | `vardecl-module-binding-alias` on the `{ verifyProperty: … }` object literal |
+| verifyCallableProperty | `expr-logical-value-family` on `options && options.verifyProperty \|\| verifyProperty` |
+| verifyAccessorProperty | `param-type-unresolved(desc)` |
+| verifyEqualTo | `abi-signature-parity`: IR's `(externref ×3) → ()` signature resolves to the structurally equal `$__closure_prop_set_type` index, legacy's to `verifyEqualTo_type` |
+| `<module-init>` | `expr-ident-not-in-scope` on `Array` / `Object` (the alias initializers) |
+
+**Found while implementing:** a helper whose call sites all pass string keys
+(`verifyConfigurable(o, "c")`) gets a native-string `name` slot from legacy
+(`inferImplicitAnyParamType`). The IR claimed it as a dynamic carrier, so the
+claim ended at the parity guard — a claim-then-demote, already live on main
+for `verifyConfigurable` and `verifyEnumerable`.
+
+## Ranking (units unblocked per arm)
+
+1. **`!` over a descriptor read** — verifyNotEnumerable, verifyNotConfigurable
+   (2 now); verifyNotWritable moves to its isWritable callee.
+2. **`&&` over exact booleans** — isEnumerable, verifyEnumerable (2).
+3. **isWritable's alias conditional** — isWritable, verifyWritable,
+   verifyNotWritable (3). Further blockers inside isWritable are not yet
+   measured (`arguments.length`, a store in `try`).
+4. **Call-site-narrowed string parameter** — every helper a test calls with
+   string-only keys, verifyProperty among them (`verifyProperty(this,
+   "Boolean", …)` in most files). Today that is a pre-claim refusal (see
+   below). Projecting legacy's string slot into the IR is the fix, once a
+   concrete string can stand in for the carrier (`this.x = s`, `new K(s)`).
+5. verifyProperty's descriptor `var` (1, but the most-called helper).
+6. verifyPrimordial* object literal (2); verifyCallableProperty's logical value
+   (1); verifyAccessorProperty's `desc` (1); verifyEqualTo's type identity (1);
+   `<module-init>` (1).
+
+## Implementation Plan
+
+Slices 1 and 2 ship here, plus the pre-claim refusal from the finding above.
+
+### Slice 2 — one module-influence predicate for `!` and `&&`/`||`
+
+- **Module:** `src/ir/select.ts`, next to `trackedModuleInfluenceIsBoolean`.
+- **Duplicate removed:** the `!` site tested
+  `trackedModuleInfluenceIsBoolean(op) || declaredExpressionHasExactFamily(op,
+  "boolean")` inline; the `&&`/`||` site tested only the first half. Both now
+  call one helper, `moduleInfluenceIsExactBoolean`. S1g already certifies the
+  isEnumerable expression as exactly boolean (its own comment cites it); the
+  logical site simply did not ask.
+
+### Slice 1 — `!` over a descriptor member read
+
+- **Module:** `src/ir/uncurried-object-alias.ts`, the module that certifies
+  the stored alias. The new predicate, `isStoredObjectDescriptorMemberRead`,
+  reuses `isStoredObjectDescriptorAliasCall`, which moves there from
+  `select.ts`. Both are questions about the alias, not about selection, and the
+  move keeps `select.ts` under its size ceiling.
+- **Selector:** the `!` site skips the module-value refusal for that operand.
+  `!` is ToBoolean of any value, and the operand is a dynamic carrier, so
+  there is no module storage slot to misread.
+- **No lowering change:** from-ast already lowers `!dyn` through `dyn.truthy`,
+  and the move-only scan already admits the read.
+
+### Pre-claim refusal: legacy's non-null string parameter
+
+The first push refused every native-string legacy slot in the
+`dynamicCarrierDivergesFromLegacy` probe (#4612). Main's #7119 (`4240084f13`)
+then rewrote that probe: it refuses every call-site-inferred reference slot
+except the native string, which it says the IR reconciles. The main merge
+(2026-10-29) keeps #7119's probe and narrows its exemption to what the IR
+actually reconciles.
+
+Measured:
+- `mk(K, v)` called inside a function with a string literal `v` (the S3a
+  shape): legacy's slot is `(ref null $AnyString)`, the IR claims it with the
+  same signature, so it is reconciled. Called at top level (`mk(K, "a")`), the
+  slot is the non-null `ref`, and main claims it and then withdraws it; this
+  branch refuses it before the claim (review 2, finding (c)).
+- `verifyNotEnumerable(o, "x")`, `verifyConfigurable(o, "c")`,
+  `notEnum(obj, k)` (the #7106 dyn-delete pin) and `joined(a, sep)`: legacy's
+  slot is the non-null `(ref $AnyString)`. The IR withdraws the claim at the
+  parity guard.
+
+So only the nullable string slot is exempt (`reconciledString`). The non-null
+one is refused before the claim, with no post-claim error, as on the first
+push.
+
+Projecting the slot into the IR as `string` (ranking item 4) was tried and
+measured. It refuses S3a's `E(message)`, whose `this.message = message` needs
+the dynamic carrier, and through the call graph also `mk`. Item 4 therefore
+needs an IR string-to-carrier box at those sites first.
+
+### Acceptance criteria
+
+- isEnumerable, verifyEnumerable, verifyNotEnumerable and
+  verifyNotConfigurable ship IR bodies in a standalone compile of the literal
+  harness when keys are mixed (symbol and string).
+- Each helper's passing and throwing paths (data, accessor, symbol-keyed,
+  non-configurable and absent properties) pass standalone as in node, with the
+  literal harness. The upstream harness self-tests for these helpers pass.
+- Scoped standalone test262 A/B (`built-ins/Boolean`, `built-ins/Math`):
+  0 pass→fail.
+- Code quality: no new predicate that duplicates an existing one; each new
+  arm sits beside the sibling it reuses; no function or file budget growth;
+  `check:ir-fallbacks`, `check:host-import-policy` and the standalone-arms
+  gate stay green. The arms are lane-neutral: default gc (native-first)
+  claims the same units as standalone, through the same capabilities.
+
+## Test plan
+
+`tests/issue-7190-prophelper-not-and-logical.test.ts`: fixtures compiled with
+the literal harness through `runTest262File` (standalone), cross-checked by
+running the same assembled source in node; plus the ten upstream harness
+self-tests for these helpers.
+
+## Results (measured 2026-10-29)
+
+Per-unit census, standalone, `built-ins/Boolean/prop-desc.js`:
+
+| | legacy units |
+| --- | --- |
+| main | 14 |
+| + slice 2 | 12 (isEnumerable, verifyEnumerable ship) |
+| + slice 1 | 10 (verifyNotEnumerable, verifyNotConfigurable ship) |
+
+`tests/issue-7190-*`: head 19/19; base fails exactly the two IR-unit checks,
+all runtime checks pass on both.
+
+Scoped standalone test262 A/B (`TEST262_TARGET=standalone`, one chunk per
+directory, base = `origin/main` `cb3ff519`, head = this branch; each side with
+its own compiler bundle):
+
+| dir | files | pass base → head | pass→fail | Σ `ir_legacy_units` base → head | files with fewer / more legacy units |
+| --- | --- | --- | --- | --- | --- |
+| `built-ins/Boolean` | 51 | 49 → 49 | 0 | 175 → 148 | 7 / 0 |
+| `built-ins/Math` | 327 | 308 → 308 | 0 | 2012 → 1530 | 121 / 0 |
+
+`ir_only_pass` stays 0 in both directories on both sides: ten propertyHelper
+units are still legacy (see the ranking), so no file that includes
+propertyHelper.js reaches zero yet.
+
+## Adversarial review (2026-10-29)
+
+A fresh-context review agent was given the diff and the plan and asked to
+prove the quality goal was not met. Its verdict on the first push was **not
+met**, with one blocking finding. All findings are now resolved:
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 (blocking) | `legacyParamSlotIsNativeString` repeated the native-string slot test word for word (`index.ts` projection, `irFieldTypeMatchesLegacyValType`) | one predicate, `isAnyStringSlot` in `native-strings-shared.ts`. It replaces the two `index.ts` copies; since the main merge the probe arm is #7119's, narrowed (see above). The other near-copies are listed below |
+| 2 | the probe looked up the parameter's legacy slot twice | fixed; since the main merge it is #7119's probe, which reads the slot once |
+| 3 | stale comments on the probe and in `resolveParamType` | `resolveParamType`'s comment now names #7119's arm; the probe doc is main's |
+| 4 | the `&&`/`\|\|` module check only bites on the dynamic path | comment added |
+| 5 | the tests pinned only the generic refusal code, standalone only, with no `\|\|` case | the tests assert the refusal detail, run gc as well as standalone, add an `\|\|` fixture and a still-refused negative (`o \|\| nonIndexNumericPropertyName`) |
+
+The reviewer found (a), (b) and (c) sound. (a): `&&`/`\|\|` admits only operands
+the checker proves boolean, the same set `!` already admitted. (b): `!` over the
+descriptor read is still gated by `currentDynamicRuntimeBuildable` and the
+`native-own-property-descriptor` capability, and lowers through `dyn.truthy`.
+(c): the probe runs only where the IR would choose the dynamic carrier, so no
+claimed function is lost.
+
+**Left for a separate cleanup:** the same `$AnyString` slot test is open-coded
+in about a dozen more codegen sites (`index.ts` `scriptVarSlotIsStringHome`,
+`regexp-standalone.ts`, `value-tags.ts`, `literals.ts`, …). They can move onto
+`isAnyStringSlot`; that is outside this PR's IR scope.
+
+After the fixes: `tests/issue-7190-*` head 23/23; base fails exactly the 5
+IR-unit checks (standalone and gc), and every runtime check passes on both.
+
+## Adversarial review 2 — merged head `f42f91ae` (2026-10-29)
+
+This was a fresh-context agent, given the diff against main and the plan.
+**Verdict: quality goal met, no blocking items.**
+
+Soundness questions:
+- **(a), (b), (d) held under probing:**
+  - (a) A JSDoc-boolean module var with non-boolean storage and reassigned
+    module booleans either ran correctly or were refused before the claim, as on main.
+  - (b) The `!` exemption keeps the alias-call arm's gates and lowers through `dyn.truthy`.
+  - (d) Both `isAnyStringSlot` call sites behave exactly as before.
+- **(c) held.** The narrowed exemption lost 0 IR bodies in a 426-file sweep
+  (harness self-tests plus `built-ins/Object/getOwnPropertyDescriptor`):
+  - gained isEnumerable ×34, verifyEnumerable ×32, verifyNotEnumerable ×32 and
+    verifyNotConfigurable ×32;
+  - post-claim errors went from 58 to 55, because the verifyConfigurable
+    withdrawals are gone.
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 | the `&&`/`\|\|` comment named a gate that does not exist on that branch | rewritten to say what it refuses (`o \|\| moduleNumber`) |
+| 2 | the `!` comment's argument would justify exempting every dynamic operand | it now says why only the certified alias member read is exempt |
+| 3 | `reconciledString` checked the string type inline | uses `isAnyStringSlot` |
+| 3a/3b | twins of `isAnyStringSlot` in `declarations.ts:1523`, `program-abi-fnctor-planning.ts:100` and `index.ts:4250` | left, with the other near-copies, for the separate cleanup below. `declarations.ts`'s twin omits the `nativeStrings` check, so folding it is not provably byte-identical without a gc A/B. |
+| 3c | the probe derives the owner and index next to `legacyParamSlot` | left: #7119's code, needed for `legacyPositionCarriesFnctorInstance(name, index)` |
+| 4 | "non-null" holds only at selection time; the emitted WAT shows `ref null` | the comment says so |
+| 5 | no test for where the `!` exemption stops | `not-boundary` fixture: `!__getOwnPropertyDescriptor(obj, k)` stays `expr-module-value-not` |
+| 6 | the refusal-provider setup is copied across test files | test-only, left |
+
+## Next slice — measured blocker chains (2026-10-29, merged head)
+
+Measured on the real harness (`includes: [propertyHelper.js]`, standalone),
+peeling one blocker at a time with local stubs (not shipped):
+
+- **isWritable**, in order:
+  1. `var unlikelyValue = __isArray(obj) && name === "length" ? nonIndexNumericPropertyName : "unlikelyValue"`.
+     A module f64 and an uncertified `Array.isArray` alias flow into a local
+     (`vardecl-module-binding-alias`).
+  2. `var hadValue = __hasOwnProperty(obj, name)`, the same rule on a certified
+     exact-boolean alias call.
+  3. `var oldValue = obj[name]`, a dynamic element read into a local the scan
+     treats as concrete (`move-only[concrete]`).
+  4. Still behind those, not yet peeled: `arguments.length < 4`,
+     `newValue === oldValue`, `newValue + "2"`, `obj[name] = newValue` inside
+     `try` with an `instanceof TypeError` catch, and
+     `isSameValue(obj[verifyProp || name], newValue)`.
+- **verifyProperty:**
+  1. `var originalDesc = __getOwnPropertyDescriptor(obj, name)`
+     (`vardecl-module-binding-alias`).
+  2. `var names = __getOwnPropertyNames(desc)`. That alias is not certified;
+     `uncurried-object-alias.ts` certifies only `getOwnPropertyDescriptor` among
+     the stored statics.
+  3. Then the `names.length` / `names[i]` reads, `__push`, and `__join`.
+
+**Arm tried:** exempt a local whose initializer is a certified alias call
+(`uncurriedObjectAliasMethod` or `isStoredObjectDescriptorAliasCall`) from
+`vardecl-module-binding-alias`. It clears isWritable step 2 and verifyProperty
+step 1 with no post-claim error, but ships no unit on its own, so it waits to
+land with the next blocker of either chain.
+
+**Plan for the next slice:** dynamic-carrier locals. A `var` initialized from a
+dynamic producer (alias call, `obj[name]`) gets the carrier slot, and reads of
+it join the move-only scan's dynamic names (the #2949 `dynNames` set).
+- That covers isWritable steps 2–3 and verifyProperty step 1 in one arm.
+- isWritable step 1 then needs the `Array.isArray` stored-static certification
+  in `uncurried-object-alias.ts` (beside `getOwnPropertyDescriptor`) and a
+  carrier-typed conditional.
+
+## Adversarial review 3 — merged head after #6972 (2026-10-30)
+
+This was a fresh-context agent, given the diff against main (`18a52f07e0`) and the plan.
+**Verdict: quality goal met, no blocking items.**
+
+Soundness (a)–(d) held:
+- **(a)** #6972's value-position `=` (`(flag = true) && b > 1`) is still refused
+  (`expr-module-value-representation-mismatch`), on this branch and on main.
+- **(c)** Compared on 13 harness files against a `git archive origin/main` copy:
+  - every unit main ships, this branch ships too;
+  - post-claim errors are identical;
+  - small string-only cases that main claims and then withdraws are refused
+    before the claim here.
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 (should-fix) | the helper-path fixtures used string keys alone, so `name` stayed in the legacy string slot and the tests ran legacy bodies | each helper-path fixture now appends a symbol-keyed call to each helper (`CARRIER_KEYS`) and asserts the four units ship IR before running. The accessor and absent-property (TypeError) paths now run the IR `!desc.attr` lowering. The header says the upstream self-tests are runtime parity only. |
+| 2 | the `declarations.ts:1523` twin of `isAnyStringSlot` | left for the cleanup above |
+| 3 | from-ast's descriptor arm tested `storedObjectStaticAliasMethod(…) !== undefined` inline | it reuses `isStoredObjectDescriptorAliasCall` (same predicate as the selector); `storedObjectStaticAliasMethod` is now module-private |
+| 4 | the probe comment narrated history and re-checked the ref kinds | one sentence of why; kinds checked once before the string test |
+| 5 | the `&&`/`\|\|` module gate only bites on the dynamic path | left: the comment says so; merging the two blocks would move #6972-era code |
+
+Found, not fixed (also on main): `function f(s){return s;} function w(){return
+f("a");} var r = w();` fails to compile standalone with "IR path failed for
+<module-init>: alloc-provenance check failed (#1586)". It needs its own issue.
