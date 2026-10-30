@@ -672,6 +672,7 @@ import {
   nativeStringTypeNullable,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
+import { isAnyStringSlot } from "./native-strings-shared.js";
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
 import {
   emitNativeNumberFormat,
@@ -2316,9 +2317,7 @@ function irFieldTypeMatchesLegacyValType(
     return true;
   }
   if (ir.kind === "string") {
-    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
-      return (vt.kind === "ref" || vt.kind === "ref_null") && vt.typeIdx === ctx.anyStrTypeIdx;
-    }
+    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) return isAnyStringSlot(ctx, vt);
     return vt.kind === "externref";
   }
   if (ir.kind === "class") {
@@ -2866,12 +2865,7 @@ function makeIrImplicitParamTypeResolver(
     if (inferred?.kind === "i32" && inferred.boolean === true) {
       return { kind: "bool", type: irVal(inferred) };
     }
-    if (
-      inferred?.kind === "ref" &&
-      ctx.nativeStrings &&
-      ctx.anyStrTypeIdx >= 0 &&
-      inferred.typeIdx === ctx.anyStrTypeIdx
-    ) {
+    if (inferred?.kind === "ref" && isAnyStringSlot(ctx, inferred)) {
       return { kind: "string", type: { kind: "string" } };
     }
     if (inferred?.kind === "ref" || inferred?.kind === "ref_null") {
