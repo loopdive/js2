@@ -14,31 +14,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { assembleOriginalHarness } from "./test262-original-harness.js";
-import { parseMeta } from "./test262-runner.js";
-
-async function compileHarnessBody(body: string) {
-  const source = `/*---\ndescription: String position arguments\n---*/\n${body}`;
-  return compile(assembleOriginalHarness(source, parseMeta(source) as never).primary.source, {
-    fileName: "test.js",
-    allowJs: true,
-    target: "standalone",
-    skipSemanticDiagnostics: true,
-    trackIrOutcomes: true,
-    deferTopLevelInit: true,
-  });
-}
-
-function moduleInit(result: Awaited<ReturnType<typeof compileHarnessBody>>) {
-  return (result.irOutcomes ?? []).find((outcome) => outcome.unitKind === "module-init");
-}
-
-async function runModuleInit(result: Awaited<ReturnType<typeof compileHarnessBody>>): Promise<void> {
-  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  expect(result.irPostClaimErrors ?? []).toEqual([]);
-  const { instance } = await WebAssembly.instantiate(result.binary, {});
-  (instance.exports.__module_init as () => void)();
-}
+import { compileHarnessBody, moduleInit, runModuleInit } from "./helpers/harness-module-init.js";
 
 describe("#7106 — String position arguments without a numeric proof stay legacy", () => {
   const shapes: Record<string, string> = {

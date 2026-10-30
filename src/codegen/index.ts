@@ -196,6 +196,7 @@ import {
   makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
   type IrModuleBindingResolver,
+  type IrScriptVarHome,
 } from "../ir/module-bindings.js"; // (#2856 Capability C)
 import {
   collectPreparedIrAsyncOwners,
@@ -3063,9 +3064,7 @@ function planIrOverlay(
             resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
-            admitScriptVar: (declaration) => scriptVarSlotIsSoleHome(ctx, declaration),
-            scriptVarDynamicHome: (declaration) => scriptVarSlotIsDynamicHome(ctx, declaration),
-            scriptVarStringHome: (declaration) => scriptVarSlotIsStringHome(ctx, declaration),
+            scriptVarHome: (declaration) => scriptVarHome(ctx, declaration),
           },
           identityContext,
         );
@@ -4207,50 +4206,31 @@ function compileMultiIrOverlaySource(
 }
 
 /**
- * (#7105) May the IR share a SCRIPT-goal top-level `var`'s `__mod_<name>` slot?
- * Legacy allocates that slot for scripts exactly as for modules, and a plain
- * read/write is `global.get`/`global.set` on it — measured 2026-10-20 on the
- * standalone target (`var called = 0; function cb(v) { called = called + 1; … }`
- * compiles `cb` to `global.get 9 … global.set 9`). Three script-only arms move
- * the binding's home away from the slot, and each answers `false` here:
+ * (#7105) The carrier of a SCRIPT-goal top-level `var`'s `__mod_<name>` slot
+ * (`IrScriptVarHome`) when the IR may share that slot as the binding's sole
+ * home. Legacy allocates it for scripts exactly as for modules, and a plain
+ * read or write is `global.get`/`global.set` on it. Three script-only arms
+ * move the binding's home away from the slot, and each answers `undefined`:
  *   - a runtime-eval consumer widens every script `var` to `externref`
  *     (`registerReassignedFunctionGlobals`), so the slot's type no longer
  *     matches the checker type the IR would resolve;
  *   - a name in `sloppyImplicitGlobals` (an undeclared `p = v` or a top-level
  *     `this.p = v`) resolves bare reads through the global-environment object;
- *   - a slot the declaration collector has not placed (or has already widened)
- *     is not a scalar home at all.
- * Scripts are the entire test262 corpus: every top-level `var` read inside a
- * test function was `expr-ident-not-in-scope` before this (e.g. the `kValue`
- * callbacks in `built-ins/Array/prototype/map`, 15/216 tests).
+ *   - a slot the declaration collector has not placed is not a home at all.
  */
-export function scriptVarSlotIsSoleHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
-  const slot = scriptVarHomeSlot(ctx, declaration);
-  return slot !== undefined && slot.type.kind !== "externref";
-}
-
-/**
- * (#7106) The same sole-home slot when legacy allocated it as `externref`
- * (`var o = new Object()`, `var n;`, a function-valued `var`): off fast mode
- * that is exactly `resolveIrDynamicCarrierType`, so the IR binds it as a
- * `dynamic` module binding. Fast mode's dynamic carrier is `$AnyValue`, so it
- * stays excluded.
- */
-export function scriptVarSlotIsDynamicHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
-  return !ctx.fast && scriptVarHomeSlot(ctx, declaration)?.type.kind === "externref";
-}
-
-/**
- * (#7125) The sole-home slot when legacy allocated it as the native-string
- * carrier `(ref null $AnyString)` (`var data = "data"` on standalone). That is
- * exactly the storage `resolveModuleBindingGlobal`'s `string` arm names, so the
- * IR binds it as a `string` module binding. Host strings use `externref`,
- * which is the dynamic home instead.
- */
-export function scriptVarSlotIsStringHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
-  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+export function scriptVarHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): IrScriptVarHome | undefined {
   const type = scriptVarHomeSlot(ctx, declaration)?.type;
-  return type?.kind === "ref_null" && type.typeIdx === ctx.anyStrTypeIdx;
+  switch (type?.kind) {
+    case "externref":
+      return ctx.fast ? undefined : "dynamic";
+    case "ref_null":
+      return type.typeIdx === ctx.anyStrTypeIdx ? "string" : undefined;
+    case "f64":
+    case "i32":
+      return "typed";
+    default:
+      return undefined;
+  }
 }
 
 function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclaration) {

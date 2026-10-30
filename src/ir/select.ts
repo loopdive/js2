@@ -12815,7 +12815,7 @@ export function assessModuleInit(
   // unrelated modules retain the existing conservative `var` demotion.
   // (#7106) A SCRIPT opens it unconditionally: every test262 body is a script
   // whose top-level `var`s live in the same `__mod_<name>` slots, and the
-  // resolver (with codegen's `admitScriptVar` predicate) still refuses each
+  // resolver (with codegen's `scriptVarHome` classifier) still refuses each
   // declaration it cannot place as `vardecl-module-storage-unrepresentable`.
   const scriptVarGate = currentModuleBindingResolver !== null && !ts.isExternalModule(sourceFile);
   let hasDynamicModuleUpdate = false;
