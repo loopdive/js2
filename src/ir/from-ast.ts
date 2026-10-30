@@ -17477,6 +17477,9 @@ function analyseCaptures(
       });
       continue;
     }
+    // (#7130) A module-scope binding is a global, not an environment slot:
+    // the lifted body reaches the same `__mod_` storage itself.
+    if (binding.kind === "moduleGlobal") continue;
     if (binding.kind !== "local") {
       // Slice 3 doesn't yet capture closure / nested-fn bindings — that
       // would require either lifting the inner closure to a top-level
