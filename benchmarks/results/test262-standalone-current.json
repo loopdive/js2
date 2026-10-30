@@ -12,9 +12,9 @@
   "verifiedExecutionCases": 0,
   "verifiedFrontendCases": 0,
   "unverifiedExecutionCases": 48621,
-  "timestamp": "2026-10-30T04:07:53.256Z",
-  "baseline_generated_at": "2026-10-30T04:07:53.256Z",
-  "baseline_sha": "9759ebed0b520685c9277b4005e445a78419cb2f",
+  "timestamp": "2026-10-30T06:02:04.812Z",
+  "baseline_generated_at": "2026-10-30T06:02:04.813Z",
+  "baseline_sha": "11dbff00a474e02a6a60debe704553875f0ab10a",
   "oracle_version": 16,
   "mode": {
     "target": "standalone",
@@ -1864,16 +1864,16 @@
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/round/roundingincrement-days-large.js",
           "test/built-ins/Temporal/PlainMonthDay/from/argument-string-calendar-case-insensitive.js",
+          "test/built-ins/Temporal/Duration/prototype/round/valid-increments.js",
           "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
-          "test/built-ins/Temporal/PlainDate/prototype/toLocaleString/return-string.js",
-          "test/built-ins/Temporal/PlainYearMonth/from/argument-string-calendar-case-insensitive.js"
+          "test/built-ins/Temporal/ZonedDateTime/prototype/since/roundingmode-ceil.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: round to 1e8-# days with plain relativeTo: days result: Expected SameValue(«#», «#») to be true",
           "range_error:RangeError: MM-DD format is only valid with iso8601 calendar",
+          "compile_timeout:timeout (10s)",
           "assertion_fail:Test262Error: duration1.subtract(duration2): days result: Expected SameValue(«#», «#») to be true",
-          "range_error:RangeError: Intl.DateTimeFormat is unavailable under --target standalone (no ICU data in pure Wasm) (option dateStyle)",
-          "range_error:RangeError: YYYY-MM format is only valid with iso8601 calendar"
+          "range_error:RangeError: Intl.DateTimeFormat is unavailable under --target standalone (no ICU data in pure Wasm) (option dateStyle)"
         ]
       },
       {
