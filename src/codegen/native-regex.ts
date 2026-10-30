@@ -1532,7 +1532,11 @@ export function ensureRegexRun(ctx: CodegenContext): number {
   }
 
   // (#2723) Host-free targets: a linear-safe program hands the search to the linear PikeVM.
-  const linearHandoff = regexRunBudgetHandoff(ctx, PROG, STACK, stackPoolGlobalIdx);
+  const linearHandoff = regexRunBudgetHandoff(ctx, PROG, STACK, stackPoolGlobalIdx, {
+    ensureFrameTypes,
+    regexI32ArrayType,
+    emitClassMatch,
+  });
   const body: Instr[] = [
     // pc = entryPc (#1911 — 0 for the main program); sp = start; steps = 0
     { op: "local.get", index: ENTRYPC },
@@ -1759,7 +1763,12 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
     ALT_BODY_LEN = 15;
   const indexedLiteralAlt = buildIndexedAnchoredLiteralAltSearch(i32Arr, strDataIdx);
   const searchArgs = [PROG, CTAB, NSLOTS, SDATA, SOFF, SLEN, I, STICKY, CAPS];
-  const linearFallback = regexSearchBudgetFallback(ctx, ALT_BODY_LEN + 1 + indexedLiteralAlt.locals.length, searchArgs);
+  const linearFallback = regexSearchBudgetFallback(
+    ctx,
+    ALT_BODY_LEN + 1 + indexedLiteralAlt.locals.length,
+    searchArgs,
+    { ensureFrameTypes, regexI32ArrayType, emitClassMatch },
+  );
   const body: Instr[] = [
     // (#4439) POISON GUARD — must precede every read of `prog` / `caps`.
     // `nSlots == 0` is unrepresentable for a compiled program (group 0 alone

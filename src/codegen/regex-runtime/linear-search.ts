@@ -23,7 +23,6 @@
 import type { Instr, LocalDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
-import { emitClassMatch, ensureFrameTypes, regexI32ArrayType } from "../native-regex.js";
 import { INSTR_WIDTH, ReOp } from "../regex/bytecode.js";
 import {
   I32,
@@ -77,6 +76,13 @@ const LINEAR_OP_MASK = [
   ReOp.WBOUND,
   ReOp.MATCH,
 ].reduce((mask, op) => mask | (1 << op), 0);
+
+/** Registration authority injected by native-regex; this leaf never imports its caller. */
+export interface RegexLinearDependencies {
+  readonly ensureFrameTypes: (ctx: CodegenContext) => [number, number];
+  readonly regexI32ArrayType: (ctx: CodegenContext) => number;
+  readonly emitClassMatch: (ctx: CodegenContext) => number;
+}
 
 interface LinearTypes {
   ctx: CodegenContext;
@@ -458,9 +464,10 @@ export function regexRunBudgetHandoff(
   progLocal: number,
   stackLocal: number,
   stackPoolGlobal: number,
+  dependencies: RegexLinearDependencies,
 ): Instr[] {
   if (!linearFallbackEnabled(ctx)) return [];
-  const safeIdx = ensureRegexLinearSafe(ctx);
+  const safeIdx = ensureRegexLinearSafe(ctx, dependencies);
   return if_(call(safeIdx, get(progLocal)), [
     ...get(stackLocal),
     { op: "global.set", index: stackPoolGlobal },
@@ -480,9 +487,10 @@ export function regexSearchBudgetFallback(
   ctx: CodegenContext,
   resultLocal: number,
   searchArgs: readonly number[],
+  dependencies: RegexLinearDependencies,
 ): { instrs: Instr[]; locals: LocalDef[] } {
   if (!linearFallbackEnabled(ctx)) return { instrs: [], locals: [] };
-  const searchIdx = ensureRegexSearchLinear(ctx);
+  const searchIdx = ensureRegexSearchLinear(ctx, dependencies);
   return {
     instrs: [
       { op: "local.tee", index: resultLocal },
@@ -493,19 +501,19 @@ export function regexSearchBudgetFallback(
   };
 }
 
-function ensureRegexLinearSafe(ctx: CodegenContext): number {
+function ensureRegexLinearSafe(ctx: CodegenContext, dependencies: RegexLinearDependencies): number {
   const existing = ctx.nativeRegexHelpers.get("__regex_linear_safe");
   if (existing !== undefined) return existing;
   const funcIdx = mintDefinedFunc(ctx);
   ctx.nativeRegexHelpers.set("__regex_linear_safe", funcIdx);
-  defineLinearSafe(linearTypes(ctx), funcIdx);
+  defineLinearSafe(linearTypes(ctx, dependencies), funcIdx);
   return funcIdx;
 }
 
-function ensureRegexSearchLinear(ctx: CodegenContext): number {
+function ensureRegexSearchLinear(ctx: CodegenContext, dependencies: RegexLinearDependencies): number {
   const existing = ctx.nativeRegexHelpers.get("__regex_search_linear");
   if (existing !== undefined) return existing;
-  const T = linearTypes(ctx);
+  const T = linearTypes(ctx, dependencies);
   const funcIdx = mintDefinedFunc(ctx);
   ctx.nativeRegexHelpers.set("__regex_search_linear", funcIdx);
   const assertIdx = mintDefinedFunc(ctx);
@@ -518,14 +526,14 @@ function ensureRegexSearchLinear(ctx: CodegenContext): number {
   return funcIdx;
 }
 
-function linearTypes(ctx: CodegenContext): LinearTypes {
-  const [frame, frameArr] = ensureFrameTypes(ctx);
+function linearTypes(ctx: CodegenContext, dependencies: RegexLinearDependencies): LinearTypes {
+  const [frame, frameArr] = dependencies.ensureFrameTypes(ctx);
   return {
     ctx,
-    i32Arr: regexI32ArrayType(ctx),
+    i32Arr: dependencies.regexI32ArrayType(ctx),
     strData: ctx.nativeStrDataTypeIdx,
     frame,
     frameArr,
-    classMatch: emitClassMatch(ctx),
+    classMatch: dependencies.emitClassMatch(ctx),
   };
 }
