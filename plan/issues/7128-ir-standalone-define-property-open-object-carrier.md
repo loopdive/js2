@@ -408,7 +408,11 @@ front of it, so S1 is groundwork and must not be tuned for a pass count.
      the carrier.
    - U2 admits a read `o.k` only where it is consumed DIRECTLY: one side of a
      strict `===`/`!==` whose other side is a primitive literal, `null` or
-     `undefined` (review round 3, PR #6957). Rounds 1 and 2 used a wider
+     the global `undefined` (review round 3, PR #6957). Round 4 found that the
+     `undefined` operand was matched by spelling alone:
+     `var undefined = { y: 1 }; … o.x === undefined` was claimed and then
+     demoted ("matching operand types for '==='"). Now any `undefined`
+     identifier in a `name` slot anywhere in the file refuses it. Rounds 1 and 2 used a wider
      allow-list, and each round found a new failing shape in it:
      - ToBoolean, `o.k.y` and `o.k?.y` (round 1);
      - loose `== null` and `switch` through an alias (round 2);
@@ -481,6 +485,11 @@ npx vitest run tests/issue-7128-define-property-open-carrier.test.ts
 (cd <root> && npx tsx /tmp/claude-0/ab/gc-bytes.mts)          # sha256 of each gc binary
 for f in <12 files>; do npx vitest run tests/equivalence/$f.test.ts; done
 ```
+
+Review round 4 (PR #6957, 2026-10-30, head `00ba5fdf`): the shadowed
+`undefined` fix. Both new refusal controls (object- and number-shadowed
+`undefined`) fail on `00ba5fdf` and pass after the fix. The PR test file passes
+64/64, and the global-`undefined` claimed cases are unchanged.
 
 ### Remaining for S1
 

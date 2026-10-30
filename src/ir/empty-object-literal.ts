@@ -119,7 +119,7 @@ const OBJECT_PROTOTYPE_KEYS: ReadonlySet<string> = new Set(
 /**
  * The one consumer a U2 read `o.k` is proven for — consumed DIRECTLY, never
  * passed on: one side of a strict `===`/`!==` whose other side is a primitive
- * literal, `null` or `undefined`. Everything else stays on legacy, which is
+ * literal, `null` or the global `undefined`. Everything else stays on legacy, which is
  * correct by construction:
  *   - an alias (`var y = o.k`, `y = o.k`, `return`, `throw`) hands the value to
  *     the dynamic-value scan, whose own gaps (`y.z` must throw on undefined,
@@ -142,8 +142,29 @@ function isProvenReadConsumer(read: ts.PropertyAccessExpression): boolean {
   return (
     isPrimitiveLiteral(other) ||
     other.kind === ts.SyntaxKind.NullKeyword ||
-    (ts.isIdentifier(other) && other.text === "undefined")
+    (ts.isIdentifier(other) && other.text === "undefined" && !declaresUndefined(read.getSourceFile()))
   );
+}
+
+/**
+ * Is `undefined` possibly a source binding anywhere in `file`? Against a
+ * shadowing `var undefined = {}` the comparison is not with the carrier's
+ * undefined, and the lowering demotes after the claim. Matched by syntax: an
+ * `undefined` identifier in any `name` slot counts, a property name included,
+ * which can only refuse.
+ */
+function declaresUndefined(file: ts.SourceFile): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node)) {
+      if (node.text === "undefined" && (node.parent as { readonly name?: ts.Node }).name === node) found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
 }
 
 /** The ToPropertyDescriptor fields of a data descriptor (§6.2.5.5). */

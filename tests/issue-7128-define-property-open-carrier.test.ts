@@ -96,6 +96,9 @@ const REFUSED: Record<string, string> = {
   // so legacy is the reference here, not node).
   "dynamic parameter == null": `export function f(p) { return p == null ? 1 : 0; }`,
   "switch on a dynamic parameter": `export function f(p) { switch (p) { case 3: return 1; } return 0; }`,
+  // Round 4 (PR #6957): a local `undefined` is not the carrier's undefined.
+  "object-shadowed undefined": `export function f() { var undefined = { y: 1 }; var o = {}; return o.x === undefined ? 1 : 0; }`,
+  "number-shadowed undefined": `export function f() { var undefined = 5; var o = {}; Object.defineProperty(o, "x", { value: 5 }); return o.x === undefined ? 1 : 0; }`,
   "shadowed Object": `export function f() { var Object = { defineProperty: function (a, b, c) { return a; } }; var o = {}; Object.defineProperty(o, "x", { value: 1 }); return o.x === undefined ? 1 : 0; }`,
 };
 
