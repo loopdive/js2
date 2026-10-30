@@ -310,8 +310,8 @@ const ORIGINAL_DECLARATIONS = {
 } as const;
 
 const ADAPTER_SHAPES = [
-  // (#7106) the unbacked-index no-op guard ahead of the grow-store body.
-  ["donor", "ensureVecElemSet", "dcee684af3aba6deb51585054348c3a27fbd578969df8518fe270ffa038d00e2"],
+  // (#7106) an f64 grow gap holds the undefined marker on every lane when absence is not tracked.
+  ["donor", "ensureVecElemSet", "6125b21fb398ff07750ee4141d4e0b98e20d3642e3f2f2c085a3569376ae54ab"],
   ["registry", "getOrRegisterArrayType", "ef19d0d5b623d517dff2b5e517dcae50ca866a6215133b35ae8722ab460d8b22"],
   ["registry", "getOrRegisterVecBaseType", "8da164e7abf6ca79052b8d96e4e30149440d9b6d853c3aae464048511015319f"],
   ["registry", "getOrRegisterVecType", "5a88ad02771b893b7f15aa1bacf3d36ce34d09e5db02c822541f2e409b2dfb08"],
@@ -760,17 +760,6 @@ describe("complete donor/registry preservation", () => {
   });
 });
 
-const NEGATIVE_INDEX_GUARD = [
-  { op: "local.get", index: 1 },
-  { op: "i32.const", value: 0 },
-  { op: "i32.lt_s" },
-  { op: "local.get", index: 0 },
-  { op: "ref.is_null" },
-  { op: "i32.eqz" },
-  { op: "i32.and" },
-  { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
-];
-
 function context(standalone = true) {
   return createCodegenContext(createEmptyModule(), ts.createProgram([], {}).getTypeChecker(), { standalone });
 }
@@ -803,10 +792,7 @@ describe("real legacy adapters retain dense and hole behavior", () => {
             : kind === "dense-f64"
               ? { kind: "f64-hole" as const, bits: UNDEF_F64_BITS }
               : { kind: "default" as const };
-      // (#7106) A negative index is a no-op for a non-null receiver, ahead of
-      // the shared grow-store body.
-      expect(fn.body.slice(0, NEGATIVE_INDEX_GUARD.length)).toEqual(NEGATIVE_INDEX_GUARD);
-      expect({ body: fn.body.slice(NEGATIVE_INDEX_GUARD.length), locals: fn.locals }).toEqual(
+      expect({ body: fn.body, locals: fn.locals }).toEqual(
         buildVectorGrowStoreBody({
           carrierTypeIndex: kind === "hole-global" ? carrier.superTypeIdx! : index,
           arrayTypeIndex: data.typeIdx,

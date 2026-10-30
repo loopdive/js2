@@ -2,33 +2,47 @@
 
 import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
 import { forEachChild, ts } from "../ts-api.js";
-import { isArrayIndexNumber, literalElementKey, SPARSE_INDEX_CEILING } from "../shared/array-index-key.js";
+import { isArrayIndexNumber, literalElementKey, MAX_DENSE_VEC_LENGTH } from "../shared/array-index-key.js";
+import { skipTransparentExpressions } from "../shared/transparent-expressions.js";
 import { literalFieldName } from "./fnctor-field-writes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
+import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
 
-export function unwrapTypeErasedExpression(expr: ts.Expression): ts.Expression | undefined {
-  return ts.isAsExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isSatisfiesExpression(expr) ||
-    ts.isNonNullExpression(expr)
-    ? expr.expression
-    : undefined;
+/** (#7106) What the selector knows about an element key before runtime. */
+export interface ElementKeyEvidence {
+  /** Whether a name is bound locally, shadowing the global `undefined` / `NaN` / `Infinity`. */
+  readonly isLocal: (name: string) => boolean;
+  /** The checker family of the key's declared type. */
+  readonly declaredFamily?: (expr: ts.Expression) => IrDeclaredPrimitiveExpressionFamily | undefined;
+  /** The value of the key's number literal type (`const k = 0.5`). */
+  readonly numberLiteralType?: (expr: ts.Expression) => number | undefined;
 }
 
 /**
- * (#7106) A constant element key the vec lane does not own: a literal
- * (`literalElementKey`) whose value is not an array index up to
- * `SPARSE_INDEX_CEILING` (`a[0.5]`, `a[-1]`, `a[4294967295]`, `a[true]`,
- * `a[20000000]`). ToPropertyKey makes a non-index a NAMED property, and above
- * the ceiling legacy's store keeps a valid index sparse instead of growing the
- * backing array; legacy's named-key and sparse routes (#4247, #4556, #4491)
- * own both. `isLocal` reports whether a name is shadowed by a local binding.
+ * (#7106) An Array element access the vec lane leaves to legacy, decided by a
+ * key whose value is known before runtime:
+ * - a key that is not an array index: a literal (`literalElementKey`: `a[0.5]`,
+ *   `a[-1]`, `a[null]`, `a[true]`), a number literal type of such a value
+ *   (`const k = 0.5`), or any boolean. ToPropertyKey makes it a NAMED property,
+ *   which only legacy's named-key route reads and writes (#4247, #4556);
+ * - a `write` to an index the vec lane cannot grow its backing array to hold
+ *   (`MAX_DENSE_VEC_LENGTH`); legacy's sparse tail moves `length` instead.
+ * A read of any index stays on the vec lane: a read never grows the array.
  */
-export function isConstantNonVecIndexKey(key: ts.Expression, isLocal: (name: string) => boolean): boolean {
-  const literal = literalElementKey(key, isLocal);
-  if (literal === undefined) return false;
-  const { value } = literal;
-  return !(typeof value === "number" && isArrayIndexNumber(value) && value <= SPARSE_INDEX_CEILING);
+export function isLegacyOnlyVecKey(key: ts.Expression, evidence: ElementKeyEvidence, write: boolean): boolean {
+  const literal = literalElementKey(key, evidence.isLocal);
+  if (literal !== undefined) return isLegacyOnlyKeyValue(literal.value, write);
+  // Ask the checker about the operand the vec lane lowers: a type-erased cast
+  // (`b as any`) changes the key's type, not its value.
+  const operand = skipTransparentExpressions(key);
+  if (evidence.declaredFamily?.(operand) === "boolean") return true;
+  const typed = evidence.numberLiteralType?.(operand);
+  return typed !== undefined && isLegacyOnlyKeyValue(typed, write);
+}
+
+function isLegacyOnlyKeyValue(value: number | boolean | null | undefined, write: boolean): boolean {
+  if (typeof value !== "number" || !isArrayIndexNumber(value)) return true;
+  return write && value >= MAX_DENSE_VEC_LENGTH;
 }
 
 /** Reject affine three-deep indices whose IR widening is costlier than legacy i32 induction. */

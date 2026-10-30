@@ -44,7 +44,8 @@ import {
 import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
-import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./select-expression-structure.js";
+import { expressionIsDefinitelyBoolean } from "./select-expression-structure.js";
+import { unwrapTypeErasedExpression } from "../shared/transparent-expressions.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -229,6 +230,7 @@ import {
   lowerNarrowedI32Element as lowerNarrowedI32ElementWith,
   planI32ArrayElements,
   tryLowerVecPush,
+  type VecIndex,
 } from "./array-element-lowering.js";
 import { lowerVecSearchOrJoinCall } from "./array-methods/vec-search-join.js";
 import {
@@ -5992,23 +5994,12 @@ function lowerExactDynamicPrimitiveTypeof(
   const tagFor = (family: IrPrimitiveExpressionFamily) =>
     family === "number" ? JS_TAG_IDS.NumberF64 : family === "boolean" ? JS_TAG_IDS.Boolean : JS_TAG_IDS.String;
   const labelFor = (family: IrPrimitiveExpressionFamily): string => (family === "boolean" ? "boolean" : family);
-  const cond = cx.builder.emitTagTest(inner, tagFor(families[0]));
-  let whenTrue!: IrValueId;
-  const thenBody = cx.builder.collectBodyInstrs(() => {
-    whenTrue = cx.builder.emitStringConst(labelFor(families[0]));
-  });
-  let whenFalse!: IrValueId;
-  const elseBody = cx.builder.collectBodyInstrs(() => {
-    whenFalse = cx.builder.emitStringConst(labelFor(families[1]));
-  });
-  return cx.builder.emitIfElse({
-    cond,
-    then: thenBody,
-    thenValue: whenTrue,
-    else: elseBody,
-    elseValue: whenFalse,
-    resultType: { kind: "string" },
-  });
+  return cx.builder.emitIfElseValue(
+    cx.builder.emitTagTest(inner, tagFor(families[0])),
+    () => cx.builder.emitStringConst(labelFor(families[0])),
+    () => cx.builder.emitStringConst(labelFor(families[1])),
+    { kind: "string" },
+  );
 }
 
 /**
@@ -6184,28 +6175,14 @@ function lowerOptionalExternPropertyAccess(
   // contract: condition lives in the outer scope).
   const cond = cx.builder.emitRefIsNull(recv);
 
-  // Build the "null arm": emit a `ref.null.extern` matching the result
-  // type. `collectBodyInstrs` re-routes builder emits into the arm's
-  // buffer; the SSA value defined inside the callback becomes `thenValue`.
-  let thenValue!: IrValueId;
-  const thenBody = cx.builder.collectBodyInstrs(() => {
-    thenValue = cx.builder.emitConst({ kind: "null", ty: resultType }, resultType);
-  });
-
-  // Build the "non-null arm": emit the actual extern-property access.
-  let elseValue!: IrValueId;
-  const elseBody = cx.builder.collectBodyInstrs(() => {
-    elseValue = cx.builder.emitExternProp(importPrefix, propName, recv, resultType);
-  });
-
-  return cx.builder.emitIfElse({
+  // The null arm yields a `ref.null.extern` of the result type; the other
+  // arm reads the extern property.
+  return cx.builder.emitIfElseValue(
     cond,
-    then: thenBody,
-    thenValue,
-    else: elseBody,
-    elseValue,
+    () => cx.builder.emitConst({ kind: "null", ty: resultType }, resultType),
+    () => cx.builder.emitExternProp(importPrefix, propName, recv, resultType),
     resultType,
-  });
+  );
 }
 
 /**
@@ -6884,26 +6861,69 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
   return cx.safeIndexedArrays.has(expr.expression.text + ":" + expr.argumentExpression.text);
 }
 
+/** (#7106) An element key lowered once (`lowerElementIndex`), shared by the read and the write. */
+interface ElementSlot extends VecIndex {
+  /** The counted-loop proof (`isProvenInBoundsIr`): read and write unchecked. */
+  readonly proven: boolean;
+}
+
 /**
  * (#7106) Lower an element access's key ONCE to its vec index (`emitVecIndex`:
  * -1 for a key that names no element), together with the counted-loop proof
- * (`isProvenInBoundsIr`) that lets the caller read or write unchecked. The key
- * needs no runtime exactness test when that proof holds or it is int32-valued
- * (`isI32PureExprIR`). The selector already refused a constant key the vec lane
- * does not own (`isConstantNonVecIndexKey`), so legacy's routes own it.
+ * that lets the caller read or write unchecked. The key needs no runtime
+ * exactness test when that proof holds or it is int32-valued
+ * (`isI32PureExprIR`). The selector already refused a key the vec lane leaves to
+ * legacy (`isLegacyOnlyVecKey`).
  */
 function lowerElementIndex(
   access: ts.ElementAccessExpression,
   cx: LowerCtx,
   rejectKey: (detail: string) => never,
-): { readonly index: IrValueId; readonly proven: boolean } {
+): ElementSlot {
   const key = lowerExpr(access.argumentExpression, cx, IR_F64);
   const keyType = cx.builder.typeOf(key);
   const scalar = asVal(keyType)?.kind;
   if (scalar !== "f64" && scalar !== "i32") rejectKey(`index must be number or bool (got ${describeIrType(keyType)})`);
   const proven = isProvenInBoundsIr(access, cx);
   const integral = proven || isI32PureExprIR(access.argumentExpression, cx.i32PureNames, cx.provenCharReads);
-  return { index: emitVecIndex(key, integral, cx), proven };
+  return { ...emitVecIndex(key, integral, cx), proven };
+}
+
+/**
+ * (#7106) The write tail of an element store or compound: an unchecked
+ * `vec.set` under the counted-loop proof, else the grow-store helper — the
+ * branded sparse carrier's (`IR_HOLEY_ARRAY_ELEM_SET`) or the vec's. The
+ * helper name embeds the vec STRUCT typeIdx; the lower-time resolver
+ * intercepts the prefix and materializes it on demand (name-based resolution —
+ * funcIdx-shift safe by construction). An index that may be negative skips the
+ * store: the helper would trap on it, and it names no element.
+ */
+function emitElementWrite(
+  lhs: ts.ElementAccessExpression,
+  recv: IrValueId,
+  vec: IrVecLowering,
+  slot: ElementSlot,
+  value: IrValueId,
+  cx: LowerCtx,
+): void {
+  if (slot.proven) {
+    cx.builder.emitVecSet(recv, slot.index, value);
+    return;
+  }
+  const provider =
+    cx.resolver?.isHoleyArrayElementStore?.(lhs) === true
+      ? IR_HOLEY_ARRAY_ELEM_SET
+      : vecElemSetProviderSymbol(cx.builder.typeOf(recv), vec);
+  const store = (): void => {
+    cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, slot.index, value], null);
+  };
+  if (!slot.mayBeNegative) {
+    store();
+    return;
+  }
+  const zero = cx.builder.emitConst({ kind: "i32", value: 0 }, IR_I32);
+  const nonNegative = cx.builder.emitBinary("i32.ge_s", slot.index, zero, IR_BOOL);
+  cx.builder.emitIfStmt({ cond: nonNegative, then: cx.builder.collectBodyInstrs(store), else: [] });
 }
 
 /**
@@ -7020,7 +7040,7 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
       `ir/from-ast: element store into '${elem.kind}' vec not in IR scope (${cx.funcName})`,
     );
   }
-  const { index: idxI32, proven } = lowerElementIndex(lhs, cx, (detail) =>
+  const slot = lowerElementIndex(lhs, cx, (detail) =>
     demoteToLegacy("element-store-unsupported", `ir/from-ast: element-store ${detail} in ${cx.funcName}`),
   );
   // Value — lower with the element-type hint, then coerce. Invariant W for a
@@ -7028,12 +7048,7 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   // already-lowered f64 (the #3741 rule — a truncation saturates where the
   // source semantics wrap).
   if (narrowedI32) {
-    const narrowVal = lowerNarrowedI32Element(rhs, cx);
-    if (proven) {
-      cx.builder.emitVecSet(recv, idxI32, narrowVal);
-      return;
-    }
-    cx.builder.emitCall(irIntrinsicFuncRef(vecElemSetProviderSymbol(recvType, vec)), [recv, idxI32, narrowVal], null);
+    emitElementWrite(lhs, recv, vec, slot, lowerNarrowedI32Element(rhs, cx), cx);
     return;
   }
   const valRaw = lowerExpr(rhs, cx, irVal(elem));
@@ -7051,18 +7066,7 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   } else {
     val = coerceToExpectedExtern(valRaw, elem, cx, `element-store value`);
   }
-  // The helper name embeds the vec STRUCT typeIdx; the lower-time resolver
-  // intercepts the prefix and materializes the helper on demand (name-based
-  // resolution — funcIdx-shift safe by construction).
-  if (proven) {
-    cx.builder.emitVecSet(recv, idxI32, val);
-    return;
-  }
-  const provider =
-    cx.resolver?.isHoleyArrayElementStore?.(lhs) === true
-      ? IR_HOLEY_ARRAY_ELEM_SET
-      : vecElemSetProviderSymbol(recvType, vec);
-  cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, idxI32, val], null);
+  emitElementWrite(lhs, recv, vec, slot, val, cx);
 }
 
 /**
@@ -7157,13 +7161,13 @@ function lowerElementCompound(
     );
   }
   // (2) Index — ONCE; the same i32 SSA id feeds the read and the write.
-  const { index: idxI32, proven } = lowerElementIndex(lhs, cx, (detail) =>
+  const slot = lowerElementIndex(lhs, cx, (detail) =>
     demoteToLegacy("element-store-unsupported", `ir/from-ast: compound element ${detail} in ${cx.funcName}`),
   );
   // (3) READ — strictly before the RHS.
-  const oldValue = proven
-    ? cx.builder.emitVecGet(recv, idxI32, resolvedVec.elementType)
-    : emitSafeVecGet(recv, idxI32, vec.elementValType, cx);
+  const oldValue = slot.proven
+    ? cx.builder.emitVecGet(recv, slot.index, resolvedVec.elementType)
+    : emitSafeVecGet(recv, slot.index, vec.elementValType, cx);
   if (asVal(cx.builder.typeOf(oldValue))?.kind !== "f64") {
     throw new IrUnsupportedError(
       "element-store-unsupported",
@@ -7180,19 +7184,9 @@ function lowerElementCompound(
       `ir/from-ast: compound element write RHS must be f64 (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
     );
   }
-  // (5) binop — `++`/`--` has no RHS node — then (6) the store tail: the
-  // same fast/provider fork `lowerElementStore` uses, keyed off the SAME
-  // bounds proof as the read.
-  const result = emitNumberBinary(op, oldValue, rhsValue, lhs, rhs, cx);
-  if (proven) {
-    cx.builder.emitVecSet(recv, idxI32, result);
-    return;
-  }
-  const provider =
-    cx.resolver?.isHoleyArrayElementStore?.(lhs) === true
-      ? IR_HOLEY_ARRAY_ELEM_SET
-      : vecElemSetProviderSymbol(recvType, vec);
-  cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, idxI32, result], null);
+  // (5) binop — `++`/`--` has no RHS node — then (6) the store tail, keyed
+  // off the SAME slot (index and bounds proof) as the read.
+  emitElementWrite(lhs, recv, vec, slot, emitNumberBinary(op, oldValue, rhsValue, lhs, rhs, cx), cx);
 }
 
 function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx, hint: IrType): IrValueId {
@@ -7248,8 +7242,8 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx, hint
 
   // Slice 12 (#1169o) — dynamic element access on a vec receiver.
   // The receiver's ValType must resolve to a vec via the resolver; the
-  // index is lowered as f64 (JS Number) and truncated to i32 for the
-  // backend `vec.get`.
+  // key becomes the i32 vec index once (`lowerElementIndex`, -1 for a key
+  // that names no element).
   //
   // (#2766 — hybrid prove-then-specialize) The read is FAST (an unchecked
   // `vec.get`/`array.get`, which traps on OOB) ONLY when the index is *proven*

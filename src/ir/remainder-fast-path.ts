@@ -70,13 +70,5 @@ export function emitNumberRemainder(
   }
   if (condition === undefined) return fastI64();
 
-  let thenValue!: IrValueId;
-  const thenBody = builder.collectBodyInstrs(() => {
-    thenValue = fastI64();
-  });
-  let elseValue!: IrValueId;
-  const elseBody = builder.collectBodyInstrs(() => {
-    elseValue = exactFallback();
-  });
-  return builder.emitIfElse({ cond: condition, then: thenBody, thenValue, else: elseBody, elseValue, resultType: f64 });
+  return builder.emitIfElseValue(condition, fastI64, exactFallback, f64);
 }

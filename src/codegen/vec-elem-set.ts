@@ -10,31 +10,32 @@
 //
 // Not IR-only: legacy reaches the same helper for rest-parameter collection
 // (`codegen/index.ts`), the overlay stores (`vec-overlay.ts`), the vec arm of
-// `__extern_set` (`object-runtime.ts`) and self-hosted stdlib bodies
-// (`stdlib-selfhost.ts`), on both lanes. Steps 2 and 3 below therefore apply to
-// those callers too: a negative index no longer traps there either, and an
-// f64 grow gap holds a marker on gc as well, exactly what legacy's inline
-// store writes there. The host bridge's `__vec_get` maps both markers to
-// `undefined` (#3315, #4491 T11), and the flag gating its absence-marker arm
-// (`f64HoleMarkerEmitted`) is set at finalize for every module with an f64 vec
-// BEFORE `__vec_get` is built (`vec-access-exports.ts`), so a helper
-// materialized later cannot leave a marker the bridge does not map.
+// `__extern_set` and `__vec_dp_value` (`object-runtime.ts`) and self-hosted
+// stdlib bodies (`stdlib-selfhost.ts`), on both lanes. Those callers pass only
+// non-negative indices; the IR's store sites skip a negative one themselves
+// (`emitElementWrite` in `ir/from-ast.ts`), so the helper never sees one.
 //
 // Semantics — legacy parity (JS `arr[i] = v` on a growable vec):
 //   1. Null receiver → throw TypeError (`ref.null.extern` payload on the
 //      shared `__exn` tag) — the legacy null-guard shape (#441).
-//   2. (#7106) A negative idx is a no-op: the -1 the IR passes for a key that
-//      is not an array index, and every negative int32. Growing for it trapped
-//      ("array element access out of bounds"). The linear and Porffor `set`
-//      runtimes drop a negative index the same way.
-//   3. idx >= capacity → grow the backing array to
+//   2. idx >= capacity → grow the backing array to
 //      `max(idx + 1, oldCap * 2, 4)`, copy the old contents, and point the
 //      vec's `data` field at the new array (legacy grow sequence,
-//      assignment.ts:4094-4178). An f64 grow gap holds the absence marker
-//      when the module can ask presence questions, else the undefined marker
-//      (legacy's #4491 T8/T11 choice), so it never reads back as `0`.
-//   4. `data[idx] = val`.
-//   5. idx + 1 > vec.length → vec.length = idx + 1 (JS length update on
+//      assignment.ts:4094-4178). (#7106) An f64 grow gap holds the absence
+//      marker when the module can ask presence questions, else the undefined
+//      marker — the #4491 T8/T11 choice legacy's inline store
+//      (`compileElementAssignment`) already makes on every lane — so it never
+//      reads back as `0`. Until #7106 this helper zero-filled the gap except
+//      on a standalone module with hole presence, so a gap written through it
+//      (the IR's stores, and legacy's `__extern_set`) read `0` where the same
+//      store compiled inline read `undefined`. Every reader maps the markers:
+//      the host bridge's `__vec_get` maps both to `undefined` (#3315, #4491
+//      T11), and the flag gating its absence-marker arm
+//      (`f64HoleMarkerEmitted`) is set at finalize for every module with an
+//      f64 vec BEFORE `__vec_get` is built (`vec-access-exports.ts`), so a
+//      helper materialized later cannot leave a marker the bridge misses.
+//   3. `data[idx] = val`.
+//   4. idx + 1 > vec.length → vec.length = idx + 1 (JS length update on
 //      OOB writes).
 //
 // The helper is pure WasmGC — no host import — so it works identically in
@@ -233,19 +234,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
     name,
     typeIdx: sigIdx,
     locals,
-    body: [
-      // Step 2: `if (idx < 0 && vec !== null) return` (param 0 = vec,
-      // 1 = idx). A null receiver still reaches the TypeError.
-      { op: "local.get", index: 1 },
-      { op: "i32.const", value: 0 },
-      { op: "i32.lt_s" },
-      { op: "local.get", index: 0 },
-      { op: "ref.is_null" },
-      { op: "i32.eqz" },
-      { op: "i32.and" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
-      ...body,
-    ],
+    body,
     exported: false,
   };
   pushDefinedFunc(ctx, funcIdx, fn);

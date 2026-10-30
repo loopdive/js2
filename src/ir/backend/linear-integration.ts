@@ -127,6 +127,7 @@ import {
 import { buildIrUnitTypeMap, projectIrUnitTypeMapToLegacy, type LatticeType } from "../propagate.js";
 import {
   makeIrArrayExpressionPredicate,
+  makeIrNumberLiteralTypeResolver,
   makeIrAmbientBindingPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrPrimitiveExpressionClassifier,
@@ -674,6 +675,7 @@ function planLinearIrOverlay(
       classifyPrimitiveExpression: makeIrPrimitiveExpressionClassifier(ctx.checker),
       classifyDeclaredPrimitiveExpression: makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker),
       isArrayExpression: makeIrArrayExpressionPredicate(ctx.checker),
+      numberLiteralTypeValue: makeIrNumberLiteralTypeResolver(ctx.checker),
       isRegExpExpression: makeIrRegExpExpressionPredicate(ctx.checker),
       isAmbientBinding: makeIrAmbientBindingPredicate(ctx.checker),
       supportsSymbolicMathHelpers: false,

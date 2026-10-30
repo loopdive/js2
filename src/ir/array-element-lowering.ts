@@ -14,7 +14,6 @@ import {
   type ExactInt32Proof,
 } from "./array-element-inference.js";
 import { IrFunctionBuilder } from "./builder.js";
-import { irTypeIsBoolean } from "./boolean-brand.js";
 import { irIntrinsicFuncRef } from "./callable-bindings.js";
 import type { I32PureNames } from "./i32-pure-bitwise.js";
 import { JS_TAG_IDS } from "./js-tag-domain.js";
@@ -541,6 +540,17 @@ export function emitForwardingAwareLinearVecLen(
   return host.builder.emitUnary("f64.convert_i32_s", lenI32, IR_F64);
 }
 
+/** (#7106) An element key lowered to a vec index (`emitVecIndex`). */
+export interface VecIndex {
+  readonly index: IrValueId;
+  /**
+   * The key went through the runtime exactness test, so `index` may be
+   * negative: -1 for a key that is not an array index, or a negative integer
+   * key. A grow-store traps on a negative index, so a store skips it.
+   */
+  readonly mayBeNegative: boolean;
+}
+
 /**
  * (#7106) The vec index of an element key, or -1 when the key names no element
  * a vec slot can hold.
@@ -549,12 +559,12 @@ export function emitForwardingAwareLinearVecLen(
  * and an integer of 2^31 or more is an index no dense vec backs, so truncating
  * the key (`a[0.5]` reading `a[0]`, `a[-1] = v` trapping in the grow-store) is
  * never right. The f64 key truncates with `i32.trunc_sat_f64_s` and keeps the
- * result only when converting it back is exact. A boolean key is the named
- * property `"true"` / `"false"`, never element 1 or 0, so it is -1 outright.
- * -1 is out of range for every bounds-checked read (`i32.lt_u` against the
- * length) and dropped by every vec store helper as a negative index (the WasmGC
- * grow-store, the linear and Porffor runtimes), so a non-index key reads as
- * absent and never writes or traps. Any other i32 key keeps its value.
+ * result only when converting it back is exact. -1 is out of range for every
+ * bounds-checked read (`i32.lt_u` against the length), and the store sites
+ * skip a negative index, so a non-index key reads as absent and never writes
+ * or traps. An i32 key keeps its value: on an Array receiver the selector
+ * already refused a key it knows names a property (a boolean, a non-index
+ * literal; `isLegacyOnlyVecKey`).
  *
  * `integral` is the caller's static proof that the f64 key is an integer (the
  * counted-loop pair, an int32-valued expression); it skips the runtime test.
@@ -563,15 +573,16 @@ export function emitVecIndex(
   key: IrValueId,
   integral: boolean,
   host: Pick<ArrayElementLoweringHost, "builder">,
-): IrValueId {
+): VecIndex {
   const b = host.builder;
-  const keyType = b.typeOf(key);
-  if (irTypeIsBoolean(keyType)) return b.emitConst({ kind: "i32", value: -1 }, IR_I32);
-  if (asVal(keyType)?.kind === "i32") return key;
+  if (asVal(b.typeOf(key))?.kind === "i32") return { index: key, mayBeNegative: false };
   const index = b.emitUnary("i32.trunc_sat_f64_s", key, IR_I32);
-  if (integral) return index;
+  if (integral) return { index, mayBeNegative: false };
   const exact = b.emitBinary("f64.eq", b.emitUnary("f64.convert_i32_s", index, IR_F64), key, IR_I32);
-  return b.emitSelect(exact, index, b.emitConst({ kind: "i32", value: -1 }, IR_I32), IR_I32);
+  return {
+    index: b.emitSelect(exact, index, b.emitConst({ kind: "i32", value: -1 }, IR_I32), IR_I32),
+    mayBeNegative: true,
+  };
 }
 
 /** An f64 element holding the `undefined` or the absence marker (a grow gap, a legacy hole). */

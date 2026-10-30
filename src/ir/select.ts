@@ -98,10 +98,10 @@ import {
 } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
+import { unwrapTypeErasedExpression } from "../shared/transparent-expressions.js";
 import {
   isAffineThreeDeepElementAccess,
-  isConstantNonVecIndexKey,
-  unwrapTypeErasedExpression,
+  isLegacyOnlyVecKey,
   identifierIsValueReference,
   isFunctionObjectReceiver,
   functionObjectReadLocals,
@@ -565,6 +565,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * while preserving same-named methods on local classes.
    */
   readonly isArrayExpression?: (expr: ts.Expression) => boolean;
+  /** (#7106) The value of an expression's number literal type (`const k = 0.5` → 0.5), else `undefined`. */
+  readonly numberLiteralTypeValue?: (expr: ts.Expression) => number | undefined;
   /** (#7108) Checker element family of an array receiver; absent ⇒ no array search/join claims. */
   readonly classifyArrayElementFamily?: (expr: ts.Expression) => IrArrayElementFamily | undefined;
   /** Exact pre-scanned sized-Array constructor sites for the sparse carrier. */
@@ -4108,25 +4110,35 @@ function isPhase1MutableMemberTarget(
   ) {
     return false;
   }
-  return isPhase1ElementKey(target, scope, localClasses);
+  return isPhase1ElementKey(target, true, scope, localClasses);
 }
 
 /**
- * (#7106) Shape gate for the key of every element read and write: Phase-1, and,
- * on an Array or tuple receiver (the vec lane), not a constant the vec lane
- * does not own (`isConstantNonVecIndexKey`). Such an access keeps the whole
+ * (#7106) Shape gate for the key of every element read and `write`: Phase-1,
+ * and, on an Array or tuple receiver (the vec lane), not a key the vec lane
+ * leaves to legacy (`isLegacyOnlyVecKey`). Such an access keeps the whole
  * function on legacy, whose named-key and sparse routes own it. Any other
  * receiver keeps the key: the dynamic arm reads a named key itself.
  */
 function isPhase1ElementKey(
   access: ts.ElementAccessExpression,
+  write: boolean,
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
   const key = access.argumentExpression;
+  const options = currentSelectionOptions;
   if (
-    currentSelectionOptions?.isArrayExpression?.(access.expression) === true &&
-    isConstantNonVecIndexKey(key, (name) => scope.has(name))
+    options?.isArrayExpression?.(access.expression) === true &&
+    isLegacyOnlyVecKey(
+      key,
+      {
+        isLocal: (name) => scope.has(name),
+        declaredFamily: options.classifyDeclaredPrimitiveExpression,
+        numberLiteralType: options.numberLiteralTypeValue,
+      },
+      write,
+    )
   ) {
     return shapeNo("element-key-not-vec-index", key);
   }
@@ -4621,7 +4633,7 @@ function isPhase1StatementListInScope(
         ) {
           return shapeNo("nontail-elemstore-recv", lhs.expression);
         }
-        if (!isPhase1ElementKey(lhs, scope, localClasses))
+        if (!isPhase1ElementKey(lhs, true, scope, localClasses))
           return shapeNo("nontail-elemstore-idx", lhs.argumentExpression);
         if (!isPhase1Expr(s.expression.right, scope, localClasses))
           return shapeNo("nontail-elemstore-rhs", s.expression.right);
@@ -5956,7 +5968,7 @@ function isPhase1BodyStatement(
           ) {
             return shapeNo("body-elemstore-recv", lhs.expression);
           }
-          if (!isPhase1ElementKey(lhs, scope, localClasses)) return false;
+          if (!isPhase1ElementKey(lhs, true, scope, localClasses)) return false;
           return isPhase1Expr(stmt.expression.right, scope, localClasses);
         }
       }
@@ -6268,7 +6280,8 @@ function isPhase1Tail(
       const lhs = expr.left;
       if (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text))
         return shapeNo("tail-elemstore-recv", lhs.expression);
-      if (!isPhase1ElementKey(lhs, scope, localClasses)) return shapeNo("tail-elemstore-idx", lhs.argumentExpression);
+      if (!isPhase1ElementKey(lhs, true, scope, localClasses))
+        return shapeNo("tail-elemstore-idx", lhs.argumentExpression);
       return isPhase1Expr(expr.right, scope, localClasses);
     }
     return isPhase1Expr(expr, scope, localClasses);
@@ -12294,7 +12307,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (isAffineThreeDeepElementAccess(expr)) {
       return capabilityNo("array-method-unsupported", "expr-affine-3deep-vector-index", expr);
     }
-    return isPhase1Expr(expr.expression, scope, localClasses) && isPhase1ElementKey(expr, scope, localClasses);
+    return isPhase1Expr(expr.expression, scope, localClasses) && isPhase1ElementKey(expr, false, scope, localClasses);
   }
   // #1804 — fixed-length, non-spread, non-sparse array literals are now
   // selector-accepted (lowered via `vec.new_fixed`). This keeps `f([1,2,3])`'s

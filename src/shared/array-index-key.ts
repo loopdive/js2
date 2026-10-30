@@ -2,9 +2,8 @@
 //
 // (#7106) Array-index facts the legacy codegen and the IR share, so legacy's
 // named-key route (`codegen/array-nonindex-key.ts`) and the IR selector agree on
-// which constant keys name an element: the §10.4.2 index domain, the ceiling up
-// to which a backing vec array is grown, and the value of a key spelled as a
-// literal.
+// which constant keys name an element: the §10.4.2 index domain, the bounds on
+// growing a backing vec array, and the value of a key spelled as a literal.
 import { ts } from "../ts-api.js";
 import { skipTransparentExpressions } from "./transparent-expressions.js";
 
@@ -12,12 +11,21 @@ import { skipTransparentExpressions } from "./transparent-expressions.js";
 export const MAX_ARRAY_INDEX_EXCLUSIVE = 4294967295;
 
 /**
- * Largest index whose element the store path grows a backing vec array to
+ * Largest index whose element legacy's store path grows a backing vec array to
  * hold. Above it legacy's store moves only `length` (a sparse tail, see
- * `codegen/vec-sparse-index.ts`), and the IR selector leaves such a constant
- * index to legacy.
+ * `codegen/vec-sparse-index.ts`); `a.length = n` and `defineProperty(a,
+ * "length")` grow the backing array only up to it as well.
  */
 export const SPARSE_INDEX_CEILING = 16777216;
+
+/**
+ * The longest backing array the IR vec lane's grow-store can allocate: V8's
+ * cap on a WasmGC array of 8-byte elements, measured on this repo's Node (a
+ * store at index 134217723 grows to it; one at 134217724 traps "requested new
+ * array is too large"). The IR selector leaves a constant store at this index
+ * or beyond to legacy, whose sparse tail moves `length` instead of trapping.
+ */
+export const MAX_DENSE_VEC_LENGTH = 134217724;
 
 /**
  * `true` when `n`'s property key (`ToString(n)`) is an array index.

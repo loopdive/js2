@@ -48,6 +48,7 @@
  * recover that absence at the `in` site.
  */
 import type { ts } from "../../ts-api.js";
+import { isArrayIndexNumber } from "../../shared/array-index-key.js";
 import type { vecStaticIndexPresenceInstrs } from "./array-length-holes.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -69,9 +70,6 @@ export interface ArrayCarrierInDependencies {
   readonly flushLateImportShifts: typeof flushLateImportShifts;
   readonly vecStaticIndexPresenceInstrs: typeof vecStaticIndexPresenceInstrs;
 }
-
-/** Largest array index (§6.1.7: an integer index below 2^32 − 1). */
-const MAX_ARRAY_INDEX = 2 ** 32 - 2;
 
 /** A fresh boolean-branded i32 result (consumers may annotate the object). */
 function booleanResult(): InnerResult {
@@ -120,7 +118,7 @@ function arrayCarriersStaticallyDense(ctx: CodegenContext): boolean {
 /** The canonical array index a property key names, or `undefined`. */
 function canonicalArrayIndex(key: string): number | undefined {
   const n = Number(key);
-  return Number.isInteger(n) && n >= 0 && n <= MAX_ARRAY_INDEX && String(n) === key ? n : undefined;
+  return isArrayIndexNumber(n) && String(n) === key ? n : undefined;
 }
 
 /**

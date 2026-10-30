@@ -81,6 +81,14 @@ describe("#7106 — IR vector element keys under the test262 harness", () => {
     "negative store": { body: `var a = [0, 1, 2]; a[-1] = 5; assert.sameValue(a.length, 3);`, disposition: "select" },
     "a[a.length] read": { body: `var a = [1]; assert.sameValue(a[a.length], undefined);`, disposition: "claimed" },
     "negative read": { body: `var a = [1]; assert.sameValue(a[-1], undefined);`, disposition: "select" },
+    "large index store and read-back": {
+      body: `var a = [1]; a[20000000] = 3; assert.sameValue(a[20000000], 3); assert.sameValue(a.length, 20000001);`,
+      disposition: "claimed",
+    },
+    "boolean variable key": {
+      body: `var b = true; var a = [1]; a[b] = 7; assert.sameValue(a[b], 7); assert.sameValue(a[1], undefined);`,
+      disposition: "select",
+    },
   };
 
   for (const [name, { body, disposition }] of Object.entries(rows)) {
@@ -166,16 +174,45 @@ describe("#7106 — IR vector element keys in function bodies", () => {
       expect(store(2147483648)).toBe(102);
     }, 60_000);
 
-    it(`keeps JS length for a constant index above the sparse ceiling, refused at select (${target})`, async () => {
-      // Legacy keeps a constant index above SPARSE_INDEX_CEILING sparse (only
-      // `length` moves); the vec lane would have to back every slot below it.
+    it(`keeps a large constant index on the vec lane: store, read-back, compound, cast key, read (${target})`, async () => {
       const result = await compileTs(
-        `export function f(): number { const a: number[] = [1]; a[20000000] = 3; return a.length; }`,
+        `export function store(): number { const a: number[] = [1]; a[20000000] = 3; return a.length * 10 + a[20000000]; }
+        export function compound(): number { const a: number[] = [1]; a[20000000] += 3; a[20000001]++; return a.length; }
+        export function cast(): number { const a: number[] = [1]; a[16777217 as any] = 7; return a.length; }
+        function readFar(a: number[]): number { return a[200000000]; }
+        export function callsReadFar(): number { const v = readFar([1]); return v === v ? 0 : 1; }`,
+        target,
+      );
+      for (const name of ["store", "compound", "cast", "readFar", "callsReadFar"]) {
+        expect(outcomeOf(result, name)?.irBodyEmitted, name).toBe(true);
+      }
+      const exports = (await instantiate(result)).exports as Record<string, () => number>;
+      expect(exports.store!()).toBe(200000013);
+      expect(exports.compound!()).toBe(20000002);
+      expect(exports.cast!()).toBe(16777218);
+      expect(exports.callsReadFar!()).toBe(1);
+    }, 60_000);
+
+    it(`reads an array another function filled at a large constant index (${target})`, async () => {
+      const result = await compileTs(
+        `function make(): number[] { const a: number[] = [1]; a[20000000] = 3; return a; }
+        function read(a: number[], i: number): number { return a[i]; }
+        export function f(): number { const a = make(); const gap = read(a, 50); return read(a, 20000000) * 10 + (gap === gap ? 0 : 1); }`,
+        target,
+      );
+      for (const name of ["make", "read", "f"]) expect(outcomeOf(result, name)?.irBodyEmitted, name).toBe(true);
+      expect(((await instantiate(result)).exports.f as () => number)()).toBe(31);
+    }, 60_000);
+
+    it(`leaves a constant store beyond MAX_DENSE_VEC_LENGTH to legacy's sparse tail (${target})`, async () => {
+      // The vec lane's grow-store would trap ("requested new array is too large").
+      const result = await compileTs(
+        `export function f(): number { const a: number[] = [1]; a[200000000] = 3; return a.length; }`,
         target,
       );
       expect(outcomeOf(result, "f")).toMatchObject({ kind: "unsupported", stage: "select" });
       expect(postClaimErrorsOf(result, "f")).toEqual([]);
-      expect(((await instantiate(result)).exports.f as () => number)()).toBe(20000001);
+      expect(((await instantiate(result)).exports.f as () => number)()).toBe(200000001);
     }, 60_000);
 
     it(`grows to a runtime index above the sparse ceiling (${target})`, async () => {
@@ -187,19 +224,24 @@ describe("#7106 — IR vector element keys in function bodies", () => {
       expect(((await instantiate(result)).exports.f as (n: number) => number)(16777217)).toBe(16777218);
     }, 60_000);
 
-    it(`never writes element 1 or 0 for a boolean key (${target})`, async () => {
+    it(`leaves a boolean key and a non-index literal type to legacy's named-key route (${target})`, async () => {
       const result = await compileTs(
         `export function t(b: boolean): number { const a: number[] = [10, 20]; a[b] = 5; return a[0] * 100 + a[1]; }
-        export function read(b: boolean): number { const a: number[] = [10, 20]; const v: number = a[b]; return v; }`,
+        export function roundTrip(b: boolean): number { const a: number[] = [10, 20]; a[b] = 5; return a[b] + a[0]; }
+        export function literalType(): number { const k = 0.5; const a: number[] = [10, 20]; a[k] = 7; return a[k] + a[0] * 100; }`,
         target,
       );
-      for (const name of ["t", "read"]) expect(outcomeOf(result, name)?.irBodyEmitted).toBe(true);
-      const exports = (await instantiate(result)).exports as Record<string, (b: boolean) => number>;
-      // Was 1005 for `true` and 520 for `false`: the key wrote element 1 / 0.
+      for (const name of ["t", "roundTrip", "literalType"]) {
+        expect(outcomeOf(result, name), name).toMatchObject({ kind: "unsupported", stage: "select" });
+        expect(postClaimErrorsOf(result, name)).toEqual([]);
+      }
+      const exports = (await instantiate(result)).exports as Record<string, (b?: boolean) => number>;
+      // Main's IR wrote element 1 / 0 (1005 / 520).
       for (const key of [true, false]) {
         expect(exports.t!(key)).toBe(1020);
-        expect(exports.read!(key)).toBeNaN();
+        expect(exports.roundTrip!(key)).toBe(15);
       }
+      expect(exports.literalType!()).toBe(1007);
     }, 60_000);
 
     it(`reads a runtime non-index key as absent, not truncated (${target})`, async () => {

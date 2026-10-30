@@ -86,6 +86,8 @@ func-budget-allow:
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select.ts::collectCallGraph
   - src/ir/select.ts::whyNotIrClaimable
+  # 2026-10-30 (vector element keys, review round 2): +2 each, the
+  # `numberLiteralTypeValue` selection option built and passed beside its siblings
   - src/codegen/index.ts::planIrOverlay
   - src/ir/integration.ts::compileIrPathFunctions
   - src/codegen/fnctor-escape-gate.ts::analyzeFnctorEscapeGate
@@ -100,29 +102,46 @@ loc-budget-allow:
   # 2026-10-29 (#6972 merge-queue root cause C): `activeBufferBranched`, the
   # buffer-end query the shared body-statement lister stops on (from-ast.ts
   # nets -1: two inline guards folded into it)
-  # 2026-10-30 (vector element keys, review round): +17, `emitIfElseValue`, the
-  # value-producing `if` four sites shared as copies (two element reads,
-  # `vec-search-join.ts`, `boolean-brand.ts`); those copies are deleted
+  # 2026-10-30 (vector element keys, review rounds 1-2): +17, `emitIfElseValue`,
+  # the value-producing `if` that was copied at seven sites (two element reads,
+  # `vec-search-join.ts`, `boolean-brand.ts`, `remainder-fast-path.ts`, and
+  # `from-ast.ts`'s exact typeof and nullable extern read); every copy is
+  # deleted, so the IR nets fewer lines
   - src/ir/builder.ts
   - src/ir/core/nodes.ts
   - src/ir/core/dialect/js.ts
   - src/ir/from-ast.ts
+  # 2026-10-30 (vector element keys, review round 2): +3, builds and passes the
+  # checker-backed `numberLiteralTypeValue` selection option beside its siblings
   - src/ir/integration.ts
   - src/ir/lower-generic.ts
   - src/ir/runtime/verify.ts
-  # 2026-10-30 (vector element keys): +20, `isPhase1ElementKey`, the one
-  # key gate the element read, store and compound arms share; it needs
-  # `isPhase1Expr`, `shapeNo` and the selection options, private to the selector
+  # 2026-10-30 (vector element keys, review rounds 1-2): +33,
+  # `isPhase1ElementKey`, the one key gate the element read, store and compound
+  # arms share (it needs `isPhase1Expr`, `shapeNo` and the selection options,
+  # private to the selector), its `write` flag, and the `numberLiteralTypeValue`
+  # option it reads
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
   - src/ir/ambient-typeof.ts
   - src/ir/prepared-component-dependencies.ts
+  # 2026-10-30 (vector element keys, review round 2): +3, builds and passes the
+  # `numberLiteralTypeValue` selection option beside `isArrayExpression`
   - src/codegen/index.ts
   - src/ir/propagate.ts
   - src/codegen/dyn-read.ts
   - src/codegen/fnctor-escape-gate.ts
   - src/codegen/expressions/new-super.ts
+  # 2026-10-30 (vector element keys, review round 2): +17,
+  # `makeIrNumberLiteralTypeResolver`, the checker-backed selection-option
+  # factory beside its siblings (`makeIrArrayExpressionPredicate`,
+  # `makeIrDeclaredPrimitiveExpressionClassifier`); every integration site
+  # already imports those from here
+  - src/ir/module-bindings.ts
+  # 2026-10-30 (vector element keys, review round 2): +2, the import and the
+  # option line of that factory in the linear selection options
+  - src/ir/backend/linear-integration.ts
 ---
 
 ## Problem
@@ -2502,45 +2521,57 @@ and the dynamic-consumer read costs nothing on the measured corpora.
 Lower with JS semantics where the vec lane can hold the answer; refuse at
 select where only legacy's named-key route can.
 
-1. **On an Array or tuple receiver, a constant key the vec lane does not own is
-   refused at select.** `literalElementKey` (`src/shared/array-index-key.ts`)
-   reads the value of a key spelled as a literal: a numeric literal under unary
-   `+`/`-`, `true`, `false`, `null`, `void …`, and an unshadowed `undefined` /
-   `NaN` / `Infinity`. `isConstantNonVecIndexKey`
-   (`select-expression-structure.ts`) refuses any such value that is not an
-   array index up to `SPARSE_INDEX_CEILING` (2^24): a non-index is a named
-   property, and above the ceiling legacy keeps a valid index sparse (only
-   `length` moves) instead of growing the backing array. `isPhase1ElementKey`
-   (`select.ts`) applies it only when the selector's checker-backed
-   `isArrayExpression` says the receiver is an Array or tuple, and is the one
-   key gate for the element read arm, the three `=` store arms and the compound
-   target. Legacy's #4247/#4556 named-key route and its sparse tail own the
-   refused accesses; any other receiver keeps the key, because the dynamic arm
-   reads a named key itself.
+1. **On an Array or tuple receiver, a key the vec lane cannot serve is refused
+   at select.** `isLegacyOnlyVecKey` (`select-expression-structure.ts`) reads
+   the key's value before runtime: a literal (`literalElementKey`,
+   `src/shared/array-index-key.ts`: a numeric literal under unary `+`/`-`,
+   `true`, `false`, `null`, `void …`, an unshadowed `undefined` / `NaN` /
+   `Infinity`), else, through type-erased casts, a boolean declared type
+   (`classifyDeclaredPrimitiveExpression`) or a number literal type (the new
+   checker-backed `numberLiteralTypeValue` option, `const k = 0.5`). It refuses
+   a key that is not an array index — a NAMED property, which only legacy's
+   #4247/#4556 named-key route reads and writes — and a store or compound to an
+   index at or beyond `MAX_DENSE_VEC_LENGTH` (134217724, V8's cap on a WasmGC
+   array of 8-byte elements, measured), where the vec lane's grow-store would
+   trap and legacy's sparse tail moves `length` instead. A read of any index
+   stays: a read never grows the array. `isPhase1ElementKey` (`select.ts`)
+   applies it only when the checker-backed `isArrayExpression` says the
+   receiver is an Array or tuple, and is the one key gate for the element read
+   arm, the three `=` store arms and the compound target; any other receiver
+   keeps the key, because the dynamic arm reads a named key itself.
 2. **A runtime key goes through `emitVecIndex`** (`array-element-lowering.ts`):
-   truncate, keep the result only if converting it back is exact, else -1. A
-   boolean-branded key is -1 outright: `a[true]` is the property `"true"`, not
-   element 1. -1 fails every unsigned bounds check, and every vec store helper
-   drops it as a negative index. `lowerElementIndex` (`from-ast.ts`) lowers the
-   key once for the read, store, compound and logical-vector arms (four inline
-   copies folded into one) and returns the counted-loop proof with it, so no
-   caller recomputes `isProvenInBoundsIr`. The runtime test is skipped for a
-   key proven integral: the counted-loop pair or `isI32PureExprIR`.
+   truncate, keep the result only if converting it back is exact, else -1. -1
+   fails every unsigned bounds check. `lowerElementIndex` (`from-ast.ts`)
+   lowers the key once for the read, store, compound and logical-vector arms
+   (four inline copies folded into one) and returns it with the counted-loop
+   proof and `mayBeNegative`, so no caller recomputes `isProvenInBoundsIr`. The
+   runtime test is skipped for a key proven integral: the counted-loop pair or
+   `isI32PureExprIR`.
 3. **A dynamic consumer gets `undefined`.** For a dynamic hint on a numeric vec
    (f64, or #3734 narrowed i32), `emitUndefinedAwareVecGet` yields the boxed
    element, or `undefined` out of range and for an f64 marker slot. The
    logical-vector read arm uses the same read for an f64 element. Numeric
    consumers keep the NaN read, the legacy-matching answer.
-4. **The store helper never traps** (`codegen/vec-elem-set.ts`). A negative
-   index is a no-op for a non-null receiver, as in the linear and Porffor `set`
-   runtimes. Any other runtime index still grows the backing array, as on main,
-   so `a[n] = v` with `n = 2^24 + 1` makes `length` `n + 1`. The f64 grow gap
-   gets legacy's marker on every lane (absence where presence is tracked, else
-   undefined) instead of zero on gc. The helper is shared with legacy callers
-   (rest-parameter collection, `vec-overlay.ts`, the vec arm of `__extern_set`,
-   self-hosted stdlib bodies); the module header says so and why the bridge's
-   `__vec_get` cannot miss the marker (`f64HoleMarkerEmitted` is set at
-   finalize for every module with an f64 vec, before `__vec_get` is built).
+4. **An IR store never traps on a key the IR tested.** `emitElementWrite`
+   (`from-ast.ts`) is the one write tail of the store, narrowed-store and
+   compound arms: `vec.set` under the counted-loop proof, else the grow-store
+   helper, skipped by an `if (index >= 0)` when `mayBeNegative`. The shared
+   helper (`codegen/vec-elem-set.ts`) keeps main's body apart from the gap
+   fill: its legacy callers (rest-parameter collection, `vec-overlay.ts`,
+   `__extern_set` / `__vec_dp_value`, self-hosted stdlib bodies) pass only
+   non-negative indices. Any runtime index grows the backing array, as on main,
+   so `a[n] = v` with `n = 2^24 + 1` makes `length` `n + 1`.
+5. **The f64 grow gap holds a marker on every lane — a deliberate legacy fix.**
+   The helper fills an f64 gap with the absence marker where the module tracks
+   presence, else the undefined marker: the #4491 T8/T11 choice legacy's own
+   inline store (`compileElementAssignment`) already makes on every lane. Main's
+   helper zero-filled except on a standalone module with hole presence, so a
+   gap written through it (the IR's stores, and legacy's dynamic `__extern_set`
+   / `__vec_dp_value`) read `0` where the same store compiled inline read
+   `undefined`. This is the one change to gc output under `experimentalIR:
+   false`; the header documents why the bridge's `__vec_get` cannot miss the
+   marker (`f64HoleMarkerEmitted` is set at finalize for every module with an
+   f64 vec, before `__vec_get` is built).
 
 Reuse, and duplicates removed:
 
@@ -2553,28 +2584,38 @@ Reuse, and duplicates removed:
   the search/join lowering and the new read share it.
 - `IrFunctionBuilder.emitIfElseValue` replaces the collect/collect/`emitIfElse`
   boilerplate of the two bounds-checked reads, serves the new read, and folds
-  the same boilerplate in `vec-search-join.ts` (nullable string match) and
-  `boolean-brand.ts` (`lowerBooleanToString`); both byte-identical.
+  six copies elsewhere: `vec-search-join.ts` (nullable string match),
+  `boolean-brand.ts` (`lowerBooleanToString`), `remainder-fast-path.ts`, and
+  `from-ast.ts`'s exact two-family `typeof` and nullable extern property read.
+  All byte-identical.
 - The literal key classifier is one function, `literalElementKey`, which
   legacy's `array-nonindex-key.ts` (`resolveNumericKey`,
-  `nonArrayIndexNumericKey`) and the selector both call. The bounds stay
-  explicit beside it in `src/shared/array-index-key.ts`:
-  `MAX_ARRAY_INDEX_EXCLUSIVE`, `isArrayIndexNumber` (both moved from
-  `array-nonindex-key.ts`) and `SPARSE_INDEX_CEILING` (moved from
-  `vec-sparse-index.ts`, which re-exports it). `skipTransparentExpressions`
-  moves to `src/shared/transparent-expressions.ts` so the classifier can use it
-  without an ir→codegen edge; `codegen/shared.ts` re-exports it for its many
-  legacy importers. The selector's private `MAX_VEC_INDEX` is gone.
+  `nonArrayIndexNumericKey`) and the selector both call. The index bounds live
+  beside it in `src/shared/array-index-key.ts`, one definition each:
+  `MAX_ARRAY_INDEX_EXCLUSIVE` and `isArrayIndexNumber` (from
+  `array-nonindex-key.ts`; `array/in-array-carrier.ts` and
+  `object-model/object-own-key-order.ts` drop their own `MAX_ARRAY_INDEX`),
+  `SPARSE_INDEX_CEILING` (from `vec-sparse-index.ts`; `array-length-define.ts`
+  drops `SAFE_GROW_CEILING` and, like `vec-length-set.ts`, its inline
+  `16777216`) and the new `MAX_DENSE_VEC_LENGTH`. Every importer reads them from
+  `shared/`; no re-export. `unwrapTypeErasedExpression` and
+  `skipTransparentExpressions` (defined in terms of it) move to
+  `src/shared/transparent-expressions.ts`, so the classifier and the selector
+  use them without an ir→codegen edge; `codegen/shared.ts` re-exports the
+  latter for its many legacy importers. The selector's private `MAX_VEC_INDEX`
+  is gone.
+- The three store tails share `emitElementWrite` (provider choice, proof fork,
+  negative-index skip).
 - The stale orphan doc comment above `lowerElementStore` is replaced by
   `lowerElementIndex`.
 
 **Code-quality acceptance criterion:** one key gate in the selector, one key
-lowering in `from-ast.ts`, one literal key classifier and one set of index
-bounds shared by legacy and the IR, one marker definition and one marker
-predicate, one value-producing `if` helper; no post-claim demote added;
-`from-ast.ts` shrinks.
+lowering and one write tail in `from-ast.ts`, one literal key classifier and
+one definition of each index bound shared by legacy and the IR, one marker
+definition and one marker predicate, one value-producing `if` helper; no
+post-claim demote added; `from-ast.ts` shrinks.
 
-### Review round (PR #6989, 2026-10-30)
+### Review round 1 (PR #6989, 2026-10-30)
 
 The adversarial review asked for changes; each finding and its fix:
 
@@ -2599,6 +2640,39 @@ The adversarial review asked for changes; each finding and its fix:
    hint.
 8. `vec-elem-set.ts` documents its legacy callers; the `__vec_get` /
    `f64HoleMarkerEmitted` order was checked and cannot desync (point 4 above).
+
+### Review round 2 (PR #6989, 2026-10-30)
+
+A fresh-context delta review of `fcaae97fba` asked for changes again:
+
+1. **Blocker: refusing constant indices above 2^24 regressed them.** Legacy's
+   sparse route is incomplete (read-back traps, `a[20000000] += 3` leaves
+   `length` 1, `a[16777217 as any] = 7` gives `length` 2), and an IR function
+   reading an array legacy filled sparsely traps (IR reads bound by `length`
+   only). Fixed by keeping every valid constant index below
+   `MAX_DENSE_VEC_LENGTH` on the dense IR path runtime keys use (point 1). The
+   cap is measured, not the 2^26 the review suggested: main's IR grows
+   `a[100000000]` (800 MB) correctly, and 2^26 would have sent it to legacy.
+   The cross-boundary trap no longer arises from this change; it remains for
+   arrays legacy makes sparse on its own (follow-up 7).
+2. **Reads were refused too, and the refusal spread to callers.** Reads of any
+   valid index stay IR (point 1).
+3. **gc output changed for legacy.** The negative-index guard moved out of the
+   shared helper into the IR store sites (point 4), so `__extern_set` /
+   `__vec_dp_value` keep main's helper body; the guard also covers
+   `__ir_vec_elem_set_externref` (`native-vectors.ts`), which builds the
+   grow-store body without one. The f64 gap fill stays, called out as a legacy
+   fix (point 5).
+4. **Boolean keys.** Refused at select from the checker (point 1) instead of
+   lowered to -1, so `a[b] = 5; a[b]` reads 5 through legacy. Number literal
+   types (`const k = 0.5`) likewise. The boolean arm in `emitVecIndex` is gone,
+   and so is the post-claim demote `a[b] + 1` used to hit.
+5. **Intersection receivers** (`number[] & {tag?: 1}`): recorded, follow-up 8.
+6. **Value-if copies**: folded (see "Reuse").
+7. **"One shared bound" was not one**: folded (see "Reuse").
+8. **Re-export and the unwrap twin**: dropped; `unwrapTypeErasedExpression`
+   moved beside `skipTransparentExpressions`.
+9. **Stale comment** (`truncated to i32 for the backend vec.get`): replaced.
 
 ### Results
 
@@ -2634,7 +2708,11 @@ The adversarial review asked for changes; each finding and its fix:
     `select` against -1). `binarySearch`'s `arr[mid]` does not: `mid` is
     int32-valued.
 
-### Results, review round (base: main `11dbff00a4`, measured 2026-10-30)
+### Results, review round 1 (base: main `11dbff00a4`, measured 2026-10-30)
+
+Superseded by review round 2 for the constant above 2^24 (now IR), the
+boolean key (now refused at select) and the helper guard (now at the IR store
+sites).
 
 - `tests/issue-7106-vector-index-semantics.test.ts`: 39 cases, standalone and
   gc, 26 of them fail on main. New this round:
@@ -2668,6 +2746,65 @@ The adversarial review asked for changes; each finding and its fix:
   post-claim demotes on main and here alike. Both are outside this change; the
   string case is follow-up 6.
 
+### Results, review round 2 (base: main `fef53f070a`, same sources as `11dbff00a4`; measured 2026-10-30)
+
+- `tests/issue-7106-vector-index-semantics.test.ts`: 49 cases, standalone and
+  gc. New this round:
+  - `a[20000000] = 3` stays IR: `length` 20000001 and the read-back is 3;
+    `a[20000000] += 3; a[20000001]++` gives `length` 20000002;
+    `a[16777217 as any] = 7` gives `length` 16777218; a reader of `a[200000000]`
+    and its caller stay IR. The harness row `a[20000000] = 3;
+    assert.sameValue(a[20000000], 3)` passes on the IR;
+  - an IR function reads what another IR function stored at index 20000000
+    (main's IR did too; the first review round's legacy route trapped);
+  - `a[200000000] = 3` is refused at select, and legacy gives `length`
+    200000001 (main's IR trapped: "requested new array is too large");
+  - a boolean key (`t(b)`, `a[b] = 5; a[b]`, the harness `var b = true` row)
+    and a number literal type (`const k = 0.5`) are refused at select, and
+    legacy answers as node (1020, 15, 1007).
+- `issue-3518-vector-grow-store-donor`: the helper body equals
+  `buildVectorGrowStoreBody` again (no guard); the `ensureVecElemSet` source
+  hash is re-pinned for the gap-fill change alone.
+- test262, base sources swapped in from main, same 1,220 files, no flips:
+
+  | Set | Lane | Before = after (pass / fail / CE) |
+  |---|---|---|
+  | 1,180 sample | standalone | 1,068 / 82 / 30 |
+  | 877 ES5 element-access files | standalone | 836 / 21 / 20 |
+  | 69 non-index-key files | standalone | 65 / 4 / 0 |
+  | 1,180 sample | gc | 1,068 / 91 / 21 |
+  | 877 ES5 element-access files | gc | 836 / 21 / 20 |
+  | 69 non-index-key files | gc | 65 / 4 / 0 |
+
+- gc under `experimentalIR: false` (the review's corpus: 13 playground examples
+  and 184 test262 files, main vs this change): 57 identical, 140 changed. In
+  every changed compile the only differences are the f64 instance of
+  `__vec_elem_set_*` (the gap-fill block: `array.new` with the undefined
+  marker plus an `array.fill`, instead of `array.new_default`) and the two
+  legacy functions that inline it, `__extern_set` (once) and `__vec_dp_value`
+  (seven times). `S11.6.1_A1.js`: 1,055,040 → 1,055,546 bytes. Observable:
+  `o[3] = 2` through an `any` alias of `[1.5]` leaves `a[1]` and `o[2]`
+  `undefined` (main: `0`).
+- Against the first review round's tree, only those three helper kinds and
+  `quicksort` (the store guard) change on gc; the value-if folds are
+  byte-identical (remainder, exact typeof and `${boolean}` sources, both lanes,
+  checked to reach the folded code).
+- Playground (13 examples × gc/standalone) against main: 9 identical, 17
+  changed. The changed functions are the f64 `__vec_elem_set_4` (gap fill,
+  +52 bytes) and the two IR functions with runtime-tested store keys:
+  `quicksort` (+184 with its exactness tests and store guards) and `fdow`.
+- The review's probes, rerun on this tree (`p1`, `p2`, `p4`, `p5`, `p6b`,
+  `p8`, `p9`, `p11`–`p13`, `p15`–`p18`; `p3`, `p6`, `p10` and `p19` measure
+  main's legacy route only, and `p14` allocates up to 2^30 elements): no row is
+  worse than main. The rows still wrong on both are follow-ups 1, 2, 3, 7, 8
+  and 9.
+- Equivalence, four shards: 20 failing / 2,455 passing, every failure in the
+  baseline; no new regressions.
+- `tests/issue-4150-fmod-integral-fast-path.test.ts` fails one case ("uses
+  positive, unknown, and negative AOT proofs …"). Main, the first review
+  round and this tree emit identical WAT for its source, so the failure is
+  not from this change.
+
 
 ### Left as follow-ups
 
@@ -2681,15 +2818,14 @@ The adversarial review asked for changes; each finding and its fix:
    `UNDEF_F64_BITS`. Needs a maybe-undefined f64 carrier in the IR. Refusing
    these consumers at select is not an option: `const tmp = arr[i]` is
    `quicksort`'s swap.
-2. **A runtime non-index key** (`a[i]` with `i = 0.5`, or a boolean `b`) reads
-   as absent and a store to it is dropped; JavaScript reads and writes the
-   named property, so `a[b] = 5; a[b]` reads `undefined` where JavaScript reads
-   5. Legacy's store truncates a numeric key and writes `a[0]`; it routes a
-   boolean key through the property-key dispatch. Needs a runtime
-   named-property path for vecs, or a checker-backed boolean-key refusal in the
-   selector.
+2. **A runtime non-index key** typed `number` (`a[i]` with `i = 0.5`, including
+   `var k = 0.5`, whose declared type widens to `number`) reads as absent and a
+   store to it is dropped; JavaScript reads and writes the named property.
+   Legacy's store truncates the key and writes `a[0]`. Needs a runtime
+   named-property path for vecs.
 3. A runtime index of 2^31 or more is dropped rather than stored as a sparse
-   length (`i32` carries the index).
+   length (`i32` carries the index), and one from `MAX_DENSE_VEC_LENGTH` up to
+   2^31 − 1 traps in the grow-store, as on main.
 4. **#3734 narrowed i32 vecs zero-fill a grow gap**
    (`const a: number[] = []; a[0] = 1; a[3] = 3; a[1]` reads 0): the narrowing
    gate admits a plain store without proving it gap-free.
@@ -2700,3 +2836,22 @@ The adversarial review asked for changes; each finding and its fix:
    ("element access on string … not in slice 12"). Pre-existing on main and
    independent of the key; the first cut's select refusal hid it only for
    non-index constants, and the review scoped that refusal to the vec lane.
+7. **IR reads bound by `length`, not by the backing array.** An array legacy
+   leaves with `length` past its backing array — a store above
+   `SPARSE_INDEX_CEILING` or a `a.length = n` presize, both legacy-only — traps
+   when an IR function reads an index in that tail
+   (`codegen/vec-index-domain.ts` §2 describes the invariant;
+   `backedBoundsGuard` is legacy's answer). Pre-existing on main. The IR's
+   bounds check needs the backing length too, which is a new `vec.len` form
+   lowered on each backend.
+8. **The key gate trusts the checker's Array type, not the IR's vec typing.**
+   `const a = [1, 2] as number[] & { tag?: 1 }; a[0.5] = 7` is IR-claimed
+   (`isArrayExpression` is false for the intersection) and the store is
+   dropped: node 17, here NaN, main 77. Widening `isArrayExpression` to
+   intersections also changes Array-method routing and the selector's value
+   families, which needs its own measurement.
+9. **A negative int32-valued key still traps a store** (`a[x | 0] = v` with
+   `x = -1`), as on main: an `isI32PureExprIR` key skips the exactness test,
+   so `emitElementWrite` does not guard it.
+10. `MAX_DENSE_VEC_LENGTH` is the 8-byte bound for every element kind; i32 and
+    externref vecs could grow twice as far before V8 refuses.

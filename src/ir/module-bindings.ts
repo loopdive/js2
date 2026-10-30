@@ -415,6 +415,23 @@ export function makeIrArrayExpressionPredicate(checker: ts.TypeChecker): (expr: 
 }
 
 /**
+ * (#7106) Build a checker-backed reader of an expression's number literal type
+ * (`const k = 0.5; a[k]` → 0.5). The selector refuses an Array element key
+ * whose literal type is not an array index, as it refuses the same key spelled
+ * as a literal.
+ */
+export function makeIrNumberLiteralTypeResolver(checker: ts.TypeChecker): (expr: ts.Expression) => number | undefined {
+  return (expr) => {
+    try {
+      const type = checker.getTypeAtLocation(unwrapParens(expr));
+      return type.isNumberLiteral() ? type.value : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+/**
  * Build a checker-backed proof that an expression has the ambient lib
  * `RegExp` type. Host-free backends use this only to keep RegExp prototype
  * calls on the native legacy path; user classes that happen to be named
