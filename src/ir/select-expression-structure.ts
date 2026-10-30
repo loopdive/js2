@@ -483,3 +483,17 @@ export function uniformLiteralReturnKind(body: ts.Block): "f64" | "string" | nul
   forEachChild(body, visit);
   return ok ? kind : null;
 }
+
+/** Is this member access the target of a write: assignment, `++`/`--`, `delete`, or a for-in/of head? */
+export function propertyAccessIsWriteTarget(expression: ts.PropertyAccessExpression): boolean {
+  const parent = expression.parent;
+  return (
+    (ts.isBinaryExpression(parent) &&
+      parent.left === expression &&
+      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) && parent.operand === expression) ||
+    (ts.isDeleteExpression(parent) && parent.expression === expression) ||
+    ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && parent.initializer === expression)
+  );
+}

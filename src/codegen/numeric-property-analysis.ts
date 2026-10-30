@@ -108,6 +108,7 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { readEnv } from "../env.js";
+import { identifierWritesOf, isNumericCompoundAssignment, type IdentifierWrite } from "../shared/binding-writes.js";
 
 /** The host facts this analysis needs; kept tiny so it can run standalone. */
 export interface NumericPropertyAnalysisHost {
@@ -232,21 +233,6 @@ const ALWAYS_NUMERIC_BINARY: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.LessThanLessThanToken,
   ts.SyntaxKind.GreaterThanGreaterThanToken,
   ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
-]);
-
-/** Compound-assignment forms of {@link ALWAYS_NUMERIC_BINARY} (NOT `+=`). */
-const ALWAYS_NUMERIC_COMPOUND: ReadonlySet<ts.SyntaxKind> = new Set([
-  ts.SyntaxKind.MinusEqualsToken,
-  ts.SyntaxKind.AsteriskEqualsToken,
-  ts.SyntaxKind.SlashEqualsToken,
-  ts.SyntaxKind.PercentEqualsToken,
-  ts.SyntaxKind.AsteriskAsteriskEqualsToken,
-  ts.SyntaxKind.AmpersandEqualsToken,
-  ts.SyntaxKind.BarEqualsToken,
-  ts.SyntaxKind.CaretEqualsToken,
-  ts.SyntaxKind.LessThanLessThanEqualsToken,
-  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
-  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
 ]);
 
 /** Comparisons — boolean, which an f64 (or i32-boolean) slot represents. */
@@ -590,6 +576,12 @@ function isSameKeyCopy(node: ts.Node, scopes: ScopeTable): boolean {
   return slot !== undefined && slot === scopes.resolve(rhsKey, rhsKey.text);
 }
 
+/** The definition an identifier store contributes: its named value, a forced number, or an opaque value. */
+function valueDefOf(write: IdentifierWrite): ValueDef {
+  if (write.kind === "value") return { expr: write.expr };
+  return write.kind === "numeric" ? { forcedNumeric: true } : {};
+}
+
 /** Pass 2 — index every definition, call, property write and delete. */
 function collectNumericFlowFacts(
   sourceFiles: readonly ts.SourceFile[],
@@ -647,13 +639,6 @@ function collectNumericFlowFacts(
         } else {
           for (const name of bindingNames(node.name)) define(node, name, {});
         }
-      } else if (ts.isBinaryExpression(node) && ts.isIdentifier(unwrap(node.left))) {
-        const target = (unwrap(node.left) as ts.Identifier).text;
-        const op = node.operatorToken.kind;
-        if (op === ts.SyntaxKind.EqualsToken) define(node, target, { expr: node.right });
-        else if (ALWAYS_NUMERIC_COMPOUND.has(op)) define(node, target, { forcedNumeric: true });
-        else if (op === ts.SyntaxKind.PlusEqualsToken) define(node, target, { expr: node });
-        else if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment) define(node, target, {});
       } else if (ts.isParameter(node) && isFunctionLikeWithBody(node.parent)) {
         const owner = functionBindingName(node.parent);
         const index = node.parent.parameters.indexOf(node);
@@ -674,16 +659,13 @@ function collectNumericFlowFacts(
         } else {
           for (const name of bindingNames(node.name)) scopes.resolve(node.parent, name)?.defs.push({});
         }
-      } else if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
-        // `for (var k in o)` binds a property key / arbitrary element.
-        const init = node.initializer;
-        if (ts.isVariableDeclarationList(init)) {
-          for (const decl of init.declarations) for (const name of bindingNames(decl.name)) define(node, name, {});
-        } else if (ts.isIdentifier(unwrap(init as ts.Expression))) {
-          define(node, (unwrap(init as ts.Expression) as ts.Identifier).text, {});
-        }
       } else if (ts.isCatchClause(node) && node.variableDeclaration) {
         for (const name of bindingNames(node.variableDeclaration.name)) define(node, name, {});
+      } else {
+        // (#4495) Every other identifier store — assignment of any operator,
+        // destructuring targets, `++`/`--`, for-in/for-of heads — from the one
+        // shared enumerator; a declarator's own store is the branch above.
+        for (const write of identifierWritesOf(node)) define(node, write.target.text, valueDefOf(write));
       }
 
       // --- property writes -------------------------------------------------
@@ -699,7 +681,7 @@ function collectNumericFlowFacts(
         } else if (ts.isPropertyAccessExpression(lhs) || ts.isElementAccessExpression(lhs)) {
           const name = assignmentPropertyName(lhs);
           if (op === ts.SyntaxKind.EqualsToken) recordWrite(name, { value: node.right });
-          else if (ALWAYS_NUMERIC_COMPOUND.has(op)) recordWrite(name, { forcedNumeric: true });
+          else if (isNumericCompoundAssignment(op)) recordWrite(name, { forcedNumeric: true });
           else if (op === ts.SyntaxKind.PlusEqualsToken) recordWrite(name, { value: node, plusEqualsRhs: node.right });
           else recordWrite(name, {});
         }
@@ -712,8 +694,6 @@ function collectNumericFlowFacts(
           if (isFnctorInstanceReceiver(operand.expression, host)) notePoison(facts, node);
         } else if (ts.isPropertyAccessExpression(operand) || ts.isElementAccessExpression(operand)) {
           recordWrite(assignmentPropertyName(operand), { forcedNumeric: true });
-        } else if (ts.isIdentifier(operand)) {
-          define(node, operand.text, { forcedNumeric: true });
         }
       } else if (ts.isPropertyAssignment(node)) {
         recordWrite(propertyNameText(node.name), { value: node.initializer });
@@ -1054,7 +1034,7 @@ function makeProver(
 
     if (ts.isBinaryExpression(value)) {
       const op = value.operatorToken.kind;
-      if (ALWAYS_NUMERIC_BINARY.has(op) || ALWAYS_NUMERIC_COMPOUND.has(op) || BOOLEAN_BINARY.has(op)) return true;
+      if (ALWAYS_NUMERIC_BINARY.has(op) || isNumericCompoundAssignment(op) || BOOLEAN_BINARY.has(op)) return true;
       // `+` / `+=` are the only arithmetic-looking forms that can produce a
       // string; both operands must be provably non-string.
       if (op === ts.SyntaxKind.PlusToken || op === ts.SyntaxKind.PlusEqualsToken) {

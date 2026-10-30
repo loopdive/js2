@@ -296,6 +296,7 @@ import {
 } from "./calls.js";
 import { readEnv } from "../../env.js";
 import { emitSabMethodCall } from "../buffers/shared-array-buffer.js"; // (#7011)
+import { methodReceiverStaticType } from "../declarations/heterogeneous-scalar-var-widening.js"; // (#4495)
 
 /**
  * (#742 slice 4) Receiver-type method-call dispatch — extracted verbatim from
@@ -893,8 +894,7 @@ export function compileReceiverMethodCall(
     }
   }
 
-  // Check if receiver is an externref object
-  let receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
+  let receiverType = methodReceiverStaticType(ctx, fctx, propAccess); // (#4495)
   // (#2767) When the static type resolves NO nominal symbol and the receiver
   // is a bare identifier (the evolving-`any` `var d; d = new Date(0)` case),
   // recover the effective nominal type from the binding's assignments so the
@@ -3953,7 +3953,7 @@ export function compileReceiverMethodCall(
   if (lateFnctorCall !== undefined) return lateFnctorCall;
 
   // Generic dynamic fallback; the native tail reuses this receiver resolution.
-  const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
+  const recvTsType = methodReceiverStaticType(ctx, fctx, propAccess);
   // A mixed mutable local's physical carrier outranks its stale checker type.
   const recvWasm = effectiveLocalCarrier(fctx, propAccess.expression, resolveWasmType(ctx, recvTsType));
   {

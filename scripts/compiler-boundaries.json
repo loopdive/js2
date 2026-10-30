@@ -5183,6 +5183,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/expressions/destructuring-source-literal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/direct-eval-environment.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8589,6 +8597,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "IR dyn.construct support (#7106 S3a): the per-arity wrapper over the legacy native-construct driver and the selector's plain-callee predicate; moves with the construct-driver backend split."
+    },
+    {
+      "path": "src/codegen/declarations/ir-open-object-binding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7128",
+      "nextBoundary": "IR open-object carrier support (#7128 S1): legacy's open-$Object binding query the selector asks; moves with the object-shape widening pre-pass."
     },
     {
       "path": "src/codegen/array/ir-array-prototype-borrow.ts",
@@ -12947,6 +12963,30 @@
       "destination": "ir-core",
       "owner": "7135",
       "nextBoundary": "JavaScript producer emits canonical boxing and runtime callable bindings; separate runtime-provider preparation from pure IR contracts."
+    },
+    {
+      "path": "src/ir/empty-object-literal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7128",
+      "nextBoundary": "Frontend source-shape certifier for the empty-object-literal arms (#4471 inert, #7128 S1 open carrier); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/open-object-carrier.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7128",
+      "nextBoundary": "JavaScript producer for the open-object carrier (#7128 S1): emits the canonical runtime callable bindings; separate runtime-provider preparation from pure IR contracts."
+    },
+    {
+      "path": "src/ir/throw-type-error.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7128",
+      "nextBoundary": "JavaScript producer helper for `if (cond) throw new TypeError(msg)` (native-in, open-object carrier): emits the canonical runtime callable binding; separate runtime-provider preparation from pure IR contracts."
     },
     {
       "path": "src/ir/outcomes.ts",
