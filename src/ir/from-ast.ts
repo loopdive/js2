@@ -230,7 +230,6 @@ import {
   lowerNarrowedI32Element as lowerNarrowedI32ElementWith,
   planI32ArrayElements,
   tryLowerVecPush,
-  type VecIndex,
 } from "./array-element-lowering.js";
 import { lowerVecSearchOrJoinCall } from "./array-methods/vec-search-join.js";
 import {
@@ -6862,7 +6861,9 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
 }
 
 /** (#7106) An element key lowered once (`lowerElementIndex`), shared by the read and the write. */
-interface ElementSlot extends VecIndex {
+interface ElementSlot {
+  /** The i32 vec index (`emitVecIndex`); negative for a key that names no element. */
+  readonly index: IrValueId;
   /** The counted-loop proof (`isProvenInBoundsIr`): read and write unchecked. */
   readonly proven: boolean;
 }
@@ -6886,7 +6887,7 @@ function lowerElementIndex(
   if (scalar !== "f64" && scalar !== "i32") rejectKey(`index must be number or bool (got ${describeIrType(keyType)})`);
   const proven = isProvenInBoundsIr(access, cx);
   const integral = proven || isI32PureExprIR(access.argumentExpression, cx.i32PureNames, cx.provenCharReads);
-  return { ...emitVecIndex(key, integral, cx), proven };
+  return { index: emitVecIndex(key, integral, cx), proven };
 }
 
 /**
@@ -6895,8 +6896,9 @@ function lowerElementIndex(
  * branded sparse carrier's (`IR_HOLEY_ARRAY_ELEM_SET`) or the vec's. The
  * helper name embeds the vec STRUCT typeIdx; the lower-time resolver
  * intercepts the prefix and materializes it on demand (name-based resolution —
- * funcIdx-shift safe by construction). An index that may be negative skips the
- * store: the helper would trap on it, and it names no element.
+ * funcIdx-shift safe by construction). A negative index skips the store: it
+ * names no element (-1 for a non-index key, or a negative int32 key such as
+ * `a[i - 1]` at `i = 0`), and the helper would trap on it.
  */
 function emitElementWrite(
   lhs: ts.ElementAccessExpression,
@@ -6917,10 +6919,6 @@ function emitElementWrite(
   const store = (): void => {
     cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, slot.index, value], null);
   };
-  if (!slot.mayBeNegative) {
-    store();
-    return;
-  }
   const zero = cx.builder.emitConst({ kind: "i32", value: 0 }, IR_I32);
   const nonNegative = cx.builder.emitBinary("i32.ge_s", slot.index, zero, IR_BOOL);
   cx.builder.emitIfStmt({ cond: nonNegative, then: cx.builder.collectBodyInstrs(store), else: [] });
@@ -13973,30 +13971,15 @@ function tryLowerExactMixedPrimitiveWrapperCall(expr: ts.CallExpression, cx: Low
 
     const branchScope = new Map(cx.scope);
     const thenCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
-    let whenTrue!: IrValueId;
-    const thenBody = cx.builder.collectBodyInstrs(() => {
-      whenTrue = convertMixedPrimitiveArm(proof.conditional.whenTrue, proof.mixed.whenTrue, proof.kind, "then", thenCx);
-    });
     const elseCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
-    let whenFalse!: IrValueId;
-    const elseBody = cx.builder.collectBodyInstrs(() => {
-      whenFalse = convertMixedPrimitiveArm(
-        proof.conditional.whenFalse,
-        proof.mixed.whenFalse,
-        proof.kind,
-        "else",
-        elseCx,
-      );
-    });
-    joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
-    return cx.builder.emitIfElse({
+    const value = cx.builder.emitIfElseValue(
       cond,
-      then: thenBody,
-      thenValue: whenTrue,
-      else: elseBody,
-      elseValue: whenFalse,
-      resultType: proof.kind === "String" ? { kind: "string" } : irVal({ kind: "f64" }),
-    });
+      () => convertMixedPrimitiveArm(proof.conditional.whenTrue, proof.mixed.whenTrue, proof.kind, "then", thenCx),
+      () => convertMixedPrimitiveArm(proof.conditional.whenFalse, proof.mixed.whenFalse, proof.kind, "else", elseCx),
+      proof.kind === "String" ? { kind: "string" } : irVal({ kind: "f64" }),
+    );
+    joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
+    return value;
   } catch (error) {
     if (error instanceof IrInvariantError) throw error;
     throw new IrInvariantError(
@@ -14966,29 +14949,20 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
     const lt = cx.builder.typeOf(lhs);
     const resultType = irVal({ kind: "i32" });
     if (lt.kind === "dynamic") {
-      const isObject = cx.builder.emitTagTest(lhs, JS_TAG_IDS.Object);
-      let whenObject!: IrValueId;
-      const thenBody = cx.builder.collectBodyInstrs(() => {
-        const payload = cx.builder.emitUnbox(lhs, JS_TAG_IDS.Object);
-        const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [payload], resultType);
-        if (result === null) {
-          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-          throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
-        }
-        whenObject = result;
-      });
-      let whenNotObject!: IrValueId;
-      const elseBody = cx.builder.collectBodyInstrs(() => {
-        whenNotObject = cx.builder.emitConst({ kind: "i32", value: 0 }, resultType);
-      });
-      return cx.builder.emitIfElse({
-        cond: isObject,
-        then: thenBody,
-        thenValue: whenObject,
-        else: elseBody,
-        elseValue: whenNotObject,
+      return cx.builder.emitIfElseValue(
+        cx.builder.emitTagTest(lhs, JS_TAG_IDS.Object),
+        () => {
+          const payload = cx.builder.emitUnbox(lhs, JS_TAG_IDS.Object);
+          const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [payload], resultType);
+          if (result === null) {
+            // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+            throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
+          }
+          return result;
+        },
+        () => cx.builder.emitConst({ kind: "i32", value: 0 }, resultType),
         resultType,
-      });
+      );
     }
     const lv = asVal(lt);
     if (lt.kind === "string" || lt.kind === "object" || lt.kind === "closure" || lt.kind === "class") {

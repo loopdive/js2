@@ -4127,18 +4127,9 @@ function isPhase1ElementKey(
   localClasses: ReadonlySet<string>,
 ): boolean {
   const key = access.argumentExpression;
-  const options = currentSelectionOptions;
   if (
-    options?.isArrayExpression?.(access.expression) === true &&
-    isLegacyOnlyVecKey(
-      key,
-      {
-        isLocal: (name) => scope.has(name),
-        declaredFamily: options.classifyDeclaredPrimitiveExpression,
-        numberLiteralType: options.numberLiteralTypeValue,
-      },
-      write,
-    )
+    currentSelectionOptions?.isArrayExpression?.(access.expression) === true &&
+    isLegacyOnlyVecKey(key, write, (name) => scope.has(name), currentSelectionOptions)
   ) {
     return shapeNo("element-key-not-vec-index", key);
   }

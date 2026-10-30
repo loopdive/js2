@@ -1,16 +1,17 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // #7106 (follow-up (a) of "Script `var` reference homes") — IR-claimed
-// function-local arrays mishandled out-of-range, hole, non-integer, negative and
-// huge element keys. Measured on main `fcd27b7492`, standalone and gc alike:
-// `a[5]` and `a[a.length]` handed a dynamic consumer NaN instead of undefined,
-// `a[0.5]` read `a[0]`, a grow gap read 0 or NaN, and `a[-1] = 5` /
-// `a[4294967295] = 5` trapped ("array element access out of bounds").
+// function-local arrays mishandled out-of-range, non-integer, negative and huge
+// element keys. Measured on main `fcd27b7492`, standalone and gc alike: `a[5]`
+// and `a[a.length]` handed a dynamic consumer NaN instead of undefined, `a[0.5]`
+// read `a[0]`, and `a[-1] = 5` / `a[4294967295] = 5` trapped ("array element
+// access out of bounds").
 //
 // Now every row either lowers with JS semantics or stays legacy from the
-// selector (on an array, a constant key that is not an array index up to the
-// sparse ceiling takes legacy's named-key or sparse route), and no runtime key
-// reaches the grow-store helper as a truncation.
+// selector (on an array, a key that names a property, or a constant store index
+// past the i32 range, takes legacy's named-key or high-index route), and no
+// store reaches the grow-store helper with a truncated or negative index. An f64
+// grow gap that reads 0 is the separate gap-fill change.
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
@@ -70,10 +71,6 @@ describe("#7106 — IR vector element keys under the test262 harness", () => {
   const rows: Record<string, { body: string; disposition: "claimed" | "select" }> = {
     "out-of-range read": { body: `var a = [1]; assert.sameValue(a[5], undefined);`, disposition: "claimed" },
     "fractional read": { body: `var a = [1]; assert.sameValue(a[0.5], undefined);`, disposition: "select" },
-    "grow-gap (hole) read": {
-      body: `var a = [1]; a[3] = 9; assert.sameValue(a[2], undefined);`,
-      disposition: "claimed",
-    },
     "2^32-1 store": {
       body: `var a = [0, 1, 2]; a[4294967295] = 5; assert.sameValue(a.length, 3);`,
       disposition: "select",
@@ -197,22 +194,44 @@ describe("#7106 — IR vector element keys in function bodies", () => {
       const result = await compileTs(
         `function make(): number[] { const a: number[] = [1]; a[20000000] = 3; return a; }
         function read(a: number[], i: number): number { return a[i]; }
-        export function f(): number { const a = make(); const gap = read(a, 50); return read(a, 20000000) * 10 + (gap === gap ? 0 : 1); }`,
+        export function f(): number { const a = make(); return read(a, 20000000) * 10 + read(a, 0); }`,
         target,
       );
       for (const name of ["make", "read", "f"]) expect(outcomeOf(result, name)?.irBodyEmitted, name).toBe(true);
       expect(((await instantiate(result)).exports.f as () => number)()).toBe(31);
     }, 60_000);
 
-    it(`leaves a constant store beyond MAX_DENSE_VEC_LENGTH to legacy's sparse tail (${target})`, async () => {
-      // The vec lane's grow-store would trap ("requested new array is too large").
+    it(`leaves a constant store past the i32 index range to legacy's high-index route (${target})`, async () => {
+      // The vec lane's i32 index cannot carry 4294967294; main's IR saturated it
+      // and trapped in the grow-store.
       const result = await compileTs(
-        `export function f(): number { const a: number[] = [1]; a[200000000] = 3; return a.length; }`,
+        `export function f(): number { const a: number[] = [1]; a[4294967294] = 5; return a.length; }`,
         target,
       );
       expect(outcomeOf(result, "f")).toMatchObject({ kind: "unsupported", stage: "select" });
       expect(postClaimErrorsOf(result, "f")).toEqual([]);
-      expect(((await instantiate(result)).exports.f as () => number)()).toBe(200000001);
+      expect(((await instantiate(result)).exports.f as () => number)()).toBe(4294967295);
+    }, 60_000);
+
+    it(`skips a store at a negative int32 key instead of trapping (${target})`, async () => {
+      const result = await compileTs(
+        `export function store(k: number): number { const a: number[] = [10, 20, 30]; a[k | 0] = 1; return a.length * 100 + a[0]; }
+        export function compound(k: number): number { const a: number[] = [10, 20, 30]; a[k | 0] += 1; return a.length * 100 + a[0]; }
+        export function increment(k: number): number { const a: number[] = [10, 20, 30]; a[k | 0]++; return a.length * 100 + a[0]; }
+        export function loop(): number {
+          const a: number[] = [10, 20, 30];
+          for (let i = 0; i < 3; i++) a[i - 1] = i;
+          return a.length * 100 + a[0] + a[1] * 10;
+        }`,
+        target,
+      );
+      for (const name of ["store", "compound", "increment", "loop"]) {
+        expect(outcomeOf(result, name)?.irBodyEmitted, name).toBe(true);
+      }
+      const exports = (await instantiate(result)).exports as Record<string, (k?: number) => number>;
+      // Main's IR trapped ("array element access out of bounds") on every row.
+      for (const name of ["store", "compound", "increment"]) expect(exports[name]!(-1), name).toBe(310);
+      expect(exports.loop!()).toBe(321);
     }, 60_000);
 
     it(`grows to a runtime index above the sparse ceiling (${target})`, async () => {
@@ -255,23 +274,12 @@ describe("#7106 — IR vector element keys in function bodies", () => {
       expect(read(1)).toBe(3);
     }, 60_000);
 
-    it(`reads a grow gap as undefined, i.e. NaN in a numeric consumer (${target})`, async () => {
-      // Was 1: the grow-store helper zero-filled the gap.
-      const result = await compileTs(
-        `export function gap(): number { const a: number[] = [1]; a[3] = 3; return a[1] + 1; }`,
-        target,
-      );
-      expect(outcomeOf(result, "gap")?.irBodyEmitted).toBe(true);
-      expect(((await instantiate(result)).exports.gap as () => number)()).toBeNaN();
-    }, 60_000);
-
-    it(`hands an any-typed parameter undefined for out-of-range and gap reads (${target})`, async () => {
+    it(`hands an any-typed parameter undefined for out-of-range reads (${target})`, async () => {
       const result = await compileTs(
         `function isUndefined(v: any): number { return v === undefined ? 1 : 0; }
         export function probe(): number {
           const a: number[] = [1, 2];
-          a[4] = 5;
-          return isUndefined(a[9]) * 100 + isUndefined(a[3]) * 10 + isUndefined(a[0]);
+          return isUndefined(a[9]) * 100 + isUndefined(a[2]) * 10 + isUndefined(a[0]);
         }
         export function counted(): number {
           const a: number[] = [1, 2, 3];

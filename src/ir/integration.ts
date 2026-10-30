@@ -317,12 +317,8 @@ export { exactPreparedUnitCallableBindingId } from "./prepared-callable-resoluti
 import { prepareIrVectorSupport } from "./prepared-vector-support.js";
 import { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
 import {
-  makeIrArrayExpressionPredicate,
-  makeIrNumberLiteralTypeResolver,
-  makeIrDeclaredPrimitiveExpressionClassifier,
+  makeIrCheckerSelectionOptions,
   makeIrModuleBindingResolver,
-  makeIrPrimitiveExpressionClassifier,
-  makeIrRegExpExpressionPredicate,
   type IrLegacyModuleBindingIdentity,
   type IrLegacyModuleBindingResolver,
   type IrFnctorArrayMethodPlan,
@@ -2541,12 +2537,7 @@ export function compileIrPathFunctions(
     moduleBindingOptions,
     moduleBindingIdentityContext,
   );
-  const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ctx.checker);
-  const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker);
-  const isArrayExpression = makeIrArrayExpressionPredicate(ctx.checker);
-  const numberLiteralTypeValue = makeIrNumberLiteralTypeResolver(ctx.checker);
   const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ctx.checker, ctx.oracle);
-  const isRegExpExpression = makeIrRegExpExpressionPredicate(ctx.checker);
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const declarationsByName = collectIntegrationFunctionDeclarations(integrationSourceFiles);
   const { implicitParamUsesNumericVecAbi, effectiveOverride } = makeMultiSourceOverrideResolvers({
@@ -2570,12 +2561,8 @@ export function compileIrPathFunctions(
       ...(resolveHostVoidCallback ? { hostVoidCallbacks: resolveHostVoidCallback } : {}),
       ...(supportsDateSnapshots ? { hostDateSnapshots: makeIrHostDateSnapshotResolver(ctx.checker) } : {}),
       resolveModuleBinding: moduleBindingResolver,
-      classifyPrimitiveExpression,
-      classifyDeclaredPrimitiveExpression,
-      isArrayExpression,
-      numberLiteralTypeValue,
+      ...makeIrCheckerSelectionOptions(ctx.checker),
       classifyArrayElementFamily,
-      isRegExpExpression,
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)

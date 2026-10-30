@@ -8,32 +8,19 @@
 // DEFINED function appended at mint time, never an import, so no existing
 // funcIdx shifts).
 //
-// Not IR-only: legacy reaches the same helper for rest-parameter collection
-// (`codegen/index.ts`), the overlay stores (`vec-overlay.ts`), the vec arm of
-// `__extern_set` and `__vec_dp_value` (`object-runtime.ts`) and self-hosted
-// stdlib bodies (`stdlib-selfhost.ts`), on both lanes. Those callers pass only
-// non-negative indices; the IR's store sites skip a negative one themselves
-// (`emitElementWrite` in `ir/from-ast.ts`), so the helper never sees one.
+// Legacy calls it too: rest-parameter collection (`codegen/index.ts`), the
+// overlay stores (`vec-overlay.ts`), `__extern_set` / `__vec_dp_value`
+// (`object-runtime.ts`) and self-hosted stdlib bodies (`stdlib-selfhost.ts`).
+// The IR's store sites never pass it a negative index: `emitElementWrite`
+// (`ir/from-ast.ts`) skips the store for one.
 //
-// Semantics — legacy parity (JS `arr[i] = v` on a growable vec):
+// Semantics — EXACT legacy parity (JS `arr[i] = v` on a growable vec):
 //   1. Null receiver → throw TypeError (`ref.null.extern` payload on the
 //      shared `__exn` tag) — the legacy null-guard shape (#441).
 //   2. idx >= capacity → grow the backing array to
 //      `max(idx + 1, oldCap * 2, 4)`, copy the old contents, and point the
 //      vec's `data` field at the new array (legacy grow sequence,
-//      assignment.ts:4094-4178). (#7106) An f64 grow gap holds the absence
-//      marker when the module can ask presence questions, else the undefined
-//      marker — the #4491 T8/T11 choice legacy's inline store
-//      (`compileElementAssignment`) already makes on every lane — so it never
-//      reads back as `0`. Until #7106 this helper zero-filled the gap except
-//      on a standalone module with hole presence, so a gap written through it
-//      (the IR's stores, and legacy's `__extern_set`) read `0` where the same
-//      store compiled inline read `undefined`. Every reader maps the markers:
-//      the host bridge's `__vec_get` maps both to `undefined` (#3315, #4491
-//      T11), and the flag gating its absence-marker arm
-//      (`f64HoleMarkerEmitted`) is set at finalize for every module with an
-//      f64 vec BEFORE `__vec_get` is built (`vec-access-exports.ts`), so a
-//      helper materialized later cannot leave a marker the bridge misses.
+//      assignment.ts:4094-4178).
 //   3. `data[idx] = val`.
 //   4. idx + 1 > vec.length → vec.length = idx + 1 (JS length update on
 //      OOB writes).
@@ -48,7 +35,7 @@ import { ensureExnTag } from "./registry/imports.js";
 import { ensureHoleType, holeSentinelInstrs } from "./array-holes.js";
 import { buildVectorGrowStoreBody, type VectorGrowStoreGapFill } from "../runtime/wasmgc/values/vector-grow-store.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js";
-import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js";
+import { HOLE_F64_BITS } from "./value-tags.js";
 
 /** Reserved name prefix; the suffix is the vec STRUCT typeIdx. */
 export const VEC_ELEM_SET_PREFIX = "__vec_elem_set_";
@@ -189,19 +176,17 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
   if (elem.kind === "i8" || elem.kind === "i16") return null;
 
   const holeyCarrier = isHoleyArrayType(ctx, vecTypeIdx) && elem.kind === "externref";
-  // An f64 grow gap holds a marker on every lane, exactly as legacy's inline
-  // store fills it (#4491 T8/T11): the absence marker where the module can ask
-  // presence questions, else the undefined marker. Without one, an indexed
-  // write past capacity grows the backing array with f64 zeroes, so the gap
-  // reads back as `0`. Mark the carrier here as well as in literal lowering: a
-  // module can first encounter a sparse indexed write before it emits a f64
-  // literal marker.
-  const f64Absence = elem.kind === "f64" && f64HolesActive(ctx);
-  if (f64Absence) ctx.f64HoleMarkerEmitted = true;
+  // Standalone f64 vectors use the same absence marker as sparse literals.
+  // Without this, an indexed write past capacity grows the backing array with
+  // f64 zeroes, materializing every intervening index as an own property.
+  // Mark the carrier here as well as in literal lowering: a module can first
+  // encounter a sparse indexed write before it emits a f64 literal marker.
+  const f64HoleCarrier = ctx.standalone && elem.kind === "f64" && f64HolesActive(ctx);
+  if (f64HoleCarrier) ctx.f64HoleMarkerEmitted = true;
   const gapFill: VectorGrowStoreGapFill = holeyCarrier
     ? { kind: "hole-global", globalIndex: ensureHoleType(ctx) }
-    : elem.kind === "f64"
-      ? { kind: "f64-hole", bits: f64Absence ? HOLE_F64_BITS : UNDEF_F64_BITS }
+    : f64HoleCarrier
+      ? { kind: "f64-hole", bits: HOLE_F64_BITS }
       : { kind: "default" };
   // (#4430) The branded sparse carrier is a FINAL subtype of the ordinary
   // externref vec, and BOTH fields this helper touches (`length`, `data`) are

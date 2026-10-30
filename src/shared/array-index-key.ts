@@ -2,8 +2,9 @@
 //
 // (#7106) Array-index facts the legacy codegen and the IR share, so legacy's
 // named-key route (`codegen/array-nonindex-key.ts`) and the IR selector agree on
-// which constant keys name an element: the §10.4.2 index domain, the bounds on
-// growing a backing vec array, and the value of a key spelled as a literal.
+// which keys name an element: the §10.4.2 index domain (for a number and for a
+// string key), the bounds on growing and indexing a backing vec array, and the
+// value of a key spelled as a literal.
 import { ts } from "../ts-api.js";
 import { skipTransparentExpressions } from "./transparent-expressions.js";
 
@@ -19,13 +20,11 @@ export const MAX_ARRAY_INDEX_EXCLUSIVE = 4294967295;
 export const SPARSE_INDEX_CEILING = 16777216;
 
 /**
- * The longest backing array the IR vec lane's grow-store can allocate: V8's
- * cap on a WasmGC array of 8-byte elements, measured on this repo's Node (a
- * store at index 134217723 grows to it; one at 134217724 traps "requested new
- * array is too large"). The IR selector leaves a constant store at this index
- * or beyond to legacy, whose sparse tail moves `length` instead of trapping.
+ * 2^31 − 1 — the largest array index an i32 carries as a non-negative value.
+ * Legacy's high-index route (`codegen/vec-sparse-index.ts`) and the IR
+ * selector both handle the indices above it apart.
  */
-export const MAX_DENSE_VEC_LENGTH = 134217724;
+export const MAX_I32_INDEX = 0x7fffffff;
 
 /**
  * `true` when `n`'s property key (`ToString(n)`) is an array index.
@@ -35,6 +34,16 @@ export const MAX_DENSE_VEC_LENGTH = 134217724;
  */
 export function isArrayIndexNumber(n: number): boolean {
   return Number.isInteger(n) && n >= 0 && n < MAX_ARRAY_INDEX_EXCLUSIVE;
+}
+
+/**
+ * The array index a STRING property key names, else `undefined`: §10.4.2's
+ * `ToString(ToUint32(k)) === k` and not 2^32 − 1. `"00"`, `"-0"`, `"1.0"`,
+ * `" 1"`, `""` and `"4294967295"` name none.
+ */
+export function arrayIndexOfKey(key: string): number | undefined {
+  const n = Number(key);
+  return isArrayIndexNumber(n) && String(n) === key ? n : undefined;
 }
 
 /**

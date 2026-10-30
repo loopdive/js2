@@ -21,6 +21,7 @@ import {
   type IrUnitId,
 } from "./identity.js";
 import type { IrClassShape } from "./nodes.js";
+import type { IrSelectionOptions } from "./select.js";
 import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
@@ -395,7 +396,7 @@ export function projectIrLocalClassExpressionResolverToLegacy(
  * classification lets local classes with methods such as `indexOf` retain
  * ordinary class dispatch while real arrays reject before claim.
  */
-export function makeIrArrayExpressionPredicate(checker: ts.TypeChecker): (expr: ts.Expression) => boolean {
+function makeIrArrayExpressionPredicate(checker: ts.TypeChecker): (expr: ts.Expression) => boolean {
   return (expr) => {
     try {
       const type = checker.getTypeAtLocation(unwrapParens(expr));
@@ -420,7 +421,7 @@ export function makeIrArrayExpressionPredicate(checker: ts.TypeChecker): (expr: 
  * whose literal type is not an array index, as it refuses the same key spelled
  * as a literal.
  */
-export function makeIrNumberLiteralTypeResolver(checker: ts.TypeChecker): (expr: ts.Expression) => number | undefined {
+function makeIrNumberLiteralTypeValue(checker: ts.TypeChecker): (expr: ts.Expression) => number | undefined {
   return (expr) => {
     try {
       const type = checker.getTypeAtLocation(unwrapParens(expr));
@@ -437,7 +438,7 @@ export function makeIrNumberLiteralTypeResolver(checker: ts.TypeChecker): (expr:
  * calls on the native legacy path; user classes that happen to be named
  * `RegExp` must retain normal IR class dispatch.
  */
-export function makeIrRegExpExpressionPredicate(checker: ts.TypeChecker): (expr: ts.Expression) => boolean {
+function makeIrRegExpExpressionPredicate(checker: ts.TypeChecker): (expr: ts.Expression) => boolean {
   const isAmbientRegExp = (type: ts.Type): boolean => {
     const symbol = type.aliasSymbol ?? type.getSymbol();
     if (symbol?.getName() !== "RegExp") return false;
@@ -602,6 +603,30 @@ export function makeIrPrimitiveExpressionClassifier(
   };
 
   return (expr) => classifyExpression(expr, new Set());
+}
+
+/**
+ * (#7106) The checker-backed selection options every IR selection planner
+ * passes (`codegen/index.ts`, `ir/integration.ts`, the linear backend, the
+ * fallback gate): one factory, so the planners cannot drift apart.
+ */
+export function makeIrCheckerSelectionOptions(
+  checker: ts.TypeChecker,
+): Pick<
+  IrSelectionOptions,
+  | "classifyPrimitiveExpression"
+  | "classifyDeclaredPrimitiveExpression"
+  | "isArrayExpression"
+  | "isRegExpExpression"
+  | "numberLiteralTypeValue"
+> {
+  return {
+    classifyPrimitiveExpression: makeIrPrimitiveExpressionClassifier(checker),
+    classifyDeclaredPrimitiveExpression: makeIrDeclaredPrimitiveExpressionClassifier(checker),
+    isArrayExpression: makeIrArrayExpressionPredicate(checker),
+    isRegExpExpression: makeIrRegExpExpressionPredicate(checker),
+    numberLiteralTypeValue: makeIrNumberLiteralTypeValue(checker),
+  };
 }
 
 export type IrModuleBindingValueKind = bindingValue.IrModuleBindingValueKind;

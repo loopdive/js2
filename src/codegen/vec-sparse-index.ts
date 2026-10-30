@@ -57,7 +57,7 @@ import type { Instr } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { MAX_ARRAY_INDEX_EXCLUSIVE, SPARSE_INDEX_CEILING } from "../shared/array-index-key.js";
+import { MAX_ARRAY_INDEX_EXCLUSIVE, MAX_I32_INDEX, SPARSE_INDEX_CEILING } from "../shared/array-index-key.js";
 
 /**
  * Allocate and set an i32 flag local: 1 when `idxLocal`, read as u32, names an
@@ -158,7 +158,7 @@ export function highArrayIndexLiteralI32(key: ts.Expression): number | undefined
   }
   if (!ts.isNumericLiteral(inner)) return undefined;
   const n = Number(inner.text);
-  if (!Number.isInteger(n) || n <= 0x7fffffff || n >= MAX_ARRAY_INDEX_EXCLUSIVE) return undefined;
+  if (!Number.isInteger(n) || n <= MAX_I32_INDEX || n >= MAX_ARRAY_INDEX_EXCLUSIVE) return undefined;
   return n | 0;
 }
 

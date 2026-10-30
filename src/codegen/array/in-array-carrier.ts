@@ -48,7 +48,7 @@
  * recover that absence at the `in` site.
  */
 import type { ts } from "../../ts-api.js";
-import { isArrayIndexNumber } from "../../shared/array-index-key.js";
+import { arrayIndexOfKey } from "../../shared/array-index-key.js";
 import type { vecStaticIndexPresenceInstrs } from "./array-length-holes.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -115,12 +115,6 @@ function arrayCarriersStaticallyDense(ctx: CodegenContext): boolean {
   );
 }
 
-/** The canonical array index a property key names, or `undefined`. */
-function canonicalArrayIndex(key: string): number | undefined {
-  const n = Number(key);
-  return isArrayIndexNumber(n) && String(n) === key ? n : undefined;
-}
-
 /**
  * Compile `expr` (`key in arr`) whose receiver's static type is a plain array
  * carrier. `constantKey` is the key's ToPropertyKey string when it is known at
@@ -150,7 +144,7 @@ export function compileArrayCarrierIn(
     fctx.body.push({ op: "i32.const", value: 1 });
     return booleanResult();
   }
-  const index = canonicalArrayIndex(constantKey);
+  const index = arrayIndexOfKey(constantKey);
   if (index === undefined) return undefined;
   return emitConstantIndexIn(ctx, fctx, expr, index, deps);
 }

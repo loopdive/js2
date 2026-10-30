@@ -2,21 +2,11 @@
 
 import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
 import { forEachChild, ts } from "../ts-api.js";
-import { isArrayIndexNumber, literalElementKey, MAX_DENSE_VEC_LENGTH } from "../shared/array-index-key.js";
+import { isArrayIndexNumber, literalElementKey, MAX_I32_INDEX } from "../shared/array-index-key.js";
 import { skipTransparentExpressions } from "../shared/transparent-expressions.js";
 import { literalFieldName } from "./fnctor-field-writes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
-import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
-
-/** (#7106) What the selector knows about an element key before runtime. */
-export interface ElementKeyEvidence {
-  /** Whether a name is bound locally, shadowing the global `undefined` / `NaN` / `Infinity`. */
-  readonly isLocal: (name: string) => boolean;
-  /** The checker family of the key's declared type. */
-  readonly declaredFamily?: (expr: ts.Expression) => IrDeclaredPrimitiveExpressionFamily | undefined;
-  /** The value of the key's number literal type (`const k = 0.5`). */
-  readonly numberLiteralType?: (expr: ts.Expression) => number | undefined;
-}
+import type { IrSelectionOptions } from "./select.js";
 
 /**
  * (#7106) An Array element access the vec lane leaves to legacy, decided by a
@@ -25,24 +15,32 @@ export interface ElementKeyEvidence {
  *   `a[-1]`, `a[null]`, `a[true]`), a number literal type of such a value
  *   (`const k = 0.5`), or any boolean. ToPropertyKey makes it a NAMED property,
  *   which only legacy's named-key route reads and writes (#4247, #4556);
- * - a `write` to an index the vec lane cannot grow its backing array to hold
- *   (`MAX_DENSE_VEC_LENGTH`); legacy's sparse tail moves `length` instead.
- * A read of any index stays on the vec lane: a read never grows the array.
+ * - a `write` to an index above `MAX_I32_INDEX`, which the vec lane's i32
+ *   index cannot carry (it would drop the store); legacy's high-index route
+ *   (`codegen/vec-sparse-index.ts`) moves `length` for a plain store.
+ * A read of any index stays on the vec lane: it reads as absent past the i32
+ * range, as legacy's does. `isLocal` reports whether a name is a local binding
+ * (shadowing the global `undefined` / `NaN` / `Infinity`); the checker facts
+ * come from the selection options and are looked up through type-erased casts,
+ * which change a key's type but not its value.
  */
-export function isLegacyOnlyVecKey(key: ts.Expression, evidence: ElementKeyEvidence, write: boolean): boolean {
-  const literal = literalElementKey(key, evidence.isLocal);
+export function isLegacyOnlyVecKey(
+  key: ts.Expression,
+  write: boolean,
+  isLocal: (name: string) => boolean,
+  checker: Pick<IrSelectionOptions, "classifyDeclaredPrimitiveExpression" | "numberLiteralTypeValue"> | undefined,
+): boolean {
+  const literal = literalElementKey(key, isLocal);
   if (literal !== undefined) return isLegacyOnlyKeyValue(literal.value, write);
-  // Ask the checker about the operand the vec lane lowers: a type-erased cast
-  // (`b as any`) changes the key's type, not its value.
   const operand = skipTransparentExpressions(key);
-  if (evidence.declaredFamily?.(operand) === "boolean") return true;
-  const typed = evidence.numberLiteralType?.(operand);
+  if (checker?.classifyDeclaredPrimitiveExpression?.(operand) === "boolean") return true;
+  const typed = checker?.numberLiteralTypeValue?.(operand);
   return typed !== undefined && isLegacyOnlyKeyValue(typed, write);
 }
 
 function isLegacyOnlyKeyValue(value: number | boolean | null | undefined, write: boolean): boolean {
   if (typeof value !== "number" || !isArrayIndexNumber(value)) return true;
-  return write && value >= MAX_DENSE_VEC_LENGTH;
+  return write && value > MAX_I32_INDEX;
 }
 
 /** Reject affine three-deep indices whose IR widening is costlier than legacy i32 induction. */

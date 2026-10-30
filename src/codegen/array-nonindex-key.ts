@@ -62,7 +62,7 @@ import {
 import { resolveConstantExpression } from "./literals.js";
 import { isRangeProvenArrayIndex, tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { highArrayIndexLiteralI32 } from "./vec-sparse-index.js";
-import { isArrayIndexNumber, literalElementKey, MAX_ARRAY_INDEX_EXCLUSIVE } from "../shared/array-index-key.js";
+import { arrayIndexOfKey, isArrayIndexNumber, literalElementKey, MAX_I32_INDEX } from "../shared/array-index-key.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 import { VEC_PROP_GET, VEC_PROP_SET } from "./vec-props.js";
 import { emitToNumber } from "./coercion-engine.js";
@@ -135,7 +135,11 @@ export function isDynamicPropertyKeyExpression(
   // A literal ordinary name (for example `"[object Object]"`) is also a
   // property key, not a numeric index. Numeric spellings and the historical
   // named-key constants are handled by their dedicated routes first.
-  return ts.isStringLiteral(inner) && !isArrayIndexString(inner.text) && !isNamedNumericOrBooleanSpelling(inner.text);
+  return (
+    ts.isStringLiteral(inner) &&
+    arrayIndexOfKey(inner.text) === undefined &&
+    !isNamedNumericOrBooleanSpelling(inner.text)
+  );
 }
 
 /**
@@ -221,18 +225,6 @@ function resolveNumericKey(ctx: CodegenContext, fctx: FunctionContext, raw: ts.E
 
   const constVal = resolveConstantExpression(ctx, key);
   return typeof constVal === "number" ? constVal : undefined;
-}
-
-/**
- * `true` when the STRING key `k` is an array index — i.e.
- * `ToString(ToUint32(k)) === k` and `ToUint32(k) !== 2^32 − 1`, verbatim
- * §10.4.2.2. `>>> 0` is ToUint32, and it makes every near-miss spelling fall
- * out correctly: `"00"` → `"0" !== "00"`, `"4294967296"` → `"0"`, `"-1"` →
- * `"4294967295"`, `"1.1"` → `"1"`, `""` → `"0"`.
- */
-function isArrayIndexString(k: string): boolean {
-  const u = Number(k) >>> 0;
-  return String(u) === k && u !== MAX_ARRAY_INDEX_EXCLUSIVE;
 }
 
 /**
@@ -332,7 +324,7 @@ export function nonArrayIndexNumericKey(
 
   const n = resolveNumericKey(ctx, fctx, key);
   if (n !== undefined) {
-    if (isArrayIndexNumber(n)) return allowHighArrayIndex && n > 0x7fffffff ? String(n) : undefined;
+    if (isArrayIndexNumber(n)) return allowHighArrayIndex && n > MAX_I32_INDEX ? String(n) : undefined;
     // `String(n)` IS ECMAScript `ToString(Number)` for every finite and
     // non-finite double, including `"1e+21"` and `"-Infinity"`.
     return String(n);
@@ -340,10 +332,8 @@ export function nonArrayIndexNumericKey(
 
   const s = resolveStringKey(ctx, fctx, key);
   if (s === undefined || !isNamedNumericOrBooleanSpelling(s)) return undefined;
-  if (isArrayIndexString(s)) {
-    const n = Number(s);
-    return allowHighArrayIndex && n > 0x7fffffff ? s : undefined;
-  }
+  const index = arrayIndexOfKey(s);
+  if (index !== undefined) return allowHighArrayIndex && index > MAX_I32_INDEX ? s : undefined;
   return s;
 }
 
@@ -409,10 +399,10 @@ export function arrayIndexConstantKey(
   const isWrapper = wrapperArg !== undefined && (ts.isStringLiteral(wrapperArg) || ts.isNumericLiteral(wrapperArg));
   if (!ts.isStringLiteral(inner) && !isWrapper) return undefined;
 
-  if (ts.isStringLiteral(inner)) return isArrayIndexString(inner.text) ? Number(inner.text) : undefined;
+  if (ts.isStringLiteral(inner)) return arrayIndexOfKey(inner.text);
   // `new String("2")` is a string key; `new Number(2)` a numeric one.
   if (ts.isStringLiteral(wrapperArg!)) {
-    return isArrayIndexString(wrapperArg!.text) ? Number(wrapperArg!.text) : undefined;
+    return arrayIndexOfKey(wrapperArg!.text);
   }
   const n = Number((wrapperArg as ts.NumericLiteral).text);
   return isArrayIndexNumber(n) ? n : undefined;

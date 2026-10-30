@@ -540,17 +540,6 @@ export function emitForwardingAwareLinearVecLen(
   return host.builder.emitUnary("f64.convert_i32_s", lenI32, IR_F64);
 }
 
-/** (#7106) An element key lowered to a vec index (`emitVecIndex`). */
-export interface VecIndex {
-  readonly index: IrValueId;
-  /**
-   * The key went through the runtime exactness test, so `index` may be
-   * negative: -1 for a key that is not an array index, or a negative integer
-   * key. A grow-store traps on a negative index, so a store skips it.
-   */
-  readonly mayBeNegative: boolean;
-}
-
 /**
  * (#7106) The vec index of an element key, or -1 when the key names no element
  * a vec slot can hold.
@@ -559,12 +548,12 @@ export interface VecIndex {
  * and an integer of 2^31 or more is an index no dense vec backs, so truncating
  * the key (`a[0.5]` reading `a[0]`, `a[-1] = v` trapping in the grow-store) is
  * never right. The f64 key truncates with `i32.trunc_sat_f64_s` and keeps the
- * result only when converting it back is exact. -1 is out of range for every
- * bounds-checked read (`i32.lt_u` against the length), and the store sites
- * skip a negative index, so a non-index key reads as absent and never writes
- * or traps. An i32 key keeps its value: on an Array receiver the selector
- * already refused a key it knows names a property (a boolean, a non-index
- * literal; `isLegacyOnlyVecKey`).
+ * result only when converting it back is exact. -1, like any negative index,
+ * is out of range for every bounds-checked read (`i32.lt_u` against the
+ * length) and skipped by every store site (`emitElementWrite`), so a non-index
+ * key reads as absent and never writes or traps. An i32 key keeps its value:
+ * on an Array receiver the selector already refused a key it knows names a
+ * property (a boolean, a non-index literal; `isLegacyOnlyVecKey`).
  *
  * `integral` is the caller's static proof that the f64 key is an integer (the
  * counted-loop pair, an int32-valued expression); it skips the runtime test.
@@ -573,19 +562,16 @@ export function emitVecIndex(
   key: IrValueId,
   integral: boolean,
   host: Pick<ArrayElementLoweringHost, "builder">,
-): VecIndex {
+): IrValueId {
   const b = host.builder;
-  if (asVal(b.typeOf(key))?.kind === "i32") return { index: key, mayBeNegative: false };
+  if (asVal(b.typeOf(key))?.kind === "i32") return key;
   const index = b.emitUnary("i32.trunc_sat_f64_s", key, IR_I32);
-  if (integral) return { index, mayBeNegative: false };
+  if (integral) return index;
   const exact = b.emitBinary("f64.eq", b.emitUnary("f64.convert_i32_s", index, IR_F64), key, IR_I32);
-  return {
-    index: b.emitSelect(exact, index, b.emitConst({ kind: "i32", value: -1 }, IR_I32), IR_I32),
-    mayBeNegative: true,
-  };
+  return b.emitSelect(exact, index, b.emitConst({ kind: "i32", value: -1 }, IR_I32), IR_I32);
 }
 
-/** An f64 element holding the `undefined` or the absence marker (a grow gap, a legacy hole). */
+/** An f64 element holding the `undefined` or the absence marker (a hole, or a grow gap where holes are tracked). */
 export function isF64Hole(value: IrValueId, b: IrFunctionBuilder): IrValueId {
   const bits = b.emitUnary("i64.reinterpret_f64", value, IR_I64);
   const isUndefined = b.emitBinary("i64.eq", bits, b.emitConst({ kind: "i64", value: UNDEF_F64_BITS }, IR_I64), IR_I32);
