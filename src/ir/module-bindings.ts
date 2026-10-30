@@ -7,6 +7,8 @@
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
+import { literalElementKey } from "../shared/array-index-key.js";
+import { skipTransparentExpressions } from "../shared/transparent-expressions.js";
 import * as bindingValue from "./module-binding-value-kinds.js";
 import { updateRetypesModuleBinding } from "./update-retyped-bindings.js";
 import { isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
@@ -417,10 +419,11 @@ function makeIrArrayExpressionPredicate(checker: ts.TypeChecker): (expr: ts.Expr
 
 /**
  * (#7106) Build a checker-backed reader of an expression's number literal type
- * (`const k = 0.5; a[k]` → 0.5): part of `staticElementKey`, which the selector
- * and the element lowering both read.
+ * (`const k = 0.5; a[k]` → 0.5), for the selector's refusal of a key that
+ * names a property (`isLegacyOnlyVecKey`). Narrowing makes the type wrong
+ * after a call that changes the value, so only a refusal may rest on it.
  */
-export function makeIrNumberLiteralTypeValue(checker: ts.TypeChecker): (expr: ts.Expression) => number | undefined {
+function makeIrNumberLiteralTypeValue(checker: ts.TypeChecker): (expr: ts.Expression) => number | undefined {
   return (expr) => {
     try {
       const type = checker.getTypeAtLocation(unwrapParens(expr));
@@ -429,6 +432,38 @@ export function makeIrNumberLiteralTypeValue(checker: ts.TypeChecker): (expr: ts
       return undefined;
     }
   };
+}
+
+/**
+ * (#7106) Build a reader of the number a `const` binding holds when its
+ * initializer spells one, directly or through another such binding
+ * (`const K = 2147483648; a[K]`): the element lowering's static key
+ * (`lowerElementIndex`). The value cannot change after the declaration. A
+ * binding's literal TYPE is not enough: `const k = o.k` copies the narrowed
+ * type of `o.k`, which a call can have made wrong.
+ */
+export function makeIrConstNumberValue(checker: ts.TypeChecker): (expr: ts.Expression) => number | undefined {
+  const constValue = (expr: ts.Expression, seen: Set<ts.VariableDeclaration>): number | undefined => {
+    const inner = skipTransparentExpressions(expr);
+    // Every name counts as shadowed: the initializer's scope is not the key's,
+    // and a global `NaN` / `Infinity` is no array index anyway.
+    const literal = literalElementKey(inner, () => true);
+    if (literal !== undefined) return typeof literal.value === "number" ? literal.value : undefined;
+    if (!ts.isIdentifier(inner)) return undefined;
+    const declaration = checker.getSymbolAtLocation(inner)?.valueDeclaration;
+    if (
+      !declaration ||
+      !ts.isVariableDeclaration(declaration) ||
+      !declaration.initializer ||
+      (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+      seen.has(declaration)
+    ) {
+      return undefined;
+    }
+    seen.add(declaration);
+    return constValue(declaration.initializer, seen);
+  };
+  return (expr) => constValue(expr, new Set());
 }
 
 /**

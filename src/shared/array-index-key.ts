@@ -4,7 +4,7 @@
 // named-key route (`codegen/array-nonindex-key.ts`) and the IR selector agree on
 // which keys name an element: the §10.4.2 index domain (for a number and for a
 // string key), the bounds on growing and indexing a backing vec array, and the
-// value of a key spelled as a literal.
+// value of a key known before runtime.
 import { ts } from "../ts-api.js";
 import { skipTransparentExpressions } from "./transparent-expressions.js";
 
@@ -46,6 +46,11 @@ export function arrayIndexOfKey(key: string): number | undefined {
   return isArrayIndexNumber(n) && String(n) === key ? n : undefined;
 }
 
+/** The value of an element key known before runtime: a record, because the value may be `undefined`. */
+export interface ElementKeyValue {
+  readonly value: number | boolean | null | undefined;
+}
+
 /**
  * The value of an element key spelled as a literal, through transparent
  * wrappers: a numeric literal under any number of unary `+` / `-`, `true`,
@@ -56,7 +61,7 @@ export function arrayIndexOfKey(key: string): number | undefined {
 export function literalElementKey(
   key: ts.Expression,
   isShadowed: (name: string) => boolean,
-): { readonly value: number | boolean | null | undefined } | undefined {
+): ElementKeyValue | undefined {
   const inner = skipTransparentExpressions(key);
   if (ts.isNumericLiteral(inner)) return { value: Number(inner.text) };
   if (inner.kind === ts.SyntaxKind.TrueKeyword) return { value: true };
@@ -78,4 +83,26 @@ export function literalElementKey(
     return { value: inner.operator === ts.SyntaxKind.MinusToken ? -operand : operand };
   }
   return undefined;
+}
+
+/**
+ * (#7106) The value of an element key known before runtime: its literal
+ * spelling (`literalElementKey`), else what `numberValue` reads for the key
+ * with its type-erased casts removed (they change a key's type, not its
+ * value). The caller's reader decides how far the value can be trusted.
+ */
+export function staticElementKey(
+  key: ts.Expression,
+  isShadowed: (name: string) => boolean,
+  numberValue: ((expr: ts.Expression) => number | undefined) | undefined,
+): ElementKeyValue | undefined {
+  const literal = literalElementKey(key, isShadowed);
+  if (literal !== undefined) return literal;
+  const value = numberValue?.(skipTransparentExpressions(key));
+  return value === undefined ? undefined : { value };
+}
+
+/** (#7106) `true` when a key's static value (`staticElementKey`) is an array index. */
+export function isStaticArrayIndex(known: ElementKeyValue | undefined): boolean {
+  return known !== undefined && typeof known.value === "number" && isArrayIndexNumber(known.value);
 }

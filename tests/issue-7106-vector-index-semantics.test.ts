@@ -8,10 +8,10 @@
 // access out of bounds").
 //
 // Now every row either lowers with JS semantics or stays legacy from the
-// selector (on an array, a key that names a property, or a constant store index
-// past the i32 range, takes legacy's named-key or high-index route), and no
-// store reaches the grow-store helper with a truncated or negative index. An f64
-// grow gap that reads 0 is the separate gap-fill change.
+// selector (on an array, a key that names a property takes legacy's named-key
+// route), and no store reaches the grow-store helper with a truncated or
+// negative index; a static index past the i32 range still traps, as on main.
+// An f64 grow gap that reads 0 is the separate gap-fill change.
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
@@ -167,15 +167,17 @@ describe("#7106 — IR vector element keys in function bodies", () => {
       const result = await compileTs(source, target);
       expect(outcomeOf(result, "store")?.irBodyEmitted).toBe(true);
       const store = (await instantiate(result)).exports.store as (i: number) => number;
-      // Non-integer, negative, NaN and 2^32-1 keys name properties, not
-      // elements: element 0 and the length are untouched. (Was: 702 for 0.5,
-      // a trap for -1 and 4294967295.)
-      for (const key of [0.5, -1, Number.NaN, 4294967295]) expect(store(key)).toBe(102);
+      // Non-integer, negative, NaN, infinite and 2^32-1 keys name properties,
+      // not elements: element 0 and the length are untouched. (Was: 702 for
+      // 0.5, a trap for -1 and 4294967295.)
+      for (const key of [0.5, -1, -2147483649, Number.NaN, Infinity, -Infinity, 4294967295, 2 ** 53]) {
+        expect(store(key), String(key)).toBe(102);
+      }
       expect(store(1)).toBe(102);
       expect(store(5)).toBe(106);
-      // A valid index the dense vec cannot back is dropped rather than
-      // trapping; JavaScript would make `length` 2147483649 here.
-      expect(store(2147483648)).toBe(102);
+      // A valid index no vec can back traps in the grow-store, as on main;
+      // dropping it would leave `length` silently wrong (JavaScript: 2147483649).
+      for (const key of [2147483648, 4294967294]) expect(() => store(key)).toThrow(WebAssembly.RuntimeError);
     }, 60_000);
 
     it(`keeps a large constant index on the vec lane: store, read-back, compound, cast key, read (${target})`, async () => {
@@ -208,29 +210,37 @@ describe("#7106 — IR vector element keys in function bodies", () => {
       expect(((await instantiate(result)).exports.f as () => number)()).toBe(31);
     }, 60_000);
 
-    it(`keeps every static spelling of an index past the i32 range on the IR, trapping as on main (${target})`, async () => {
+    it(`traps on a store at an index past the i32 range, whatever its spelling, as on main (${target})`, async () => {
       // The saturated index grows the backing array to 2^31 slots and traps
       // ("array element access out of bounds"), exactly as main's IR does. No
       // spelling falls back to a silent wrong answer: legacy's high-index route
       // drops the read-back and the compound, and drops `length` for every
-      // spelling but a bare literal.
+      // spelling but a bare literal. Static keys (a literal, a `const` bound to
+      // one) saturate without a runtime test; the rest saturate in its cold arm.
       const writes = {
         bound: `a[2147483647] = 5;`,
         bare: `a[2147483648] = 5;`,
         constBinding: `const K = 2147483648; a[K] = 5;`,
+        constChain: `const K = 2147483648; const J = K; a[J] = 5;`,
         negatedTwice: `a[-(-2147483648)] = 5;`,
         unaryPlus: `a[+2147483648] = 5;`,
         satisfies: `a[2147483648 satisfies number] = 5;`,
         compound: `a[2147483648] += 1;`,
         high: `a[4294967294] = 5;`,
+        power: `a[2 ** 31] = 5;`,
+        sum: `const K = 2147483647; a[K + 1] = 5;`,
+        readonlyField: `const o = new Big(); a[o.k] = 5;`,
+        narrowed: `const k: number = big(); if (k === 2147483648) a[k] = 5;`,
       };
       const result = await compileTs(
-        Object.entries(writes)
+        `class Big { readonly k: 2147483648 = 2147483648; }
+        function big(): number { return 2147483648; }
+        ${Object.entries(writes)
           .map(
             ([name, write]) =>
               `export function ${name}(): number { const a: number[] = [1]; ${write} return a.length; }`,
           )
-          .join("\n"),
+          .join("\n")}`,
         target,
       );
       const exports = (await instantiate(result)).exports as Record<string, () => number>;
@@ -275,6 +285,31 @@ describe("#7106 — IR vector element keys in function bodies", () => {
       // Main's IR trapped ("array element access out of bounds") on every row.
       for (const name of ["store", "compound", "increment"]) expect(exports[name]!(-1), name).toBe(310);
       expect(exports.loop!()).toBe(321);
+    }, 60_000);
+
+    it(`tests a key at runtime when a call made its narrowed literal type wrong (${target})`, async () => {
+      // `o.k === 1` narrows `o.k`, and a `const` copying it, to the type 1, but
+      // `o.set()` changes the value. Only a literal, or a `const` bound to one,
+      // is a static key; trusting the type skipped the runtime test and the
+      // store guard (226655b496: a trap, a trap, 307 and 11).
+      const narrowed = (cls: string, body: string) =>
+        `{ const o = new ${cls}(); const a: number[] = [10, 20, 30]; if (o.k === 1) { o.set(); ${body} } return 0; }`;
+      const store = `a[o.k] = 7; return a.length * 100 + a[0];`;
+      const result = await compileTs(
+        `class Negative { k: 1 | -1 = 1; set(): void { this.k = -1; } }
+        class Half { k: 1 | 0.5 = 1; set(): void { this.k = 0.5; } }
+        export function negative(): number ${narrowed("Negative", store)}
+        export function copied(): number ${narrowed("Negative", `const k = o.k; a[k] = 7; return a.length * 100 + a[0];`)}
+        export function half(): number ${narrowed("Half", store)}
+        export function halfRead(): number ${narrowed("Half", `return a[o.k] + 1;`)}`,
+        target,
+      );
+      for (const name of ["negative", "copied", "half", "halfRead"]) {
+        expect(outcomeOf(result, name)?.irBodyEmitted, name).toBe(true);
+      }
+      const exports = (await instantiate(result)).exports as Record<string, () => number>;
+      for (const name of ["negative", "copied", "half"]) expect(exports[name]!(), name).toBe(310);
+      expect(exports.halfRead!()).toBeNaN();
     }, 60_000);
 
     it(`grows to a runtime index above the sparse ceiling (${target})`, async () => {

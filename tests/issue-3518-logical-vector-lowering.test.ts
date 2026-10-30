@@ -209,14 +209,27 @@ describe("source-bound logical vectors without physical resolution", () => {
       const rows = instructions(f.lower({ returnTypeOverride: element }));
       expect(rows.filter((row) => row.kind === "unary" && row.op === "i32.trunc_sat_f64_s")).toHaveLength(1);
       expect(rows.filter((row) => row.kind === "binary" && row.op === "i32.lt_u")).toHaveLength(1);
-      expect(rows.filter((row) => row.kind === "if")).toHaveLength(1);
       expect(rows.filter((row) => row.kind === "vec.get")).toHaveLength(1);
-      // (#7106) The truncated index survives only when it is exact; a
-      // non-integer key selects -1, which the unsigned bounds check rejects.
-      expect(rows.filter((row) => row.kind === "binary" && row.op === "f64.eq")).toHaveLength(1);
-      expect(rows.filter((row) => row.kind === "select")).toHaveLength(1);
-      expect(rows.filter((row) => row.kind === "const")).toMatchObject([
-        { value: { kind: "i32", value: -1 } },
+      // (#7106) The truncated index survives when it is exact: an i32 `if` on
+      // the `f64.eq` keeps it, with nothing in the hot arm. The cold arm keeps
+      // the saturated index for an integer key below 2^32 - 1 and gives -1 for
+      // any other key, which the unsigned bounds check rejects. The bounds
+      // check is the second `if`.
+      const truncated = rows.find((row) => row.kind === "unary" && row.op === "i32.trunc_sat_f64_s")!;
+      const ifs = rows.filter((row): row is Extract<IrInstr, { kind: "if" }> => row.kind === "if");
+      expect(ifs).toHaveLength(2);
+      const keyIndex = ifs.find((row) => row.thenValue === truncated.result)!;
+      expect(keyIndex).toMatchObject({ then: [], resultType: irVal({ kind: "i32" }) });
+      expect(rows.find((row) => row.result === keyIndex.cond)).toMatchObject({ kind: "binary", op: "f64.eq" });
+      const cold = keyIndex.else.at(-1) as Extract<IrInstr, { kind: "select" }>;
+      expect(cold).toMatchObject({ kind: "select", whenTrue: truncated.result, result: keyIndex.elseValue });
+      expect(keyIndex.else.find((row) => row.result === cold.whenFalse)).toMatchObject({
+        kind: "const",
+        value: { kind: "i32", value: -1 },
+      });
+      expect(keyIndex.else.filter((row) => row.kind === "unary" && row.op === "f64.trunc")).toHaveLength(1);
+      // The read's own constant is the OOB carrier, in the bounds check's else arm.
+      expect(rows.filter((row) => row.kind === "const" && !keyIndex.else.includes(row))).toMatchObject([
         element === f64 ? { value: { kind: "f64", value: NaN } } : { value: { kind: "null" } },
       ]);
       expect(f.physical).not.toHaveBeenCalled();

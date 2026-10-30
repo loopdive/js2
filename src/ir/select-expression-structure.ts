@@ -2,34 +2,11 @@
 
 import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
 import { forEachChild, ts } from "../ts-api.js";
-import { isArrayIndexNumber, literalElementKey } from "../shared/array-index-key.js";
+import { isStaticArrayIndex, staticElementKey } from "../shared/array-index-key.js";
 import { skipTransparentExpressions } from "../shared/transparent-expressions.js";
 import { literalFieldName } from "./fnctor-field-writes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import type { IrSelectionOptions } from "./select.js";
-
-/**
- * (#7106) The value of an element key known before runtime: its literal
- * spelling (`literalElementKey`), else its number literal type
- * (`const k = 0.5`), looked up through type-erased casts, which change a key's
- * type but not its value. `isShadowed` reports whether a name is a local
- * binding, which shadows the global `undefined` / `NaN` / `Infinity`.
- */
-export function staticElementKey(
-  key: ts.Expression,
-  isShadowed: (name: string) => boolean,
-  numberLiteralTypeValue: IrSelectionOptions["numberLiteralTypeValue"],
-): { readonly value: number | boolean | null | undefined } | undefined {
-  const literal = literalElementKey(key, isShadowed);
-  if (literal !== undefined) return literal;
-  const typed = numberLiteralTypeValue?.(skipTransparentExpressions(key));
-  return typed === undefined ? undefined : { value: typed };
-}
-
-/** (#7106) `true` when a static element key (`staticElementKey`) is an array index. */
-export function isStaticArrayIndex(known: { readonly value: unknown } | undefined): boolean {
-  return known !== undefined && typeof known.value === "number" && isArrayIndexNumber(known.value);
-}
 
 /**
  * (#7106) An Array element key the vec lane leaves to legacy because it names
@@ -37,6 +14,12 @@ export function isStaticArrayIndex(known: { readonly value: unknown } | undefine
  * (`staticElementKey`: `a[0.5]`, `a[-1]`, `a[null]`, `a[true]`,
  * `const k = 0.5`), or any boolean. ToPropertyKey makes it a NAMED property,
  * which only legacy's named-key route reads and writes (#4247, #4556).
+ *
+ * The static value here includes the key's number literal TYPE, which
+ * narrowing can get wrong (`o.k === 1` narrows `o.k`, and a call may then
+ * change it). Refusing on it is still safe: legacy's key lowering reads no
+ * types, so a key whose type is wrong is handled from its runtime value. The
+ * lowering never trusts the type (`lowerElementIndex`).
  *
  * A static array index of any size stays on the vec lane, reads and writes
  * alike. Past the i32 range the lowering saturates it, so a write traps in the

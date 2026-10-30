@@ -44,8 +44,9 @@ import {
 import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
-import { expressionIsDefinitelyBoolean, isStaticArrayIndex, staticElementKey } from "./select-expression-structure.js";
+import { expressionIsDefinitelyBoolean } from "./select-expression-structure.js";
 import { unwrapTypeErasedExpression } from "../shared/transparent-expressions.js";
+import { isStaticArrayIndex, staticElementKey } from "../shared/array-index-key.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -290,8 +291,8 @@ import {
   IR_MATH_METHOD_TABLE,
 } from "./select.js";
 import {
+  makeIrConstNumberValue,
   makeIrDeclaredPrimitiveExpressionClassifier,
-  makeIrNumberLiteralTypeValue,
   makeIrPrimitiveExpressionClassifier,
   type IrPrimitiveExpressionFamily,
 } from "./module-bindings.js";
@@ -1949,6 +1950,7 @@ export function lowerFunctionAstToIr(
     generatorBufferSlot,
     checker: options.checker,
     oracle: options.oracle,
+    constNumberValue: options.checker && makeIrConstNumberValue(options.checker),
     // #4177 — outer function only; lifted-closure contexts deliberately omit
     // it (see the LowerCtx field doc).
     latticeParamFacts: collectLatticeParamFacts(fn, params),
@@ -3194,6 +3196,8 @@ interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLow
   readonly checker?: ts.TypeChecker;
   /** (#4218) Backend-selected oracle threaded from AstToIrOptions (see there). */
   readonly oracle?: TypeOracle;
+  /** (#7106) The number a `const` binding holds (`makeIrConstNumberValue`): built once per function, shared by nested bodies. */
+  readonly constNumberValue?: (expr: ts.Expression) => number | undefined;
   /**
    * #4177 — the enclosing function's OWN never-written parameter facts from
    * the SAME signature resolution selection claimed the function with,
@@ -6867,19 +6871,21 @@ interface ElementSlot {
   readonly index: IrValueId;
   /** The counted-loop proof (`isProvenInBoundsIr`): read and write unchecked. */
   readonly proven: boolean;
-  /** The key is a static array index (`staticElementKey`), so `index` is non-negative. */
+  /** The key is an array index spelled as a literal or held by a `const`, so `index` is non-negative. */
   readonly staticIndex: boolean;
 }
 
 /**
  * (#7106) Lower an element access's key ONCE to its vec index (`emitVecIndex`:
- * -1 for a key that names no element), together with the counted-loop proof
- * that lets the caller read or write unchecked. The key needs no runtime
+ * negative for a key that names no element), together with the counted-loop
+ * proof that lets the caller read or write unchecked. The key needs no runtime
  * exactness test when that proof holds, it is int32-valued (`isI32PureExprIR`),
- * or it is a static array index (`staticElementKey`). A static index past the
- * i32 range saturates, so its write traps in the grow-store, as it always has.
- * The selector already refused a key that names a property
- * (`isLegacyOnlyVecKey`).
+ * or it is a static array index: a literal, or a `const` bound to one
+ * (`constNumberValue`). Not a number literal TYPE, which the selector refuses
+ * on: narrowing makes it wrong after a call that changes the value. An index
+ * past the i32 range saturates either way, so its write traps in the
+ * grow-store, as on main. The selector already refused a key that names a
+ * property (`isLegacyOnlyVecKey`).
  */
 function lowerElementIndex(
   access: ts.ElementAccessExpression,
@@ -6892,11 +6898,7 @@ function lowerElementIndex(
   if (scalar !== "f64" && scalar !== "i32") rejectKey(`index must be number or bool (got ${describeIrType(keyType)})`);
   const proven = isProvenInBoundsIr(access, cx);
   const staticIndex = isStaticArrayIndex(
-    staticElementKey(
-      access.argumentExpression,
-      (name) => cx.scope.has(name),
-      cx.checker && makeIrNumberLiteralTypeValue(cx.checker),
-    ),
+    staticElementKey(access.argumentExpression, (name) => cx.scope.has(name), cx.constNumberValue),
   );
   const integral =
     proven || staticIndex || isI32PureExprIR(access.argumentExpression, cx.i32PureNames, cx.provenCharReads);
@@ -6910,9 +6912,10 @@ function lowerElementIndex(
  * helper name embeds the vec STRUCT typeIdx; the lower-time resolver
  * intercepts the prefix and materializes it on demand (name-based resolution —
  * funcIdx-shift safe by construction). A negative index skips the store: it
- * names no element (-1 for a non-index key, or a negative int32 key such as
- * `a[i - 1]` at `i = 0`), and the helper would trap on it. A static index is
- * never negative, so it needs no test.
+ * names no element (a non-index key, or a negative int32 key such as
+ * `a[i - 1]` at `i = 0`), and the helper would trap on it. A static index
+ * (`lowerElementIndex`) is a value known exactly, never negative, so it needs
+ * no test.
  */
 function emitElementWrite(
   lhs: ts.ElementAccessExpression,
@@ -17056,6 +17059,7 @@ function liftNestedFunction(
     funcKind: "regular",
     checker: cx.checker,
     oracle: cx.oracle,
+    constNumberValue: cx.constNumberValue,
     numericLocalScalarForDecl: cx.numericLocalScalarForDecl,
     allocRegistry: cx.allocRegistry,
   };
@@ -17253,6 +17257,7 @@ function liftClosureBody(
     funcKind: "regular",
     checker: cx.checker,
     oracle: cx.oracle,
+    constNumberValue: cx.constNumberValue,
     numericLocalScalarForDecl: cx.numericLocalScalarForDecl,
     allocRegistry: cx.allocRegistry,
   };

@@ -6,6 +6,7 @@
 
 import { ts } from "../ts-api.js";
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "../shared/contracts/f64-value-markers.js";
+import { MAX_ARRAY_INDEX_EXCLUSIVE } from "../shared/array-index-key.js";
 
 import { isCanonI32Lowerable, makePlannedI32Probe, planI32Slots, type IsPromotedI32 } from "./analysis/i32-slots.js";
 import {
@@ -541,24 +542,29 @@ export function emitForwardingAwareLinearVecLen(
 }
 
 /**
- * (#7106) The vec index of an element key, or -1 when the key names no element
- * a vec slot can hold.
+ * (#7106) The vec index of an element key: negative when the key names no
+ * element, 2^31 − 1 for an array index past the i32 range.
  *
  * ToPropertyKey turns a non-integer, negative or NaN key into a NAMED property,
- * and an integer of 2^31 or more is an index no dense vec backs, so truncating
- * the key (`a[0.5]` reading `a[0]`, `a[-1] = v` trapping in the grow-store) is
- * never right. The f64 key truncates with `i32.trunc_sat_f64_s` and keeps the
- * result only when converting it back is exact. -1, like any negative index,
- * is out of range for every bounds-checked read (`i32.lt_u` against the
- * length) and skipped by every store site (`emitElementWrite`), so a non-index
- * key reads as absent and never writes or traps. An i32 key keeps its value:
- * on an Array receiver the selector already refused a key it knows names a
- * property (a boolean, a non-index literal; `isLegacyOnlyVecKey`).
+ * so truncating it (`a[0.5]` reading `a[0]`, `a[-1] = v` trapping in the
+ * grow-store) is never right. The f64 key truncates with `i32.trunc_sat_f64_s`
+ * and keeps the result when converting it back is exact. A negative index is
+ * out of range for every bounds-checked read (`i32.lt_u` against the length)
+ * and skipped by every store site (`emitElementWrite`), so a non-index key
+ * reads as absent and never writes or traps. An array index past the i32
+ * range keeps its saturated 2^31 − 1 (`inexactVecIndex`), as on main: a read
+ * misses, and a store traps in the grow-store rather than being dropped with
+ * `length` silently wrong. An i32 key keeps its value: on an Array receiver
+ * the selector already refused a key it knows names a property (a boolean, a
+ * non-index literal; `isLegacyOnlyVecKey`).
  *
  * `integral` is the caller's static proof that the f64 key is an integer (the
  * counted-loop pair, an int32-valued expression, a static array index); it
  * skips the runtime test, and `i32.trunc_sat_f64_s` saturates an index past
- * the i32 range.
+ * the i32 range the same way.
+ *
+ * A branch, not a `select`: the exact arm is the common one, and quicksort's
+ * hot loop measured faster with the branch.
  */
 export function emitVecIndex(
   key: IrValueId,
@@ -570,7 +576,27 @@ export function emitVecIndex(
   const index = b.emitUnary("i32.trunc_sat_f64_s", key, IR_I32);
   if (integral) return index;
   const exact = b.emitBinary("f64.eq", b.emitUnary("f64.convert_i32_s", index, IR_F64), key, IR_I32);
-  return b.emitSelect(exact, index, b.emitConst({ kind: "i32", value: -1 }, IR_I32), IR_I32);
+  return b.emitIfElseValue(
+    exact,
+    () => index,
+    () => inexactVecIndex(key, index, b),
+    IR_I32,
+  );
+}
+
+/**
+ * `emitVecIndex`'s cold arm, for a key `i32.trunc_sat_f64_s` did not carry
+ * exactly. An integer below 2^32 − 1 keeps the saturated `index`: 2^31 − 1 for
+ * an array index past the i32 range, −2^31 for a key below it (−Infinity
+ * too), which is negative like -1. Any other key (a fraction, NaN, +Infinity,
+ * 2^32 − 1 and up) is -1.
+ */
+function inexactVecIndex(key: IrValueId, index: IrValueId, b: IrFunctionBuilder): IrValueId {
+  const integral = b.emitBinary("f64.eq", b.emitUnary("f64.trunc", key, IR_F64), key, IR_I32);
+  const limit = b.emitConst({ kind: "f64", value: MAX_ARRAY_INDEX_EXCLUSIVE }, IR_F64);
+  const belowLimit = b.emitBinary("f64.lt", key, limit, IR_I32);
+  const none = b.emitConst({ kind: "i32", value: -1 }, IR_I32);
+  return b.emitSelect(b.emitBinary("i32.and", integral, belowLimit, IR_I32), index, none, IR_I32);
 }
 
 /** An f64 element holding the `undefined` or the absence marker (a hole, or a grow gap where holes are tracked). */

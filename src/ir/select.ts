@@ -565,7 +565,11 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * while preserving same-named methods on local classes.
    */
   readonly isArrayExpression?: (expr: ts.Expression) => boolean;
-  /** (#7106) The value of an expression's number literal type (`const k = 0.5` → 0.5), else `undefined`. */
+  /**
+   * (#7106) The value of an expression's number literal type (`const k = 0.5`
+   * → 0.5), else `undefined`. Narrowing can make it wrong, so it only refuses
+   * a key (`isLegacyOnlyVecKey`).
+   */
   readonly numberLiteralTypeValue?: (expr: ts.Expression) => number | undefined;
   /** (#7108) Checker element family of an array receiver; absent ⇒ no array search/join claims. */
   readonly classifyArrayElementFamily?: (expr: ts.Expression) => IrArrayElementFamily | undefined;
