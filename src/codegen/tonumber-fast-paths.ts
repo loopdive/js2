@@ -188,17 +188,25 @@ export function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
 }
 
 /**
- * Prepare an inline semantic Symbol-to-number guard before a caller compiles
- * operands or retains helper indices. The relational caller has already
- * ensured the native object runtime, which registers the Symbol carrier.
+ * Reserve the Symbol TypeError dependencies under the existing numeric-provider
+ * policy, before operand compilation or helper-index capture. Relational
+ * callers require the native Symbol carrier; existing fast paths also support
+ * minimal modules without that carrier and retain their preparation policy.
  */
-export function prepareSymbolToNumberGuard(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (!ctx.standalone) return;
-  if (ctx.symbolTypeIdx < 0) throw new Error("Missing native Symbol carrier for numeric value conversion");
-  void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
-    forceInModuleCtor: true,
-    flush: fctx,
-  });
+export function prepareSymbolToNumberGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  requireSymbolCarrier = true,
+): void {
+  if (ctx.standalone) {
+    if (requireSymbolCarrier && ctx.symbolTypeIdx < 0) {
+      throw new Error("Missing native Symbol carrier for numeric value conversion");
+    }
+    void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
+      forceInModuleCtor: true,
+      flush: fctx,
+    });
+  }
 }
 
 /**
@@ -233,12 +241,7 @@ function ensureDeps(
   // every registration below is idempotent, so that rebuild adds nothing.
   // Doing it the other way round (registering at finalize) would add an
   // imported global after the shift pass had already run.
-  if (ctx.standalone) {
-    void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
-      forceInModuleCtor: true,
-      flush: fctx,
-    });
-  }
+  prepareSymbolToNumberGuard(ctx, fctx, false);
   flushLateImportShifts(ctx, fctx);
   const unboxIdx = ctx.funcMap.get("__unbox_number");
   if (unboxIdx === undefined) return undefined;

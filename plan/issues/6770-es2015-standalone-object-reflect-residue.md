@@ -1037,3 +1037,20 @@ floor credit. The separate accessor repair is excluded from this bounded fix.
 The old author-written whole-wrapper hold condition requires truthful receiving
 owner reconciliation after normal current-head QA, hooks, CI and review. This
 source-only preparation does not release that hold or waive a required gate.
+
+## 2026-10-30 follow-up: share Symbol TypeError dependency preparation
+
+Published head `9dd0f877` failed the standalone-arm ratchet: the new preparation
+helper duplicated a mode branch already owned by numeric fast-path dependency
+setup. The gate measured one additional standalone arm and one additional
+negative standalone arm. No allowance or baseline change is proposed.
+
+The source-only follow-up consolidates both dependency reservations into one
+function. Relational callers retain mandatory Symbol-carrier validation before
+registration; existing fast paths explicitly retain their minimal-module policy.
+The existing host/non-standalone no-op, constructor/message selection, shift-flush
+order, Symbol throw instructions and both relational operand guards are unchanged.
+Source counting matches current main's existing arm counts; actual gate, runtime
+qualification, normal hooks and refreshed CI remain pending. Existing 24-case
+controls, both complete originals and the retained one-pass/one-fail outcome are
+not rewritten or credited as new results.
