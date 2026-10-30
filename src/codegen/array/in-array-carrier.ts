@@ -48,7 +48,7 @@
  * recover that absence at the `in` site.
  */
 import type { ts } from "../../ts-api.js";
-import { arrayIndexOfKey } from "../../shared/array-index-key.js";
+import { arrayIndexOfKey, MAX_I32_INDEX } from "../../shared/array-index-key.js";
 import type { vecStaticIndexPresenceInstrs } from "./array-length-holes.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -172,7 +172,7 @@ function emitConstantIndexIn(
   }
   if (emitStaticHolePresence(ctx, fctx, recv, index, deps)) return booleanResult();
   if (dense && (recv.kind === "ref" || recv.kind === "ref_null") && deps.isVecBaseSubtype(ctx, recv.typeIdx)) {
-    if (index > 0x7fffffff) {
+    if (index > MAX_I32_INDEX) {
       // `length` is a non-negative i32, so it can never exceed this index.
       fctx.body.push({ op: "drop" }, { op: "i32.const", value: 0 });
     } else {

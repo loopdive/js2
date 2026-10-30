@@ -44,7 +44,7 @@ import {
 import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
-import { expressionIsDefinitelyBoolean } from "./select-expression-structure.js";
+import { expressionIsDefinitelyBoolean, isStaticArrayIndex, staticElementKey } from "./select-expression-structure.js";
 import { unwrapTypeErasedExpression } from "../shared/transparent-expressions.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
@@ -291,6 +291,7 @@ import {
 } from "./select.js";
 import {
   makeIrDeclaredPrimitiveExpressionClassifier,
+  makeIrNumberLiteralTypeValue,
   makeIrPrimitiveExpressionClassifier,
   type IrPrimitiveExpressionFamily,
 } from "./module-bindings.js";
@@ -6866,15 +6867,19 @@ interface ElementSlot {
   readonly index: IrValueId;
   /** The counted-loop proof (`isProvenInBoundsIr`): read and write unchecked. */
   readonly proven: boolean;
+  /** The key is a static array index (`staticElementKey`), so `index` is non-negative. */
+  readonly staticIndex: boolean;
 }
 
 /**
  * (#7106) Lower an element access's key ONCE to its vec index (`emitVecIndex`:
  * -1 for a key that names no element), together with the counted-loop proof
  * that lets the caller read or write unchecked. The key needs no runtime
- * exactness test when that proof holds or it is int32-valued
- * (`isI32PureExprIR`). The selector already refused a key the vec lane leaves to
- * legacy (`isLegacyOnlyVecKey`).
+ * exactness test when that proof holds, it is int32-valued (`isI32PureExprIR`),
+ * or it is a static array index (`staticElementKey`). A static index past the
+ * i32 range saturates, so its write traps in the grow-store, as it always has.
+ * The selector already refused a key that names a property
+ * (`isLegacyOnlyVecKey`).
  */
 function lowerElementIndex(
   access: ts.ElementAccessExpression,
@@ -6886,8 +6891,16 @@ function lowerElementIndex(
   const scalar = asVal(keyType)?.kind;
   if (scalar !== "f64" && scalar !== "i32") rejectKey(`index must be number or bool (got ${describeIrType(keyType)})`);
   const proven = isProvenInBoundsIr(access, cx);
-  const integral = proven || isI32PureExprIR(access.argumentExpression, cx.i32PureNames, cx.provenCharReads);
-  return { index: emitVecIndex(key, integral, cx), proven };
+  const staticIndex = isStaticArrayIndex(
+    staticElementKey(
+      access.argumentExpression,
+      (name) => cx.scope.has(name),
+      cx.checker && makeIrNumberLiteralTypeValue(cx.checker),
+    ),
+  );
+  const integral =
+    proven || staticIndex || isI32PureExprIR(access.argumentExpression, cx.i32PureNames, cx.provenCharReads);
+  return { index: emitVecIndex(key, integral, cx), proven, staticIndex };
 }
 
 /**
@@ -6898,7 +6911,8 @@ function lowerElementIndex(
  * intercepts the prefix and materializes it on demand (name-based resolution —
  * funcIdx-shift safe by construction). A negative index skips the store: it
  * names no element (-1 for a non-index key, or a negative int32 key such as
- * `a[i - 1]` at `i = 0`), and the helper would trap on it.
+ * `a[i - 1]` at `i = 0`), and the helper would trap on it. A static index is
+ * never negative, so it needs no test.
  */
 function emitElementWrite(
   lhs: ts.ElementAccessExpression,
@@ -6919,6 +6933,10 @@ function emitElementWrite(
   const store = (): void => {
     cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, slot.index, value], null);
   };
+  if (slot.staticIndex) {
+    store();
+    return;
+  }
   const zero = cx.builder.emitConst({ kind: "i32", value: 0 }, IR_I32);
   const nonNegative = cx.builder.emitBinary("i32.ge_s", slot.index, zero, IR_BOOL);
   cx.builder.emitIfStmt({ cond: nonNegative, then: cx.builder.collectBodyInstrs(store), else: [] });

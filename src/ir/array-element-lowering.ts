@@ -556,7 +556,9 @@ export function emitForwardingAwareLinearVecLen(
  * property (a boolean, a non-index literal; `isLegacyOnlyVecKey`).
  *
  * `integral` is the caller's static proof that the f64 key is an integer (the
- * counted-loop pair, an int32-valued expression); it skips the runtime test.
+ * counted-loop pair, an int32-valued expression, a static array index); it
+ * skips the runtime test, and `i32.trunc_sat_f64_s` saturates an index past
+ * the i32 range.
  */
 export function emitVecIndex(
   key: IrValueId,

@@ -2,45 +2,56 @@
 
 import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
 import { forEachChild, ts } from "../ts-api.js";
-import { isArrayIndexNumber, literalElementKey, MAX_I32_INDEX } from "../shared/array-index-key.js";
+import { isArrayIndexNumber, literalElementKey } from "../shared/array-index-key.js";
 import { skipTransparentExpressions } from "../shared/transparent-expressions.js";
 import { literalFieldName } from "./fnctor-field-writes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import type { IrSelectionOptions } from "./select.js";
 
 /**
- * (#7106) An Array element access the vec lane leaves to legacy, decided by a
- * key whose value is known before runtime:
- * - a key that is not an array index: a literal (`literalElementKey`: `a[0.5]`,
- *   `a[-1]`, `a[null]`, `a[true]`), a number literal type of such a value
- *   (`const k = 0.5`), or any boolean. ToPropertyKey makes it a NAMED property,
- *   which only legacy's named-key route reads and writes (#4247, #4556);
- * - a `write` to an index above `MAX_I32_INDEX`, which the vec lane's i32
- *   index cannot carry (it would drop the store); legacy's high-index route
- *   (`codegen/vec-sparse-index.ts`) moves `length` for a plain store.
- * A read of any index stays on the vec lane: it reads as absent past the i32
- * range, as legacy's does. `isLocal` reports whether a name is a local binding
- * (shadowing the global `undefined` / `NaN` / `Infinity`); the checker facts
- * come from the selection options and are looked up through type-erased casts,
- * which change a key's type but not its value.
+ * (#7106) The value of an element key known before runtime: its literal
+ * spelling (`literalElementKey`), else its number literal type
+ * (`const k = 0.5`), looked up through type-erased casts, which change a key's
+ * type but not its value. `isShadowed` reports whether a name is a local
+ * binding, which shadows the global `undefined` / `NaN` / `Infinity`.
+ */
+export function staticElementKey(
+  key: ts.Expression,
+  isShadowed: (name: string) => boolean,
+  numberLiteralTypeValue: IrSelectionOptions["numberLiteralTypeValue"],
+): { readonly value: number | boolean | null | undefined } | undefined {
+  const literal = literalElementKey(key, isShadowed);
+  if (literal !== undefined) return literal;
+  const typed = numberLiteralTypeValue?.(skipTransparentExpressions(key));
+  return typed === undefined ? undefined : { value: typed };
+}
+
+/** (#7106) `true` when a static element key (`staticElementKey`) is an array index. */
+export function isStaticArrayIndex(known: { readonly value: unknown } | undefined): boolean {
+  return known !== undefined && typeof known.value === "number" && isArrayIndexNumber(known.value);
+}
+
+/**
+ * (#7106) An Array element key the vec lane leaves to legacy because it names
+ * a property, not an element: a static value that is not an array index
+ * (`staticElementKey`: `a[0.5]`, `a[-1]`, `a[null]`, `a[true]`,
+ * `const k = 0.5`), or any boolean. ToPropertyKey makes it a NAMED property,
+ * which only legacy's named-key route reads and writes (#4247, #4556).
+ *
+ * A static array index of any size stays on the vec lane, reads and writes
+ * alike. Past the i32 range the lowering saturates it, so a write traps in the
+ * grow-store exactly as before. Legacy's high-index route is no better: it
+ * gets a bare literal's plain-store `length` right, but not the element's
+ * read-back or a compound (follow-up 3).
  */
 export function isLegacyOnlyVecKey(
   key: ts.Expression,
-  write: boolean,
-  isLocal: (name: string) => boolean,
-  checker: Pick<IrSelectionOptions, "classifyDeclaredPrimitiveExpression" | "numberLiteralTypeValue"> | undefined,
+  isShadowed: (name: string) => boolean,
+  options: Pick<IrSelectionOptions, "classifyDeclaredPrimitiveExpression" | "numberLiteralTypeValue">,
 ): boolean {
-  const literal = literalElementKey(key, isLocal);
-  if (literal !== undefined) return isLegacyOnlyKeyValue(literal.value, write);
-  const operand = skipTransparentExpressions(key);
-  if (checker?.classifyDeclaredPrimitiveExpression?.(operand) === "boolean") return true;
-  const typed = checker?.numberLiteralTypeValue?.(operand);
-  return typed !== undefined && isLegacyOnlyKeyValue(typed, write);
-}
-
-function isLegacyOnlyKeyValue(value: number | boolean | null | undefined, write: boolean): boolean {
-  if (typeof value !== "number" || !isArrayIndexNumber(value)) return true;
-  return write && value > MAX_I32_INDEX;
+  const known = staticElementKey(key, isShadowed, options.numberLiteralTypeValue);
+  if (known !== undefined) return !isStaticArrayIndex(known);
+  return options.classifyDeclaredPrimitiveExpression?.(skipTransparentExpressions(key)) === "boolean";
 }
 
 /** Reject affine three-deep indices whose IR widening is costlier than legacy i32 induction. */

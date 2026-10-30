@@ -112,7 +112,14 @@ describe("#7106 — IR vector element keys under the test262 harness", () => {
 
 describe("#7106 — IR vector element keys in function bodies", () => {
   async function compileTs(source: string, target: Target): Promise<Result> {
-    return compile(source, { fileName: "test.ts", trackIrOutcomes: true, ...targetOptions(target) });
+    return compile(source, { fileName: "test.ts", trackIrOutcomes: true, emitWat: true, ...targetOptions(target) });
+  }
+
+  function functionWat(wat: string, name: string): string {
+    const start = wat.indexOf(`(func $${name}`);
+    expect(start, name).toBeGreaterThanOrEqual(0);
+    const next = wat.indexOf("\n  (func $", start + 1);
+    return wat.slice(start, next < 0 ? undefined : next);
   }
 
   for (const target of TARGETS) {
@@ -201,21 +208,53 @@ describe("#7106 — IR vector element keys in function bodies", () => {
       expect(((await instantiate(result)).exports.f as () => number)()).toBe(31);
     }, 60_000);
 
-    it(`leaves a constant store past the i32 index range to legacy's high-index route (${target})`, async () => {
-      // The vec lane's i32 index cannot carry 4294967294; main's IR saturated it
-      // and trapped in the grow-store.
+    it(`keeps every static spelling of an index past the i32 range on the IR, trapping as on main (${target})`, async () => {
+      // The saturated index grows the backing array to 2^31 slots and traps
+      // ("array element access out of bounds"), exactly as main's IR does. No
+      // spelling falls back to a silent wrong answer: legacy's high-index route
+      // drops the read-back and the compound, and drops `length` for every
+      // spelling but a bare literal.
+      const writes = {
+        bound: `a[2147483647] = 5;`,
+        bare: `a[2147483648] = 5;`,
+        constBinding: `const K = 2147483648; a[K] = 5;`,
+        negatedTwice: `a[-(-2147483648)] = 5;`,
+        unaryPlus: `a[+2147483648] = 5;`,
+        satisfies: `a[2147483648 satisfies number] = 5;`,
+        compound: `a[2147483648] += 1;`,
+        high: `a[4294967294] = 5;`,
+      };
       const result = await compileTs(
-        `export function f(): number { const a: number[] = [1]; a[4294967294] = 5; return a.length; }`,
+        Object.entries(writes)
+          .map(
+            ([name, write]) =>
+              `export function ${name}(): number { const a: number[] = [1]; ${write} return a.length; }`,
+          )
+          .join("\n"),
         target,
       );
-      expect(outcomeOf(result, "f")).toMatchObject({ kind: "unsupported", stage: "select" });
-      expect(postClaimErrorsOf(result, "f")).toEqual([]);
-      expect(((await instantiate(result)).exports.f as () => number)()).toBe(4294967295);
+      const exports = (await instantiate(result)).exports as Record<string, () => number>;
+      for (const name of Object.keys(writes)) {
+        expect(outcomeOf(result, name)?.irBodyEmitted, name).toBe(true);
+        expect(postClaimErrorsOf(result, name), name).toEqual([]);
+        expect(() => exports[name]!(), name).toThrow(WebAssembly.RuntimeError);
+      }
     }, 60_000);
 
-    it(`skips a store at a negative int32 key instead of trapping (${target})`, async () => {
+    it(`grows a narrowed i32 vec past the f64 vec's allocation limit (${target})`, async () => {
+      // 4-byte elements: V8 grows this past index 134217723, where an f64 vec stops.
       const result = await compileTs(
-        `export function store(k: number): number { const a: number[] = [10, 20, 30]; a[k | 0] = 1; return a.length * 100 + a[0]; }
+        `export function f(): number { const a: number[] = []; a[0] = 1; a[200000000] = 7; return (a[200000000] | 0) * 1e9 + a.length; }`,
+        target,
+      );
+      expect(outcomeOf(result, "f")?.irBodyEmitted).toBe(true);
+      expect(((await instantiate(result)).exports.f as () => number)()).toBe(7200000001);
+    }, 60_000);
+
+    it(`skips a store at a negative int32 key instead of trapping, and guards no static index (${target})`, async () => {
+      const result = await compileTs(
+        `export function constant(): number { const a: number[] = [10, 20, 30]; a[4] = 1; return a.length; }
+        export function store(k: number): number { const a: number[] = [10, 20, 30]; a[k | 0] = 1; return a.length * 100 + a[0]; }
         export function compound(k: number): number { const a: number[] = [10, 20, 30]; a[k | 0] += 1; return a.length * 100 + a[0]; }
         export function increment(k: number): number { const a: number[] = [10, 20, 30]; a[k | 0]++; return a.length * 100 + a[0]; }
         export function loop(): number {
@@ -225,10 +264,14 @@ describe("#7106 — IR vector element keys in function bodies", () => {
         }`,
         target,
       );
-      for (const name of ["store", "compound", "increment", "loop"]) {
+      for (const name of ["constant", "store", "compound", "increment", "loop"]) {
         expect(outcomeOf(result, name)?.irBodyEmitted, name).toBe(true);
       }
+      // The store guard is `i32.ge_s index 0`; a static index needs none.
+      expect(functionWat(result.wat!, "constant")).not.toContain("i32.ge_s");
+      expect(functionWat(result.wat!, "store")).toContain("i32.ge_s");
       const exports = (await instantiate(result)).exports as Record<string, (k?: number) => number>;
+      expect(exports.constant!()).toBe(5);
       // Main's IR trapped ("array element access out of bounds") on every row.
       for (const name of ["store", "compound", "increment"]) expect(exports[name]!(-1), name).toBe(310);
       expect(exports.loop!()).toBe(321);

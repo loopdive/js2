@@ -417,11 +417,10 @@ function makeIrArrayExpressionPredicate(checker: ts.TypeChecker): (expr: ts.Expr
 
 /**
  * (#7106) Build a checker-backed reader of an expression's number literal type
- * (`const k = 0.5; a[k]` → 0.5). The selector refuses an Array element key
- * whose literal type is not an array index, as it refuses the same key spelled
- * as a literal.
+ * (`const k = 0.5; a[k]` → 0.5): part of `staticElementKey`, which the selector
+ * and the element lowering both read.
  */
-function makeIrNumberLiteralTypeValue(checker: ts.TypeChecker): (expr: ts.Expression) => number | undefined {
+export function makeIrNumberLiteralTypeValue(checker: ts.TypeChecker): (expr: ts.Expression) => number | undefined {
   return (expr) => {
     try {
       const type = checker.getTypeAtLocation(unwrapParens(expr));

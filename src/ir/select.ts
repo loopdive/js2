@@ -4110,26 +4110,25 @@ function isPhase1MutableMemberTarget(
   ) {
     return false;
   }
-  return isPhase1ElementKey(target, true, scope, localClasses);
+  return isPhase1ElementKey(target, scope, localClasses);
 }
 
 /**
- * (#7106) Shape gate for the key of every element read and `write`: Phase-1,
- * and, on an Array or tuple receiver (the vec lane), not a key the vec lane
- * leaves to legacy (`isLegacyOnlyVecKey`). Such an access keeps the whole
- * function on legacy, whose named-key and sparse routes own it. Any other
- * receiver keeps the key: the dynamic arm reads a named key itself.
+ * (#7106) Shape gate for the key of every element read and write: Phase-1,
+ * and, on an Array or tuple receiver (the vec lane), not a key that names a
+ * property (`isLegacyOnlyVecKey`). Such an access keeps the whole function on
+ * legacy, whose named-key route owns it. Any other receiver keeps the key: the
+ * dynamic arm reads a named key itself.
  */
 function isPhase1ElementKey(
   access: ts.ElementAccessExpression,
-  write: boolean,
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
   const key = access.argumentExpression;
   if (
     currentSelectionOptions?.isArrayExpression?.(access.expression) === true &&
-    isLegacyOnlyVecKey(key, write, (name) => scope.has(name), currentSelectionOptions)
+    isLegacyOnlyVecKey(key, (name) => scope.has(name), currentSelectionOptions)
   ) {
     return shapeNo("element-key-not-vec-index", key);
   }
@@ -4624,7 +4623,7 @@ function isPhase1StatementListInScope(
         ) {
           return shapeNo("nontail-elemstore-recv", lhs.expression);
         }
-        if (!isPhase1ElementKey(lhs, true, scope, localClasses))
+        if (!isPhase1ElementKey(lhs, scope, localClasses))
           return shapeNo("nontail-elemstore-idx", lhs.argumentExpression);
         if (!isPhase1Expr(s.expression.right, scope, localClasses))
           return shapeNo("nontail-elemstore-rhs", s.expression.right);
@@ -5959,7 +5958,7 @@ function isPhase1BodyStatement(
           ) {
             return shapeNo("body-elemstore-recv", lhs.expression);
           }
-          if (!isPhase1ElementKey(lhs, true, scope, localClasses)) return false;
+          if (!isPhase1ElementKey(lhs, scope, localClasses)) return false;
           return isPhase1Expr(stmt.expression.right, scope, localClasses);
         }
       }
@@ -6271,8 +6270,7 @@ function isPhase1Tail(
       const lhs = expr.left;
       if (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text))
         return shapeNo("tail-elemstore-recv", lhs.expression);
-      if (!isPhase1ElementKey(lhs, true, scope, localClasses))
-        return shapeNo("tail-elemstore-idx", lhs.argumentExpression);
+      if (!isPhase1ElementKey(lhs, scope, localClasses)) return shapeNo("tail-elemstore-idx", lhs.argumentExpression);
       return isPhase1Expr(expr.right, scope, localClasses);
     }
     return isPhase1Expr(expr, scope, localClasses);
@@ -12298,7 +12296,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (isAffineThreeDeepElementAccess(expr)) {
       return capabilityNo("array-method-unsupported", "expr-affine-3deep-vector-index", expr);
     }
-    return isPhase1Expr(expr.expression, scope, localClasses) && isPhase1ElementKey(expr, false, scope, localClasses);
+    return isPhase1Expr(expr.expression, scope, localClasses) && isPhase1ElementKey(expr, scope, localClasses);
   }
   // #1804 — fixed-length, non-spread, non-sparse array literals are now
   // selector-accepted (lowered via `vec.new_fixed`). This keeps `f([1,2,3])`'s
