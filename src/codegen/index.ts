@@ -13,6 +13,7 @@ import {
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
 import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
 import { irDynamicInstanceOfAtLegacyParity } from "./ir-dynamic-instanceof.js"; // (#7106) generic dynamic instanceof
+import { irOpenObjectSelectionOption } from "./declarations/ir-open-object-binding.js"; // (#7128 S1)
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
 import { ts, forEachChild } from "../ts-api.js";
@@ -3278,6 +3279,7 @@ function planIrOverlay(
       // (#7106 compareArray.format)
       arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
       dynamicInstanceOfAtLegacyParity: (site) => irDynamicInstanceOfAtLegacyParity(ctx, site), // (#7106)
+      ...irOpenObjectSelectionOption(ctx), // (#7128 S1)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
