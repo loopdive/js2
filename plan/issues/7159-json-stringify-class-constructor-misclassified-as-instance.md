@@ -1,10 +1,11 @@
 ---
 id: 7159
 title: "Native-first and standalone: JSON.stringify(C) of a class constructor prints {} / null instead of undefined"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-31
+completed: 2026-10-31
 priority: low
 horizon: s
 feasibility: medium
@@ -14,7 +15,14 @@ area: codegen
 language_feature: classes
 goal: correctness
 parent: 6979
-related: [7149, 7158]
+related: [7149, 7158, 6734, 7201]
+# 2026-10-31 (#7159): +5 lines / +3 in emitJsonStringifyValue — one dependency
+# call, one arm build, one splice. The arm itself lives in
+# json-stringify-carriers.ts; the codec only gains the call sites.
+loc-budget-allow:
+  - src/codegen/json-codec-native.ts
+func-budget-allow:
+  - src/codegen/json-codec-native.ts::emitJsonStringifyValue
 ---
 
 # #7159 — `JSON.stringify(C)` where `C` is a class
@@ -53,3 +61,44 @@ function check is missing in the property path on every lane.
 
 Acceptance: node's output on gc native-first and standalone for all four
 programs; equivalence gate reports no new regressions.
+
+## Resolution (2026-10-31)
+
+Cause confirmed: a class VALUE is its lazily built `$C` struct singleton
+(`__class_C`, same type and `__tag` as an instance), so the codec's
+closed-struct classifier walked it as an instance (`{}` / `{"y":0}`), and the
+`__get_member_toJSON` dispatcher returned the INSTANCE `toJSON` for it.
+
+Fix, local to JSON: `__json_stringify_value` now asks `__typeof_function` (the
+predicate `typeof v === "function"` lowers to — closures, class singletons,
+branded builtin constructors, callable proxies) right after the null check and
+BEFORE the toJSON lookup and every object arm, and returns the codec's
+"no serialisation" null. So a callable is omitted as a property and becomes
+`null` in an array, under a replacer and with an indent too. No host import, no
+change to the classifier, `ref.test` legality or type APIs.
+(`json-stringify-carriers.ts::jsonCallableSkipInstrs`.)
+
+Not fixed here:
+
+- **Top level** (`JSON.stringify(C)`, `JSON.stringify(f)`): still `"null"`,
+  node `undefined` — now the same answer plain functions already gave (it was
+  `{}` for a class). The result lives in a string-typed slot that cannot hold
+  `undefined`; a call-site fold to `undefined` was tried and dropped because
+  `console.log(JSON.stringify(C))` and `const s = JSON.stringify(C)` then trap
+  (illegal cast), exactly as `console.log(JSON.stringify(undefined))` already
+  does on main. That is #6734.
+- **wasi**: a class instance, and an object literal holding a function inside
+  an array, serialise as `null` (pre-existing, same on main; #7201).
+- **Other class-value misclassification** seen while probing: `Object.keys(C)`
+  answers the instance field names (`["y"]`, node: static names) and `for (k in
+  C)` iterates them, on all three lanes. Same root (class value = instance
+  struct); not JSON, not cheap — left for a follow-up.
+- A `toJSON` own/static member on a callable (`static toJSON()`), which the spec
+  would call before the callable check, is not consulted (it was not before
+  either).
+
+Tests: `tests/equivalence/issue-7159-json-stringify-function-values.test.ts` —
+issue rows, replacer, indent, prototype `toJSON`, and a callable kind (class,
+function, arrow, method, bound) × position (property, array, nested) sweep on
+gc native-first, standalone and wasi vs node, plus printed `console.log` rows.
+Top-level rows are `it.skip` pinned for #6734.

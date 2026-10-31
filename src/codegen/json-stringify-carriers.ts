@@ -37,11 +37,13 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
+import { ensureLateImport } from "./shared.js";
 
 const EQ_HEAP_TYPE = -19; // abstract `eq` heap type
 const CYCLE_MESSAGE = "Converting circular structure to JSON";
 const CLOSED_STRUCT_CLASSIFIER = "__object_assign_closed_struct_source";
 const TO_JSON_MEMBER_GET = "__get_member_toJSON";
+const TYPEOF_FUNCTION = "__typeof_function";
 
 /**
  * `i32` on the stack: is the (non-null) value in `anyLocal` a closed user
@@ -52,6 +54,31 @@ export function jsonClosedStructTestInstrs(ctx: CodegenContext, anyLocal: number
   const classifierIdx = ctx.funcMap.get(CLOSED_STRUCT_CLASSIFIER);
   if (classifierIdx === undefined) return undefined;
   return [{ op: "local.get", index: anyLocal }, { op: "extern.convert_any" }, { op: "call", funcIdx: classifierIdx }];
+}
+
+/** (#7159) Register the {@link jsonCallableSkipInstrs} predicate; run with the codec's other dependencies, before it captures any funcIdx. */
+export function ensureJsonCallablePredicate(ctx: CodegenContext): void {
+  ensureLateImport(ctx, TYPEOF_FUNCTION, [{ kind: "externref" }], [{ kind: "i32" }]);
+}
+
+/**
+ * (#7159) §25.5.2 SerializeJSONProperty step 11: a callable value serialises to
+ * `undefined` (the codec's null result — omitted as a property, `null` in an
+ * array). Asked through `__typeof_function`, the predicate `typeof v ===
+ * "function"` lowers to, BEFORE the toJSON lookup and the object arms: a class
+ * VALUE is a `$C` struct (its singleton) that the closed-struct classifier
+ * would otherwise walk as an instance, and whose `toJSON` dispatcher would find
+ * the INSTANCE method. Callers must flush late-import shifts after the codec.
+ */
+export function jsonCallableSkipInstrs(ctx: CodegenContext, anyLocal: number, strTypeIdx: number): Instr[] {
+  const typeofFnIdx = ctx.funcMap.get(TYPEOF_FUNCTION);
+  if (typeofFnIdx === undefined) return [];
+  return [
+    { op: "local.get", index: anyLocal },
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: typeofFnIdx },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null", typeIdx: strTypeIdx }, { op: "return" }] },
+  ];
 }
 
 /** A replacer argument the type oracle sees as callable (a call signature). */

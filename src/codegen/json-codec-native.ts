@@ -58,6 +58,8 @@ import { reserveReplacerDriver, reserveReviverDriver, reserveToJsonDriver } from
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { buildRawJsonSymbolToStringGuard, prepareRawJsonSymbolToString } from "./json-rawjson-symbol.js";
 import {
+  ensureJsonCallablePredicate,
+  jsonCallableSkipInstrs,
   jsonClosedStructTestInstrs,
   jsonCycleEnterInstrs,
   jsonToJsonMethodLookupInstrs,
@@ -149,6 +151,7 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   const objTypes = ensureObjectRuntime(ctx);
   emitNativeNumberFormat(ctx, new Set(["number_toString"]));
   const quoteIdx = emitJsonQuoteString(ctx);
+  ensureJsonCallablePredicate(ctx); // (#7159)
 
   const concatIdx = ctx.nativeStrHelpers.get("__str_concat")!;
   const orderedIdx = ctx.funcMap.get("__obj_ordered")!;
@@ -285,6 +288,7 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   const litStr = (s: string): Instr[] => nativeStringLiteralInstrs(ctx, s);
   // (#1599) closed user struct screen (undefined outside standalone).
   const closedStructTest = jsonClosedStructTestInstrs(ctx, L_ANY);
+  const callableSkip = jsonCallableSkipInstrs(ctx, L_ANY, anyStrTypeIdx); // (#7159)
 
   // out = __str_concat(out, <piece in L_PIECE, non-null>)
   const appendPiece: Instr[] = [
@@ -1165,6 +1169,7 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
     // any = v
     { op: "local.get", index: P_V },
     { op: "local.set", index: L_ANY },
+    ...callableSkip, // (#7159) a callable (incl. a class value) → undefined
     // ── (#2166 PR-D2) toJSON (§25.5.2 SerializeJSONProperty step 2.b) ──────────
     // If the value is an $Object with a callable own `toJSON`, replace it with
     // value.toJSON(key) before serialising. Look the method up via __extern_get
