@@ -1,10 +1,11 @@
 ---
 id: 7162
 title: "All lanes: `#m in v` for a private method, accessor or static private name is compile-time false for every operand"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-31
+completed: 2026-10-31
 priority: medium
 horizon: s
 feasibility: medium
@@ -58,3 +59,37 @@ folds the expression to `false`.
 Acceptance: node's output for all three programs on gc native-first,
 standalone and wasi; host-assisted gc bytes unchanged unless the host arm must
 change (then state the delta); equivalence gate no new regressions.
+
+## Resolution (2026-10-31)
+
+`compileInOperator`'s private arm now resolves its target with a local
+`resolvePrivateInTarget` (`src/codegen/binary-ops-in.ts`): the innermost class
+that declares the name in its own body decides.
+
+- **Instance field**: unchanged, via `resolveDeclaringClassForPrivateName`.
+- **Instance method or accessor**: the declaring class's struct, then the
+  same own-brand test as fields (`emitOwnPrivateBrandPredicate`, which keeps
+  the #7160 constructor/prototype exclusion).
+- **Static private name** (field, method or accessor): `ref.eq` with the
+  declaring class's `__class_<C>` singleton, so a subclass constructor answers
+  false.
+
+Non-objects throw the #7150 TypeError on every lane, through the existing guard.
+No shared helper, `ref.test` legality or classifier changed, and no host
+import was added.
+
+Tests: `tests/equivalence/issue-7162-private-in-method-accessor-static.test.ts`
+has 104 rows, diffed against node on gc native-first, standalone and wasi. It
+covers methods, accessors (pair, getter-only, setter-only), static fields,
+methods and getters, subclass instances and constructors, `C.prototype`,
+Proxy, `Object.create`, unrelated same-named classes, typed parameters,
+`this`, class expressions (anonymous and named) and nested shadowing.
+
+Bytes (unoptimized, 3 lanes): the 13 playground examples plus 268 equivalence
+sources. Only the 104 #7162 programs changed. Every other program, including
+the 39 other private-`in` sources, is byte-identical.
+
+Left out: a static method's `this` is compiled as the declaring class on every
+lane, so `class D extends C {}; D.st()` with `static st() { return #st in this; }`
+answers true; node answers false. This is a separate defect (`this === C` is
+also true inside `D.who()`), not the `in` arm.
