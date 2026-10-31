@@ -102,6 +102,21 @@ export function additiveOperandsProvable(left: AdditiveProof, right: AdditivePro
   return left === right && left !== "unprovable";
 }
 
+/**
+ * The family `+` produces over its operands' families: the carrier when either
+ * side is dynamic (the dynamic `+`), a number or a string over two of the
+ * same, and nothing a selector can name otherwise.
+ */
+export function additiveResultFamily(left: OperandFamily, right: OperandFamily): OperandFamily {
+  if (left === "dynamic" || right === "dynamic") return "dynamic";
+  return left === right && (left === "number" || left === "string") ? left : "unknown";
+}
+
+/** The family `&&` / `||` produce: a boolean over two booleans, nothing a selector can name otherwise. */
+export function logicalResultFamily(left: OperandFamily, right: OperandFamily): OperandFamily {
+  return left === "boolean" && right === "boolean" ? "boolean" : "unknown";
+}
+
 /** The operators whose result is a boolean (the comparisons, `instanceof`, `in`). */
 export function isComparisonResultOperator(op: ts.SyntaxKind): boolean {
   return (
