@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4344,
-    "fail": 1247,
+    "pass": 4346,
+    "fail": 1245,
     "ce": 201,
     "skip": 0,
     "total": 5792,
@@ -2213,8 +2213,8 @@
       },
       {
         "name": "class-methods-private",
-        "pass": 1488,
-        "fail": 187,
+        "pass": 1489,
+        "fail": 186,
         "ce": 34,
         "skip": 0,
         "total": 1709,
@@ -2222,8 +2222,8 @@
       },
       {
         "name": "class-static-methods-private",
-        "pass": 1197,
-        "fail": 214,
+        "pass": 1198,
+        "fail": 213,
         "ce": 102,
         "skip": 0,
         "total": 1513,
@@ -2465,12 +2465,12 @@
       },
       {
         "name": "class-fields-private-in",
-        "pass": 11,
-        "fail": 5,
+        "pass": 13,
+        "fail": 3,
         "ce": 3,
         "skip": 0,
         "total": 19,
-        "pct": 58
+        "pct": 68
       },
       {
         "name": "object-spread",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4582,
+    "pass": 4579,
     "fail": 197,
-    "ce": 142,
+    "ce": 145,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4483,
+        "pass": 4480,
         "fail": 106,
-        "ce": 22,
+        "ce": 25,
         "skip": 0,
         "total": 4611,
         "pct": 97
