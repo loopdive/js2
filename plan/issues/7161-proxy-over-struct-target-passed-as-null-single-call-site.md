@@ -91,24 +91,39 @@ sites disagreed (a conflict withdraws the narrowing).
 
 **Fix.** A call site whose argument `tracesToProxyValue` (`new Proxy(…)`,
 `Proxy.revocable(…).proxy`, a single-initializer variable or single-return
-helper call yielding one) now withdraws a GC-ref narrowing for that parameter,
-which then stays `externref`. Scalar narrowings and every non-Proxy argument are
-untouched. No classifier, `ref.test` legality or type API was changed.
+helper call yielding one) now withdraws the call-site narrowing for that
+parameter, whatever its kind, so the parameter stays `externref`. Withdrawing
+only a ref agreement was not enough (review round 1): with `t(proxy); t(5)` the
+Proxy site contributes nothing, the `f64` agreement from `t(5)` survived and the
+Proxy was ToNumber'd (`typeof o` → `number`, `o.x` → `NaN`); base had a `$C`/`f64`
+conflict and stayed correct. A Proxy fits no scalar slot, so the withdrawal is
+unconditional. Non-Proxy arguments are untouched. No classifier, `ref.test`
+legality or type API was changed.
 
 **Tests.** `tests/equivalence/issue-7161-proxy-single-call-site.test.ts`, gc
-native-first / standalone / wasi vs node: 12/12 on this branch, 3/12 on base
-(the three passing on base are the controls).
+native-first / standalone / wasi vs node: 17/17 on this branch, 8/17 on base
+(the 8 passing on base are the 3 controls and the 5 Proxy-plus-scalar rows,
+which base got right by a type conflict); the round-1 head failed those 5.
 
-**Not covered (different sites, all pre-existing):**
+**Not covered (all pre-existing; follow-ups filed separately):**
 
+- A `let` reassigned to a Proxy (`let p = new C(); p = new Proxy(…)`, or
+  `let p; p = new Proxy(…)`): `tracesToProxyValue` has no assignment hop.
+- A Proxy from a ternary, inline or through a const: no conditional hop.
 - A Proxy returned from a helper (`function mk() { return new Proxy(new C(), {}); }`):
   the parameter now stays externref, but `mk`'s own return type is narrowed to
   `$C` and the return nulls the Proxy.
-- A Proxy stored in an array literal (`[new Proxy(new C(), {})]`) or an object
-  literal field: the element/field store narrows to `$C`.
+- Proxies in array or object literals (`[new Proxy(new C(), {})]`, `{ p: … }`),
+  including the trap in a `.map` callback over such an array: the element/field
+  store narrows to `$C`.
 - A Proxy as `this` of a method call (`p.m()`): the method dispatch casts the
   receiver to `$C`.
+- `const P = Proxy; new P(new C(), {})`: the value is not null, but `#v in` it
+  answers `true` (node: `false`), from a different seam.
 - An explicitly annotated `function t(o: C)` called with a Proxy: the typed ABI
   itself is `$C`.
+- `o.x` on an untyped parameter holding a number (`t(5)` with `String(o.x)`)
+  answers `NaN` instead of `undefined`, on base too; the Proxy-plus-number row
+  reads `o.x` only for the object call.
 - wasi only: `"x" in p` / `p.x` on an empty-handler Proxy over a class instance
   answer `false` / `undefined` even at top level with no call involved.

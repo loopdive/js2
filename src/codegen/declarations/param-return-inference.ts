@@ -750,7 +750,7 @@ export function inferParamTypeFromCallSites(
   // handling observe the actual prototype. Instance-only Map/Set parameters
   // never set this flag and retain their existing specialized fast path.
   if (sawStandaloneCollectionNativeProtoArg) type = null;
-  if (sawProxyArg && type !== null && (type.kind === "ref" || type.kind === "ref_null")) type = null;
+  if (sawProxyArg) type = null; // a Proxy fits neither a struct nor a scalar slot
   // (#3548) Soundness: if ANY call site under-applies this param, the value can
   // be `undefined` at runtime, so a NON-NULLABLE ref inference has no valid
   // filler — widen to the nullable ref of the same type (NOT all the way to

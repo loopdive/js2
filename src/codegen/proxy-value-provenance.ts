@@ -293,9 +293,11 @@ function isRealmGlobalExpression(ctx: CodegenContext, expr: ts.Expression, depth
  * type, so call-site parameter inference would agree the parameter onto the
  * target's struct (`$C`, `$Map`, `$Date`); the runtime value is the `$Proxy`
  * carrier, and the guarded `ref.test`/`ref.cast` at the argument boundary turns
- * it into a silent `ref.null`. The caller withdraws the ref narrowing so the
- * parameter keeps its dynamic (externref) representation. Conservative in the
- * safe direction: a false positive only costs the struct fast path.
+ * it into a silent `ref.null`. The caller then withdraws the parameter's
+ * call-site narrowing of ANY kind (a scalar agreed by another site would
+ * ToNumber the Proxy), so the parameter keeps its dynamic (externref)
+ * representation. Conservative in the safe direction: a false positive only
+ * costs the fast path.
  */
 export function proxyArgDefeatsRefNarrowing(ctx: CodegenContext, wasmType: ValType, arg: ts.Expression): boolean {
   return (wasmType.kind === "ref" || wasmType.kind === "ref_null") && tracesToProxyValue(ctx, arg);

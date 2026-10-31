@@ -63,12 +63,42 @@ const CASES: Record<string, [string, readonly (typeof ALL)[number][]]> = {
     `${BRAND}function run() { return t("rev", Proxy.revocable(new C(), {}).proxy); }`,
     ALL,
   ],
-  "control: two call sites, a Proxy and a plain instance": [
+  "two call sites, a Proxy and a plain instance": [
     `${BRAND}function run() { return t("p", new Proxy(new C(), {})) + t("c", new C()); }`,
     ALL,
   ],
   "two call sites, both Proxies": [
     `${BRAND}function run() { return t("a", new Proxy(new C(), {})) + t("b", new Proxy(new C(), {})); }`,
+    ALL,
+  ],
+  "a Proxy site and a number site, Proxy first": [
+    `class C { x = 1; }
+function t(o) { return typeof o + ":" + String(o === null) + ":" + (typeof o === "object" ? String(o.x) : "-") + ";"; }
+function run() { return t(new Proxy(new C(), {})) + t(5); }`,
+    NO_WASI,
+  ],
+  "a Proxy site and a number site, number first": [
+    `class C { x = 1; }
+function t(o) { return typeof o + ":" + String(o === null) + ";"; }
+function run() { return t(5) + t(new Proxy(new C(), {})); }`,
+    ALL,
+  ],
+  "a Proxy site and a boolean site, Proxy first": [
+    `class C { x = 1; }
+function t(o) { return typeof o + ":" + String(o === null) + ";"; }
+function run() { return t(new Proxy(new C(), {})) + t(true); }`,
+    ALL,
+  ],
+  "a Proxy site and a boolean site, boolean first": [
+    `class C { x = 1; }
+function t(o) { return typeof o + ":" + String(o === null) + ";"; }
+function run() { return t(false) + t(new Proxy(new C(), {})); }`,
+    ALL,
+  ],
+  "a Proxy site and a number site, typeof only": [
+    `class C { x = 1; }
+function t(o) { return typeof o + ":" + String(o === null) + ";"; }
+function run() { return t(new Proxy(new C(), {})) + t(5); }`,
     ALL,
   ],
   "a Proxy passed through a variable": [
