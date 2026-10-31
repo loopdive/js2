@@ -166,7 +166,7 @@ function needsSymbolThrowArm(ctx: CodegenContext): boolean {
  *
  * A module that never registered the `$Symbol` carrier emits nothing.
  */
-function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
+export function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
   const symTypeIdx = ctx.symbolTypeIdx;
   if (!ctx.standalone || symTypeIdx < 0) return [];
   return [
@@ -185,6 +185,28 @@ function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
     },
     { op: "local.get", index: primLocal },
   ];
+}
+
+/**
+ * Reserve the Symbol TypeError dependencies under the existing numeric-provider
+ * policy, before operand compilation or helper-index capture. Relational
+ * callers require the native Symbol carrier; existing fast paths also support
+ * minimal modules without that carrier and retain their preparation policy.
+ */
+export function prepareSymbolToNumberGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  requireSymbolCarrier = true,
+): void {
+  if (ctx.standalone) {
+    if (requireSymbolCarrier && ctx.symbolTypeIdx < 0) {
+      throw new Error("Missing native Symbol carrier for numeric value conversion");
+    }
+    void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
+      forceInModuleCtor: true,
+      flush: fctx,
+    });
+  }
 }
 
 /**
@@ -219,12 +241,7 @@ function ensureDeps(
   // every registration below is idempotent, so that rebuild adds nothing.
   // Doing it the other way round (registering at finalize) would add an
   // imported global after the shift pass had already run.
-  if (ctx.standalone) {
-    void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
-      forceInModuleCtor: true,
-      flush: fctx,
-    });
-  }
+  prepareSymbolToNumberGuard(ctx, fctx, false);
   flushLateImportShifts(ctx, fctx);
   const unboxIdx = ctx.funcMap.get("__unbox_number");
   if (unboxIdx === undefined) return undefined;
