@@ -66,7 +66,7 @@ function peelParens(e: ts.Expression): ts.Expression {
  * rebinds an existing identifier. Member writes (`obj.n = …`) are NOT
  * variable writes and are deliberately not collected.
  */
-function collectWrittenNamesIncludingNested(root: ts.Node): Set<string> {
+export function collectWrittenNamesIncludingNested(root: ts.Node): Set<string> {
   const written = new Set<string>();
   const addTargets = (target: ts.Expression): void => {
     const t = peelParens(target);

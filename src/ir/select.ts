@@ -75,7 +75,7 @@ import {
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
-import { isAmbientIntrinsicName, isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
 import { type ArrayPrototypeBorrowCall, matchArrayPrototypeBorrowCall } from "./array-prototype-borrow-call.js";
@@ -169,6 +169,7 @@ import {
 } from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
+import { collectWrittenNamesIncludingNested } from "./lattice-param-facts.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 // excluded here (eval, non-selected with shapes, import(), Proxy)
 
@@ -8472,7 +8473,6 @@ function exactNumericExponentiationOperand(
 function isAmbientIntrinsicValue(expr: ts.Identifier): boolean {
   const resolver = currentModuleBindingResolver;
   return (
-    isAmbientIntrinsicName(expr.text) &&
     resolver !== null &&
     resolver(expr) === undefined &&
     isAmbientIntrinsicValueUse(expr, (node) => resolver.isLibOnlyBinding(node), {
@@ -11086,25 +11086,39 @@ function isPhase1StaticPredicateCall(
   localClasses: ReadonlySet<string>,
 ): boolean | undefined {
   const verdict = selectStaticPredicateCall(expr, {
-    isAmbientNamespace: (receiver) =>
-      !scope.has(receiver.text) &&
-      selectorSeesAmbientBinding(receiver) &&
-      currentModuleBindingResolver?.isDirectModuleBinding(receiver) !== true,
+    // The Math arms' ambient test: a module or source binding of the name is not ambient.
+    isAmbientNamespace: (receiver) => !scope.has(receiver.text) && selectorSeesAmbientBinding(receiver),
     isGlobalUndefined: (operand) => isUnshadowedUndefinedIdentifier(operand, scope),
-    family: (expression) => staticPredicateFamily(expression, scope),
+    untypedLocal: (identifier) => {
+      const local = unannotatedLocal(identifier);
+      return local !== undefined && !localIsRewritten(local) ? local : undefined;
+    },
+    family: (expression) => provenIrFamily(expression, scope),
+    isStringMethodCall: (call) =>
+      ts.isPropertyAccessExpression(call.expression) &&
+      currentSelectionOptions?.classifyPrimitiveExpression?.(call.expression.expression) === "string",
   });
   if (verdict === undefined) return undefined;
   if (!verdict.admitted) return capabilityNo(verdict.reason, verdict.arm, verdict.node);
   return verdict.lowered.every((operand) => isPhase1Expr(operand, scope, localClasses));
 }
 
-/** The selector's proof of the family an operand or a partner of a static predicate lowers to. */
-function staticPredicateFamily(expression: ts.Expression, scope: ReadonlySet<string>): OperandFamily {
-  // A module binding lowers as its slot's kind, whatever the checker says of the read.
+/**
+ * The IR representation family the selector proves `expression` lowers to —
+ * `irOperandFamily`'s, not the checker's type: a module binding is its slot
+ * (an f64, or an i32 read without the boolean brand), a native-i32 slot read
+ * (#7136) an i32, and an unannotated local unknown (its caller traces the
+ * initializer when the local is never rewritten).
+ */
+function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): OperandFamily {
+  // A rewritten unannotated local (`untypedLocal` declined it): from-ast keeps the initializer's slot and
+  // withdraws a write of another family after the claim (`x = 1; x = undefined`), so nothing is proved here.
+  if (ts.isIdentifier(expression) && unannotatedLocal(expression) !== undefined) return "unknown";
   if (moduleBinding(expression) !== undefined) {
     const slot = obviousModuleValueFamily(expression);
-    return slot === "f64" ? "number" : slot === "boolean" ? "boolean" : "unknown";
+    return slot === "f64" ? "number" : slot === "boolean" ? "int32" : "unknown";
   }
+  if (currentSelectionOptions?.isNativeI32SlotRead?.(expression) === true) return "int32";
   if (expressionIsProvenNumber(expression)) return "number";
   if (expressionIsProvenString(expression)) return "string";
   if (ts.isCallExpression(expression) && !scope.has("String") && ambientStringToStringCall(expression) !== null) {
@@ -11113,6 +11127,25 @@ function staticPredicateFamily(expression: ts.Expression, scope: ReadonlySet<str
   const obvious = obviousSelectorValueFamily(expression, scope);
   if (obvious === "string" || obvious === "boolean") return obvious;
   return "unknown";
+}
+
+/** The unannotated function or block local `identifier` names; from-ast types its slot from the initializer. */
+function unannotatedLocal(identifier: ts.Identifier): ts.VariableDeclaration | undefined {
+  const declaration = closureLocalDeclaration(identifier);
+  return declaration?.type === undefined ? declaration : undefined;
+}
+
+const writtenNamesByScope = new WeakMap<ts.Node, ReadonlySet<string>>();
+
+/** Is the local written after its declaration anywhere in its function (nested functions included)? */
+function localIsRewritten(declaration: ts.VariableDeclaration): boolean {
+  const scope = ts.findAncestor(declaration.parent, (node) => isFunctionLike(node) || ts.isSourceFile(node))!;
+  let written = writtenNamesByScope.get(scope);
+  if (written === undefined) {
+    written = collectWrittenNamesIncludingNested(scope);
+    writtenNamesByScope.set(scope, written);
+  }
+  return !ts.isIdentifier(declaration.name) || written.has(declaration.name.text);
 }
 
 function functionObjectCallIsPhase1(
@@ -12112,7 +12145,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // `dyn.to_string` (the dynamic scan gates that on the runtime being
     // buildable); a concrete primitive operand folds inline in from-ast.
     const toStringArg = scope.has("String") ? null : ambientStringToStringCall(expr);
-    if (toStringArg !== null) return isPhase1Expr(toStringArg, scope, localClasses);
+    if (toStringArg !== null) {
+      // An i32 without the boolean brand (a module boolean, a native-i32 slot) is no operand from-ast renders.
+      if (provenIrFamily(toStringArg, scope) === "int32") {
+        return capabilityNo("operand-coercion-unsupported", "expr-string-call-i32-operand", toStringArg);
+      }
+      return isPhase1Expr(toStringArg, scope, localClasses);
+    }
     // (#7106 module-init lever B) `Number(v)` under the source-bound plan.
     const toNumberArgs = preparedNumberConversionCall(expr);
     if (toNumberArgs !== null) return toNumberArgs.every((argument) => isPhase1Expr(argument, scope, localClasses));

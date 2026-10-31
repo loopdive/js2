@@ -7,6 +7,7 @@
 // checker's `boolean` agrees with. Any operand, arity or consumer the lowering
 // cannot take is refused at selection, so nothing withdraws after the claim.
 
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
@@ -15,6 +16,12 @@ import { lane, runModuleInit, TARGETS, type Target } from "./helpers/ambient-int
 
 const run = (target: Target, source: string, experimentalIR = true) =>
   runModuleInit(target, source, { fileName: "issue-7106-static-calls.js", experimentalIR });
+
+// What node answers for a typed function's exported `f`.
+const nodeFunction = (source: string) =>
+  new Function(
+    `${ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText.replace(/export /g, "")}; return f;`,
+  )() as (...args: number[]) => number;
 
 // The module `var` an operand may read.
 const PRELUDE = "var n = 2;";
@@ -97,6 +104,26 @@ const REFUSED: Record<string, string> = {
   stringEquality: `if ("false" == Number.isNaN(1)) { throw "#16"; }`,
   stringMethodArgument: `if ("abc".indexOf(Number.isNaN(1)) !== -1) { throw "#17"; }`,
   throwOperand: `var c = false; if (c) { throw Number.isNaN(1); }`,
+  // (round 2) The family the IR lowers, not the checker's: a module boolean is
+  // an i32 read without the brand, a rewritten or logically joined local is not
+  // its initializer's family, and an out-of-bounds element reads as NaN.
+  moduleBooleanOperand: `var t = true; if (Object.is(t, true) !== true || Number.isNaN(t)) { throw "#19"; }`,
+  moduleBooleanFromPredicate: `var t = Number.isNaN(NaN); if (Object.is(t, true) !== true) { throw "#20"; }`,
+  moduleBooleanArray: `var t = true; if (Array.isArray(t) !== false) { throw "#21"; }`,
+  logicalLocal: `{ let x = undefined || 1; if (Object.is(x, 1) !== true) { throw "#22"; } }`,
+  rewrittenLocal: `{ let x = 1; x = undefined; if (Object.is(x, undefined) !== true) { throw "#23"; } }`,
+  outOfBoundsUndefined: `{ let a = [1, 2]; if (Object.is(a[5], undefined) !== true) { throw "#24"; } }`,
+  outOfBoundsAbsent: `{ let a = [1, 2]; if (Object.is(a[5]) !== true) { throw "#25"; } }`,
+  outOfBoundsLocal: `{ let a = [1, 2]; let v = a[5]; if (Number.isFinite(v) !== false) { throw "#25a"; } }`,
+  holeRead: `{ let a = [1, , 2]; if (Object.is(a[1], undefined) !== true) { throw "#25b"; } }`,
+  // Consumers the lowering cannot take.
+  numberSlotWrite: `{ let r = 0; r = Number.isNaN(NaN); if (r !== true) { throw "#26"; } }`,
+  voidOperand: `if (void Number.isNaN(NaN) !== undefined) { throw "#27"; }`,
+  elementRead: `if (Number.isNaN(1)[0] !== undefined) { throw "#28"; }`,
+  memberRead: `if (Number.isNaN(NaN).toString() !== "true") { throw "#29"; }`,
+  orModuleBooleanTemplate: `var t = true; if (\`\${Number.isNaN(1) || t}\` !== "true") { throw "#30"; }`,
+  branchModuleBooleanTemplate: `var t = true; var c = true; if (\`\${c ? Number.isNaN(NaN) : t}\` !== "true") { throw "#31"; }`,
+  orModuleBooleanString: `var t = true; if (String(Number.isNaN(1) || t) !== "true") { throw "#32"; }`,
 };
 
 describe("#7106 — the ambient boolean statics in IR bodies", () => {
@@ -159,10 +186,92 @@ describe("#7106 — the ambient boolean statics in IR bodies", () => {
       [[10], [1001]],
     ],
   };
+  // Typed functions the selector refuses: legacy keeps them and answers as node.
+  const REFUSED_FUNCTIONS: Record<string, [string, readonly (readonly number[])[]]> = {
+    outOfBoundsUndefined: [
+      `export function f(x: number): number { const a: number[] = [x]; return Object.is(a[3], undefined) ? 1 : 0; }`,
+      [[1]],
+    ],
+    outOfBoundsAbsent: [
+      `export function f(x: number): number { const a: number[] = [x]; return Object.is(void 0, a[x]) ? 1 : 0; }`,
+      [[1], [5]],
+    ],
+    nativeI32Field: [
+      `type i32 = number; class C { v: i32 = 3; } export function f(x: number): number { return Number.isInteger(new C().v) ? x : -x; }`,
+      [[1]],
+    ],
+    moduleBoolean: [
+      `const flag: boolean = true; export function f(x: number): number { return Object.is(flag, true) ? x : -x; }`,
+      [[1]],
+    ],
+    asAny: [`export function f(x: number): number { return (Number.isNaN(x) as any) + 1; }`, [[NaN], [1]]],
+    asUnknown: [
+      `export function f(x: number): number { const u = Number.isNaN(x) as unknown; return u ? 1 : 0; }`,
+      [[NaN], [1]],
+    ],
+    satisfies: [
+      `export function f(x: number): number { return (Number.isNaN(x) satisfies boolean) ? 1 : 0; }`,
+      [[NaN], [1]],
+    ],
+    nonNull: [`export function f(x: number): number { return Number.isNaN(x)! ? 1 : 0; }`, [[NaN], [1]]],
+    numberSlot: [
+      `export function f(x: number): number { let r: any = 0; r = Number.isNaN(x); return r ? 1 : 0; }`,
+      [[NaN], [1]],
+    ],
+    // `String(<module boolean>)`: from-ast renders no unbranded i32, so the generic `String(v)` arm refuses it too.
+    stringOfModuleBoolean: [
+      `let t = true; export function f(x: number): number { return Object.is(String(t), "true") ? x : -x; }`,
+      [[1]],
+    ],
+    stringOfModuleBooleanEquality: [
+      `let t = true; export function f(x: number): number { return String(t) === "true" ? x : -x; }`,
+      [[1]],
+    ],
+  };
+  for (const [name, [source, inputs]] of Object.entries(REFUSED_FUNCTIONS)) {
+    const node = nodeFunction(source);
+    for (const target of TARGETS) {
+      it(`${name}: a typed function stays legacy with no errors and answers as node (${lane(target)})`, async () => {
+        const result = await compile(source, {
+          fileName: "issue-7106-static-calls.ts",
+          trackIrOutcomes: true,
+          ...(target ? { target } : {}),
+        });
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
+        expect((result.irOutcomes ?? []).find((o) => o.displayName === "f")?.irBodyEmitted).toBe(false);
+        const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
+        const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+        const f = instance.exports.f as (...args: number[]) => number;
+        for (const input of inputs) expect(f(...input)).toBe(node(...input));
+      });
+    }
+  }
+
+  // In `Object.is`, an f64 that holds legacy's `undefined` marker (here a
+  // legacy-compiled callee's `undefined as any`) is `undefined`, not NaN.
+  for (const target of TARGETS) {
+    it(`legacy's f64 undefined marker is undefined to Object.is (${lane(target)})`, async () => {
+      const source = `function g(): number { return undefined as any; }
+export function f(): number {
+  return (Object.is(g(), undefined) ? 1 : 0) + (Object.is(g(), NaN) ? 2 : 0) + (Object.is(g(), g()) ? 4 : 0);
+}`;
+      const result = await compile(source, {
+        fileName: "issue-7106-static-calls.ts",
+        trackIrOutcomes: true,
+        ...(target ? { target } : {}),
+      });
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "f")).toEqual([]);
+      expect((result.irOutcomes ?? []).find((o) => o.displayName === "f")?.irBodyEmitted).toBe(true);
+      const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+      expect((instance.exports.f as () => number)()).toBe(5);
+    });
+  }
+
   for (const [name, [source, inputs]] of Object.entries(FUNCTIONS)) {
-    const node = new Function(`${source.replace("export ", "").replace(/: number/g, "")}; return f;`)() as (
-      ...args: number[]
-    ) => number;
+    const node = nodeFunction(source);
     for (const target of TARGETS) {
       it(`${name}: a typed function claims, answers as node, and stays native (${lane(target)})`, async () => {
         const result = await compile(source, {
