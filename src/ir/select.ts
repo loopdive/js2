@@ -75,7 +75,7 @@ import {
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
-import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { isAmbientIntrinsicName, isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
 import { type ArrayPrototypeBorrowCall, matchArrayPrototypeBorrowCall } from "./array-prototype-borrow-call.js";
@@ -165,8 +165,10 @@ import {
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   nativeI32OperandsAdmissible,
+  type OperandFamily,
 } from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
+import { selectStaticPredicateCall } from "./static-predicates/selection.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 // excluded here (eval, non-selected with shapes, import(), Proxy)
 
@@ -3101,16 +3103,6 @@ function dynamicMethodCallIsAdmitted(name: string, arity: number): boolean {
   return arity <= 1 && currentSelectionOptions?.supportsBackendCapability?.("host-dynamic-method-call") === true;
 }
 
-/**
- * Does a dynamic method call's operand reach the carrier: a value the caller
- * already sees as dynamic, or a concrete one `lowerDynamicOperands` boxes? The
- * concrete rule must stay in step with `boxConcreteToDynamic`; #7144's
- * `boxableIntoDynamic` is the single spelling to switch to here.
- */
-function dynamicMethodOperandBoxes(operand: ts.Expression, isDynShaped: (operand: ts.Expression) => boolean): boolean {
-  return isDynShaped(operand) || concreteDynamicAssignmentOperandIsBuildable(unwrapPhase1Parens(operand));
-}
-
 /** (#7119) Does `recv.<name>(…arity args)` on a dynamic receiver lower through the brand-dispatch wrapper? */
 function dynamicMethodCallTakesWrapper(name: string, arity: number): boolean {
   return (
@@ -3454,8 +3446,10 @@ function dynamicUsesAreMoveOnly(
           return scanExpr(e.arguments[0]!, false) && scanExpr(e.arguments[1]!, false);
         }
         for (const argument of e.arguments) {
-          if (ts.isSpreadElement(argument) || !dynamicMethodOperandBoxes(argument, isDynShaped)) return false;
-          if (!scanExpr(argument, isDynShaped(argument))) return false;
+          if (ts.isSpreadElement(argument)) return false;
+          const dynamic = isDynShaped(argument);
+          if (!dynamic && !concreteDynamicAssignmentOperandIsBuildable(unwrap(argument))) return false;
+          if (!scanExpr(argument, dynamic)) return false;
         }
         return true;
       }
@@ -8478,6 +8472,7 @@ function exactNumericExponentiationOperand(
 function isAmbientIntrinsicValue(expr: ts.Identifier): boolean {
   const resolver = currentModuleBindingResolver;
   return (
+    isAmbientIntrinsicName(expr.text) &&
     resolver !== null &&
     resolver(expr) === undefined &&
     isAmbientIntrinsicValueUse(expr, (node) => resolver.isLibOnlyBinding(node), {
@@ -8643,47 +8638,6 @@ function borrowResultReachesTypedSlot(call: ts.CallExpression): boolean {
   return !(
     (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
     parent.expression === node
-  );
-}
-
-/**
- * (#7106 module-init) The callee of a measured static call on the ambient
- * namespace (`Number.isNaN(v)`, `Object.is(a, b)`, `Array.isArray(v)`), else
- * undefined. The receiver passes the intrinsic predicate only as such a
- * call's (the shared `isExactStaticMethodCall`).
- */
-function ambientStaticMethodCallee(expr: ts.Expression): ts.PropertyAccessExpression | undefined {
-  const call = unwrapPhase1Parens(expr);
-  if (!ts.isCallExpression(call) || !ts.isPropertyAccessExpression(call.expression)) return undefined;
-  const receiver = unwrapPhase1Parens(call.expression.expression);
-  return ts.isIdentifier(receiver) && isAmbientIntrinsicValue(receiver) ? call.expression : undefined;
-}
-
-/**
- * (#7106 module-init) A measured static call: the realm read, then the
- * dynamic method call. `undefined` when the call is not one, else the Phase-1
- * verdict — final, because the generic receiver walk would admit the receiver
- * and claim a call that then fails the build (measured: `null`, `void 0` and
- * array-literal operands, a fourth argument). An operand reaches the carrier
- * as the unshadowed `undefined`, another such call, or a concrete value that
- * boxes.
- */
-function isPhase1AmbientStaticMethodCall(
-  expr: ts.CallExpression,
-  scope: ReadonlySet<string>,
-  localClasses: ReadonlySet<string>,
-): boolean | undefined {
-  const callee = ambientStaticMethodCallee(expr);
-  if (callee === undefined) return undefined;
-  if (!dynamicMethodCallIsAdmitted(callee.name.text, expr.arguments.length)) {
-    return shapeNo("expr-ambient-static-call-lane", expr);
-  }
-  const isDynShaped = (operand: ts.Expression): boolean =>
-    isUnshadowedUndefinedIdentifier(operand, scope) || ambientStaticMethodCallee(operand) !== undefined;
-  return expr.arguments.every(
-    (operand) =>
-      (dynamicMethodOperandBoxes(operand, isDynShaped) || shapeNo("expr-ambient-static-call-operand", operand)) &&
-      isPhase1Expr(operand, scope, localClasses),
   );
 }
 
@@ -11121,6 +11075,46 @@ function isPhase1ArraySearchOrJoin(
   );
 }
 
+/**
+ * (#7106) `Number.isNaN(x)`, `Object.is(a, b)`, `Array.isArray(x)` on the
+ * unshadowed ambient namespace: `undefined` when the call is not one, else the
+ * Phase-1 verdict (`static-predicates/selection.ts`).
+ */
+function isPhase1StaticPredicateCall(
+  expr: ts.CallExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  const verdict = selectStaticPredicateCall(expr, {
+    isAmbientNamespace: (receiver) =>
+      !scope.has(receiver.text) &&
+      selectorSeesAmbientBinding(receiver) &&
+      currentModuleBindingResolver?.isDirectModuleBinding(receiver) !== true,
+    isGlobalUndefined: (operand) => isUnshadowedUndefinedIdentifier(operand, scope),
+    family: (expression) => staticPredicateFamily(expression, scope),
+  });
+  if (verdict === undefined) return undefined;
+  if (!verdict.admitted) return capabilityNo(verdict.reason, verdict.arm, verdict.node);
+  return verdict.lowered.every((operand) => isPhase1Expr(operand, scope, localClasses));
+}
+
+/** The selector's proof of the family an operand or a partner of a static predicate lowers to. */
+function staticPredicateFamily(expression: ts.Expression, scope: ReadonlySet<string>): OperandFamily {
+  // A module binding lowers as its slot's kind, whatever the checker says of the read.
+  if (moduleBinding(expression) !== undefined) {
+    const slot = obviousModuleValueFamily(expression);
+    return slot === "f64" ? "number" : slot === "boolean" ? "boolean" : "unknown";
+  }
+  if (expressionIsProvenNumber(expression)) return "number";
+  if (expressionIsProvenString(expression)) return "string";
+  if (ts.isCallExpression(expression) && !scope.has("String") && ambientStringToStringCall(expression) !== null) {
+    return "string";
+  }
+  const obvious = obviousSelectorValueFamily(expression, scope);
+  if (obvious === "string" || obvious === "boolean") return obvious;
+  return "unknown";
+}
+
 function functionObjectCallIsPhase1(
   expr: ts.CallExpression,
   scope: ReadonlySet<string>,
@@ -11830,9 +11824,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           isPhase1Expr(operand, scope, localClasses),
         );
       }
-      // (#7106 module-init) `Number.isNaN(v)`, `Object.is(a, b)`: realm read + dynamic method call.
-      const staticCall = isPhase1AmbientStaticMethodCall(expr, scope, localClasses);
-      if (staticCall !== undefined) return staticCall;
       // (#1371) Whitelist f64 Math ops; the ambient receiver is not in scope, so the
       // generic receiver check below would reject these. Recognise the shape
       // here and accept it; the lowerer in from-ast.ts emits a plain unary
@@ -11858,6 +11849,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       ) {
         return shapeNo("expr-math-call-shape", expr);
       }
+      // (#7106) `Number.isNaN(x)`, `Object.is(a, b)`, `Array.isArray(x)`: typed by operand family, like Math.
+      const staticPredicate = isPhase1StaticPredicateCall(expr, scope, localClasses);
+      if (staticPredicate !== undefined) return staticPredicate;
       // #3787 — exact ambient String.fromCharCode(...). Each argument is
       // lowered independently through the mode-selected unary helper, then
       // concatenated left-to-right. The numeric proof is required because

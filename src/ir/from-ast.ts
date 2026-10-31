@@ -229,6 +229,11 @@ import {
 } from "./array-element-lowering.js";
 import { lowerVecSearchOrJoinCall } from "./array-methods/vec-search-join.js";
 import {
+  lowerStaticPredicateCall,
+  staticPredicatePlan,
+  type IrStaticPredicateHost,
+} from "./static-predicates/lowering.js";
+import {
   emitPreparedAsyncAwait,
   preparedAsyncAwaitResultType,
   tryLowerPreparedAsyncPromiseAll,
@@ -9336,6 +9341,19 @@ function lowerArrayPrototypeBorrowCall(borrow: ArrayPrototypeBorrowCall, cx: Low
   return result;
 }
 
+/** (#7106) `static-predicates/lowering.ts`'s view of this lowering context. */
+function staticPredicateHost(cx: LowerCtx): IrStaticPredicateHost {
+  return {
+    builder: cx.builder,
+    funcName: cx.funcName,
+    isGlobalUndefined: (operand) => isUnshadowedUndefinedExpression(operand, cx),
+    lowerOperand: (operand) => {
+      const value = lowerExpr(operand, cx, IR_F64);
+      return { value, family: irOperandFamily(typeOfValue(value, cx), operand) };
+    },
+  };
+}
+
 function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (!ts.isPropertyAccessExpression(expr.expression)) {
     demoteToLegacy("method-call-unsupported", `ir/from-ast: malformed method call in ${cx.funcName}`);
@@ -9715,6 +9733,15 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     }
     demoteToLegacy("method-call-unsupported", `ir/from-ast: Math.${methodName} not in IR whitelist (${cx.funcName})`);
   }
+  // (#7106) `Number.isNaN(x)`, `Object.is(a, b)`, `Array.isArray(x)`: typed by operand family, like Math above.
+  const staticPredicate = staticPredicatePlan(
+    expr,
+    (receiver) =>
+      !receiverIsDirectModuleBinding &&
+      cx.scope.get(receiver.text) === undefined &&
+      cx.resolver?.isAmbientBinding?.(receiver) !== false,
+  );
+  if (staticPredicate !== undefined) return lowerStaticPredicateCall(expr, staticPredicate, staticPredicateHost(cx));
 
   // (#3144) `C.m(args)` — static method call on a locally-declared class.
   // Recognised BEFORE receiver lowering (like the Math/console arms above):

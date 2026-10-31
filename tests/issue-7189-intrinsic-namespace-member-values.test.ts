@@ -4,8 +4,8 @@
 // VALUE (`var __isArray = Array.isArray`, the propertyHelper.js prelude) is a
 // realm read in an IR body: `dyn.member_get` off the #7118 intrinsic value.
 // Calls (`Object.getPrototypeOf(x)`) and every other member read stay on the
-// legacy path, except the measured static calls of #7106
-// (`issue-7106-ambient-static-calls.test.ts`).
+// legacy path; the boolean statics #7106 lowers natively (`Array.isArray(x)`,
+// `issue-7106-ambient-static-calls.test.ts`) never read the namespace value.
 
 import { describe, expect, it } from "vitest";
 
@@ -57,12 +57,13 @@ const CLAIMING: Record<string, string> = Object.fromEntries(
 CLAIMING.propertyHelperPrelude = `var __isArray = Array.isArray;
 var __defineProperty = Object.defineProperty;
 if (typeof __isArray !== "function" || __defineProperty.length !== 3) { throw "#prelude"; }`;
-// (#7106) A measured static call claims as well: realm read + dynamic method call.
+// (#7106) A boolean static's call claims too, lowered natively by operand family.
 CLAIMING.isArrayCall = `if (Array.isArray(1) !== false) { throw "#5"; }`;
 
-// Refused shapes: an unmeasured call (legacy's type-directed static arm; the
-// dynamic route answers `Object.getPrototypeOf(1)` wrongly), a further read, an
-// unmeasured or absent member, a write, and a static read through an alias.
+// Refused shapes: a call outside #7106's boolean statics (legacy's
+// type-directed static arm; the dynamic route answers `Object.getPrototypeOf(1)`
+// wrongly), a further read, an unmeasured or absent member, a write, and a
+// static read through an alias.
 const REFUSED: Record<string, string> = {
   primitiveCall: `if (Object.getPrototypeOf(1) !== Number.prototype) { throw "#1"; }`,
   stringCall: `if (Object.getPrototypeOf("a") !== String.prototype) { throw "#2"; }`,
@@ -104,14 +105,14 @@ describe("#7189 — static method values off ambient namespace intrinsics", () =
   }
 
   // The predicate itself: only the plain value read of a listed static method
-  // admits; an unmeasured call, a further read and every write form —
-  // destructuring and a for-of head included — refuse.
+  // admits; a call, a further read and every write form — destructuring and a
+  // for-of head included — refuse.
   describe("isAmbientIntrinsicValueUse on static-method reads", () => {
     it("admits a listed static method read as a plain value", () => {
       expect(intrinsicUseVerdicts(`var f = Array.isArray; var g = (Array).from;`, "Array")).toEqual([true, true]);
     });
     it.each([
-      ["an unmeasured call", `Array.from(1);`],
+      ["a call", `Array.isArray(1);`],
       ["a string coercion", `var s = "" + Array.isArray;`],
       ["a call argument", `String(Array.isArray);`],
       ["a loose-equality operand", `var b = Array.isArray == null;`],
