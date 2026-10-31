@@ -1,6 +1,6 @@
 ---
 id: 7167
-title: "Standalone: Array.prototype.sort.call(arrayLike) leaves the array-like unsorted"
+title: "Standalone: Array.prototype.sort.call(arrayLike) leaves typed literal fields unsorted"
 sprint: current
 created: 2026-10-25
 updated: 2026-10-31
@@ -15,7 +15,7 @@ priority: low
 horizon: m
 feasibility: medium
 language_feature: arrays
-related: [7151, 7165]
+related: [7151, 7165, 7213]
 ---
 
 # #7167 — generic-receiver `sort` is a no-op on standalone
@@ -65,8 +65,10 @@ it read before:
 - a key that is not a declared field gets no string write, so an inherited
   setter still runs only once.
 
-The fix is standalone-only, like the arms. Modules with no index-named struct
-field emit nothing new. The shared runtime, the classifiers and the type APIs
+The fix runs whenever native strings are on. On wasi the closed-struct arms
+are not built, so the extra string-keyed write is harmless there; today every
+closed-struct `sort.call` already throws on wasi on base and head alike.
+Modules with no index-named struct field emit nothing new. The shared runtime, the classifiers and the type APIs
 are untouched.
 
 **Still wrong, and left alone on purpose** (each one needs shared
@@ -77,11 +79,16 @@ object-model or type work):
   and the closed-struct arm refuses to store `undefined` there. Fixing this
   means widening the struct field type. A dynamic read gives the right
   answer, as it did before.
-- A `string` value stored into an `f64` slot is coerced to `NaN`. This is
-  the same thing a literal `p["1"] = "a"` does.
+- A `string` value stored into an `f64` slot is coerced to `NaN`, and a
+  boolean slot given `"b"` reads `false`. This is the same thing a literal
+  `p["1"] = "a"` does.
 - `2 in o` on a typed literal is folded to `true` at compile time.
 - `Object.keys` order is wrong after an expando: `0,length,1`.
 - `Array.prototype.sort.call("ba")` does not throw TypeError.
 - A class-prototype index setter does not run.
 - On wasi, plain array-like objects misread: `({ length: 2 } as any).length`
   is `undefined`. This is independent of sort.
+
+**Scope note (2026-10-31, PR #7016 review).** This issue is closed for the
+write-back into declared fields. The issue's own program, the coerced typed
+reads and the leftovers above move to #7213.
