@@ -99,7 +99,12 @@ for (const row of cases.sweepRows()) {
 const callbacks: Record<string, Record<string, string>> = {};
 for (const row of cases.callbackRows()) {
   const src = cases.callbackSource(row.wrapper, row.method, row.form);
-  const node = read(evaluateAsJs(src).at as (i: number) => number);
+  let node: string;
+  try {
+    node = read(evaluateAsJs(src).at as (i: number) => number);
+  } catch {
+    node = "JSERR";
+  }
   for (const [lane, options] of LANES) {
     const value = await run(base, src, options, "at");
     if (value !== node) (callbacks[row.key] ??= {})[lane] = failed(value) ? "trap" : "wrong";

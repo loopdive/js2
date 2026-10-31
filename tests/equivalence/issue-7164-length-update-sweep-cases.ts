@@ -217,6 +217,27 @@ export const CALLBACK_WRAPPERS: Record<string, (method: string) => string> = {
   comma: (m) => `(0, g).${m}`,
   assign: (m) => `(h = g).${m}`,
   element: (m) => `g['${m}']`,
+  // (#7164 r10) Wrappers on the method reference, receiver-returning element
+  // calls, optional chains, `<T>`, nested wrappers and template keys.
+  calleeParen: (m) => `(g.${m})`,
+  calleeAs: (m) => `(g.${m} as any)`,
+  calleeAngle: (m) => `(<any>g.${m})`,
+  calleeNonNull: (m) => `g.${m}!`,
+  calleeSatisfies: (m) => `(g.${m} satisfies any)`,
+  calleeElemParen: (m) => `(g['${m}'])`,
+  calleeComma: (m) => `(0, g.${m})`,
+  calleeCond: (m) => `(g.length >= 0 ? g.${m} : g.${m})`,
+  angle: (m) => `(<any[]>g).${m}`,
+  sort: (m) => `g.sort().${m}`,
+  elemReverse: (m) => `g['reverse']().${m}`,
+  elemFill: (m) => `g['fill']('f', 5).${m}`,
+  calleeReverse: (m) => `(g.reverse)().${m}`,
+  nonNullReverse: (m) => `g.reverse!().${m}`,
+  optional: (m) => `g?.${m}`,
+  optionalCall: (m) => `g.${m}?.`,
+  optionalElem: (m) => `g?.['${m}']`,
+  nested: (m) => `((g as any[])!).${m}`,
+  template: (m) => `g[\`${m}\`]`,
 };
 export const CALLBACK_METHODS = [
   "forEach",

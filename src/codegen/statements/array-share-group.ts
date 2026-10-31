@@ -325,31 +325,28 @@ function classifyUse(ctx: CodegenContext, identifier: ts.Identifier, container: 
       partners.push(parent.name);
       return safe();
     }
-    if (ts.isPropertyAccessExpression(parent)) {
+    if (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) {
       if (parent.expression !== use) return TYPED_USE;
-      const name = parent.name.text;
-      const call = parent.parent;
-      if (RECEIVER_RETURNING.has(name) && ts.isCallExpression(call) && call.expression === parent) {
-        // `xs.reverse()` is `xs`: keep following the result.
-        use = call;
+      const member = memberUse(parent);
+      if (reads) {
+        // (#7164) The grow verdict decides whether a binding switches carrier, so
+        // here a member use is safe only in an allowlisted shape; any other may
+        // hand the vec to code whose length stores are not the switched binding's.
+        if (member.kind === "escape") return safe({ escapesDynamic: true });
+        if (member.kind === "returnsReceiver") {
+          use = member.call; // `xs.reverse()` is `xs`: keep following the result.
+          passedThrough = true;
+          continue;
+        }
+        if (member.kind === "call" && !container && callbackSeesArray(member.name, member.call))
+          return safe({ escapesDynamic: true });
+      } else if (ts.isPropertyAccessExpression(parent) && member.kind === "returnsReceiver" && member.direct) {
+        use = member.call;
         passedThrough = true;
         continue;
       }
-      // (#7164) `xs.forEach((v, i, arr) => …)`, behind any wrapper resolved above: `arr` escapes the group.
-      if (reads && ts.isCallExpression(call) && call.expression === parent && callbackSeesArray(name, call))
-        return safe({ escapesDynamic: true });
-      return !container || CONTAINER_SAFE_MEMBERS.has(name) ? safe() : TYPED_USE;
-    }
-    if (ts.isElementAccessExpression(parent)) {
-      if (parent.expression !== use) return TYPED_USE;
-      // (#7164) `xs['forEach'](cb)` / `xs[k](cb)`: a computed method call may hand the array to its callback.
-      const call = parent.parent;
-      if (reads && ts.isCallExpression(call) && call.expression === parent) {
-        const key = skipValueWrappers(parent.argumentExpression);
-        const name = ts.isStringLiteralLike(key) ? key.text : undefined;
-        if (name === undefined || callbackSeesArray(name, call)) return safe({ escapesDynamic: true });
-      }
-      return !container || elementReadIsSafe(parent) ? safe() : TYPED_USE;
+      if (ts.isElementAccessExpression(parent)) return !container || elementReadIsSafe(parent) ? safe() : TYPED_USE;
+      return !container || CONTAINER_SAFE_MEMBERS.has(parent.name.text) ? safe() : TYPED_USE;
     }
     if (ts.isForOfStatement(parent)) return parent.expression === use && !container ? safe() : TYPED_USE;
     if (ts.isForInStatement(parent)) return parent.expression === use ? safe() : TYPED_USE;
@@ -588,6 +585,52 @@ function callbackSeesArray(method: string, call: ts.CallExpression): boolean {
   };
   visit(callback.body);
   return usesArguments;
+}
+
+/**
+ * (#7164) What a member access on a group member does, for the grow verdict's
+ * allowlist:
+ * - `call`: a method called directly — the access (through parentheses, `as`,
+ *   `<T>`, `!`, `satisfies`) is the callee of a call, the name a property name
+ *   or a string-literal key;
+ * - `returnsReceiver`: the same for `reverse` / `sort` / `fill` / `copyWithin`,
+ *   whose result is the receiver;
+ * - `element`: `xs[i]` read or written, or `xs.length`;
+ * - `escape`: anything else — a method value taken off the vec
+ *   (`(0, xs.forEach)`, `const f = xs.reverse`), a computed key in a call, any
+ *   other property.
+ * `direct` marks a call whose callee is the bare access, the only shape the
+ * share-group verdict (non-grow) followed before #7164.
+ */
+type MemberUse =
+  | { kind: "call" | "returnsReceiver"; name: string; call: ts.CallExpression; direct: boolean }
+  | { kind: "element" | "escape" };
+function memberUse(access: ts.PropertyAccessExpression | ts.ElementAccessExpression): MemberUse {
+  let callee: ts.Node = access;
+  while (
+    callee.parent &&
+    skipValueWrappers(callee.parent) !== callee.parent &&
+    (callee.parent as { expression?: ts.Node }).expression === callee
+  )
+    callee = callee.parent;
+  const call =
+    callee.parent && ts.isCallExpression(callee.parent) && callee.parent.expression === callee
+      ? callee.parent
+      : undefined;
+  let name: string | undefined;
+  if (ts.isPropertyAccessExpression(access)) name = access.name.text;
+  else {
+    const key = skipValueWrappers(access.argumentExpression);
+    if (ts.isStringLiteralLike(key)) name = key.text;
+    else if (!call) return { kind: "element" }; // `xs[i]`
+  }
+  if (name === undefined) return { kind: "escape" }; // `xs[k](…)`
+  if (call) {
+    const direct = callee === access;
+    return { kind: RECEIVER_RETURNING.has(name) ? "returnsReceiver" : "call", name, call, direct };
+  }
+  if (name === "length" || (ts.isElementAccessExpression(access) && /^\d+$/.test(name))) return { kind: "element" };
+  return { kind: "escape" };
 }
 
 /**

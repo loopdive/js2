@@ -347,6 +347,24 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
     body: "const g: any[] = []; g.push('a'); g.length = 3; return String(2 in g);",
     gap: "#7170 (same as origin/main: a grown index is present)",
   },
+  // (#7164 r10) A wrapper on the method reference, and receiver-returning calls
+  // through one: the binding is not switched, so nothing traps.
+  calleeParenForEach: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; (g.forEach)((v, i, a) => { if (i === 0) a.length = 9; }); return String(g[8]) + g.length;",
+    gap: "same as origin/main: the binding is not switched, and the grow through the alias is lost",
+  },
+  calleeCommaForEach: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; try { (0, g.forEach)((v: any, i: number, a: any[]) => { if (i === 0) a.length = 9; }); } catch (e) { return 'TypeError'; } return String(g[8]) + g.length;",
+    gap: "same as origin/main: the binding is not switched, and the grow through the alias is lost (node throws: `this` is lost)",
+  },
+  calleeReverseAlias: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; const h = (g.reverse)(); h.length = 9; return String(g[8]) + g.length;",
+    gap: "same as origin/main: the binding is not switched, and the grow through the alias is lost",
+  },
+  elemFillAlias: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; const h = g['fill']('f', 5); h.length = 9; return String(g[8]) + g.length;",
+    gap: "same as origin/main: the binding is not switched, and the grow through the alias is lost",
+  },
   spreadShrinkGrow: {
     body: "const g: any[] = []; g.push('y'); g.push('z'); g.length = 1; g.length = 3; const s = [...g]; return s.length+':'+(1 in s)+':'+String(s[1]);",
   },
@@ -728,19 +746,21 @@ describe("#7164 length-update sweep: never worse than origin/main", () => {
 
 // (#7164 r9) Callback-array escape sweep: a switched binding behind every
 // receiver shape (`(g)`, `g!`, `as`, `satisfies`, `.reverse()` / `.fill()` /
-// `.copyWithin()`, `?:`, `||`, `??`, `&&`, comma, `h = g`, `g['m']`), handed to
+// `.copyWithin()`, `?:`, `||`, `??`, `&&`, comma, `h = g`, `g['m']`) and every
+// wrapper on the method reference (`(g.m)(cb)`, `(0, g.m)(cb)`, …), handed to
 // every callback method whose callback updates `length` through its array
 // parameter (behind any of those shapes the binding is not switched, so the
 // store through the parameter is origin/main's). None of these may trap where
 // origin/main does not. Same contract as the
 // length-update sweep; origin/main's outcomes are in
 // issue-7164-callback-sweep-base.json (scripts/record-7164-bases.mts). By
-// default every 29th row runs (32 of 900); JS2WASM_FULL_SWEEP=1 runs all.
+// default every 41st row runs (50 of 2,040, every shape, method and form);
+// JS2WASM_FULL_SWEEP=1 runs all.
 const CALLBACK_BASE = JSON.parse(
   readFileSync(new URL("./issue-7164-callback-sweep-base.json", import.meta.url), "utf8"),
 ) as Record<string, Partial<Record<Lane, "wrong" | "trap">>>;
 describe("#7164 callback-array escape sweep: never worse than origin/main", () => {
-  const rows = callbackRows().filter((_, i) => FULL_LENGTH_SWEEP || i % 29 === 0);
+  const rows = callbackRows().filter((_, i) => FULL_LENGTH_SWEEP || i % 41 === 0);
   for (const row of rows) {
     const src = callbackSource(row.wrapper, row.method, row.form);
     for (const { lane, options } of LANES) {
@@ -751,7 +771,12 @@ describe("#7164 callback-array escape sweep: never worse than origin/main", () =
           for (let i = 0; i < n; i++) out += String.fromCharCode(at(i));
           return out;
         };
-        const node = read(evaluateAsJs(src).at as (i: number) => number);
+        let node: string;
+        try {
+          node = read(evaluateAsJs(src).at as (i: number) => number);
+        } catch {
+          node = "JSERR"; // `(0, g.forEach)(cb)` loses `this` in JS
+        }
         let head: string;
         try {
           const result = await compile(src, { fileName: "probe.ts", ...options });
