@@ -193,7 +193,7 @@ import {
 import { captureVecOrClosureReadBinding, buildVecOrClosurePropSetMissArm, reserveVecPropHelpers } from "./vec-props.js";
 import { ensureSymbolCarrier } from "./symbol-native.js";
 import { ensureVecElemSet } from "./vec-elem-set.js";
-import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
+import { SPARSE_INDEX_CEILING } from "../shared/array-index-key.js";
 // (#4160) prototype-index store — reserve + registration-time consult builders
 // (all resolve to `undefined` unless `ctx.standalone && ctx.protoIndexDirty`).
 import {

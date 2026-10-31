@@ -23,6 +23,7 @@
  */
 import type { Instr, ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
+import { MAX_ARRAY_INDEX_EXCLUSIVE } from "../../shared/array-index-key.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { compileExpression } from "../shared.js";
 import { getFuncRefWrapperRootTypeIdx } from "../closures/funcref-wrapper-types.js";
@@ -36,8 +37,8 @@ const withArraySubclassReceiverAsVec = bound("withArraySubclassReceiverAsVec");
 
 export const OBJ_ORDER_INDEX_OF_KEY_FN = "__obj_order_index_of_key";
 
-/** 2^32 − 2, the largest array index (§6.1.7). */
-const MAX_ARRAY_INDEX = 4294967294n;
+/** 2^32 − 2, the largest array index (§6.1.7), as the i64 the emitted range test compares. */
+const MAX_ARRAY_INDEX = BigInt(MAX_ARRAY_INDEX_EXCLUSIVE - 1);
 /** Ten digits is the longest spelling that can stay ≤ MAX_ARRAY_INDEX. */
 const MAX_DIGITS = 10;
 
@@ -45,7 +46,7 @@ const MAX_DIGITS = 10;
 function staticArrayIndexOf(name: string): number {
   if (!/^(0|[1-9][0-9]{0,9})$/.test(name)) return -1;
   const v = Number(name);
-  return v <= Number(MAX_ARRAY_INDEX) ? v : -1;
+  return v < MAX_ARRAY_INDEX_EXCLUSIVE ? v : -1;
 }
 
 /**

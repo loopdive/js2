@@ -2,16 +2,36 @@
 
 import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
 import { forEachChild, ts } from "../ts-api.js";
+import { isStaticArrayIndex, staticElementKey } from "../shared/array-index-key.js";
+import { skipTransparentExpressions } from "../shared/transparent-expressions.js";
 import { literalFieldName } from "./fnctor-field-writes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
+import type { IrSelectionOptions } from "./select.js";
 
-export function unwrapTypeErasedExpression(expr: ts.Expression): ts.Expression | undefined {
-  return ts.isAsExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isSatisfiesExpression(expr) ||
-    ts.isNonNullExpression(expr)
-    ? expr.expression
-    : undefined;
+/**
+ * (#7106) An Array element key the vec lane leaves to legacy because it names
+ * a property, not an element: a static value that is not an array index
+ * (`staticElementKey`: `a[0.5]`, `a[-1]`, `a[null]`, `a[true]`,
+ * `const k = 0.5`), or any boolean. ToPropertyKey makes it a NAMED property,
+ * which only legacy's named-key route reads and writes (#4247, #4556). The
+ * static value includes the key's number literal TYPE, which only a refusal
+ * may rest on (`staticElementKey`).
+ *
+ * A static array index of any size stays on the vec lane, reads and writes
+ * alike. Past the i32 range the lowering saturates it, so a write traps in the
+ * grow-store exactly as before. Legacy's high-index route is no better: it
+ * gets a bare literal's plain-store `length` right, but not the element's
+ * read-back or a compound (follow-up 3).
+ */
+export function isLegacyOnlyVecKey(
+  key: ts.Expression,
+  isShadowed: (id: ts.Identifier) => boolean,
+  options: Pick<IrSelectionOptions, "classifyDeclaredPrimitiveExpression" | "numberLiteralTypeValue">,
+): boolean {
+  const inner = skipTransparentExpressions(key);
+  const known = staticElementKey(inner, isShadowed, options.numberLiteralTypeValue);
+  if (known !== undefined) return !isStaticArrayIndex(known);
+  return options.classifyDeclaredPrimitiveExpression?.(inner) === "boolean";
 }
 
 /** Reject affine three-deep indices whose IR widening is costlier than legacy i32 induction. */

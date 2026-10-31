@@ -62,6 +62,7 @@ import {
 import { resolveConstantExpression } from "./literals.js";
 import { isRangeProvenArrayIndex, tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { highArrayIndexLiteralI32 } from "./vec-sparse-index.js";
+import { arrayIndexOfKey, isArrayIndexNumber, literalElementKey, MAX_I32_INDEX } from "../shared/array-index-key.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 import { VEC_PROP_GET, VEC_PROP_SET } from "./vec-props.js";
 import { emitToNumber } from "./coercion-engine.js";
@@ -134,20 +135,11 @@ export function isDynamicPropertyKeyExpression(
   // A literal ordinary name (for example `"[object Object]"`) is also a
   // property key, not a numeric index. Numeric spellings and the historical
   // named-key constants are handled by their dedicated routes first.
-  return ts.isStringLiteral(inner) && !isArrayIndexString(inner.text) && !isNamedNumericOrBooleanSpelling(inner.text);
-}
-
-/** 2^32 − 1 — the exclusive upper bound on array indices (§10.4.2.2). */
-const MAX_ARRAY_INDEX_EXCLUSIVE = 4294967295;
-
-/**
- * `true` when `n`'s property key (`ToString(n)`) is an array index.
- *
- * `-0` counts: `ToString(-0)` is `"0"`, and `0` is an index. `Number.isInteger`
- * accepts `-0` and `-0 >= 0` holds, so the plain arithmetic is already right.
- */
-function isArrayIndexNumber(n: number): boolean {
-  return Number.isInteger(n) && n >= 0 && n < MAX_ARRAY_INDEX_EXCLUSIVE;
+  return (
+    ts.isStringLiteral(inner) &&
+    arrayIndexOfKey(inner.text) === undefined &&
+    !isNamedNumericOrBooleanSpelling(inner.text)
+  );
 }
 
 /**
@@ -192,7 +184,9 @@ function isUnshadowedGlobal(fctx: FunctionContext, name: string): boolean {
 function resolveNumericKey(ctx: CodegenContext, fctx: FunctionContext, raw: ts.Expression): number | undefined {
   const key = skipTransparentExpressions(raw);
 
-  if (ts.isNumericLiteral(key)) return Number(key.text);
+  // A numeric literal (under unary `+`/`-`) and the unshadowed `NaN` / `Infinity`.
+  const literal = literalElementKey(key, (id) => !isUnshadowedGlobal(fctx, id.text))?.value;
+  if (typeof literal === "number") return literal;
 
   if (ts.isPrefixUnaryExpression(key)) {
     const inner = resolveNumericKey(ctx, fctx, key.operand);
@@ -200,11 +194,6 @@ function resolveNumericKey(ctx: CodegenContext, fctx: FunctionContext, raw: ts.E
     if (key.operator === ts.SyntaxKind.MinusToken) return -inner;
     if (key.operator === ts.SyntaxKind.PlusToken) return inner;
     return undefined;
-  }
-
-  if (ts.isIdentifier(key) && isUnshadowedGlobal(fctx, key.text)) {
-    if (key.text === "NaN") return NaN;
-    if (key.text === "Infinity") return Infinity;
   }
 
   if (
@@ -236,18 +225,6 @@ function resolveNumericKey(ctx: CodegenContext, fctx: FunctionContext, raw: ts.E
 
   const constVal = resolveConstantExpression(ctx, key);
   return typeof constVal === "number" ? constVal : undefined;
-}
-
-/**
- * `true` when the STRING key `k` is an array index — i.e.
- * `ToString(ToUint32(k)) === k` and `ToUint32(k) !== 2^32 − 1`, verbatim
- * §10.4.2.2. `>>> 0` is ToUint32, and it makes every near-miss spelling fall
- * out correctly: `"00"` → `"0" !== "00"`, `"4294967296"` → `"0"`, `"-1"` →
- * `"4294967295"`, `"1.1"` → `"1"`, `""` → `"0"`.
- */
-function isArrayIndexString(k: string): boolean {
-  const u = Number(k) >>> 0;
-  return String(u) === k && u !== MAX_ARRAY_INDEX_EXCLUSIVE;
 }
 
 /**
@@ -311,21 +288,12 @@ export function nonArrayIndexNumericKey(
   // `true as any` must decide identically to the bare `true` the equivalent JS
   // writes.
   const inner = skipTransparentExpressions(key);
-  if (inner.kind === ts.SyntaxKind.TrueKeyword) return "true";
-  if (inner.kind === ts.SyntaxKind.FalseKeyword) return "false";
-  // (#4556) `null` / `undefined` element keys. ToPropertyKey(null) is the
-  // STRING `"null"`, not index 0 — but the vec lane coerced them to i32 and
-  // wrote element 0 (`x[null] = 0` made `x[0]` 0 and `x["null"]` undefined;
-  // test262 `built-ins/Array/S15.4_A1.1_T5`). Same failure shape as the
-  // boolean-literal arm directly above, same fix.
-  if (inner.kind === ts.SyntaxKind.NullKeyword) return "null";
-  if (
-    inner.kind === ts.SyntaxKind.UndefinedKeyword ||
-    ts.isVoidExpression(inner) ||
-    (ts.isIdentifier(inner) && inner.text === "undefined" && isUnshadowedGlobal(fctx, "undefined"))
-  ) {
-    return "undefined";
-  }
+  // `true` / `false`, and (#4556) `null` / `undefined` / `void …`: the key is
+  // the STRING `"true"`, `"null"`, …, never index 1 or 0. The vec lane coerced
+  // them to i32 and wrote a real element (`x[null] = 0` made `x[0]` 0 and
+  // `x["null"]` undefined; test262 `built-ins/Array/S15.4_A1.1_T5`).
+  const literal = literalElementKey(inner, (id) => !isUnshadowedGlobal(fctx, id.text));
+  if (literal !== undefined && typeof literal.value !== "number") return String(literal.value);
   // (#4556) `new Boolean(<const>)` — the wrapper twin of the `new Number` /
   // `new String` arms in the key resolvers: ToPropertyKey runs ToPrimitive
   // first, so the key is `"true"` / `"false"` (`S15.4_A1.1_T6`).
@@ -356,7 +324,7 @@ export function nonArrayIndexNumericKey(
 
   const n = resolveNumericKey(ctx, fctx, key);
   if (n !== undefined) {
-    if (isArrayIndexNumber(n)) return allowHighArrayIndex && n > 0x7fffffff ? String(n) : undefined;
+    if (isArrayIndexNumber(n)) return allowHighArrayIndex && n > MAX_I32_INDEX ? String(n) : undefined;
     // `String(n)` IS ECMAScript `ToString(Number)` for every finite and
     // non-finite double, including `"1e+21"` and `"-Infinity"`.
     return String(n);
@@ -364,10 +332,8 @@ export function nonArrayIndexNumericKey(
 
   const s = resolveStringKey(ctx, fctx, key);
   if (s === undefined || !isNamedNumericOrBooleanSpelling(s)) return undefined;
-  if (isArrayIndexString(s)) {
-    const n = Number(s);
-    return allowHighArrayIndex && n > 0x7fffffff ? s : undefined;
-  }
+  const index = arrayIndexOfKey(s);
+  if (index !== undefined) return allowHighArrayIndex && index > MAX_I32_INDEX ? s : undefined;
   return s;
 }
 
@@ -433,10 +399,10 @@ export function arrayIndexConstantKey(
   const isWrapper = wrapperArg !== undefined && (ts.isStringLiteral(wrapperArg) || ts.isNumericLiteral(wrapperArg));
   if (!ts.isStringLiteral(inner) && !isWrapper) return undefined;
 
-  if (ts.isStringLiteral(inner)) return isArrayIndexString(inner.text) ? Number(inner.text) : undefined;
+  if (ts.isStringLiteral(inner)) return arrayIndexOfKey(inner.text);
   // `new String("2")` is a string key; `new Number(2)` a numeric one.
   if (ts.isStringLiteral(wrapperArg!)) {
-    return isArrayIndexString(wrapperArg!.text) ? Number(wrapperArg!.text) : undefined;
+    return arrayIndexOfKey(wrapperArg!.text);
   }
   const n = Number((wrapperArg as ts.NumericLiteral).text);
   return isArrayIndexNumber(n) ? n : undefined;

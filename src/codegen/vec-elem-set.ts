@@ -8,6 +8,12 @@
 // DEFINED function appended at mint time, never an import, so no existing
 // funcIdx shifts).
 //
+// Legacy calls it too: rest-parameter collection (`codegen/index.ts`), the
+// overlay stores (`vec-overlay.ts`), `__extern_set` / `__vec_dp_value`
+// (`object-runtime.ts`) and self-hosted stdlib bodies (`stdlib-selfhost.ts`).
+// The IR's store sites never pass it a negative index: `emitElementWrite`
+// (`ir/from-ast.ts`) skips the store for one.
+//
 // Semantics — EXACT legacy parity (JS `arr[i] = v` on a growable vec):
 //   1. Null receiver → throw TypeError (`ref.null.extern` payload on the
 //      shared `__exn` tag) — the legacy null-guard shape (#441).
