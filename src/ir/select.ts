@@ -3101,6 +3101,16 @@ function dynamicMethodCallIsAdmitted(name: string, arity: number): boolean {
   return arity <= 1 && currentSelectionOptions?.supportsBackendCapability?.("host-dynamic-method-call") === true;
 }
 
+/**
+ * Does a dynamic method call's operand reach the carrier: a value the caller
+ * already sees as dynamic, or a concrete one `lowerDynamicOperands` boxes? The
+ * concrete rule must stay in step with `boxConcreteToDynamic`; #7144's
+ * `boxableIntoDynamic` is the single spelling to switch to here.
+ */
+function dynamicMethodOperandBoxes(operand: ts.Expression, isDynShaped: (operand: ts.Expression) => boolean): boolean {
+  return isDynShaped(operand) || concreteDynamicAssignmentOperandIsBuildable(unwrapPhase1Parens(operand));
+}
+
 /** (#7119) Does `recv.<name>(…arity args)` on a dynamic receiver lower through the brand-dispatch wrapper? */
 function dynamicMethodCallTakesWrapper(name: string, arity: number): boolean {
   return (
@@ -3444,10 +3454,8 @@ function dynamicUsesAreMoveOnly(
           return scanExpr(e.arguments[0]!, false) && scanExpr(e.arguments[1]!, false);
         }
         for (const argument of e.arguments) {
-          if (ts.isSpreadElement(argument)) return false;
-          const dynamic = isDynShaped(argument);
-          if (!dynamic && !concreteDynamicAssignmentOperandIsBuildable(unwrap(argument))) return false;
-          if (!scanExpr(argument, dynamic)) return false;
+          if (ts.isSpreadElement(argument) || !dynamicMethodOperandBoxes(argument, isDynShaped)) return false;
+          if (!scanExpr(argument, isDynShaped(argument))) return false;
         }
         return true;
       }
@@ -8639,6 +8647,47 @@ function borrowResultReachesTypedSlot(call: ts.CallExpression): boolean {
 }
 
 /**
+ * (#7106 module-init) The callee of a measured static call on the ambient
+ * namespace (`Number.isNaN(v)`, `Object.is(a, b)`, `Array.isArray(v)`), else
+ * undefined. The receiver passes the intrinsic predicate only as such a
+ * call's (the shared `isExactStaticMethodCall`).
+ */
+function ambientStaticMethodCallee(expr: ts.Expression): ts.PropertyAccessExpression | undefined {
+  const call = unwrapPhase1Parens(expr);
+  if (!ts.isCallExpression(call) || !ts.isPropertyAccessExpression(call.expression)) return undefined;
+  const receiver = unwrapPhase1Parens(call.expression.expression);
+  return ts.isIdentifier(receiver) && isAmbientIntrinsicValue(receiver) ? call.expression : undefined;
+}
+
+/**
+ * (#7106 module-init) A measured static call: the realm read, then the
+ * dynamic method call. `undefined` when the call is not one, else the Phase-1
+ * verdict — final, because the generic receiver walk would admit the receiver
+ * and claim a call that then fails the build (measured: `null`, `void 0` and
+ * array-literal operands, a fourth argument). An operand reaches the carrier
+ * as the unshadowed `undefined`, another such call, or a concrete value that
+ * boxes.
+ */
+function isPhase1AmbientStaticMethodCall(
+  expr: ts.CallExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  const callee = ambientStaticMethodCallee(expr);
+  if (callee === undefined) return undefined;
+  if (!dynamicMethodCallIsAdmitted(callee.name.text, expr.arguments.length)) {
+    return shapeNo("expr-ambient-static-call-lane", expr);
+  }
+  const isDynShaped = (operand: ts.Expression): boolean =>
+    isUnshadowedUndefinedIdentifier(operand, scope) || ambientStaticMethodCallee(operand) !== undefined;
+  return expr.arguments.every(
+    (operand) =>
+      (dynamicMethodOperandBoxes(operand, isDynShaped) || shapeNo("expr-ambient-static-call-operand", operand)) &&
+      isPhase1Expr(operand, scope, localClasses),
+  );
+}
+
+/**
  * (#7106 S1b) `typeof <ambient global>` folds to a constant tag when the
  * identifier is the UNSHADOWED ambient binding (`typeof JSON !== "undefined"`
  * in assert.js). Shadowing is settled by the checker-backed ambient predicate
@@ -11781,6 +11830,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           isPhase1Expr(operand, scope, localClasses),
         );
       }
+      // (#7106 module-init) `Number.isNaN(v)`, `Object.is(a, b)`: realm read + dynamic method call.
+      const staticCall = isPhase1AmbientStaticMethodCall(expr, scope, localClasses);
+      if (staticCall !== undefined) return staticCall;
       // (#1371) Whitelist f64 Math ops; the ambient receiver is not in scope, so the
       // generic receiver check below would reject these. Recognise the shape
       // here and accept it; the lowerer in from-ast.ts emits a plain unary

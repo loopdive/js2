@@ -56,7 +56,8 @@ export function isAmbientIntrinsicName(name: string): boolean {
  *     (measured, TypeScript 5.9), so the file is checked as well;
  *   - the value reaches only opaque uses — see {@link isOpaqueIntrinsicUse} —
  *     or is the receiver of an exact `<Namespace>.<staticMethod>` value read
- *     (#7189, {@link isExactStaticMethodValueRead}), or, once the module's
+ *     (#7189, {@link isExactStaticMethodValueRead}) or call (#7106,
+ *     {@link isExactStaticMethodCall}), or, once the module's
  *     builtin-prototype companion is seeded, of an exact
  *     `<Receiver>.prototype.<method>` value read (#7127,
  *     {@link isExactProtoMethodValueRead}).
@@ -72,6 +73,7 @@ export function isAmbientIntrinsicValueUse(
     !declaredNames(node.getSourceFile()).has(node.text) &&
     (isOpaqueIntrinsicUse(node) ||
       isExactStaticMethodValueRead(node) ||
+      isExactStaticMethodCall(node) ||
       (seed?.builtinProtoCompanionSeeded?.() === true && isExactProtoMethodValueRead(node)))
   );
 }
@@ -418,54 +420,93 @@ function isExactProtoMethodValueRead(node: ts.Identifier): boolean {
   );
 }
 
+/** A use of a static method off its namespace intrinsic, measured exact through the realm read. */
+type StaticMethodUse = "value" | "call";
+
 /**
- * (#7189) Static methods measured exact as `<Namespace>.<m>` values through
- * the realm read (`dyn.member_get` off `dyn.global_object`): typeof, `name`
- * and `length` of the value and its identity across reads answer as node on
- * standalone and gc, and legacy's own `globalThis.<Namespace>.<m>` is
- * identical to its static `<Namespace>.<m>` read for every entry. Left out:
- * `Object.create` (legacy answers its `length` wrongly), data members
- * (`Array.prototype` is #7127's) and unmeasured methods.
+ * Static methods measured exact through the realm read (`dyn.member_get` off
+ * `dyn.global_object`), each with the uses that were measured:
+ *   - `"value"` (#7189): the `<Namespace>.<m>` value — typeof, `name` and
+ *     `length` and its identity across reads answer as node on standalone and
+ *     gc, and legacy's own `globalThis.<Namespace>.<m>` is identical to its
+ *     static `<Namespace>.<m>` read for every entry. Left out: `Object.create`
+ *     (legacy answers its `length` wrongly), data members (`Array.prototype` is
+ *     #7127's) and unmeasured methods.
+ *   - `"call"` (#7106): the call through the dynamic method call answers as
+ *     legacy and node on standalone and gc, for primitive operands and 0–3
+ *     arguments. Left out: the calls that route answers wrongly
+ *     (`String.fromCodePoint`, `Object.isExtensible` / `isFrozen` /
+ *     `isSealed`, `Array.of` / `from`, `JSON.parse`, `Object.getPrototypeOf`
+ *     on a primitive), `Object.hasOwn` (legacy itself answers wrongly), calls
+ *     whose operands are objects, and `Object.keys` / `getOwnPropertyNames`,
+ *     whose array result is exact only as a member receiver.
  */
-const STATIC_METHOD_NAMES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  ["Array", new Set(["isArray", "from", "of"])],
-  [
-    "Object",
-    new Set([
-      "defineProperty",
-      "defineProperties",
-      "getOwnPropertyDescriptor",
-      "getOwnPropertyNames",
-      "getPrototypeOf",
-      "setPrototypeOf",
-      "keys",
-      "values",
-      "entries",
-      "assign",
-      "is",
-      "hasOwn",
-      "isExtensible",
-      "preventExtensions",
-      "seal",
-      "isSealed",
-      "freeze",
-      "isFrozen",
-    ]),
-  ],
-]);
+const STATIC_METHODS: ReadonlyMap<string, ReadonlyMap<string, readonly StaticMethodUse[]>> = new Map(
+  Object.entries<Record<string, readonly StaticMethodUse[]>>({
+    Array: { isArray: ["value", "call"], from: ["value"], of: ["value"] },
+    Object: {
+      defineProperty: ["value"],
+      defineProperties: ["value"],
+      getOwnPropertyDescriptor: ["value"],
+      getOwnPropertyNames: ["value"],
+      getPrototypeOf: ["value"],
+      setPrototypeOf: ["value"],
+      keys: ["value"],
+      values: ["value"],
+      entries: ["value"],
+      assign: ["value"],
+      is: ["value", "call"],
+      hasOwn: ["value"],
+      isExtensible: ["value"],
+      preventExtensions: ["value"],
+      seal: ["value"],
+      isSealed: ["value"],
+      freeze: ["value"],
+      isFrozen: ["value"],
+    },
+    Number: { isSafeInteger: ["call"], isInteger: ["call"], isFinite: ["call"], isNaN: ["call"] },
+  }).map(([namespace, methods]) => [namespace, new Map(Object.entries(methods))]),
+);
+
+function isStaticMethodUse(namespace: ts.Identifier, method: string | undefined, use: StaticMethodUse): boolean {
+  return method !== undefined && STATIC_METHODS.get(namespace.text)?.get(method)?.includes(use) === true;
+}
 
 /**
  * (#7189) The intrinsic itself is the receiver of `<Namespace>.<staticMethod>`
  * read as a plain value (`var __isArray = Array.isArray`, propertyHelper.js).
- * A CALL keeps legacy's static builtin arms (`Object.getPrototypeOf(x)` there
- * is type-directed; the dynamic route answers primitives wrongly).
  */
 function isExactStaticMethodValueRead(node: ts.Identifier): boolean {
-  const methods = STATIC_METHOD_NAMES.get(node.text);
-  if (methods === undefined) return false;
   const methodAccess = memberAccessOf(node);
-  const method = methodAccess && staticMemberName(methodAccess);
-  return methodAccess !== undefined && method !== undefined && methods.has(method) && isPlainMethodValue(methodAccess);
+  return (
+    methodAccess !== undefined &&
+    isStaticMethodUse(node, staticMemberName(methodAccess), "value") &&
+    isPlainMethodValue(methodAccess)
+  );
+}
+
+/**
+ * (#7106) The intrinsic itself is the receiver of a direct `<Namespace>.<m>(…)`
+ * call — a property access, not `?.`, called unparenthesized with no spread —
+ * whose value is used where #7118 measured an intrinsic exact: an opaque
+ * {@link usePosition}. A `var` initializer, `return`, array element or `+`
+ * operand was measured to claim the call and then fail the build. The selector
+ * adds the lane and operand rules.
+ */
+function isExactStaticMethodCall(node: ts.Identifier): boolean {
+  const methodAccess = memberAccessOf(node);
+  if (methodAccess === undefined || !ts.isPropertyAccessExpression(methodAccess) || methodAccess.questionDotToken) {
+    return false;
+  }
+  const call = methodAccess.parent;
+  return (
+    isStaticMethodUse(node, methodAccess.name.text, "call") &&
+    ts.isCallExpression(call) &&
+    call.expression === methodAccess &&
+    call.questionDotToken === undefined &&
+    !call.arguments.some(ts.isSpreadElement) &&
+    usePosition(call).kind === "opaque"
+  );
 }
 
 /**

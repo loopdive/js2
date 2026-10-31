@@ -4,7 +4,8 @@
 // VALUE (`var __isArray = Array.isArray`, the propertyHelper.js prelude) is a
 // realm read in an IR body: `dyn.member_get` off the #7118 intrinsic value.
 // Calls (`Object.getPrototypeOf(x)`) and every other member read stay on the
-// legacy path.
+// legacy path, except the measured static calls of #7106
+// (`issue-7106-ambient-static-calls.test.ts`).
 
 import { describe, expect, it } from "vitest";
 
@@ -56,16 +57,17 @@ const CLAIMING: Record<string, string> = Object.fromEntries(
 CLAIMING.propertyHelperPrelude = `var __isArray = Array.isArray;
 var __defineProperty = Object.defineProperty;
 if (typeof __isArray !== "function" || __defineProperty.length !== 3) { throw "#prelude"; }`;
+// (#7106) A measured static call claims as well: realm read + dynamic method call.
+CLAIMING.isArrayCall = `if (Array.isArray(1) !== false) { throw "#5"; }`;
 
-// Refused shapes: a call (legacy's type-directed static arm; the dynamic route
-// answers `Object.getPrototypeOf(1)` wrongly), a further read, an unmeasured
-// or absent member, a write, and a static read through an alias.
+// Refused shapes: an unmeasured call (legacy's type-directed static arm; the
+// dynamic route answers `Object.getPrototypeOf(1)` wrongly), a further read, an
+// unmeasured or absent member, a write, and a static read through an alias.
 const REFUSED: Record<string, string> = {
   primitiveCall: `if (Object.getPrototypeOf(1) !== Number.prototype) { throw "#1"; }`,
   stringCall: `if (Object.getPrototypeOf("a") !== String.prototype) { throw "#2"; }`,
   nullProtoCall: `var o = Object.create(null); if (Object.getPrototypeOf(o) !== null) { throw "#3"; }`,
   functionCall: `if (Object.getPrototypeOf(function () {}) !== Function.prototype) { throw "#4"; }`,
-  isArrayCall: `if (Array.isArray(1) !== false) { throw "#5"; }`,
   furtherRead: `if (Object.keys.length !== 1) { throw "#6"; }`,
   absentMember: `if (typeof Object.nope !== "undefined") { throw "#7"; }`,
   unmeasured: `if (typeof Object.groupBy !== "function") { throw "#8"; }`,
@@ -102,14 +104,14 @@ describe("#7189 — static method values off ambient namespace intrinsics", () =
   }
 
   // The predicate itself: only the plain value read of a listed static method
-  // admits; a call, a further read and every write form — destructuring and a
-  // for-of head included — refuse.
+  // admits; an unmeasured call, a further read and every write form —
+  // destructuring and a for-of head included — refuse.
   describe("isAmbientIntrinsicValueUse on static-method reads", () => {
     it("admits a listed static method read as a plain value", () => {
       expect(intrinsicUseVerdicts(`var f = Array.isArray; var g = (Array).from;`, "Array")).toEqual([true, true]);
     });
     it.each([
-      ["a call", `Array.isArray(1);`],
+      ["an unmeasured call", `Array.from(1);`],
       ["a string coercion", `var s = "" + Array.isArray;`],
       ["a call argument", `String(Array.isArray);`],
       ["a loose-equality operand", `var b = Array.isArray == null;`],
