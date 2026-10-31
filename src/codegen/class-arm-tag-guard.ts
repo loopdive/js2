@@ -29,8 +29,70 @@
  * whose classes all have distinct shapes needs no test beyond `ref.test`.
  */
 
-import type { Instr } from "../ir/types.js";
+import type { FieldDef, Instr, TypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+
+/**
+ * (#7199) Could the structs `a` and `b` be ONE canonical WasmGC type?
+ *
+ * The twin test used to compare field type INDICES, so `class A { a: P }` and
+ * `class B { b: Q }` with `P`/`Q` themselves twins read as distinct although
+ * the engine canonicalises both pairs to one type (same for `P[]` vs `Q[]`, a
+ * self-referencing `class A { a: A | null }` beside `class B { b: B | null }`,
+ * and mutually-referencing pairs whose rec groups are isomorphic).
+ *
+ * This is a deliberate OVER-approximation of isorecursive equality, never an
+ * under-approximation: the answer may only be wrong towards "maybe twins",
+ * which costs a redundant (still correct) `__tag` test and nothing else. So the
+ * walk compares field kinds and referenced type SHAPES, coinductively — a pair
+ * already on the stack is assumed equal, which accepts every cycle that iso-
+ * recursive equality accepts — and ignores what only ever SEPARATES canonical
+ * types: mutability, supertype/finality, and the emitter's later rec-group
+ * split. An index it cannot resolve answers "maybe". Equal indices (the old
+ * test) still answer "equal", so the guarded set only grows.
+ */
+function mayShareCanonicalLayout(ctx: CodegenContext, a: readonly FieldDef[], b: readonly FieldDef[]): boolean {
+  const assumed = new Set<string>();
+  const def = (idx: number): Exclude<TypeDef, { kind: "rec" | "sub" }> | undefined => {
+    const t = ctx.mod.types[idx];
+    return t?.kind === "sub" ? t.type : t?.kind === "rec" ? undefined : t;
+  };
+  const sameType = (x: number, y: number): boolean => {
+    if (x === y) return true;
+    const key = x < y ? `${x},${y}` : `${y},${x}`;
+    if (assumed.has(key)) return true;
+    const dx = def(x);
+    const dy = def(y);
+    if (!dx || !dy) return true;
+    if (dx.kind !== dy.kind) return false;
+    assumed.add(key);
+    if (dx.kind === "struct") return sameFields(dx.fields, (dy as typeof dx).fields);
+    if (dx.kind === "array") return sameVal(dx.element, (dy as typeof dx).element);
+    const fy = dy as typeof dx;
+    return sameVals(dx.params, fy.params) && sameVals(dx.results, fy.results);
+  };
+  const sameVal = (x: ValType, y: ValType): boolean => {
+    if (x.kind !== y.kind) return false;
+    const xi = (x as { typeIdx?: number }).typeIdx;
+    const yi = (y as { typeIdx?: number }).typeIdx;
+    return xi === undefined || yi === undefined ? xi === yi : sameType(xi, yi);
+  };
+  const sameVals = (x: readonly ValType[], y: readonly ValType[]): boolean =>
+    x.length === y.length && x.every((v, i) => sameVal(v, y[i]!));
+  const sameFields = (x: readonly FieldDef[], y: readonly FieldDef[]): boolean =>
+    x.length === y.length && x.every((f, i) => sameVal(f.type, y[i]!.type));
+  return sameFields(a, b);
+}
+
+/** (#7158 / #7199) Does any OTHER emitted struct possibly share `structName`'s canonical type? */
+function hasLayoutTwin(ctx: CodegenContext, structName: string): boolean {
+  const own = ctx.structFields.get(structName);
+  if (!own) return false;
+  for (const [name, fields] of ctx.structFields) {
+    if (name !== structName && mayShareCanonicalLayout(ctx, own, fields)) return true;
+  }
+  return false;
+}
 
 /**
  * The i32 condition `receiver.__tag ∈ {own} ∪ {descendants}`, or `undefined`
@@ -47,19 +109,13 @@ export function classArmTagCondition(
 ): Instr[] | undefined {
   const fields = ctx.structFields.get(structName);
   if (!fields || fields.length === 0 || fields[0]!.name !== "__tag") return undefined;
-  const layoutSig = (n: string): string | undefined => {
-    const fs = ctx.structFields.get(n);
-    return fs?.map((f) => `${f.type.kind}:${(f.type as { typeIdx?: number }).typeIdx ?? ""}`).join(",");
-  };
-  const own = layoutSig(structName);
-  if (own === undefined) return undefined;
   // Compare against every emitted struct, not only the ones that also declare
   // this member. A same-layout sibling that does NOT declare the key is the
   // important negative case: without a tag guard its instance passes this
   // arm's structural `ref.test` and appears to inherit an unrelated
   // sibling-only method (React's repeated `class Foo` tests observed
   // UNSAFE_componentWillMount from a later sibling).
-  if (![...ctx.structFields.keys()].some((name) => name !== structName && layoutSig(name) === own)) return undefined;
+  if (!hasLayoutTwin(ctx, structName)) return undefined;
   const ownTag = ctx.classTagMap.get(structName);
   if (ownTag === undefined) return undefined;
   const tags = [ownTag];
@@ -142,12 +198,6 @@ function enumerationArmTags(
 ): number[] | undefined {
   const fields = ctx.structFields.get(structName);
   if (!fields || fields[0]?.name !== "__tag" || ctx.classTagMap.get(structName) === undefined) return undefined;
-  const layoutSig = (n: string): string | undefined =>
-    ctx.structFields
-      .get(n)
-      ?.map((f) => `${f.type.kind}:${(f.type as { typeIdx?: number }).typeIdx ?? ""}`)
-      .join(",");
-  const own = layoutSig(structName);
   const nearestArm = (cls: string): string | undefined => {
     const seen = new Set<string>();
     let cur: string | undefined = cls;
@@ -157,7 +207,7 @@ function enumerationArmTags(
     }
     return cur !== undefined && armStructNames.has(cur) ? cur : undefined;
   };
-  const twin = [...ctx.structFields.keys()].some((n) => n !== structName && layoutSig(n) === own);
+  const twin = hasLayoutTwin(ctx, structName);
   const armDescendant = [...armStructNames].some(
     (n) => n !== structName && nearestArm(ctx.classParentMap.get(n) ?? "") === structName,
   );
