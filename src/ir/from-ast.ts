@@ -2736,7 +2736,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     // return the carrier's undefined (exactly legacy's value for the slot).
     if (
       cx.returnType.kind === "dynamic" &&
-      (!stmt.expression || isUnshadowedUndefinedExpression(stmt.expression, cx))
+      (!stmt.expression || isUnshadowedGlobalExpression(stmt.expression, "undefined", cx))
     ) {
       cx.builder.terminate({ kind: "return", values: [cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined)] });
       return;
@@ -8134,13 +8134,13 @@ function expandStaticSpreadArgs(args: readonly ts.Expression[], cx: LowerCtx): t
  * Boundary callables unpack externref through a root cast on each self use;
  * `collectIrUses`'s double count forces the source SSA value into a local.
  */
-function isUnshadowedUndefinedExpression(expr: ts.Expression, cx: LowerCtx): boolean {
+function isUnshadowedGlobalExpression(expr: ts.Expression, name: string, cx: LowerCtx): boolean {
   let candidate = expr;
   while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
   return (
     ts.isIdentifier(candidate) &&
-    candidate.text === "undefined" &&
-    !cx.scope.has("undefined") &&
+    candidate.text === name &&
+    !cx.scope.has(name) &&
     cx.resolver?.resolveModuleBinding?.(candidate) === undefined
   );
 }
@@ -8165,7 +8165,7 @@ function lowerClosureCall(
     const expected = signature.params[i]!;
     const argument = expandedArgExprs[i];
     const argVal =
-      i >= defaultParamStart && (argument === undefined || isUnshadowedUndefinedExpression(argument, cx))
+      i >= defaultParamStart && (argument === undefined || isUnshadowedGlobalExpression(argument, "undefined", cx))
         ? emitExpressionDefaultMissingF64(expected, cx)
         : lowerExpr(argument!, cx, expected);
     if (!irTypeAssignable(cx.builder.typeOf(argVal), expected)) {
@@ -9297,7 +9297,7 @@ function lowerMethodCallWithSourcePlan(
     return lowerSourceClosureInvocation(closureInvocation, {
       builder: cx.builder,
       lower: (node) =>
-        isUnshadowedUndefinedExpression(node, cx)
+        isUnshadowedGlobalExpression(node, "undefined", cx)
           ? cx.builder.emitCall(irIntrinsicFuncRef(IR_CLOSURE_UNDEFINED), [], irVal({ kind: "externref" }))!
           : lowerExpr(node, cx, irVal({ kind: "externref" })),
       externalize: (value) => coerceToExpectedExtern(value, { kind: "externref" }, cx, "closure invocation"),
@@ -9347,10 +9347,9 @@ function lowerArrayPrototypeBorrowCall(borrow: ArrayPrototypeBorrowCall, cx: Low
  * ambient callback; user-source builds do, and an explicit `false` preserves
  * shadow safety.
  */
-function isAmbientReceiver(receiver: ts.Identifier | undefined, cx: LowerCtx): receiver is ts.Identifier {
+function isAmbientReceiver(receiver: ts.Identifier, isDirectModuleBinding: boolean, cx: LowerCtx): boolean {
   return (
-    receiver !== undefined &&
-    cx.resolver?.isDirectModuleBinding?.(receiver) !== true &&
+    !isDirectModuleBinding &&
     cx.scope.get(receiver.text) === undefined &&
     cx.resolver?.isAmbientBinding?.(receiver) !== false
   );
@@ -9361,7 +9360,7 @@ function staticPredicateHost(cx: LowerCtx): IrStaticPredicateHost {
   return {
     builder: cx.builder,
     funcName: cx.funcName,
-    isGlobalUndefined: (operand) => isUnshadowedUndefinedExpression(operand, cx),
+    isUnshadowedGlobal: (operand, name) => isUnshadowedGlobalExpression(operand, name, cx),
     lowerOperand: (operand) => {
       const value = lowerExpr(operand, cx, IR_F64);
       return { value, family: irOperandFamily(typeOfValue(value, cx), operand) };
@@ -9409,7 +9408,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   if (
     receiverIdentifier?.text === "Function" &&
     methodName === "prototype" &&
-    isAmbientReceiver(receiverIdentifier, cx)
+    isAmbientReceiver(receiverIdentifier, receiverIsDirectModuleBinding, cx)
   ) {
     if (expr.arguments.some(ts.isSpreadElement)) {
       throw new IrUnsupportedError(
@@ -9501,7 +9500,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   if (
     receiverIdentifier?.text === "Object" &&
     methodName === "defineProperty" &&
-    isAmbientReceiver(receiverIdentifier, cx)
+    isAmbientReceiver(receiverIdentifier, receiverIsDirectModuleBinding, cx)
   ) {
     return lowerObjectDefinePropertyCall(expr, cx);
   }
@@ -9693,7 +9692,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     methodName === "stringify" &&
     expr.arguments.length === 1 &&
     !ts.isSpreadElement(expr.arguments[0]!) &&
-    isAmbientReceiver(receiverIdentifier, cx)
+    isAmbientReceiver(receiverIdentifier, receiverIsDirectModuleBinding, cx)
   ) {
     const argument = expr.arguments[0]!;
     const raw = lowerExpr(argument, cx, irDynamic());
@@ -9710,7 +9709,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   // Exact-arity Math builtins become semantic intrinsics before receiver
   // lowering because the ambient `Math` global has no IR value binding.
   // Recheck the selector proof here so divergence fails with a clear error.
-  if (receiverIdentifier?.text === "Math" && isAmbientReceiver(receiverIdentifier, cx)) {
+  if (receiverIdentifier?.text === "Math" && isAmbientReceiver(receiverIdentifier, receiverIsDirectModuleBinding, cx)) {
     const plan = IR_MATH_METHOD_TABLE[methodName];
     if (plan !== undefined && expr.arguments.length === plan.arity) {
       const args = expr.arguments.map((argExpr) => {
@@ -9734,7 +9733,9 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     demoteToLegacy("method-call-unsupported", `ir/from-ast: Math.${methodName} not in IR whitelist (${cx.funcName})`);
   }
   // (#7106) `Number.isNaN(x)`, `Object.is(a, b)`, `Array.isArray(x)`: typed by operand family, like Math above.
-  const staticPredicate = staticPredicatePlan(expr, (receiver) => isAmbientReceiver(receiver, cx));
+  const staticPredicate = staticPredicatePlan(expr, (receiver) =>
+    isAmbientReceiver(receiver, receiverIsDirectModuleBinding, cx),
+  );
   if (staticPredicate !== undefined) return lowerStaticPredicateCall(expr, staticPredicate, staticPredicateHost(cx));
 
   // (#3144) `C.m(args)` — static method call on a locally-declared class.
@@ -13502,7 +13503,10 @@ function lowerEarlyReturn(stmt: ts.ReturnStatement, cx: LowerCtx): void {
     cx.builder.emitEarlyReturn(null);
     return;
   }
-  if (cx.returnType.kind === "dynamic" && (!stmt.expression || isUnshadowedUndefinedExpression(stmt.expression, cx))) {
+  if (
+    cx.returnType.kind === "dynamic" &&
+    (!stmt.expression || isUnshadowedGlobalExpression(stmt.expression, "undefined", cx))
+  ) {
     // #7104 — same carrier undefined as the tail form.
     cx.builder.emitEarlyReturn(cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined));
     return;

@@ -78,10 +78,10 @@ if (Number.isNaN(1) == null) { throw "#null"; }
 if (c ? Number.isNaN(1) : !Number.isFinite(NaN)) {} else { throw "#branch"; }
 if (Number.isNaN(NaN) && !Array.isArray(1)) {} else { throw "#and"; }
 if (\`\${Number.isNaN(1)}\` !== "false") { throw "#template"; }`;
-CLAIMING.valueSinks = `var r = Number.isSafeInteger(9007199254740992);
-function h(v) { return v === false; }
+CLAIMING.valueSinks = `function h(v) { return v === false; }
 function g() { return Object.is(-0, -0); }
-if (r !== false || !h(Number.isNaN(1)) || !g()) { throw "#sink"; }`;
+function k() { const r = Number.isSafeInteger(9007199254740992); return r === false; }
+if (!h(Number.isNaN(1)) || !g() || !k()) { throw "#sink"; }`;
 
 // Refused at selection — legacy answers as node does. (`Object.getPrototypeOf(1)`
 // is the #7189 suite's `primitiveCall`.)
@@ -124,6 +124,22 @@ const REFUSED: Record<string, string> = {
   orModuleBooleanTemplate: `var t = true; if (\`\${Number.isNaN(1) || t}\` !== "true") { throw "#30"; }`,
   branchModuleBooleanTemplate: `var t = true; var c = true; if (\`\${c ? Number.isNaN(NaN) : t}\` !== "true") { throw "#31"; }`,
   orModuleBooleanString: `var t = true; if (String(Number.isNaN(1) || t) !== "true") { throw "#32"; }`,
+  destructuringDeclaration: `function f() { const { toString } = Object.is(1, 1); return typeof toString; }
+if (f() !== "function") { throw "#33"; }`,
+  // A module boolean's slot reads back without the brand, so `String(t)` would withdraw.
+  moduleBooleanDeclaration: `var t = Number.isNaN(NaN); if (String(t) !== "true") { throw "#40"; }`,
+};
+
+// (round 3) Consumers whose slot the answer is written into and from-ast would
+// withdraw on: the unit stays legacy, with no post-claim error, and answers as
+// legacy does (legacy's own answer is wrong for most of them, on main too).
+const LEGACY_PARITY: Record<string, string> = {
+  rewrittenNumber: `function f() { let r = Number.isNaN(NaN); r = 5; return r; } if (f() !== 5) { throw "#34"; }`,
+  rewrittenString: `function f() { let r = Number.isNaN(NaN); r = "s"; return r; } if (f() !== "s") { throw "#35"; }`,
+  rewrittenUndefined: `function f() { let r = Number.isNaN(NaN); r = undefined; return r; } if (f() !== undefined) { throw "#36"; }`,
+  jsDocNumberResult: `/** @returns {number} */ function f() { return Number.isNaN(1); } if (f() !== false) { throw "#37"; }`,
+  jsDocNumberParameter: `/** @param {number} v */ function g(v) { return v; } if (g(Number.isNaN(1)) !== false) { throw "#38"; }`,
+  jsDocStringParameter: `/** @param {string} v */ function g(v) { return v; } if (g(Number.isNaN(1)) !== false) { throw "#39"; }`,
 };
 
 describe("#7106 — the ambient boolean statics in IR bodies", () => {
@@ -152,6 +168,14 @@ describe("#7106 — the ambient boolean statics in IR bodies", () => {
     }
   }
 
+  for (const [name, source] of Object.entries(LEGACY_PARITY)) {
+    for (const target of TARGETS) {
+      it(`${name} stays legacy with no errors and answers as legacy (${lane(target)})`, async () => {
+        expect(await run(target, source)).toEqual(await run(target, source, false));
+      });
+    }
+  }
+
   for (const target of TARGETS) {
     it(`a failing check throws from the IR body (${lane(target)})`, async () => {
       expect(await run(target, `if (Number.isNaN(NaN) !== false) { throw "#neg"; }`)).toEqual({
@@ -171,6 +195,13 @@ describe("#7106 — the ambient boolean statics in IR bodies", () => {
       `export function f(x: number): number { return Number.isSafeInteger(x) ? 1 : 0; }`,
       [[2 ** 53], [2 ** 53 - 1], [-0], [1.5]],
     ],
+    // Against a constant, `Object.is` needs only the bits (`NaN`: `x ≠ x`); an arithmetic result is never `undefined`.
+    objectIsConstants: [
+      `export function f(a: number): number {
+  return (Object.is(a, NaN) ? 1 : 0) + (Object.is(a, -0) ? 2 : 0) + (Object.is(0, a) ? 4 : 0) + (Object.is(a * 2, undefined) ? 8 : 0);
+}`,
+      [[NaN], [-0], [0], [1]],
+    ],
     objectIs: [
       `export function f(a: number, b: number): number { return Object.is(a, b) ? 1 : 0; }`,
       [
@@ -181,6 +212,10 @@ describe("#7106 — the ambient boolean statics in IR bodies", () => {
       ],
     ],
     isArray: [`export function f(x: number): number { return Array.isArray(x) ? 1 : 0; }`, [[1]]],
+    localDeclaration: [
+      `export function f(x: number): number { const nan = Number.isNaN(x); return nan ? 1 : 0; }`,
+      [[NaN], [1]],
+    ],
     hotLoop: [
       `export function f(n: number): number { let s = 0; for (let i = 0; i < n; i++) { if (Number.isInteger(i / 2)) s++; } return s; }`,
       [[10], [1001]],
@@ -218,13 +253,9 @@ describe("#7106 — the ambient boolean statics in IR bodies", () => {
       `export function f(x: number): number { let r: any = 0; r = Number.isNaN(x); return r ? 1 : 0; }`,
       [[NaN], [1]],
     ],
-    // `String(<module boolean>)`: from-ast renders no unbranded i32, so the generic `String(v)` arm refuses it too.
+    // `String(<module boolean>)`: from-ast renders no unbranded i32.
     stringOfModuleBoolean: [
       `let t = true; export function f(x: number): number { return Object.is(String(t), "true") ? x : -x; }`,
-      [[1]],
-    ],
-    stringOfModuleBooleanEquality: [
-      `let t = true; export function f(x: number): number { return String(t) === "true" ? x : -x; }`,
       [[1]],
     ],
   };
@@ -248,13 +279,14 @@ describe("#7106 — the ambient boolean statics in IR bodies", () => {
     }
   }
 
-  // In `Object.is`, an f64 that holds legacy's `undefined` marker (here a
-  // legacy-compiled callee's `undefined as any`) is `undefined`, not NaN.
+  // An f64 that holds legacy's `undefined` marker (here a legacy-compiled
+  // callee's `undefined as any`) is `undefined` to `Object.is(v, undefined)`.
+  // Against a number it counts as NaN, as on main (the plan's follow-ups).
   for (const target of TARGETS) {
     it(`legacy's f64 undefined marker is undefined to Object.is (${lane(target)})`, async () => {
       const source = `function g(): number { return undefined as any; }
 export function f(): number {
-  return (Object.is(g(), undefined) ? 1 : 0) + (Object.is(g(), NaN) ? 2 : 0) + (Object.is(g(), g()) ? 4 : 0);
+  return (Object.is(g(), undefined) ? 1 : 0) + (Object.is(g(), 1) ? 2 : 0) + (Object.is(g(), g()) ? 4 : 0);
 }`;
       const result = await compile(source, {
         fileName: "issue-7106-static-calls.ts",

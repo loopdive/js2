@@ -169,7 +169,6 @@ import {
 } from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
-import { collectWrittenNamesIncludingNested } from "./lattice-param-facts.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 // excluded here (eval, non-selected with shapes, import(), Proxy)
 
@@ -11089,14 +11088,26 @@ function isPhase1StaticPredicateCall(
     // The Math arms' ambient test: a module or source binding of the name is not ambient.
     isAmbientNamespace: (receiver) => !scope.has(receiver.text) && selectorSeesAmbientBinding(receiver),
     isGlobalUndefined: (operand) => isUnshadowedUndefinedIdentifier(operand, scope),
-    untypedLocal: (identifier) => {
-      const local = unannotatedLocal(identifier);
-      return local !== undefined && !localIsRewritten(local) ? local : undefined;
-    },
+    untypedLocal: unannotatedLocal,
     family: (expression) => provenIrFamily(expression, scope),
     isStringMethodCall: (call) =>
       ts.isPropertyAccessExpression(call.expression) &&
       currentSelectionOptions?.classifyPrimitiveExpression?.(call.expression.expression) === "string",
+    // A top-level function's parameter takes the verdict its own claim resolves its signature with; a
+    // local callee's is not resolved here.
+    argumentSlotFamily: (call, index) => {
+      if (!ts.isIdentifier(call.expression)) return undefined;
+      if (scope.has(call.expression.text)) return "unknown";
+      const kind = calleeParamResolvedKind(call.expression.text, index, currentClaimTypeMap);
+      return kind === null ? undefined : (RESOLVED_KIND_FAMILIES[kind] ?? "unknown");
+    },
+    returnSlotFamily: (statement) => {
+      const fn = ts.findAncestor(statement, ts.isFunctionLike);
+      const declared = fn && (fn.type ?? ts.getJSDocReturnType(fn));
+      if (declared === undefined) return undefined;
+      const kind = resolveReturnTypeNode(declared);
+      return (kind !== null && RESOLVED_KIND_FAMILIES[kind]) || "unknown";
+    },
   });
   if (verdict === undefined) return undefined;
   if (!verdict.admitted) return capabilityNo(verdict.reason, verdict.arm, verdict.node);
@@ -11111,8 +11122,7 @@ function isPhase1StaticPredicateCall(
  * initializer when the local is never rewritten).
  */
 function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): OperandFamily {
-  // A rewritten unannotated local (`untypedLocal` declined it): from-ast keeps the initializer's slot and
-  // withdraws a write of another family after the claim (`x = 1; x = undefined`), so nothing is proved here.
+  // An unannotated local: its family is its initializer's, which the caller traces.
   if (ts.isIdentifier(expression) && unannotatedLocal(expression) !== undefined) return "unknown";
   if (moduleBinding(expression) !== undefined) {
     const slot = obviousModuleValueFamily(expression);
@@ -11121,31 +11131,29 @@ function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): 
   if (currentSelectionOptions?.isNativeI32SlotRead?.(expression) === true) return "int32";
   if (expressionIsProvenNumber(expression)) return "number";
   if (expressionIsProvenString(expression)) return "string";
-  if (ts.isCallExpression(expression) && !scope.has("String") && ambientStringToStringCall(expression) !== null) {
-    return "string";
+  // An ambient `String(v)` is a string when from-ast renders `v`: a number or a string, never an unbranded i32.
+  const toStringArg = ts.isCallExpression(expression) && !scope.has("String") && ambientStringToStringCall(expression);
+  if (toStringArg) {
+    const argument = provenIrFamily(toStringArg, scope);
+    return argument === "number" || argument === "string" ? "string" : "unknown";
   }
   const obvious = obviousSelectorValueFamily(expression, scope);
   if (obvious === "string" || obvious === "boolean") return obvious;
   return "unknown";
 }
 
+/** The family of a resolved parameter or result kind; a kind no predicate operand has is absent. */
+const RESOLVED_KIND_FAMILIES: Partial<Record<NonNullable<ResolvedKind>, OperandFamily>> = {
+  f64: "number",
+  bool: "boolean",
+  string: "string",
+  dynamic: "dynamic",
+};
+
 /** The unannotated function or block local `identifier` names; from-ast types its slot from the initializer. */
 function unannotatedLocal(identifier: ts.Identifier): ts.VariableDeclaration | undefined {
   const declaration = closureLocalDeclaration(identifier);
   return declaration?.type === undefined ? declaration : undefined;
-}
-
-const writtenNamesByScope = new WeakMap<ts.Node, ReadonlySet<string>>();
-
-/** Is the local written after its declaration anywhere in its function (nested functions included)? */
-function localIsRewritten(declaration: ts.VariableDeclaration): boolean {
-  const scope = ts.findAncestor(declaration.parent, (node) => isFunctionLike(node) || ts.isSourceFile(node))!;
-  let written = writtenNamesByScope.get(scope);
-  if (written === undefined) {
-    written = collectWrittenNamesIncludingNested(scope);
-    writtenNamesByScope.set(scope, written);
-  }
-  return !ts.isIdentifier(declaration.name) || written.has(declaration.name.text);
 }
 
 function functionObjectCallIsPhase1(
@@ -12145,13 +12153,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // `dyn.to_string` (the dynamic scan gates that on the runtime being
     // buildable); a concrete primitive operand folds inline in from-ast.
     const toStringArg = scope.has("String") ? null : ambientStringToStringCall(expr);
-    if (toStringArg !== null) {
-      // An i32 without the boolean brand (a module boolean, a native-i32 slot) is no operand from-ast renders.
-      if (provenIrFamily(toStringArg, scope) === "int32") {
-        return capabilityNo("operand-coercion-unsupported", "expr-string-call-i32-operand", toStringArg);
-      }
-      return isPhase1Expr(toStringArg, scope, localClasses);
-    }
+    if (toStringArg !== null) return isPhase1Expr(toStringArg, scope, localClasses);
     // (#7106 module-init lever B) `Number(v)` under the source-bound plan.
     const toNumberArgs = preparedNumberConversionCall(expr);
     if (toNumberArgs !== null) return toNumberArgs.every((argument) => isPhase1Expr(argument, scope, localClasses));

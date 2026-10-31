@@ -11,8 +11,9 @@
  * The answers are legacy's typed arms (`codegen/expressions/call-builtin-static.ts`),
  * op for op:
  *   - a number operand takes `numberIsPredicateOps` / `sameValueNumberOps`,
- *     except that in `Object.is` legacy's f64 `undefined` marker (a
- *     legacy-compiled callee's `undefined as any`, say) answers as `undefined`;
+ *     except that `Object.is(x, undefined)` tests a read for legacy's f64
+ *     `undefined` marker (a legacy-compiled callee's `undefined as any`, say),
+ *     and a constant operand needs only its bits;
  *   - `Number.is*` of a non-number primitive is `false` (§21.1.2.x: no ToNumber);
  *   - `Object.is` of two strings is string equality, of two booleans `i32.eq`,
  *     of two `undefined` or two `null` `true`, of two different families `false`;
@@ -73,19 +74,43 @@ export function staticPredicateLiteralFamily(
 export interface IrStaticPredicateHost {
   readonly builder: IrFunctionBuilder;
   readonly funcName: string;
-  isGlobalUndefined(operand: ts.Expression): boolean;
+  /** Is `operand` the global `name` (`undefined`, `NaN`), unshadowed by a scope or module binding? */
+  isUnshadowedGlobal(operand: ts.Expression, name: string): boolean;
   /** Lower an operand unboxed; `family` is the lowered value's `irOperandFamily`. */
   lowerOperand(operand: ts.Expression): { readonly value: IrValueId; readonly family: OperandFamily };
 }
 
+/**
+ * Where a number operand's value comes from, as far as legacy's f64
+ * `undefined` marker (`../f64-undefined-marker.ts`) goes. Only a read can
+ * carry the marker: a numeric literal, `NaN` or `Infinity` is a constant, and
+ * an arithmetic or bitwise result is never the marker, because Wasm quiets
+ * every NaN `f64.add` / `sub` / `mul` / `div` produce and the marker is a
+ * signalling NaN. A sign (`-x`, `+x`) keeps its operand's source.
+ */
+type NumberSource = "nan" | "constant" | "arithmetic" | "read";
+
 interface Operand {
   readonly family: OperandFamily;
   readonly value?: IrValueId;
+  readonly source?: NumberSource;
 }
 
 const IR_BOOL = irBool();
 const F64: IrType = irVal({ kind: "f64" });
 const I64: IrType = irVal({ kind: "i64" });
+const ARITHMETIC_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.PlusToken,
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+]);
 /** The families a lowered operand may have: `./selection.ts` admits only these. */
 export const LOWERED_FAMILIES: ReadonlySet<OperandFamily> = new Set(["number", "string", "boolean"]);
 
@@ -98,7 +123,9 @@ export function lowerStaticPredicateCall(
   for (let index = 0; index < plan.arity; index++) {
     const argument = call.arguments[index];
     const literal =
-      argument === undefined ? "undefined" : staticPredicateLiteralFamily(argument, host.isGlobalUndefined);
+      argument === undefined
+        ? "undefined"
+        : staticPredicateLiteralFamily(argument, (operand) => host.isUnshadowedGlobal(operand, "undefined"));
     operands.push(literal !== undefined ? { family: literal } : lowerOperand(argument!, host));
   }
   const b = host.builder;
@@ -115,7 +142,26 @@ function lowerOperand(argument: ts.Expression, host: IrStaticPredicateHost): Ope
       `ir/from-ast: static predicate operand lowered as ${operand.family} (${host.funcName})`,
     );
   }
-  return operand;
+  return operand.family === "number" ? { ...operand, source: numberSource(argument, host) } : operand;
+}
+
+function numberSource(operand: ts.Expression, host: IrStaticPredicateHost): NumberSource {
+  let candidate = operand;
+  for (;;) {
+    if (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
+    else if (
+      ts.isPrefixUnaryExpression(candidate) &&
+      (candidate.operator === ts.SyntaxKind.MinusToken || candidate.operator === ts.SyntaxKind.PlusToken)
+    ) {
+      candidate = candidate.operand;
+    } else break;
+  }
+  if (ts.isNumericLiteral(candidate)) return "constant";
+  if (ts.isIdentifier(candidate) && (candidate.text === "NaN" || candidate.text === "Infinity")) {
+    if (host.isUnshadowedGlobal(candidate, candidate.text)) return candidate.text === "NaN" ? "nan" : "constant";
+  }
+  const arithmetic = ts.isBinaryExpression(candidate) && ARITHMETIC_OPERATORS.has(candidate.operatorToken.kind);
+  return arithmetic ? "arithmetic" : "read";
 }
 
 function booleanConst(value: boolean, b: IrFunctionBuilder): IrValueId {
@@ -169,35 +215,24 @@ function sameValue(x: Operand, y: Operand, b: IrFunctionBuilder): IrValueId {
 }
 
 /**
- * SameValue with a number operand, which may hold legacy's f64 `undefined`
- * marker: against `undefined` it is that marker test. Against another number
- * it is `sameValueNumberOps` (equal bits, or both NaN), except that of two
- * NaNs, which may be markers, two markers are the same `undefined` and one
- * marker is never a number: both NaN, the answer is "both or neither is a
- * marker". An `if` keeps the marker tests off the path of a number.
+ * SameValue with a number operand, branch-free. Against `undefined` it is the
+ * test for legacy's f64 `undefined` marker, which only a read can hold.
+ * Against `NaN` it is `x ≠ x`, against any other constant equal bits, and
+ * against another number `sameValueNumberOps` (equal bits, or both NaN). There
+ * a marker counts as NaN, as in `Number.isNaN` and on main: testing a read for
+ * it made the measured loops 30–100 % slower (#7106 plan, follow-ups).
  */
 function sameValueWithNumber(x: Operand, y: Operand, b: IrFunctionBuilder): IrValueId {
   if (x.family !== y.family) {
     const [number, other] = x.family === "number" ? [x, y] : [y, x];
-    return other.family === "undefined" ? emitF64IsUndefined(number.value!, b) : booleanConst(false, b);
+    const mayBeUndefined = other.family === "undefined" && number.source === "read";
+    return mayBeUndefined ? emitF64IsUndefined(number.value!, b) : booleanConst(false, b);
   }
-  const [left, right] = [x.value!, y.value!];
-  const bothNaN = b.emitBinary("i32.and", selfUnequal(left, b), selfUnequal(right, b), IR_BOOL);
-  let sameKind!: IrValueId;
-  const then = b.collectBodyInstrs(() => {
-    sameKind = b.emitBinary("i32.eq", emitF64IsUndefined(left, b), emitF64IsUndefined(right, b), IR_BOOL);
-  });
-  let bitsEqual!: IrValueId;
-  const otherwise = b.collectBodyInstrs(() => {
-    const bits = (value: IrValueId): IrValueId => b.emitUnary("i64.reinterpret_f64", value, I64);
-    bitsEqual = b.emitBinary("i64.eq", bits(left), bits(right), IR_BOOL);
-  });
-  return b.emitIfElse({
-    cond: bothNaN,
-    then,
-    thenValue: sameKind,
-    else: otherwise,
-    elseValue: bitsEqual,
-    resultType: IR_BOOL,
-  });
+  const [constant, other] = x.source === "nan" || x.source === "constant" ? [x, y] : [y, x];
+  if (constant.source === "nan") return selfUnequal(other.value!, b);
+  const bits = (value: IrValueId): IrValueId => b.emitUnary("i64.reinterpret_f64", value, I64);
+  const bitsEqual = b.emitBinary("i64.eq", bits(x.value!), bits(y.value!), IR_BOOL);
+  if (constant.source === "constant") return bitsEqual;
+  const bothNaN = b.emitBinary("i32.and", selfUnequal(x.value!, b), selfUnequal(y.value!, b), IR_BOOL);
+  return b.emitBinary("i32.or", bitsEqual, bothNaN, IR_BOOL);
 }
