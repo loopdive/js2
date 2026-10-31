@@ -1,10 +1,11 @@
 ---
 id: 7161
 title: "Native-first, standalone, wasi: a Proxy over a struct-backed target arrives as null inside a single-call-site function"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-31
+completed: 2026-10-31
 priority: medium
 horizon: m
 feasibility: hard
@@ -15,6 +16,15 @@ language_feature: proxy
 goal: correctness
 parent: 6979
 related: [7150, 4749, 7163]
+loc-budget-allow:
+  # 2026-10-31 (#7161): +7 lines — the import, the flag, the withdrawal check at
+  # the typed-argument site and the one-line withdrawal; the predicate lives in
+  # proxy-value-provenance.ts (proxyArgDefeatsRefNarrowing).
+  - src/codegen/declarations/param-return-inference.ts
+func-budget-allow:
+  # 2026-10-31 (#7161): +6 lines in inferParamTypeFromCallSites — the Proxy-arg
+  # flag, its 4-line record at the typed-argument site, and its withdrawal.
+  - src/codegen/declarations/param-return-inference.ts::inferParamTypeFromCallSites
 ---
 
 # #7161 — `new Proxy(new C(), {})` becomes wasm null when passed to a one-caller function
@@ -67,3 +77,38 @@ and the Proxy carrier representation (#4749 standalone Proxy source arm).
 
 Acceptance: node's output on gc native-first, standalone and wasi; host-assisted
 gc bytes unchanged; the equivalence gate reports no new regressions.
+
+## Resolution (2026-10-31)
+
+**Cause, confirmed.** `inferParamTypeFromCallSites`
+(`src/codegen/declarations/param-return-inference.ts`) reads the call-site
+argument's checker type. TS types `new Proxy(t, h)` as `t`'s type, so the site
+agreed `o` onto `(ref null $C)` (`$Map`, `$Date` likewise). The argument is a
+`$Proxy` carrier; the caller's boundary `ref.test (ref $C)` fails and its
+`else` arm emits `ref.null $C`, so the callee got null. With two call sites the
+value was nulled the same way when both sites agreed; it only survived when the
+sites disagreed (a conflict withdraws the narrowing).
+
+**Fix.** A call site whose argument `tracesToProxyValue` (`new Proxy(…)`,
+`Proxy.revocable(…).proxy`, a single-initializer variable or single-return
+helper call yielding one) now withdraws a GC-ref narrowing for that parameter,
+which then stays `externref`. Scalar narrowings and every non-Proxy argument are
+untouched. No classifier, `ref.test` legality or type API was changed.
+
+**Tests.** `tests/equivalence/issue-7161-proxy-single-call-site.test.ts`, gc
+native-first / standalone / wasi vs node: 12/12 on this branch, 3/12 on base
+(the three passing on base are the controls).
+
+**Not covered (different sites, all pre-existing):**
+
+- A Proxy returned from a helper (`function mk() { return new Proxy(new C(), {}); }`):
+  the parameter now stays externref, but `mk`'s own return type is narrowed to
+  `$C` and the return nulls the Proxy.
+- A Proxy stored in an array literal (`[new Proxy(new C(), {})]`) or an object
+  literal field: the element/field store narrows to `$C`.
+- A Proxy as `this` of a method call (`p.m()`): the method dispatch casts the
+  receiver to `$C`.
+- An explicitly annotated `function t(o: C)` called with a Proxy: the typed ABI
+  itself is `$C`.
+- wasi only: `"x" in p` / `p.x` on an empty-handler Proxy over a class instance
+  answer `false` / `undefined` even at top level with no call involved.
