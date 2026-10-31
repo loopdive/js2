@@ -1,12 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// (#7164) Records — or checks — the two origin/main fixtures that
+// (#7164) Records — or checks — the three origin/main fixtures that
 // tests/equivalence/issue-7164-externref-vec-length-growth.test.ts compares
 // head against:
 //
 //   issue-7164-length-update-sweep-base.json  every sweep cell where the base
 //       compiler differs from node: "wrong" (a value) or "trap" (a trap or a
 //       compile error). A cell not listed matched node on base.
+//   issue-7164-callback-sweep-base.json  the same for the callback-array
+//       escape sweep (receiver wrapper × callback method × length update).
 //   issue-7164-leak-base.json  per leak setup/case/lane, the marker leaks head
 //       still SHARES with base (same index, same kind). Recording refuses when
 //       head has a leak base lacks: that is a regression to fix, not to record.
@@ -93,6 +95,17 @@ for (const row of cases.sweepRows()) {
   }
 }
 
+// The callback-array escape sweep: base only, same encoding.
+const callbacks: Record<string, Record<string, string>> = {};
+for (const row of cases.callbackRows()) {
+  const src = cases.callbackSource(row.wrapper, row.method, row.form);
+  const node = read(evaluateAsJs(src).at as (i: number) => number);
+  for (const [lane, options] of LANES) {
+    const value = await run(base, src, options, "at");
+    if (value !== node) (callbacks[row.key] ??= {})[lane] = failed(value) ? "trap" : "wrong";
+  }
+}
+
 // The leak detector: head ∩ base.
 const leak: Record<string, Record<string, string[]>> = {};
 const refused: string[] = [];
@@ -118,6 +131,8 @@ const leakPath = join(repo, "tests/equivalence/issue-7164-leak-base.json");
 const format = (value: object, path: string): string =>
   execSync(`npx prettier --stdin-filepath ${path}`, { cwd: repo, input: JSON.stringify(value) }).toString();
 const sweepText = format({ $base: baseSha, ...sweep }, sweepPath);
+const callbackPath = join(repo, "tests/equivalence/issue-7164-callback-sweep-base.json");
+const callbackText = format({ $base: baseSha, ...callbacks }, callbackPath);
 const leakText = format({ $base: baseSha, ...leak }, leakPath);
 console.log(
   `base ${baseSha}: ${Object.keys(sweep).length} sweep rows differ from node; ${Object.keys(leak).length} leak cases share a leak`,
@@ -128,8 +143,9 @@ if (refused.length > 0) {
 }
 if (mode === "write") {
   writeFileSync(sweepPath, sweepText);
+  writeFileSync(callbackPath, callbackText);
   writeFileSync(leakPath, leakText);
-  console.log("wrote both fixtures");
+  console.log("wrote the three fixtures");
 } else {
   const entries = (text: string): string => {
     const { $base: _, ...rest } = JSON.parse(text) as Record<string, unknown>;
@@ -138,6 +154,7 @@ if (mode === "write") {
   const stale: string[] = [];
   for (const [path, text] of [
     [sweepPath, sweepText],
+    [callbackPath, callbackText],
     [leakPath, leakText],
   ] as const) {
     const committed = readFileSync(path, "utf8");
@@ -151,5 +168,5 @@ if (mode === "write") {
     console.error(`STALE (re-run with --write): ${stale.join(", ")}`);
     process.exit(1);
   }
-  console.log("both fixtures match");
+  console.log("the three fixtures match");
 }

@@ -639,18 +639,23 @@ function receiverMayHoldExternref(ctx: CodegenContext, receiverType: ValType | u
  * The fill a static length store gets. A literal `0` or a typed (non-externref)
  * receiver: the shrink fill only, as before #7164. A binding #7164 moved onto
  * the externref carrier: a grow fills every new slot with `undefined`. Any
- * other receiver gets the shrink fill only, byte-identical to origin/main.
+ * other externref receiver: origin/main's fill, plus a reallocation when the
+ * grow passes the backing (origin/main set the length past it, and the next
+ * read trapped).
  */
 function lengthStoreMode(
   ctx: CodegenContext,
   target: ts.Node,
   literalClear: boolean,
   receiverType: ValType | undefined,
-): "shrink-only" | "length-store" {
+): "shrink-only" | "length-store" | "length-store-realloc" {
   if (literalClear || !receiverMayHoldExternref(ctx, receiverType)) return "shrink-only";
-  // Only a binding #7164 moved onto the externref carrier grows; every other vec is origin/main's store.
+  // A binding #7164 moved onto the externref carrier fills the grow with `undefined`.
+  // Any other externref receiver — an alias, a parameter, a callback's array
+  // argument — may hold such a vec too, so it reallocates past the capacity,
+  // and keeps origin/main's slot values.
   const receiver = ts.isPropertyAccessExpression(target) ? target.expression : undefined;
-  return receiver && isGrowthSwitchedReceiver(ctx, receiver) ? "length-store" : "shrink-only";
+  return receiver && isGrowthSwitchedReceiver(ctx, receiver) ? "length-store" : "length-store-realloc";
 }
 
 /** The forms {@link tryCompileArrayLengthUpdate} lowers. */
@@ -677,9 +682,11 @@ export function tryCompileArrayLengthUpdate(
   // the pre-scan armed the hole-aware reads, and nothing in the program can make
   // a length non-writable or an element non-configurable (base throws there).
   if (!ctx.usesArrayHoles || lengthUpdateMayMeetFrozenArray(ctx)) return undefined;
-  // Only a binding #7164 moved onto the externref carrier: on `origin/main` it
-  // was a typed vec, so the dynamic route's `$Hole` fill would be new to it.
-  if (!isGrowthSwitchedReceiver(ctx, target.expression)) return undefined;
+  // A binding #7164 moved onto the externref carrier takes every form here. Any
+  // other receiver takes only `+=` / `-=`, whose old route set the length past
+  // the backing without reallocating; `++` / `--` keep their dynamic route.
+  const switched = isGrowthSwitchedReceiver(ctx, target.expression);
+  if (!switched && update.kind !== "compound") return undefined;
   if (ctx.oracle.typeFactOf(target.expression).kind !== "array") return undefined;
   if (update.kind === "compound" && ctx.oracle.staticJsTypeOf(update.value) !== "number") return undefined;
   const snap = snapshotSpeculative(ctx, fctx);

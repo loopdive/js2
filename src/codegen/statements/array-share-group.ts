@@ -335,10 +335,20 @@ function classifyUse(ctx: CodegenContext, identifier: ts.Identifier, container: 
         passedThrough = true;
         continue;
       }
+      // (#7164) `xs.forEach((v, i, arr) => …)`, behind any wrapper resolved above: `arr` escapes the group.
+      if (reads && ts.isCallExpression(call) && call.expression === parent && callbackSeesArray(name, call))
+        return safe({ escapesDynamic: true });
       return !container || CONTAINER_SAFE_MEMBERS.has(name) ? safe() : TYPED_USE;
     }
     if (ts.isElementAccessExpression(parent)) {
       if (parent.expression !== use) return TYPED_USE;
+      // (#7164) `xs['forEach'](cb)` / `xs[k](cb)`: a computed method call may hand the array to its callback.
+      const call = parent.parent;
+      if (reads && ts.isCallExpression(call) && call.expression === parent) {
+        const key = skipValueWrappers(parent.argumentExpression);
+        const name = ts.isStringLiteralLike(key) ? key.text : undefined;
+        if (name === undefined || callbackSeesArray(name, call)) return safe({ escapesDynamic: true });
+      }
       return !container || elementReadIsSafe(parent) ? safe() : TYPED_USE;
     }
     if (ts.isForOfStatement(parent)) return parent.expression === use && !container ? safe() : TYPED_USE;
@@ -513,7 +523,6 @@ function groupVerdict(ctx: CodegenContext, decl: ts.VariableDeclaration, reads: 
       )
         seeded = true;
       const verdict = classifyUse(ctx, id, false, reads);
-      if (reads && callbackSeesReceiver(id)) local = false;
       if (verdict.typed) dynamic = false;
       if (verdict.escapesDynamic) {
         shared = true;
@@ -557,17 +566,14 @@ const CALLBACK_ARRAY_PARAM = new Map<string, number>([
 ]);
 
 /**
- * (#7164) `xs.forEach((v, i, arr) => …)`: the callback's array parameter is
- * another name for the vec, outside the share group. True when the callback can
- * see it — it declares that parameter or a rest, uses `arguments`, or is not an
- * inline function.
+ * (#7164) `xs.<method>(cb)`: the callback's array parameter is another name
+ * for the vec, outside the share group. True when the callback can see it — it
+ * declares that parameter or a rest, uses `arguments`, or is not an inline
+ * function.
  */
-function callbackSeesReceiver(id: ts.Identifier): boolean {
-  const access = id.parent;
-  if (!ts.isPropertyAccessExpression(access) || access.expression !== id) return false;
-  const arrayParam = CALLBACK_ARRAY_PARAM.get(access.name.text);
-  const call = access.parent;
-  if (arrayParam === undefined || !ts.isCallExpression(call) || call.expression !== access) return false;
+function callbackSeesArray(method: string, call: ts.CallExpression): boolean {
+  const arrayParam = CALLBACK_ARRAY_PARAM.get(method);
+  if (arrayParam === undefined) return false;
   let callback: ts.Expression | undefined = call.arguments[0];
   while (callback && ts.isParenthesizedExpression(callback)) callback = callback.expression;
   if (!callback) return false;

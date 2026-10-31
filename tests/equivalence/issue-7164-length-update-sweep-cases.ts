@@ -194,3 +194,74 @@ export function leaksIn(node: string, head: string, lane: string): string[] {
   }
   return out;
 }
+
+// ── (#7164 r9) Callback-array escape sweep ──
+// A switched binding reached through every receiver shape `classifyUse` looks
+// through, handed to every callback method, whose callback updates the length
+// through its array parameter. The test asserts head never traps or fails to
+// compile where origin/main does not (issue-7164-callback-sweep-base.json).
+
+export const CALLBACK_WRAPPERS: Record<string, (method: string) => string> = {
+  plain: (m) => `g.${m}`,
+  paren: (m) => `(g).${m}`,
+  nonNull: (m) => `g!.${m}`,
+  as: (m) => `(g as any[]).${m}`,
+  satisfies: (m) => `(g satisfies any[]).${m}`,
+  reverse: (m) => `g.reverse().${m}`,
+  fill: (m) => `g.fill('f', 5).${m}`,
+  copyWithin: (m) => `g.copyWithin(1, 0, 1).${m}`,
+  cond: (m) => `(g.length >= 0 ? g : g).${m}`,
+  or: (m) => `(g || g).${m}`,
+  nullish: (m) => `(g ?? g).${m}`,
+  and: (m) => `(g && g).${m}`,
+  comma: (m) => `(0, g).${m}`,
+  assign: (m) => `(h = g).${m}`,
+  element: (m) => `g['${m}']`,
+};
+export const CALLBACK_METHODS = [
+  "forEach",
+  "map",
+  "filter",
+  "some",
+  "every",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flatMap",
+  "reduce",
+  "reduceRight",
+] as const;
+export const CALLBACK_FORMS: Record<string, string> = {
+  assign: "a.length = 9",
+  plusEq: "a.length += 7",
+  postInc: "a.length++",
+  preInc: "++a.length",
+  minusEq: "a.length -= 1",
+};
+
+export function callbackSource(wrapper: string, method: string, form: string): string {
+  const reduce = method === "reduce" || method === "reduceRight";
+  const update = CALLBACK_FORMS[form]!;
+  const callback = reduce
+    ? `(acc: any, v: any, i: number, a: any[]) => { if (i === 0 || i === 1) { ${update}; } return acc; }`
+    : `(v: any, i: number, a: any[]) => { if (i === 0 || i === 1) { ${update}; } return ${method === "flatMap" ? "[v]" : "false"}; }`;
+  const call = `${CALLBACK_WRAPPERS[wrapper]!(method)}(${callback}${reduce ? ", 0" : ""})`;
+  return `function value(): string {
+    const g: any[] = []; g.push('a'); g.length = 2; let h: any[] = [];
+    ${call};
+    let s = String(g.length) + ":";
+    for (let i = 0; i < g.length; i++) s += String(g[i]) + ",";
+    return s + (h.length >= 0 ? "" : "");
+  }
+export function at(i: number): number { const s = value(); return i < 0 ? s.length : s.charCodeAt(i); }`;
+}
+
+export function callbackRows(): { key: string; wrapper: string; method: string; form: string }[] {
+  const rows: { key: string; wrapper: string; method: string; form: string }[] = [];
+  for (const wrapper of Object.keys(CALLBACK_WRAPPERS))
+    for (const method of CALLBACK_METHODS)
+      for (const form of Object.keys(CALLBACK_FORMS))
+        rows.push({ key: `${wrapper}/${method}/${form}`, wrapper, method, form });
+  return rows;
+}

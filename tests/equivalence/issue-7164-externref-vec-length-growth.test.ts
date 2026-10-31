@@ -24,6 +24,8 @@ import { compile } from "../../src/index.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
 import { readFileSync } from "node:fs";
 import {
+  callbackRows,
+  callbackSource,
   LEAK_SETUPS,
   LEAK_SUMMARY,
   leaksIn,
@@ -320,6 +322,30 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
   // (#7164 r8) origin/main folded this search to a constant (0).
   closureIndexOf: {
     body: "const g: any[] = ['a', 'b']; const f = (x: any) => g.indexOf(x); return String(f('b'));",
+  },
+  // (#7164 r9) The array parameter behind a receiver wrapper (round-8 review shapes).
+  wrapParenForEach: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; (g).forEach((v, i, a) => { if (i === 0) a.length = 9; }); return String(g[8]);",
+  },
+  wrapNonNullForEach: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; g!.forEach((v, i, a) => { if (i === 0) a.length = 9; }); return String(g[8]);",
+  },
+  wrapAsForEach: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; (g as any[]).forEach((v, i, a) => { if (i === 0) a.length = 9; }); return String(g[8]);",
+  },
+  wrapReverseForEach: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; g.reverse().forEach((v, i, a) => { if (i === 0) a.length = 9; }); return String(g[8]);",
+  },
+  wrapOrMap: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; (g || g).map((v, i, a) => { if (i === 0) a.length = 9; return v; }); return String(g[8]);",
+  },
+  wrapElementForEach: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; g['forEach']((v: any, i: number, a: any[]) => { if (i === 0) a.length = 9; }); return String(g[8]);",
+  },
+  // `k in g` after a grow: true, as on origin/main (node: false).
+  inAfterGrow: {
+    body: "const g: any[] = []; g.push('a'); g.length = 3; return String(2 in g);",
+    gap: "#7170 (same as origin/main: a grown index is present)",
   },
   spreadShrinkGrow: {
     body: "const g: any[] = []; g.push('y'); g.push('z'); g.length = 1; g.length = 3; const s = [...g]; return s.length+':'+(1 in s)+':'+String(s[1]);",
@@ -693,6 +719,47 @@ describe("#7164 length-update sweep: never worse than origin/main", () => {
           head = `TRAP ${String(e)}`;
         }
         const base = SWEEP_BASE[row.key]?.[lane] ?? "ok";
+        if (base === "ok") expect(head, `${row.key}/${lane}`).toBe(node);
+        else if (base === "wrong") expect(head, `${row.key}/${lane}`).not.toMatch(/^(TRAP|CE) /);
+      }, 120_000);
+    }
+  }
+});
+
+// (#7164 r9) Callback-array escape sweep: a switched binding behind every
+// receiver shape (`(g)`, `g!`, `as`, `satisfies`, `.reverse()` / `.fill()` /
+// `.copyWithin()`, `?:`, `||`, `??`, `&&`, comma, `h = g`, `g['m']`), handed to
+// every callback method whose callback updates `length` through its array
+// parameter. Any externref length store reallocates past the backing, so none
+// of these may trap where origin/main does not. Same contract as the
+// length-update sweep; origin/main's outcomes are in
+// issue-7164-callback-sweep-base.json (scripts/record-7164-bases.mts). By
+// default every 29th row runs (32 of 900); JS2WASM_FULL_SWEEP=1 runs all.
+const CALLBACK_BASE = JSON.parse(
+  readFileSync(new URL("./issue-7164-callback-sweep-base.json", import.meta.url), "utf8"),
+) as Record<string, Partial<Record<Lane, "wrong" | "trap">>>;
+describe("#7164 callback-array escape sweep: never worse than origin/main", () => {
+  const rows = callbackRows().filter((_, i) => FULL_LENGTH_SWEEP || i % 29 === 0);
+  for (const row of rows) {
+    const src = callbackSource(row.wrapper, row.method, row.form);
+    for (const { lane, options } of LANES) {
+      it(`${row.key} / ${lane}`, async () => {
+        const read = (at: (i: number) => number): string => {
+          const n = at(-1);
+          let out = "";
+          for (let i = 0; i < n; i++) out += String.fromCharCode(at(i));
+          return out;
+        };
+        const node = read(evaluateAsJs(src).at as (i: number) => number);
+        let head: string;
+        try {
+          const result = await compile(src, { fileName: "probe.ts", ...options });
+          if (!result.success) head = `CE ${result.errors[0]?.message}`;
+          else head = read((await instantiateWithRuntime(result)).exports.at as (i: number) => number);
+        } catch (e) {
+          head = `TRAP ${String(e)}`;
+        }
+        const base = CALLBACK_BASE[row.key]?.[lane] ?? "ok";
         if (base === "ok") expect(head, `${row.key}/${lane}`).toBe(node);
         else if (base === "wrong") expect(head, `${row.key}/${lane}`).not.toMatch(/^(TRAP|CE) /);
       }, 120_000);
