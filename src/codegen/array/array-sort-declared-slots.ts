@@ -24,15 +24,16 @@
  *
  * The candidate set mirrors S1's own screen (non-synthetic, mutable, not
  * accessor-backed), read at emit time: a struct type registered later simply
- * gets no arm, i.e. today's behaviour. Standalone only, like S1. Returns `[]`
- * when no struct declares an index-named field, keeping those modules
- * byte-identical.
+ * gets no arm, i.e. today's behaviour. Mode-neutral: where S1 is not built
+ * (wasi) the string write reaches the same bag entry the boxed write then
+ * overwrites with the same value, and a declared data field has no setter, so
+ * the extra write is unobservable. Returns `[]` without native strings or when
+ * no struct declares an index-named field, keeping those modules byte-identical.
  */
 import type { Instr } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { isSyntheticStructName } from "../emit-helpers.js";
 import { exposedClosedStructFieldName } from "../fnctor-identity-fields.js";
-import { stringConstantExternrefInstrs } from "../native-strings.js";
 
 /** A canonical array index name ("0", "17"; not "01", "1.5", "-0"), below 2^31 so an i32 compare holds it. */
 function canonicalIndexOf(name: string): number | undefined {
@@ -65,8 +66,10 @@ function declaredIndexSlots(ctx: CodegenContext): Map<number, number[]> {
  * The string-keyed slot write for element `i` (an i32 local) of the sorted
  * list, guarded per declaring struct type. `recv` is the receiver externref
  * local, `value` pushes the element. The key is the index's literal string,
- * known at compile time. `[]` off standalone or when no struct declares an
- * index-named field.
+ * known at compile time, built by `keyString` (the caller passes
+ * `stringConstantExternrefInstrs`; taking it as a parameter keeps this module
+ * out of the native-strings import cycle). `[]` without native strings or
+ * when no struct declares an index-named field.
  */
 export function sortDeclaredSlotWrite(
   ctx: CodegenContext,
@@ -74,8 +77,9 @@ export function sortDeclaredSlotWrite(
   i: number,
   value: Instr[],
   strictSetIdx: number,
+  keyString: (key: string) => Instr[],
 ): Instr[] {
-  if (!ctx.standalone || !ctx.nativeStrings) return [];
+  if (!ctx.nativeStrings) return [];
   const out: Instr[] = [];
   for (const [typeIdx, indices] of declaredIndexSlots(ctx)) {
     // `if (i == n0) set "n0" else if (i == n1) …`
@@ -83,7 +87,7 @@ export function sortDeclaredSlotWrite(
     for (const n of [...indices].reverse()) {
       const write: Instr[] = [
         { op: "local.get", index: recv },
-        ...stringConstantExternrefInstrs(ctx, String(n)),
+        ...keyString(String(n)),
         ...value,
         { op: "call", funcIdx: strictSetIdx },
       ];

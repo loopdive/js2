@@ -36,7 +36,7 @@ import { holeTestInstrs } from "../array-holes.js";
 import { stringVecElementIsNullable } from "../array-join-element.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
-import { ensureNativeStringHelpers } from "../native-strings.js";
+import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "../native-strings.js";
 import { getOrRegisterArrayType } from "../registry/types.js";
 import { coerceType, ensureLateImport, flushLateImportShifts } from "../shared.js";
 import { ensureSpecExternrefToStringProvider } from "../coercion-engine.js";
@@ -331,7 +331,9 @@ export function emitArraySortMemberBody(
     );
   } else {
     // (#7167) A closed-struct receiver's declared index slots first; `[]` for every other module.
-    const slotWrite = sortDeclaredSlotWrite(ctx, 1, i, elemAt, fn.__extern_set_strict!);
+    const slotWrite = sortDeclaredSlotWrite(ctx, 1, i, elemAt, fn.__extern_set_strict!, (key) =>
+      stringConstantExternrefInstrs(ctx, key),
+    );
     fctx.body.push(
       i32(0),
       set(i),
