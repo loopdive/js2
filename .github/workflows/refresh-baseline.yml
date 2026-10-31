@@ -116,7 +116,8 @@ jobs:
   runtime-eval-provider:
     name: build default QuickJS runtime-eval provider
     needs: validate-inputs
-    runs-on: ubuntu-latest
+    # Pinned (2026-10-31): ubuntu-latest moved to 26.04, which has no clang-18.
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
       JS2WASM_EVAL_ENGINE: quickjs
