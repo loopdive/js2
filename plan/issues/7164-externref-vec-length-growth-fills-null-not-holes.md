@@ -71,7 +71,7 @@ The `length` setter growth path on `$__vec_externref` (`grep -rn "length" src/co
 
 Acceptance: node's output for all programs; no trap in `join` after `sort`; host-assisted gc bytes unchanged; equivalence gate no new regressions.
 
-## Resolution (2026-10-31, review round 8)
+## Resolution (2026-11-01, review round 9)
 
 **Design: only switched bindings change.** The new length store applies to the
 arrays it was built for. Every other array compiles as on `origin/main`.
@@ -82,7 +82,12 @@ arrays it was built for. Every other array compiles as on `origin/main`.
   endpoint receives the vec, and no callback method hands it to a callback
   that can see its array parameter (one that declares it or a rest, uses
   `arguments`, or is not an inline function: `g.forEach((v, i, arr) =>
-  arr.length = 5)` would otherwise grow the vec through main's store). Example: `const g: any[] = []; g.push('y');
+  arr.length = 5)` would otherwise grow the vec through main's store). The
+  check runs where the share-group classifier has already resolved the
+  receiver, so it sees through every shape the classifier looks through:
+  parentheses, `!`, `as`, `satisfies`, `.reverse()` / `.sort()` / `.fill()` /
+  `.copyWithin()`, `?:`, `||`, `??`, `&&`, comma, `h = g`, and `g['m'](cb)` /
+  `g[k](cb)` (a computed key always counts). Example: `const g: any[] = []; g.push('y');
   g.length = 3;` — #7154 used to store `g` as a typed string vec, so the new
   slots read `null` and `sort()` trapped. #7164 moves such a group onto the
   externref carrier, and every member gets the new store:
@@ -139,6 +144,8 @@ node --import ./scripts/record-7164-bases-loader.mjs --import tsx \
 - `issue-7164-length-update-sweep-base.json`: every sweep cell where
   `origin/main` differs from node ("wrong", or "trap" for a trap or compile
   error).
+- `issue-7164-callback-sweep-base.json`: the same for the callback-array
+  escape sweep.
 - `issue-7164-leak-base.json`: per leak setup / case / lane, the leaks head
   still shares with `origin/main`. Recording refuses when head has a leak
   `origin/main` lacks.
@@ -146,7 +153,7 @@ node --import ./scripts/record-7164-bases-loader.mjs --import tsx \
   `--check` recomputes both and fails when the entries differ from the
   committed file, so a stale entry cannot widen what the test allows; it warns
   when only `"$base"` is older. It takes about 26 minutes.
-- Recorded against `origin/main` 96e5b4bfde; the entries are unchanged since
+- Recorded against `origin/main` cc03abc63b; the entries are unchanged since
   b6250f09f8.
 
 **Tests.** `tests/equivalence/issue-7164-externref-vec-length-growth.test.ts`
@@ -156,32 +163,51 @@ are named `it.fails` rows.
 | Block | Rows |
 |---|---|
 | Programs × reads | 6 × 12 × 3 |
-| Share-group and length-update guards | 38 × 3 |
+| Share-group and length-update guards | 45 × 3 |
 | Readers after a grow | 35 × 3 |
 | Generated "matches node" sweep | 37 × 3 |
 | Marker-leak detector, relative to `origin/main` | 9 setups × 3 lanes (37 cases each) |
 | Callbacks that grow the array | 14 methods × 2 × 3 |
 | Length-update sweep, head never worse than `origin/main` | 44 of 1,008 rows × 3 (all with `JS2WASM_FULL_SWEEP=1`) |
+| Callback-array escape sweep (15 receiver shapes × 12 callback methods × 5 length updates), never worse than `origin/main` | 32 of 900 rows × 3 (all with `JS2WASM_FULL_SWEEP=1`) |
 
-Rounds 7–8 added guard rows for the mixed-array, parameter and literal-seeded
+Rounds 7–9 added guard rows for the mixed-array, parameter and literal-seeded
 grows ("same as `origin/main`"), the callback array-parameter escapes, the
-getter that grows a switched binding, and the folded searches.
+getter that grows a switched binding, the folded searches, and one row per
+round-8 receiver shape (paren, `!`, `as`, `.reverse()`, `||`, `['forEach']`).
+
+**Round 9: why the escape check and not a reallocating store.** The round-8
+review asked to make the trap impossible: let every externref `length =`
+reallocate past the backing. That version was built and measured. It closed
+the trap (0 new traps on the generated sweep even with the escape check
+switched off), but it changed `origin/main`'s answers on arrays this PR must
+leave alone: a grown mixed `any[]` or parameter answered `hasOwnProperty(3)`
+true, and on wasi `indexOf(undefined)` found the grown slot. So every
+non-switched store stays `origin/main`'s, byte-identical, and the escape
+check closes the class instead: on the full generated callback sweep and the
+round-8 attack sets it gives 0 new traps and 0 worse cells.
 
 **Results against `origin/main`.**
 
 - **Full length-update sweep** (3,024 cells): **0 worse**, 58 better, 824 both
   match node, 2,142 both wrong.
 - **Leak detector:** 0 leaks head adds; 576 leaks shared with `origin/main`.
+- **Fixtures** re-checked with `--check` against `origin/main` cc03abc63b:
+  all three match.
   Mutant check (round 6): filling the grow with `null` again fails 18 of the
   27 detector rows.
-- **Review probe sets r1–r7** (old0–5, U, V, W, X, L, L2, DB, A, B's rows
-  after the wasi hang, B2, C, D, E, E2, E3, F, G, H, I, and round 7's P, Q, R,
-  IOF: 1,584 programs × 3 lanes, head vs `origin/main`): 204 improved, 367
-  both match node, 922 both wrong identically, 83 both wrong differently,
-  **8 regressed**, 0 new traps or compile errors. All 8 are the #7170 class
-  below: 4 in L, 1 in L2, 3 in A. Set B's first 33 rows were not re-run
-  (row 34 hangs on wasi on both trees, see Left out); round 6 found no
-  regression among them.
+- **Review probe sets r1–r8** (old0–5, U, V, W, X, L, L2, DB, A, B's rows
+  after the wasi hang, B2, C, D, E, E2, E3, F, G, H, I, round 7's P, Q, R,
+  IOF, IOF3 and round 8's S, S2, T: 1,694 programs × 3 lanes, head vs
+  `origin/main`): 217 improved, 373 both match node, 995 both wrong
+  identically, 101 both wrong differently, **8 regressed**, **0 new traps or
+  compile errors**. All 8 are the #7170 class below: 4 in L, 1 in L2, 3 in A.
+  Set B's first 33 rows were not re-run (row 34 hangs on wasi on both trees,
+  see Left out); round 6 found no regression among them.
+- **Callback-array escape sweep** (900 rows × 3 lanes = 2,700 cells): 0 new
+  traps, 0 worse; 18 both match node, 2,682 both wrong (origin/main loses the
+  grow through the callback's array parameter, and so does head, since the
+  binding is not switched).
 
 **Known regressions (gc and standalone; tied to #7170).** On a switched
 binding a grown slot is a present `undefined`. `origin/main`'s `null` slot
@@ -212,6 +238,8 @@ and then trapped on any read past the backing. The cost is linear.
 - **#7170 (holes):** a grown index is present. `in`, `hasOwnProperty`,
   for-in, `Object.keys`, callbacks, `indexOf` and copies see it.
 - **#7171 (wasi):** `in` answers wrongly on dense and grown arrays.
+- **`k in g` after a grow** is true where node says false (the grown index is
+  a present `undefined`): the same as `origin/main`, a #7170 item.
 - **Number-holding arrays:** an f64 carrier grows with `0`s, as on
   `origin/main`.
 - **Same as `origin/main`, kept as `it.fails` rows:**

@@ -1,5 +1,5 @@
 {
-  "$base": "9befa978d3eb155090955aa3b092c24b65489541",
+  "$base": "cc03abc63ba6abd827c910705566daed490e343e",
   "growWithinCapacity/self": {
     "gc": ["1: undefined → null", "2: undefined → null"],
     "standalone": ["1: undefined → null", "2: undefined → null"],
