@@ -24,7 +24,7 @@
  * this lane uses. JS-host lanes are untouched: `ensureAnyFromExternHelper`
  * answers `undefined` outside `native-first`, and the caller keeps its cast.
  */
-import type { Instr } from "../ir/types.js";
+import type { Instr, ValType } from "../ir/types.js";
 import { ensureAnyFromExternHelper } from "./any-helpers.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -79,4 +79,18 @@ export function anyValueElemFromExternInstrs(
       ],
     },
   ];
+}
+
+/**
+ * (#7166) A `typeof` operand typed `$AnyValue` that compiled to an externref (an
+ * element of an externref-element vec whose checker type is a union) is
+ * classified by its runtime value. A bare cast traps on a non-box element,
+ * and the legacy boxing reports every unrecognised value as a string.
+ */
+export function externrefOperandAsAnyValue(ctx: CodegenContext, fctx: FunctionContext, operandType: ValType): boolean {
+  if (operandType.kind !== "externref") return false;
+  const fromExternIdx = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+  if (fromExternIdx === undefined) return false;
+  fctx.body.push({ op: "call", funcIdx: fromExternIdx });
+  return true;
 }
