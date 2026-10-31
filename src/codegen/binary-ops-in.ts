@@ -180,6 +180,83 @@ function emitOwnPrivateBrandPredicate(
 }
 
 /**
+ * (#7162) The class a `#name in v` brand-checks against. An instance private
+ * field keeps the shared resolver. A private method or accessor has no field
+ * slot but lives on the same instance brand, so it gets the declaring class's
+ * struct. A static private name (field, method or accessor) is on the class
+ * constructor alone, so `structTypeIdx` is left undefined: identity test.
+ */
+function resolvePrivateInTarget(
+  ctx: CodegenContext,
+  node: ts.PrivateIdentifier,
+): { className: string; structTypeIdx?: number } | undefined {
+  for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
+    if (!ts.isClassDeclaration(cur) && !ts.isClassExpression(cur)) continue;
+    const member = cur.members.find(
+      (m) => m.name !== undefined && ts.isPrivateIdentifier(m.name) && m.name.text === node.text,
+    );
+    if (member === undefined) continue;
+    const isStatic = ts.getCombinedModifierFlags(member) & ts.ModifierFlags.Static;
+    if (!isStatic && ts.isPropertyDeclaration(member)) return resolveDeclaringClassForPrivateName(ctx, node);
+    const className = ts.isClassExpression(cur) ? (ctx.anonClassExprNames.get(cur) ?? cur.name?.text) : cur.name?.text;
+    if (className === undefined) return undefined;
+    if (isStatic) return ctx.classObjectGlobals.has(className) ? { className } : undefined;
+    const structTypeIdx = ctx.structMap.get(className);
+    return structTypeIdx === undefined ? undefined : { className, structTypeIdx };
+  }
+  return undefined;
+}
+
+/** (#7162) Leave `#name in v`'s answer, before the non-object guard, as an i32. */
+function emitPrivateInPredicate(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: number,
+  target: { className: string; structTypeIdx?: number },
+): void {
+  if (target.structTypeIdx === undefined) emitStaticPrivateNamePredicate(ctx, fctx, receiver, target.className);
+  else emitOwnPrivateBrandPredicate(ctx, fctx, receiver, target.className, target.structTypeIdx);
+}
+
+/**
+ * (#7162) `#s in v` for a static private name: true exactly when `v` IS the
+ * declaring class constructor (`ref.eq` with its `__class_<C>` singleton; a
+ * subclass constructor has its own singleton and answers false). A null or
+ * non-eq receiver, or a singleton not yet materialised, answers false.
+ */
+function emitStaticPrivateNamePredicate(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: number,
+  cls: string,
+): void {
+  const globalIdx = ctx.classObjectGlobals.get(cls)!;
+  const classEq = (): Instr[] => [{ op: "global.get", index: globalIdx }, { op: "any.convert_extern" }];
+  fctx.body.push({ op: "local.get", index: receiver }, { op: "ref.test", typeIdx: EQ_HEAP_TYPE });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [
+      ...classEq(),
+      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: receiver },
+          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+          ...classEq(),
+          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+          { op: "ref.eq" },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+    ],
+    else: [{ op: "i32.const", value: 0 }],
+  });
+}
+
+/**
  * Keep a dynamic `key in value` comparison on the JavaScript property surface.
  * Physical structs also contain compiler-only fields such as `__tag`; unlike
  * public TypeScript properties, the import collector intentionally has no
@@ -352,7 +429,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
   // Falls through to the legacy path if the resolver can't find the
   // declaring class (defensive — well-formed source always finds it).
   if (ts.isPrivateIdentifier(expr.left)) {
-    const declared = resolveDeclaringClassForPrivateName(ctx, expr.left);
+    const declared = resolvePrivateInTarget(ctx, expr.left);
     if (declared) {
       // Compile the receiver. Coerce externref → anyref and save it so
       // the brand predicate can combine structural ref.test with class-tag
@@ -377,7 +454,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       }
       const tmpAny = allocTempLocal(fctx, { kind: "anyref" });
       fctx.body.push({ op: "local.set", index: tmpAny });
-      emitOwnPrivateBrandPredicate(ctx, fctx, tmpAny, declared.className, declared.structTypeIdx);
+      emitPrivateInPredicate(ctx, fctx, tmpAny, declared);
       if (externCopy !== undefined && hostFree) emitNativePrivateInObjectGuard(ctx, fctx, externCopy);
       const isObjectIdx =
         externCopy !== undefined && !hostFree
