@@ -107,7 +107,7 @@ loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/lower-generic.ts
   - src/ir/runtime/verify.ts
-  # 2026-10-31 (boolean statics, round 4): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+86); the rule lives in src/ir/static-predicates/
+  # 2026-10-31 (boolean statics, round 5): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+89); the rule lives in src/ir/static-predicates/
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
@@ -2459,7 +2459,7 @@ are the plan's, measured on main `6434436564`, standalone unless stated,
 harness assembled by `assembleOriginalHarness` with the worker's compile
 options. "Exact" means IR = legacy (IR off) = node, on standalone and on gc.
 The first build followed the plan's route and was rejected in review; the
-rebuilt design was reviewed three more times. The four reviews, the design as
+rebuilt design was reviewed four more times. The five reviews, the design as
 built and its measurements follow.
 
 ### Problem (measured)
@@ -2908,7 +2908,39 @@ changes:
    follow-up 11's, not refused in the allow-list: refusing every member
    call's argument would refuse `assert.sameValue(…)` too.
 
-### Implementation (as built, 2026-10-31, after four reviews)
+### Review of the fifth build (2026-10-31)
+
+A fifth fresh-context review of `2163e7cd22` approved with nits: nothing
+newly failing to compile, no answer newly wrong against node on standalone,
+gc or linear, perf within noise, bytes identical. What changed:
+
+1. **Follow-up 11 lists four more generic withdrawals**, each with main's
+   twin: a closure capturing a local the unit writes, `throw` of a number in
+   a claimed `<module-init>`, a closure returning `undefined as any` into its
+   declared `number` result, and a newly claimed `f` withdrawing `C_new`, a
+   unit main claims. The Result's "units that became legacy: 0" now says it
+   holds for the test262 population, with that case as the counter-example.
+2. **`argumentSlotFamily` admitted any identifier callee that is neither
+   scope-local nor a top-level function declaration**, including a module
+   `const h = (b: boolean) => …` or `var h = function …`, which have a
+   parameter slot of the program's own. It now returns `unknown` for any
+   callee the source declares (`localValueDeclaration`) other than a
+   top-level function; `undefined` stays for a member callee or one declared
+   outside the source (lib, imported). Those shapes are refused earlier
+   today, on main and here, so the change moves no outcome (census below);
+   tests `moduleArrowCallee` and `moduleFunctionExpressionCallee` hold them
+   at legacy with no post-claim error.
+3. **Comments.** A number is never `undefined` "as main's boxed `Object.is`
+   path answers", not "as in legacy's typed arm": main boxes the marker as a
+   number and calls its boxed SameValue. `f64-undefined-marker.ts` no
+   longer says every value reader must test the bits; it names the readers
+   that do and points at follow-up 7 for the ones that do not.
+4. **The single-argument check reuses the loop's family** instead of
+   recomputing `expressionFamily`.
+5. **The Result's "0 grew" is the six-directory corpus's**; a newly claimed
+   micro-shape can be 1–4 B larger than main through generic IR lowering.
+
+### Implementation (as built, 2026-10-31, after five reviews)
 
 **`src/ir/static-predicates/`**, in the shape of `src/ir/array-methods/`:
 
@@ -2929,8 +2961,8 @@ changes:
   - a missing argument is `undefined`; `null`, the global `undefined` and
     `void 0` are never lowered (`staticPredicateLiteralFamily`, on #7144's
     `isUndefinedCompareOperand`);
-  - a number is never `undefined`, as in legacy's typed arm, so
-    `Object.is(number, undefined)` is `false`; against `NaN` the answer is
+  - a number is never `undefined`, as main's boxed `Object.is` path answers,
+    so `Object.is(number, undefined)` is `false`; against `NaN` the answer is
     `x ≠ x`, against another constant equal bits, and otherwise
     `sameValueNumberOps`, all branch-free (`numberConstant` reads the
     constant from the operand's syntax).
@@ -2953,9 +2985,9 @@ changes:
     admits a boolean into, judged by the slot's declared type through
     `declaredSlotFamily` (a declaration of or `=` into a local annotated
     `boolean` or `any`, a `return` into a declared result, an argument into a
-    top-level function's parameter; a module `var`, a member target and a
-    scope-local callee's argument refuse; a member, ambient or imported
-    callee's argument is admitted unless it is a string method's);
+    top-level function's parameter; a module `var`, a member target and the
+    argument of any other callee the source declares refuse; a member, lib or
+    imported callee's argument is admitted unless it is a string method's);
     `binaryOperandsAdmissible` against the partner's family,
     `nullComparisonFolds`, a strict `undefined` compare. Through a comma's
     right side, `&&` / `||` with a boolean partner and a conditional branch
@@ -2992,7 +3024,7 @@ changes:
   now; `isStaticMethodUse` went with it), `dynamicMethodOperandBoxes` with
   the move-only scan edit (finding 4), and the name-first conjunct in
   `isAmbientIntrinsicValue` (second review, finding 6).
-- **Size:** `select.ts` +86 lines net (`isPhase1Expr` +3), `from-ast.ts` +25
+- **Size:** `select.ts` +89 lines net (`isPhase1Expr` +3), `from-ast.ts` +25
   (`lowerMethodCall` −10), `lattice-param-facts.ts` +18 (`localIsRewritten`),
   `operand-admissibility.ts` +15 (the two result rules), and three new
   modules: `static-predicates/lowering.ts`, `static-predicates/selection.ts`
@@ -3001,7 +3033,7 @@ changes:
 
 **Tests.**
 
-- `tests/issue-7106-ambient-static-calls.test.ts`, 273 tests, on standalone
+- `tests/issue-7106-ambient-static-calls.test.ts`, 277 tests, on standalone
   and gc:
   - every method over 28 operand shapes claims `<module-init>` with no
     post-claim error, and answers as node and as legacy. The shapes are
@@ -3022,6 +3054,8 @@ changes:
     `void`, a member or element read of the answer, and a module boolean
     reached through `||`, a conditional or `String`; and from the third, a
     destructuring declaration and a module `var` initialised by a predicate;
+    and from the fifth, a predicate passed to a module arrow or function
+    expression callee;
   - from the third review, `LEGACY_PARITY`: a rewritten local declaration
     (`r = 5`, `"s"`, `undefined`), a `@returns {number}` result and a
     `{number}` / `{string}` JSDoc parameter stay legacy with no post-claim
@@ -3053,7 +3087,9 @@ changes:
 
 Main `89b160ca8d` vs this branch; same scripts as E (`probe-blockers.mts`,
 standalone; pass status through `runTest262File`). The three earlier builds'
-figures were the same in every row of this table.
+figures were the same in every row of this table. After the fifth review's
+changes the census output is byte-identical, and so are the playground and
+shared-piece binaries (26/26, 80/80, 30/30).
 
 | over the 817 files (792 compile) | main | as built |
 | --- | ---: | ---: |
@@ -3063,7 +3099,7 @@ figures were the same in every row of this table.
 | gc passes among those 53 | 51 | 51 (0 flips) |
 | newly zero-legacy files passing, standalone / gc | — | 23 / 23 |
 | post-claim errors among the 53, standalone + gc | — | 0 |
-| units that became legacy | — | 0 |
+| units that became legacy, in this population | — | 0 |
 
 - **The 23** are E's 20 plus `Object/is/{same-value-x-y-null,
   not-same-value-x-y-null, not-same-value-x-y-undefined}`: `null` and
@@ -3077,6 +3113,9 @@ figures were the same in every row of this table.
   - 3 have a function whose first refusal moved past the call.
 - The 2 failures among the 53 fail identically on main (Temporal
   `Duration/prototype/total/precision-exact-mathematical-values-{1,2}`).
+- **"Units that became legacy: 0" holds for this population only.** A
+  newly claimed unit can take a neighbour that main claims down with it:
+  the fifth review's `Object.is(g(), c.v)` withdraws `C_new` (follow-up 11).
 - **Outside the population,** 95 files that include harness files calling
   these methods in functions are unchanged: same units, codes and details.
 - **Probes, all four reviews** (`.tmp/review4/`, which reruns the earlier
@@ -3139,7 +3178,10 @@ figures were the same in every row of this table.
   passed.js` came from the probe's compile order: a generated name carries a
   checker symbol id that depends on which compiler copy runs first.
 - **Sizes** over the six directories (`sizes.mts`): of 168 binary pairs, 0
-  grew, 46 shrank, and no host import was added.
+  grew, 46 shrank, and no host import was added. That holds for this corpus
+  only: a newly claimed micro-shape can be 1–4 B larger than main through
+  generic IR lowering (a dead `local.tee`, a copy before `+=`), with the
+  predicate ops identical and the time equal (fifth review, `wat.mts`).
 - **Neighbour suites** (`tests/issue-7118-*`, `tests/issue-7189-*`,
   `tests/issue-7106-*`; main's 51 files against main's sources, this
   branch's 52 against its own): 5 failures on main (702 of 707 pass) and the
@@ -3247,6 +3289,31 @@ figures were the same in every row of this table.
       body (`i32NativeTwin`);
     - a write of `undefined as any` (or `undefined` in JS) into an f64 slot
       withdraws on the assignment (`twinAssignUndef`);
+    - its closure-return form: a closure that returns `undefined as any`
+      into its declared `number` result
+      (`const h = (): number => undefined as any;` and
+      `Number.isNaN(h())`) withdraws with "closure body type
+      dynamic<tag:1> != declared return f64" (main's twin `h() === 1`);
+    - a closure that captures a local the unit writes
+      (`let b: boolean = false; const g = (): number => (b ? 1 : 0);
+      b = Number.isNaN(x); return g();`, or the predicate in the
+      initializer and `b = false` later) withdraws with "closure inside f
+      captures non-local binding "b" — not in slice 3" (main's twin
+      `b = x > 1`);
+    - `throw` of a number in a claimed `<module-init>` withdraws with
+      "throw val not in slice 9": `{ const b: boolean = Number.isNaN(NaN);
+      if (!b) throw 1; }`, or a predicate local beside
+      `try { throw 1; } catch (e) {}` (main's twins with `1 > 0`; 18 rows in
+      the fifth review's `mi-ts-twin.mjs`);
+    - a newly claimed unit can withdraw a neighbour main claims. With
+      `function g(): number { return undefined as any; }` and
+      `class C { v: number = 0; }`, `f` returning
+      `Object.is(g(), new C().v)` (or reading a field written from `g()`,
+      `fieldFromCall`) is claimed here, and `C_new`, which shares a prepared
+      component with `f`, withdraws with "prepared component … has
+      incomplete dependencies" because `g` fails verification. Main refuses
+      `f` and claims `C_new`; its twin `g() === c.v` claims `f` and
+      withdraws `C_new` the same way;
     - `const [a] = [x]` withdraws (the third review's list);
     - a generator called from a claimed unit withdraws on `.next()` over an
       externref, and the generator itself on host-free targets

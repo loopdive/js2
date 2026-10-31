@@ -269,6 +269,15 @@ describe("#7106 — the ambient boolean statics in IR bodies", () => {
       `let t = true; export function f(x: number): number { return Object.is(String(t), "true") ? x : -x; }`,
       [[1]],
     ],
+    // A source-declared callee that is not a top-level function: its parameter slot is not resolved.
+    moduleArrowCallee: [
+      `const h = (b: boolean): number => (b ? 1 : 0); export function f(x: number): number { return h(Number.isNaN(x)); }`,
+      [[NaN], [1]],
+    ],
+    moduleFunctionExpressionCallee: [
+      `var h = function (b: boolean): number { return b ? 1 : 0; }; export function f(x: number): number { return h(Number.isNaN(x)); }`,
+      [[NaN], [1]],
+    ],
   };
   for (const [name, [source, inputs]] of Object.entries(REFUSED_FUNCTIONS)) {
     const node = nodeFunction(source);
@@ -290,8 +299,8 @@ describe("#7106 — the ambient boolean statics in IR bodies", () => {
     }
   }
 
-  // A number is never `undefined` to `Object.is`, as in legacy's typed arm: IR
-  // f64 ops carry a NaN's payload through, so legacy's f64 `undefined` marker
+  // A number is never `undefined` to `Object.is`, as main's boxed path answers:
+  // IR f64 ops carry a NaN's payload through, so legacy's f64 `undefined` marker
   // (here a legacy-compiled callee's `undefined as any`) cannot be told from a
   // NaN that `+x`, `Number(x)`, `Math.abs` or `Math.min` made of it. Each bit is
   // one shape; the IR answers as legacy does, and node's `false` for all but `g()`.

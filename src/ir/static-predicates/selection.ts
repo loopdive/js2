@@ -58,8 +58,10 @@ export interface IrStaticPredicateSelection {
   /**
    * The family of the callee's parameter the argument at `index` is written
    * into: a top-level function's (`unknown` when that parameter does not
-   * resolve, or for a local callee); `undefined` for a member, ambient or
-   * imported callee, which has no parameter slot of the program's own.
+   * resolve); `unknown` for any other callee the source declares (a local, a
+   * module `const h = (b) => …`); `undefined` for a member callee or one
+   * declared outside the source (lib, imported), which has no parameter slot
+   * of the program's own.
    */
   readonly argumentSlotFamily: (call: ts.CallExpression, index: number) => OperandFamily | undefined;
 }
@@ -84,20 +86,17 @@ export function selectStaticPredicateCall(
     return { admitted: false, reason: "call-arity-unsupported", arm: "expr-static-predicate-arity", node: call };
   }
   const lowered: ts.Expression[] = [];
+  const lone = plan.test === "same-value" && call.arguments.length === 1;
   for (const operand of call.arguments) {
     if (staticPredicateLiteralFamily(operand, options.isGlobalUndefined) !== undefined) continue;
-    if (!LOWERED_FAMILIES.has(expressionFamily(operand, options))) {
+    const family = expressionFamily(operand, options);
+    if (!LOWERED_FAMILIES.has(family)) return refusal("expr-static-predicate-operand", operand);
+    // `Object.is(x)`: main answers a number `x` through its boxing path, which reads legacy's f64 `undefined`
+    // marker as `undefined`, and the lowering cannot tell the marker from a NaN; only a literal `x` is lowered.
+    if (lone && family === "number" && !ts.isNumericLiteral(unsignedOperand(operand))) {
       return refusal("expr-static-predicate-operand", operand);
     }
     lowered.push(operand);
-  }
-  // `Object.is(x)`: main answers a number `x` through its boxing path, which reads legacy's f64 `undefined`
-  // marker as `undefined`, and the lowering cannot tell the marker from a NaN; only a literal `x` is lowered.
-  const [single] = lowered;
-  if (plan.test === "same-value" && call.arguments.length === 1 && single !== undefined) {
-    const literal = ts.isNumericLiteral(unsignedOperand(single));
-    if (!literal && expressionFamily(single, options) === "number")
-      return refusal("expr-static-predicate-operand", single);
   }
   if (!booleanAnswerConsumed(call, options)) return refusal("expr-static-predicate-consumer", call);
   return { admitted: true, lowered };
@@ -162,9 +161,10 @@ function expressionFamily(
  *     local annotated `boolean` or `any`, a `return` into the declared result
  *     (an undeclared one is inferred from the returns), a call's argument into
  *     a top-level function's parameter. A module `var` refuses (a module
- *     boolean reads back without the brand), as do a member target and a
- *     local callee's argument. A member, ambient or imported callee's argument
- *     is admitted, except a string method's: it needs a ToString;
+ *     boolean reads back without the brand), as do a member target and the
+ *     argument of any other callee the source declares. A member, lib or
+ *     imported callee's argument is admitted, except a string method's: it
+ *     needs a ToString;
  *   - a comma's sides, `&&` / `||` with a boolean partner and a conditional
  *     arm with a boolean partner forward it: their own position decides;
  *   - a typed binary operator `binaryOperandsAdmissible` admits against the

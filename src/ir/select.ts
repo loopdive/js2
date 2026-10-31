@@ -11094,14 +11094,17 @@ function isPhase1StaticPredicateCall(
       ts.isPropertyAccessExpression(call.expression) &&
       currentSelectionOptions?.classifyPrimitiveExpression?.(call.expression.expression) === "string",
     declaredSlotFamily: (type) => resolvedKindFamily(resolveReturnTypeNode(type)),
-    // A top-level function's parameter takes the verdict its own claim resolves its signature with; a
-    // local callee's is not resolved here.
+    // A top-level function's parameter takes the verdict its own claim resolves its signature with; any
+    // other callee the source declares (a local, a module `const h = (b) => …`) is not resolved here.
     argumentSlotFamily: (call, index) => {
       if (!ts.isIdentifier(call.expression)) return undefined;
       const name = call.expression.text;
-      if (scope.has(name)) return "unknown";
-      if (currentDynScanDecls?.get(name) === undefined) return undefined;
-      return resolvedKindFamily(calleeParamResolvedKind(name, index, currentClaimTypeMap));
+      const local = scope.has(name);
+      if (!local && currentDynScanDecls?.has(name)) {
+        return resolvedKindFamily(calleeParamResolvedKind(name, index, currentClaimTypeMap));
+      }
+      const declared = local || currentModuleBindingResolver?.localValueDeclaration(call.expression) !== undefined;
+      return declared ? "unknown" : undefined;
     },
   });
   if (verdict === undefined) return undefined;

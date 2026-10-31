@@ -8,11 +8,11 @@
  * lowered unboxed, the answer a native IR boolean, as the checker types it. No
  * realm read, no runtime helper and no host import.
  *
- * The answers are legacy's typed arms (`codegen/expressions/call-builtin-static.ts`),
- * op for op:
+ * The answers are main's: legacy's typed arms
+ * (`codegen/expressions/call-builtin-static.ts`) op for op, where it has one:
  *   - a number operand takes `numberIsPredicateOps` / `sameValueNumberOps`
- *     (against a constant, only its bits) and is never `undefined`, as in
- *     legacy's typed arms ({@link sameValueWithNumber});
+ *     (against a constant, only its bits) and is never `undefined`, as main's
+ *     boxed `Object.is` path answers ({@link sameValueWithNumber});
  *   - `Number.is*` of a non-number primitive is `false` (§21.1.2.x: no ToNumber);
  *   - `Object.is` of two strings is string equality, of two booleans `i32.eq`,
  *     of two `undefined` or two `null` `true`, of two different families `false`;
@@ -191,11 +191,12 @@ function sameValue(x: Operand, y: Operand, b: IrFunctionBuilder): IrValueId {
 /**
  * SameValue with a number operand, branch-free: `sameValueNumberOps` (equal
  * bits, or both NaN), or against a constant only what it needs (`NaN`: a NaN;
- * any other constant: its bits). A number is never `undefined` here, as in
- * legacy's typed arm: legacy's f64 `undefined` marker cannot be told from a
- * NaN, because IR f64 ops (`+x`, `Number(x)`, `Math.abs`) carry a NaN's
- * payload through, so `Object.is(+g(), undefined)` would read a marker that
- * JS calls a number (#7106 plan, follow-up 7).
+ * any other constant: its bits). A number is never `undefined` here, as main's
+ * boxed `Object.is` path answers (it boxes legacy's f64 `undefined` marker as a
+ * number). The marker cannot be told from a NaN, because IR f64 ops (`+x`,
+ * `Number(x)`, `Math.abs`) carry a NaN's payload through, so
+ * `Object.is(+g(), undefined)` would read a marker that JS calls a number
+ * (#7106 plan, follow-up 7).
  */
 function sameValueWithNumber(x: Operand, y: Operand, b: IrFunctionBuilder): IrValueId {
   if (x.family !== y.family) return booleanConst(false, b);

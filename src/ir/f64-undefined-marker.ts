@@ -8,8 +8,10 @@ import { irVal, type IrType, type IrValueId } from "./nodes.js";
  * Legacy's f64 stand-ins for `undefined` (`codegen/value-tags.ts`): an f64
  * slot that holds `undefined` carries `UNDEF_F64_BITS`, an absent array
  * element `HOLE_F64_BITS` (#4491 T11). Both are signaling NaNs, so arithmetic
- * reads them as ToNumber(undefined); a reader that observes the VALUE — a
- * NaN test, SameValue, a rendering — must test the bits.
+ * reads them as ToNumber(undefined). A reader that tells them from a NaN tests
+ * the bits (an array search's holes, a default parameter's sentinel). The
+ * boolean statics do not: IR f64 ops carry a NaN's payload through, so the
+ * bits do not prove `undefined` there (#7106 plan, follow-up 7).
  */
 export const F64_UNDEFINED_BITS = 0x7ff00000deadc0den;
 const F64_HOLE_BITS = 0x7ff00000deadc01en;
