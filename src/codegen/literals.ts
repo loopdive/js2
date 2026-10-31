@@ -46,6 +46,7 @@ import { emptyBackingStoreInstrs } from "./empty-vec-store.js"; // (#3921) share
 import { spreadSourceNeedsRuntimeCopy } from "./object-model/object-spread-extern-source.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { literalContextualType } from "./expressions/destructuring-source-literal.js"; // (#4495)
 import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#5158) absent tuple slot === undefined
@@ -2437,7 +2438,7 @@ export function compileObjectLiteral(
     // builder declined — fall through to the struct paths below.
   }
 
-  const contextType = ctx.checker.getContextualType(expr);
+  const contextType = literalContextualType(ctx, expr);
   if (!contextType) {
     // #1606: `getTypeAtLocation` can crash inside TypeScript's `checkObjectLiteral`
     // for object literals parsed from a foreign SourceFile (e.g. statically inlined
@@ -5370,7 +5371,7 @@ export function compileArrayLiteral(
   // Check if the target type is a tuple — compile as struct.new instead of array.
   // Skip if _arrayLiteralForceVec is set (e.g. destructuring default where the target
   // is a vec type, but TS contextual type resolution sees a tuple pattern).
-  const ctxTupleType = ctx.checker.getContextualType(expr) ?? ctx.checker.getTypeAtLocation(expr);
+  const ctxTupleType = literalContextualType(ctx, expr) ?? ctx.checker.getTypeAtLocation(expr);
   if (
     ctxTupleType &&
     isTupleType(ctxTupleType) &&

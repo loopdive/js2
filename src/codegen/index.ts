@@ -1,12 +1,19 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  irNativeI32SlotRead,
+  irNativeNumericFieldType,
+  irNativeSignatureDiverges,
+} from "./declarations/ir-native-numeric-field.js";
+import { nativeConsoleOutputAvailable } from "./helpers/ir-native-console.js";
 import {
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
   ensureGlobalEnvironmentOperation,
 } from "./global-environment.js";
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
 import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
 import { irDynamicInstanceOfAtLegacyParity } from "./ir-dynamic-instanceof.js"; // (#7106) generic dynamic instanceof
+import { irOpenObjectSelectionOption } from "./declarations/ir-open-object-binding.js"; // (#7128 S1)
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
 import { ts, forEachChild } from "../ts-api.js";
@@ -84,6 +91,7 @@ import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
+import { irArrayPrototypeBorrowAdmitted } from "./array/ir-array-prototype-borrow.js"; // (#7106 compareArray.format)
 import {
   compileIrPathFunctions,
   irAmbientNamespaceConstant, // (#7106 module-init lever A)
@@ -189,6 +197,7 @@ import {
   makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
   type IrModuleBindingResolver,
+  type IrScriptVarHome,
 } from "../ir/module-bindings.js"; // (#2856 Capability C)
 import {
   collectPreparedIrAsyncOwners,
@@ -663,9 +672,9 @@ import {
   flatStringType,
   nativeStringType,
   nativeStringTypeNullable,
-  standaloneConsoleSinkAvailable,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
+import { isAnyStringSlot } from "./native-strings-shared.js";
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
 import {
   emitNativeNumberFormat,
@@ -850,6 +859,7 @@ installObjectModelPorts(() => ({
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
+  irNativeI32SlotRead,
   hasExportModifier,
   hasDeclareModifier,
   hasAsyncModifier,
@@ -1878,7 +1888,7 @@ function buildIrClassShapes(
       else return; // computed / string-literal / numeric names → leave to ValType path
       if (astFieldIr.has(mangled)) return;
       const tsType = ctx.checker.getTypeAtLocation(tsNode);
-      const ir = tsTypeToClassPositionIr(ctx, tsType, lookup);
+      const ir = irNativeNumericFieldType(ctx, tsNode) ?? tsTypeToClassPositionIr(ctx, tsType, lookup);
       if (ir) astFieldIr.set(mangled, ir);
     };
     // #3000-E: the legacy `structFields` for a subclass is `[...parentFields,
@@ -1963,7 +1973,7 @@ function buildIrClassShapes(
       if (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name) && computedMethodName === undefined) {
         continue;
       }
-      if (member.asteriskToken) continue; // generators → defer
+      if (member.asteriskToken || irNativeSignatureDiverges(ctx, member)) continue; // generators, native ABI → defer
       const methodName = ts.isPrivateIdentifier(member.name)
         ? privateMemberMangledName(member.name)
         : ts.isComputedPropertyName(member.name)
@@ -2021,7 +2031,7 @@ function buildIrClassShapes(
     // filter on `memberKind`, so these never leak into `class.call`
     // resolution.
     for (const member of stmt.members) {
-      if (!member.name) continue;
+      if (!member.name || (ts.isFunctionLike(member) && irNativeSignatureDiverges(ctx, member))) continue;
       const placement = placementFor(member);
       const placementTerminal = placement ? identityContext.terminalByUnitId.get(placement.unitId) : undefined;
       const nestedAccessorPlacement = placementTerminal?.containingTerminalOwnerId !== undefined;
@@ -2309,9 +2319,7 @@ function irFieldTypeMatchesLegacyValType(
     return true;
   }
   if (ir.kind === "string") {
-    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
-      return (vt.kind === "ref" || vt.kind === "ref_null") && vt.typeIdx === ctx.anyStrTypeIdx;
-    }
+    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) return isAnyStringSlot(ctx, vt);
     return vt.kind === "externref";
   }
   if (ir.kind === "class") {
@@ -2859,12 +2867,7 @@ function makeIrImplicitParamTypeResolver(
     if (inferred?.kind === "i32" && inferred.boolean === true) {
       return { kind: "bool", type: irVal(inferred) };
     }
-    if (
-      inferred?.kind === "ref" &&
-      ctx.nativeStrings &&
-      ctx.anyStrTypeIdx >= 0 &&
-      inferred.typeIdx === ctx.anyStrTypeIdx
-    ) {
+    if (inferred?.kind === "ref" && isAnyStringSlot(ctx, inferred)) {
       return { kind: "string", type: { kind: "string" } };
     }
     if (inferred?.kind === "ref" || inferred?.kind === "ref_null") {
@@ -3062,9 +3065,7 @@ function planIrOverlay(
             resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
-            admitScriptVar: (declaration) => scriptVarSlotIsSoleHome(ctx, declaration),
-            scriptVarDynamicHome: (declaration) => scriptVarSlotIsDynamicHome(ctx, declaration),
-            scriptVarStringHome: (declaration) => scriptVarSlotIsStringHome(ctx, declaration),
+            scriptVarHome: (declaration) => scriptVarHome(ctx, declaration),
           },
           identityContext,
         );
@@ -3275,7 +3276,10 @@ function planIrOverlay(
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
+      // (#7106 compareArray.format)
+      arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
       dynamicInstanceOfAtLegacyParity: (site) => irDynamicInstanceOfAtLegacyParity(ctx, site), // (#7106)
+      ...irOpenObjectSelectionOption(ctx), // (#7128 S1)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
@@ -3318,7 +3322,8 @@ function planIrOverlay(
       // so this only adds the native-string lanes.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
-      supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
+      supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
+      isNativeI32SlotRead: (expr) => irNativeI32SlotRead(ctx, ast.checker, expr),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
@@ -4203,50 +4208,31 @@ function compileMultiIrOverlaySource(
 }
 
 /**
- * (#7105) May the IR share a SCRIPT-goal top-level `var`'s `__mod_<name>` slot?
- * Legacy allocates that slot for scripts exactly as for modules, and a plain
- * read/write is `global.get`/`global.set` on it — measured 2026-10-20 on the
- * standalone target (`var called = 0; function cb(v) { called = called + 1; … }`
- * compiles `cb` to `global.get 9 … global.set 9`). Three script-only arms move
- * the binding's home away from the slot, and each answers `false` here:
+ * (#7105) The carrier of a SCRIPT-goal top-level `var`'s `__mod_<name>` slot
+ * (`IrScriptVarHome`) when the IR may share that slot as the binding's sole
+ * home. Legacy allocates it for scripts exactly as for modules, and a plain
+ * read or write is `global.get`/`global.set` on it. Three script-only arms
+ * move the binding's home away from the slot, and each answers `undefined`:
  *   - a runtime-eval consumer widens every script `var` to `externref`
  *     (`registerReassignedFunctionGlobals`), so the slot's type no longer
  *     matches the checker type the IR would resolve;
  *   - a name in `sloppyImplicitGlobals` (an undeclared `p = v` or a top-level
  *     `this.p = v`) resolves bare reads through the global-environment object;
- *   - a slot the declaration collector has not placed (or has already widened)
- *     is not a scalar home at all.
- * Scripts are the entire test262 corpus: every top-level `var` read inside a
- * test function was `expr-ident-not-in-scope` before this (e.g. the `kValue`
- * callbacks in `built-ins/Array/prototype/map`, 15/216 tests).
+ *   - a slot the declaration collector has not placed is not a home at all.
  */
-export function scriptVarSlotIsSoleHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
-  const slot = scriptVarHomeSlot(ctx, declaration);
-  return slot !== undefined && slot.type.kind !== "externref";
-}
-
-/**
- * (#7106) The same sole-home slot when legacy allocated it as `externref`
- * (`var o = new Object()`, `var n;`, a function-valued `var`): off fast mode
- * that is exactly `resolveIrDynamicCarrierType`, so the IR binds it as a
- * `dynamic` module binding. Fast mode's dynamic carrier is `$AnyValue`, so it
- * stays excluded.
- */
-export function scriptVarSlotIsDynamicHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
-  return !ctx.fast && scriptVarHomeSlot(ctx, declaration)?.type.kind === "externref";
-}
-
-/**
- * (#7125) The sole-home slot when legacy allocated it as the native-string
- * carrier `(ref null $AnyString)` (`var data = "data"` on standalone). That is
- * exactly the storage `resolveModuleBindingGlobal`'s `string` arm names, so the
- * IR binds it as a `string` module binding. Host strings use `externref`,
- * which is the dynamic home instead.
- */
-export function scriptVarSlotIsStringHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
-  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+export function scriptVarHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): IrScriptVarHome | undefined {
   const type = scriptVarHomeSlot(ctx, declaration)?.type;
-  return type?.kind === "ref_null" && type.typeIdx === ctx.anyStrTypeIdx;
+  switch (type?.kind) {
+    case "externref":
+      return ctx.fast ? undefined : "dynamic";
+    case "ref_null":
+      return type.typeIdx === ctx.anyStrTypeIdx ? "string" : undefined;
+    case "f64":
+    case "i32":
+      return "typed";
+    default:
+      return undefined;
+  }
 }
 
 function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclaration) {
@@ -4262,9 +4248,10 @@ function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclarat
     return undefined;
   }
   if (ctx.sloppyImplicitGlobals.has(name)) return undefined;
-  // (#7106) `var g` merged with `function g`: the checker gives the script
-  // `var` its own symbol, but the binding (and its slot) is the function's.
-  if (ctx.funcMap.has(name) || ctx.liveFuncBindingGlobals?.has(name)) return undefined;
+  // (#7106) `var g` merged with `function g` owns the function's slot; (#7189) a same-named object-runtime
+  // helper (`__getOwnPropertyNames`) is not that `function` and can enter `funcMap` after selection.
+  const helperOnly = omObjectRuntime.OBJECT_RUNTIME_HELPER_NAMES.has(name) && !ctx.topLevelFunctionNames.has(name);
+  if ((ctx.funcMap.has(name) && !helperOnly) || ctx.liveFuncBindingGlobals?.has(name)) return undefined;
   const globalIdx = ctx.moduleGlobals.get(name);
   const global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
   return global?.name === `__mod_${name}` ? global : undefined;

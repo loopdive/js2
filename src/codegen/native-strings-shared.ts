@@ -27,6 +27,16 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 
+/** Is `slot` the native string type (`$AnyString`, nullable or not) of a native-strings lane? */
+export function isAnyStringSlot(ctx: CodegenContext, slot: ValType): boolean {
+  return (
+    (slot.kind === "ref" || slot.kind === "ref_null") &&
+    ctx.nativeStrings &&
+    ctx.anyStrTypeIdx >= 0 &&
+    slot.typeIdx === ctx.anyStrTypeIdx
+  );
+}
+
 /** Derived per-call state shared by every native-string helper builder. */
 export interface NativeStrShared {
   ctx: CodegenContext;

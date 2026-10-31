@@ -22,6 +22,11 @@
 // `shiftLateImportIndices` pass is a no-op for every body produced here.
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
+import {
+  nativeConsoleOutputAvailable,
+  ensureIrNativeConsoleProvider,
+  IR_NATIVE_CONSOLE_SYMBOLS,
+} from "../codegen/helpers/ir-native-console.js";
 import { notePreparedFunctionMemberClosures } from "./function-member-closure-plan.js";
 import { projectFunctionValueLoweringPlans } from "./function-object-lowering.js";
 import {
@@ -81,8 +86,7 @@ import {
   addStringImports,
   addUnionImports, // (#2949 slice 3) host-mode dynamic op imports (__box_number/__typeof_* family)
   TYPED_ARRAY_NAMES,
-  scriptVarSlotIsDynamicHome,
-  scriptVarSlotIsSoleHome,
+  scriptVarHome,
   ensureIrDynamicDeleteHelper, // (#7106 propertyHelper) dynamic delete wrappers
   IR_DYN_DELETE_SLOPPY_HELPER,
   IR_DYN_DELETE_STRICT_HELPER,
@@ -91,15 +95,26 @@ import {
   ensureIrDynamicInstanceOfHelper, // (#7106) generic dynamic instanceof wrapper
   IR_DYN_INSTANCEOF_HELPER,
   irDynamicInstanceOfAtLegacyParity,
-  scriptVarSlotIsStringHome,
   buildModuleInitPrologueCall, // (#7106) GDI prologue replay — see module-init-prologue-patch.ts
   moduleInitPrologueMayEmit,
   retireModuleInitPrologueHelper,
+  irNativeI32SlotRead,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
+import {
+  ensureIrDynamicMethodCallHelper,
+  irTemplateWrapperLane,
+} from "../codegen/object-model/ir-dynamic-method-call.js";
+import { irWrapperSymbolIsNameable, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
+import { parseIrArrayPrototypeBorrowHelperName } from "./array-prototype-borrow-call.js";
+import {
+  ensureIrArrayPrototypeBorrowHelper,
+  irArrayPrototypeBorrowAdmitted,
+  irArrayPrototypeBorrowWrapperLane,
+} from "../codegen/array/ir-array-prototype-borrow.js"; // (#7106 compareArray.format)
 import {
   ensureIrArgumentsLengthHelper,
   ensureIrPublishArgcHelper,
@@ -164,13 +179,8 @@ import {
   VEC_NEW_SIZED_PREFIX,
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
 import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
-import { getOrRegisterHoleyArrayType } from "../codegen/registry/types.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
-import {
-  ensureNativeStringHelpers,
-  standaloneConsoleSinkAvailable,
-  STANDALONE_STDOUT_APPEND_FN,
-} from "../codegen/native-strings.js";
+import { ensureNativeStringHelpers, STANDALONE_STDOUT_APPEND_FN } from "../codegen/native-strings.js";
 import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
 import {
   nativeStringLiteralMaterialization,
@@ -198,6 +208,7 @@ import { isBooleanType, isNumberType, isStringType } from "../checker/type-mappe
 import {
   addFuncType,
   getArrTypeIdxFromVec,
+  getOrRegisterHoleyArrayType,
   getOrRegisterRefCellType,
   getOrRegisterVecType,
 } from "../codegen/registry/types.js";
@@ -213,7 +224,7 @@ import {
   irNativeNumberToFixedAvailable,
   irNativeNumberToStringAvailable,
 } from "../codegen/number-format-native.js"; // #4462 — host-free Number formatting for the IR string carrier
-import { IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
+import { IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import { IR_NATIVE_PROMISE_DELAY_FN } from "./promise-delay-lowering.js";
 import {
   ensureHostCharCodeAtGuarded,
@@ -2396,10 +2407,8 @@ export function compileIrPathFunctions(
     resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
     stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
     // (#7105) Must agree with the selector-side option: a script `var` the
-    // selector admitted is written here through the same slot predicate.
-    admitScriptVar: (declaration: ts.VariableDeclaration) => scriptVarSlotIsSoleHome(ctx, declaration),
-    scriptVarDynamicHome: (declaration: ts.VariableDeclaration) => scriptVarSlotIsDynamicHome(ctx, declaration),
-    scriptVarStringHome: (declaration: ts.VariableDeclaration) => scriptVarSlotIsStringHome(ctx, declaration),
+    // selector admitted is written here through the same slot classifier.
+    scriptVarHome: (declaration: ts.VariableDeclaration) => scriptVarHome(ctx, declaration),
   };
   // Direct compatibility callers share this context; structural globals never fall back to declaration names.
   const compatibilityInventory = loweringPlans
@@ -2571,6 +2580,8 @@ export function compileIrPathFunctions(
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
+      // (#7106 compareArray.format)
+      arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       implicitParamUsesNumericVecAbi,
@@ -2580,7 +2591,8 @@ export function compileIrPathFunctions(
       // narrower table, or a direct caller would demote where production claims.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
-      supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
+      supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
+      isNativeI32SlotRead: (expr) => irNativeI32SlotRead(ctx, ctx.checker, expr),
       supportsLiteralStringReplace: true,
       ...(loweringPlans?.fnctorNativeStringBoundaries
         ? {
@@ -5857,24 +5869,42 @@ export function compileIrPathFunctions(
     // only on a path that actually enters the orphaned artifact. Empty VOID
     // bodies are already valid Wasm (fall-through) — leave those as-is rather
     // than converting today's silent no-op into a trap.
-    const stubIfOrphanedEmpty = (unitId: IrUnitId, terminalOwnerUnitId: IrUnitId, funcIdx: number): void => {
+    //
+    // (#7106) A fresh slot still carries its allocation placeholder (`typeIdx:
+    // 0`, not a func type) until its patch installs, so an orphaned one has no
+    // signature at all and the final ABI planner rejects the whole module. It
+    // takes the signature its lowered body would have installed, or `() -> ()`
+    // when its owner failed before lowering it. Patches run first so a lowered
+    // slot keeps its real signature.
+    const stubIfOrphanedEmpty = (
+      unitId: IrUnitId,
+      terminalOwnerUnitId: IrUnitId,
+      funcIdx: number,
+      loweredTypeIdx?: number,
+    ): void => {
       const orphan = definedFuncAt(ctx, funcIdx);
       if (!orphan || orphan.body.length > 0) return;
       const typeDef = ctx.mod.types[orphan.typeIdx];
-      if (!typeDef || typeDef.kind !== "func" || typeDef.results.length === 0) return;
+      if (typeDef?.kind === "func" && typeDef.results.length === 0) return;
       replaceUnitCallableAt(unitId, terminalOwnerUnitId, funcIdx, orphan, {
         ...orphan,
+        typeIdx: typeDef?.kind === "func" ? orphan.typeIdx : (loweredTypeIdx ?? addFuncType(ctx, [], [])),
         body: [{ op: "unreachable" }],
       });
     };
+    for (const patch of pendingPatches) {
+      if (!options?.deferPreparedPublication && (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId))) {
+        stubIfOrphanedEmpty(
+          patch.entry.artifactUnitId,
+          patch.entry.terminalOwnerUnitId,
+          patch.funcIdx,
+          patch.wasmFunc.typeIdx,
+        );
+      }
+    }
     for (const slot of freshSlots) {
       if (!options?.deferPreparedPublication && (atomicAborted || failedOwners.has(slot.terminalOwnerUnitId))) {
         stubIfOrphanedEmpty(slot.artifactUnitId, slot.terminalOwnerUnitId, slot.funcIdx);
-      }
-    }
-    for (const patch of pendingPatches) {
-      if (!options?.deferPreparedPublication && (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId))) {
-        stubIfOrphanedEmpty(patch.entry.artifactUnitId, patch.entry.terminalOwnerUnitId, patch.funcIdx);
       }
     }
 
@@ -7016,6 +7046,12 @@ function makeFromAstResolver(
     dynamicCarrierIsExternref() {
       return !ctx.fast;
     },
+    dynamicMethodCallWrapper(method: string, arity: number) {
+      return irTemplateWrapperLane(ctx) && irWrapperSymbolIsNameable(method, arity);
+    },
+    arrayPrototypeBorrowWrapper(method: string) {
+      return irArrayPrototypeBorrowWrapperLane(ctx, method);
+    },
     // (#7106) the selector's `dynamicInstanceOfAtLegacyParity`, asked again per site.
     dynamicInstanceOfAtLegacyParity: (site: ts.BinaryExpression) => irDynamicInstanceOfAtLegacyParity(ctx, site),
     // (#7106 propertyHelper) the wrapper a dynamic delete at this site calls.
@@ -7291,12 +7327,12 @@ function makeFromAstResolver(
     nativeNumberToFixedAvailable(): boolean {
       return irNativeNumberToFixedAvailable(ctx);
     },
-    // (#4462) Standalone's host-free console sink (#3469). Minted in the
-    // pre-body window, which precedes both IR planning and body lowering, so
-    // `funcMap` presence is the same fact at claim time and at build time.
-    standaloneConsoleSinkAvailable(): boolean {
-      return standaloneConsoleSinkAvailable(ctx);
+    // Planning and lowering share the native output-provider capability.
+    nativeConsoleOutputAvailable(): boolean {
+      return nativeConsoleOutputAvailable(ctx);
     },
+    // `hostFreeEnvironment(ctx)`, read in place: a value import of codegen/context/types grows the import SCC.
+    nativeNumericDomains: () => ctx.targetProfile.environment !== "javascript",
     // (#2955 slice 5) String for-of strategy — the LAST from-ast mode read,
     // relocated. Native strings iterate via the `__str_charAt` counter loop;
     // host strings feed the `__iterator` host protocol (already
@@ -7578,12 +7614,8 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNativePromiseDelayProvider(ctx);
   } else if (ref.binding.kind === "runtime" && symbol === IR_ASYNC_PROMISE_ALL_NATIVE_FN) {
     index = ensureIrNativePromiseAllProvider(ctx);
-  } else if (ref.binding.kind === "runtime" && symbol === IR_CONSOLE_SINK_APPEND_FN) {
-    // (#4462) Host-free console sink. Never minted here: `ensureStandaloneStdoutSink`
-    // owns it and runs in the pre-body window so the funcidx is final. Absence is
-    // a claim/capability disagreement, which the `null` turns into the standard
-    // "cannot materialize callable provider" invariant rather than a silent miss.
-    index = ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) ?? null;
+  } else if (ref.binding.kind === "runtime" && IR_NATIVE_CONSOLE_SYMBOLS.has(symbol)) {
+    index = ensureIrNativeConsoleProvider(ctx, symbol);
   } else if (ref.binding.kind === "runtime" && symbol === "__hof_holey_array_filter") {
     index = ensureHoleyArrayFilter(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
@@ -9112,6 +9144,31 @@ function admitFunctionPrototypeCall(
   observeNativeRuntimeProvider(ctx, arm.symbol);
 }
 
+/** The (method, arity) a per-pair template wrapper symbol was named for. */
+type TemplateWrapperPair = { readonly method: string; readonly arity: number };
+
+/**
+ * Build every wrapper of one template family a unit calls, in symbol order,
+ * register each as a native provider, and settle the import shift once for
+ * the batch. A wrapper the lane cannot build is an invariant breach: the
+ * selector admitted the call only where codegen said it would build it.
+ */
+function buildTemplateWrapperFamily(
+  ctx: CodegenContext,
+  wrappers: ReadonlyMap<string, TemplateWrapperPair>,
+  ensure: (ctx: CodegenContext, symbol: string, method: string, arity: number) => number | undefined,
+  family: string,
+): void {
+  if (wrappers.size === 0) return;
+  for (const [symbol, { method, arity }] of [...wrappers].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    if (ensure(ctx, symbol, method, arity) === undefined) {
+      throw new Error(`ir/integration: ${symbol} has no host-free ${family} wrapper (#7106)`);
+    }
+    observeNativeRuntimeProvider(ctx, symbol);
+  }
+  flushLateImportShifts(ctx, null);
+}
+
 function preregisterDynamicSupport(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
@@ -9174,6 +9231,10 @@ function preregisterDynamicSupport(
   let usesNumberFromValue = false;
   // (#7106 S3a) `dyn.construct` calls the per-arity construct driver wrapper.
   const dynConstructArities = new Set<number>();
+  // (#7106 Stage 4) dynamic-receiver method calls through the brand-dispatch wrappers.
+  const dynamicMethodCallWrappers = new Map<string, TemplateWrapperPair>();
+  // (#7106 compareArray.format) `Array.prototype.<m>.call(…)` borrows through the template wrappers.
+  const arrayPrototypeBorrowWrappers = new Map<string, TemplateWrapperPair>();
   // (#7106 S1c) `dyn.string_carrier` calls the checked carrier-recovery wrapper.
   let usesDynStringCarrier = false;
   // (#7106 S1e) `dyn.arguments_length` calls the argc-protocol wrapper.
@@ -9271,6 +9332,10 @@ function preregisterDynamicSupport(
             const symbol = i.target.binding.symbol;
             const dynamicNeed = irDynamicRuntimeNeedForSymbol(symbol);
             if (dynamicNeed !== undefined) dynamicRuntimeNeeds.add(dynamicNeed);
+            const methodWrapper = parseIrDynamicMethodCallHelperName(symbol);
+            if (methodWrapper !== undefined) dynamicMethodCallWrappers.set(symbol, methodWrapper);
+            const borrowWrapper = parseIrArrayPrototypeBorrowHelperName(symbol);
+            if (borrowWrapper !== undefined) arrayPrototypeBorrowWrappers.set(symbol, borrowWrapper);
             switch (symbol) {
               case "__extern_set_strict":
                 usesFunctionMemberStrictSet = true;
@@ -9451,6 +9516,16 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
   }
+  // (#7106 Stage 4 / compareArray.format) One wrapper per (method, arity),
+  // each family built from legacy's own emitters over a template, so their
+  // reservations are shared with legacy sites and filled at finalize like theirs.
+  buildTemplateWrapperFamily(ctx, dynamicMethodCallWrappers, ensureIrDynamicMethodCallHelper, "brand-dispatch");
+  buildTemplateWrapperFamily(
+    ctx,
+    arrayPrototypeBorrowWrappers,
+    ensureIrArrayPrototypeBorrowHelper,
+    "Array.prototype borrow",
+  );
   if (usesNumberFromValue) {
     // (#7106 module-init lever B) legacy's `Number(v)` emission over a template,
     // registered now so no Phase-3 body drives a late-import index shift.

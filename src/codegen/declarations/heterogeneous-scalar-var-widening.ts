@@ -41,6 +41,7 @@
  * name, so a same-named local in an unrelated function cannot force a module
  * global to widen (the #3364 bare-name-keying failure mode).
  */
+import type { JsTag } from "../../checker/oracle.js";
 import type { ValType } from "../../ir/types.js";
 import {
   collectHeterogeneouslyAssignedModuleVarNames,
@@ -52,7 +53,8 @@ import {
   updateRetypesModuleIdentifier,
 } from "../../ir/update-retyped-bindings.js";
 import { ts } from "../../ts-api.js";
-import type { CodegenContext } from "../context/types.js";
+import { getLocalType } from "../context/locals.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { reassignedFunctionBindingIsDynamic } from "./reassigned-function-binding-widening.js";
 
@@ -217,6 +219,70 @@ export function moduleGlobalIsDynamicButStaticallyPrimitive(ctx: CodegenContext,
   if (decl === undefined || !ts.isIdentifier(decl.name) || !isModuleScoped(decl)) return false;
   const tag = ctx.oracle.staticJsTypeOf(id);
   return tag !== "mixed" && HETEROGENEOUS_PRIMITIVE_SLOT_TAGS.has(tag);
+}
+
+/**
+ * (#4495) {@link moduleGlobalIsDynamicButStaticallyPrimitive}, plus its
+ * function-local twin: a local the mixed-assignment analysis demoted to an
+ * externref slot keeps its initializer's checker type just the same, so a
+ * static `typeof x` fold would report that type forever. A local a closure
+ * writes lives in a ref cell; its slot is the cell's value type.
+ *
+ * The local branch does not consult the checker type: every carrier the
+ * mixed-assignment analysis left on externref outgrows it, whether that type
+ * is a primitive or an object (an object carrier's closed struct type is just
+ * as stale), so dispatching on it is exactly as unsafe.
+ */
+export function slotIsDynamicButStaticallyPrimitive(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): boolean {
+  const localIdx = fctx.mixedAssignmentCarrierVars?.has(id.text) ? fctx.localMap.get(id.text) : undefined;
+  if (localIdx !== undefined) {
+    const slotType = fctx.boxedCaptures?.get(id.text)?.valType ?? getLocalType(fctx, localIdx);
+    if (slotType?.kind === "externref") return true;
+  }
+  return moduleGlobalIsDynamicButStaticallyPrimitive(ctx, id);
+}
+
+/**
+ * The checker type a member read should dispatch on. A binding widened to
+ * externref by a reaching write of another type holds values its initializer's
+ * type no longer describes, so it reads as `any` and takes the dynamic arms.
+ */
+export function memberReceiverStaticType(ctx: CodegenContext, fctx: FunctionContext, receiver: ts.Expression): ts.Type {
+  return ts.isIdentifier(receiver) && slotIsDynamicButStaticallyPrimitive(ctx, fctx, receiver)
+    ? ctx.checker.getAnyType()
+    : ctx.checker.getTypeAtLocation(receiver);
+}
+
+/** {@link memberReceiverStaticType} as a JS tag: a widened binding's tag is `mixed`. */
+export function receiverStaticJsType(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+): JsTag | "mixed" {
+  return ts.isIdentifier(receiver) && slotIsDynamicButStaticallyPrimitive(ctx, fctx, receiver)
+    ? "mixed"
+    : ctx.oracle.staticJsTypeOf(receiver);
+}
+
+/**
+ * {@link memberReceiverStaticType} for a method call. The stale type still
+ * routes the methods it declares, whose native arms take the externref carrier
+ * (`r = id('x'); r.toUpperCase()`). A method it lacks can only live on a value a
+ * reaching write stored (`[...s] = [1, 2]; s.join()`), and only the dynamic arms
+ * can dispatch that.
+ */
+export function methodReceiverStaticType(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  method: ts.PropertyAccessExpression,
+): ts.Type {
+  return ctx.oracle.signatureOf(method) === undefined
+    ? memberReceiverStaticType(ctx, fctx, method.expression)
+    : ctx.checker.getTypeAtLocation(method.expression);
 }
 
 /**

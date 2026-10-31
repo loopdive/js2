@@ -277,7 +277,12 @@ describe("issued canonical BigInt-to-number owner", () => {
   it.each(["conversion", "dependency"] as const)("refuses a changed completed %s body", (role) => {
     const f = complete();
     completed(f);
-    (role === "conversion" ? f.pack.number : f.bigint.equal).object.body.push({ op: "nop" });
+    const target = (role === "conversion" ? f.pack.number : f.bigint.equal).object.body;
+    if (isPrivatelyCopiedFrozenArray(target)) {
+      protectedMutation(f, target, () => target.push({ op: "nop" }));
+      return;
+    }
+    target.push({ op: "nop" });
     expect(() => completed(f)).toThrow("altered completed function");
   });
 
@@ -443,6 +448,13 @@ describe("BigInt number own-data authentication", () => {
   it.each(["locals", "body"] as const)("independently rejects changed full %s after warm completion", (role) => {
     const f = complete();
     expect(completed(f)).toBe(f.pack);
+    if (isPrivatelyCopiedFrozenArray(f.pack.number.object.body)) {
+      protectedMutation(f, f.pack.number.object, () => {
+        if (role === "locals") f.pack.number.object.locals.push({ name: "unused", type: { kind: "i32" } });
+        else f.pack.number.object.body = [{ op: "f64.const", value: 0 }];
+      });
+      return;
+    }
     if (role === "locals") f.pack.number.object.locals.push({ name: "unused", type: { kind: "i32" } });
     else f.pack.number.object.body = [{ op: "f64.const", value: 0 }];
     expect(() => completed(f)).toThrow();
@@ -455,6 +467,20 @@ function definitionAccessorControl(f: Fixture, target: object, key: PropertyKey,
   expect(descriptor).toBeDefined();
   expect(Object.hasOwn(descriptor!, "value")).toBe(true);
   expect(descriptor!.enumerable).toBe(true);
+  if (!descriptor!.configurable) {
+    let reads = 0;
+    protectedMutation(f, target, () =>
+      Object.defineProperty(target, key, {
+        get() {
+          reads++;
+          return descriptor!.value;
+        },
+      }),
+    );
+    expect(reads).toBe(0);
+    expect(() => action()).not.toThrow();
+    return;
+  }
   expect(descriptor!.configurable).toBe(true);
   const before = populations(f),
     state = f.tx.state;
@@ -621,6 +647,23 @@ describe("BigInt number descriptor-first live definitions", () => {
         key: fieldKey,
         descriptor: Object.getOwnPropertyDescriptor(target, fieldKey)!,
       }));
+      if (Object.isFrozen(target)) {
+        if (shape === "sparse") protectedMutation(f, target, () => Reflect.deleteProperty(target, key), false);
+        else if (shape === "inherited") {
+          protectedMutation(f, target, () => Reflect.deleteProperty(target, key), false);
+          protectedMutation(f, target, () => Object.setPrototypeOf(target, { op: descriptor!.value }));
+        } else
+          protectedMutation(f, target, () =>
+            Object.defineProperty(
+              target,
+              key,
+              shape === "hidden"
+                ? { ...descriptor!, enumerable: false }
+                : { value: shape === "cycle" ? target : 1, enumerable: true, configurable: true, writable: true },
+            ),
+          );
+        return;
+      }
       if (shape === "inherited") {
         expect(originalFields.map((field) => field.key)).toEqual(["op", "index"]);
         expect(originalFields.every((field) => field.descriptor.configurable)).toBe(true);
@@ -677,6 +720,18 @@ describe("BigInt number descriptor-first live definitions", () => {
       const key = part === "locals" || part === "body" ? part : part === "deep-attributes" ? "op" : "body";
       const descriptor = Object.getOwnPropertyDescriptor(target, key)!;
       expect(Object.hasOwn(descriptor, "value")).toBe(true);
+      if (!descriptor.writable) {
+        protectedMutation(f, target, () =>
+          Object.defineProperty(
+            target,
+            key,
+            part === "locals" || part === "body"
+              ? { ...descriptor, value: structuredClone(descriptor.value) }
+              : { ...descriptor, writable: true },
+          ),
+        );
+        return;
+      }
       expect(descriptor.writable).toBe(true);
       const before = populations(f),
         state = f.tx.state;
@@ -700,3 +755,83 @@ describe("BigInt number descriptor-first live definitions", () => {
     },
   );
 });
+
+import { copyOwnedFunctionDefinition, isPrivatelyCopiedFrozenArray } from "../src/wasm/physical/owned-function-data.js";
+import { vi } from "vitest";
+describe("owned numeric provenance boundary", () => {
+  it("admits genuine copied completion while preserving protected data", () => {
+    const f = complete();
+    expect(isPrivatelyCopiedFrozenArray(f.pack.number.object.body)).toBe(true);
+    expect(Object.isFrozen(f.pack.number.object.body)).toBe(true);
+    expect(() => f.pack.number.object.body.push({ op: "nop" })).toThrow(TypeError);
+    expect(completed(f)).toBe(f.pack);
+  });
+  it.each(["prototype-spoof", "proxy", "derived"] as const)("rejects unbranded %s before canonical filling", (kind) => {
+    const f = fixture();
+    const genuine = copyOwnedFunctionDefinition({ locals: [], body: [] }).body;
+    const input =
+      kind === "prototype-spoof"
+        ? Object.freeze(Object.setPrototypeOf([], Object.getPrototypeOf(genuine)))
+        : kind === "proxy"
+          ? new Proxy(genuine, {})
+          : genuine.slice();
+    expect(isPrivatelyCopiedFrozenArray(genuine)).toBe(true);
+    expect(isPrivatelyCopiedFrozenArray(input)).toBe(false);
+    f.pack.number.object.body = input;
+    expect(() => current(f)).toThrow("invalid live definition array");
+  });
+  it("rejects a caller-minted branded wrong body through canonical comparison", () => {
+    const f = fixture();
+    const original = f.tx.fillOwnedFunction.bind(f.tx);
+    const wrong = copyOwnedFunctionDefinition({ locals: [], body: [{ op: "f64.const", value: 0 }] });
+    expect(isPrivatelyCopiedFrozenArray(wrong.body)).toBe(true);
+    const spy = vi
+      .spyOn(f.tx, "fillOwnedFunction")
+      .mockImplementation((token, definition) => original(token, token === f.pack.number ? wrong : definition));
+    try {
+      expect(() => complete(f)).toThrow(/changed canonical/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+  it("does not turn shallow array branding into mutable-byte admission", () => {
+    const f = fixture();
+    const copied = copyOwnedFunctionDefinition({
+      locals: [],
+      body: [{ op: "nop", metadata: new Uint8Array([7]) } as never],
+    });
+    expect(isPrivatelyCopiedFrozenArray(copied.body)).toBe(true);
+    expect(copied.immutable).toBe(false);
+    f.pack.number.object.body = copied.body;
+    expect(() => current(f)).toThrow("non-plain live definition record");
+  });
+  it("does not let the brand authorize a foreign transaction", () => {
+    const f = complete();
+    expect(isPrivatelyCopiedFrozenArray(f.pack.number.object.body)).toBe(true);
+    const foreign = fixture();
+    expect(() => requireCompletedNativeBigIntNumber(foreign.tx, f.pack, f.plan, f.dependencies)).toThrow(
+      "foreign or copied owner",
+    );
+  });
+});
+
+import { emitWat } from "../src/emit/wat.js";
+/** Owned payload controls require rejection at the attempted write, then prove unchanged output and live authority. */
+function protectedMutation(f: Fixture, target: object, mutation: () => unknown, result?: false): void {
+  expect(isPrivatelyCopiedFrozenArray(f.pack.number.object.body)).toBe(true);
+  const before = Object.getOwnPropertyDescriptors(target),
+    proto = Object.getPrototypeOf(target),
+    binary = emitBinary(f.module),
+    wat = emitWat(f.module),
+    population = populations(f),
+    state = f.tx.state;
+  if (result === false) expect(mutation()).toBe(false);
+  else expect(mutation).toThrow(TypeError);
+  expect(Object.getOwnPropertyDescriptors(target)).toEqual(before);
+  expect(Object.getPrototypeOf(target)).toBe(proto);
+  expect(emitBinary(f.module)).toEqual(binary);
+  expect(emitWat(f.module)).toBe(wat);
+  expect(f.tx.state).toBe(state);
+  unchangedPopulations(f, population);
+  expect(completed(f)).toBe(f.pack);
+}

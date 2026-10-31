@@ -9,7 +9,7 @@
  * boxed externref carrier.
  */
 import { ts, forEachChild } from "../../ts-api.js";
-import { jsTagOfFact, type JsTag } from "../../checker/oracle.js";
+import { identifierWriteTag, jsTagOfFact, type JsTag } from "../../checker/oracle.js";
 import type { WidenedCarrierOracle } from "../../checker/usage-inference.js";
 import type { ValType } from "../../ir/types.js";
 import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
@@ -17,11 +17,7 @@ import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { initializerMayProduceHostCallable } from "./host-callable-initializer.js";
 import { readEnv } from "../../env.js";
-
-function stripParens(expr: ts.Expression): ts.Expression {
-  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
-  return expr;
-}
+import { identifierWritesOf, stripParens, type IdentifierWrite } from "../../shared/binding-writes.js";
 
 function containingScope(decl: ts.VariableDeclaration): ts.Node {
   for (let node: ts.Node | undefined = decl.parent; node; node = node.parent) {
@@ -34,8 +30,11 @@ function containingScope(decl: ts.VariableDeclaration): ts.Node {
 interface AssignmentFact {
   /** Identifier on the left, retained for the declaration-name self guard. */
   target: ts.Identifier;
-  /** RHS is deliberately retained as syntax, not a phase-sensitive type verdict. */
-  value: ts.Expression;
+  /**
+   * (#4495) What the store writes, deliberately retained as syntax, not a
+   * phase-sensitive type verdict — see {@link identifierWritesOf}.
+   */
+  write: IdentifierWrite;
   /** Source-walk order, so resolved and `with` fallback facts can be merged exactly. */
   order: number;
 }
@@ -85,19 +84,23 @@ function scopeCarrierFacts(ctx: CodegenContext, scope: ts.Node): ScopeCarrierFac
   };
   let order = 0;
   const visit = (node: ts.Node): void => {
+    // (#4495) Every identifier store — plain, logical and compound
+    // assignment, destructuring, for-in/for-of heads, `++`/`--` and `var`
+    // re-declarations — not only `x = v`.
+    for (const write of identifierWritesOf(node)) {
+      const target = write.target;
+      const resolved = ctx.oracle.variableDeclarationOf(target);
+      const fact: AssignmentFact = { target, write, order: order++ };
+      if (resolved !== undefined) {
+        pushWeakFact(facts.assignmentsByDeclaration, resolved, fact);
+      } else if (isInsideWithBody(target)) {
+        // The checker intentionally resolves no identifier inside a `with`
+        // body. Preserve the existing tightly-bounded name fallback.
+        pushNamedFact(facts.unresolvedWithAssignmentsByName, target.text, fact);
+      }
+    }
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-      const target = stripParens(node.left);
-      if (ts.isIdentifier(target)) {
-        const resolved = ctx.oracle.variableDeclarationOf(target);
-        const fact: AssignmentFact = { target, value: node.right, order: order++ };
-        if (resolved !== undefined) {
-          pushWeakFact(facts.assignmentsByDeclaration, resolved, fact);
-        } else if (isInsideWithBody(target)) {
-          // The checker intentionally resolves no identifier inside a `with`
-          // body. Preserve the existing tightly-bounded name fallback.
-          pushNamedFact(facts.unresolvedWithAssignmentsByName, target.text, fact);
-        }
-      } else if (ts.isPropertyAccessExpression(node.left)) {
+      if (ts.isPropertyAccessExpression(node.left)) {
         // Keep the old out-of-shape predicate exact: it accepted parentheses
         // around the receiver, but not around the entire assignment target.
         const propertyTarget = node.left;
@@ -194,7 +197,10 @@ export function bindingMayReceiveHostCallable(ctx: CodegenContext, decl: ts.Vari
   const resolved = facts.assignmentsByDeclaration.get(decl) ?? [];
   const unresolvedWith = facts.unresolvedWithAssignmentsByName.get(decl.name.text) ?? [];
   return [...resolved, ...unresolvedWith].some(
-    (fact) => fact.target !== decl.name && initializerMayProduceHostCallable(ctx, fact.value),
+    (fact) =>
+      fact.target !== decl.name &&
+      fact.write.kind === "value" &&
+      initializerMayProduceHostCallable(ctx, fact.write.expr),
   );
 }
 
@@ -326,9 +332,11 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
         ? resolvedFacts[resolvedIndex++]!
         : unresolvedWithFacts[unresolvedIndex++]!;
     if (fact.target === decl.name) continue;
-    const rawTag = ctx.oracle.staticJsTypeOf(fact.value);
+    const value = fact.write.kind === "value" ? fact.write.expr : undefined;
+    // An annotation fixes the tag, not the struct: the #2917 check below still applies.
+    const rawTag = identifierWriteTag(ctx.oracle, fact.write, initialTag, decl.type !== undefined);
     const assignedTag =
-      rawTag === "mixed" && initialDomain === "object" && nullableSingleObjectAssignment(ctx, fact.value)
+      rawTag === "mixed" && initialDomain === "object" && value && nullableSingleObjectAssignment(ctx, value)
         ? "object"
         : rawTag;
     const unresolvable = assignedTag === "mixed";
@@ -336,7 +344,7 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
       mixed = true;
       break;
     }
-    if (initialDomain === "object" && crossesUntypedObjectReturns(ctx, decl.initializer, fact.value)) {
+    if (initialDomain === "object" && value && crossesUntypedObjectReturns(ctx, decl.initializer, value)) {
       mixed = true;
       break;
     }

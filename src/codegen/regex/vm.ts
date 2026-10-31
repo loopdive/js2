@@ -19,6 +19,8 @@
  * entries leak into the outer attempt).
  */
 import { ReOp } from "./bytecode.js";
+import { isLinearSafe, searchLinear } from "./linear.js";
+import { asciiFold, assertionHolds, classMatch, forwardCodePoint, unitMatches } from "./match-units.js";
 
 /** Matches the Wasm VM's step cap. Tunable; documented in the issue. */
 export const REGEX_STEP_CAP = 1_000_000;
@@ -49,41 +51,6 @@ interface Frame {
   pc: number;
   sp: number;
   caps: Int32Array;
-}
-
-/** Does code unit/code point `c` fall in class at `classTable[offset]`? */
-function classMatch(classTable: number[], offset: number, c: number, negated: boolean): boolean {
-  const rangeCount = classTable[offset]!;
-  let inside = false;
-  let loIndex = 0;
-  let hiIndex = rangeCount - 1;
-  while (loIndex <= hiIndex) {
-    const mid = loIndex + ((hiIndex - loIndex) >> 1);
-    const p = offset + 1 + 2 * mid;
-    const lo = classTable[p]!;
-    const hi = classTable[p + 1]!;
-    if (c < lo) hiIndex = mid - 1;
-    else if (c > hi) loIndex = mid + 1;
-    else {
-      inside = true;
-      break;
-    }
-  }
-  return negated ? !inside : inside;
-}
-
-function asciiFold(code: number): number {
-  if (code >= 0x41 && code <= 0x5a) return code + 0x20;
-  return code;
-}
-
-function isLineTerminator(c: number): boolean {
-  return c === 0x0a || c === 0x0d || c === 0x2028 || c === 0x2029;
-}
-
-/** §22.2.2.6 IsWordChar (ASCII; Unicode case folding lands with `u` in 2d). */
-function isWordChar(c: number): boolean {
-  return (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5a) || c === 0x5f || (c >= 0x61 && c <= 0x7a);
 }
 
 /**
@@ -145,29 +112,11 @@ export function runAt(
     let failed = false;
 
     switch (op) {
-      case ReOp.CHAR: {
-        if (inBounds() && unit() === a) {
-          sp += dir;
-          pc++;
-        } else failed = true;
-        break;
-      }
-      case ReOp.CHARI: {
-        if (inBounds() && asciiFold(unit()) === a) {
-          sp += dir;
-          pc++;
-        } else failed = true;
-        break;
-      }
-      case ReOp.ANY: {
-        if (inBounds() && (a !== 0 || !isLineTerminator(unit()))) {
-          sp += dir;
-          pc++;
-        } else failed = true;
-        break;
-      }
+      case ReOp.CHAR:
+      case ReOp.CHARI:
+      case ReOp.ANY:
       case ReOp.CLASS: {
-        if (inBounds() && classMatch(classTable, a, unit(), b !== 0)) {
+        if (inBounds() && unitMatches(op, a, b, classTable, unit())) {
           sp += dir;
           pc++;
         } else failed = true;
@@ -180,40 +129,28 @@ export function runAt(
         }
         let codePoint = unit();
         let width = 1;
-        if (dir > 0 && codePoint >= 0xd800 && codePoint <= 0xdbff && sp + 1 < len) {
-          const trail = input.charCodeAt(sp + 1);
-          if (trail >= 0xdc00 && trail <= 0xdfff) {
-            codePoint = 0x10000 + ((codePoint - 0xd800) << 10) + (trail - 0xdc00);
-            width = 2;
+        if (dir > 0) {
+          codePoint = forwardCodePoint(input, sp);
+          if (codePoint < 0) {
+            failed = true;
+            break;
           }
-        } else if (
-          dir > 0 &&
-          codePoint >= 0xdc00 &&
-          codePoint <= 0xdfff &&
-          sp > 0 &&
-          input.charCodeAt(sp - 1) >= 0xd800 &&
-          input.charCodeAt(sp - 1) <= 0xdbff
-        ) {
-          // Search/sticky entry must not reinterpret the trail half of an
-          // existing pair as a lone surrogate.
-          failed = true;
-          break;
-        } else if (dir < 0 && codePoint >= 0xdc00 && codePoint <= 0xdfff && sp > 1) {
+          if (codePoint > 0xffff) width = 2;
+        } else if (codePoint >= 0xdc00 && codePoint <= 0xdfff && sp > 1) {
           const lead = input.charCodeAt(sp - 2);
           if (lead >= 0xd800 && lead <= 0xdbff) {
             codePoint = 0x10000 + ((lead - 0xd800) << 10) + (codePoint - 0xdc00);
             width = 2;
           }
         } else if (
-          dir < 0 &&
           codePoint >= 0xd800 &&
           codePoint <= 0xdbff &&
           sp < len &&
           input.charCodeAt(sp) >= 0xdc00 &&
           input.charCodeAt(sp) <= 0xdfff
         ) {
-          // Likewise, reverse lookbehind cannot enter a pair between its
-          // lead and trail halves and treat the lead as lone.
+          // Reverse lookbehind cannot enter a pair between its lead and
+          // trail halves and treat the lead as lone.
           failed = true;
           break;
         }
@@ -239,30 +176,10 @@ export function runAt(
         pc++;
         break;
       }
-      case ReOp.BOL: {
-        // a = multiline: `^` matches at position 0, OR (multiline) right after
-        // a line terminator (§22.2.2.6). `\r\n` counts as two terminators, so a
-        // `^` between them still matches — the char before sp being any LT
-        // suffices.
-        if (sp === 0 || (a !== 0 && isLineTerminator(input.charCodeAt(sp - 1)))) pc++;
-        else failed = true;
-        break;
-      }
-      case ReOp.EOL: {
-        // a = multiline: `$` matches at end of input, OR (multiline) right
-        // before a line terminator (§22.2.2.7).
-        if (sp === len || (a !== 0 && isLineTerminator(input.charCodeAt(sp)))) pc++;
-        else failed = true;
-        break;
-      }
+      case ReOp.BOL:
+      case ReOp.EOL:
       case ReOp.WBOUND: {
-        // a = negated (`\B`). Word boundary: exactly one of the neighbouring
-        // code units is a word char (§22.2.2.6); out-of-bounds neighbours are
-        // non-word. Position-based — direction-independent.
-        const before = sp > 0 ? isWordChar(input.charCodeAt(sp - 1)) : false;
-        const after = sp < len ? isWordChar(input.charCodeAt(sp)) : false;
-        const boundary = before !== after;
-        if (a !== 0 ? !boundary : boundary) pc++;
+        if (assertionHolds(op, a, input, sp)) pc++;
         else failed = true;
         break;
       }
@@ -358,6 +275,18 @@ export function runAt(
  * Full search: scan start positions `startIdx..len` (sticky callers pass a
  * pre-clamped range via a single `runAt`). Returns the first match's caps or
  * null.
+ *
+ * (#2723) When an attempt exhausts the step budget and the program is
+ * linear-safe, the rest of the search — from that start position on — runs on
+ * the linear PikeVM instead of throwing. Its answer is the one backtracking
+ * would have produced with unbounded steps. For a fixed compiled pattern,
+ * that remaining linear scan is linear in the input, including capture-copy
+ * and class-predicate costs. The per-attempt budget does not bound the sum of
+ * earlier backtracking attempts: a non-sticky /a*b/ search over only `a`s can
+ * remain quadratic without any one attempt exhausting its budget. This is a
+ * budget-exhaustion fallback, not universal whole-search ReDoS immunity.
+ * Programs the PikeVM cannot run (backreferences, lookarounds, nullable-body
+ * loops) keep the RangeError.
  */
 export function search(
   prog: number[],
@@ -370,7 +299,13 @@ export function search(
 ): Int32Array | null {
   const len = input.length;
   for (let i = Math.max(0, startIdx); i <= len; i++) {
-    const m = runAt(prog, classTable, nGroups, input, i, 0, 1, undefined, nScratch);
+    let m: Int32Array | null;
+    try {
+      m = runAt(prog, classTable, nGroups, input, i, 0, 1, undefined, nScratch);
+    } catch (e) {
+      if (!(e instanceof RangeError) || !isLinearSafe(prog)) throw e;
+      return searchLinear(prog, classTable, 2 * nGroups + nScratch, input, i, sticky);
+    }
     if (m) return m;
     if (sticky) return null;
   }

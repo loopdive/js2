@@ -23,7 +23,7 @@ import {
   certifyImportedIrCall,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
-  isFunctionObjectChainedWrite,
+  isFunctionObjectReceiverUse,
   functionObjectStoreRoot,
   type IrSelection,
 } from "../ir/select.js";
@@ -43,6 +43,7 @@ import { sourceFunctionDeclarationForHandle } from "./program-abi-source-callabl
 import { localGlobalIdx } from "./registry/imports.js";
 import { planProgramAbiFunctionValue } from "./program-abi-planning.js";
 import { makeIrFunctionMemberClosures } from "./function-member-closure-planning.js";
+import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js";
 import { computeClosureWrapperSig } from "./closures.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
@@ -84,18 +85,7 @@ export function hasPreparedFunctionObjectReference(
     sourceOwnerUnitId(identifier) !== ownerUnitId
   )
     return false;
-  const access = identifier.parent;
-  const use = access.parent;
-  if (
-    !(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) ||
-    access.expression !== identifier ||
-    access.questionDotToken !== undefined ||
-    !(
-      (ts.isCallExpression(use) && use.expression === access && !use.questionDotToken) ||
-      (ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken)
-    )
-  )
-    return false;
+  if (!isFunctionObjectReceiverUse(identifier, { chainedWrite: false })) return false;
   const unitId = plan.target.binding.unitId;
   const declaration = identity.identityContext.declarationByUnitId.get(unitId);
   const resolved = ctx.oracle.valueDeclarationOf(identifier);
@@ -855,16 +845,7 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
       const visit = (node: ts.Node): void => {
         if (ts.isIdentifier(node)) {
           const access = node.parent;
-          const use = access?.parent;
-          const isReceiver =
-            (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) &&
-            access.expression === node &&
-            access.questionDotToken === undefined &&
-            ((ts.isCallExpression(use) && use.expression === access) ||
-              (ts.isBinaryExpression(use) &&
-                use.left === access &&
-                use.operatorToken.kind === ts.SyntaxKind.EqualsToken) ||
-              isFunctionObjectChainedWrite(access));
+          const isReceiver = isFunctionObjectReceiverUse(node, { chainedWrite: true });
           // (#7106 S3c) A self-guarded constructor used as a value: the `new F(…)`
           // callee (`dyn.construct`) or the `x instanceof F` operand
           // (`dyn.instanceof_fn`, which reads the plan's exact unit target).
@@ -899,9 +880,9 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
             // and every member call/write dispatches dynamically, so it gets
             // the opaque all-dynamic signature (#7106 census arm 4).
             if (missingEvidence && !isReceiver && !isStoredValue) return;
-            const signature = missingEvidence
-              ? opaqueReceiverSignature(target.declaration)
-              : {
+            const resolvedSignature = (): IrClosureSignature | undefined => {
+              try {
+                return {
                   params: target.declaration.parameters.map((parameter, index) =>
                     resolvePositionType(
                       effectiveIrParamTypeNode(parameter),
@@ -914,6 +895,17 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
                       ? null
                       : resolvePositionType(returnNode, claim?.typeEntry.returnType, classShapeSidecar),
                 };
+              } catch (error) {
+                // (#7106 Stage 4) Evidence that does not resolve (a JSDoc
+                // `{object}` parameter) is no signature either: a receiver-only
+                // or stored use never reads it, so it takes the opaque one.
+                if (error instanceof IrUnsupportedError && (isReceiver || isStoredValue)) return undefined;
+                throw error;
+              }
+            };
+            const signature = missingEvidence
+              ? opaqueReceiverSignature(target.declaration)
+              : (resolvedSignature() ?? opaqueReceiverSignature(target.declaration));
             const funcIdx = ctx.programAbiSourceCallables?.handleForUnit(target.targetUnitId);
             const prepared =
               funcIdx === undefined ? null : ensureFuncClosureSingletonAccessor(ctx, target.targetName, funcIdx);
@@ -1010,6 +1002,7 @@ export function planIrFunctionValueResolverState(
     ? makeIrFunctionMemberClosures(ctx, identityContext, functionObjectValues, {
         computeSignature: (expression) => computeClosureWrapperSig(ctx, expression),
         dynamicCarrierIsExternref: () => resolveIrDynamicCarrierType(ctx).kind === "externref",
+        fnctorPrototypeMethodStruct: (expression) => resolveLiftedMethodThisStruct(ctx, expression),
         valueType,
         typeBindingKey: irTypeBindingKey,
       })

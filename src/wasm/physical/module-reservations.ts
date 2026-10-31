@@ -1,5 +1,16 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import {
+  createOwnedFunctionSnapshotStore,
+  copyOwnedFunctionDefinition,
+  publishOwnedFunctionDefinition,
+  ownedFunctionShell,
+} from "./owned-function-data.js";
+import {
+  capturePhysicalDataSnapshot,
+  matchesPhysicalDataSnapshot,
+  type PhysicalDataSnapshot,
+} from "./data-snapshot.js";
 import type { FuncHandle, Instr, LocalDef, ValType } from "../model/instructions.js";
 import type {
   TypeDef,
@@ -210,103 +221,6 @@ function dataText(data: PhysicalData): string {
   return encode(data);
 }
 
-type FunctionSnapshot =
-  | string
-  | bigint
-  | boolean
-  | undefined
-  | null
-  | { readonly kind: "number"; readonly high: number; readonly low: number }
-  | {
-      readonly kind: "object";
-      readonly tag: string;
-      readonly fields: readonly (readonly [string, FunctionSnapshot])[];
-    };
-
-/** Immutable expected data only. Never retain live objects or a successful-validation cache. */
-function captureFunctionSnapshot(data: PhysicalData): FunctionSnapshot {
-  const active = new Set<object>(),
-    numberBits = new DataView(new ArrayBuffer(8));
-  const capture = (value: object | string | number | bigint | boolean | undefined | null): FunctionSnapshot => {
-    if (value === null || value === undefined) return value;
-    switch (typeof value) {
-      case "string":
-      case "boolean":
-      case "bigint":
-        return value;
-      case "number":
-        numberBits.setFloat64(0, value, true);
-        return Object.freeze({
-          kind: "number",
-          high: numberBits.getUint32(4, true),
-          low: numberBits.getUint32(0, true),
-        });
-      case "object": {
-        if (active.has(value)) throw new Error("cyclic physical descriptor");
-        active.add(value);
-        const tag = Array.isArray(value) ? `array:${value.length}` : value instanceof Uint8Array ? "bytes" : "object";
-        // Object.entries captures ALL sibling values before descending into any child, as dataText does.
-        const fields = Object.entries(value).map(([key, entry]) => Object.freeze([key, capture(entry)] as const));
-        active.delete(value);
-        return Object.freeze({ kind: "object", tag, fields: Object.freeze(fields) });
-      }
-      default:
-        throw new Error("unsupported physical descriptor value");
-    }
-  };
-  return capture(data);
-}
-
-/** Walk every live child, even after mismatch: later getters/errors/cycles retain their original precedence. */
-function matchesFunctionSnapshot(data: PhysicalData, expected: FunctionSnapshot): boolean {
-  const active = new Set<object>(),
-    numberBits = new DataView(new ArrayBuffer(8));
-  const matches = (
-    value: object | string | number | bigint | boolean | undefined | null,
-    snapshot: FunctionSnapshot,
-  ): boolean => {
-    if (value === null || value === undefined) return value === snapshot;
-    switch (typeof value) {
-      case "string":
-      case "boolean":
-      case "bigint":
-        return value === snapshot;
-      case "number": {
-        numberBits.setFloat64(0, value, true);
-        const high = numberBits.getUint32(4, true),
-          low = numberBits.getUint32(0, true);
-        return (
-          typeof snapshot === "object" &&
-          snapshot !== null &&
-          snapshot.kind === "number" &&
-          snapshot.high === high &&
-          snapshot.low === low
-        );
-      }
-      case "object": {
-        if (active.has(value)) throw new Error("cyclic physical descriptor");
-        active.add(value);
-        const tag = Array.isArray(value) ? `array:${value.length}` : value instanceof Uint8Array ? "bytes" : "object";
-        const fields = Object.entries(value),
-          prior =
-            typeof snapshot === "object" && snapshot !== null && snapshot.kind === "object" ? snapshot : undefined;
-        let equal = prior !== undefined && prior.tag === tag && prior.fields.length === fields.length;
-        for (let index = 0; index < fields.length; index++) {
-          const [key, entry] = fields[index]!;
-          const field = prior?.fields[index];
-          if (field?.[0] !== key) equal = false;
-          if (!matches(entry, field?.[1])) equal = false;
-        }
-        active.delete(value);
-        return equal;
-      }
-      default:
-        throw new Error("unsupported physical descriptor value");
-    }
-  };
-  return matches(data, expected);
-}
-
 /**
  * Completion ledger around the existing module allocator. Start on empty
  * physical storage; reserve the complete ordered demand set, freeze, fill,
@@ -327,8 +241,9 @@ export class PhysicalModuleReservations {
   readonly #expected: { [K in PopulationKey]: PhysicalModuleStorage[K] };
   readonly #filledFunctions = new Map<
     FunctionReservation,
-    { locals: LocalDef[]; body: Instr[]; snapshot: FunctionSnapshot }
+    { locals: LocalDef[]; body: Instr[]; snapshot: PhysicalDataSnapshot }
   >();
+  readonly #ownedFunctions = createOwnedFunctionSnapshotStore<FunctionReservation, PhysicalDataSnapshot>();
   readonly #filledGlobals = new Map<GlobalReservation, { init: Instr[]; text: string }>();
   readonly #publications = new Map<Element | WasmExport, string>();
   readonly #exportNames = new Set<string>();
@@ -403,17 +318,17 @@ export class PhysicalModuleReservations {
     }
   }
 
-  #captureFunction(data: PhysicalData): FunctionSnapshot {
+  #captureFunction(data: PhysicalData): PhysicalDataSnapshot {
     try {
-      return captureFunctionSnapshot(data);
+      return capturePhysicalDataSnapshot(data);
     } catch (error) {
       return this.#fail(error instanceof Error ? error.message : String(error));
     }
   }
 
-  #matchesFunction(data: PhysicalData, expected: FunctionSnapshot): boolean {
+  #matchesFunction(data: PhysicalData, expected: PhysicalDataSnapshot): boolean {
     try {
-      return matchesFunctionSnapshot(data, expected);
+      return matchesPhysicalDataSnapshot(data, expected);
     } catch (error) {
       return this.#fail(error instanceof Error ? error.message : String(error));
     }
@@ -498,7 +413,10 @@ export class PhysicalModuleReservations {
       if (
         token.object.locals !== fill.locals ||
         token.object.body !== fill.body ||
-        !this.#matchesFunction(token.object, fill.snapshot)
+        !this.#matchesFunction(
+          this.#ownedFunctions.get(token) !== undefined ? ownedFunctionShell(token.object) : token.object,
+          this.#ownedFunctions.get(token) ?? fill.snapshot,
+        )
       )
         this.#fail(`altered completed function ${token.key}`);
     }
@@ -885,16 +803,59 @@ export class PhysicalModuleReservations {
     } else this.#fail("completion requires a defined function or global");
   }
 
-  fillFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {
+  /** Shared fill preconditions; owned fills recheck them after copy callbacks. */
+  #requireFunctionFill(token: FunctionReservation): void {
     this.#require("filling");
     this.#owned(token);
     if (token.kind !== "function") this.#fail("function fill requires a defined-function token");
     if (this.#filledFunctions.has(token)) this.#fail(`duplicate function fill ${token.key}`);
+  }
+
+  #validateFunctionDefinition(definition: { locals: LocalDef[]; body: Instr[] }): void {
     for (const local of definition.locals) this.#validateValue(local.type);
     this.#validateInstructions(definition.body);
+  }
+
+  fillFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {
+    this.#requireFunctionFill(token);
+    this.#validateFunctionDefinition(definition);
     token.object.locals = definition.locals;
     token.object.body = definition.body;
     this.#filledFunctions.set(token, { ...definition, snapshot: this.#captureFunction(token.object) });
+  }
+
+  /**
+   * Copies dense arrays and plain own-data records, detaching caller aliases.
+   * Published locals/body are locked; copied records and private-prototype arrays
+   * are frozen. Callers keep ownership and mutability of their original inputs.
+   * Byte views are copied but remain mutable, so those definitions retain full
+   * recursive live audits. Immutable payloads retain shell and module audits.
+   * Copy callbacks cannot carry authority across phases: recheck before and
+   * after publication. Legacy fillFunction retains live caller-data semantics.
+   */
+  fillOwnedFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {
+    this.#requireFunctionFill(token);
+    try {
+      const data = copyOwnedFunctionDefinition(definition);
+      // Capture may invoke proxy traps: do not carry reservation authority across it.
+      this.#requireFunctionFill(token);
+      this.#validateFunctionDefinition(data);
+      this.#requireFunctionFill(token);
+      publishOwnedFunctionDefinition(token.object, data.locals, data.body);
+      const snapshot = this.#captureFunction(token.object);
+      const shell = data.immutable ? this.#captureFunction(ownedFunctionShell(token.object)) : undefined;
+      if (this.#state !== "filling") this.#fail("owned publication changed ledger phase");
+      this.#verifyLayout();
+      if (this.#state !== "filling" || this.#filledFunctions.has(token)) this.#fail("reentrant owned publication");
+      this.#filledFunctions.set(token, { locals: data.locals, body: data.body, snapshot });
+      if (shell !== undefined) this.#ownedFunctions.set(token, shell);
+      // Registration must participate in the closing audit before returning authority.
+      this.#verifyLayout();
+      if (this.#state !== "filling") this.#fail("owned closing audit changed ledger phase");
+    } catch (error) {
+      if (this.#state === "failed") throw error; // Already prefixed by #fail.
+      this.#fail(error instanceof Error ? error.message : String(error));
+    }
   }
 
   fillGlobal(token: GlobalReservation, initializer: Instr[]): void {

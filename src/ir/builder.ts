@@ -2226,6 +2226,15 @@ export class IrFunctionBuilder {
   }
 
   /**
+   * Whether the buffer being filled already ends in a `br.label`. Reading
+   * the emitted instr, not the statement kind, also covers a break/continue
+   * that a plain block lowered inline into this buffer.
+   */
+  activeBufferBranched(): boolean {
+    return (this.bodyBuffer ?? this.current?.instrs)?.at(-1)?.kind === "br.label";
+  }
+
+  /**
    * #2952 slice 2 — emit a statement-level `if (cond) then [else]` inside a
    * nested buffer. Both arms are pre-collected via `collectBodyInstrs`;
    * `else` may be an empty array (plain if). Result is void.

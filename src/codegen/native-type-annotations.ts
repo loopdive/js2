@@ -70,6 +70,10 @@
  */
 import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
+import type { TypeOracle } from "../checker/oracle.js";
+
+/** Existing checker callers and IR preparation share one exact declaration proof. */
+type NativeAnnotationSource = Pick<ts.TypeChecker, "getSymbolAtLocation"> | Pick<TypeOracle, "declarationsOf">;
 
 /**
  * Native type annotation map: type alias names that map to Wasm types.
@@ -108,7 +112,7 @@ function isNumberAliasDeclaration(decl: ts.Declaration): boolean {
  * the native aliases, or names a symbol that is not a user-declared
  * `= number` alias.
  */
-export function nativeTypeFromTypeNode(checker: ts.TypeChecker, node: ts.TypeNode | undefined): ValType | null {
+export function nativeTypeFromTypeNode(checker: NativeAnnotationSource, node: ts.TypeNode | undefined): ValType | null {
   if (!node || !ts.isTypeReferenceNode(node)) return null;
   if (node.typeArguments && node.typeArguments.length > 0) return null;
   const nameNode = node.typeName;
@@ -118,8 +122,10 @@ export function nativeTypeFromTypeNode(checker: ts.TypeChecker, node: ts.TypeNod
   // The name must actually bind to a user-declared `= number` alias. Without
   // this check a program that declares `interface i32 { … }` (or imports an
   // unrelated `i32`) would be silently miscompiled to a Wasm i32.
-  const symbol = checker.getSymbolAtLocation(nameNode);
-  const declarations = symbol?.declarations;
+  const declarations =
+    "declarationsOf" in checker
+      ? checker.declarationsOf(nameNode)
+      : checker.getSymbolAtLocation(nameNode)?.declarations;
   if (!declarations || declarations.length === 0) return null;
   if (!declarations.every(isNumberAliasDeclaration)) return null;
   return mapped;
@@ -131,7 +137,7 @@ export function nativeTypeFromTypeNode(checker: ts.TypeChecker, node: ts.TypeNod
  * `ts.PropertyDeclaration`, signature return types, …).
  */
 export function nativeTypeOfDeclaration(
-  checker: ts.TypeChecker,
+  checker: NativeAnnotationSource,
   decl: { readonly type?: ts.TypeNode } | undefined,
 ): ValType | null {
   return nativeTypeFromTypeNode(checker, decl?.type);
@@ -229,4 +235,21 @@ export function isInt32Literal(expr: ts.Expression): boolean {
   if (!ts.isNumericLiteral(e)) return false;
   const v = Number(e.text.replace(/_/g, ""));
   return Number.isInteger(v) && v >= -2147483648 && v <= 2147483647;
+}
+
+/**
+ * (#7136) The declaration of a class field read whose annotation is a native
+ * i32-storage alias (`v: i32`, #323): its struct slot is an i32.
+ */
+export function nativeI32FieldDeclaration(
+  checker: ts.TypeChecker,
+  expr: ts.Expression,
+): ts.PropertyDeclaration | undefined {
+  if (!ts.isPropertyAccessExpression(expr)) return undefined;
+  const declaration = checker.getSymbolAtLocation(expr.name)?.valueDeclaration;
+  return declaration !== undefined &&
+    ts.isPropertyDeclaration(declaration) &&
+    nativeTypeOfDeclaration(checker, declaration)?.kind === "i32"
+    ? declaration
+    : undefined;
 }
