@@ -23,6 +23,7 @@ import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dy
 import { isNumericIndexExpression } from "./property-access.js"; // (#5358)
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
+  collectClassAndDescendants,
   emitPrivateBrandPredicate,
   emitThrowTypeError,
   resolveDeclaringClassForPrivateName,
@@ -117,6 +118,65 @@ function emitNativePrivateInObjectGuard(ctx: CodegenContext, fctx: FunctionConte
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: notObject, else: [] });
   fctx.body.push({ op: "local.get", index: brand });
   releaseTempLocal(fctx, brand);
+}
+
+const EQ_HEAP_TYPE = -19; // abstract `eq` heap type
+
+/**
+ * (#7160) A private brand is an OWN brand of an instance (§7.3.31
+ * PrivateElementFind). A class VALUE and its `.prototype` are lazily built
+ * singletons of the same struct type and `__tag` as an instance, so they pass
+ * the struct/tag brand predicate. Emit that predicate, then clear its i32 when
+ * the receiver is identical (`ref.eq`) to the class-object or prototype
+ * singleton of the declaring class or one of its subclasses; the i32 stays on
+ * the stack. A global not yet materialised holds null, which is not
+ * eq-castable, so its arm answers false.
+ */
+function emitOwnPrivateBrandPredicate(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: number,
+  cls: string,
+  structTypeIdx: number,
+): void {
+  emitPrivateBrandPredicate(ctx, fctx, receiver, cls, structTypeIdx);
+  const globals: number[] = [];
+  for (const name of collectClassAndDescendants(ctx, cls)) {
+    for (const map of [ctx.classObjectGlobals, ctx.protoGlobals]) {
+      const idx = map.get(name);
+      if (idx !== undefined) globals.push(idx);
+    }
+  }
+  if (globals.length === 0) return;
+  const isSingleton: Instr[] = [];
+  globals.forEach((globalIdx, i) => {
+    isSingleton.push(
+      { op: "global.get", index: globalIdx },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: receiver },
+          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+          { op: "global.get", index: globalIdx },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+          { op: "ref.eq" },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+    );
+    if (i > 0) isSingleton.push({ op: "i32.or" });
+  });
+  isSingleton.push({ op: "i32.eqz" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: isSingleton,
+    else: [{ op: "i32.const", value: 0 }],
+  });
 }
 
 /**
@@ -317,7 +377,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       }
       const tmpAny = allocTempLocal(fctx, { kind: "anyref" });
       fctx.body.push({ op: "local.set", index: tmpAny });
-      emitPrivateBrandPredicate(ctx, fctx, tmpAny, declared.className, declared.structTypeIdx);
+      emitOwnPrivateBrandPredicate(ctx, fctx, tmpAny, declared.className, declared.structTypeIdx);
       if (externCopy !== undefined && hostFree) emitNativePrivateInObjectGuard(ctx, fctx, externCopy);
       const isObjectIdx =
         externCopy !== undefined && !hostFree
