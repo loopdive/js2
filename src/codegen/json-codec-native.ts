@@ -1169,7 +1169,6 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
     // any = v
     { op: "local.get", index: P_V },
     { op: "local.set", index: L_ANY },
-    ...callableSkip, // (#7159) a callable (incl. a class value) → undefined
     // ── (#2166 PR-D2) toJSON (§25.5.2 SerializeJSONProperty step 2.b) ──────────
     // If the value is an $Object with a callable own `toJSON`, replace it with
     // value.toJSON(key) before serialising. Look the method up via __extern_get
@@ -1251,6 +1250,7 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
             ],
           },
         ] satisfies Instr[])),
+    ...callableSkip, // (#7159) §25.5.2 step 11, after toJSON: a callable → undefined
     ...buildRawJsonStringifyArm(ctx, L_ANY, objectTypeIdx, anyStrTypeIdx, externGetIdxTJ),
     // (#1599) §25.5.2.5/6 step 1 — a value already on the stack is a cycle.
     ...jsonCycleEnterInstrs(ctx, objVecArrTypeIdx, L_ANY, P_DEPTH),

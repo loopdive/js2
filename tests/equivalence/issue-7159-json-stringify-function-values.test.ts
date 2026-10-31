@@ -25,8 +25,12 @@ const ENC =
 
 // Pre-existing wasi gaps, independent of #7159 (same answer on main): a class
 // INSTANCE renders `null`, and so does an object literal holding a function
-// inside an array (`{ x: [{ v: fn }] }`, the "nested" position).
+// inside an array (`{ x: [{ v: fn }] }`, the "nested" position); a static
+// `toJSON` on a class is not called.
 const NOT_ON_WASI = new Set([
+  "static toJSON, top level",
+  "static toJSON, property and array",
+  "instance toJSON while the class value is serialised",
   "class property next to instances",
   "toJSON on the class prototype",
   "nested callables next to an instance",
@@ -68,6 +72,38 @@ const ISSUE_ROWS: [string, string][] = [
   ],
 ];
 
+// §25.5.2 order: toJSON (step 2) runs BEFORE the callable test (step 11), and
+// the test then screens toJSON's RESULT. A class value's toJSON is its own
+// static member, never the instance method.
+const TO_JSON_ROWS: [string, string][] = [
+  ["static toJSON, top level", `class C { static toJSON() { return "S"; } y = 1 } return JSON.stringify(C);`],
+  [
+    "static toJSON, property and array",
+    `class C { static toJSON() { return "S"; } y = 1 } return JSON.stringify({ a: C, b: [C] });`,
+  ],
+  [
+    "instance toJSON while the class value is serialised",
+    `class C { toJSON() { return "I"; } y = 1 } return JSON.stringify({ c: C, d: [C], e: new C() });`,
+  ],
+  [
+    "toJSON returning a class",
+    `class C { y = 1 } const o = { toJSON() { return C; } }; return JSON.stringify({ a: o, b: [o] });`,
+  ],
+  [
+    "toJSON returning a function",
+    `function f() { return 1; } const o = { toJSON() { return f; } }; return JSON.stringify({ a: o, b: [o] });`,
+  ],
+  [
+    "static toJSON returning a class",
+    `class D { y = 2 } class C { static toJSON() { return D; } } return JSON.stringify({ a: C, b: [C] });`,
+  ],
+];
+
+// A function's OWN `toJSON` property: node calls it (`{"a":"T","b":["T"]}`);
+// every lane omits / nulls the function instead — the codec's toJSON step only
+// looks at objects and class structs, not closures. Same answer on main.
+const FN_OWN_TO_JSON = `function f() { return 1; } (f as any).toJSON = () => "T"; return JSON.stringify({ a: f, b: [f] });`;
+
 // (#6734) Top-level callables: node answers `undefined`, every lane `"null"`.
 const TOP_LEVEL_ROWS: [string, string][] = [
   ["class with a private field, top level", `class C { #x = 1 } return JSON.stringify(C);`],
@@ -93,6 +129,10 @@ const POSITIONS: [string, (f: string) => string][] = [
 
 describe("#7159 JSON.stringify of function values (class constructors included)", () => {
   for (const [name, body] of ISSUE_ROWS) it(name, () => expectSameOnAllLanes(name, body));
+  for (const [name, body] of TO_JSON_ROWS) it(name, () => expectSameOnAllLanes(name, body));
+  it.fails("function with its own toJSON property (not called; pre-existing)", () =>
+    expectSameOnAllLanes("function own toJSON", FN_OWN_TO_JSON),
+  );
   for (const [name, body] of TOP_LEVEL_ROWS) it.skip(`#6734: ${name}`, () => expectSameOnAllLanes(name, body));
   for (const [kind, decl, f] of KINDS) {
     for (const [pos, make] of POSITIONS) {

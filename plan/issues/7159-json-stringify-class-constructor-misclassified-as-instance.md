@@ -69,14 +69,28 @@ Cause confirmed: a class VALUE is its lazily built `$C` struct singleton
 closed-struct classifier walked it as an instance (`{}` / `{"y":0}`), and the
 `__get_member_toJSON` dispatcher returned the INSTANCE `toJSON` for it.
 
-Fix, local to JSON: `__json_stringify_value` now asks `__typeof_function` (the
-predicate `typeof v === "function"` lowers to — closures, class singletons,
-branded builtin constructors, callable proxies) right after the null check and
-BEFORE the toJSON lookup and every object arm, and returns the codec's
-"no serialisation" null. So a callable is omitted as a property and becomes
-`null` in an array, under a replacer and with an indent too. No host import, no
-change to the classifier, `ref.test` legality or type APIs.
-(`json-stringify-carriers.ts::jsonCallableSkipInstrs`.)
+Fix, local to JSON, in §25.5.2 order:
+
+1. **toJSON first (step 2).** For a callable value the `toJSON` lookup now uses
+   the generic `__extern_get` read, which sees a class's own (static) members,
+   instead of the `__get_member_toJSON` dispatcher, which would answer the
+   INSTANCE method for a class value. So `static toJSON()` is still called
+   (`{a: C}` → `{"a":"S"}`, as on main) and an instance `toJSON` no longer leaks
+   onto the class value (`{c: C}` → `{}`; main gave `{"c":"I"}`).
+   (`json-stringify-carriers.ts::jsonToJsonMethodLookupInstrs`.)
+2. **Then the callable test (step 11), on toJSON's result.**
+   `__json_stringify_value` asks `__typeof_function` (the predicate `typeof v
+   === "function"` lowers to — closures, class singletons, branded builtin
+   constructors, callable proxies) before every object arm and returns the
+   codec's "no serialisation" null: omitted as a property, `null` in an array,
+   under a replacer and with an indent too. A `toJSON` returning a class value
+   is therefore skipped as well (main serialised it as an instance).
+   (`json-stringify-carriers.ts::jsonCallableSkipInstrs`.)
+
+No host import, no change to the classifier, `ref.test` legality or type APIs.
+
+Round 1 of this fix ran the callable test BEFORE toJSON, which dropped a static
+`toJSON` that main called — caught in review of PR #7001 and corrected here.
 
 Not fixed here:
 
@@ -93,12 +107,15 @@ Not fixed here:
   answers the instance field names (`["y"]`, node: static names) and `for (k in
   C)` iterates them, on all three lanes. Same root (class value = instance
   struct); not JSON, not cheap — left for a follow-up.
-- A `toJSON` own/static member on a callable (`static toJSON()`), which the spec
-  would call before the callable check, is not consulted (it was not before
-  either).
+- A plain function's OWN `toJSON` property (`f.toJSON = () => "T"`) is not
+  called — node gives `{"a":"T"}`, every lane omits the function. The same
+  answer on main: the codec's toJSON step only looks at objects and class
+  structs, not closures. Pinned with `it.fails`.
+- **wasi** also does not call a static `toJSON` on a class (same on main).
 
 Tests: `tests/equivalence/issue-7159-json-stringify-function-values.test.ts` —
-issue rows, replacer, indent, prototype `toJSON`, and a callable kind (class,
+issue rows, replacer, indent, prototype / static / returned-class `toJSON`
+rows, and a callable kind (class,
 function, arrow, method, bound) × position (property, array, nested) sweep on
 gc native-first, standalone and wasi vs node, plus printed `console.log` rows.
 Top-level rows are `it.skip` pinned for #6734.

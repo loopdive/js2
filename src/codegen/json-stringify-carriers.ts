@@ -65,10 +65,10 @@ export function ensureJsonCallablePredicate(ctx: CodegenContext): void {
  * (#7159) §25.5.2 SerializeJSONProperty step 11: a callable value serialises to
  * `undefined` (the codec's null result — omitted as a property, `null` in an
  * array). Asked through `__typeof_function`, the predicate `typeof v ===
- * "function"` lowers to, BEFORE the toJSON lookup and the object arms: a class
- * VALUE is a `$C` struct (its singleton) that the closed-struct classifier
- * would otherwise walk as an instance, and whose `toJSON` dispatcher would find
- * the INSTANCE method. Callers must flush late-import shifts after the codec.
+ * "function"` lowers to, AFTER the toJSON step (so its result is screened too)
+ * and BEFORE the object arms: a class VALUE is a `$C` struct (its singleton)
+ * that the closed-struct classifier would otherwise walk as an instance.
+ * Callers must flush late-import shifts after the codec.
  */
 export function jsonCallableSkipInstrs(ctx: CodegenContext, anyLocal: number, strTypeIdx: number): Instr[] {
   const typeofFnIdx = ctx.funcMap.get(TYPEOF_FUNCTION);
@@ -126,7 +126,22 @@ export function jsonIsPrimitive(ctx: CodegenContext, value: ts.Expression): bool
 export function jsonToJsonMethodLookupInstrs(ctx: CodegenContext, anyLocal: number, generic: Instr[]): Instr[] {
   const dispatcherIdx = ctx.funcMap.get(TO_JSON_MEMBER_GET);
   if (dispatcherIdx === undefined) return generic;
-  return [{ op: "local.get", index: anyLocal }, { op: "extern.convert_any" }, { op: "call", funcIdx: dispatcherIdx }];
+  const dispatched: Instr[] = [
+    { op: "local.get", index: anyLocal },
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: dispatcherIdx },
+  ];
+  // (#7159) A class VALUE is a `$C` struct like its instances, so the
+  // dispatcher would answer the INSTANCE `toJSON`; a callable asks the generic
+  // read, which sees the class's own (static) members only.
+  const typeofFnIdx = ctx.funcMap.get(TYPEOF_FUNCTION);
+  if (typeofFnIdx === undefined) return dispatched;
+  return [
+    { op: "local.get", index: anyLocal },
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: typeofFnIdx },
+    { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: generic, else: dispatched },
+  ];
 }
 
 /**
