@@ -21,6 +21,7 @@
 import { ts } from "../ts-api.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import type { CodegenContext } from "./context/types.js";
+import type { ValType } from "../ir/types.js";
 
 const TRACE_DEPTH_LIMIT = 4;
 
@@ -284,4 +285,20 @@ function isRealmGlobalExpression(ctx: CodegenContext, expr: ts.Expression, depth
     ts.isPropertyAccessExpression(call.expression) &&
     call.expression.name.text === "createRealm"
   );
+}
+
+/**
+ * (#7161) True when a call-site argument whose checker type resolved to the GC
+ * ref `wasmType` may really be a Proxy. TS types `new Proxy(t, h)` as `t`'s
+ * type, so call-site parameter inference would agree the parameter onto the
+ * target's struct (`$C`, `$Map`, `$Date`); the runtime value is the `$Proxy`
+ * carrier, and the guarded `ref.test`/`ref.cast` at the argument boundary turns
+ * it into a silent `ref.null`. The caller then withdraws the parameter's
+ * call-site narrowing of ANY kind (a scalar agreed by another site would
+ * ToNumber the Proxy), so the parameter keeps its dynamic (externref)
+ * representation. Conservative in the safe direction: a false positive only
+ * costs the fast path.
+ */
+export function proxyArgDefeatsRefNarrowing(ctx: CodegenContext, wasmType: ValType, arg: ts.Expression): boolean {
+  return (wasmType.kind === "ref" || wasmType.kind === "ref_null") && tracesToProxyValue(ctx, arg);
 }
