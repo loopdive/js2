@@ -1,0 +1,721 @@
+{
+  "issue": 6892,
+  "sourceBase": "e7760d1c2af4636ede6a352154d193b234af5fc4",
+  "candidate": "f9800cadcb9c33f928ba9b8e96ad1a0abf1bcbc1",
+  "exactFunctionalRowsPerRun": 90,
+  "testsPassedPerRun": 61,
+  "controls": {
+    "sourceCandidate": "f9800cadcb9c33f928ba9b8e96ad1a0abf1bcbc1",
+    "testsPassed": 25,
+    "testFilesPassed": 3,
+    "files": [
+      "tests/issue-3518-linear-counted-string-reservation.test.ts",
+      "tests/issue-3518-string-repeat-ir.test.ts",
+      "tests/issue-3922-linear-string-repeat.test.ts"
+    ],
+    "evidencePath": "hybrid-existing-controls.log.gz",
+    "rawSha256": "25828cc2d4b963bc3ecd1996f58f6181671f0c38caed35821402d6fa06658c91"
+  },
+  "runs": [
+    {
+      "path": "/private/tmp/js2-6892-linear-repeat-baseline-20261007/.tmp/6892-hybrid-baseline-ab1.log",
+      "sha256": "e6098cbddf1cacc336a52c583445f57de5b7feb198d6bd802539a8aa6aff6234",
+      "provenance": {
+        "issue": 6892,
+        "kind": "provenance",
+        "revision": "e7760d1c2af4636ede6a352154d193b234af5fc4",
+        "kernelSha256": "c8df1de8944d12cd155a29f321fe4bd09f72cb3b36078ec8b828ce9de32dfcad",
+        "testSha256": "b0bb3cf778df90f3bef641f923765260bfdcbc2fd168a26a85508aacd7079898",
+        "node": "v22.23.2",
+        "v8": "12.4.254.21-node.56",
+        "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+        "nodeOptions": "",
+        "lane": "linear",
+        "harness": "tests/issue-6892-linear-repeat-bulk-copy.test.ts",
+        "allocator": "ordinary bump; source instrument exposes arena usage but never resets",
+        "flags": {
+          "JS2WASM_LINEAR_IR": "1",
+          "JS2WASM_IR_STRING_BUILDER": "1",
+          "optimize": false
+        },
+        "benchmarkEnabled": true,
+        "caseCounts": {
+          "semantic": 15,
+          "semanticControls": 2,
+          "provider": 33,
+          "providerTraps": 8,
+          "providerCustody": 1,
+          "mechanism": 1,
+          "optionalInstrument": 1
+        }
+      },
+      "instrument": {
+        "issue": 6892,
+        "kind": "instrument",
+        "enabled": true,
+        "status": "complete",
+        "cases": 8,
+        "elapsedMs": 3090.1399999999994,
+        "pairing": "parent alternates exact baseline/candidate order on the same machine and joins medians by caseId",
+        "observations": 67
+      },
+      "mechanism": {
+        "issue": 6892,
+        "kind": "mechanism",
+        "provider": "__str_repeat",
+        "bulkCopies": 0,
+        "remainders": 1,
+        "mechanism": "bytewise-remainder",
+        "structure": {
+          "unchangedPrefix": true,
+          "unchangedReturn": true,
+          "unchangedLocals": true,
+          "unchangedAbi": true,
+          "scratch6": true,
+          "scratch7": false,
+          "oldShape": true,
+          "bulkShape": false,
+          "hybridShape": false
+        },
+        "locals": [
+          {
+            "name": "integerCount",
+            "type": "f64"
+          },
+          {
+            "name": "sourceLen",
+            "type": "i32"
+          },
+          {
+            "name": "resultLen",
+            "type": "i32"
+          },
+          {
+            "name": "result",
+            "type": "i32"
+          },
+          {
+            "name": "i",
+            "type": "i32"
+          }
+        ]
+      }
+    },
+    {
+      "path": ".tmp/6892-hybrid-candidate-ab1.log",
+      "sha256": "2bc5a7dcbbfc5a6292bedd3b5b2ba587dcaaf5101c9d0440e688184feafdf8db",
+      "provenance": {
+        "issue": 6892,
+        "kind": "provenance",
+        "revision": "f9800cadcb9c33f928ba9b8e96ad1a0abf1bcbc1",
+        "kernelSha256": "5ba8a23ed459fb717864e776813d5df09c1846a060e3a3ceaa7753a05db821b1",
+        "testSha256": "b0bb3cf778df90f3bef641f923765260bfdcbc2fd168a26a85508aacd7079898",
+        "node": "v22.23.2",
+        "v8": "12.4.254.21-node.56",
+        "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+        "nodeOptions": "",
+        "lane": "linear",
+        "harness": "tests/issue-6892-linear-repeat-bulk-copy.test.ts",
+        "allocator": "ordinary bump; source instrument exposes arena usage but never resets",
+        "flags": {
+          "JS2WASM_LINEAR_IR": "1",
+          "JS2WASM_IR_STRING_BUILDER": "1",
+          "optimize": false
+        },
+        "benchmarkEnabled": true,
+        "caseCounts": {
+          "semantic": 15,
+          "semanticControls": 2,
+          "provider": 33,
+          "providerTraps": 8,
+          "providerCustody": 1,
+          "mechanism": 1,
+          "optionalInstrument": 1
+        }
+      },
+      "instrument": {
+        "issue": 6892,
+        "kind": "instrument",
+        "enabled": true,
+        "status": "complete",
+        "cases": 8,
+        "elapsedMs": 3862.0516250000073,
+        "pairing": "parent alternates exact baseline/candidate order on the same machine and joins medians by caseId",
+        "observations": 67
+      },
+      "mechanism": {
+        "issue": 6892,
+        "kind": "mechanism",
+        "provider": "__str_repeat",
+        "bulkCopies": 2,
+        "remainders": 1,
+        "mechanism": "hybrid-bytewise-through-64",
+        "structure": {
+          "unchangedPrefix": true,
+          "unchangedReturn": true,
+          "unchangedLocals": true,
+          "unchangedAbi": true,
+          "scratch6": true,
+          "scratch7": true,
+          "oldShape": false,
+          "bulkShape": false,
+          "hybridShape": true
+        },
+        "locals": [
+          {
+            "name": "integerCount",
+            "type": "f64"
+          },
+          {
+            "name": "sourceLen",
+            "type": "i32"
+          },
+          {
+            "name": "resultLen",
+            "type": "i32"
+          },
+          {
+            "name": "result",
+            "type": "i32"
+          },
+          {
+            "name": "copiedBytes",
+            "type": "i32"
+          },
+          {
+            "name": "copyBytes",
+            "type": "i32"
+          }
+        ]
+      }
+    },
+    {
+      "path": ".tmp/6892-hybrid-candidate-ba2.log",
+      "sha256": "f47da36042f53e51f8b48d68b7e22e3b7e730f5a7428ae918bb002955adb9568",
+      "provenance": {
+        "issue": 6892,
+        "kind": "provenance",
+        "revision": "f9800cadcb9c33f928ba9b8e96ad1a0abf1bcbc1",
+        "kernelSha256": "5ba8a23ed459fb717864e776813d5df09c1846a060e3a3ceaa7753a05db821b1",
+        "testSha256": "b0bb3cf778df90f3bef641f923765260bfdcbc2fd168a26a85508aacd7079898",
+        "node": "v22.23.2",
+        "v8": "12.4.254.21-node.56",
+        "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+        "nodeOptions": "",
+        "lane": "linear",
+        "harness": "tests/issue-6892-linear-repeat-bulk-copy.test.ts",
+        "allocator": "ordinary bump; source instrument exposes arena usage but never resets",
+        "flags": {
+          "JS2WASM_LINEAR_IR": "1",
+          "JS2WASM_IR_STRING_BUILDER": "1",
+          "optimize": false
+        },
+        "benchmarkEnabled": true,
+        "caseCounts": {
+          "semantic": 15,
+          "semanticControls": 2,
+          "provider": 33,
+          "providerTraps": 8,
+          "providerCustody": 1,
+          "mechanism": 1,
+          "optionalInstrument": 1
+        }
+      },
+      "instrument": {
+        "issue": 6892,
+        "kind": "instrument",
+        "enabled": true,
+        "status": "complete",
+        "cases": 8,
+        "elapsedMs": 3351.933042000004,
+        "pairing": "parent alternates exact baseline/candidate order on the same machine and joins medians by caseId",
+        "observations": 67
+      },
+      "mechanism": {
+        "issue": 6892,
+        "kind": "mechanism",
+        "provider": "__str_repeat",
+        "bulkCopies": 2,
+        "remainders": 1,
+        "mechanism": "hybrid-bytewise-through-64",
+        "structure": {
+          "unchangedPrefix": true,
+          "unchangedReturn": true,
+          "unchangedLocals": true,
+          "unchangedAbi": true,
+          "scratch6": true,
+          "scratch7": true,
+          "oldShape": false,
+          "bulkShape": false,
+          "hybridShape": true
+        },
+        "locals": [
+          {
+            "name": "integerCount",
+            "type": "f64"
+          },
+          {
+            "name": "sourceLen",
+            "type": "i32"
+          },
+          {
+            "name": "resultLen",
+            "type": "i32"
+          },
+          {
+            "name": "result",
+            "type": "i32"
+          },
+          {
+            "name": "copiedBytes",
+            "type": "i32"
+          },
+          {
+            "name": "copyBytes",
+            "type": "i32"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/private/tmp/js2-6892-linear-repeat-baseline-20261007/.tmp/6892-hybrid-baseline-ba2.log",
+      "sha256": "c24d3b34d7d106c9783205cd377207149a0fd07f2980dbe09c42c859c2d41e05",
+      "provenance": {
+        "issue": 6892,
+        "kind": "provenance",
+        "revision": "e7760d1c2af4636ede6a352154d193b234af5fc4",
+        "kernelSha256": "c8df1de8944d12cd155a29f321fe4bd09f72cb3b36078ec8b828ce9de32dfcad",
+        "testSha256": "b0bb3cf778df90f3bef641f923765260bfdcbc2fd168a26a85508aacd7079898",
+        "node": "v22.23.2",
+        "v8": "12.4.254.21-node.56",
+        "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+        "nodeOptions": "",
+        "lane": "linear",
+        "harness": "tests/issue-6892-linear-repeat-bulk-copy.test.ts",
+        "allocator": "ordinary bump; source instrument exposes arena usage but never resets",
+        "flags": {
+          "JS2WASM_LINEAR_IR": "1",
+          "JS2WASM_IR_STRING_BUILDER": "1",
+          "optimize": false
+        },
+        "benchmarkEnabled": true,
+        "caseCounts": {
+          "semantic": 15,
+          "semanticControls": 2,
+          "provider": 33,
+          "providerTraps": 8,
+          "providerCustody": 1,
+          "mechanism": 1,
+          "optionalInstrument": 1
+        }
+      },
+      "instrument": {
+        "issue": 6892,
+        "kind": "instrument",
+        "enabled": true,
+        "status": "complete",
+        "cases": 8,
+        "elapsedMs": 4493.695457999987,
+        "pairing": "parent alternates exact baseline/candidate order on the same machine and joins medians by caseId",
+        "observations": 67
+      },
+      "mechanism": {
+        "issue": 6892,
+        "kind": "mechanism",
+        "provider": "__str_repeat",
+        "bulkCopies": 0,
+        "remainders": 1,
+        "mechanism": "bytewise-remainder",
+        "structure": {
+          "unchangedPrefix": true,
+          "unchangedReturn": true,
+          "unchangedLocals": true,
+          "unchangedAbi": true,
+          "scratch6": true,
+          "scratch7": false,
+          "oldShape": true,
+          "bulkShape": false,
+          "hybridShape": false
+        },
+        "locals": [
+          {
+            "name": "integerCount",
+            "type": "f64"
+          },
+          {
+            "name": "sourceLen",
+            "type": "i32"
+          },
+          {
+            "name": "resultLen",
+            "type": "i32"
+          },
+          {
+            "name": "result",
+            "type": "i32"
+          },
+          {
+            "name": "i",
+            "type": "i32"
+          }
+        ]
+      }
+    }
+  ],
+  "pairs": [
+    {
+      "order": "baseline/candidate",
+      "cases": [
+        {
+          "caseId": "ascii-2-n-3",
+          "calls": 256,
+          "outputBytes": 10,
+          "baselineSamplesMs": [
+            0.06424999999580905, 0.06408299999020528, 0.06712500000139698, 0.06695900000340771, 0.06533300000592135,
+            0.06287500000325963, 0.06516699999338016
+          ],
+          "candidateSamplesMs": [
+            0.021749999999883585, 0.021624999993946403, 0.022792000003391877, 0.02166699999361299, 0.021542000002227724,
+            0.02162500000849832, 0.02145800000289455
+          ],
+          "baselineMedianMs": 0.06516699999338016,
+          "candidateMedianMs": 0.02162500000849832,
+          "baselineSpreadMs": 0.004249999998137355,
+          "candidateSpreadMs": 0.0013340000004973263,
+          "baselineOverCandidate": 3.0135028886830266,
+          "retainedArenaBytes": [12320, 12320, 12320, 12320, 12320, 12320, 12320, 12320, 12320, 12320],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-2-n-9",
+          "calls": 256,
+          "outputBytes": 22,
+          "baselineSamplesMs": [
+            0.031957999992300756, 0.03250000000116415, 0.03204199999163393, 0.03208400000585243, 2.0299169999925653,
+            0.03283299999020528, 0.03208400000585243
+          ],
+          "candidateSamplesMs": [
+            0.03204199999163393, 0.03195899999991525, 0.03154099998937454, 0.03449999999429565, 0.03216600000450853,
+            0.03191700000024866, 0.031749999994644895
+          ],
+          "baselineMedianMs": 0.03208400000585243,
+          "candidateMedianMs": 0.03195899999991525,
+          "baselineSpreadMs": 1.9979590000002645,
+          "candidateSpreadMs": 0.0029590000049211085,
+          "baselineOverCandidate": 1.0039112614893304,
+          "retainedArenaBytes": [18464, 18464, 18464, 18464, 18464, 18464, 18464, 18464, 18464, 18464],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-2-n-1024",
+          "calls": 252,
+          "outputBytes": 2052,
+          "baselineSamplesMs": [
+            2.0625, 0.7700000000040745, 2.519750000006752, 0.6802499999903375, 1.2965410000033444, 1.5395830000052229,
+            2.035874999986845
+          ],
+          "candidateSamplesMs": [
+            1.3189169999968726, 0.36729200000991113, 0.929707999996026, 0.9949999999953434, 1.122417000005953,
+            0.3769170000014128, 1.0675420000043232
+          ],
+          "baselineMedianMs": 1.5395830000052229,
+          "candidateMedianMs": 0.9949999999953434,
+          "baselineSpreadMs": 1.8395000000164146,
+          "candidateSpreadMs": 0.9516249999869615,
+          "baselineOverCandidate": 1.5473195980024403,
+          "retainedArenaBytes": [
+            1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288
+          ],
+          "memoryGrowthBytes": [983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-2-n-65537",
+          "calls": 3,
+          "outputBytes": 131078,
+          "baselineSamplesMs": [
+            1.3578330000018468, 1.3232500000012806, 4.740333000008832, 1.78970800001116, 0.5257500000006985,
+            0.5065840000024764, 0.6258749999979045
+          ],
+          "candidateSamplesMs": [
+            0.9155420000024606, 0.24483300000429153, 4.056500000006054, 0.3492499999993015, 0.8678750000108266,
+            0.4005829999950947, 0.6346250000060536
+          ],
+          "baselineMedianMs": 1.3232500000012806,
+          "candidateMedianMs": 0.6346250000060536,
+          "baselineSpreadMs": 4.233749000006355,
+          "candidateSpreadMs": 3.811667000001762,
+          "baselineOverCandidate": 2.0850896198363733,
+          "retainedArenaBytes": [786584, 786584, 786584, 786584, 786584, 786584, 786584, 786584, 786584, 786584],
+          "memoryGrowthBytes": [786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-3",
+          "calls": 256,
+          "outputBytes": 13,
+          "baselineSamplesMs": [
+            0.024709000004804693, 0.023457999996026047, 0.07349999999860302, 0.07474999999976717, 0.06949999999778811,
+            0.07587499999499414, 0.07183300000906456
+          ],
+          "candidateSamplesMs": [
+            0.4657909999950789, 0.04804100000183098, 0.07583300000987947, 0.02449999999953434, 0.025750000000698492,
+            0.025042000008397736, 0.024583999998867512
+          ],
+          "baselineMedianMs": 0.07183300000906456,
+          "candidateMedianMs": 0.025750000000698492,
+          "baselineSpreadMs": 0.052416999998968095,
+          "candidateSpreadMs": 0.44129099999554455,
+          "baselineOverCandidate": 2.7896310682375156,
+          "retainedArenaBytes": [14368, 14368, 14368, 14368, 14368, 14368, 14368, 14368, 14368, 14368],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-9",
+          "calls": 256,
+          "outputBytes": 31,
+          "baselineSamplesMs": [
+            0.04137500000069849, 0.040750000000116415, 0.04012499999953434, 0.1204579999903217, 0.11424999999871943,
+            0.11908400000538677, 0.11320800000976305
+          ],
+          "candidateSamplesMs": [
+            0.04033399999025278, 0.040249999990919605, 0.040957999997772276, 0.040791999999783, 0.041040999989490956,
+            0.04175000000395812, 0.04608300000836607
+          ],
+          "baselineMedianMs": 0.11320800000976305,
+          "candidateMedianMs": 0.040957999997772276,
+          "baselineSpreadMs": 0.08033299999078736,
+          "candidateSpreadMs": 0.005833000017446466,
+          "baselineOverCandidate": 2.764002148931112,
+          "retainedArenaBytes": [22560, 22560, 22560, 22560, 22560, 22560, 22560, 22560, 22560, 22560],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-1024",
+          "calls": 168,
+          "outputBytes": 3076,
+          "baselineSamplesMs": [
+            0.7693749999889405, 2.807249999998021, 1.5407500000001164, 0.7062909999949625, 0.86579100000381,
+            0.8791669999918668, 1.2075839999888558
+          ],
+          "candidateSamplesMs": [
+            0.35604199999943376, 1.9240410000056727, 1.2367079999967245, 0.8415830000012647, 1.1213750000024447,
+            1.5283329999947455, 0.36412499999278225
+          ],
+          "baselineMedianMs": 0.8791669999918668,
+          "candidateMedianMs": 1.1213750000024447,
+          "baselineSpreadMs": 2.1009590000030585,
+          "candidateSpreadMs": 1.567999000006239,
+          "baselineOverCandidate": 0.7840080258521459,
+          "retainedArenaBytes": [
+            1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600
+          ],
+          "memoryGrowthBytes": [983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-65537",
+          "calls": 2,
+          "outputBytes": 196615,
+          "baselineSamplesMs": [
+            1.6661659999954281, 0.5113339999952586, 0.5213750000111759, 1.295708999998169, 2.512457999997423,
+            3.0991250000079162, 1.5390840000036405
+          ],
+          "candidateSamplesMs": [
+            0.6063750000030268, 0.6725830000068527, 0.42316700000083074, 1.5615419999958249, 1.7003329999861307,
+            0.6215000000083819, 0.2564589999965392
+          ],
+          "baselineMedianMs": 1.5390840000036405,
+          "candidateMedianMs": 0.6215000000083819,
+          "baselineSpreadMs": 2.5877910000126576,
+          "candidateSpreadMs": 1.4438739999895915,
+          "baselineOverCandidate": 2.4764022525871017,
+          "retainedArenaBytes": [786544, 786544, 786544, 786544, 786544, 786544, 786544, 786544, 786544, 786544],
+          "memoryGrowthBytes": [786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432],
+          "exactBatchStateEquality": true
+        }
+      ]
+    },
+    {
+      "order": "candidate/baseline",
+      "cases": [
+        {
+          "caseId": "ascii-2-n-3",
+          "calls": 256,
+          "outputBytes": 10,
+          "baselineSamplesMs": [
+            0.02341599999635946, 0.022792000003391877, 0.023625000001629815, 0.02308400000038091, 0.022541999991517514,
+            0.02204199999687262, 0.0221670000028098
+          ],
+          "candidateSamplesMs": [
+            0.02154099999461323, 0.021542000002227724, 0.022874999995110556, 0.02179199999955017, 0.02987500000745058,
+            0.021624999993946403, 0.023417000003973953
+          ],
+          "baselineMedianMs": 0.022792000003391877,
+          "candidateMedianMs": 0.02179199999955017,
+          "baselineSpreadMs": 0.0015830000047571957,
+          "candidateSpreadMs": 0.00833400001283735,
+          "baselineOverCandidate": 1.0458883995898653,
+          "retainedArenaBytes": [12320, 12320, 12320, 12320, 12320, 12320, 12320, 12320, 12320, 12320],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-2-n-9",
+          "calls": 256,
+          "outputBytes": 22,
+          "baselineSamplesMs": [
+            0.8717500000057044, 0.48370799999975134, 0.18266599999333266, 0.09804199999780394, 0.03674999999930151,
+            0.03487499999755528, 0.0775829999911366
+          ],
+          "candidateSamplesMs": [
+            0.09775000000081491, 0.09529100000509061, 0.0962089999957243, 0.09495800000149757, 0.12379100000543986,
+            0.09695799999462906, 0.0358330000017304
+          ],
+          "baselineMedianMs": 0.09804199999780394,
+          "candidateMedianMs": 0.0962089999957243,
+          "baselineSpreadMs": 0.8368750000081491,
+          "candidateSpreadMs": 0.08795800000370946,
+          "baselineOverCandidate": 1.019052271639463,
+          "retainedArenaBytes": [18464, 18464, 18464, 18464, 18464, 18464, 18464, 18464, 18464, 18464],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-2-n-1024",
+          "calls": 252,
+          "outputBytes": 2052,
+          "baselineSamplesMs": [
+            3.1357499999867287, 0.7083330000023125, 5.903458000000683, 0.9299999999930151, 2.146959000005154,
+            1.9041250000009313, 2.9429999999993015
+          ],
+          "candidateSamplesMs": [
+            0.7683749999996508, 0.45279199999640696, 1.2428749999962747, 0.969874999995227, 1.505541999998968,
+            0.43374999999650754, 1.0886670000036247
+          ],
+          "baselineMedianMs": 2.146959000005154,
+          "candidateMedianMs": 0.969874999995227,
+          "baselineSpreadMs": 5.19512499999837,
+          "candidateSpreadMs": 1.0717920000024606,
+          "baselineOverCandidate": 2.2136450573689594,
+          "retainedArenaBytes": [
+            1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288
+          ],
+          "memoryGrowthBytes": [983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-2-n-65537",
+          "calls": 3,
+          "outputBytes": 131078,
+          "baselineSamplesMs": [
+            1.530666000006022, 2.4408330000005662, 0.4994580000056885, 4.241250000006403, 1.3051659999910044,
+            1.9128340000024764, 1.8862079999962589
+          ],
+          "candidateSamplesMs": [
+            0.2993339999957243, 0.2560420000081649, 0.6286249999975553, 1.1812079999945126, 0.2430410000088159,
+            0.2825840000004973, 1.2571250000037253
+          ],
+          "baselineMedianMs": 1.8862079999962589,
+          "candidateMedianMs": 0.2993339999957243,
+          "baselineSpreadMs": 3.7417920000007143,
+          "candidateSpreadMs": 1.0140839999949094,
+          "baselineOverCandidate": 6.301348994845896,
+          "retainedArenaBytes": [786584, 786584, 786584, 786584, 786584, 786584, 786584, 786584, 786584, 786584],
+          "memoryGrowthBytes": [786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-3",
+          "calls": 256,
+          "outputBytes": 13,
+          "baselineSamplesMs": [
+            0.024541000006138347, 0.02612500000395812, 0.027041000008466654, 0.3079999999899883, 0.023874999998952262,
+            0.024749999996856786, 0.024292000001878478
+          ],
+          "candidateSamplesMs": [
+            0.07320799998706207, 0.024834000010741875, 0.023750000007566996, 0.02354199999535922, 6.2818330000009155,
+            0.024208000002545305, 0.02449999999953434
+          ],
+          "baselineMedianMs": 0.024749999996856786,
+          "candidateMedianMs": 0.02449999999953434,
+          "baselineSpreadMs": 0.284124999991036,
+          "candidateSpreadMs": 6.258291000005556,
+          "baselineOverCandidate": 1.0102040815235591,
+          "retainedArenaBytes": [14368, 14368, 14368, 14368, 14368, 14368, 14368, 14368, 14368, 14368],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-9",
+          "calls": 256,
+          "outputBytes": 31,
+          "baselineSamplesMs": [
+            0.11537500000849832, 0.1184170000051381, 0.0422919999982696, 6.671875, 0.08100000000558794,
+            0.05095900000014808, 0.04054099999484606
+          ],
+          "candidateSamplesMs": [
+            0.040374999996856786, 0.04166700001223944, 0.1522499999991851, 0.04120900000270922, 0.040208000005804934,
+            0.040374999996856786, 0.04258400000981055
+          ],
+          "baselineMedianMs": 0.08100000000558794,
+          "candidateMedianMs": 0.04120900000270922,
+          "baselineSpreadMs": 6.631334000005154,
+          "candidateSpreadMs": 0.11204199999338016,
+          "baselineOverCandidate": 1.9655900410168343,
+          "retainedArenaBytes": [22560, 22560, 22560, 22560, 22560, 22560, 22560, 22560, 22560, 22560],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-1024",
+          "calls": 168,
+          "outputBytes": 3076,
+          "baselineSamplesMs": [
+            0.7346249999973224, 2.171958999999333, 1.7715829999942798, 0.8132089999999152, 1.163749999992433,
+            1.665292000005138, 2.0801249999931315
+          ],
+          "candidateSamplesMs": [
+            0.4672080000018468, 0.8983329999900889, 0.42266700000618584, 0.37170800000603776, 2.52033400000073,
+            0.5268750000104774, 0.3766250000044238
+          ],
+          "baselineMedianMs": 1.665292000005138,
+          "candidateMedianMs": 0.4672080000018468,
+          "baselineSpreadMs": 1.4373340000020107,
+          "candidateSpreadMs": 2.1486259999946924,
+          "baselineOverCandidate": 3.564348213212435,
+          "retainedArenaBytes": [
+            1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600
+          ],
+          "memoryGrowthBytes": [983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-65537",
+          "calls": 2,
+          "outputBytes": 196615,
+          "baselineSamplesMs": [
+            0.5288750000036089, 2.5947089999972377, 1.540166999999201, 1.5281660000036936, 0.49383300000044983,
+            2.0158749999973224, 3.793874999988475
+          ],
+          "candidateSamplesMs": [
+            0.23991700001352, 0.23729099999764003, 0.6313329999975394, 0.5609580000018468, 0.8982920000125887,
+            0.24712499999441206, 0.40554200000769924
+          ],
+          "baselineMedianMs": 1.540166999999201,
+          "candidateMedianMs": 0.40554200000769924,
+          "baselineSpreadMs": 3.300041999988025,
+          "candidateSpreadMs": 0.6610010000149487,
+          "baselineOverCandidate": 3.797798994851238,
+          "retainedArenaBytes": [786544, 786544, 786544, 786544, 786544, 786544, 786544, 786544, 786544, 786544],
+          "memoryGrowthBytes": [786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432],
+          "exactBatchStateEquality": true
+        }
+      ]
+    }
+  ]
+}
