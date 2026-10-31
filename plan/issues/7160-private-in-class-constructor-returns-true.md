@@ -1,10 +1,11 @@
 ---
 id: 7160
 title: "All lanes: `#x in C` with C the class constructor returns true instead of false"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-31
+completed: 2026-10-31
 priority: low
 horizon: s
 feasibility: medium
@@ -60,3 +61,36 @@ chain instead of own brand ownership.
 Acceptance: `#x in C`, `#x in C.prototype`, `#x in Object.create(new C())`
 are `false` on gc native-first, standalone and wasi; `#x in new C()` stays
 `true`; host-assisted gc bytes unchanged; equivalence gate no new regressions.
+
+## Resolution (2026-10-31, Opus)
+
+**Cause (verified).** The class VALUE `C` and, on wasi, `C.prototype` are
+lazily built singletons (`__class_<C>` / `__proto_<C>` externref globals) of
+the same struct type and `__tag` as an instance, so the struct + tag predicate
+(`emitPrivateBrandPredicate`) accepted them. `Object.create(new C())` and a
+Proxy already answered false.
+
+**Fix (local to the private arm of `compileInOperator`).** After the brand
+predicate, `emitExcludeClassSingletons` (`src/codegen/binary-ops-in.ts`)
+clears the brand when the receiver is `ref.eq` to the class-object or
+prototype singleton of the declaring class or any subclass — the same
+identity test `__typeof_function` uses for class values (#5383 S2f R13 /
+#7159), but against only the relevant classes' globals. An unmaterialised
+global is null and its arm answers false. `collectClassAndDescendants` was
+lifted out of `collectClassAndDescendantTags` (`expressions/helpers.ts`) with
+the same BFS order, so the tag ladder is byte-identical. No shared `ref.test`
+legality, type API or classifier category changed; no host import.
+
+**Tests.** `tests/equivalence/issue-7160-private-in-constructor.test.ts`, 16
+rows × gc native-first / standalone / wasi vs node: base 6/16, head 16/16.
+
+**Left out / overlap.**
+- #7162: `#m() {}`, `get #g()` and `static #s` still fall to the compile-time
+  path (`resolveDeclaringClassForPrivateName` requires an instance field
+  slot): `#m in new C()` / `#g in new C()` / `#s in C` answer false (node:
+  true). Same function, different arm; not touched.
+- #7163 (typed nullable receiver) not touched; a typed non-null receiver
+  holding the constructor (`static ht(v: C)`) is fixed by this change and
+  pinned.
+- `C.#x` (a private READ with the constructor as receiver) shares
+  `emitPrivateBrandPredicate` and is not changed here.
