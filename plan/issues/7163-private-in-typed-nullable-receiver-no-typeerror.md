@@ -1,10 +1,11 @@
 ---
 id: 7163
 title: "Native-first and standalone: `#x in o` with o typed `C | null` returns false for null instead of throwing TypeError"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-31
+completed: 2026-10-31
 priority: low
 horizon: s
 feasibility: medium
@@ -43,9 +44,23 @@ skipped; the brand test on null yields `false`.
    (ask `ctx.oracle`), emit a `ref.is_null` check before the brand test that
    throws the same TypeError (`buildThrowJsErrorInstrs`, message text as in
    #7150). Receivers whose type excludes nullish stay untouched (byte-identical).
-3. Tests: `tests/issue-7163-private-in-typed-nullable.test.ts` with the three
+3. Tests: `tests/equivalence/issue-7163-private-in-typed-nullable.test.ts` with the three
    receivers on gc native-first and standalone vs node.
 
 Acceptance: TypeError on null/undefined for nullable typed receivers; non-null
 typed receivers byte-identical; host-assisted gc bytes unchanged; equivalence
 gate no new regressions.
+
+## Resolution (2026-10-31)
+
+Cause confirmed. `C | null` / `C | undefined` (and `typeof C | null`) lower as a
+nullable struct ref; `C | null | undefined` already lowered as externref and
+threw correctly. New `emitTypedNullablePrivateInGuard` in
+`src/codegen/binary-ops-in.ts` runs on the host-free lanes when the receiver
+compiled to `ref_null` and `ctx.oracle.nullabilityOf` admits null/undefined:
+`ref.is_null` → the #7150 TypeError (same message constant). Covers field,
+method, accessor and static private names. A/B (sha256 of the binary, base =
+`HEAD:src/codegen/binary-ops-in.ts`): non-nullable typed receivers, `this`,
+`any`, `C | null | undefined`, subclass, and the #7150/#7162 test corpora are
+byte-identical on gc, standalone and wasi; only the nullable-typed probe
+changed.
