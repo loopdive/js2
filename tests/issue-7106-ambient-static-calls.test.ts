@@ -140,6 +140,8 @@ const LEGACY_PARITY: Record<string, string> = {
   jsDocNumberResult: `/** @returns {number} */ function f() { return Number.isNaN(1); } if (f() !== false) { throw "#37"; }`,
   jsDocNumberParameter: `/** @param {number} v */ function g(v) { return v; } if (g(Number.isNaN(1)) !== false) { throw "#38"; }`,
   jsDocStringParameter: `/** @param {string} v */ function g(v) { return v; } if (g(Number.isNaN(1)) !== false) { throw "#39"; }`,
+  // (round 4) A top-level callee whose parameter does not resolve (destructured) is not a slot to judge.
+  destructuredParameter: `function g({ a }) { return a; } if (g(Number.isNaN(1)) !== undefined) { throw "#41"; }`,
 };
 
 describe("#7106 — the ambient boolean statics in IR bodies", () => {
@@ -216,6 +218,15 @@ describe("#7106 — the ambient boolean statics in IR bodies", () => {
       `export function f(x: number): number { const nan = Number.isNaN(x); return nan ? 1 : 0; }`,
       [[NaN], [1]],
     ],
+    // A local declared `boolean` takes the answer, at its declaration and in a later write.
+    booleanLocal: [
+      `export function f(x: number): number { let b: boolean = Number.isNaN(x); return b ? 1 : 0; }`,
+      [[NaN], [1]],
+    ],
+    booleanLocalWrite: [
+      `export function f(x: number): number { let b: boolean = false; b = Number.isFinite(x); return b ? 1 : 0; }`,
+      [[NaN], [1]],
+    ],
     hotLoop: [
       `export function f(n: number): number { let s = 0; for (let i = 0; i < n; i++) { if (Number.isInteger(i / 2)) s++; } return s; }`,
       [[10], [1001]],
@@ -279,26 +290,73 @@ describe("#7106 — the ambient boolean statics in IR bodies", () => {
     }
   }
 
-  // An f64 that holds legacy's `undefined` marker (here a legacy-compiled
-  // callee's `undefined as any`) is `undefined` to `Object.is(v, undefined)`.
-  // Against a number it counts as NaN, as on main (the plan's follow-ups).
-  for (const target of TARGETS) {
-    it(`legacy's f64 undefined marker is undefined to Object.is (${lane(target)})`, async () => {
-      const source = `function g(): number { return undefined as any; }
-export function f(): number {
-  return (Object.is(g(), undefined) ? 1 : 0) + (Object.is(g(), 1) ? 2 : 0) + (Object.is(g(), g()) ? 4 : 0);
+  // A number is never `undefined` to `Object.is`, as in legacy's typed arm: IR
+  // f64 ops carry a NaN's payload through, so legacy's f64 `undefined` marker
+  // (here a legacy-compiled callee's `undefined as any`) cannot be told from a
+  // NaN that `+x`, `Number(x)`, `Math.abs` or `Math.min` made of it. Each bit is
+  // one shape; the IR answers as legacy does, and node's `false` for all but `g()`.
+  const NUMBER_VS_UNDEFINED = [
+    "g()",
+    "+g()",
+    "Math.abs(g())",
+    "Number(g())",
+    "Math.min(g(), Infinity)",
+    "h()",
+    "c > 0 ? +g() : 1",
+    "(0, +g())",
+    "-g()",
+    "g() % 2",
+  ];
+  const markerSource = `function g(): number { return undefined as any; }
+function h(): number { return +g(); }
+export function f(c: number): number {
+  return ${NUMBER_VS_UNDEFINED.map((operand, bit) => `(Object.is(${operand}, undefined) ? ${2 ** bit} : 0)`).join(" + ")};
 }`;
+  for (const target of TARGETS) {
+    it(`a number is never undefined to Object.is, as in legacy (${lane(target)})`, async () => {
+      const answers: number[] = [];
+      for (const experimentalIR of [true, false]) {
+        const result = await compile(markerSource, {
+          fileName: "issue-7106-static-calls.ts",
+          trackIrOutcomes: true,
+          experimentalIR,
+          ...(target ? { target } : {}),
+        });
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "f")).toEqual([]);
+        expect((result.irOutcomes ?? []).find((o) => o.displayName === "f")?.irBodyEmitted === true).toBe(
+          experimentalIR,
+        );
+        const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
+        const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+        answers.push((instance.exports.f as (c: number) => number)(1));
+      }
+      expect(answers[0]).toBe(answers[1]);
+      expect(answers[0]! & ~1).toBe(nodeFunction(markerSource)(1) & ~1);
+    });
+  }
+
+  // `Object.is(x)` with one number argument stays legacy: main answers it through its boxing path, which
+  // reads the marker as `undefined`, while a literal (`Object.is(0)`) is lowered.
+  for (const target of TARGETS) {
+    it(`Object.is with one number argument stays legacy unless it is a literal (${lane(target)})`, async () => {
+      const source = `function g(): number { return undefined as any; }
+export function f(): number { return Object.is(g()) ? 1 : 0; }
+export function k(): number { return Object.is(-0) ? 1 : 0; }`;
       const result = await compile(source, {
         fileName: "issue-7106-static-calls.ts",
         trackIrOutcomes: true,
         ...(target ? { target } : {}),
       });
       expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-      expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "f")).toEqual([]);
-      expect((result.irOutcomes ?? []).find((o) => o.displayName === "f")?.irBodyEmitted).toBe(true);
+      const outcome = (name: string) => (result.irOutcomes ?? []).find((o) => o.displayName === name);
+      expect(outcome("f")?.irBodyEmitted).toBe(false);
+      expect(outcome("k")?.irBodyEmitted).toBe(true);
+      expect((result.irPostClaimErrors ?? []).filter((error) => error.func !== "g")).toEqual([]);
       const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
       const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
-      expect((instance.exports.f as () => number)()).toBe(5);
+      expect((instance.exports.f as () => number)()).toBe(1);
+      expect((instance.exports.k as () => number)()).toBe(0);
     });
   }
 

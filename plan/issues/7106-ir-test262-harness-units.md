@@ -81,7 +81,7 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerTypeOf
   - src/ir/select.ts::dynamicUsesAreMoveOnly
   - src/ir/select.ts::scanExpr
-  # 2026-10-31 (boolean statics, round 3): the 3-line adapter call beside the Math arms (+3)
+  # 2026-10-31 (boolean statics, round 4): the 3-line adapter call beside the Math arms (+3)
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select.ts::collectCallGraph
   - src/ir/select.ts::whyNotIrClaimable
@@ -102,12 +102,12 @@ loc-budget-allow:
   - src/ir/builder.ts
   - src/ir/core/nodes.ts
   - src/ir/core/dialect/js.ts
-  # 2026-10-31 (boolean statics, round 3): the static-predicate arm, its host, the shared ambient-receiver helper and the name-parameterised unshadowed-global test (+25); the lowering lives in src/ir/static-predicates/
+  # 2026-10-31 (boolean statics, round 4): the static-predicate arm, its host, the shared ambient-receiver helper and the name-parameterised unshadowed-global test (+25); the lowering lives in src/ir/static-predicates/
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/lower-generic.ts
   - src/ir/runtime/verify.ts
-  # 2026-10-31 (boolean statics, round 3): the selection adapter, the IR-representation family proof and the argument / result slot families it needs from select.ts's private resolvers (+87); the rule lives in src/ir/static-predicates/
+  # 2026-10-31 (boolean statics, round 4): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+86); the rule lives in src/ir/static-predicates/
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
@@ -2459,7 +2459,7 @@ are the plan's, measured on main `6434436564`, standalone unless stated,
 harness assembled by `assembleOriginalHarness` with the worker's compile
 options. "Exact" means IR = legacy (IR off) = node, on standalone and on gc.
 The first build followed the plan's route and was rejected in review; the
-rebuilt design was reviewed twice more. The three reviews, the design as
+rebuilt design was reviewed three more times. The four reviews, the design as
 built and its measurements follow.
 
 ### Problem (measured)
@@ -2670,7 +2670,9 @@ and requested changes. Each finding and what changed:
      `Object.is(x, NaN)` is false. The marker is a NaN, so the bit tests sat
      in an `if` on "both operands are NaN". (The third review measured that
      `if` slower than main; it is gone, and only `Object.is(x, undefined)`
-     still tests the marker: finding 1 below.)
+     still tested the marker: finding 1 below. The fourth review showed that
+     test unsound, and `Object.is` no longer reads the marker at all; the
+     shared module still serves vec-search-join and from-ast's constant.)
    - **`Number.isNaN` keeps legacy's `f64.ne`**, so a marker answers `true`
      there, as on main. Excluding it is exact but not cheap: as a
      branch-free test it took the `Number.isNaN(i / 0 - 1)` loop from 1.2 to
@@ -2757,8 +2759,10 @@ error, no answer newly wrong against node) and requested changes:
      marker, because Wasm quiets every NaN those ops produce and the marker
      is a signalling NaN; anything else is a read. A sign (`-x`, `+x`) keeps
      its operand's source;
-   - against `undefined`, a read takes the marker test, and a constant or an
-     arithmetic result answers `false`;
+   - against `undefined`, a read took the marker test, and a constant or an
+     arithmetic result answered `false` (the fourth review showed the test
+     wrong for any operand whose op carries a NaN payload through: it is
+     gone, finding 1 below);
    - against `NaN`, the answer is `x ≠ x`; against any other constant, equal
      bits;
    - otherwise `sameValueNumberOps`.
@@ -2780,10 +2784,10 @@ error, no answer newly wrong against node) and requested changes:
      the declaration must bind an identifier;
    - (b) a rewritten local (`let r = Number.isNaN(NaN); r = 5`, also `"s"`,
      `undefined`): the declaration must pass `localIsRewritten`, as an
-     operand must. Any other declaration is judged by its slot's family with
-     `slotWriteVerdict`: an annotated `boolean` local takes the answer, and a
-     module `var` does not, because a module boolean reads back as an
-     unbranded i32 (`int32`, as an operand). Without that, reverting the
+     operand must. A module `var` refuses, because a module boolean reads
+     back as an unbranded i32 (`int32`, as an operand); an annotated local
+     is judged by its declared type (fourth review, finding 2). Without that,
+     reverting the
      generic `String(v)` edit (finding 3) brought back a withdrawal in
      `var t = Number.isNaN(NaN); String(t)` (`n2.mjs` `strModPred`);
    - (c) a `return` into a declared result (`@returns {number}`):
@@ -2832,7 +2836,79 @@ error, no answer newly wrong against node) and requested changes:
 8. **The `untypedLocal` option's doc** says it returns rewritten locals too,
    and that this module trusts only one `localIsRewritten` clears.
 
-### Implementation (as built, 2026-10-31, after three reviews)
+### Review of the fourth build (2026-10-31)
+
+A fourth fresh-context review of `a119134ff5` found one blocker and requested
+changes:
+
+1. **Blocker: `Object.is(<number>, undefined)` answered `true` where node
+   and main answer `false`.** Repro: `function g(): number { return undefined
+   as any; }` and `Object.is(+g(), undefined)`; likewise
+   `Math.abs(g())`, `Number(g())`, `Math.min(g(), Infinity)`, `c ? +g() :
+   1`, `(0, +g())`. The third build decided "can this be `undefined`" from
+   the bit pattern, but IR f64 ops carry a NaN's payload through: unary `+`
+   and `Number(x)` lower to the value itself, `f64.abs` keeps the payload,
+   and so does the `Math.min` lowering. The reviewer proposed classifying
+   operator results as never `undefined` and testing only value-carrying
+   reads. That still answers wrongly: a call is a value-carrying read, and
+   `function h(): number { return +g(); }` returns the marker's bits from an
+   IR-claimed body, so `Object.is(h(), undefined)` would answer `true`
+   (`.tmp/review4/r4-marker.mts` `plusCallee`: node 0, main 0, the third
+   build 1). A local or a field assigned from `+g()` would hold the same bits.
+   The marker test cannot be sound while IR producers do not canonicalise
+   the payload, so it is gone: a number is never `undefined` to
+   `Object.is`, exactly as legacy's typed arm answers on main. Against a
+   constant, `Object.is` still needs only `x ≠ x` (`NaN`) or the bits
+   (`numberConstant`, which replaced `numberSource`; the private operator
+   set went with it). `Object.is(x, undefined)` for a number is now the
+   constant `false`. The marker test is follow-up 7. The test "a number is
+   never undefined to Object.is" checks ten shapes, `g()` included, against
+   the IR-off compile and against node.
+
+   One shape then answered unlike main: `Object.is(g())`, with the second
+   argument missing. Main answers it through its boxing path, which reads
+   the marker as `undefined` (node and main 1), unlike its explicit
+   `Object.is(g(), undefined)` (main 0). `Object.is` with one number
+   argument is therefore lowered only when that argument is a literal
+   (`Object.is(0)`, in `not-same-value-x-y-number.js`); anything else stays
+   legacy (`expr-static-predicate-operand`). The literal test is
+   `unsignedOperand`, which `numberConstant` shares.
+
+   The third build's Result said "no row newly wrong against node"; that
+   was wrong for these shapes, which no probe then had.
+2. **Two consumer branches were dead.** `booleanWritable(options.family(…))`
+   for a declaration and `booleanWritable(expressionFamily(target))` for `=`
+   never admitted anything: `provenIrFamily` never names an identifier
+   `boolean` or `dynamic`, and an unannotated `=` target is rewritten by the
+   write itself. Both now judge the slot by its declared type through one
+   `declaredSlotFamily(typeNode)` (`resolveReturnTypeNode` →
+   `RESOLVED_KIND_FAMILIES`), which the `return` arm shares, and the
+   `localDeclaration` option (annotated or not) replaced `untypedLocal`:
+   - a declaration: annotated, `declaredSlotFamily` of its type; unannotated,
+     a local `localIsRewritten` clears; a module `var` refuses;
+   - `=`: into a local whose declared type takes a boolean (`boolean`,
+     `any`); an unannotated local, a module binding and a member target
+     (class fields included) refuse.
+
+   `let b: boolean = Number.isNaN(x)` and `let b: boolean = false; b =
+   Number.isFinite(x)` now claim with no post-claim error (tests
+   `booleanLocal`, `booleanLocalWrite`); `any` slots stay refused by other
+   selector arms (`b === true` over the carrier).
+3. **`returnSlotFamily` copied `effectiveIrReturnTypeNode`.** The helper's
+   parameter is now `ts.SignatureDeclaration`, and `selection.ts` calls it
+   on the `return`'s function, with no guard (a `return` always has one).
+4. **The two slot arms disagreed on an unresolved kind.** Both now go
+   through `resolvedKindFamily`: a slot that is declared but does not
+   resolve (a destructured or unsupported parameter, an unsupported result
+   type) is `unknown` and refuses. `undefined` (admit) means only "no slot
+   of the program's own": a member, ambient or imported callee, or an
+   undeclared result. Test `destructuredParameter`.
+5. **`a.push(Number.isNaN(NaN))` claims, then withdraws** ("push value i32
+   into f64 vec"); main's twin `a.push(1 > 0)` withdraws the same way. It is
+   follow-up 11's, not refused in the allow-list: refusing every member
+   call's argument would refuse `assert.sameValue(…)` too.
+
+### Implementation (as built, 2026-10-31, after four reviews)
 
 **`src/ir/static-predicates/`**, in the shape of `src/ir/array-methods/`:
 
@@ -2853,15 +2929,15 @@ error, no answer newly wrong against node) and requested changes:
   - a missing argument is `undefined`; `null`, the global `undefined` and
     `void 0` are never lowered (`staticPredicateLiteralFamily`, on #7144's
     `isUndefinedCompareOperand`);
-  - `Object.is(x, undefined)` tests a read `x` for legacy's f64 `undefined`
-    marker (`emitF64IsUndefined`, `src/ir/f64-undefined-marker.ts`); a
-    constant or arithmetic `x` answers `false`. Against `NaN` the answer is
+  - a number is never `undefined`, as in legacy's typed arm, so
+    `Object.is(number, undefined)` is `false`; against `NaN` the answer is
     `x ≠ x`, against another constant equal bits, and otherwise
-    `sameValueNumberOps`, all branch-free (`numberSource` reads which applies
-    from the operand's syntax).
+    `sameValueNumberOps`, all branch-free (`numberConstant` reads the
+    constant from the operand's syntax).
 - **`selection.ts`** holds the admission, the exact domain of that lowering:
   - at most the plan's arity of arguments, none spread
-    (`call-arity-unsupported`);
+    (`call-arity-unsupported`); `Object.is` with one number argument only
+    when it is a literal;
   - each operand is a literal of the line above, or is proved to lower to a
     number, a string or a boolean (`expressionFamily`,
     `operand-coercion-unsupported`): an unannotated local takes its
@@ -2873,13 +2949,13 @@ error, no answer newly wrong against node) and requested changes:
     (`booleanAnswerConsumed`, `operand-coercion-unsupported`), an allow-list
     judged with the predicates from-ast withdraws on: conditions, `!`,
     `typeof`, a statement, a template span; the identifier initializer of an
-    unannotated local `localIsRewritten` clears, or of a declaration whose
-    slot is a boolean (an annotated local; a module `var` reads back as
-    `int32` and refuses); a
-    write `slotWriteVerdict` admits a boolean into (`=`, a `return` into a
-    declared result, an argument into a top-level function's parameter; a
-    member or ambient callee's argument is admitted unless it is a string
-    method's, a scope-local callee's refuses);
+    unannotated local `localIsRewritten` clears; a write `slotWriteVerdict`
+    admits a boolean into, judged by the slot's declared type through
+    `declaredSlotFamily` (a declaration of or `=` into a local annotated
+    `boolean` or `any`, a `return` into a declared result, an argument into a
+    top-level function's parameter; a module `var`, a member target and a
+    scope-local callee's argument refuse; a member, ambient or imported
+    callee's argument is admitted unless it is a string method's);
     `binaryOperandsAdmissible` against the partner's family,
     `nullComparisonFolds`, a strict `undefined` compare. Through a comma's
     right side, `&&` / `||` with a boolean partner and a conditional branch
@@ -2899,9 +2975,11 @@ error, no answer newly wrong against node) and requested changes:
   `obviousSelectorValueFamily`. An ambient `String(v)` is a string only when
   `v` is a proven number or string. Refusals use `capabilityNo` with the
   verdict's reason (first review, finding 5). The adapter also resolves the
-  slot a boolean answer is written into: `argumentSlotFamily` through
-  `calleeParamResolvedKind`, `returnSlotFamily` through
-  `resolveReturnTypeNode`.
+  slots a boolean answer is written into: `declaredSlotFamily` (a type
+  node, through `resolveReturnTypeNode`) and `argumentSlotFamily` (through
+  `calleeParamResolvedKind`), both mapped by one `resolvedKindFamily`, and
+  hands the selection its `localDeclaration` resolver.
+  `effectiveIrReturnTypeNode` now takes any signature declaration.
 - **`src/ir/from-ast.ts`** gains one arm after the Math arm in
   `lowerMethodCall`, `staticPredicateHost`, and `isAmbientReceiver`, the
   ambient test the Function, Object, JSON, Math and predicate arms now share.
@@ -2914,15 +2992,16 @@ error, no answer newly wrong against node) and requested changes:
   now; `isStaticMethodUse` went with it), `dynamicMethodOperandBoxes` with
   the move-only scan edit (finding 4), and the name-first conjunct in
   `isAmbientIntrinsicValue` (second review, finding 6).
-- **Size:** `select.ts` +87 lines net (`isPhase1Expr` +3), `from-ast.ts` +25
+- **Size:** `select.ts` +86 lines net (`isPhase1Expr` +3), `from-ast.ts` +25
   (`lowerMethodCall` −10), `lattice-param-facts.ts` +18 (`localIsRewritten`),
   `operand-admissibility.ts` +15 (the two result rules), and three new
   modules: `static-predicates/lowering.ts`, `static-predicates/selection.ts`
-  and `f64-undefined-marker.ts`.
+  and `f64-undefined-marker.ts` (now shared by `vec-search-join.ts` and
+  from-ast's sentinel constant only).
 
 **Tests.**
 
-- `tests/issue-7106-ambient-static-calls.test.ts`, 265 tests, on standalone
+- `tests/issue-7106-ambient-static-calls.test.ts`, 273 tests, on standalone
   and gc:
   - every method over 28 operand shapes claims `<module-init>` with no
     post-claim error, and answers as node and as legacy. The shapes are
@@ -2947,7 +3026,7 @@ error, no answer newly wrong against node) and requested changes:
     (`r = 5`, `"s"`, `undefined`), a `@returns {number}` result and a
     `{number}` / `{string}` JSDoc parameter stay legacy with no post-claim
     error and answer as the IR-off run does (legacy's answer is wrong for
-    most of them, on main too);
+    most of them, on main too); from the fourth, a destructured parameter;
   - TypeScript functions with typed operands, including the hot loop:
     IR-claimed, answering as node, with no host import and no
     `__dyn_member_get` / `__ir_dyn_method_call` / `__extern_method_call` in
@@ -2957,22 +3036,24 @@ error, no answer newly wrong against node) and requested changes:
     boolean, `as any`, `as unknown`, `satisfies`, `!`, a write into an `any`
     slot, and `Object.is(String(<module boolean>), …)`;
   - `Object.is` against constants (`NaN`, `-0`, `0`) and of an arithmetic
-    result against `undefined`, and a predicate in a local declaration,
-    IR-claimed and answering as node;
-  - legacy's f64 `undefined` marker (a legacy callee's `undefined as any`)
-    answers `Object.is(v, undefined)` true, `Object.is(v, 1)` false and
-    `Object.is(v, v)` true, in an IR-claimed body.
+    result against `undefined`, a predicate in a local declaration, and in a
+    `boolean` local's declaration and later write, IR-claimed and answering
+    as node;
+  - a number is never `undefined` to `Object.is`: ten shapes over a callee's
+    `undefined as any` (`g()`, `+g()`, `Math.abs(g())`, `Number(g())`,
+    `Math.min(g(), Infinity)`, a callee returning `+g()`, a conditional, a
+    comma, `-g()`, `g() % 2`) answer as the IR-off compile, and as node for
+    all but `g()`; `Object.is(g())` stays legacy and `Object.is(-0)` claims.
 - `tests/issue-7189-intrinsic-namespace-member-values.test.ts`: `isArrayCall`
   moves to `CLAIMING`, deliberately. The predicate case "refuses a call" is
   back to main's, because the namespace of a call is not a value read. The
   `getPrototypeOf` refusal lives only in this suite's `primitiveCall`.
 
-### Result (measured 2026-10-31, after the third review)
+### Result (measured 2026-10-31, after the fourth review)
 
-Main `3ea2637ac1` vs this branch; same scripts as E (`probe-blockers.mts`,
-standalone; pass status through `runTest262File`). The first two builds'
-figures (mains `51040d3a01`, `96e5b4bfde`) were the same in every row of this
-table.
+Main `89b160ca8d` vs this branch; same scripts as E (`probe-blockers.mts`,
+standalone; pass status through `runTest262File`). The three earlier builds'
+figures were the same in every row of this table.
 
 | over the 817 files (792 compile) | main | as built |
 | --- | ---: | ---: |
@@ -2986,8 +3067,8 @@ table.
 
 - **The 23** are E's 20 plus `Object/is/{same-value-x-y-null,
   not-same-value-x-y-null, not-same-value-x-y-undefined}`: `null` and
-  `undefined` are literal operands now. The second and third reviews'
-  refusals cost none of them.
+  `undefined` are literal operands now. No later review's refusal cost any
+  of them.
 - The other 30 changed files keep a legacy `<module-init>` or function:
   - 24 move from `expr-ident-not-in-scope` to `operand-coercion-unsupported`
     (an object, symbol, array or dynamic operand, or a consumer refusal);
@@ -2998,73 +3079,78 @@ table.
   `Duration/prototype/total/precision-exact-mathematical-values-{1,2}`).
 - **Outside the population,** 95 files that include harness files calling
   these methods in functions are unchanged: same units, codes and details.
-- **Probes, all three reviews** (`.tmp/review3/`: the first review's `c1`–`c11`,
-  530 rows; the second's module-init and TypeScript files; the third's
-  `n1`–`n10`; `r3-ops.mjs`): no new compile error and no row newly wrong against node. The first
-  review's 530 rows: none worse than main; 282 module inits newly claimed,
-  all answering as node. Of the post-claim errors the probes show on this
-  branch (`pce-audit.mts`, 108 rows), 88 are main's in the same shape. The
-  other 20 are units main refuses only because of the boolean static, which
-  then reach one of follow-up 11's generic withdrawals, each of which main
-  takes in a twin without one: an untyped callee's typeIdx parity
-  (`userFn*`, `boolParam*`), a generator's `.next()` (`retGen`,
-  `genReturn`), and a write of `undefined` into an f64 slot (`jsdocParam`).
-  The TypeScript probes add the same classes (`anyUndef*`, `destructArrPred`,
-  `i32NativePred`), each with its twin on main. Every unit that withdraws
-  answers through legacy, as on main.
-- **The hot loop** (`.tmp/review3/hot6.mts`: one module per shape, base and
+- **Probes, all four reviews** (`.tmp/review4/`, which reruns the earlier
+  reviews' files against this main): no new compile error and no row newly
+  wrong against node. The first review's 530 rows: none worse than main;
+  282 module inits newly claimed, all answering as node. The fourth
+  review's TypeScript and JS files (`sem1`–`sem4`, `cons-ts`, `cons-js`,
+  `member-*`, `jsdocdecl`, `i32`, `twin1`, `t1*`) have no wrong answer main
+  does not share, and `r4-marker.mts` answers as main on all 21 shapes. Of
+  the 114 module-init post-claim error rows audited against main
+  (`pce-audit.mts`), 92 are main's in the same shape; the other 22 are
+  follow-up 11's classes, each with a twin on main: an untyped callee's
+  typeIdx parity (`userFn*`, `boolParam*`), a generator's `.next()`
+  (`retGen`, `genReturn`), `undefined` written into an f64 slot
+  (`jsdocParam`). The TypeScript and JS probes add the same classes
+  (`anyUndef*`, `isFieldUndef`, `destructArr`, `i32Param`,
+  `paramWrittenUndef`, `vecPush`) and follow-up 5's `"ab" + x` (`strLen`).
+  Every withdrawn unit answers through legacy.
+- **The hot loop** (`.tmp/review4/hot.mts`: one module per shape, base and
   branch instances alternated 31 times, 10⁶ iterations, best time in ms; 0
-  host imports on both lanes, `f` IR-claimed). Shapes marked * are the third
-  review's, with its round-2 measurement:
+  host imports on both lanes; `f` IR-claimed unless marked legacy, where
+  main is legacy too):
 
-  | `f`'s loop body | standalone main → branch | gc main → branch |
+  | shape | standalone main → branch | gc main → branch |
   | --- | --- | --- |
-  | `Object.is(i / 2, 3.5)` * (round 2: 0.89 → 1.20) | 0.90 → 0.89 | 0.88 → 0.89 |
-  | `g(i / 2, 3.5)`, `g(a, b) = Object.is(a, b)` * (0.91 → 1.21) | 0.90 → 0.89 | 0.89 → 0.89 |
-  | `Object.is(i / 2, k)`, `k` a local * (1.82 → 2.10) | 1.80 → 1.80 | 1.80 → 1.79 |
-  | `Object.is(i / (i - 7), NaN)` * (+3 %) | 1.95 → 1.28 | 1.93 → 1.28 |
-  | `g(i / 2, k)` over two locals | 1.79 → 1.79 | 1.81 → 1.79 |
-  | `g(a) = Object.is(a, NaN)` | 1.94 → 1.28 | 1.93 → 1.28 |
-  | `g(a) = Object.is(a, 3.5)` | 0.89 → 0.89 | 0.89 → 0.90 |
-  | `g(a) = Object.is(a, undefined)` | 24.7 → 1.55 | 23.2 → 1.55 |
-  | `Object.is(i % 3, 0)` | 7.51 → 5.31 | 7.49 → 5.32 |
-  | `Number.isNaN(i / 0 - 1)` | 1.20 → 1.20 | 1.20 → 1.20 |
-  | `Number.isInteger(i / 2)` | 1.88 → 1.86 | 1.87 → 1.87 |
+  | `Object.is(i / 2, k)`, `k` a local | 1.81 → 1.80 | 1.80 → 1.79 |
+  | `g(a, b) = Object.is(a, b)` over `(i / 2, 3.5)` | 0.89 → 0.90 | 0.89 → 0.89 |
+  | `g(a, b)` over `(i / 2, i / 3)` | 2.21 → 2.21 | 2.20 → 2.20 |
+  | `g(a, b)` over two locals | 1.79 → 1.80 | 1.80 → 1.79 |
+  | `Object.is(i / 2, 3.5)` | 0.89 → 0.89 | 0.89 → 0.89 |
+  | `g(a) = Object.is(a, 3.5)` | 0.91 → 0.91 | 0.89 → 0.90 |
+  | `Object.is(i * -1, -0)` | 0.81 → 0.81 | 0.81 → 0.83 |
+  | `Object.is(i % 3, 0)` | 7.60 → 5.31 | 7.54 → 5.33 |
+  | `Object.is(i / (i - 7), NaN)` | 1.93 → 1.28 | 1.94 → 1.28 |
+  | `g(a) = Object.is(a, NaN)` | 1.93 → 1.28 | 1.94 → 1.28 |
+  | `g(a) = Object.is(a, undefined)` | 24.65 → 0.56 | 23.51 → 0.56 |
+  | `Object.is(i / 2, undefined)` | 12.87 → 0.56 | 25.70 → 0.56 |
+  | `Object.is(h, undefined)`, `h` a local | 12.72 → 0.56 | 12.82 → 0.56 |
+  | `Object.is(i > 5, true)` | 1.82 → 1.75 | 0.86 → 0.86 |
+  | `Number.isNaN(i / 0 - 1)` | 1.20 → 1.20 | 1.21 → 1.20 |
+  | `Number.isInteger(i / 2)` | 1.86 → 1.88 | 1.88 → 1.88 |
+  | `Number.isFinite(i / (i - 7))` | 1.37 → 1.35 | 1.35 → 1.35 |
+  | `Number.isSafeInteger(i * 1.5)` | 2.51 → 2.50 | 2.52 → 2.53 |
+  | `Object.is(a, "ab1000000")` (legacy) | 13.14 → 13.08 | 13.13 → 13.17 |
+  | `!Array.isArray(i)` (legacy) | 0.65 → 0.65 | 0.65 → 0.65 |
 
-  Single runs on this shared box sometimes doubled for both builds; the
-  table takes the quiet runs (`r3-hot6-a.out`, `r3-hot6-b.out`), and every
-  rerun kept the order. Where branch and main emit the same ops
-  (`sameValueNumberOps`), they differ by under 0.03 ms.
+  Where the branch emits `sameValueNumberOps` or `numberIsPredicateOps`,
+  the ops are main's and the two differ by at most 0.02 ms, the spread of
+  repeated runs on this shared box.
 - **Other targets:** on `linear`, TypeScript functions over these calls now
   compile and answer correctly; main fails them with "Unsupported method
   call". On `wasi` they are IR-claimed.
 - **Bytes** (sha-256, main vs this branch, gc and standalone): all 26
   playground binaries; 345 of 345 from a quarter of the 1/60 test262 sample;
-  159 of 159 from the second review's 80 files; 194 of 196 from the third
-  review's random 100 files; 78 of 80 from its 40 files that use the
-  statics; and the shared-piece programs, 80 of 80 and 30 of 30
-  (`b3.mts`, `b4.mts`, custom sections stripped, also on wasi and linear).
-  The two differing pairs in the 100-file sample
-  (`AsyncFromSyncIteratorPrototype/next/absent-value-not-passed.js`) differ
-  only in the name section: a generated name carries a checker symbol id
-  (`__@iterator@156`) whose value depends on which compiler copy the probe
-  process runs first. With the stripped code sections compared, or the
-  compile order swapped, they are identical. The two in the 40-file sample
-  are `Object/is/same-value-x-y-empty.js`, one of the 23. The `String(v)`
-  program the third review measured is identical again.
+  159 of 159 from the second review's 80 files; the fourth review's random
+  100 files, 200 of 200, and its 33 static-using files, 66 of 66 (code
+  sections, custom sections stripped); and the shared-piece programs, 80 of
+  80 and 30 of 30 (`b3.mts`, `b4.mts`). A name-section-only difference the
+  third round saw in `AsyncFromSyncIteratorPrototype/next/absent-value-not-
+  passed.js` came from the probe's compile order: a generated name carries a
+  checker symbol id that depends on which compiler copy runs first.
 - **Sizes** over the six directories (`sizes.mts`): of 168 binary pairs, 0
   grew, 46 shrank, and no host import was added.
 - **Neighbour suites** (`tests/issue-7118-*`, `tests/issue-7189-*`,
   `tests/issue-7106-*`; main's 51 files against main's sources, this
   branch's 52 against its own): 5 failures on main (702 of 707 pass) and the
-  same 5 here (969 of 974), 0 new. All 5 are pre-existing: three
+  same 5 here (977 of 982), 0 new. All 5 are pre-existing: three
   `semanticProviders: "host-assisted"` tests (removed by #6979), and
   `script-var` "heterogeneous" on both lanes.
-- **Equivalence** (`equivalence-gate.mjs`, three shards): 2 907 tests pass;
+- **Equivalence** (`equivalence-gate.mjs`, three shards): 3 028 tests pass;
   the 20 that fail are all in the baseline's known failures, so no new
   regression. Two known failures pass (`delete-sentinel`, `reflect-api`
-  `Reflect.construct`), as they did in the second round; the baseline is
-  main's to ratchet.
+  `Reflect.construct`), as in the earlier rounds; the baseline is main's to
+  ratchet.
 
 **Risks.**
 
@@ -3130,12 +3216,14 @@ table.
      lanes (refused here, so legacy keeps them);
    - legacy answers `Object.is(a[5], NaN)` and `Number.isNaN(a[5])` wrongly
      for an out-of-bounds read (`bool.mjs` / `twin.mjs` `blockArrOOBIsNaN`).
-7. **Legacy's f64 `undefined` marker counts as NaN** in `Number.isNaN` and
-   in `Object.is` against `NaN` or another number read, on main and here
-   (only `Object.is(x, undefined)` tests it). The exact answer is one more
-   test on a read; it made a tight `Number.isNaN` loop up to 3× slower
-   (second review) and `Object.is` over reads 30–100 % slower (third
-   review, finding 1).
+7. **A number is never `undefined` to these predicates**, on main and here:
+   legacy's f64 `undefined` marker counts as NaN in `Number.isNaN`, and
+   `Object.is(number, undefined)` is `false`. A sound marker test needs IR
+   producers that canonicalise a NaN's payload (`+x`, `Number(x)`,
+   `Math.abs` and the `Math.min` lowering carry it through, so a callee
+   returning `+g()` hands back the marker's bits) or an `undefined` that is
+   not a NaN. Testing reads cost 30–100 % on the measured loops (third
+   review) and misread `+g()` (fourth review).
 8. **An out-of-bounds f64 read in IR is not `undefined`.** It reads NaN on
    the GC lanes and 0 on linear (`emitSafeVecGet`), never legacy's marker.
    This lever refuses an element read as an operand; reading the marker
@@ -3163,6 +3251,10 @@ table.
     - a generator called from a claimed unit withdraws on `.next()` over an
       externref, and the generator itself on host-free targets
       (`genTwin`);
+    - `a.push(Number.isNaN(NaN))` on a number array withdraws with "push
+      value i32 into f64 vec" (main's twin `a.push(1 > 0)`); a member
+      call's argument stays admitted, because refusing it would refuse
+      `assert.sameValue(…)`;
     - `"ab" + x` that `additiveOperandsProvable` refuses is follow-up 5.
 
     A hoisted module `var` read before its initializer

@@ -11088,25 +11088,20 @@ function isPhase1StaticPredicateCall(
     // The Math arms' ambient test: a module or source binding of the name is not ambient.
     isAmbientNamespace: (receiver) => !scope.has(receiver.text) && selectorSeesAmbientBinding(receiver),
     isGlobalUndefined: (operand) => isUnshadowedUndefinedIdentifier(operand, scope),
-    untypedLocal: unannotatedLocal,
+    localDeclaration: closureLocalDeclaration,
     family: (expression) => provenIrFamily(expression, scope),
     isStringMethodCall: (call) =>
       ts.isPropertyAccessExpression(call.expression) &&
       currentSelectionOptions?.classifyPrimitiveExpression?.(call.expression.expression) === "string",
+    declaredSlotFamily: (type) => resolvedKindFamily(resolveReturnTypeNode(type)),
     // A top-level function's parameter takes the verdict its own claim resolves its signature with; a
     // local callee's is not resolved here.
     argumentSlotFamily: (call, index) => {
       if (!ts.isIdentifier(call.expression)) return undefined;
-      if (scope.has(call.expression.text)) return "unknown";
-      const kind = calleeParamResolvedKind(call.expression.text, index, currentClaimTypeMap);
-      return kind === null ? undefined : (RESOLVED_KIND_FAMILIES[kind] ?? "unknown");
-    },
-    returnSlotFamily: (statement) => {
-      const fn = ts.findAncestor(statement, ts.isFunctionLike);
-      const declared = fn && (fn.type ?? ts.getJSDocReturnType(fn));
-      if (declared === undefined) return undefined;
-      const kind = resolveReturnTypeNode(declared);
-      return (kind !== null && RESOLVED_KIND_FAMILIES[kind]) || "unknown";
+      const name = call.expression.text;
+      if (scope.has(name)) return "unknown";
+      if (currentDynScanDecls?.get(name) === undefined) return undefined;
+      return resolvedKindFamily(calleeParamResolvedKind(name, index, currentClaimTypeMap));
     },
   });
   if (verdict === undefined) return undefined;
@@ -11142,13 +11137,17 @@ function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): 
   return "unknown";
 }
 
-/** The family of a resolved parameter or result kind; a kind no predicate operand has is absent. */
 const RESOLVED_KIND_FAMILIES: Partial<Record<NonNullable<ResolvedKind>, OperandFamily>> = {
   f64: "number",
   bool: "boolean",
   string: "string",
   dynamic: "dynamic",
 };
+
+/** The family of a resolved parameter or slot kind; `unknown` for a kind no predicate answer fits. */
+function resolvedKindFamily(kind: ResolvedKind): OperandFamily {
+  return (kind !== null && RESOLVED_KIND_FAMILIES[kind]) || "unknown";
+}
 
 /** The unannotated function or block local `identifier` names; from-ast types its slot from the initializer. */
 function unannotatedLocal(identifier: ts.Identifier): ts.VariableDeclaration | undefined {

@@ -6,7 +6,8 @@
  * exact domain of the lowering and of the consumer of its answer, so neither
  * the call nor its consumer demotes at build time (another construct in the
  * unit still may: #7106 plan, follow-ups):
- *   - at most the plan's arity of arguments, none spread;
+ *   - at most the plan's arity of arguments, none spread; `Object.is` with one
+ *     number argument only when it is a literal;
  *   - every operand is `null`, the global `undefined` or `void 0` (never
  *     lowered), or is proved to lower to a number, a string or a boolean —
  *     the IR representation from-ast's `irOperandFamily` will name, not the
@@ -33,30 +34,34 @@ import {
 } from "../analysis/operand-admissibility.js";
 import { ts } from "../../ts-api.js";
 import { localIsRewritten } from "../lattice-param-facts.js";
-import { LOWERED_FAMILIES, staticPredicateLiteralFamily, staticPredicatePlan } from "./lowering.js";
+import { effectiveIrReturnTypeNode } from "../select-expression-structure.js";
+import { LOWERED_FAMILIES, staticPredicateLiteralFamily, staticPredicatePlan, unsignedOperand } from "./lowering.js";
 
 export interface IrStaticPredicateSelection {
   /** The receiver is the unshadowed ambient namespace. */
   readonly isAmbientNamespace: (receiver: ts.Identifier) => boolean;
   readonly isGlobalUndefined: (operand: ts.Expression) => boolean;
   /**
-   * The declaration of an unannotated local, rewritten or not: from-ast types
-   * its slot from the initializer, and withdraws a later write of another
-   * family, so this module trusts only a local `localIsRewritten` clears.
+   * The declaration of the function or block local `identifier` names,
+   * annotated or not, rewritten or not; `undefined` for a module binding.
+   * from-ast types an unannotated local's slot from its initializer and
+   * withdraws a later write of another family, so this module traces only an
+   * unannotated local that `localIsRewritten` clears.
    */
-  readonly untypedLocal: (identifier: ts.Identifier) => ts.VariableDeclaration | undefined;
+  readonly localDeclaration: (identifier: ts.Identifier) => ts.VariableDeclaration | undefined;
   /** The representation family the selector proves any other expression lowers to; `unknown` without a proof. */
   readonly family: (expression: ts.Expression) => OperandFamily;
   /** A string method's call: its arguments need a ToString a boolean does not get. */
   readonly isStringMethodCall: (call: ts.CallExpression) => boolean;
+  /** The family of the slot a type node declares (`unknown` for a kind no predicate answer fits). */
+  readonly declaredSlotFamily: (type: ts.TypeNode) => OperandFamily;
   /**
    * The family of the callee's parameter the argument at `index` is written
-   * into: a top-level function's, `unknown` for a local callee, `undefined`
-   * for a member or ambient callee (no parameter slot of the program's own).
+   * into: a top-level function's (`unknown` when that parameter does not
+   * resolve, or for a local callee); `undefined` for a member, ambient or
+   * imported callee, which has no parameter slot of the program's own.
    */
   readonly argumentSlotFamily: (call: ts.CallExpression, index: number) => OperandFamily | undefined;
-  /** The family of the declared result a `return` writes into; `undefined` when the function declares none. */
-  readonly returnSlotFamily: (statement: ts.ReturnStatement) => OperandFamily | undefined;
 }
 
 export type IrStaticPredicateVerdict =
@@ -86,6 +91,14 @@ export function selectStaticPredicateCall(
     }
     lowered.push(operand);
   }
+  // `Object.is(x)`: main answers a number `x` through its boxing path, which reads legacy's f64 `undefined`
+  // marker as `undefined`, and the lowering cannot tell the marker from a NaN; only a literal `x` is lowered.
+  const [single] = lowered;
+  if (plan.test === "same-value" && call.arguments.length === 1 && single !== undefined) {
+    const literal = ts.isNumericLiteral(unsignedOperand(single));
+    if (!literal && expressionFamily(single, options) === "number")
+      return refusal("expr-static-predicate-operand", single);
+  }
   if (!booleanAnswerConsumed(call, options)) return refusal("expr-static-predicate-consumer", call);
   return { admitted: true, lowered };
 }
@@ -110,8 +123,8 @@ function expressionFamily(
   while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
   const family = (operand: ts.Expression) => expressionFamily(operand, options, seen);
   if (ts.isIdentifier(candidate)) {
-    const local = options.untypedLocal(candidate);
-    if (local !== undefined) {
+    const local = options.localDeclaration(candidate);
+    if (local !== undefined && local.type === undefined) {
       if (local.initializer === undefined || seen.has(local) || localIsRewritten(local)) return "unknown";
       return expressionFamily(local.initializer, options, new Set(seen).add(local));
     }
@@ -143,13 +156,15 @@ function expressionFamily(
  *   - a condition, `!`, `typeof`, a statement, a template span;
  *   - the initializer of an unannotated local that is never rewritten
  *     (`localIsRewritten`: from-ast withdraws a write of another family into
- *     the initializer's slot), or of a declaration whose slot is a boolean —
- *     not a module boolean, which reads back without the brand;
- *   - a write `slotWriteVerdict` admits a boolean into: `=`, a `return` into
- *     the declared result (an undeclared one is inferred from the returns),
- *     a call's argument into a top-level function's parameter (a local
- *     callee's is not resolved, so it refuses). A member or ambient callee's
- *     argument is admitted, except a string method's: it needs a ToString;
+ *     the initializer's slot);
+ *   - a write `slotWriteVerdict` admits a boolean into, judged by the slot's
+ *     declared type (`declaredSlotFamily`): a declaration of or `=` into a
+ *     local annotated `boolean` or `any`, a `return` into the declared result
+ *     (an undeclared one is inferred from the returns), a call's argument into
+ *     a top-level function's parameter. A module `var` refuses (a module
+ *     boolean reads back without the brand), as do a member target and a
+ *     local callee's argument. A member, ambient or imported callee's argument
+ *     is admitted, except a string method's: it needs a ToString;
  *   - a comma's sides, `&&` / `||` with a boolean partner and a conditional
  *     arm with a boolean partner forward it: their own position decides;
  *   - a typed binary operator `binaryOperandsAdmissible` admits against the
@@ -174,12 +189,13 @@ function booleanAnswerConsumed(answer: ts.Expression, options: IrStaticPredicate
   if (ts.isTypeOfExpression(parent) || ts.isExpressionStatement(parent) || ts.isTemplateSpan(parent)) return true;
   if (ts.isVariableDeclaration(parent)) {
     if (!ts.isIdentifier(parent.name)) return false;
-    // An unannotated local's slot is this initializer's while it is never rewritten; any other declaration
-    // is its slot's family, and a module boolean's reads back without the brand (`int32`).
-    if (options.untypedLocal(parent.name) !== undefined) return !localIsRewritten(parent);
-    return booleanWritable(options.family(parent.name));
+    if (parent.type !== undefined) return annotatedLocalTakesBoolean(parent.name, options);
+    return options.localDeclaration(parent.name) !== undefined && !localIsRewritten(parent);
   }
-  if (ts.isReturnStatement(parent)) return booleanWritable(options.returnSlotFamily(parent));
+  if (ts.isReturnStatement(parent)) {
+    const declared = effectiveIrReturnTypeNode(ts.findAncestor(parent, ts.isFunctionLike)!);
+    return booleanWritable(declared && options.declaredSlotFamily(declared));
+  }
   if (ts.isCallExpression(parent)) {
     if (parent.expression === child || options.isStringMethodCall(parent)) return false;
     return booleanWritable(options.argumentSlotFamily(parent, parent.arguments.indexOf(child as ts.Expression)));
@@ -200,6 +216,14 @@ function booleanWritable(slot: OperandFamily | undefined): boolean {
   return slot === undefined || slotWriteVerdict(slot, "boolean") === "admissible";
 }
 
+/** Is `target` a function or block local whose declared type takes a boolean (`boolean`, `any`)? */
+function annotatedLocalTakesBoolean(target: ts.Expression, options: IrStaticPredicateSelection): boolean {
+  let name = target;
+  while (ts.isParenthesizedExpression(name)) name = name.expression;
+  const local = ts.isIdentifier(name) ? options.localDeclaration(name) : undefined;
+  return local?.type !== undefined && booleanWritable(options.declaredSlotFamily(local.type));
+}
+
 function binaryOperandConsumed(
   parent: ts.BinaryExpression,
   child: ts.Node,
@@ -215,7 +239,7 @@ function binaryOperandConsumed(
     );
   }
   if (op === ts.SyntaxKind.EqualsToken)
-    return parent.right === child && booleanWritable(expressionFamily(parent.left, options));
+    return parent.right === child && annotatedLocalTakesBoolean(parent.left, options);
   if (!isTypedBinaryOperator(op)) return false;
   if (isEqualityOperator(op) && partner.kind === ts.SyntaxKind.NullKeyword) return nullComparisonFolds(op, "boolean");
   if (isStrictEqualityOperator(op) && isUndefinedCompareOperand(partner, () => !options.isGlobalUndefined(partner))) {
