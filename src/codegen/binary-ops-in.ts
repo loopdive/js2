@@ -120,6 +120,26 @@ function emitNativePrivateInObjectGuard(ctx: CodegenContext, fctx: FunctionConte
   releaseTempLocal(fctx, brand);
 }
 
+/**
+ * (#7163) `#x in v` with `v` typed `C | null` / `C | undefined` (or the static
+ * `typeof C | null`) is lowered as a nullable ref, not externref, so the #7150
+ * guard above never sees it. Wasm null there is JS null or undefined — never an
+ * Object — so throw the same TypeError. Only when the static type admits a
+ * nullish value: a receiver typed plain `C` stays byte-identical.
+ */
+function emitTypedNullablePrivateInGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiverExpr: ts.Expression,
+  receiver: number,
+): void {
+  const { nullable, undefinable } = ctx.oracle.nullabilityOf(receiverExpr);
+  if (!nullable && !undefinable) return;
+  const throwInstrs = buildThrowTypeErrorBranch(ctx, fctx, PRIVATE_IN_NON_OBJECT);
+  fctx.body.push({ op: "local.get", index: receiver }, { op: "ref.is_null" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
+}
+
 const EQ_HEAP_TYPE = -19; // abstract `eq` heap type
 
 /**
@@ -454,6 +474,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       }
       const tmpAny = allocTempLocal(fctx, { kind: "anyref" });
       fctx.body.push({ op: "local.set", index: tmpAny });
+      if (hostFree && objResult?.kind === "ref_null") emitTypedNullablePrivateInGuard(ctx, fctx, expr.right, tmpAny);
       emitPrivateInPredicate(ctx, fctx, tmpAny, declared);
       if (externCopy !== undefined && hostFree) emitNativePrivateInObjectGuard(ctx, fctx, externCopy);
       const isObjectIdx =
@@ -476,11 +497,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: buildThrowTypeErrorBranch(
-                ctx,
-                fctx,
-                "Cannot use 'in' operator to search for private field in a non-object",
-              ),
+              then: buildThrowTypeErrorBranch(ctx, fctx, PRIVATE_IN_NON_OBJECT),
               else: [],
             },
           ],
