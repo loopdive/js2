@@ -232,6 +232,8 @@ export const CALLBACK_WRAPPERS: Record<string, (method: string) => string> = {
   elemReverse: (m) => `g['reverse']().${m}`,
   elemFill: (m) => `g['fill']('f', 5).${m}`,
   calleeReverse: (m) => `(g.reverse)().${m}`,
+  calleeFill: (m) => `(g.fill)('f', 5).${m}`,
+  calleeCopyWithin: (m) => `(g.copyWithin)(1, 0, 1).${m}`,
   nonNullReverse: (m) => `g.reverse!().${m}`,
   optional: (m) => `g?.${m}`,
   optionalCall: (m) => `g.${m}?.`,
@@ -285,4 +287,44 @@ export function callbackRows(): { key: string; wrapper: string; method: string; 
       for (const form of Object.keys(CALLBACK_FORMS))
         rows.push({ key: `${wrapper}/${method}/${form}`, wrapper, method, form });
   return rows;
+}
+
+// ── (#7164 r11) Assignment-target sweep ──
+// An element or `length` of a switched binding written as a for-of / for-in
+// target, inside a destructuring pattern, through a wrapper, or through a
+// receiver-returning call. Only a plain store on the bare binding takes the
+// new path; every other target leaves the binding unswitched, so head must
+// not fail where origin/main does not (issue-7164-target-sweep-base.json).
+export const TARGET_FORMS: Record<string, string> = {
+  forOfElem: "for (g[0] of ['p', 'q']) {}",
+  forOfElem1: "const ys: string[] = ['p']; for (g[1] of ys) {}",
+  forOfElem5: "for (g[5] of ['p', 'q']) {}",
+  forOfElemString: "for (g[0] of 'pq') {}",
+  forOfPattern: "for ([g[0]] of [['p']]) {}",
+  forOfReverse: "for (g.reverse()[0] of ['q']) {}",
+  forOfLength: "for (g.length of [9]) {}",
+  forInElem: "for (g[0] in { k: 1 }) {}",
+  arrayPatternLength: "[g.length] = [9];",
+  objectPatternLength: "({ a: g.length } = { a: 9 });",
+  patternDefaultLength: "[g.length = 9] = [];",
+  arrayPatternElem: "[g[5]] = ['x'];",
+  reversePatternLength: "[g.reverse().length] = [9];",
+  reversePlusEq: "g.reverse().length += 7;",
+  reverseAssign: "g.reverse().length = 9;",
+  reverseElem: "g.reverse()[0] = 'x';",
+  asLength: "(g.length as any) = 9;",
+  nonNullLength: "g.length! = 9;",
+  asElem: "(g[0] as any) = 'x';",
+  parenLength: "(g).length = 9;",
+  plainLength: "g.length = 9;",
+  plainPlusEq: "g.length += 7;",
+};
+
+export function targetSource(form: string): string {
+  return `function value(): string {
+    const g: any[] = []; g.push('a'); g.length = 2;
+    ${TARGET_FORMS[form]!}
+    return String(g[0]) + ":" + String(g[8]) + ":" + g.length;
+  }
+export function at(i: number): number { const s = value(); return i < 0 ? s.length : s.charCodeAt(i); }`;
 }

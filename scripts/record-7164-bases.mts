@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// (#7164) Records — or checks — the three origin/main fixtures that
+// (#7164) Records — or checks — the four origin/main fixtures that
 // tests/equivalence/issue-7164-externref-vec-length-growth.test.ts compares
 // head against:
 //
@@ -9,6 +9,8 @@
 //       compile error). A cell not listed matched node on base.
 //   issue-7164-callback-sweep-base.json  the same for the callback-array
 //       escape sweep (receiver wrapper × callback method × length update).
+//   issue-7164-target-sweep-base.json  the same for the assignment-target
+//       sweep, with "ce" (compile error) kept apart from "trap".
 //   issue-7164-leak-base.json  per leak setup/case/lane, the marker leaks head
 //       still SHARES with base (same index, same kind). Recording refuses when
 //       head has a leak base lacks: that is a regression to fix, not to record.
@@ -111,6 +113,23 @@ for (const row of cases.callbackRows()) {
   }
 }
 
+// The assignment-target sweep: base only, keeping a compile error ("ce")
+// apart from a trap ("trap"), since head may fail only the way base does.
+const targets: Record<string, Record<string, string>> = {};
+for (const form of Object.keys(cases.TARGET_FORMS)) {
+  const src = cases.targetSource(form);
+  let node: string;
+  try {
+    node = read(evaluateAsJs(src).at as (i: number) => number);
+  } catch {
+    node = "JSERR";
+  }
+  for (const [lane, options] of LANES) {
+    const value = await run(base, src, options, "at");
+    if (value !== node) (targets[form] ??= {})[lane] = value === "CE" ? "ce" : value === "TRAP" ? "trap" : "wrong";
+  }
+}
+
 // The leak detector: head ∩ base.
 const leak: Record<string, Record<string, string[]>> = {};
 const refused: string[] = [];
@@ -138,6 +157,8 @@ const format = (value: object, path: string): string =>
 const sweepText = format({ $base: baseSha, ...sweep }, sweepPath);
 const callbackPath = join(repo, "tests/equivalence/issue-7164-callback-sweep-base.json");
 const callbackText = format({ $base: baseSha, ...callbacks }, callbackPath);
+const targetPath = join(repo, "tests/equivalence/issue-7164-target-sweep-base.json");
+const targetText = format({ $base: baseSha, ...targets }, targetPath);
 const leakText = format({ $base: baseSha, ...leak }, leakPath);
 console.log(
   `base ${baseSha}: ${Object.keys(sweep).length} sweep rows differ from node; ${Object.keys(leak).length} leak cases share a leak`,
@@ -149,8 +170,9 @@ if (refused.length > 0) {
 if (mode === "write") {
   writeFileSync(sweepPath, sweepText);
   writeFileSync(callbackPath, callbackText);
+  writeFileSync(targetPath, targetText);
   writeFileSync(leakPath, leakText);
-  console.log("wrote the three fixtures");
+  console.log("wrote the four fixtures");
 } else {
   const entries = (text: string): string => {
     const { $base: _, ...rest } = JSON.parse(text) as Record<string, unknown>;
@@ -160,6 +182,7 @@ if (mode === "write") {
   for (const [path, text] of [
     [sweepPath, sweepText],
     [callbackPath, callbackText],
+    [targetPath, targetText],
     [leakPath, leakText],
   ] as const) {
     const committed = readFileSync(path, "utf8");
@@ -173,5 +196,5 @@ if (mode === "write") {
     console.error(`STALE (re-run with --write): ${stale.join(", ")}`);
     process.exit(1);
   }
-  console.log("the three fixtures match");
+  console.log("the four fixtures match");
 }

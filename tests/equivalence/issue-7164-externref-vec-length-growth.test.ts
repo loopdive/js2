@@ -26,6 +26,8 @@ import { readFileSync } from "node:fs";
 import {
   callbackRows,
   callbackSource,
+  TARGET_FORMS,
+  targetSource,
   LEAK_SETUPS,
   LEAK_SUMMARY,
   leaksIn,
@@ -754,7 +756,7 @@ describe("#7164 length-update sweep: never worse than origin/main", () => {
 // origin/main does not. Same contract as the
 // length-update sweep; origin/main's outcomes are in
 // issue-7164-callback-sweep-base.json (scripts/record-7164-bases.mts). By
-// default every 41st row runs (50 of 2,040, every shape, method and form);
+// default every 41st row runs (53 of 2,160, every shape, method and form);
 // JS2WASM_FULL_SWEEP=1 runs all.
 const CALLBACK_BASE = JSON.parse(
   readFileSync(new URL("./issue-7164-callback-sweep-base.json", import.meta.url), "utf8"),
@@ -788,6 +790,42 @@ describe("#7164 callback-array escape sweep: never worse than origin/main", () =
         const base = CALLBACK_BASE[row.key]?.[lane] ?? "ok";
         if (base === "ok") expect(head, `${row.key}/${lane}`).toBe(node);
         else if (base === "wrong") expect(head, `${row.key}/${lane}`).not.toMatch(/^(TRAP|CE) /);
+      }, 120_000);
+    }
+  }
+});
+
+// (#7164 r11) Assignment-target sweep: an element or `length` of a switched
+// binding as a for-of / for-in target, in a destructuring pattern, behind a
+// wrapper or a receiver-returning call. Head may trap only where origin/main
+// traps and fail to compile only where it does (issue-7164-target-sweep-base.json).
+const TARGET_BASE = JSON.parse(
+  readFileSync(new URL("./issue-7164-target-sweep-base.json", import.meta.url), "utf8"),
+) as Record<string, Partial<Record<Lane, "wrong" | "trap" | "ce">>>;
+describe("#7164 assignment-target sweep: never worse than origin/main", () => {
+  for (const form of Object.keys(TARGET_FORMS)) {
+    const src = targetSource(form);
+    for (const { lane, options } of LANES) {
+      it(`${form} / ${lane}`, async () => {
+        const read = (at: (i: number) => number): string => {
+          const n = at(-1);
+          let out = "";
+          for (let i = 0; i < n; i++) out += String.fromCharCode(at(i));
+          return out;
+        };
+        const node = read(evaluateAsJs(src).at as (i: number) => number);
+        let head: string;
+        try {
+          const result = await compile(src, { fileName: "probe.ts", ...options });
+          if (!result.success) head = `CE ${result.errors[0]?.message}`;
+          else head = read((await instantiateWithRuntime(result)).exports.at as (i: number) => number);
+        } catch (e) {
+          head = `TRAP ${String(e)}`;
+        }
+        const base = TARGET_BASE[form]?.[lane] ?? "ok";
+        if (base === "ok") expect(head, `${form}/${lane}`).toBe(node);
+        if (base !== "trap") expect(head, `${form}/${lane}`).not.toMatch(/^TRAP /);
+        if (base !== "ce") expect(head, `${form}/${lane}`).not.toMatch(/^CE /);
       }, 120_000);
     }
   }

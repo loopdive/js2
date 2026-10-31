@@ -622,15 +622,88 @@ function memberUse(access: ts.PropertyAccessExpression | ts.ElementAccessExpress
   else {
     const key = skipValueWrappers(access.argumentExpression);
     if (ts.isStringLiteralLike(key)) name = key.text;
-    else if (!call) return { kind: "element" }; // `xs[i]`
+    else if (!call) return elementUse(access, callee); // `xs[i]`
   }
   if (name === undefined) return { kind: "escape" }; // `xs[k](…)`
   if (call) {
     const direct = callee === access;
     return { kind: RECEIVER_RETURNING.has(name) ? "returnsReceiver" : "call", name, call, direct };
   }
-  if (name === "length" || (ts.isElementAccessExpression(access) && /^\d+$/.test(name))) return { kind: "element" };
+  if (name === "length" || (ts.isElementAccessExpression(access) && /^\d+$/.test(name)))
+    return elementUse(access, callee);
   return { kind: "escape" };
+}
+
+/**
+ * (#7164) `xs[i]` / `xs.length` is safe only as an rvalue or as the direct
+ * target of a plain `=`, a compound assignment or `++` / `--` on the bare
+ * binding — the stores the length / element store paths handle. A for-of /
+ * for-in target, a destructuring-pattern position, a wrapped (`as`, `!`, …)
+ * target, or a store through another receiver (`xs.reverse().length += 7`)
+ * escapes.
+ */
+function elementUse(access: ts.PropertyAccessExpression | ts.ElementAccessExpression, top: ts.Node): MemberUse {
+  const parent = top.parent;
+  if (!parent) return { kind: "element" };
+  if ((ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.initializer === top)
+    return { kind: "escape" };
+  if (isPatternElement(top)) return { kind: "escape" };
+  // `[xs.length = 9] = []`: the target of a default inside a pattern.
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.left === top &&
+    isPatternElement(parent)
+  )
+    return { kind: "escape" };
+  const written =
+    (ts.isBinaryExpression(parent) &&
+      parent.left === top &&
+      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+      (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken));
+  if (written && (top !== access || !ts.isIdentifier(skipValueWrappers(access.expression)))) return { kind: "escape" };
+  return { kind: "element" };
+}
+
+/** (#7164) `node` sits in an array / object destructuring pattern (`[xs[0]] = …`, `({ a: xs.length } = …)`, `for ([xs[0]] of …)`). */
+function isPatternElement(node: ts.Node): boolean {
+  const literalPart = (n: ts.Node, child: ts.Node): boolean =>
+    ts.isArrayLiteralExpression(n) ||
+    ts.isObjectLiteralExpression(n) ||
+    ts.isSpreadElement(n) ||
+    ts.isSpreadAssignment(n) ||
+    ts.isShorthandPropertyAssignment(n) ||
+    (ts.isPropertyAssignment(n) && n.initializer === child) ||
+    ts.isParenthesizedExpression(n);
+  let child: ts.Node = node;
+  let parent = node.parent;
+  let inLiteral = false;
+  while (parent) {
+    const isAssign =
+      ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken && parent.left === child;
+    if (isAssign) {
+      if (!inLiteral) return false;
+      // A default inside the pattern (`[xs.length = 9] = []`) keeps climbing; the outer `=` ends it.
+      const holder = parent.parent;
+      if (
+        holder &&
+        (ts.isArrayLiteralExpression(holder) || (ts.isPropertyAssignment(holder) && holder.initializer === parent))
+      ) {
+        child = parent;
+        parent = parent.parent;
+        continue;
+      }
+      return true;
+    }
+    if (!literalPart(parent, child)) break;
+    if (ts.isArrayLiteralExpression(parent) || ts.isObjectLiteralExpression(parent)) inLiteral = true;
+    child = parent;
+    parent = parent.parent;
+  }
+  if (!inLiteral || !parent) return false;
+  return (ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.initializer === child;
 }
 
 /**
