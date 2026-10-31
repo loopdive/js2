@@ -693,7 +693,9 @@ jobs:
         github.event_name == 'schedule' ||
         github.event_name == 'workflow_dispatch'
       )
-    runs-on: ubuntu-latest
+    # Pinned (2026-10-31): ubuntu-latest moved to 26.04, which has no clang-18;
+    # the QuickJS cache-key step reads `clang-18 --version` before any install.
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
       # Explicit in the provider job even when workflow inputs do not exist
