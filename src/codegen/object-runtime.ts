@@ -128,6 +128,7 @@ import {
   getOrRegisterVecType,
   isVecBaseSubtype,
 } from "./registry/types.js";
+import { assignEnumerationArmTags, enumerationArmTagGuard } from "./class-arm-tag-guard.js"; // (#7158)
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
 import * as bc from "./builtin-ctor-callable.js"; // (#4394/#4656) constructor [[Call]] arms
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
@@ -8799,6 +8800,9 @@ type EnumShapeEntry = {
    * stamps instead of enumerating the wrong name list.
    */
   shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
+  /** (#7158) Nominal `__tag` guard inputs; see `assignEnumerationArmTags`. */
+  classTags?: number[];
+  structName?: string;
 };
 
 /**
@@ -8868,12 +8872,14 @@ function collectClosedStructEnumerationEntries(ctx: CodegenContext, emptyTypeIdx
     const shapeId = ctx.shapeIdByStructName.get(structName);
     const shapeRange = fnctorLayoutShapeRangeFor(ctx, structName);
     entries.push({
+      structName,
       typeIdx,
       fields: orderedNames.map((name) => byName.get(name)!),
       ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
       ...(shapeRange ? { shapeRange } : {}),
     });
   }
+  assignEnumerationArmTags(ctx, entries);
   return entries;
 }
 
@@ -8979,6 +8985,7 @@ function buildClosedStructEnumerationArms(
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: entry.typeIdx },
+      ...enumerationArmTagGuard(entry.typeIdx, entry.classTags),
       { op: "if", blockType: { kind: "empty" }, then: exactThen },
     );
   }
