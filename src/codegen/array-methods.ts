@@ -81,6 +81,7 @@ import { tryEmitProtoOverrideTwoArm } from "./builtin-proto-member-override.js";
 import { isStandaloneArraySubclass, withArraySubclassReceiverAsVec } from "./array-subclass-receiver.js"; // (#2917)
 import { withOwnKeyListReceiverAsVec } from "./object-model/object-own-key-order.js"; // (#6770 S5)
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
+import { isGrowthSwitchedReceiver } from "./statements/array-share-group.js";
 import {
   compileArrowAsClosure,
   compileExpression,
@@ -6845,7 +6846,7 @@ function setupArrayLoop(
   fctx.body.push({ op: "local.set", index: iTmp });
 
   const getOp = elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
-  const reload = callbackMayReplaceBacking(propAccess.parent) ? vecTypeIdx : undefined;
+  const reload = loopMayNeedReload(ctx, propAccess) ? vecTypeIdx : undefined;
   return { vecTmp, recvExternTmp, dataTmp, lenTmp, logicalLenTmp, iTmp, getOp, vecTypeIdx: reload };
 }
 
@@ -7436,11 +7437,20 @@ function reloadLoopData(loop: ArrayLoopLocals): Instr[] {
 }
 
 /**
+ * (#7164) A switched binding's `length =` reallocates, and a getter or
+ * `valueOf` the callback reaches without a call can run one, so its loops
+ * always re-read the backing. Other receivers skip it for a pure callback.
+ */
+function loopMayNeedReload(ctx: CodegenContext, propAccess: ts.PropertyAccessExpression): boolean {
+  return isGrowthSwitchedReceiver(ctx, propAccess.expression) || callbackMayReplaceBacking(propAccess.parent);
+}
+
+/**
  * (#7164) Whether the HOF's callback can replace the receiver's backing array.
  * An inline arrow / function expression with no call, `new`, tagged template,
- * assignment, `++` / `--` or `delete` runs no code that could (an implicit
- * getter or `valueOf` could, but then the loop reads the earlier backing, as
- * before #7164), so its loop skips the per-iteration backing check.
+ * assignment, `++` / `--` or `delete` runs no code that replaces a
+ * non-switched receiver's backing except through a getter or `valueOf` that
+ * pushes — and there the loop reads the earlier backing, as before #7164.
  */
 function callbackMayReplaceBacking(call: ts.Node): boolean {
   if (!ts.isCallExpression(call)) return true;
@@ -8137,7 +8147,7 @@ function compileArrayReduceRight(
     logicalLenTmp,
     iTmp,
     getOp,
-    vecTypeIdx: callbackMayReplaceBacking(propAccess.parent) ? vecTypeIdx : undefined,
+    vecTypeIdx: loopMayNeedReload(ctx, propAccess) ? vecTypeIdx : undefined,
   };
 
   // Compile initial value or use the last present element as the default seed.

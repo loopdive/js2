@@ -513,6 +513,7 @@ function groupVerdict(ctx: CodegenContext, decl: ts.VariableDeclaration, reads: 
       )
         seeded = true;
       const verdict = classifyUse(ctx, id, false, reads);
+      if (reads && callbackSeesReceiver(id)) local = false;
       if (verdict.typed) dynamic = false;
       if (verdict.escapesDynamic) {
         shared = true;
@@ -544,6 +545,43 @@ function groupVerdict(ctx: CodegenContext, decl: ts.VariableDeclaration, reads: 
   const result: GroupVerdict = { shared, dynamic, grows, seeded, local, members: seen };
   for (const member of seen) verdicts.set(member, result);
   return result;
+}
+
+/** Callback methods whose callback receives the array itself (index of that parameter). */
+const CALLBACK_ARRAY_PARAM = new Map<string, number>([
+  ...["forEach", "map", "filter", "some", "every", "find", "findIndex", "findLast", "findLastIndex", "flatMap"].map(
+    (name) => [name, 2] as const,
+  ),
+  ["reduce", 3],
+  ["reduceRight", 3],
+]);
+
+/**
+ * (#7164) `xs.forEach((v, i, arr) => …)`: the callback's array parameter is
+ * another name for the vec, outside the share group. True when the callback can
+ * see it — it declares that parameter or a rest, uses `arguments`, or is not an
+ * inline function.
+ */
+function callbackSeesReceiver(id: ts.Identifier): boolean {
+  const access = id.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== id) return false;
+  const arrayParam = CALLBACK_ARRAY_PARAM.get(access.name.text);
+  const call = access.parent;
+  if (arrayParam === undefined || !ts.isCallExpression(call) || call.expression !== access) return false;
+  let callback: ts.Expression | undefined = call.arguments[0];
+  while (callback && ts.isParenthesizedExpression(callback)) callback = callback.expression;
+  if (!callback) return false;
+  if (!ts.isArrowFunction(callback) && !ts.isFunctionExpression(callback)) return true;
+  if (callback.parameters.length > arrayParam || callback.parameters.some((p) => p.dotDotDotToken)) return true;
+  if (!ts.isFunctionExpression(callback)) return false;
+  let usesArguments = false;
+  const visit = (node: ts.Node): void => {
+    if (usesArguments) return;
+    if (ts.isIdentifier(node) && node.text === "arguments") usesArguments = true;
+    else forEachChild(node, visit);
+  };
+  visit(callback.body);
+  return usesArguments;
 }
 
 /**

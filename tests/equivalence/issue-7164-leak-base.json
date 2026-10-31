@@ -1,482 +1,633 @@
 {
+  "$base": "51040d3a0133b1d75a8d31d4b634debcd573fcc6",
   "growWithinCapacity/self": {
-    "gc": ["1: undefined → null", "2: undefined → null"],
-    "standalone": ["1: undefined → null", "2: undefined → null"],
-    "wasi": ["1: undefined → null", "2: undefined → null"]
+    "gc": ["1: undefined \u2192 null", "2: undefined \u2192 null"],
+    "standalone": ["1: undefined \u2192 null", "2: undefined \u2192 null"],
+    "wasi": ["1: undefined \u2192 null", "2: undefined \u2192 null"]
   },
   "growWithinCapacity/dynamicRead": {
-    "gc": ["1: undefined → null", "2: undefined → null"],
-    "standalone": ["1: undefined → null", "2: undefined → null"],
-    "wasi": ["1: undefined → null", "2: undefined → null"]
+    "gc": ["1: undefined \u2192 null", "2: undefined \u2192 null"],
+    "standalone": ["1: undefined \u2192 null", "2: undefined \u2192 null"],
+    "wasi": ["1: undefined \u2192 null", "2: undefined \u2192 null"]
   },
   "growWithinCapacity/restSuper": {
-    "gc": ["1: undefined → value", "2: undefined → value"],
-    "standalone": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value", "2: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "growWithinCapacity/apply": {
-    "gc": ["1: undefined → null", "2: undefined → null"],
-    "standalone": ["1: undefined → null", "2: undefined → null"],
-    "wasi": ["1: undefined → null", "2: undefined → null"]
+    "gc": ["1: undefined \u2192 null", "2: undefined \u2192 null"],
+    "standalone": ["1: undefined \u2192 null", "2: undefined \u2192 null"],
+    "wasi": ["1: undefined \u2192 null", "2: undefined \u2192 null"]
   },
-  "shrinkThenPostfixInc/self": { "wasi": ["1: undefined → value", "2: undefined → value"] },
+  "shrinkThenPostfixInc/self": { "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"] },
   "shrinkThenPostfixInc/dynamicRead": {
-    "gc": ["1: undefined → value", "2: undefined → null"],
-    "standalone": ["1: undefined → value", "2: undefined → null"]
+    "gc": ["1: undefined \u2192 value", "2: undefined \u2192 null"],
+    "standalone": ["1: undefined \u2192 value", "2: undefined \u2192 null"]
   },
   "shrinkThenPostfixInc/restDecl": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPostfixInc/restLead": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPostfixInc/restArrow": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPostfixInc/restExpr": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPostfixInc/restMethod": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPostfixInc/restStatic": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPostfixInc/restClosure": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPostfixInc/restNew": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPostfixInc/restSuper": {
-    "gc": ["1: undefined → value", "2: undefined → value"],
-    "standalone": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value", "2: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPostfixInc/apply": {
-    "gc": ["1: undefined → value", "2: undefined → null"],
-    "standalone": ["1: undefined → value", "2: undefined → null"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value", "2: undefined \u2192 null"],
+    "standalone": ["1: undefined \u2192 value", "2: undefined \u2192 null"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPostfixInc/positionalDecl": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value"]
   },
   "shrinkThenPostfixInc/positionalMethod": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value"]
   },
   "shrinkThenPostfixInc/positionalNew": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value"]
   },
-  "shrinkThenPrefixInc/self": { "wasi": ["1: undefined → value", "2: undefined → value"] },
+  "shrinkThenPrefixInc/self": { "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"] },
   "shrinkThenPrefixInc/dynamicRead": {
-    "gc": ["1: undefined → value", "2: undefined → null"],
-    "standalone": ["1: undefined → value", "2: undefined → null"]
+    "gc": ["1: undefined \u2192 value", "2: undefined \u2192 null"],
+    "standalone": ["1: undefined \u2192 value", "2: undefined \u2192 null"]
   },
   "shrinkThenPrefixInc/restDecl": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPrefixInc/restLead": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPrefixInc/restArrow": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPrefixInc/restExpr": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPrefixInc/restMethod": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPrefixInc/restStatic": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPrefixInc/restClosure": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPrefixInc/restNew": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPrefixInc/restSuper": {
-    "gc": ["1: undefined → value", "2: undefined → value"],
-    "standalone": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value", "2: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPrefixInc/apply": {
-    "gc": ["1: undefined → value", "2: undefined → null"],
-    "standalone": ["1: undefined → value", "2: undefined → null"],
-    "wasi": ["1: undefined → value", "2: undefined → value"]
+    "gc": ["1: undefined \u2192 value", "2: undefined \u2192 null"],
+    "standalone": ["1: undefined \u2192 value", "2: undefined \u2192 null"],
+    "wasi": ["1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenPrefixInc/positionalDecl": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value"]
   },
   "shrinkThenPrefixInc/positionalMethod": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value"]
   },
   "shrinkThenPrefixInc/positionalNew": {
-    "gc": ["1: undefined → value"],
-    "standalone": ["1: undefined → value"],
-    "wasi": ["1: undefined → value"]
+    "gc": ["1: undefined \u2192 value"],
+    "standalone": ["1: undefined \u2192 value"],
+    "wasi": ["1: undefined \u2192 value"]
   },
   "shrinkThenAssign/dynamicRead": {
-    "gc": ["0: undefined → value", "1: undefined → value", "2: undefined → null"],
-    "standalone": ["0: undefined → value", "1: undefined → value", "2: undefined → null"],
-    "wasi": ["0: undefined → value", "1: undefined → value", "2: undefined → null"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value", "2: undefined \u2192 null"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value", "2: undefined \u2192 null"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value", "2: undefined \u2192 null"]
   },
   "shrinkThenAssign/restDecl": {
-    "gc": ["0: undefined → value", "1: undefined → value"],
-    "standalone": ["0: undefined → value", "1: undefined → value"],
-    "wasi": ["0: undefined → value", "1: undefined → value"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value"]
   },
   "shrinkThenAssign/restLead": {
-    "gc": ["0: undefined → value", "1: undefined → value"],
-    "standalone": ["0: undefined → value", "1: undefined → value"],
-    "wasi": ["0: undefined → value", "1: undefined → value"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value"]
   },
   "shrinkThenAssign/restArrow": {
-    "gc": ["0: undefined → value", "1: undefined → value"],
-    "standalone": ["0: undefined → value", "1: undefined → value"],
-    "wasi": ["0: undefined → value", "1: undefined → value"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value"]
   },
   "shrinkThenAssign/restExpr": {
-    "gc": ["0: undefined → value", "1: undefined → value"],
-    "standalone": ["0: undefined → value", "1: undefined → value"],
-    "wasi": ["0: undefined → value", "1: undefined → value"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value"]
   },
   "shrinkThenAssign/restMethod": {
-    "gc": ["0: undefined → value", "1: undefined → value"],
-    "standalone": ["0: undefined → value", "1: undefined → value"],
-    "wasi": ["0: undefined → value", "1: undefined → value"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value"]
   },
   "shrinkThenAssign/restStatic": {
-    "gc": ["0: undefined → value", "1: undefined → value"],
-    "standalone": ["0: undefined → value", "1: undefined → value"],
-    "wasi": ["0: undefined → value", "1: undefined → value"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value"]
   },
   "shrinkThenAssign/restClosure": {
-    "gc": ["0: undefined → value", "1: undefined → value"],
-    "standalone": ["0: undefined → value", "1: undefined → value"],
-    "wasi": ["0: undefined → value", "1: undefined → value"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value"]
   },
   "shrinkThenAssign/restNew": {
-    "gc": ["0: undefined → value", "1: undefined → value"],
-    "standalone": ["0: undefined → value", "1: undefined → value"],
-    "wasi": ["0: undefined → value", "1: undefined → value"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value"]
   },
   "shrinkThenAssign/restSuper": {
-    "gc": ["0: undefined → value", "1: undefined → value", "2: undefined → value"],
-    "standalone": ["0: undefined → value", "1: undefined → value", "2: undefined → value"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value", "2: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value", "2: undefined \u2192 value"]
   },
   "shrinkThenAssign/apply": {
-    "gc": ["0: undefined → value", "1: undefined → value", "2: undefined → null"],
-    "standalone": ["0: undefined → value", "1: undefined → value", "2: undefined → null"],
-    "wasi": ["0: undefined → value", "1: undefined → value", "2: undefined → null"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value", "2: undefined \u2192 null"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value", "2: undefined \u2192 null"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value", "2: undefined \u2192 null"]
   },
   "shrinkThenAssign/positionalDecl": {
-    "gc": ["0: undefined → value", "1: undefined → value"],
-    "standalone": ["0: undefined → value", "1: undefined → value"],
-    "wasi": ["0: undefined → value", "1: undefined → value"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value"]
   },
   "shrinkThenAssign/positionalMethod": {
-    "gc": ["0: undefined → value", "1: undefined → value"],
-    "standalone": ["0: undefined → value", "1: undefined → value"],
-    "wasi": ["0: undefined → value", "1: undefined → value"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value"]
   },
   "shrinkThenAssign/positionalNew": {
-    "gc": ["0: undefined → value", "1: undefined → value"],
-    "standalone": ["0: undefined → value", "1: undefined → value"],
-    "wasi": ["0: undefined → value", "1: undefined → value"]
+    "gc": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 value", "1: undefined \u2192 value"],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value"]
   },
-  "postIncOnly/self": { "wasi": ["2: undefined → value", "3: undefined → value"] },
-  "postIncOnly/map": { "wasi": ["2: undefined → value", "3: undefined → value"] },
-  "postIncOnly/slice": { "wasi": ["2: undefined → value", "3: undefined → value"] },
-  "postIncOnly/concat": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/self": { "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"] },
+  "postIncOnly/map": { "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"] },
+  "postIncOnly/slice": { "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"] },
+  "postIncOnly/concat": { "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"] },
   "postIncOnly/toReversed": {
-    "gc": ["0: present → absent", "0: visited → skipped", "1: present → absent", "1: visited → skipped"],
-    "standalone": ["0: present → absent", "0: visited → skipped", "1: present → absent", "1: visited → skipped"],
-    "wasi": ["0: undefined → value", "1: undefined → value"]
+    "gc": [
+      "0: present \u2192 absent",
+      "0: visited \u2192 skipped",
+      "1: present \u2192 absent",
+      "1: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "0: present \u2192 absent",
+      "0: visited \u2192 skipped",
+      "1: present \u2192 absent",
+      "1: visited \u2192 skipped"
+    ],
+    "wasi": ["0: undefined \u2192 value", "1: undefined \u2192 value"]
   },
   "postIncOnly/toSpliced": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/with": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
-  "postIncOnly/splice": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/splice": { "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"] },
   "postIncOnly/arrayFrom": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/arrayOf": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ]
   },
-  "postIncOnly/entries": { "wasi": ["2: undefined → value", "3: undefined → value"] },
-  "postIncOnly/values": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/entries": { "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"] },
+  "postIncOnly/values": { "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"] },
   "postIncOnly/spread": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/spreadLead": {
-    "gc": ["3: undefined → value", "4: undefined → value"],
-    "standalone": ["3: undefined → value", "4: undefined → value"],
-    "wasi": ["3: undefined → value", "4: undefined → value"]
+    "gc": ["3: undefined \u2192 value", "4: undefined \u2192 value"],
+    "standalone": ["3: undefined \u2192 value", "4: undefined \u2192 value"],
+    "wasi": ["3: undefined \u2192 value", "4: undefined \u2192 value"]
   },
-  "postIncOnly/forOfCollect": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/forOfCollect": { "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"] },
   "postIncOnly/restDecl": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/restLead": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/restArrow": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/restExpr": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/restMethod": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/restStatic": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/restClosure": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/restNew": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/restSuper": {
-    "gc": ["2: undefined → value", "3: undefined → value"],
-    "standalone": ["2: undefined → value", "3: undefined → value"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 value"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/apply": {
-    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
-    "wasi": ["2: undefined → value", "3: undefined → value"]
+    "gc": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "standalone": [
+      "2: present \u2192 absent",
+      "2: visited \u2192 skipped",
+      "3: present \u2192 absent",
+      "3: visited \u2192 skipped"
+    ],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "postIncOnly/positionalDecl": {
-    "gc": ["2: present → absent", "2: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped"],
-    "wasi": ["2: undefined → null"]
+    "gc": ["2: present \u2192 absent", "2: visited \u2192 skipped"],
+    "standalone": ["2: present \u2192 absent", "2: visited \u2192 skipped"],
+    "wasi": ["2: undefined \u2192 null"]
   },
   "postIncOnly/positionalMethod": {
-    "gc": ["2: present → absent", "2: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped"],
-    "wasi": ["2: undefined → null"]
+    "gc": ["2: present \u2192 absent", "2: visited \u2192 skipped"],
+    "standalone": ["2: present \u2192 absent", "2: visited \u2192 skipped"],
+    "wasi": ["2: undefined \u2192 null"]
   },
   "postIncOnly/positionalNew": {
-    "gc": ["2: present → absent", "2: visited → skipped"],
-    "standalone": ["2: present → absent", "2: visited → skipped"],
-    "wasi": ["2: undefined → null"]
+    "gc": ["2: present \u2192 absent", "2: visited \u2192 skipped"],
+    "standalone": ["2: present \u2192 absent", "2: visited \u2192 skipped"],
+    "wasi": ["2: undefined \u2192 null"]
   },
   "plusEqOnly/self": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/map": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/slice": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/concat": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/toReversed": {
-    "gc": ["0: undefined → null", "1: undefined → value"],
-    "standalone": ["0: undefined → null", "1: undefined → value"],
-    "wasi": ["0: undefined → null", "1: undefined → value"]
+    "gc": ["0: undefined \u2192 null", "1: undefined \u2192 value"],
+    "standalone": ["0: undefined \u2192 null", "1: undefined \u2192 value"],
+    "wasi": ["0: undefined \u2192 null", "1: undefined \u2192 value"]
   },
   "plusEqOnly/toSpliced": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/with": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/splice": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/arrayFrom": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/arrayOf": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/entries": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/values": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/spread": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/spreadLead": {
-    "gc": ["3: undefined → value", "4: undefined → value"],
-    "standalone": ["3: undefined → value", "4: undefined → value"],
-    "wasi": ["3: undefined → value", "4: undefined → value"]
+    "gc": ["3: undefined \u2192 value", "4: undefined \u2192 value"],
+    "standalone": ["3: undefined \u2192 value", "4: undefined \u2192 value"],
+    "wasi": ["3: undefined \u2192 value", "4: undefined \u2192 value"]
   },
   "plusEqOnly/forOfCollect": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/indexRead": {
-    "gc": ["2: undefined → value"],
-    "standalone": ["2: undefined → value"],
-    "wasi": ["2: undefined → value"]
+    "gc": ["2: undefined \u2192 value"],
+    "standalone": ["2: undefined \u2192 value"],
+    "wasi": ["2: undefined \u2192 value"]
   },
   "plusEqOnly/dynamicRead": {
-    "gc": ["2: undefined → value"],
-    "standalone": ["2: undefined → value"],
-    "wasi": ["2: undefined → value"]
+    "gc": ["2: undefined \u2192 value"],
+    "standalone": ["2: undefined \u2192 value"],
+    "wasi": ["2: undefined \u2192 value"]
   },
   "plusEqOnly/restDecl": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/restLead": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/restArrow": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/restExpr": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/restMethod": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/restStatic": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/restClosure": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/restNew": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/restSuper": {
-    "gc": ["2: undefined → value", "3: undefined → value"],
-    "standalone": ["2: undefined → value", "3: undefined → value"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 value"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 value"]
   },
   "plusEqOnly/apply": {
-    "gc": ["2: undefined → value", "3: undefined → null"],
-    "standalone": ["2: undefined → value", "3: undefined → null"],
-    "wasi": ["2: undefined → value", "3: undefined → null"]
+    "gc": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "standalone": ["2: undefined \u2192 value", "3: undefined \u2192 null"],
+    "wasi": ["2: undefined \u2192 value", "3: undefined \u2192 null"]
   },
   "plusEqOnly/positionalDecl": {
-    "gc": ["2: undefined → value"],
-    "standalone": ["2: undefined → value"],
-    "wasi": ["2: undefined → value"]
+    "gc": ["2: undefined \u2192 value"],
+    "standalone": ["2: undefined \u2192 value"],
+    "wasi": ["2: undefined \u2192 value"]
   },
   "plusEqOnly/positionalMethod": {
-    "gc": ["2: undefined → value"],
-    "standalone": ["2: undefined → value"],
-    "wasi": ["2: undefined → value"]
+    "gc": ["2: undefined \u2192 value"],
+    "standalone": ["2: undefined \u2192 value"],
+    "wasi": ["2: undefined \u2192 value"]
   },
   "plusEqOnly/positionalNew": {
-    "gc": ["2: undefined → value"],
-    "standalone": ["2: undefined → value"],
-    "wasi": ["2: undefined → value"]
+    "gc": ["2: undefined \u2192 value"],
+    "standalone": ["2: undefined \u2192 value"],
+    "wasi": ["2: undefined \u2192 value"]
   }
 }

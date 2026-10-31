@@ -289,6 +289,38 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
     body: "const g: any[] = ['a', 'b']; g.length = 4; return g.indexOf(undefined) + (g.includes(undefined) ? 'T' : 'F');",
     gap: "same as origin/main: a literal-seeded string vec's grown slots are null, so includes(undefined) is false",
   },
+  // (#7164 r8) A callback that can see its array parameter is another name for
+  // the vec: the binding is not switched, so the store through it is main's.
+  cbArrayParamForEach: {
+    body: "const g: any[] = []; g.push('a'); g.length = 3; g.forEach((v, i, arr) => { if (i === 0) arr.length = 5; }); return String(g[4]);",
+  },
+  cbArrayParamMap: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; const r = g.map((v, i, a) => { if (i === 0) a.length = 20; return String(v); }); return String(g.length) + ':' + String(g[19]) + ':' + r.length;",
+    gap: "same as origin/main: a grow through the callback's array parameter is lost",
+  },
+  cbArrayParamFnExpr: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; g.some(function (v, i, a) { a.length = 9; return true; }); return String(g.length) + String(g[8]);",
+    gap: "same as origin/main: a grow through the callback's array parameter is lost",
+  },
+  cbArrayParamPlusEq: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; g.forEach((v, i, a) => { if (i === 0) a.length += 7; }); return String(g.length) + String(g[8]);",
+    gap: "same as origin/main: a grow through the callback's array parameter is lost",
+  },
+  cbArrayParamNamed: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; const cb = (v: any, i: number, a: any[]) => { if (i === 0) a.length = 9; }; g.forEach(cb); return String(g.length) + String(g[8]);",
+    gap: "same as origin/main: a grow through the callback's array parameter is lost",
+  },
+  // (#7164 r8) A getter the callback reads can grow (and reallocate) a switched binding.
+  getterGrowSome: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; const o = { get x() { g.length = 50; g[1] = 'B'; return 0; } }; return String(g.some((v, i) => o.x === 0 && v === 'B'));",
+  },
+  getterGrowFindIndex: {
+    body: "const g: any[] = []; g.push('a'); g.length = 2; const o = { get x() { g.length = 50; g[1] = 'B'; return 0; } }; const r = g.findIndex((v, i) => o.x + i === 1 && v === 'B'); return String(r) + ':' + g.length;",
+  },
+  // (#7164 r8) origin/main folded this search to a constant (0).
+  closureIndexOf: {
+    body: "const g: any[] = ['a', 'b']; const f = (x: any) => g.indexOf(x); return String(f('b'));",
+  },
   spreadShrinkGrow: {
     body: "const g: any[] = []; g.push('y'); g.push('z'); g.length = 1; g.length = 3; const s = [...g]; return s.length+':'+(1 in s)+':'+String(s[1]);",
   },

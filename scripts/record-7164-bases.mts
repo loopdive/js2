@@ -11,16 +11,24 @@
 //       still SHARES with base (same index, same kind). Recording refuses when
 //       head has a leak base lacks: that is a regression to fix, not to record.
 //
+// Each fixture's first key, "$base", is the base commit it was recorded against.
+//
 // The base compiler is `git archive <rev> src tests/equivalence/helpers.ts`,
-// extracted under .tmp/7164-base (node_modules resolve from the repo). Every
-// sweep and leak module is compiled on its own on gc, standalone and wasi.
+// extracted under the repo's .tmp/7164-base. That location is load-bearing:
+// node_modules and the repo's package.json (ESM) resolve from there; extracted
+// outside the repo, tsx loads helpers.ts as CommonJS and vitest refuses to load.
+// Every sweep and leak module is compiled on its own on gc, standalone and
+// wasi. The test compiles a leak setup's 37 cases into one module, so a
+// module-wide registration (like #7164's own box-type bug) could differ
+// between the two; the test's base-relative rule still holds per case.
 //
 //   node --import ./scripts/record-7164-bases-loader.mjs --import tsx \
 //     scripts/record-7164-bases.mts [--base <rev>] (--write | --check)
 //
-// --check recomputes both fixtures and exits 1 when either differs from the
-// committed file, so a stale entry (one base no longer has) cannot silently
-// widen what the test allows. It takes about an hour on a 4-core box.
+// --check recomputes both fixtures and exits 1 when either's entries differ from
+// the committed file, so a stale entry (one base no longer has) cannot silently
+// widen what the test allows; it warns when only the recorded "$base" is older.
+// It takes about half an hour on a 4-core box.
 import { execSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -109,8 +117,8 @@ const sweepPath = join(repo, "tests/equivalence/issue-7164-length-update-sweep-b
 const leakPath = join(repo, "tests/equivalence/issue-7164-leak-base.json");
 const format = (value: object, path: string): string =>
   execSync(`npx prettier --stdin-filepath ${path}`, { cwd: repo, input: JSON.stringify(value) }).toString();
-const sweepText = format(sweep, sweepPath);
-const leakText = format(leak, leakPath);
+const sweepText = format({ $base: baseSha, ...sweep }, sweepPath);
+const leakText = format({ $base: baseSha, ...leak }, leakPath);
 console.log(
   `base ${baseSha}: ${Object.keys(sweep).length} sweep rows differ from node; ${Object.keys(leak).length} leak cases share a leak`,
 );
@@ -123,10 +131,22 @@ if (mode === "write") {
   writeFileSync(leakPath, leakText);
   console.log("wrote both fixtures");
 } else {
-  const stale = [
-    readFileSync(sweepPath, "utf8") !== sweepText ? sweepPath : undefined,
-    readFileSync(leakPath, "utf8") !== leakText ? leakPath : undefined,
-  ].filter(Boolean);
+  const entries = (text: string): string => {
+    const { $base: _, ...rest } = JSON.parse(text) as Record<string, unknown>;
+    return JSON.stringify(rest);
+  };
+  const stale: string[] = [];
+  for (const [path, text] of [
+    [sweepPath, sweepText],
+    [leakPath, leakText],
+  ] as const) {
+    const committed = readFileSync(path, "utf8");
+    if (entries(committed) !== entries(text)) stale.push(path);
+    else if ((JSON.parse(committed) as { $base?: string }).$base !== baseSha)
+      console.warn(
+        `WARNING: ${path} records base ${(JSON.parse(committed) as { $base?: string }).$base ?? "(none)"}; entries still match ${baseSha} — re-run with --write to refresh it`,
+      );
+  }
   if (stale.length > 0) {
     console.error(`STALE (re-run with --write): ${stale.join(", ")}`);
     process.exit(1);
