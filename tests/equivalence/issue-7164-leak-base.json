@@ -1,0 +1,483 @@
+{
+  "$base": "cc03abc63ba6abd827c910705566daed490e343e",
+  "growWithinCapacity/self": {
+    "gc": ["1: undefined → null", "2: undefined → null"],
+    "standalone": ["1: undefined → null", "2: undefined → null"],
+    "wasi": ["1: undefined → null", "2: undefined → null"]
+  },
+  "growWithinCapacity/dynamicRead": {
+    "gc": ["1: undefined → null", "2: undefined → null"],
+    "standalone": ["1: undefined → null", "2: undefined → null"],
+    "wasi": ["1: undefined → null", "2: undefined → null"]
+  },
+  "growWithinCapacity/restSuper": {
+    "gc": ["1: undefined → value", "2: undefined → value"],
+    "standalone": ["1: undefined → value", "2: undefined → value"]
+  },
+  "growWithinCapacity/apply": {
+    "gc": ["1: undefined → null", "2: undefined → null"],
+    "standalone": ["1: undefined → null", "2: undefined → null"],
+    "wasi": ["1: undefined → null", "2: undefined → null"]
+  },
+  "shrinkThenPostfixInc/self": { "wasi": ["1: undefined → value", "2: undefined → value"] },
+  "shrinkThenPostfixInc/dynamicRead": {
+    "gc": ["1: undefined → value", "2: undefined → null"],
+    "standalone": ["1: undefined → value", "2: undefined → null"]
+  },
+  "shrinkThenPostfixInc/restDecl": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPostfixInc/restLead": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPostfixInc/restArrow": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPostfixInc/restExpr": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPostfixInc/restMethod": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPostfixInc/restStatic": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPostfixInc/restClosure": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPostfixInc/restNew": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPostfixInc/restSuper": {
+    "gc": ["1: undefined → value", "2: undefined → value"],
+    "standalone": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPostfixInc/apply": {
+    "gc": ["1: undefined → value", "2: undefined → null"],
+    "standalone": ["1: undefined → value", "2: undefined → null"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPostfixInc/positionalDecl": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value"]
+  },
+  "shrinkThenPostfixInc/positionalMethod": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value"]
+  },
+  "shrinkThenPostfixInc/positionalNew": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value"]
+  },
+  "shrinkThenPrefixInc/self": { "wasi": ["1: undefined → value", "2: undefined → value"] },
+  "shrinkThenPrefixInc/dynamicRead": {
+    "gc": ["1: undefined → value", "2: undefined → null"],
+    "standalone": ["1: undefined → value", "2: undefined → null"]
+  },
+  "shrinkThenPrefixInc/restDecl": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPrefixInc/restLead": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPrefixInc/restArrow": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPrefixInc/restExpr": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPrefixInc/restMethod": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPrefixInc/restStatic": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPrefixInc/restClosure": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPrefixInc/restNew": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPrefixInc/restSuper": {
+    "gc": ["1: undefined → value", "2: undefined → value"],
+    "standalone": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPrefixInc/apply": {
+    "gc": ["1: undefined → value", "2: undefined → null"],
+    "standalone": ["1: undefined → value", "2: undefined → null"],
+    "wasi": ["1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenPrefixInc/positionalDecl": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value"]
+  },
+  "shrinkThenPrefixInc/positionalMethod": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value"]
+  },
+  "shrinkThenPrefixInc/positionalNew": {
+    "gc": ["1: undefined → value"],
+    "standalone": ["1: undefined → value"],
+    "wasi": ["1: undefined → value"]
+  },
+  "shrinkThenAssign/dynamicRead": {
+    "gc": ["0: undefined → value", "1: undefined → value", "2: undefined → null"],
+    "standalone": ["0: undefined → value", "1: undefined → value", "2: undefined → null"],
+    "wasi": ["0: undefined → value", "1: undefined → value", "2: undefined → null"]
+  },
+  "shrinkThenAssign/restDecl": {
+    "gc": ["0: undefined → value", "1: undefined → value"],
+    "standalone": ["0: undefined → value", "1: undefined → value"],
+    "wasi": ["0: undefined → value", "1: undefined → value"]
+  },
+  "shrinkThenAssign/restLead": {
+    "gc": ["0: undefined → value", "1: undefined → value"],
+    "standalone": ["0: undefined → value", "1: undefined → value"],
+    "wasi": ["0: undefined → value", "1: undefined → value"]
+  },
+  "shrinkThenAssign/restArrow": {
+    "gc": ["0: undefined → value", "1: undefined → value"],
+    "standalone": ["0: undefined → value", "1: undefined → value"],
+    "wasi": ["0: undefined → value", "1: undefined → value"]
+  },
+  "shrinkThenAssign/restExpr": {
+    "gc": ["0: undefined → value", "1: undefined → value"],
+    "standalone": ["0: undefined → value", "1: undefined → value"],
+    "wasi": ["0: undefined → value", "1: undefined → value"]
+  },
+  "shrinkThenAssign/restMethod": {
+    "gc": ["0: undefined → value", "1: undefined → value"],
+    "standalone": ["0: undefined → value", "1: undefined → value"],
+    "wasi": ["0: undefined → value", "1: undefined → value"]
+  },
+  "shrinkThenAssign/restStatic": {
+    "gc": ["0: undefined → value", "1: undefined → value"],
+    "standalone": ["0: undefined → value", "1: undefined → value"],
+    "wasi": ["0: undefined → value", "1: undefined → value"]
+  },
+  "shrinkThenAssign/restClosure": {
+    "gc": ["0: undefined → value", "1: undefined → value"],
+    "standalone": ["0: undefined → value", "1: undefined → value"],
+    "wasi": ["0: undefined → value", "1: undefined → value"]
+  },
+  "shrinkThenAssign/restNew": {
+    "gc": ["0: undefined → value", "1: undefined → value"],
+    "standalone": ["0: undefined → value", "1: undefined → value"],
+    "wasi": ["0: undefined → value", "1: undefined → value"]
+  },
+  "shrinkThenAssign/restSuper": {
+    "gc": ["0: undefined → value", "1: undefined → value", "2: undefined → value"],
+    "standalone": ["0: undefined → value", "1: undefined → value", "2: undefined → value"]
+  },
+  "shrinkThenAssign/apply": {
+    "gc": ["0: undefined → value", "1: undefined → value", "2: undefined → null"],
+    "standalone": ["0: undefined → value", "1: undefined → value", "2: undefined → null"],
+    "wasi": ["0: undefined → value", "1: undefined → value", "2: undefined → null"]
+  },
+  "shrinkThenAssign/positionalDecl": {
+    "gc": ["0: undefined → value", "1: undefined → value"],
+    "standalone": ["0: undefined → value", "1: undefined → value"],
+    "wasi": ["0: undefined → value", "1: undefined → value"]
+  },
+  "shrinkThenAssign/positionalMethod": {
+    "gc": ["0: undefined → value", "1: undefined → value"],
+    "standalone": ["0: undefined → value", "1: undefined → value"],
+    "wasi": ["0: undefined → value", "1: undefined → value"]
+  },
+  "shrinkThenAssign/positionalNew": {
+    "gc": ["0: undefined → value", "1: undefined → value"],
+    "standalone": ["0: undefined → value", "1: undefined → value"],
+    "wasi": ["0: undefined → value", "1: undefined → value"]
+  },
+  "postIncOnly/self": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/map": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/slice": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/concat": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/toReversed": {
+    "gc": ["0: present → absent", "0: visited → skipped", "1: present → absent", "1: visited → skipped"],
+    "standalone": ["0: present → absent", "0: visited → skipped", "1: present → absent", "1: visited → skipped"],
+    "wasi": ["0: undefined → value", "1: undefined → value"]
+  },
+  "postIncOnly/toSpliced": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/with": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/splice": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/arrayFrom": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/arrayOf": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"]
+  },
+  "postIncOnly/entries": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/values": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/spread": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/spreadLead": {
+    "gc": ["3: undefined → value", "4: undefined → value"],
+    "standalone": ["3: undefined → value", "4: undefined → value"],
+    "wasi": ["3: undefined → value", "4: undefined → value"]
+  },
+  "postIncOnly/forOfCollect": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/restDecl": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/restLead": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/restArrow": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/restExpr": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/restMethod": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/restStatic": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/restClosure": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/restNew": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/restSuper": {
+    "gc": ["2: undefined → value", "3: undefined → value"],
+    "standalone": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/apply": {
+    "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
+    "wasi": ["2: undefined → value", "3: undefined → value"]
+  },
+  "postIncOnly/positionalDecl": {
+    "gc": ["2: present → absent", "2: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped"],
+    "wasi": ["2: undefined → null"]
+  },
+  "postIncOnly/positionalMethod": {
+    "gc": ["2: present → absent", "2: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped"],
+    "wasi": ["2: undefined → null"]
+  },
+  "postIncOnly/positionalNew": {
+    "gc": ["2: present → absent", "2: visited → skipped"],
+    "standalone": ["2: present → absent", "2: visited → skipped"],
+    "wasi": ["2: undefined → null"]
+  },
+  "plusEqOnly/self": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/map": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/slice": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/concat": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/toReversed": {
+    "gc": ["0: undefined → null", "1: undefined → value"],
+    "standalone": ["0: undefined → null", "1: undefined → value"],
+    "wasi": ["0: undefined → null", "1: undefined → value"]
+  },
+  "plusEqOnly/toSpliced": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/with": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/splice": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/arrayFrom": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/arrayOf": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/entries": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/values": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/spread": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/spreadLead": {
+    "gc": ["3: undefined → value", "4: undefined → value"],
+    "standalone": ["3: undefined → value", "4: undefined → value"],
+    "wasi": ["3: undefined → value", "4: undefined → value"]
+  },
+  "plusEqOnly/forOfCollect": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/indexRead": {
+    "gc": ["2: undefined → value"],
+    "standalone": ["2: undefined → value"],
+    "wasi": ["2: undefined → value"]
+  },
+  "plusEqOnly/dynamicRead": {
+    "gc": ["2: undefined → value"],
+    "standalone": ["2: undefined → value"],
+    "wasi": ["2: undefined → value"]
+  },
+  "plusEqOnly/restDecl": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/restLead": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/restArrow": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/restExpr": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/restMethod": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/restStatic": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/restClosure": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/restNew": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/restSuper": {
+    "gc": ["2: undefined → value", "3: undefined → value"],
+    "standalone": ["2: undefined → value", "3: undefined → value"]
+  },
+  "plusEqOnly/apply": {
+    "gc": ["2: undefined → value", "3: undefined → null"],
+    "standalone": ["2: undefined → value", "3: undefined → null"],
+    "wasi": ["2: undefined → value", "3: undefined → null"]
+  },
+  "plusEqOnly/positionalDecl": {
+    "gc": ["2: undefined → value"],
+    "standalone": ["2: undefined → value"],
+    "wasi": ["2: undefined → value"]
+  },
+  "plusEqOnly/positionalMethod": {
+    "gc": ["2: undefined → value"],
+    "standalone": ["2: undefined → value"],
+    "wasi": ["2: undefined → value"]
+  },
+  "plusEqOnly/positionalNew": {
+    "gc": ["2: undefined → value"],
+    "standalone": ["2: undefined → value"],
+    "wasi": ["2: undefined → value"]
+  }
+}

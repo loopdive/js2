@@ -7,6 +7,7 @@
  * behaviour-preserving leaf move. This module owns the `x op= y` lowering; plain
  * `=` assignment and destructuring stay in assignment.ts.
  */
+import { tryCompileArrayLengthUpdate } from "../array-length-define.js"; // (#7164)
 import { ts, forEachChild } from "../../ts-api.js";
 import { isBooleanType, isStringType } from "../../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";
@@ -2541,6 +2542,12 @@ function compilePropertyCompoundAssignment(
   rhs: ts.Expression,
   op: ts.SyntaxKind,
 ): ValType | null {
+  // (#7164) `arr.length += k` / `-= k`: the static length store, so a grow fills its new slots.
+  if (op === ts.SyntaxKind.PlusEqualsToken || op === ts.SyntaxKind.MinusEqualsToken) {
+    const update = { kind: "compound", op: op === ts.SyntaxKind.PlusEqualsToken ? "+" : "-", value: rhs } as const;
+    const lengthUpdate = tryCompileArrayLengthUpdate(ctx, fctx, target, update);
+    if (lengthUpdate) return lengthUpdate;
+  }
   const objType = ctx.checker.getTypeAtLocation(target.expression);
   const propName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
 

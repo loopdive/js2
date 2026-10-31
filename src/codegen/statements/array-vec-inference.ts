@@ -7,7 +7,12 @@ import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { resolveWasmType } from "../index.js";
 import { getOrRegisterHoleyArrayType, getOrRegisterVecType } from "../registry/types.js";
-import { shareGroupIsDynamic, skipValueWrappers } from "./array-share-group.js";
+import {
+  growingLengthStoreCarrier,
+  noteGrowthSwitchedBinding,
+  shareGroupIsDynamic,
+  skipValueWrappers,
+} from "./array-share-group.js";
 export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
   if (!ts.isIdentifier(decl.name)) return null;
   if (ctx.holeyArrayDeclarations.has(decl)) {
@@ -158,6 +163,17 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
   for (const value of secondaryStores) {
     if (ts.isSpreadElement(value)) sawDynamicElementWrite = true;
     else recordWriteType(value);
+  }
+
+  // (#7164) A growing `length` store creates holes. Only the dynamic carrier's
+  // `$Hole` and the f64 carrier's marker represent one; any other typed vec
+  // would expose its default slots (`null` / `0`) as present elements. The
+  // decision is the share group's, never this member's alone: a typed alias
+  // would otherwise hold a copy (see `growingLengthStoreCarrier`).
+  const growCarrier = growingLengthStoreCarrier(ctx, decl);
+  if (growCarrier === "group" || (growCarrier === "alone" && (inferredElemWasm as ValType | null)?.kind !== "f64")) {
+    if (!mixedElementCarrier && !sawDynamicElementWrite) noteGrowthSwitchedBinding(ctx, decl);
+    sawDynamicElementWrite = true;
   }
 
   // Heterogeneous queue/scratch arrays must preserve every JS value. ReactDOM's

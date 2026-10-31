@@ -7,6 +7,7 @@
  * element access (`arr[i]--`). The non-update prefix unary operators
  * (`+`, `-`, `!`, `~`) live in ./unary.ts.
  */
+import { tryCompileArrayLengthUpdate } from "../array-length-define.js"; // (#7164)
 import { ts } from "../../ts-api.js";
 import { tryEmitUnresolvableUpdateThrow } from "../update-unresolvable-ref.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -559,6 +560,10 @@ function compileMemberIncDec(
 
   // Unwrap parenthesized expressions: ++(obj.x) -> ++obj.x
   operand = unwrapParens(operand);
+  // (#7164) `arr.length++`: the static length store, so a grow fills its new slots.
+  const step = { kind: "step", delta: arithOp === "add" ? 1 : -1, postfix: mode === "postfix" } as const;
+  const lengthUpdate = tryCompileArrayLengthUpdate(ctx, fctx, operand, step);
+  if (lengthUpdate) return lengthUpdate;
 
   // (#2709) `super[super()]++` / `++super[super()]` — a SuperProperty UPDATE whose
   // computed key contains a super() call. §13.3.7.1 resolves the reference (with

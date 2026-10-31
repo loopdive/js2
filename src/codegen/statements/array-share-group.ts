@@ -50,6 +50,12 @@ function isFreshArrayExpression(expression: ts.Expression): boolean {
   return ts.isArrayLiteralExpression(skipValueWrappers(expression));
 }
 
+/** (#7164) A non-empty array literal. */
+function isSeedLiteral(expression: ts.Expression): boolean {
+  const literal = skipValueWrappers(expression);
+  return ts.isArrayLiteralExpression(literal) && literal.elements.length > 0;
+}
+
 /** `x as T` / `<T>x`: the value is classified by `T`. */
 function isTypeAssertion(node: ts.Node): node is ts.AsExpression | ts.TypeAssertion {
   return ts.isAsExpression(node) || ts.isTypeAssertionExpression(node);
@@ -270,7 +276,7 @@ function elementReadIsSafe(read: ts.Node): boolean {
  * `=`, `?:` branches, `||` / `??` / `&&` operands and receiver-returning
  * methods. Every other use is `typed`; unrecognised never means dynamic.
  */
-function classifyUse(ctx: CodegenContext, identifier: ts.Identifier, container: boolean): UseVerdict {
+function classifyUse(ctx: CodegenContext, identifier: ts.Identifier, container: boolean, reads = false): UseVerdict {
   const partners: ts.Node[] = [];
   const safe = (extra?: Partial<UseVerdict>): UseVerdict =>
     partners.length === 0 && !extra ? SAFE_USE : { typed: false, partners, ...extra };
@@ -313,6 +319,7 @@ function classifyUse(ctx: CodegenContext, identifier: ts.Identifier, container: 
       }
     }
     if (isInspectingUse(use, parent)) return safe();
+    if (reads && isPureReadUse(ctx, use, parent, container)) return safe();
     if (ts.isVariableDeclaration(parent)) {
       if (parent.initializer !== use || !ts.isIdentifier(parent.name)) return TYPED_USE;
       partners.push(parent.name);
@@ -328,10 +335,20 @@ function classifyUse(ctx: CodegenContext, identifier: ts.Identifier, container: 
         passedThrough = true;
         continue;
       }
+      // (#7164) `xs.forEach((v, i, arr) => …)`, behind any wrapper resolved above: `arr` escapes the group.
+      if (reads && ts.isCallExpression(call) && call.expression === parent && callbackSeesArray(name, call))
+        return safe({ escapesDynamic: true });
       return !container || CONTAINER_SAFE_MEMBERS.has(name) ? safe() : TYPED_USE;
     }
     if (ts.isElementAccessExpression(parent)) {
       if (parent.expression !== use) return TYPED_USE;
+      // (#7164) `xs['forEach'](cb)` / `xs[k](cb)`: a computed method call may hand the array to its callback.
+      const call = parent.parent;
+      if (reads && ts.isCallExpression(call) && call.expression === parent) {
+        const key = skipValueWrappers(parent.argumentExpression);
+        const name = ts.isStringLiteralLike(key) ? key.text : undefined;
+        if (name === undefined || callbackSeesArray(name, call)) return safe({ escapesDynamic: true });
+      }
       return !container || elementReadIsSafe(parent) ? safe() : TYPED_USE;
     }
     if (ts.isForOfStatement(parent)) return parent.expression === use && !container ? safe() : TYPED_USE;
@@ -356,7 +373,19 @@ function classifyUse(ctx: CodegenContext, identifier: ts.Identifier, container: 
   }
 }
 
-const groupVerdicts = new WeakMap<object, WeakMap<ts.VariableDeclaration, boolean>>();
+/** (#7164) A share group's facts: `shared`, `dynamic` as in {@link shareGroupIsDynamic}; `grows` = a member's growing `length` store. */
+interface GroupVerdict {
+  readonly shared: boolean;
+  readonly dynamic: boolean;
+  readonly grows: boolean;
+  /** (#7164) A member is seeded by a non-empty array literal (`['a', 'b']`). */
+  readonly seeded: boolean;
+  /** (#7164) The vec reaches only member bindings: no parameter, field, container or other endpoint. */
+  readonly local: boolean;
+  readonly members: ReadonlySet<ts.VariableDeclaration>;
+}
+const groupVerdicts = new WeakMap<object, WeakMap<ts.VariableDeclaration, GroupVerdict>>();
+const growVerdicts = new WeakMap<object, WeakMap<ts.VariableDeclaration, GroupVerdict>>();
 const scopeIdentifiers = new WeakMap<ts.Node, Map<string, ts.Identifier[]>>();
 
 /** Every identifier in `scope`, by name; one walk per scope. */
@@ -404,10 +433,46 @@ function usesOf(ctx: CodegenContext, member: ts.VariableDeclaration, name: ts.Id
  * for every member.
  */
 export function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
-  let verdicts = groupVerdicts.get(ctx.oracle);
+  const verdict = groupVerdict(ctx, decl, false);
+  return verdict.shared && verdict.dynamic;
+}
+
+/**
+ * (#7164) A growing `x.length = n` store on any member of the binding's share
+ * group creates holes, which only the dynamic carrier represents. Switching
+ * one member alone would split the group (a typed alias then holds a COPY and
+ * loses the other's pushes), so the answer is for the whole group:
+ *
+ * - `group`: the group shares and every member, use and endpoint admits the
+ *   dynamic carrier — every member takes it;
+ * - `alone`: the binding shares with nothing and every use is recognised —
+ *   only it takes the dynamic carrier (the caller keeps an f64 vec, which has
+ *   its own hole marker);
+ * - `undefined`: no growing store, or a use that may reach a typed place —
+ *   every member keeps the layout it infers.
+ *
+ * Uses are classified as for {@link shareGroupIsDynamic}, plus the pure reads
+ * of {@link isPureReadUse}, which cannot leak the vec to another layout.
+ */
+export function growingLengthStoreCarrier(
+  ctx: CodegenContext,
+  decl: ts.VariableDeclaration,
+): "group" | "alone" | undefined {
+  const verdict = groupVerdict(ctx, decl, true);
+  // A literal-seeded group keeps origin/main's layout: there `k in g` after a grow is already right.
+  // A vec that reaches a parameter, a field or another endpoint keeps origin/main's layout too:
+  // the length stores there are not the switched binding's.
+  if (!verdict.grows || !verdict.dynamic || verdict.seeded || !verdict.local || lengthUpdateMayMeetFrozenArray(ctx))
+    return undefined;
+  return verdict.shared ? "group" : "alone";
+}
+
+function groupVerdict(ctx: CodegenContext, decl: ts.VariableDeclaration, reads: boolean): GroupVerdict {
+  const store = reads ? growVerdicts : groupVerdicts;
+  let verdicts = store.get(ctx.oracle);
   if (!verdicts) {
     verdicts = new WeakMap();
-    groupVerdicts.set(ctx.oracle, verdicts);
+    store.set(ctx.oracle, verdicts);
   }
   const cached = verdicts.get(decl);
   if (cached !== undefined) return cached;
@@ -418,6 +483,9 @@ export function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclar
   let shared = false;
   let dynamic = true;
   let container = false;
+  let grows = false;
+  let seeded = false;
+  let local = true;
   const join = (member: ts.VariableDeclaration): void => {
     if (!seen.has(member)) {
       seen.add(member);
@@ -430,6 +498,7 @@ export function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclar
       join(member);
       return true; // judged as a member when it is dequeued
     }
+    local = false;
     return endpointIsDynamic(ctx, leaf);
   };
   for (let member = queue.pop(); member; member = queue.pop()) {
@@ -441,16 +510,30 @@ export function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclar
     }
     const partners: ts.Node[] = [];
     if (member.initializer && !isFreshArrayExpression(member.initializer)) partners.push(member.initializer);
+    if (member.initializer && isSeedLiteral(member.initializer)) seeded = true;
     for (const id of uses) {
       memberUses.push(id);
-      const verdict = classifyUse(ctx, id, false);
+      if (reads && isGrowingLengthStore(id)) grows = true;
+      const store = id.parent;
+      if (
+        ts.isBinaryExpression(store) &&
+        store.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        store.left === id &&
+        isSeedLiteral(store.right)
+      )
+        seeded = true;
+      const verdict = classifyUse(ctx, id, false, reads);
       if (verdict.typed) dynamic = false;
-      if (verdict.escapesDynamic) shared = true;
+      if (verdict.escapesDynamic) {
+        shared = true;
+        local = false;
+      }
       if (verdict.storedInto) {
         const receiver = skipValueWrappers(verdict.storedInto);
         const holder = ts.isIdentifier(receiver) ? ctx.oracle.variableDeclarationOf(receiver) : undefined;
         if (holder) {
           container = true;
+          local = false;
           join(holder);
         } else {
           dynamic = false;
@@ -466,11 +549,107 @@ export function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclar
   // A member stored into another: every member's vec may now be read back as
   // an element, so re-check every use under the container rules.
   if (dynamic && container) {
-    for (const id of memberUses) if (classifyUse(ctx, id, true).typed) dynamic = false;
+    for (const id of memberUses) if (classifyUse(ctx, id, true, reads).typed) dynamic = false;
   }
-  const result = shared && dynamic;
+  const result: GroupVerdict = { shared, dynamic, grows, seeded, local, members: seen };
   for (const member of seen) verdicts.set(member, result);
   return result;
+}
+
+/** Callback methods whose callback receives the array itself (index of that parameter). */
+const CALLBACK_ARRAY_PARAM = new Map<string, number>([
+  ...["forEach", "map", "filter", "some", "every", "find", "findIndex", "findLast", "findLastIndex", "flatMap"].map(
+    (name) => [name, 2] as const,
+  ),
+  ["reduce", 3],
+  ["reduceRight", 3],
+]);
+
+/**
+ * (#7164) `xs.<method>(cb)`: the callback's array parameter is another name
+ * for the vec, outside the share group. True when the callback can see it — it
+ * declares that parameter or a rest, uses `arguments`, or is not an inline
+ * function.
+ */
+function callbackSeesArray(method: string, call: ts.CallExpression): boolean {
+  const arrayParam = CALLBACK_ARRAY_PARAM.get(method);
+  if (arrayParam === undefined) return false;
+  let callback: ts.Expression | undefined = call.arguments[0];
+  while (callback && ts.isParenthesizedExpression(callback)) callback = callback.expression;
+  if (!callback) return false;
+  if (!ts.isArrowFunction(callback) && !ts.isFunctionExpression(callback)) return true;
+  if (callback.parameters.length > arrayParam || callback.parameters.some((p) => p.dotDotDotToken)) return true;
+  if (!ts.isFunctionExpression(callback)) return false;
+  let usesArguments = false;
+  const visit = (node: ts.Node): void => {
+    if (usesArguments) return;
+    if (ts.isIdentifier(node) && node.text === "arguments") usesArguments = true;
+    else forEachChild(node, visit);
+  };
+  visit(callback.body);
+  return usesArguments;
+}
+
+/**
+ * (#7164) `xs.length = n` with `n` not the literal `0` (a clear cannot grow).
+ * Compound stores (`+=`, `++`) are not counted: the static store fills holes
+ * only for a plain assignment.
+ */
+function isGrowingLengthStore(id: ts.Identifier): boolean {
+  const access = id.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== id || access.name.text !== "length") return false;
+  const store = access.parent;
+  if (
+    !ts.isBinaryExpression(store) ||
+    store.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    store.left !== access
+  ) {
+    return false;
+  }
+  const value = skipValueWrappers(store.right);
+  return !(ts.isNumericLiteral(value) && Number(value.text) === 0);
+}
+
+/** Global functions that only read an array argument. */
+const PURE_READ_GLOBALS = new Set(["JSON.stringify", "Object.keys", "Object.getOwnPropertyNames", "Array.isArray"]);
+
+/**
+ * (#7164) Reads that cannot hand the vec to another layout: `k in xs`, an
+ * argument of `String` / `JSON.stringify` / `Object.keys` /
+ * `Object.getOwnPropertyNames` / `Array.isArray`, and (outside a container
+ * group, whose elements are member vecs) `[...xs]`, which copies element
+ * values, or a spread into a library call (`Array.of(...xs)`). A user
+ * `f(...xs)` is not one: a rest parameter receives `xs` itself.
+ */
+function isPureReadUse(ctx: CodegenContext, use: ts.Node, parent: ts.Node, container: boolean): boolean {
+  if (ts.isBinaryExpression(parent))
+    return parent.operatorToken.kind === ts.SyntaxKind.InKeyword && parent.right === use;
+  // `[...xs]` copies; `f(...xs)` may hand xs itself to a rest parameter (aliased).
+  if (ts.isSpreadElement(parent)) {
+    if (container) return false;
+    const site = parent.parent;
+    if (ts.isArrayLiteralExpression(site)) return true;
+    // `Array.of(...xs)` / `Math.max(...xs)`: a library callee only reads the arguments.
+    if (!ts.isCallExpression(site) && !ts.isNewExpression(site)) return false;
+    const callee = skipValueWrappers(site.expression);
+    const root = ts.isPropertyAccessExpression(callee) ? callee.expression : callee;
+    return ts.isIdentifier(root) && isLibGlobal(ctx, root);
+  }
+  if (!ts.isCallExpression(parent) || !parent.arguments.includes(use as ts.Expression)) return false;
+  const callee = skipValueWrappers(parent.expression);
+  if (ts.isIdentifier(callee)) return callee.text === "String" && isLibGlobal(ctx, callee);
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    PURE_READ_GLOBALS.has(`${callee.expression.text}.${callee.name.text}`) &&
+    isLibGlobal(ctx, callee.expression)
+  );
+}
+
+/** Resolves only to ambient library declarations, not to a user binding that shadows the global. */
+function isLibGlobal(ctx: CodegenContext, id: ts.Identifier): boolean {
+  const decls = ctx.oracle.declarationsOf(id);
+  return decls.length > 0 && decls.every((decl) => decl.getSourceFile().isDeclarationFile);
 }
 
 function isExported(decl: ts.VariableDeclaration): boolean {
@@ -487,4 +666,88 @@ function enclosingScope(decl: ts.VariableDeclaration): ts.Node {
   let scope: ts.Node = decl;
   while (scope.parent && !ts.isFunctionLike(scope) && !ts.isSourceFile(scope)) scope = scope.parent;
   return scope;
+}
+
+/**
+ * (#7164) Bindings whose carrier `growingLengthStoreCarrier` switched from a
+ * typed vec to the dynamic one. On `origin/main` they held a typed vec (no
+ * `$Hole`), so their length stores fill a grow with `undefined` and their
+ * `++` / `--` / `+=` / `-=` share that store; a vec that was the dynamic
+ * carrier anyway keeps its old length-update behaviour.
+ */
+const growthSwitched = new WeakMap<object, WeakSet<ts.VariableDeclaration>>();
+
+export function noteGrowthSwitchedBinding(ctx: CodegenContext, decl: ts.VariableDeclaration): void {
+  let set = growthSwitched.get(ctx);
+  if (!set) {
+    set = new WeakSet();
+    growthSwitched.set(ctx, set);
+  }
+  // Every member of a local share group holds the same vec, so each one's length stores grow it.
+  for (const member of groupVerdict(ctx, decl, true).members) set.add(member);
+}
+
+/** `expr` names a binding {@link noteGrowthSwitchedBinding} recorded. */
+export function isGrowthSwitchedReceiver(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const inner = skipValueWrappers(expr);
+  if (!ts.isIdentifier(inner)) return false;
+  const decl = ctx.oracle.variableDeclarationOf(inner);
+  return decl !== undefined && (growthSwitched.get(ctx)?.has(decl) ?? false);
+}
+
+/** Names that can make an array's `length` non-writable or an element non-configurable. */
+const FREEZING_NAMES = new Set(["defineProperty", "defineProperties", "freeze", "seal", "preventExtensions"]);
+const lengthUpdateRoots = new WeakMap<object, ts.Node[]>();
+const frozenArrayRisk = new WeakMap<object, { roots: number; risky: boolean }>();
+
+/** (#7164) Called by the `scanForArrayHoles` pre-scan for every root it walks. */
+export function noteLengthUpdateRoot(ctx: CodegenContext, root: ts.Node): void {
+  const roots = lengthUpdateRoots.get(ctx) ?? [];
+  roots.push(root);
+  lengthUpdateRoots.set(ctx, roots);
+}
+
+/**
+ * Could the program make an array's `length` non-writable or an element
+ * non-configurable? Any mention of `defineProperty` / `defineProperties` /
+ * `freeze` / `seal` / `preventExtensions` (or no recorded roots) answers yes:
+ * no binding switches carrier for a growing length store, and `arr.length++`
+ * keeps its old, descriptor-aware route.
+ */
+export function lengthUpdateMayMeetFrozenArray(ctx: CodegenContext): boolean {
+  const roots = lengthUpdateRoots.get(ctx);
+  if (roots === undefined) return true; // not scanned yet: assume the worst, cache nothing
+  const cached = frozenArrayRisk.get(ctx);
+  if (cached !== undefined && cached.roots === roots.length) return cached.risky;
+  let risky = false;
+  const visit = (node: ts.Node): void => {
+    if (risky) return;
+    if (ts.isIdentifier(node) && FREEZING_NAMES.has(node.text)) risky = true;
+    else ts.forEachChild(node, visit);
+  };
+  for (const root of roots) visit(root);
+  frozenArrayRisk.set(ctx, { roots: roots.length, risky });
+  return risky;
+}
+
+/** (#7164) `x.length++` / `--` (prefix or postfix) / `+= k` / `-= k`: the pre-scan arms hole-aware reads for these as for `x.length = n`. */
+function isLengthUpdate(node: ts.Node): boolean {
+  let target: ts.Node | undefined;
+  if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+    if (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+      target = node.operand;
+  } else if (
+    ts.isBinaryExpression(node) &&
+    (node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken ||
+      node.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken)
+  ) {
+    target = node.left;
+  }
+  while (target && ts.isParenthesizedExpression(target)) target = target.expression;
+  return target !== undefined && ts.isPropertyAccessExpression(target) && target.name.text === "length";
+}
+
+/** (#7164) Pre-scan hook: a length update arms hole-aware reads, as `x.length = n` does. */
+export function armForLengthUpdate(ctx: CodegenContext, node: ts.Node): void {
+  if (!ctx.usesArrayHoles && isLengthUpdate(node)) ctx.usesArrayHoles = true;
 }
