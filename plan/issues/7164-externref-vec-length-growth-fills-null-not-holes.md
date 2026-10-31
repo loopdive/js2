@@ -3,7 +3,7 @@ id: 7164
 title: "Native-first and standalone: growing an externref vec via `length =` fills the new slots with null instead of holes"
 sprint: current
 created: 2026-10-25
-updated: 2026-10-28
+updated: 2026-10-31
 task_type: bugfix
 area: codegen
 goal: correctness
@@ -23,6 +23,10 @@ related: [7151, 7154, 7165]
 # backing array each iteration (`loopExitCheck` / `loopExitCheckReverse`,
 # reduceRight, both join folds) so a callback that grows the array (push or
 # `length =`) is seen — array-methods.ts owns those loops.
+# 2026-10-31 (#7164 r7): array-methods.ts also owns indexOf / includes /
+# lastIndexOf: they re-read the backing after a growing `fromIndex`, and their
+# native equality helpers register the box types they need instead of
+# returning null; the loops skip the backing check for a pure inline callback.
 # 2026-10-28 (#7164 r6): `arr.length++` / `--` / `+=` / `-=` on a binding
 # #7164 moved onto the externref carrier route through the shared static
 # length store (array-length-define.ts) from their existing entry points

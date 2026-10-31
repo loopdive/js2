@@ -265,10 +265,12 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
   },
   mixedGrowIn: {
     body: "const g: any[] = ['a', 1]; g.length = 4; return (3 in g ? 'T' : 'F') + (g.hasOwnProperty(3) ? 'T' : 'F') + g.length;",
+    wasiGap: "#7171 (same as origin/main: wasi `in` is true for a grown index)",
   },
   paramGrow: {
     pre: "function p(g: any[]): string { g.length = 4; return [g.indexOf(undefined), g.some((x: any) => x === undefined) ? 'T' : 'F', 3 in g ? 'T' : 'F', g.length].join(','); }",
     body: "return p(['a', 1]);",
+    wasiGap: "#7171 (same as origin/main: wasi `in` is true for a grown index)",
   },
   literalGrowIn: {
     body: "const g: any[] = ['a', 'b']; g.length = 4; return (3 in g ? 'T' : 'F') + g.filter((x: any) => x === undefined).length;",

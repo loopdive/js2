@@ -370,6 +370,9 @@ interface GroupVerdict {
   readonly grows: boolean;
   /** (#7164) A member is seeded by a non-empty array literal (`['a', 'b']`). */
   readonly seeded: boolean;
+  /** (#7164) The vec reaches only member bindings: no parameter, field, container or other endpoint. */
+  readonly local: boolean;
+  readonly members: ReadonlySet<ts.VariableDeclaration>;
 }
 const groupVerdicts = new WeakMap<object, WeakMap<ts.VariableDeclaration, GroupVerdict>>();
 const growVerdicts = new WeakMap<object, WeakMap<ts.VariableDeclaration, GroupVerdict>>();
@@ -447,7 +450,10 @@ export function growingLengthStoreCarrier(
 ): "group" | "alone" | undefined {
   const verdict = groupVerdict(ctx, decl, true);
   // A literal-seeded group keeps origin/main's layout: there `k in g` after a grow is already right.
-  if (!verdict.grows || !verdict.dynamic || verdict.seeded || lengthUpdateMayMeetFrozenArray(ctx)) return undefined;
+  // A vec that reaches a parameter, a field or another endpoint keeps origin/main's layout too:
+  // the length stores there are not the switched binding's.
+  if (!verdict.grows || !verdict.dynamic || verdict.seeded || !verdict.local || lengthUpdateMayMeetFrozenArray(ctx))
+    return undefined;
   return verdict.shared ? "group" : "alone";
 }
 
@@ -469,6 +475,7 @@ function groupVerdict(ctx: CodegenContext, decl: ts.VariableDeclaration, reads: 
   let container = false;
   let grows = false;
   let seeded = false;
+  let local = true;
   const join = (member: ts.VariableDeclaration): void => {
     if (!seen.has(member)) {
       seen.add(member);
@@ -481,6 +488,7 @@ function groupVerdict(ctx: CodegenContext, decl: ts.VariableDeclaration, reads: 
       join(member);
       return true; // judged as a member when it is dequeued
     }
+    local = false;
     return endpointIsDynamic(ctx, leaf);
   };
   for (let member = queue.pop(); member; member = queue.pop()) {
@@ -506,12 +514,16 @@ function groupVerdict(ctx: CodegenContext, decl: ts.VariableDeclaration, reads: 
         seeded = true;
       const verdict = classifyUse(ctx, id, false, reads);
       if (verdict.typed) dynamic = false;
-      if (verdict.escapesDynamic) shared = true;
+      if (verdict.escapesDynamic) {
+        shared = true;
+        local = false;
+      }
       if (verdict.storedInto) {
         const receiver = skipValueWrappers(verdict.storedInto);
         const holder = ts.isIdentifier(receiver) ? ctx.oracle.variableDeclarationOf(receiver) : undefined;
         if (holder) {
           container = true;
+          local = false;
           join(holder);
         } else {
           dynamic = false;
@@ -529,7 +541,7 @@ function groupVerdict(ctx: CodegenContext, decl: ts.VariableDeclaration, reads: 
   if (dynamic && container) {
     for (const id of memberUses) if (classifyUse(ctx, id, true, reads).typed) dynamic = false;
   }
-  const result: GroupVerdict = { shared, dynamic, grows, seeded };
+  const result: GroupVerdict = { shared, dynamic, grows, seeded, local, members: seen };
   for (const member of seen) verdicts.set(member, result);
   return result;
 }
@@ -627,7 +639,8 @@ export function noteGrowthSwitchedBinding(ctx: CodegenContext, decl: ts.Variable
     set = new WeakSet();
     growthSwitched.set(ctx, set);
   }
-  set.add(decl);
+  // Every member of a local share group holds the same vec, so each one's length stores grow it.
+  for (const member of groupVerdict(ctx, decl, true).members) set.add(member);
 }
 
 /** `expr` names a binding {@link noteGrowthSwitchedBinding} recorded. */
