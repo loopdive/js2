@@ -730,8 +730,9 @@ describe("#7164 length-update sweep: never worse than origin/main", () => {
 // receiver shape (`(g)`, `g!`, `as`, `satisfies`, `.reverse()` / `.fill()` /
 // `.copyWithin()`, `?:`, `||`, `??`, `&&`, comma, `h = g`, `g['m']`), handed to
 // every callback method whose callback updates `length` through its array
-// parameter. Any externref length store reallocates past the backing, so none
-// of these may trap where origin/main does not. Same contract as the
+// parameter (behind any of those shapes the binding is not switched, so the
+// store through the parameter is origin/main's). None of these may trap where
+// origin/main does not. Same contract as the
 // length-update sweep; origin/main's outcomes are in
 // issue-7164-callback-sweep-base.json (scripts/record-7164-bases.mts). By
 // default every 29th row runs (32 of 900); JS2WASM_FULL_SWEEP=1 runs all.

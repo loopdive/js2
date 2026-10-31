@@ -64,7 +64,7 @@ import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
  *   itself, so the `arr[len] = v; arr.length = len + 1` append shape stores an
  *   unchanged length and fills nothing it wrote.
  */
-export type VecLengthHoleFillMode = "shrink-only" | "both" | "length-store" | "length-store-realloc";
+export type VecLengthHoleFillMode = "shrink-only" | "both" | "length-store";
 
 /**
  * Emit, for every admitted vec type, a guarded fill of
@@ -183,49 +183,34 @@ export function buildVecLengthHoleFill(
       },
     ];
     const fillBody = fillWith(markerInstrs);
-    const growing = mode === "length-store" || mode === "length-store-realloc";
+    const growing = mode === "length-store";
     const carrierMode = growing ? "shrink-only" : mode;
-    // (#7164) The static store's externref GROW: realloc, then `undefined` in
-    // the new slots. `length-store-realloc` keeps the slots origin/main leaves
-    // inside the old backing, never sets the length past the backing (a later
-    // read trapped there on origin/main), and gives slots that did not exist
-    // before `undefined`.
+    // (#7164) The static store's externref GROW: realloc, then `undefined` in the new slots.
     const growArm: Instr[] =
-      mode === "length-store-realloc"
-        ? isExternrefCarrier
-          ? lengthStoreGrowInstrs(
-              local,
-              vecLocal,
-              newLenLocal,
-              vecTypeIdx,
-              arrTypeIdx,
-              canonicalUndefinedExternInstrs(ctx),
-            )
-          : []
-        : growing && isExternrefCarrier
-          ? [
-              ...lengthStoreGrowInstrs(local, vecLocal, newLenLocal, vecTypeIdx, arrTypeIdx),
-              { op: "local.get", index: vecLocal },
-              { op: "ref.cast", typeIdx: vecTypeIdx },
-              { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-              { op: "local.tee", index: startLocal },
-              { op: "local.get", index: newLenLocal },
-              { op: "i32.lt_u" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: growFillInstrs(
-                  vecLocal,
-                  vecTypeIdx,
-                  arrTypeIdx,
-                  dataLocal,
-                  startLocal,
-                  newLenLocal,
-                  canonicalUndefinedExternInstrs(ctx),
-                ),
-              },
-            ]
-          : [];
+      growing && isExternrefCarrier
+        ? [
+            ...lengthStoreGrowInstrs(local, vecLocal, newLenLocal, vecTypeIdx, arrTypeIdx),
+            { op: "local.get", index: vecLocal },
+            { op: "ref.cast", typeIdx: vecTypeIdx },
+            { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+            { op: "local.tee", index: startLocal },
+            { op: "local.get", index: newLenLocal },
+            { op: "i32.lt_u" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: growFillInstrs(
+                vecLocal,
+                vecTypeIdx,
+                arrTypeIdx,
+                dataLocal,
+                startLocal,
+                newLenLocal,
+                canonicalUndefinedExternInstrs(ctx),
+              ),
+            },
+          ]
+        : [];
     const then: Instr[] =
       carrierMode === "both"
         ? [
@@ -329,7 +314,6 @@ function lengthStoreGrowInstrs(
   newLenLocal: number,
   vecTypeIdx: number,
   arrTypeIdx: number,
-  freshFill: Instr[] = [],
 ): Instr[] {
   const dataLocal = local(`__vlhf_gdata_${vecTypeIdx}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const capLocal = local(`__vlhf_gcap_${vecTypeIdx}`, { kind: "i32" });
@@ -390,18 +374,6 @@ function lengthStoreGrowInstrs(
             { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
           ],
         },
-        // `freshFill` (when given) goes into [cap, newLen): slots that did not exist before.
-        ...(freshFill.length === 0
-          ? []
-          : ([
-              { op: "local.get", index: newDataLocal },
-              { op: "local.get", index: capLocal },
-              ...freshFill,
-              { op: "local.get", index: newLenLocal },
-              { op: "local.get", index: capLocal },
-              { op: "i32.sub" },
-              { op: "array.fill", typeIdx: arrTypeIdx },
-            ] satisfies Instr[])),
         { op: "local.get", index: vecLocal },
         { op: "ref.cast", typeIdx: vecTypeIdx },
         { op: "local.get", index: newDataLocal },
