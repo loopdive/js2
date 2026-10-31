@@ -2196,7 +2196,13 @@ export function makeIrLegacyModuleBindingResolver(
     // to externref. IR cannot yet own the corresponding general dynamic
     // assignment/read boundaries, so reject before claim instead of resolving
     // the same slot as f64/i32 and tripping the Program ABI invariant later.
-    if (heterogeneousAssignmentRetypesModuleBinding(options.oracle ?? checker, declaration)) {
+    // (#7132) A script var whose actual sole legacy home is dynamic already
+    // shares the IR dynamic carrier. Keep the general heterogeneous refusal
+    // for every other home; do not infer storage from the checker type alone.
+    if (
+      scriptVarHomeOf(declaration, options) !== "dynamic" &&
+      heterogeneousAssignmentRetypesModuleBinding(options.oracle ?? checker, declaration)
+    ) {
       return { kind: "unsupported", declaration, arm: "heterogeneous-assignment-retype" };
     }
 
