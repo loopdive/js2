@@ -3246,6 +3246,14 @@
       "nextBoundary": "Separate context-bound late-import registration and comparator coercion from the reusable array-like sort body construction."
     },
     {
+      "path": "src/codegen/array/array-sort-declared-slots.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the context-bound struct-table scan from the reusable declared-slot write-back construction of the array-like sort body."
+    },
+    {
       "path": "src/codegen/array/array-fill-proto-value.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
