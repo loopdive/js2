@@ -11980,6 +11980,30 @@
       "nextBoundary": "Source-node driven lowering into symbolic IR (vec/slot/loop/string ops); separate the AST argument walk from the representation-neutral scan builder."
     },
     {
+      "path": "src/ir/static-predicates/lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-ir-test262-harness-units",
+      "nextBoundary": "Source-node driven lowering of the ambient boolean statics into symbolic IR ops; separate the AST operand walk from the representation-neutral predicate builder."
+    },
+    {
+      "path": "src/ir/static-predicates/selection.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-ir-test262-harness-units",
+      "nextBoundary": "Syntactic selector admission over the shared operand-admissibility predicates; it leaves the frontend wrapper with them once they key on an IR operator enum."
+    },
+    {
+      "path": "src/ir/f64-undefined-marker.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-ir-test262-harness-units",
+      "nextBoundary": "Builds the test for legacy's f64 `undefined` / hole marker bits from IR ops; it joins the value-representation contract once the marker is a named representation fact rather than raw bit patterns."
+    },
+    {
       "path": "src/ir/array-element-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
