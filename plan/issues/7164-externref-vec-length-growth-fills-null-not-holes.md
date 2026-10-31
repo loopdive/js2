@@ -71,151 +71,163 @@ The `length` setter growth path on `$__vec_externref` (`grep -rn "length" src/co
 
 Acceptance: node's output for all programs; no trap in `join` after `sort`; host-assisted gc bytes unchanged; equivalence gate no new regressions.
 
-## Resolution (2026-10-28, review round 6)
+## Resolution (2026-10-31, review round 7)
 
-**Design: conservative by default.** The new length store applies only to the
-receivers it was built for. Everything else compiles as on `origin/main`.
+**Design: only switched bindings change.** The new length store applies to the
+arrays it was built for. Every other array compiles as on `origin/main`.
 
-- **Who gets the new behaviour.** A binding #7164 moves onto the externref
-  carrier: a non-escaping, string-only `any[]` that has a growing
-  `x.length = n` somewhere. Example: `const g: any[] = []; g.push('y');
+- **Switched binding.** A non-escaping, string-only `any[]` built by `push`
+  (not seeded by a non-empty literal) that has a growing `x.length = n`, and
+  whose share group stays local: no parameter, field, container or other
+  endpoint receives the vec. Example: `const g: any[] = []; g.push('y');
   g.length = 3;` — #7154 used to store `g` as a typed string vec, so the new
-  slots read `null` and `sort()` trapped.
-  - A grow fills the new slots with the canonical `undefined`. Past capacity
-    it reallocates to `min(max(newLen, 2·cap), 16M)`.
-  - `++` / `--` (prefix and postfix) and `+= k` / `-= k` on such a binding use
-    the same store, with ToUint32 validation (RangeError).
-- **Other externref vecs** (mixed `any[]`, parameters, property chains). A
-  `length = n` grow only replaces `null` slots with `undefined` ("keep" mode).
-  A `$Hole` left by an earlier shrink stays, as on `origin/main`. The update
-  forms keep `origin/main`'s code.
-- **Typed vecs** (`string[]`, `number[]`, `boolean[]`, objects) keep
-  `origin/main`'s code.
-- **Decline guards.** The update forms keep `origin/main`'s descriptor-aware
-  route in two cases:
+  slots read `null` and `sort()` trapped. #7164 moves such a group onto the
+  externref carrier, and every member gets the new store:
+  - a grow fills the new slots with the canonical `undefined`. Past capacity
+    it reallocates to `min(max(newLen, 2·cap), 16M)`;
+  - `++` / `--` (prefix and postfix) and `+= k` / `-= k` use the same store,
+    with ToUint32 validation (RangeError).
+- **Every other receiver** (mixed `any[]`, literal-seeded arrays, parameters,
+  property chains, typed vecs) keeps `origin/main`'s shrink-only store and
+  update forms, byte-identical. Round 6's "keep" grow (null → `undefined` on
+  every externref vec) is gone.
+- **Decline guards.** The update forms keep `origin/main`'s route in two cases:
   - the module never arms hole-aware reads;
   - the module mentions `defineProperty`, `defineProperties`, `freeze`, `seal`
-    or `preventExtensions`, since a non-writable length or a non-configurable
-    element cannot be ruled out. The carrier switch is blocked there too.
-- **Pre-scan.** The hole pre-scan now arms on `++` / `--` / `+=` / `-=` of
+    or `preventExtensions`. The carrier switch is blocked there too.
+- **Pre-scan.** The hole pre-scan arms on `++` / `--` / `+=` / `-=` of
   `.length` exactly as it does on `=`.
 
 **Other fixes.**
 
+- **`indexOf` / `includes` / `lastIndexOf` on an externref vec.** Their native
+  equality helpers need the box types. When no earlier use had registered
+  them, the method returned `null` and the call silently became a constant
+  (`g.indexOf('zz')` → `0`, `g.includes(undefined)` → `false`). They now
+  register them (`addUnionImports`).
 - `find` / `findLast` on an externref vec return the canonical `undefined`
-  when nothing matches (they returned `null`).
-- Callback loops re-read the backing when it changes, so a callback that grows
-  the array (`push` or `length =`) is seen. The common path costs one field
-  read and a `ref.eq`. There is no early exit: the find family keeps calling
-  the callback up to the original length.
+  when nothing matches.
+- **Callback loops** re-read the backing when it changes, so a callback that
+  grows the array (`push` or `length =`) is seen. There is no early exit. An
+  inline arrow or function expression with no call, `new`, tagged template,
+  assignment, `++` / `--` or `delete` cannot replace the backing, so its loop
+  skips the check.
 - `indexOf` / `includes` re-read the backing after a `fromIndex` whose
-  `valueOf` grows the array. `lastIndexOf` already read it afterwards.
+  `valueOf` grows the array.
 - `[0, ...g]` takes the externref carrier only when `g` is a switched binding.
 
 **Structure.** `array-length-update.ts` is folded into `array-length-define.ts`
-and its `compiler-boundaries.json` entry is gone. Import cycles: largest SCC
-724, unchanged. The risk scan, switched-binding set and pre-scan hooks live in
-`statements/array-share-group.ts`, outside the SCC. No host imports and no new
-raw checker calls.
+and its `compiler-boundaries.json` entry is gone. The import-cycle ratchet
+passes (largest SCC equal to `origin/main`'s). No host imports and no new raw
+checker calls.
+
+**Fixtures and how to regenerate them.**
+`scripts/record-7164-bases.mts` records both `origin/main` fixtures, or checks
+them:
+
+```bash
+node --import ./scripts/record-7164-bases-loader.mjs --import tsx \
+  scripts/record-7164-bases.mts [--base <rev>] (--write | --check)
+```
+
+- `issue-7164-length-update-sweep-base.json`: every sweep cell where
+  `origin/main` differs from node ("wrong", or "trap" for a trap or compile
+  error).
+- `issue-7164-leak-base.json`: per leak setup / case / lane, the leaks head
+  still shares with `origin/main`. Recording refuses when head has a leak
+  `origin/main` lacks.
+- `--check` recomputes both and fails when either differs from the committed
+  file, so a stale entry cannot widen what the test allows. It takes about
+  26 minutes.
+- Recorded against `origin/main` 51040d3a01 (unchanged from b6250f09f8 and
+  e4f9da2ed6).
 
 **Tests.** `tests/equivalence/issue-7164-externref-vec-length-growth.test.ts`
-runs gc native-first, standalone and wasi against node: 744 rows by default,
-all green. 98 of them are `it.fails` known gaps, each named.
+runs gc native-first, standalone and wasi against node, all green; known gaps
+are named `it.fails` rows.
 
 | Block | Rows |
 |---|---|
 | Programs × reads | 6 × 12 × 3 |
-| Share-group and length-update guards | 23 × 3 |
+| Share-group and length-update guards | 30 × 3 |
 | Readers after a grow | 35 × 3 |
 | Generated "matches node" sweep | 37 × 3 |
-| Marker-leak detector | 9 setups × 3 lanes (37 cases each) |
+| Marker-leak detector, relative to `origin/main` | 9 setups × 3 lanes (37 cases each) |
 | Callbacks that grow the array | 14 methods × 2 × 3 |
 | Length-update sweep, head never worse than `origin/main` | 44 of 1,008 rows × 3 (all with `JS2WASM_FULL_SWEEP=1`) |
 
-- **Length-update sweep** (`issue-7164-length-update-sweep-cases.ts`).
-  - Dimensions: form (`= 4`, `++`, `--`, `++x`, `--x`, `+= 2`, `-= 1`) ×
-    element (`any[]` string-only, `any[]` mixed, `string[]`, `number[]`,
-    `boolean[]`, objects) × setup (plain, after `push`, after `pop`, after a
-    shrink) × a plain `length =` elsewhere or not × receiver (local,
-    parameter, `o.p.arr`).
-  - `issue-7164-length-update-sweep-base.json` records each cell where
-    `origin/main` (2b0565cb14) differs from node.
-  - Rule: where `origin/main` matched node, head must match node. Where it did
-    not, head must not trap or fail to compile.
-- **Marker-leak detector, now relative to `origin/main`.**
-  - `issue-7164-leak-base.json` lists the leaks head still shares with
-    `origin/main` (same index, same kind). Any other leak fails.
-  - A cell this PR fixed is not listed, so regressing it fails. Mutant check:
-    filling the grow with `null` again fails 18 of the 27 detector rows
-    (298 leaks).
+Round 7 added guard rows for the mixed-array, parameter and literal-seeded
+grows ("same as `origin/main`"), and for the folded searches.
 
-**Results against `origin/main` 2b0565cb14.**
+**Results against `origin/main`.**
 
-- **Full length-update sweep** (1,008 rows × 3 lanes = 3,024 cells):
-  - worse: 0;
-  - better: 88;
-  - both match node: 824;
-  - both wrong, identically: 2,018 (293 differ only in `i in g`);
-  - both wrong, differently: 94 (73 where head's values match node and only
-    `in` differs; 6 where `origin/main` failed to compile).
-- **Leak detector** (333 cases × 3 lanes): 0 new leaks, 230 fixed, 570 shared
-  with `origin/main`.
-- **Review probe sets r1–r5** (old0–5, U, V, W, X, L, L2, DB): 0 regressions,
-  except the 4 `indexOf` rows below.
+- **Full length-update sweep** (3,024 cells): **0 worse**, 58 better, 824 both
+  match node, 2,142 both wrong.
+- **Leak detector:** 0 leaks head adds; 576 leaks shared with `origin/main`.
+  Mutant check (round 6): filling the grow with `null` again fails 18 of the
+  27 detector rows.
+- **Review probe sets r1–r6** (old0–5, U, V, W, X, L, L2, DB, A, B2, C, D, E,
+  E2, E3, F, G, H, I: 1,478 programs × 3 lanes, head vs `origin/main`):
+  193 improved, 337 both match node, 862 both wrong identically, 78 both wrong
+  differently, **8 regressed**, 0 new traps or compile errors. All 8 are the
+  #7170 class below: 4 in L, 1 in L2, 3 in A. Set B's first 33 rows were not
+  re-run (row 34 hangs on wasi on both trees, see Left out); round 6 found no
+  regression among them.
 
 **Known regressions (gc and standalone; tied to #7170).** On a switched
-binding a grown slot is a present `undefined`. `origin/main`'s slot held
-`null` (wrong in other ways), so a few hole-skipping reads were right by
-accident there:
+binding a grown slot is a present `undefined`. `origin/main`'s `null` slot
+happened to give node's answer for a search for `undefined`:
 
-- `indexOf(undefined)` after a shrink-then-grow or a grow (4 L / L2 probe rows);
+- `indexOf(undefined)` / `lastIndexOf(undefined)` after a grow, directly or
+  inside a `fromIndex` `valueOf`;
 - `some(v => v === undefined)` / `every(v => v !== undefined)`.
 
-Real holes are #7170.
+**Timing** (n = 100,000, 50 reps, best of 3 runs):
 
-**findIndex timing** (`any[]`, n = 100,000, 50 reps, best of 3 runs; the box
-was shared with another agent's run, so medians are noise):
-
-| | gc | standalone |
+| | gc main → head | standalone main → head |
 |---|---|---|
-| `any[]` `findIndex`: base → head | 42.0 → 40.7 ms | 38.3 → 40.7 ms |
-| `number[]` `findLastIndex`: base → head | 6.3 → 8.2 ms | 6.6 → 8.6 ms |
-| `any[]` `forEach`: base → head | 20.9 → 20.2 ms | 19.6 → 19.2 ms |
+| `any[]` `findIndex` | 37.5 → 37.2 ms | 38.1 → 38.4 ms |
+| `number[]` `findLastIndex` | 6.1 → 6.1 ms | 6.1 → 6.3 ms |
+| `any[]` `forEach` (mutating callback) | 107.4 → 107.6 ms | 105.7 → 110.0 ms |
+| `any[]` `reduce` | 217.4 → 207.2 ms | 208.5 → 221.0 ms |
 
-The `findLastIndex` cost is the per-iteration backing check. It is what makes
-a callback that pushes past capacity visible.
+The round-6 `findLastIndex` cost is gone: a pure inline callback skips the
+backing check.
+
+**A large grow allocates eagerly** on a switched binding:
+`g.length = 5e6` costs tens of milliseconds where `origin/main` did nothing,
+and then trapped on any read past the backing. The cost is linear.
 
 **Left out.**
 
 - **#7170 (holes):** a grown index is present. `in`, `hasOwnProperty`,
   for-in, `Object.keys`, callbacks, `indexOf` and copies see it.
-- **#7171 (wasi):** `in` is false even for present indices.
+- **#7171 (wasi):** `in` answers wrongly on dense and grown arrays.
 - **Number-holding arrays:** an f64 carrier grows with `0`s, as on
   `origin/main`.
-- **Same as `origin/main`, marked as `it.fails` rows:**
+- **Same as `origin/main`, kept as `it.fails` rows:**
   - update forms on a string-only `any[]` with no growing `length =` (still a
     #7154 string vec) emit invalid wasm;
   - `pop()` then `length++` brings the popped value back;
-  - wasi update forms on a dense `any[]` are lost, and `++o.p.arr.length`
-    reads `NaN`;
-  - wasi `indexOf` / `includes` miss a value written by `fromIndex`'s
-    `valueOf`;
+  - wasi `length++` on a dense `any[]` is lost, so
+    `while (g.length < 5) g.length++` never terminates;
+  - a literal-seeded string vec's grown slots read `null`, so
+    `includes(undefined)` is false;
   - `apply` and dynamic reads through `any` read `null`;
-  - `super(...r)` from a rest constructor forwards nothing;
-  - typed-vec groups keep the `null` fill and trap past capacity.
+  - `super(...r)` from a rest constructor forwards nothing.
+- **Pre-existing, not fixed here:** `[0, ...g]` with a literal-seeded string
+  `any[]` reads the strings as `NaN`.
 
-**Bytes** (unoptimized, base 2b0565cb14 vs head). Corpus: 282 programs per
-lane — 13 playground examples, 4 benchmark suites and 265 array-using sources
+**Bytes** (unoptimized, `origin/main` vs head). Corpus: 306 programs per
+lane — 13 playground examples, 4 benchmark suites and 289 array-using sources
 extracted from `tests/equivalence`. No program changed compile status.
 
 | Lane | Playground | Benchmark suites | Equivalence sources |
 |---|---|---|---|
-| gc | 0 changed | 3 changed, +207 B | 23 changed, +830 B |
-| standalone | 0 changed | 3 changed, +207 B | 23 changed, +830 B |
-| wasi | 0 changed | 3 changed, +312 B | 22 changed, +795 B |
+| gc | 0 changed | 3 changed, +137 B | 17 changed, +610 B |
+| standalone | 0 changed | 3 changed, +137 B | 17 changed, +610 B |
+| wasi | 0 changed | 3 changed, +172 B | 16 changed, +575 B |
 
-Almost all of it is the callback loops' backing check (a few tens of bytes
-per loop). The other sources of growth: a `length =` grow on an externref vec,
-`find` / `findLast` on an externref vec, a two-argument `indexOf` / `includes`
-on an externref vec, and the update forms on a switched binding. A program
-with none of these is byte-identical.
+Most of it is the callback loops' backing check (a mutating callback). The
+other sources: `find` / `findLast` and a two-argument `indexOf` / `includes`
+on an externref vec, and the length stores of a switched binding.
