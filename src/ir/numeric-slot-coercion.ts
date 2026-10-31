@@ -68,3 +68,8 @@ export function numericFieldUpdate(
   const value = emitNumber(lhsNumber, rhsNumber);
   return target.kind === "val" && target.val.kind === "f64" ? value : coerceIrNumeric(builder, value, target, true);
 }
+
+/** (#7106) 1 when the f64 `value` equals its truncation (an integer or ±Infinity), 0 for a fraction or NaN. */
+export function emitF64IsIntegral(builder: IrFunctionBuilder, value: IrValueId): IrValueId {
+  return builder.emitBinary("f64.eq", builder.emitUnary("f64.trunc", value, F64), value, irVal({ kind: "i32" }));
+}

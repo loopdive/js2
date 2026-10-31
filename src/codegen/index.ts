@@ -190,12 +190,9 @@ import {
 } from "../ir/promise-delay-lowering.js";
 import {
   makeIrArrayElementFamilyClassifier,
-  makeIrArrayExpressionPredicate,
-  makeIrDeclaredPrimitiveExpressionClassifier,
+  makeIrCheckerSelectionOptions,
   makeIrLocalClassExpressionResolver,
   makeIrModuleBindingResolver,
-  makeIrPrimitiveExpressionClassifier,
-  makeIrRegExpExpressionPredicate,
   type IrModuleBindingResolver,
   type IrScriptVarHome,
 } from "../ir/module-bindings.js"; // (#2856 Capability C)
@@ -3069,12 +3066,8 @@ function planIrOverlay(
           },
           identityContext,
         );
-  const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
-  const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
-  const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
   const numberConversion = irNumberConversionPlan(ast.checker, ast.sourceFile); // (#7106 module-init lever B)
   const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker, ctx.oracle);
-  const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
     hostExternSurface && options.resolveModuleBindings !== false
       ? makeIrAmbientClassCallResolver(ast.checker)
@@ -3265,11 +3258,8 @@ function planIrOverlay(
       ...(calendarResolvers.hostDateSnapshot ? { hostDateSnapshots: calendarResolvers.hostDateSnapshot } : {}),
       ...(resolvePromiseDelay ? { promiseDelays: resolvePromiseDelay } : {}),
       ...(resolveModuleBinding ? { resolveModuleBinding } : {}),
-      classifyPrimitiveExpression,
-      classifyDeclaredPrimitiveExpression,
-      isArrayExpression,
+      ...makeIrCheckerSelectionOptions(ast.checker),
       classifyArrayElementFamily,
-      isRegExpExpression,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
       preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)

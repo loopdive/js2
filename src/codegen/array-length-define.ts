@@ -14,6 +14,7 @@
  * the god-file shrinking rather than growing.
  */
 import { ts } from "../ts-api.js";
+import { SPARSE_INDEX_CEILING } from "../shared/array-index-key.js";
 import { emitVecLengthHoleFill } from "./vec-length-hole-fill.js"; // (#6482 r4)
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
@@ -298,7 +299,7 @@ export function maybeEmitVecLengthDefine(
     fctx.body.push({ op: "local.get", index: newLenLocal });
     fctx.body.push({ op: "i32.lt_s" }); // oldCap < newLen?
     fctx.body.push({ op: "local.get", index: nlLocal });
-    fctx.body.push({ op: "f64.const", value: 16777216 });
+    fctx.body.push({ op: "f64.const", value: SPARSE_INDEX_CEILING });
     fctx.body.push({ op: "f64.le" }); // nl <= 16M (allocation guard)
     fctx.body.push({ op: "i32.and" });
     fctx.body.push({
@@ -432,16 +433,11 @@ export function tryEmitVecLengthDefineForDefineProperties(
 }
 
 /**
- * The largest new length {@link maybeEmitVecLengthDefine} will actually grow the
- * backing `$data` array to. Must match its inline `f64.const 16777216` guard.
- */
-const SAFE_GROW_CEILING = 16777216;
-
-/**
  * (#3984) Does this descriptor set `length` to a literal ABOVE the helper's
  * allocation guard?
  *
- * Above `SAFE_GROW_CEILING` the helper deliberately updates `vec.length` WITHOUT
+ * Above `SPARSE_INDEX_CEILING` (the largest new length
+ * {@link maybeEmitVecLengthDefine} grows the backing `$data` array to) the helper deliberately updates `vec.length` WITHOUT
  * growing `$data` (sparse arrays are out of #2668 Slice C scope). That breaks the
  * vec invariant `length <= array.len(data)` which the same function documents,
  * and converts a clean assertion failure into an **uncatchable oob trap** — which
@@ -478,7 +474,7 @@ function exceedsSafeGrowCeiling(descExpr: ts.ObjectLiteralExpression): boolean {
     const n = Number(init.text);
     // Valid uint32 lengths only (anything else must reach the helper's RangeError).
     if (!Number.isInteger(n) || n < 0 || n > 0xffffffff) return false;
-    return n > SAFE_GROW_CEILING;
+    return n > SPARSE_INDEX_CEILING;
   }
   return false;
 }

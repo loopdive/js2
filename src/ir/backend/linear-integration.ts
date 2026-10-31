@@ -125,13 +125,7 @@ import {
   type IrPlanningIdentityInvariantCode,
 } from "../planning-identity.js";
 import { buildIrUnitTypeMap, projectIrUnitTypeMapToLegacy, type LatticeType } from "../propagate.js";
-import {
-  makeIrArrayExpressionPredicate,
-  makeIrAmbientBindingPredicate,
-  makeIrDeclaredPrimitiveExpressionClassifier,
-  makeIrPrimitiveExpressionClassifier,
-  makeIrRegExpExpressionPredicate,
-} from "../module-bindings.js";
+import { makeIrCheckerSelectionOptions, makeIrAmbientBindingPredicate } from "../module-bindings.js";
 import {
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
@@ -671,10 +665,7 @@ function planLinearIrOverlay(
       experimentalIR: true,
       trackFallbacks: true,
       recursiveTypeEvidence,
-      classifyPrimitiveExpression: makeIrPrimitiveExpressionClassifier(ctx.checker),
-      classifyDeclaredPrimitiveExpression: makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker),
-      isArrayExpression: makeIrArrayExpressionPredicate(ctx.checker),
-      isRegExpExpression: makeIrRegExpExpressionPredicate(ctx.checker),
+      ...makeIrCheckerSelectionOptions(ctx.checker),
       isAmbientBinding: makeIrAmbientBindingPredicate(ctx.checker),
       supportsSymbolicMathHelpers: false,
       supportsNumberToString: ctx.mod.functions.some((func) => func.name === "number_toString"),

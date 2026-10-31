@@ -29,9 +29,10 @@
         "src/shared/contracts/ir-preparation-errors.ts",
         "src/shared/contracts/ir-counted-string-site-id.ts",
         "src/shared/contracts/string-surrogate.ts",
-        "src/shared/contracts/linear-memory-layout.ts"
+        "src/shared/contracts/linear-memory-layout.ts",
+        "src/shared/contracts/f64-value-markers.ts"
       ],
-      "minModules": 10
+      "minModules": 11
     },
     {
       "id": "wasm-model",
@@ -14305,6 +14306,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/f64-value-markers.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-identity.ts",
       "state": "clean",
       "layer": "foundation"
@@ -16901,6 +16907,22 @@
       "path": "src/runtime/wasmgc/promise/promise-layout.ts",
       "state": "clean",
       "layer": "native-runtime"
+    },
+    {
+      "path": "src/shared/array-index-key.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/shared/transparent-expressions.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     }
   ]
 }

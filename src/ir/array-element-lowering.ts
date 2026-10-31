@@ -5,6 +5,8 @@
 // `from-ast.ts` from accumulating another feature-specific lowering subsystem.
 
 import { ts } from "../ts-api.js";
+import { HOLE_F64_BITS, UNDEF_F64_BITS } from "../shared/contracts/f64-value-markers.js";
+import { MAX_ARRAY_INDEX_EXCLUSIVE } from "../shared/array-index-key.js";
 
 import { isCanonI32Lowerable, makePlannedI32Probe, planI32Slots, type IsPromotedI32 } from "./analysis/i32-slots.js";
 import {
@@ -15,8 +17,10 @@ import {
 import { IrFunctionBuilder } from "./builder.js";
 import { irIntrinsicFuncRef } from "./callable-bindings.js";
 import type { I32PureNames } from "./i32-pure-bitwise.js";
+import { JS_TAG_IDS } from "./js-tag-domain.js";
 import type { IrVecLowering } from "./lower.js";
-import { asVal, irTypeEquals, irVal, irVec, type IrConst, type IrType, type IrValueId } from "./nodes.js";
+import { asVal, irDynamic, irTypeEquals, irVal, irVec, type IrConst, type IrType, type IrValueId } from "./nodes.js";
+import { emitF64IsIntegral } from "./numeric-slot-coercion.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import type { ValType } from "./types.js";
 import { irVecElemSetSymbol } from "./vector-runtime.js";
@@ -50,6 +54,8 @@ export interface ArrayElementLoweringHost {
 }
 
 const IR_F64: IrType = irVal({ kind: "f64" });
+const IR_I32: IrType = irVal({ kind: "i32" });
+const IR_I64: IrType = irVal({ kind: "i64" });
 const IR_STRING: IrType = { kind: "string" };
 const PURE_PUSH_BINARY_OPERATORS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.LessThanToken,
@@ -505,11 +511,11 @@ export function tryLowerVecPush(
     scalarVecReceiver && host.emptyArrayInference.isResolvedVectorExpression(receiverExpression)
       ? emitForwardingAwareLinearVecLen(recv, host)
       : host.builder.emitVecLen(recv);
-  const lenI32 = host.builder.emitUnary("i32.trunc_sat_f64_s", lenF64, irVal({ kind: "i32" }));
+  const lenI32 = host.builder.emitUnary("i32.trunc_sat_f64_s", lenF64, IR_I32);
   if (countedPush) {
     host.builder.emitVecSet(recv, lenI32, value);
-    const one = host.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
-    const nextLength = host.builder.emitBinary("i32.add", lenI32, one, irVal({ kind: "i32" }));
+    const one = host.builder.emitConst({ kind: "i32", value: 1 }, IR_I32);
+    const nextLength = host.builder.emitBinary("i32.add", lenI32, one, IR_I32);
     host.builder.emitVecSetLength(recv, nextLength);
   } else {
     const symbol =
@@ -528,12 +534,112 @@ export function emitForwardingAwareLinearVecLen(
   recv: IrValueId,
   host: Pick<ArrayElementLoweringHost, "builder" | "funcName">,
 ): IrValueId {
-  const lenI32 = host.builder.emitCall(irIntrinsicFuncRef("__arr_len"), [recv], irVal({ kind: "i32" }));
+  const lenI32 = host.builder.emitCall(irIntrinsicFuncRef("__arr_len"), [recv], IR_I32);
   if (lenI32 === null) {
     // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: forwarding-aware vec length produced no value (${host.funcName})`);
   }
   return host.builder.emitUnary("f64.convert_i32_s", lenI32, IR_F64);
+}
+
+/**
+ * (#7106) The vec index of an element key: negative when the key names no
+ * element, 2^31 − 1 for an array index past the i32 range.
+ *
+ * ToPropertyKey turns a non-integer, negative or NaN key into a NAMED property,
+ * so truncating it (`a[0.5]` reading `a[0]`, `a[-1] = v` trapping in the
+ * grow-store) is never right. The f64 key truncates with `i32.trunc_sat_f64_s`
+ * and keeps the result when converting it back is exact. A negative index is
+ * out of range for every bounds-checked read (`i32.lt_u` against the length)
+ * and skipped by every store site (`emitElementWrite`), so a non-index key
+ * reads as absent and never writes or traps. An array index past the i32
+ * range keeps its saturated 2^31 − 1 (`inexactVecIndex`), as on main: a read
+ * misses, and a store traps in the grow-store rather than being dropped with
+ * `length` silently wrong. An i32 key keeps its value: on an Array receiver
+ * the selector already refused a key it knows names a property (a boolean, a
+ * non-index literal; `isLegacyOnlyVecKey`).
+ *
+ * `integral` is the caller's static proof that the f64 key is an integer (the
+ * counted-loop pair, an int32-valued expression, a static array index); it
+ * skips the runtime test, and `i32.trunc_sat_f64_s` saturates an index past
+ * the i32 range the same way.
+ *
+ * A branch, not a `select`: the exact arm is the common one, and quicksort's
+ * hot loop measured faster with the branch.
+ */
+export function emitVecIndex(
+  key: IrValueId,
+  integral: boolean,
+  host: Pick<ArrayElementLoweringHost, "builder">,
+): IrValueId {
+  const b = host.builder;
+  if (asVal(b.typeOf(key))?.kind === "i32") return key;
+  const index = b.emitUnary("i32.trunc_sat_f64_s", key, IR_I32);
+  if (integral) return index;
+  const exact = b.emitBinary("f64.eq", b.emitUnary("f64.convert_i32_s", index, IR_F64), key, IR_I32);
+  return b.emitIfElseValue(
+    exact,
+    () => index,
+    () => inexactVecIndex(key, index, b),
+    IR_I32,
+  );
+}
+
+/**
+ * `emitVecIndex`'s cold arm, for a key `i32.trunc_sat_f64_s` did not carry
+ * exactly. An integer below 2^32 − 1 keeps the saturated `index`: 2^31 − 1 for
+ * an array index past the i32 range, −2^31 for a key below it (−Infinity
+ * too), which is negative like -1. Any other key (a fraction, NaN, +Infinity,
+ * 2^32 − 1 and up) is -1.
+ */
+function inexactVecIndex(key: IrValueId, index: IrValueId, b: IrFunctionBuilder): IrValueId {
+  const integral = emitF64IsIntegral(b, key);
+  const limit = b.emitConst({ kind: "f64", value: MAX_ARRAY_INDEX_EXCLUSIVE }, IR_F64);
+  const belowLimit = b.emitBinary("f64.lt", key, limit, IR_I32);
+  const none = b.emitConst({ kind: "i32", value: -1 }, IR_I32);
+  return b.emitSelect(b.emitBinary("i32.and", integral, belowLimit, IR_I32), index, none, IR_I32);
+}
+
+/** An f64 element holding the `undefined` or the absence marker (a hole, or a grow gap where holes are tracked). */
+export function isF64Hole(value: IrValueId, b: IrFunctionBuilder): IrValueId {
+  const bits = b.emitUnary("i64.reinterpret_f64", value, IR_I64);
+  const isUndefined = b.emitBinary("i64.eq", bits, b.emitConst({ kind: "i64", value: UNDEF_F64_BITS }, IR_I64), IR_I32);
+  const isAbsent = b.emitBinary("i64.eq", bits, b.emitConst({ kind: "i64", value: HOLE_F64_BITS }, IR_I64), IR_I32);
+  return b.emitBinary("i32.or", isUndefined, isAbsent, IR_I32);
+}
+
+/**
+ * (#7106) Element read of a numeric vec for a consumer that observes
+ * `undefined` (a dynamic hint: `assert.sameValue(a[5], undefined)`, an argument
+ * to an `any` parameter).
+ *
+ * The f64 or i32 element carrier cannot hold `undefined`: the other reads answer
+ * NaN out of range, which is ToNumber(undefined) and right only for a numeric
+ * consumer. This read produces the dynamic carrier instead: the boxed element
+ * when the index is in range and the slot holds a value, else `undefined`. An
+ * f64 slot holding a marker (`isF64Hole`) reads as `undefined` too. A `proven`
+ * index (the counted-loop pair) skips the bounds test but not the marker test:
+ * the loop proves the index in range, not the slot present.
+ */
+export function emitUndefinedAwareVecGet(
+  recv: IrValueId,
+  index: IrValueId,
+  slot: { readonly proven: boolean; readonly narrowedI32: boolean },
+  host: Pick<ArrayElementLoweringHost, "builder">,
+): IrValueId {
+  const b = host.builder;
+  const undefinedValue = (): IrValueId => b.emitDynUndefined(JS_TAG_IDS.Undefined);
+  const boxNumber = (value: IrValueId): IrValueId => b.emitBox(value, irDynamic(JS_TAG_IDS.NumberF64));
+  const element = (): IrValueId => {
+    if (slot.narrowedI32) {
+      return boxNumber(b.emitUnary("f64.convert_i32_s", b.emitVecGet(recv, index, IR_I32), IR_F64));
+    }
+    const value = b.emitVecGet(recv, index, IR_F64);
+    return b.emitIfElseValue(isF64Hole(value, b), undefinedValue, () => boxNumber(value), irDynamic());
+  };
+  if (slot.proven) return element();
+  const inRange = b.emitBinary("i32.lt_u", index, b.emitVecLenI32(recv), IR_I32);
+  return b.emitIfElseValue(inRange, element, undefinedValue, irDynamic());
 }
 
 /**
@@ -545,27 +651,14 @@ export function emitSafeNarrowedI32VecGet(
   idxI32: IrValueId,
   host: Pick<ArrayElementLoweringHost, "builder">,
 ): IrValueId {
-  const elemIr = irVal({ kind: "i32" });
-  const lenI32 = host.builder.emitVecLenI32(recv);
-  const cond = host.builder.emitBinary("i32.lt_u", idxI32, lenI32, elemIr);
-
-  let thenValue!: IrValueId;
-  const thenBody = host.builder.collectBodyInstrs(() => {
-    thenValue = host.builder.emitUnary("f64.convert_i32_s", host.builder.emitVecGet(recv, idxI32, elemIr), IR_F64);
-  });
-  let elseValue!: IrValueId;
-  const elseBody = host.builder.collectBodyInstrs(() => {
-    elseValue = host.builder.emitConst({ kind: "f64", value: NaN }, IR_F64);
-  });
-
-  return host.builder.emitIfElse({
-    cond,
-    then: thenBody,
-    thenValue,
-    else: elseBody,
-    elseValue,
-    resultType: IR_F64,
-  });
+  const b = host.builder;
+  const inRange = b.emitBinary("i32.lt_u", idxI32, b.emitVecLenI32(recv), IR_I32);
+  return b.emitIfElseValue(
+    inRange,
+    () => b.emitUnary("f64.convert_i32_s", b.emitVecGet(recv, idxI32, IR_I32), IR_F64),
+    () => b.emitConst({ kind: "f64", value: NaN }, IR_F64),
+    IR_F64,
+  );
 }
 
 /**
@@ -615,23 +708,7 @@ export function emitSafeVecGet(
     }
   }
 
-  const lenI32 = host.builder.emitVecLenI32(recv);
-  const cond = host.builder.emitBinary("i32.lt_u", idxI32, lenI32, irVal({ kind: "i32" }));
-  let thenValue!: IrValueId;
-  const thenBody = host.builder.collectBodyInstrs(() => {
-    thenValue = host.builder.emitVecGet(recv, idxI32, elemIr);
-  });
-  let elseValue!: IrValueId;
-  const elseBody = host.builder.collectBodyInstrs(() => {
-    elseValue = makeOobDefault!();
-  });
-
-  return host.builder.emitIfElse({
-    cond,
-    then: thenBody,
-    thenValue,
-    else: elseBody,
-    elseValue,
-    resultType: elemIr,
-  });
+  const b = host.builder;
+  const inRange = b.emitBinary("i32.lt_u", idxI32, b.emitVecLenI32(recv), IR_I32);
+  return b.emitIfElseValue(inRange, () => b.emitVecGet(recv, idxI32, elemIr), makeOobDefault!, elemIr);
 }
