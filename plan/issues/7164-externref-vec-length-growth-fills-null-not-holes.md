@@ -71,7 +71,7 @@ The `length` setter growth path on `$__vec_externref` (`grep -rn "length" src/co
 
 Acceptance: node's output for all programs; no trap in `join` after `sort`; host-assisted gc bytes unchanged; equivalence gate no new regressions.
 
-## Resolution (2026-11-01, review round 9)
+## Resolution (2026-11-01, review round 10)
 
 **Design: only switched bindings change.** The new length store applies to the
 arrays it was built for. Every other array compiles as on `origin/main`.
@@ -83,11 +83,16 @@ arrays it was built for. Every other array compiles as on `origin/main`.
   that can see its array parameter (one that declares it or a rest, uses
   `arguments`, or is not an inline function: `g.forEach((v, i, arr) =>
   arr.length = 5)` would otherwise grow the vec through main's store). The
-  check runs where the share-group classifier has already resolved the
-  receiver, so it sees through every shape the classifier looks through:
-  parentheses, `!`, `as`, `satisfies`, `.reverse()` / `.sort()` / `.fill()` /
-  `.copyWithin()`, `?:`, `||`, `??`, `&&`, comma, `h = g`, and `g['m'](cb)` /
-  `g[k](cb)` (a computed key always counts). Example: `const g: any[] = []; g.push('y');
+  share-group classifier's grow verdict allowlists member uses: a member
+  access on the binding is safe only as a method called directly (the access,
+  through parentheses, `as`, `<T>`, `!` and `satisfies`, is the callee of a
+  call, and the name is a property name or a string-literal key), or as
+  `xs[i]` / `xs.length`. Every other shape escapes: a method value taken off
+  the vec (`(0, g.forEach)(cb)`, `c ? g.forEach : g.map`, `const f =
+  g.reverse`), a computed key in a call, any other property. The receiver
+  shapes the classifier already looked through (parentheses, `!`, `as`,
+  `satisfies`, `.reverse()` / `.sort()` / `.fill()` / `.copyWithin()` by name
+  or string key, `?:`, `||`, `??`, `&&`, comma, `h = g`) are followed first. Example: `const g: any[] = []; g.push('y');
   g.length = 3;` — #7154 used to store `g` as a typed string vec, so the new
   slots read `null` and `sort()` trapped. #7164 moves such a group onto the
   externref carrier, and every member gets the new store:
@@ -153,7 +158,7 @@ node --import ./scripts/record-7164-bases-loader.mjs --import tsx \
   `--check` recomputes both and fails when the entries differ from the
   committed file, so a stale entry cannot widen what the test allows; it warns
   when only `"$base"` is older. It takes about 26 minutes.
-- Recorded against `origin/main` cc03abc63b; the entries are unchanged since
+- Recorded against `origin/main` 102b64e219; the length-update and leak entries are unchanged since
   b6250f09f8.
 
 **Tests.** `tests/equivalence/issue-7164-externref-vec-length-growth.test.ts`
@@ -163,18 +168,20 @@ are named `it.fails` rows.
 | Block | Rows |
 |---|---|
 | Programs × reads | 6 × 12 × 3 |
-| Share-group and length-update guards | 45 × 3 |
+| Share-group and length-update guards | 49 × 3 |
 | Readers after a grow | 35 × 3 |
 | Generated "matches node" sweep | 37 × 3 |
 | Marker-leak detector, relative to `origin/main` | 9 setups × 3 lanes (37 cases each) |
 | Callbacks that grow the array | 14 methods × 2 × 3 |
 | Length-update sweep, head never worse than `origin/main` | 44 of 1,008 rows × 3 (all with `JS2WASM_FULL_SWEEP=1`) |
-| Callback-array escape sweep (15 receiver shapes × 12 callback methods × 5 length updates), never worse than `origin/main` | 32 of 900 rows × 3 (all with `JS2WASM_FULL_SWEEP=1`) |
+| Callback-array escape sweep (34 receiver / callee shapes × 12 callback methods × 5 length updates), never worse than `origin/main` | 50 of 2,040 rows × 3 (all with `JS2WASM_FULL_SWEEP=1`) |
 
 Rounds 7–9 added guard rows for the mixed-array, parameter and literal-seeded
 grows ("same as `origin/main`"), the callback array-parameter escapes, the
 getter that grows a switched binding, the folded searches, and one row per
-round-8 receiver shape (paren, `!`, `as`, `.reverse()`, `||`, `['forEach']`).
+round-8 receiver shape (paren, `!`, `as`, `.reverse()`, `||`, `['forEach']`)
+and round-9 callee shapes (`(g.forEach)(cb)`, `(0, g.forEach)(cb)`, the
+`(g.reverse)()` and `g['fill']()` aliases).
 
 **Round 9: why the escape check and not a reallocating store.** The round-8
 review asked to make the trap impossible: let every externref `length =`
@@ -192,22 +199,25 @@ round-8 attack sets it gives 0 new traps and 0 worse cells.
 - **Full length-update sweep** (3,024 cells): **0 worse**, 58 better, 824 both
   match node, 2,142 both wrong.
 - **Leak detector:** 0 leaks head adds; 576 leaks shared with `origin/main`.
-- **Fixtures** re-checked with `--check` against `origin/main` cc03abc63b:
-  all three match.
   Mutant check (round 6): filling the grow with `null` again fails 18 of the
   27 detector rows.
-- **Review probe sets r1–r8** (old0–5, U, V, W, X, L, L2, DB, A, B's rows
+- **Fixtures** re-recorded against `origin/main` 102b64e219.
+- **Review probe sets r1–r9** (old0–5, U, V, W, X, L, L2, DB, A, B's rows
   after the wasi hang, B2, C, D, E, E2, E3, F, G, H, I, round 7's P, Q, R,
-  IOF, IOF3 and round 8's S, S2, T: 1,694 programs × 3 lanes, head vs
-  `origin/main`): 217 improved, 373 both match node, 995 both wrong
-  identically, 101 both wrong differently, **8 regressed**, **0 new traps or
-  compile errors**. All 8 are the #7170 class below: 4 in L, 1 in L2, 3 in A.
-  Set B's first 33 rows were not re-run (row 34 hangs on wasi on both trees,
-  see Left out); round 6 found no regression among them.
-- **Callback-array escape sweep** (900 rows × 3 lanes = 2,700 cells): 0 new
-  traps, 0 worse; 18 both match node, 2,682 both wrong (origin/main loses the
+  IOF, IOF3, round 8's S, S2, T and round 9's N, N2: 1,751 programs × 3
+  lanes, head vs `origin/main`): 219 improved, 373 both match node, 1,050
+  both wrong identically, 101 both wrong differently, **8 regressed**, **0 new
+  traps or compile errors**. All 8 are the #7170 class below: 4 in L, 1 in L2,
+  3 in A. Set B's first 33 rows were not re-run (row 34 hangs on wasi on both
+  trees, see Left out); round 6 found no regression among them.
+- **Callback-array escape sweep** (2,040 rows × 3 lanes = 6,120 cells): 0 new
+  traps, 0 worse; 18 both match node, 6,102 both wrong (origin/main loses the
   grow through the callback's array parameter, and so does head, since the
   binding is not switched).
+- **Non-switched stores are byte-identical to `origin/main`** on all three
+  lanes for an `any[]` parameter, a seeded literal, a class field, a
+  `number[]` and an array escaped to a concrete function. A callback that
+  takes the array parameter differs only by the loop's backing check.
 
 **Known regressions (gc and standalone; tied to #7170).** On a switched
 binding a grown slot is a present `undefined`. `origin/main`'s `null` slot
