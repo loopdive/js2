@@ -50,6 +50,12 @@ function isFreshArrayExpression(expression: ts.Expression): boolean {
   return ts.isArrayLiteralExpression(skipValueWrappers(expression));
 }
 
+/** (#7164) A non-empty array literal. */
+function isSeedLiteral(expression: ts.Expression): boolean {
+  const literal = skipValueWrappers(expression);
+  return ts.isArrayLiteralExpression(literal) && literal.elements.length > 0;
+}
+
 /** `x as T` / `<T>x`: the value is classified by `T`. */
 function isTypeAssertion(node: ts.Node): node is ts.AsExpression | ts.TypeAssertion {
   return ts.isAsExpression(node) || ts.isTypeAssertionExpression(node);
@@ -362,6 +368,8 @@ interface GroupVerdict {
   readonly shared: boolean;
   readonly dynamic: boolean;
   readonly grows: boolean;
+  /** (#7164) A member is seeded by a non-empty array literal (`['a', 'b']`). */
+  readonly seeded: boolean;
 }
 const groupVerdicts = new WeakMap<object, WeakMap<ts.VariableDeclaration, GroupVerdict>>();
 const growVerdicts = new WeakMap<object, WeakMap<ts.VariableDeclaration, GroupVerdict>>();
@@ -438,7 +446,8 @@ export function growingLengthStoreCarrier(
   decl: ts.VariableDeclaration,
 ): "group" | "alone" | undefined {
   const verdict = groupVerdict(ctx, decl, true);
-  if (!verdict.grows || !verdict.dynamic || lengthUpdateMayMeetFrozenArray(ctx)) return undefined;
+  // A literal-seeded group keeps origin/main's layout: there `k in g` after a grow is already right.
+  if (!verdict.grows || !verdict.dynamic || verdict.seeded || lengthUpdateMayMeetFrozenArray(ctx)) return undefined;
   return verdict.shared ? "group" : "alone";
 }
 
@@ -459,6 +468,7 @@ function groupVerdict(ctx: CodegenContext, decl: ts.VariableDeclaration, reads: 
   let dynamic = true;
   let container = false;
   let grows = false;
+  let seeded = false;
   const join = (member: ts.VariableDeclaration): void => {
     if (!seen.has(member)) {
       seen.add(member);
@@ -482,9 +492,18 @@ function groupVerdict(ctx: CodegenContext, decl: ts.VariableDeclaration, reads: 
     }
     const partners: ts.Node[] = [];
     if (member.initializer && !isFreshArrayExpression(member.initializer)) partners.push(member.initializer);
+    if (member.initializer && isSeedLiteral(member.initializer)) seeded = true;
     for (const id of uses) {
       memberUses.push(id);
       if (reads && isGrowingLengthStore(id)) grows = true;
+      const store = id.parent;
+      if (
+        ts.isBinaryExpression(store) &&
+        store.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        store.left === id &&
+        isSeedLiteral(store.right)
+      )
+        seeded = true;
       const verdict = classifyUse(ctx, id, false, reads);
       if (verdict.typed) dynamic = false;
       if (verdict.escapesDynamic) shared = true;
@@ -510,7 +529,7 @@ function groupVerdict(ctx: CodegenContext, decl: ts.VariableDeclaration, reads: 
   if (dynamic && container) {
     for (const id of memberUses) if (classifyUse(ctx, id, true, reads).typed) dynamic = false;
   }
-  const result: GroupVerdict = { shared, dynamic, grows };
+  const result: GroupVerdict = { shared, dynamic, grows, seeded };
   for (const member of seen) verdicts.set(member, result);
   return result;
 }

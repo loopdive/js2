@@ -1,0 +1,135 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+//
+// (#7164) Records — or checks — the two origin/main fixtures that
+// tests/equivalence/issue-7164-externref-vec-length-growth.test.ts compares
+// head against:
+//
+//   issue-7164-length-update-sweep-base.json  every sweep cell where the base
+//       compiler differs from node: "wrong" (a value) or "trap" (a trap or a
+//       compile error). A cell not listed matched node on base.
+//   issue-7164-leak-base.json  per leak setup/case/lane, the marker leaks head
+//       still SHARES with base (same index, same kind). Recording refuses when
+//       head has a leak base lacks: that is a regression to fix, not to record.
+//
+// The base compiler is `git archive <rev> src tests/equivalence/helpers.ts`,
+// extracted under .tmp/7164-base (node_modules resolve from the repo). Every
+// sweep and leak module is compiled on its own on gc, standalone and wasi.
+//
+//   node --import ./scripts/record-7164-bases-loader.mjs --import tsx \
+//     scripts/record-7164-bases.mts [--base <rev>] (--write | --check)
+//
+// --check recomputes both fixtures and exits 1 when either differs from the
+// committed file, so a stale entry (one base no longer has) cannot silently
+// widen what the test allows. It takes about an hour on a 4-core box.
+import { execSync } from "node:child_process";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const args = process.argv.slice(2);
+const mode = args.includes("--write") ? "write" : args.includes("--check") ? "check" : undefined;
+const baseRev = args.includes("--base") ? args[args.indexOf("--base") + 1]! : "origin/main";
+if (!mode) {
+  console.error("usage: record-7164-bases.mts [--base <rev>] (--write | --check)");
+  process.exit(2);
+}
+
+const baseRoot = join(repo, ".tmp", "7164-base");
+rmSync(baseRoot, { recursive: true, force: true });
+mkdirSync(baseRoot, { recursive: true });
+execSync(`git archive ${baseRev} src tests/equivalence/helpers.ts | tar -x -C ${baseRoot}`, { cwd: repo });
+const baseSha = execSync(`git rev-parse ${baseRev}`, { cwd: repo }).toString().trim();
+
+const cases = await import(pathToFileURL(join(repo, "tests/equivalence/issue-7164-length-update-sweep-cases.ts")).href);
+const { evaluateAsJs } = await import(pathToFileURL(join(repo, "tests/equivalence/helpers.ts")).href);
+type Tree = { compile: Function; instantiate: Function };
+async function loadTree(root: string): Promise<Tree> {
+  const { compile } = await import(pathToFileURL(join(root, "src/index.ts")).href);
+  const { instantiateWithRuntime } = await import(pathToFileURL(join(root, "tests/equivalence/helpers.ts")).href);
+  return { compile, instantiate: instantiateWithRuntime };
+}
+const head = await loadTree(repo);
+const base = await loadTree(baseRoot);
+const LANES: [string, Record<string, string>][] = [
+  ["gc", {}],
+  ["standalone", { target: "standalone" }],
+  ["wasi", { target: "wasi" }],
+];
+const read = (at: (i: number) => number): string => {
+  const n = at(-1);
+  let s = "";
+  for (let i = 0; i < n; i++) s += String.fromCharCode(at(i));
+  return s;
+};
+/** The exported reader's string, or "CE" / "TRAP". */
+async function run(tree: Tree, src: string, options: object, fn: string): Promise<string> {
+  try {
+    const result = await tree.compile(src, { fileName: "probe.ts", ...options });
+    if (!result.success) return "CE";
+    return read((await tree.instantiate(result)).exports[fn]);
+  } catch {
+    return "TRAP";
+  }
+}
+const failed = (v: string): boolean => v === "CE" || v === "TRAP";
+
+// The length-update sweep: base only.
+const sweep: Record<string, Record<string, string>> = {};
+for (const row of cases.sweepRows()) {
+  const src = `${cases.sweepSource(row.form, row.element, row.setup, row.eqElsewhere, row.receiver)}\nexport function at(i: number): number { const s = value(); return i < 0 ? s.length : s.charCodeAt(i); }`;
+  const node = read(evaluateAsJs(src).at as (i: number) => number);
+  for (const [lane, options] of LANES) {
+    const value = await run(base, src, options, "at");
+    if (value !== node) (sweep[row.key] ??= {})[lane] = failed(value) ? "trap" : "wrong";
+  }
+}
+
+// The leak detector: head ∩ base.
+const leak: Record<string, Record<string, string[]>> = {};
+const refused: string[] = [];
+for (const [setupName, setup] of Object.entries(cases.LEAK_SETUPS as Record<string, string>)) {
+  for (const name of Object.keys(cases.SWEEP)) {
+    const src = `${cases.SWEEP_PRELUDE}${cases.LEAK_SUMMARY}\n${cases.leakFns(setup, [name])}`;
+    const node = read(evaluateAsJs(src)[`at_${name}`] as (i: number) => number);
+    for (const [lane, options] of LANES) {
+      const h = await run(head, src, options, `at_${name}`);
+      if (failed(h)) continue; // a head compile error or trap cannot leak
+      const b = await run(base, src, options, `at_${name}`);
+      const headLeaks: string[] = cases.leaksIn(node, h, lane);
+      const baseLeaks: string[] = failed(b) ? [] : cases.leaksIn(node, b, lane);
+      for (const l of headLeaks) if (!baseLeaks.includes(l)) refused.push(`${setupName}/${name}/${lane} ${l}`);
+      const shared = headLeaks.filter((l) => baseLeaks.includes(l));
+      if (shared.length > 0) (leak[`${setupName}/${name}`] ??= {})[lane] = shared;
+    }
+  }
+}
+
+const sweepPath = join(repo, "tests/equivalence/issue-7164-length-update-sweep-base.json");
+const leakPath = join(repo, "tests/equivalence/issue-7164-leak-base.json");
+const format = (value: object, path: string): string =>
+  execSync(`npx prettier --stdin-filepath ${path}`, { cwd: repo, input: JSON.stringify(value) }).toString();
+const sweepText = format(sweep, sweepPath);
+const leakText = format(leak, leakPath);
+console.log(
+  `base ${baseSha}: ${Object.keys(sweep).length} sweep rows differ from node; ${Object.keys(leak).length} leak cases share a leak`,
+);
+if (refused.length > 0) {
+  console.error(`REFUSED: ${refused.length} leak(s) head has and base lacks:\n  ${refused.join("\n  ")}`);
+  process.exit(1);
+}
+if (mode === "write") {
+  writeFileSync(sweepPath, sweepText);
+  writeFileSync(leakPath, leakText);
+  console.log("wrote both fixtures");
+} else {
+  const stale = [
+    readFileSync(sweepPath, "utf8") !== sweepText ? sweepPath : undefined,
+    readFileSync(leakPath, "utf8") !== leakText ? leakPath : undefined,
+  ].filter(Boolean);
+  if (stale.length > 0) {
+    console.error(`STALE (re-run with --write): ${stale.join(", ")}`);
+    process.exit(1);
+  }
+  console.log("both fixtures match");
+}

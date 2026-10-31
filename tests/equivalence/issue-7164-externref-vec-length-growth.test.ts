@@ -231,7 +231,8 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
   // Update forms with no plain `length =` in the module, on every element kind.
   incOnlyAny: {
     body: "const g: any[] = ['a', 'b']; g.length++; return String(g[2]) + ':' + g.length;",
-    wasiGap: "same as origin/main 2b0565cb14: wasi length++ on a dense any[] is lost",
+    wasiGap:
+      "same as origin/main 2b0565cb14: wasi length++ on a dense any[] is lost (so `while (g.length < 5) g.length++` never terminates)",
   },
   incOnlyMixed: {
     body: "const g: any[] = []; g.push('a'); g.push(1); g.length++; return String(g[2]) + ':' + g.length + ':' + [...g].length;",
@@ -256,6 +257,35 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
   fromIndexGrowsBacking: {
     body: "const g: any[] = []; g.push('a'); g.push('b'); g.length = 2; const fi: any = { valueOf(): number { g.length = 40; g[1] = 'Q'; return 0; } }; const fj: any = { valueOf(): number { g.length = 90; g[3] = 'R'; return 0; } }; return String(g.indexOf('Q', fi)) + ':' + g.includes('R', fj);",
     wasiGap: "same as origin/main 2b0565cb14: wasi indexOf / includes miss a value written by fromIndex's valueOf",
+  },
+  // (#7164 r7) A grow of an externref vec #7164 did not switch keeps
+  // origin/main's store: mixed arrays, parameters and literal-seeded arrays.
+  mixedGrowSearch: {
+    body: "const g: any[] = ['a', 1]; g.length = 4; const t = (b: boolean): string => (b ? 'T' : 'F'); return [g.indexOf(undefined), g.lastIndexOf(undefined), t(g.some((x: any) => x === undefined)), t(g.every((x: any) => x !== undefined)), g.filter((x: any) => x === undefined).length].join(',');",
+  },
+  mixedGrowIn: {
+    body: "const g: any[] = ['a', 1]; g.length = 4; return (3 in g ? 'T' : 'F') + (g.hasOwnProperty(3) ? 'T' : 'F') + g.length;",
+  },
+  paramGrow: {
+    pre: "function p(g: any[]): string { g.length = 4; return [g.indexOf(undefined), g.some((x: any) => x === undefined) ? 'T' : 'F', 3 in g ? 'T' : 'F', g.length].join(','); }",
+    body: "return p(['a', 1]);",
+  },
+  literalGrowIn: {
+    body: "const g: any[] = ['a', 'b']; g.length = 4; return (3 in g ? 'T' : 'F') + g.filter((x: any) => x === undefined).length;",
+    wasiGap: "#7171",
+  },
+  // (#7164 r7) The native element-equality helpers register the box types they
+  // need: a search on a string-only switched vec used to fold to a constant.
+  pushGrowSearch: {
+    body: "const g: any[] = []; g.push('a'); g.length = 3; return (g.includes(undefined) ? 'T' : 'F') + g.indexOf('zz') + ',' + g.lastIndexOf('a') + ',' + g.indexOf('a');",
+  },
+  pushGrowIndexOfUndefined: {
+    body: "const g: any[] = []; g.push('a'); g.length = 3; return String(g.indexOf(undefined));",
+    gap: "#7170 (a grown index is a present undefined; same as origin/main: 1)",
+  },
+  literalGrowSearch: {
+    body: "const g: any[] = ['a', 'b']; g.length = 4; return g.indexOf(undefined) + (g.includes(undefined) ? 'T' : 'F');",
+    gap: "same as origin/main: a literal-seeded string vec's grown slots are null, so includes(undefined) is false",
   },
   spreadShrinkGrow: {
     body: "const g: any[] = []; g.push('y'); g.push('z'); g.length = 1; g.length = 3; const s = [...g]; return s.length+':'+(1 in s)+':'+String(s[1]);",

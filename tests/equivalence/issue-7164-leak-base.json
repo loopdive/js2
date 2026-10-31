@@ -1,4 +1,9 @@
 {
+  "growWithinCapacity/self": {
+    "gc": ["1: undefined → null", "2: undefined → null"],
+    "standalone": ["1: undefined → null", "2: undefined → null"],
+    "wasi": ["1: undefined → null", "2: undefined → null"]
+  },
   "growWithinCapacity/dynamicRead": {
     "gc": ["1: undefined → null", "2: undefined → null"],
     "standalone": ["1: undefined → null", "2: undefined → null"],
@@ -13,9 +18,7 @@
     "standalone": ["1: undefined → null", "2: undefined → null"],
     "wasi": ["1: undefined → null", "2: undefined → null"]
   },
-  "shrinkThenPostfixInc/self": {
-    "wasi": ["1: undefined → value", "2: undefined → value"]
-  },
+  "shrinkThenPostfixInc/self": { "wasi": ["1: undefined → value", "2: undefined → value"] },
   "shrinkThenPostfixInc/dynamicRead": {
     "gc": ["1: undefined → value", "2: undefined → null"],
     "standalone": ["1: undefined → value", "2: undefined → null"]
@@ -84,9 +87,7 @@
     "standalone": ["1: undefined → value"],
     "wasi": ["1: undefined → value"]
   },
-  "shrinkThenPrefixInc/self": {
-    "wasi": ["1: undefined → value", "2: undefined → value"]
-  },
+  "shrinkThenPrefixInc/self": { "wasi": ["1: undefined → value", "2: undefined → value"] },
   "shrinkThenPrefixInc/dynamicRead": {
     "gc": ["1: undefined → value", "2: undefined → null"],
     "standalone": ["1: undefined → value", "2: undefined → null"]
@@ -224,18 +225,10 @@
     "standalone": ["0: undefined → value", "1: undefined → value"],
     "wasi": ["0: undefined → value", "1: undefined → value"]
   },
-  "postIncOnly/self": {
-    "wasi": ["2: undefined → value", "3: undefined → value"]
-  },
-  "postIncOnly/map": {
-    "wasi": ["2: undefined → value", "3: undefined → value"]
-  },
-  "postIncOnly/slice": {
-    "wasi": ["2: undefined → value", "3: undefined → value"]
-  },
-  "postIncOnly/concat": {
-    "wasi": ["2: undefined → value", "3: undefined → value"]
-  },
+  "postIncOnly/self": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/map": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/slice": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/concat": { "wasi": ["2: undefined → value", "3: undefined → value"] },
   "postIncOnly/toReversed": {
     "gc": ["0: present → absent", "0: visited → skipped", "1: present → absent", "1: visited → skipped"],
     "standalone": ["0: present → absent", "0: visited → skipped", "1: present → absent", "1: visited → skipped"],
@@ -251,9 +244,7 @@
     "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
     "wasi": ["2: undefined → value", "3: undefined → value"]
   },
-  "postIncOnly/splice": {
-    "wasi": ["2: undefined → value", "3: undefined → value"]
-  },
+  "postIncOnly/splice": { "wasi": ["2: undefined → value", "3: undefined → value"] },
   "postIncOnly/arrayFrom": {
     "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
     "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
@@ -263,12 +254,8 @@
     "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
     "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"]
   },
-  "postIncOnly/entries": {
-    "wasi": ["2: undefined → value", "3: undefined → value"]
-  },
-  "postIncOnly/values": {
-    "wasi": ["2: undefined → value", "3: undefined → value"]
-  },
+  "postIncOnly/entries": { "wasi": ["2: undefined → value", "3: undefined → value"] },
+  "postIncOnly/values": { "wasi": ["2: undefined → value", "3: undefined → value"] },
   "postIncOnly/spread": {
     "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
     "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
@@ -279,9 +266,7 @@
     "standalone": ["3: undefined → value", "4: undefined → value"],
     "wasi": ["3: undefined → value", "4: undefined → value"]
   },
-  "postIncOnly/forOfCollect": {
-    "wasi": ["2: undefined → value", "3: undefined → value"]
-  },
+  "postIncOnly/forOfCollect": { "wasi": ["2: undefined → value", "3: undefined → value"] },
   "postIncOnly/restDecl": {
     "gc": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],
     "standalone": ["2: present → absent", "2: visited → skipped", "3: present → absent", "3: visited → skipped"],

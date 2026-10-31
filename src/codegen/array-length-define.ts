@@ -639,18 +639,18 @@ function receiverMayHoldExternref(ctx: CodegenContext, receiverType: ValType | u
  * The fill a static length store gets. A literal `0` or a typed (non-externref)
  * receiver: the shrink fill only, as before #7164. A binding #7164 moved onto
  * the externref carrier: a grow fills every new slot with `undefined`. Any
- * other externref receiver was that carrier before #7164 too: a grow replaces
- * only never-written `null` slots, so a hole an earlier shrink marked stays one.
+ * other receiver gets the shrink fill only, byte-identical to origin/main.
  */
 function lengthStoreMode(
   ctx: CodegenContext,
   target: ts.Node,
   literalClear: boolean,
   receiverType: ValType | undefined,
-): "shrink-only" | "length-store" | "length-store-keep" {
+): "shrink-only" | "length-store" {
   if (literalClear || !receiverMayHoldExternref(ctx, receiverType)) return "shrink-only";
+  // Only a binding #7164 moved onto the externref carrier grows; every other vec is origin/main's store.
   const receiver = ts.isPropertyAccessExpression(target) ? target.expression : undefined;
-  return receiver && isGrowthSwitchedReceiver(ctx, receiver) ? "length-store" : "length-store-keep";
+  return receiver && isGrowthSwitchedReceiver(ctx, receiver) ? "length-store" : "shrink-only";
 }
 
 /** The forms {@link tryCompileArrayLengthUpdate} lowers. */

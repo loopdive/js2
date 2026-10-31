@@ -3557,10 +3557,6 @@ function compileArrayAt(
 }
 
 /**
- * arr.indexOf(val) -> loop through array, return index (as f64) or -1.
- * Receiver is a vec struct; extract data and length from it.
- */
-/**
  * (#7164) A `fromIndex` whose `valueOf` grows the array can reallocate an
  * externref vec's backing (`length =` past capacity, or `push`). The scan reads
  * elements live (Get at each index), so re-read the backing after `fromIndex`
@@ -3588,6 +3584,10 @@ function reloadSearchBacking(
   ];
 }
 
+/**
+ * arr.indexOf(val) -> loop through array, return index (as f64) or -1.
+ * Receiver is a vec struct; extract data and length from it.
+ */
 function compileArrayIndexOf(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3695,6 +3695,8 @@ function compileArrayIndexOf(
     // mode keeps the `__host_eq` host import. Mirrors the standalone arm in
     // `compileArrayLikePrototypeSearch` (the `.call(...)` form).
     const nativeCmp = ctx.standalone || ctx.wasi;
+    // (#7164) The native helper needs the box types; register them if no earlier use did.
+    if (nativeCmp) addUnionImports(ctx);
     const cmpIdx = nativeCmp
       ? ensureExternStrictEqHelper(ctx)
       : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
@@ -3895,6 +3897,8 @@ function compileArrayIncludes(
     // is unsatisfiable. Route SameValueZero through the pure-Wasm
     // `__extern_same_value_zero` helper there; host/gc mode keeps the import.
     const nativeCmp = ctx.standalone || ctx.wasi;
+    // (#7164) The native helper needs the box types; register them if no earlier use did.
+    if (nativeCmp) addUnionImports(ctx);
     const svzIdx = nativeCmp
       ? ensureExternSameValueZeroHelper(ctx)
       : ensureLateImport(ctx, "__same_value_zero", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
@@ -6841,7 +6845,8 @@ function setupArrayLoop(
   fctx.body.push({ op: "local.set", index: iTmp });
 
   const getOp = elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
-  return { vecTmp, recvExternTmp, dataTmp, lenTmp, logicalLenTmp, iTmp, getOp, vecTypeIdx };
+  const reload = callbackMayReplaceBacking(propAccess.parent) ? vecTypeIdx : undefined;
+  return { vecTmp, recvExternTmp, dataTmp, lenTmp, logicalLenTmp, iTmp, getOp, vecTypeIdx: reload };
 }
 
 /**
@@ -7428,6 +7433,42 @@ function reloadLoopData(loop: ArrayLoopLocals): Instr[] {
       ],
     },
   ];
+}
+
+/**
+ * (#7164) Whether the HOF's callback can replace the receiver's backing array.
+ * An inline arrow / function expression with no call, `new`, tagged template,
+ * assignment, `++` / `--` or `delete` runs no code that could (an implicit
+ * getter or `valueOf` could, but then the loop reads the earlier backing, as
+ * before #7164), so its loop skips the per-iteration backing check.
+ */
+function callbackMayReplaceBacking(call: ts.Node): boolean {
+  if (!ts.isCallExpression(call)) return true;
+  let callback: ts.Expression | undefined = call.arguments[0];
+  while (callback && ts.isParenthesizedExpression(callback)) callback = callback.expression;
+  if (!callback || (!ts.isArrowFunction(callback) && !ts.isFunctionExpression(callback))) return true;
+  let mutates = false;
+  const visit = (node: ts.Node): void => {
+    if (mutates) return;
+    if (
+      ts.isCallExpression(node) ||
+      ts.isNewExpression(node) ||
+      ts.isTaggedTemplateExpression(node) ||
+      ts.isDeleteExpression(node) ||
+      (ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+      ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken))
+    ) {
+      mutates = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(callback.body);
+  for (const parameter of callback.parameters) visit(parameter);
+  return mutates;
 }
 
 /**
@@ -8096,7 +8137,7 @@ function compileArrayReduceRight(
     logicalLenTmp,
     iTmp,
     getOp,
-    vecTypeIdx,
+    vecTypeIdx: callbackMayReplaceBacking(propAccess.parent) ? vecTypeIdx : undefined,
   };
 
   // Compile initial value or use the last present element as the default seed.
@@ -10241,6 +10282,8 @@ function compileArrayLastIndexOf(
     // `__extern_strict_eq` helper instead of the unsatisfiable `__host_eq` import;
     // host/gc mode keeps the import. Mirrors indexOf / the `.call(...)` form.
     const nativeCmp = ctx.standalone || ctx.wasi;
+    // (#7164) The native helper needs the box types; register them if no earlier use did.
+    if (nativeCmp) addUnionImports(ctx);
     const cmpIdx = nativeCmp
       ? ensureExternStrictEqHelper(ctx)
       : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
