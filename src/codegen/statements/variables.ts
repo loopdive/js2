@@ -105,6 +105,7 @@ import { objectAssignResultNeedsExternref } from "../object-model/object-assign-
 import { integrityLiteralResultNeedsExternref } from "../object-model/object-literal-reflective-escape.js";
 import { reflectiveArrayCallNeedsExternref } from "../array/array-ctor-this.js"; // (#6771)
 import { inferStandaloneRegExpMatchResultType } from "../regexp-standalone.js";
+import { aliasedLocalVecType } from "../declarations/module-global-vec-alias.js";
 
 /**
  * A class-expression binding fast path emits its value before this caller can
@@ -1926,6 +1927,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                                 taViewCallResultType ??
                                 subarraySubviewType ??
                                 inferredVecType ??
+                                aliasedLocalVecType(ctx, fctx, decl) ?? // (#7166)
                                 standaloneRegExpMatchArrayType ??
                                 // (#4655) `var arr = x.concat(y, z)` — the concat
                                 // lowering yields a dynamic `$ObjVec` externref

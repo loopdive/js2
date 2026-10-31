@@ -51,6 +51,7 @@ import { ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
 import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
 import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
+import { aliasedModuleGlobalVecType } from "./declarations/module-global-vec-alias.js"; // (#7166)
 import { isExpressionRootedAssignmentTarget } from "./declarations/expression-rooted-assignment-target.js"; // (#6651) `f(o).p = v`
 import {
   ASYNC_CPS_ENABLED,
@@ -3769,6 +3770,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // its vec slot but widens the ELEMENT type — a boxed carrier would preserve
     // `x[0]`'s identity and lose `x.length`.
     return (
+      aliasedModuleGlobalVecType(ctx, decl, (d) => moduleGlobalWasmType(d, moduleVarDeclType(d))) ?? // (#7166) `const r = keys.sort()` shares `keys`' slot
       rebindWidenedArrayVecType(ctx, sourceFile, decl) ??
       heterogeneousWidenedModuleGlobalType(ctx, sourceFile, decl) ??
       // (#4491 wave-5 T4) `var x = true; … var x = function () {}` is ONE
