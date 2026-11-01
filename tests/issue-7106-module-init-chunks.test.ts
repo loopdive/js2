@@ -185,4 +185,18 @@ describe("#7106 chunked <module-init> lowered by the IR", () => {
       }
     },
   );
+
+  // Review round 1 dropped a void body's trailing `return`; on an empty method that left
+  // an empty body, which the prepared-class cutover reads as uninstalled (staging/sm/class/className.js).
+  it("compiles a class whose static method is empty", async () => {
+    for (const target of ["gc", "standalone"] as const) {
+      const result = await compile("class C { constructor() {} static m() {} }\nvar x = C;", {
+        allowJs: true,
+        fileName: "empty-method.js",
+        skipSemanticDiagnostics: true,
+        ...(target === "gc" ? {} : { target }),
+      } as Parameters<typeof compile>[1]);
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    }
+  });
 });

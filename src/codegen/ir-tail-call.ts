@@ -242,6 +242,8 @@ export function applyIrTailCalls(ctx: CodegenContext, body: Instr[], funcTypeIdx
     returnType: ft.results.length > 0 ? ft.results[0]! : null,
   };
   const out = convertBuffer(ctx, body, caller);
-  if (caller.returnType === null && out.at(-1)?.op === "return") out.pop();
+  // A body that is only `return` keeps it: an empty body reads as an uninstalled
+  // callable to the prepared-class cutover (`static m() {}`).
+  if (caller.returnType === null && out.length > 1 && out.at(-1)?.op === "return") out.pop();
   return out;
 }
