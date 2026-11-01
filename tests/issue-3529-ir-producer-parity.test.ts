@@ -39,9 +39,12 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     // `<module-init>`; the legacy body carries the program instead. Pin that
     // truthfully — `legacyBodyEmitted: true` still fails if nothing is emitted
     // at all, and a return to IR emission will fail here and be re-examined.
+    // (2026-11-01, re-pinned in #7066) On main `<module-init>` now stops first on
+    // its host `console.log` surface (`host-surface-unavailable`), still at
+    // selection and still on the legacy body.
     expect(terminal(result).find((outcome) => outcome.displayName === "<module-init>")).toMatchObject({
       kind: "unsupported",
-      code: "call-graph-closure",
+      code: "host-surface-unavailable",
       stage: "select",
       legacyBodyEmitted: true,
       irBodyEmitted: false,
