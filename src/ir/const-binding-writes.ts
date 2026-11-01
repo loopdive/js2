@@ -65,17 +65,10 @@ function isWriteToConstDeclaration(id: ts.Identifier): boolean {
  * too.
  */
 export function declarationBindingWritten(declaration: ts.VariableDeclaration): boolean {
-  const names = new Set(collectPatternBindingNames(declaration.name));
-  let written = false;
-  const visit = (node: ts.Node): void => {
-    if (written) return;
-    written =
-      (ts.isIdentifier(node) && names.has(node.text) && isLexicalBindingWrite(node)) ||
-      (node !== declaration && varDeclaratorWrittenNames(node).some((id) => names.has(id.text)));
-    if (!written) forEachChild(node, visit);
-  };
-  visit(bindingScopeOf(declaration));
-  return written;
+  const writes = scopeWrites(bindingScopeOf(declaration));
+  return [...collectPatternBindingNames(declaration.name)].some(
+    (name) => writes.targets.has(name) || writes.declarators.get(name)?.some((other) => other !== declaration),
+  );
 }
 
 function bindingScopeOf(declaration: ts.VariableDeclaration): ts.Node {
@@ -93,27 +86,52 @@ function blockScopeOf(statements: ts.Node): ts.Node {
   return ts.isCaseClause(statements) || ts.isDefaultClause(statements) ? statements.parent : statements;
 }
 
-const declarationsByScope = new WeakMap<ts.Node, ReadonlyMap<string, boolean>>();
+/**
+ * What one scope declares and writes, each table built the first time it is
+ * asked for, so a query looks a name up instead of rescanning the scope. Keyed
+ * by the scope node in a `WeakMap`: parsed nodes are immutable for a compile
+ * and the entries go with the AST, as `ownLocalsCache` (`binding-info.ts`)
+ * holds own-locals.
+ */
+interface ScopeTables {
+  declared?: ReadonlyMap<string, boolean>;
+  writes?: ScopeWrites;
+}
+
+/** The writes in a scope, nested functions included: plain targets, and each `var` declarator's own. */
+interface ScopeWrites {
+  readonly targets: ReadonlySet<string>;
+  readonly declarators: ReadonlyMap<string, readonly ts.VariableDeclaration[]>;
+}
+
+const tablesByScope = new WeakMap<ts.Node, ScopeTables>();
+
+function tablesOf(scope: ts.Node): ScopeTables {
+  let tables = tablesByScope.get(scope);
+  if (!tables) tablesByScope.set(scope, (tables = {}));
+  return tables;
+}
 
 /**
  * Each name the block-level scope of `statements` declares, mapped to whether
  * its first declaration there is `const`: a `let`/`const`/`var` (pattern leaves
- * included), or a function or class, which is mutable. Built once per scope
- * (parsed nodes are immutable), so a write looks its name up instead of
- * rescanning the scope's statements.
+ * included), or a function or class, which is mutable.
  */
 function blockDeclarations(
   statements: ts.Block | ts.SourceFile | ts.ModuleBlock | ts.CaseOrDefaultClause,
 ): ReadonlyMap<string, boolean> {
   const scope = blockScopeOf(statements);
-  let declared = declarationsByScope.get(scope);
-  if (declared) return declared;
+  return (tablesOf(scope).declared ??= collectBlockDeclarations(
+    ts.isCaseBlock(scope) ? scope.clauses.flatMap((clause) => clause.statements) : statements.statements,
+  ));
+}
+
+function collectBlockDeclarations(statements: readonly ts.Statement[]): ReadonlyMap<string, boolean> {
   const table = new Map<string, boolean>();
   const declare = (name: string, isConst: boolean): void => {
     if (!table.has(name)) table.set(name, isConst);
   };
-  const list = ts.isCaseBlock(scope) ? scope.clauses.flatMap((clause) => clause.statements) : statements.statements;
-  for (const st of list) {
+  for (const st of statements) {
     if (ts.isVariableStatement(st)) {
       const isConst = (st.declarationList.flags & ts.NodeFlags.Const) !== 0;
       for (const d of st.declarationList.declarations) {
@@ -123,6 +141,27 @@ function blockDeclarations(
       declare(st.name.text, false);
     }
   }
-  declarationsByScope.set(scope, (declared = table));
-  return declared;
+  return table;
+}
+
+function scopeWrites(scope: ts.Node): ScopeWrites {
+  return (tablesOf(scope).writes ??= collectScopeWrites(scope));
+}
+
+function collectScopeWrites(scope: ts.Node): ScopeWrites {
+  const targets = new Set<string>();
+  const declarators = new Map<string, ts.VariableDeclaration[]>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && isLexicalBindingWrite(node)) targets.add(node.text);
+    if (ts.isVariableDeclaration(node)) {
+      for (const id of varDeclaratorWrittenNames(node)) {
+        const writers = declarators.get(id.text);
+        if (writers) writers.push(node);
+        else declarators.set(id.text, [node]);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  return { targets, declarators };
 }

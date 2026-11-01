@@ -4113,6 +4113,23 @@ write looks the name up.
   noise (+0.7 % to +3.2 %) on a function of 1,500 writes, a script of 3,000 +
   3,000 writes and the outer-write script.
 
+**Review (#7038, approve with nits).**
+- **The sibling gate had the same rescan.** `declarationBindingWritten`
+  (#7024) walked its whole scope once per destructuring declaration.
+  N declarations in one block cost O(N²): 1.2 s, 4.3 s and 17.2 s at 750,
+  1,500 and 3,000. It now reads the same per-scope record, whose second table
+  holds the scope's write targets and each `var` declarator's own. The times
+  are 9 ms, 15 ms and 35 ms, and the module has one lookup mechanism.
+- **Every ancestor block builds its table, even when an inner one declares
+  the name.** The reviewer measured the sibling-block shape at N = 3,000 going
+  from 44 ms to 50 ms, and 2,000-deep nesting from 0.8 ms to 3.1 ms. A lazy
+  per-name walk would bring back a per-write scan. Each table is built once
+  per scope, so the cost is bounded, and it stays.
+- **Re-check after the fix.** The 238 probes and the 23 const-write rows on
+  both lanes give the same results and binaries as before; the 185 tests in
+  the const-update and for-head files pass. Whole compile against #7032's
+  head, best of 3: −0.9 %, −0.1 % and −5.6 % on the three shapes above.
+
 ## IR `finally` abrupt exit: the guard `if` was not a frame (fixed 2026-11-01)
 
 **Symptom.** Under the IR, `do { try { throw "x"; } finally { break; } }
