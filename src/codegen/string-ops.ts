@@ -118,7 +118,7 @@ import { readEnv } from "../env.js";
  * identifier, route through `resolveIdentifierType`; everything else is
  * unchanged.
  */
-function valueExprTsType(ctx: CodegenContext, node: ts.Expression): ts.Type {
+export function valueExprTsType(ctx: CodegenContext, node: ts.Expression): ts.Type {
   return ts.isIdentifier(node) ? resolveIdentifierType(ctx, node) : ctx.checker.getTypeAtLocation(node);
 }
 
@@ -2499,7 +2499,11 @@ function emitTypeErrorThrow(ctx: CodegenContext, fctx: FunctionContext, msg: str
  * stringify the internal symbol id. Returns true when a throw was emitted (the
  * caller must NOT compile the operand — the throw replaces it).
  */
-function tryThrowOnSymbolStringCoercion(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): boolean {
+export function tryThrowOnSymbolStringCoercion(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg: ts.Expression,
+): boolean {
   let argTsType: ts.Type | undefined;
   try {
     argTsType = ctx.checker.getTypeAtLocation(arg);

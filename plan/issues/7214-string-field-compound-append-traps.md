@@ -16,19 +16,19 @@ language_feature: classes
 goal: correctness
 related: [7199]
 loc-budget-allow:
-  # 2026-11-01 (#7214): +9 / +1 lines. operator-assignment.ts gets the two call
+  # 2026-11-01 (#7214): +11 / +5 lines. operator-assignment.ts gets the two call
   # sites (the field one goes through tryCompileExternrefStructFieldPlusEquals,
-  # which both struct paths already call) and the import. string-ops.ts gets an
-  # `onStack` parameter on compileNativeConcatOperand. The append itself is in
-  # string-field-append.ts.
+  # which both struct paths already call), the static slot-type read and the
+  # imports. string-ops.ts gets an `onStack` parameter on
+  # compileNativeConcatOperand and exports tryThrowOnSymbolStringCoercion (which
+  # prettier wraps). The `+` itself is in native-addition.ts and the gate and
+  # write-back in expressions/string-field-append.ts.
   - src/codegen/expressions/operator-assignment.ts
   - src/codegen/string-ops.ts
 func-budget-allow:
   # 2026-11-01 (#7214): +1 line, the `target` argument passed to the shared
   # struct-field `+=` helper.
   - src/codegen/expressions/operator-assignment.ts::compilePropertyCompoundAssignmentExternref
-import-cycles-allow:
-  - largestSccSize: 730 # 2026-11-01 (#7214): new helper expressions/string-field-append.ts, called by operator-assignment.ts and using string-ops.ts's compileNativeConcatOperand
 ---
 
 # #7214 — compound string append on a class field traps
@@ -69,19 +69,28 @@ stored `ref.null`. The next read trapped ("dereferencing a null pointer", or
 "illegal cast" once the null reached a cast). The IR path does not claim
 these methods.
 
-**Fix.** New `src/codegen/expressions/string-field-append.ts`. When the op is
-`+=` and the slot's ValType is a native string (`$AnyString` or flat
-`$NativeString`), it coerces the value already read from the slot, and the RHS,
-with the same native `+` operand cascade `recv.f + rhs` uses. To reuse it,
-`compileNativeConcatOperand` (string-ops.ts) gains an optional `onStack` type;
-it is unset everywhere else, so those call sites emit the same bytes. The
-result goes through `__str_concat` (and `__str_flatten` for a flat slot) and
-is stored back once, with the receiver evaluated once. A `T | undefined` slot
-that holds null stringifies as `undefined`, matching the plain read.
+**Fix.** `recv.f += rhs` on a native-string slot now lowers like
+`recv.f + rhs`, with the slot read once:
 
-Call sites: `tryCompileExternrefStructFieldPlusEquals`, which both struct
-paths already call (`tryEmitNativeStringFieldAppend`), and the static-global
-path (`tryEmitNativeStringGlobalAppend`).
+- `emitNativeStringSlotPlus` (`src/codegen/native-addition.ts`) is the
+  `string + rhs` dispatch of `compileStringBinaryOpWithNativeAddition`, with the
+  left operand already on the stack.
+  - A primitive-producing RHS (`isPrimitiveConcatProducer`) is concatenated
+    natively. A statically Symbol-typed RHS throws a TypeError.
+  - Anything else goes through the ToPrimitive(default) `+` dispatch
+    (`emitAnyAddFromExternTemps`). So `valueOf` runs before `toString`, a throw
+    from it propagates, and a Symbol throws a TypeError.
+- A `T | undefined` slot that holds null reads as `undefined`, matching the
+  plain read.
+- `src/codegen/expressions/string-field-append.ts` owns the gate: `+=` on a
+  `$AnyString` / flat `$NativeString` slot. Every lane has no JS host since
+  #6979, which keeps `compileNativeConcatOperand`'s precondition. It also owns the `__str_flatten`
+  for a flat slot and the single write-back.
+  - The `+` is passed in by the caller. Its type comes in by `import type`
+    only, so the module stays out of the codegen import cycle (largest SCC
+    stays 729).
+- Call sites: `tryCompileExternrefStructFieldPlusEquals`, which both struct
+  paths already call, and the static-global path.
 
 Test: `tests/equivalence/issue-7214-string-field-compound-append.test.ts`
 (gc / standalone / wasi against node).
@@ -90,4 +99,9 @@ Test: `tests/equivalence/issue-7214-string-field-compound-append.test.ts`
 on a string field trap with an illegal cast; `+=` on a `number | string` union
 field gives NaN or traps; `&&=` on a `string | undefined` field gives `null`;
 `+=` / `-=` on a boolean field gives the wrong value; `+=` on an `any` static
-field fails validation.
+field fails validation. `+=` on a field of a frozen object writes through
+instead of throwing, for string and number fields alike (`o.s = o.s + x`
+throws correctly). As under plain `+`: a function RHS stringifies as
+`function () { [native code] }`, and a `Map` RHS as `[object Object]`. On wasi,
+an object RHS also gives `[object Object]`, and a bigint gives
+`[object Object]` there too.

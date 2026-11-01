@@ -15,7 +15,8 @@ const LANES = [
   { lane: "wasi", options: { target: "wasi" } },
 ] as const;
 
-const READ = `export function test(i: number) { const s = String(run()); return i < 0 ? s.length : s.charCodeAt(i); }`;
+// A throw is reported by its constructor, so a row can assert node's TypeError / RangeError.
+const READ = `export function test(i: number) { let s: string; try { s = String(run()); } catch (e) { s = "THROW:" + (e instanceof TypeError ? "TypeError" : e instanceof RangeError ? "RangeError" : "Other"); } return i < 0 ? s.length : s.charCodeAt(i); }`;
 
 function decode(f: (i: number) => unknown): string {
   const n = Number(f(-1));
@@ -24,10 +25,21 @@ function decode(f: (i: number) => unknown): string {
   return out;
 }
 
-async function expectSameOnLanes(body: string): Promise<void> {
+// The wasi lane stringifies an object operand as "[object Object]" and has no
+// RegExp engine for `/ab/g`, under plain `+` exactly as under `+=`; and the test
+// harness cannot instantiate a wasi module that imports `wasi_snapshot_preview1`
+// (an uncaught user throw). Those rows run on gc and standalone.
+const NO_WASI = new Set([
+  "object right operand with toString",
+  "throwing valueOf (any) propagates RangeError",
+  "throwing valueOf (typed object) propagates RangeError",
+  "RegExp right operand",
+]);
+
+async function expectSameOnLanes(body: string, lanes: readonly (typeof LANES)[number][]): Promise<void> {
   const src = `${body}\n${READ}`;
   const expected = decode(evaluateAsJs(src).test as (i: number) => unknown);
-  for (const { lane, options } of LANES) {
+  for (const { lane, options } of lanes) {
     const result = await compile(src, { fileName: "probe.ts", ...options });
     expect(result.success, `${lane}: ${result.errors.map((e) => e.message).join("\n")}`).toBe(true);
     const instance = await instantiateWithRuntime(result);
@@ -58,6 +70,27 @@ function run(): string { const c = new C(); c.add(); return c.f; }`,
   "object right operand with toString": `class P { toString() { return 'P'; } }
 class C { f = 'a'; add() { this.f += new P(); } }
 function run(): string { const c = new C(); c.add(); return c.f; }`,
+  // The RHS takes `+`'s ToPrimitive(default) — valueOf first, a Symbol throws — not ToString.
+  "any Symbol right operand throws TypeError": `class C { s = 'a'; }
+function run(): string { const x: any = Symbol('q'); const o = new C(); o.s += x; return o.s; }`,
+  "Symbol cast to any throws TypeError": `class C { s = 'a'; go() { this.s += (Symbol('x') as any); return this.s; } }
+function run(): string { return new C().go(); }`,
+  "static field, Symbol right operand throws": `class C { static s = 'a'; }
+function run(): string { C.s = 'a'; const x: any = Symbol('q'); C.s += x; return C.s; }`,
+  "untyped param holding a Symbol throws": `class C { s = 'a'; add(v) { this.s += v; return this.s; } }
+function run(): string { return new C().add(Symbol('z')); }`,
+  "throwing valueOf (any) propagates RangeError": `class C { s = 'a'; }
+function run(): string { const x: any = { valueOf() { throw new RangeError('v'); }, toString() { return 'T'; } }; const o = new C(); o.s += x; return o.s; }`,
+  "throwing valueOf (typed object) propagates RangeError": `class C { s = 'a'; }
+function run(): string { const x = { valueOf(): number { throw new RangeError('v'); }, toString() { return 'T'; } }; const o = new C(); o.s += x as any; return o.s; }`,
+  "valueOf (any) wins over toString": `class C { s = 'a'; }
+function run(): string { const log: string[] = []; const r = { valueOf() { log.push('v'); return 1; }, toString() { log.push('t'); return 'T'; } }; const o = new C(); o.s += r as any; return o.s + '|' + log.join(','); }`,
+  "valueOf returning a number (any)": `class C { s = 'a'; }
+function run(): string { const x: any = { valueOf() { return 7; } }; const o = new C(); o.s += x; return o.s; }`,
+  "typed valueOf object": `class C { s = 'a'; }
+function run(): string { const x = { valueOf() { return 1; }, toString() { return 'T'; } }; const o = new C(); o.s += x as any; return o.s; }`,
+  "RegExp right operand": `class C { s = 'a'; }
+function run(): string { const o = new C(); o.s += /ab/g; return o.s; }`,
   "nullable field holding null": `class C { f: string | null = null; add() { this.f += 'x'; } }
 function run(): string { const c = new C(); c.add(); return String(c.f); }`,
   "nullable field holding a string": `class C { f: string | null = 'n'; add() { this.f += 'x'; } }
@@ -84,7 +117,7 @@ function run(): string { const c = new C(); c.add('z'); return c.f; }`,
 describe("#7214 compound string append on class fields", () => {
   for (const [name, body] of Object.entries(CASES)) {
     it(name, async () => {
-      await expectSameOnLanes(body);
+      await expectSameOnLanes(body, NO_WASI.has(name) ? LANES.slice(0, 2) : LANES);
     });
   }
 });

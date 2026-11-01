@@ -17,6 +17,7 @@ import {
   compileI64BinaryOp,
   emitAnyAdd,
   emitAnyAddFromExternTemps,
+  emitNativeStringSlotPlus as slotPlus,
   emitModulo,
   emitHostTypedArrayElementCoercion,
   emitToInt32,
@@ -2477,9 +2478,9 @@ function tryCompileExternrefStructFieldPlusEquals(
   typeIdx: number,
   fieldIdx: number,
 ): ValType | null | undefined {
-  // (#7214) A native-string field: `+=` concatenates (was ToNumber + f64.add).
-  const strAppend = tryEmitNativeStringFieldAppend(ctx, fctx, target, rhs, op, fieldType, objTmp, typeIdx, fieldIdx);
-  if (strAppend !== undefined) return strAppend;
+  // (#7214) A native-string field: `+=` is `string + rhs` (was ToNumber + f64.add).
+  const sa = tryEmitNativeStringFieldAppend(ctx, fctx, slotPlus, target, rhs, op, fieldType, objTmp, typeIdx, fieldIdx);
+  if (sa !== undefined) return sa;
   if (op !== ts.SyntaxKind.PlusEqualsToken || fieldType.kind !== "externref") return undefined;
 
   const leftTmp = allocTempLocal(fctx, { kind: "externref" });
@@ -2614,8 +2615,9 @@ function compilePropertyCompoundAssignment(
     if (globalIdx !== undefined) {
       // Read current value
       fctx.body.push({ op: "global.get", index: globalIdx });
-      const strAppend = tryEmitNativeStringGlobalAppend(ctx, fctx, target, rhs, op, globalIdx); // (#7214)
-      if (strAppend !== undefined) return strAppend;
+      const staticType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type; // (#7214)
+      const sa = tryEmitNativeStringGlobalAppend(ctx, fctx, slotPlus, target, rhs, op, globalIdx, staticType);
+      if (sa !== undefined) return sa;
       // Compile RHS
       const rhsType = compileExpression(ctx, fctx, rhs, { kind: "f64" });
       if (!rhsType) return null;
