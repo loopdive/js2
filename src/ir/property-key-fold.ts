@@ -88,6 +88,21 @@ export function foldComputedPropertyKey(name: ts.ComputedPropertyName): string |
 }
 
 /**
+ * A static property name as its key: an identifier's or string literal's
+ * text, or a numeric literal's text (already canonical, see the module doc).
+ * Null for a computed name. The one copy the selector, the lowerer, the
+ * propagation pass and the destructuring planner share (#7106).
+ *
+ * Its class-member / OrdinaryToPrimitive / prepared-scope method callers keep
+ * rejecting computed names, where one means something different (see
+ * `phase1MemberName` in `select.ts`).
+ */
+export function phase1PropertyName(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text;
+  return null;
+}
+
+/**
  * `phase1PropertyName` extended with the computed-key fold, for the OBJECT
  * LITERAL DATA-PROPERTY site only.
  *
@@ -100,9 +115,5 @@ export function foldComputedPropertyKey(name: ts.ComputedPropertyName): string |
  * keeps this slice's blast radius equal to its measurement.
  */
 export function objectLiteralDataPropertyName(name: ts.PropertyName): string | null {
-  if (ts.isIdentifier(name)) return name.text;
-  if (ts.isStringLiteral(name)) return name.text;
-  if (ts.isNumericLiteral(name)) return name.text; // matches the plain-key path
-  if (ts.isComputedPropertyName(name)) return foldComputedPropertyKey(name);
-  return null;
+  return ts.isComputedPropertyName(name) ? foldComputedPropertyKey(name) : phase1PropertyName(name);
 }

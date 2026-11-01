@@ -50,7 +50,10 @@ export function collectOuterWrites(
 }
 
 /** Allocate shared storage before control flow can create an accessor capture. */
-export function isCapturedByOrdinaryDescriptor(declaration: ts.VariableDeclaration, checker: ts.TypeChecker): boolean {
+export function isCapturedByOrdinaryDescriptor(
+  declaration: ts.VariableDeclaration | ts.BindingElement,
+  checker: ts.TypeChecker,
+): boolean {
   if (!ts.isIdentifier(declaration.name)) return false;
   const symbol = checker.getSymbolAtLocation(declaration.name);
   if (!symbol) return false;
