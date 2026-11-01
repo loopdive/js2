@@ -75,3 +75,5 @@ Left out:
   the member get/set dispatchers and the inline IC, which is #7217's scope.
 - `"m" in o` for a prototype method or getter is `false` on base and head
   regardless of twins (separate gap).
+
+**Test:** `tests/equivalence/issue-7200-twin-hasown-in.test.ts`.
