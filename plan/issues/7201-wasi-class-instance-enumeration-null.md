@@ -22,9 +22,15 @@ related: [7158]
 # output, which must stay byte-identical; `hostFreeEnvironment` is NOT a
 # substitute (gc native-first sets ctx.standalone with environment
 # "javascript", so it changed gc bytes). Net: ctx.standalone -5, noJsHost +4.
+# 2026-11-01 (review round 2): the JSON walk's toJSON reservation
+# (`reserveJsonToJson`) and the Object.defineProperties closed-struct guard are
+# consumers of the same classifier; left at `ctx.standalone` they let wasi walk
+# a class instance field by field and skip its toJSON. Same widening, +2 arms.
 standalone-arms-allow:
   - src/codegen/object-runtime.ts
   - src/codegen/object-runtime-enumeration.ts
+  - src/codegen/json-stringify-carriers.ts
+  - src/codegen/object-model/proxy-own-keys-surfaces.ts
 ---
 
 # #7201 — wasi class-instance enumeration is broken even with one class
@@ -60,9 +66,15 @@ closed-struct arms were gated on `ctx.standalone`, which wasi leaves false:
 | `fillClosedStructHasOwnArms` | `hasOwnProperty` / `Object.hasOwn` |
 | `fillClosedStructOwnPropertyNamesArms` | `Object.getOwnPropertyNames` (for…in reads the same names) |
 | `__object_assign_closed_struct_source` classifier (`object-runtime-enumeration.ts`) and its Object.assign copy arm | `JSON.stringify` object walk, `Object.assign` from an instance |
+| `reserveJsonToJson` (`json-stringify-carriers.ts`) | the walk's `toJSON` hook (own, inherited, nested, `toJSON(key)`) |
+| `installClosedStructPropertiesGuard` (`object-model/proxy-own-keys-surfaces.ts`) | `Object.defineProperties(o, instance)` |
 
 `fillClosedStructEnumerationArms` (Object.keys) was already ungated, which is
-why `Object.keys` alone worked on wasi. Each gate now reads `noJsHost(ctx)`.
+why `Object.keys` alone worked on wasi. Each gate now reads `noJsHost(ctx)`
+(the leaf `proxy-own-keys-surfaces.ts` spells it `ctx.standalone || ctx.wasi`
+to stay out of the import SCC). The last two rows came from review round 2:
+enabling the walk without the `toJSON` hook leaked fields a `toJSON` redacts
+and turned a base-correct `[null]` into `[{"a":1}]`.
 No shared classifier contract, `ref.test` legality, type API or category
 inventory changed: wasi now builds the same arms standalone already builds.
 
@@ -85,5 +97,11 @@ no-host allowlist), while standalone has a native protocall path. Not fixed.
 **Pre-existing wasi-only gap, unchanged:** `Object.entries({ a: 1 })` (an object
 literal) traps with a null dereference on wasi.
 
-Tests: `tests/equivalence/issue-7201-wasi-class-enumeration.test.ts` (15 rows,
+Tests: `tests/equivalence/issue-7201-wasi-class-enumeration.test.ts` (20 rows,
 gc + standalone + wasi vs node); every `issue-7158` row now also runs on wasi.
+
+**Follow-up (review round 2, not fixed here — wasi now matches standalone's
+wrong answer):** a closed-struct `undefined` slot serialises as `null`/`0`
+(`a?: number` → `{"a":0,...}`; `o.b = undefined`; a function replacer returning
+`undefined`), and an inherited setter written through `any` is shadowed by an
+expando. These are standalone bugs that wasi now shares.

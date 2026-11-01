@@ -8,7 +8,10 @@
 // `__getOwnPropertyNames`, the Object.assign/JSON source classifier) were gated
 // on `ctx.standalone` alone; wasi is the other no-host target and now shares
 // them. Object literals read through `any` (`({ length: 2 } as any).length`)
-// were `undefined` for the same reason. Each row is diffed against native JS;
+// were `undefined` for the same reason. The JSON walk's `toJSON` hook and the
+// `Object.defineProperties` closed-struct guard ride the same classifier, so
+// they are enabled on wasi with it (a walk without the hook leaked fields
+// that `toJSON` redacts). Each row is diffed against native JS;
 // the result is read back one char code at a time so no lane needs string
 // marshalling.
 import { describe, expect, it } from "vitest";
@@ -45,6 +48,11 @@ const CASES: Record<string, string> = {
   "instances nested in arrays and objects": `class A { a = 1; b = "x"; n: any = null }\nfunction run(): string { const xs = [new A(), new A()]; return JSON.stringify(xs) + JSON.stringify({ k: new A() }); }`,
   "nested object literal": `function run(): string { const o = { a: 1, b: { c: [1, 2, { d: "x" }] } }; return JSON.stringify(o) + Object.keys(o).join(); }`,
   "array-like object literal through any": `function run(): string { const o: any = { length: 2, 0: "x", 1: "y" }; return String(o.length) + o[0] + o[1]; }`,
+  "toJSON redacts a field": `class User { name = "ann"; password = "hunter2"; toJSON() { return { name: this.name }; } }\nfunction run(): string { return JSON.stringify(new User()); }`,
+  "toJSON returning undefined inside an array": `class A { a = 1; toJSON(): any { return undefined; } }\nfunction run(): string { return JSON.stringify([new A()]); }`,
+  "toJSON on a nested instance gets its key": `class M { v = 3; toJSON(key: string) { return key + ":M" + this.v; } }\nfunction run(): string { return JSON.stringify({ m: new M() }); }`,
+  "inherited toJSON": `class P { p = 1; toJSON() { return "P" + this.p; } }\nclass C extends P { c = 2 }\nfunction run(): string { return JSON.stringify(new C()) + JSON.stringify([new C(), new P()]); }`,
+  "Object.defineProperties from an instance": `class D { x: any = { value: 5, enumerable: true } }\nfunction run(): string { const o: any = {}; Object.defineProperties(o, new D() as any); return String(o.x) + Object.keys(o).join(); }`,
   "JSON.stringify with indent": `class A { a = 1; b = [1] }\nfunction run(): string { const o: any = new A(); return JSON.stringify(o, null, 2); }`,
 };
 
