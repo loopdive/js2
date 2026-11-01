@@ -128,7 +128,7 @@ import {
   getOrRegisterVecType,
   isVecBaseSubtype,
 } from "./registry/types.js";
-import { assignEnumerationArmTags, enumerationArmTagGuard } from "./class-arm-tag-guard.js"; // (#7158)
+import { assignEnumerationArmTags, classArmTags, enumerationArmTagGuard } from "./class-arm-tag-guard.js"; // (#7158)
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
 import * as bc from "./builtin-ctor-callable.js"; // (#4394/#4656) constructor [[Call]] arms
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
@@ -8505,6 +8505,8 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
      * base words at fixed indices regardless of where the VALUE went.
      */
     shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
+    /** (#7200) `__tag` guard against a same-layout twin class (`classArmTags`). */
+    classTags?: number[];
   };
   const byField = new Map<string, Entry[]>();
   for (const [structName, fields] of ctx.structFields) {
@@ -8513,6 +8515,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     if (typeIdx === undefined) continue;
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
+    const tagged = ((tags) => (tags ? { classTags: tags } : {}))(classArmTags(ctx, structName)); // (#7200)
     for (const field of fields) {
       if (field?.name === undefined || isInternalStructFieldName(ctx, structName, field.name)) continue;
       const presenceSlot = presenceSlotOf(fields, field.name);
@@ -8539,6 +8542,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         typeIdx,
         ...(presenceSlot ? { presenceSlot } : {}),
         ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
+        ...tagged,
       });
     }
     // (#3927) The split moved these names off the main struct, so the loop above
@@ -8556,6 +8560,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         typeIdx,
         cold,
         ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
+        ...tagged,
       });
     }
     // (#3927 per-type layouts) The split moved the flow-grown union names off
@@ -8574,6 +8579,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         typeIdx,
         presenceSlot: layoutField.presenceSlot,
         ...(shapeRange ? { shapeRange } : {}),
+        ...tagged,
       });
     }
   }
@@ -8648,6 +8654,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
           { op: "local.get", index: 0 },
           { op: "any.convert_extern" },
           { op: "ref.test", typeIdx: entry.typeIdx },
+          ...enumerationArmTagGuard(entry.typeIdx, entry.classTags), // (#7200) a twin passes `ref.test`
           {
             op: "if",
             blockType: { kind: "empty" },
