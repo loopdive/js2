@@ -15193,8 +15193,12 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
       expressionProducesDynamic(candidate.expression.expression, cx)
     );
   }
+  // (#7066) A #5092 mixed-primitive conditional lowers to the carrier (`lowerConditional`).
   if (ts.isConditionalExpression(candidate)) {
-    return expressionProducesDynamic(candidate.whenTrue, cx) && expressionProducesDynamic(candidate.whenFalse, cx);
+    return (
+      (expressionProducesDynamic(candidate.whenTrue, cx) && expressionProducesDynamic(candidate.whenFalse, cx)) ||
+      proveMixedPrimitiveConditional(candidate, cx) !== null
+    );
   }
   // A `+` over the carrier, or over a fresh wrapper's ToPrimitive, adds dynamically.
   return (

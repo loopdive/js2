@@ -1,41 +1,59 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7066 step 1 — the selector refuses a `+` the builder's operand gate would
-// demote, wherever both decide from the same checker proof (static operands),
-// so the claim never outlives its lowering.
+// #7066 step 1 — a `+` the selector claims is a `+` the builder lowers. A #5092
+// mixed-primitive conditional lowers to the dynamic carrier, so it is a dynamic
+// `+` operand (the dynamic add), not an unprovable one that demotes after the
+// claim. The other mixed pairs are refused at selection by #7106 S0.
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { compileHarnessBody, moduleInit } from "./helpers/harness-module-init.js";
 
 const B = 'export function b(n: number): string { return "v" + (n > 0 ? "p" : 0); }';
+const P = 'export function b(n: number, s: string): string { return "v" + (n > 0 ? s : 0); }';
 
 function outcomeOf(result: Awaited<ReturnType<typeof compile>>, name: string) {
   return (result.irOutcomes ?? []).find((outcome) => outcome.displayName === name);
 }
 
-describe("#7066 mixed `+` refused at selection", () => {
+async function runC(source: string): Promise<number> {
+  const result = await compile(source, { fileName: "issue-7066.ts", target: "standalone", trackIrOutcomes: true });
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(result.irPostClaimErrors ?? []).toEqual([]);
+  const { instance } = await WebAssembly.instantiate(result.binary, {});
+  return (instance.exports.c as () => number)();
+}
+
+describe("#7066 a mixed-primitive conditional is a dynamic `+` operand", () => {
   for (const target of ["gc", "standalone", "wasi"] as const) {
-    it(`compiles the repro without a caller on ${target}`, async () => {
-      const result = await compile(B, {
-        fileName: "issue-7066.ts",
-        trackIrOutcomes: true,
-        ...(target === "gc" ? {} : { target }),
+    for (const [name, source] of [
+      ["the repro", B],
+      ["a string-parameter arm", P],
+    ] as const) {
+      it(`lowers ${name} without a caller on ${target}`, async () => {
+        const result = await compile(source, {
+          fileName: "issue-7066.ts",
+          trackIrOutcomes: true,
+          ...(target === "gc" ? {} : { target }),
+        });
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
+        expect(outcomeOf(result, "b")?.irBodyEmitted).toBe(true);
       });
-      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-      expect(outcomeOf(result, "b")?.code).toBe("operand-coercion-unsupported");
-    });
+    }
   }
 
-  it("answers as node does with a caller", async () => {
-    const source = `${B}\nexport function c(): number { return (b(1) === "vp" ? 1 : 0) + (b(-1) === "v0" ? 10 : 0); }`;
-    const result = await compile(source, { fileName: "issue-7066.ts", target: "standalone", trackIrOutcomes: true });
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irPostClaimErrors ?? []).toEqual([]);
-    const { instance } = await WebAssembly.instantiate(result.binary, {});
+  it("answers as node does", async () => {
     // node: b(1) === "vp", b(-1) === "v0".
-    expect((instance.exports.c as () => number)()).toBe(11);
+    expect(
+      await runC(`${B}\nexport function c(): number { return (b(1) === "vp" ? 1 : 0) + (b(-1) === "v0" ? 10 : 0); }`),
+    ).toBe(11);
+    // node: b(1, "q") === "vq", b(-1, "q") === "v0".
+    expect(
+      await runC(
+        `${P}\nexport function c(): number { return (b(1, "q") === "vq" ? 1 : 0) + (b(-1, "q") === "v0" ? 10 : 0); }`,
+      ),
+    ).toBe(11);
   });
 
   it("refuses the S11.7.*_A4 initializer at selection instead of demoting it", async () => {

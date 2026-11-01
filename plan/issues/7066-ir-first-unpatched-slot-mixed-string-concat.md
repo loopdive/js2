@@ -14,22 +14,6 @@ area: ir
 language_feature: ir-first, string-concat, demote
 goal: ir-full-coverage
 related: [7001, 2138, 3143, 7106, 7144]
-loc-budget-allow:
-  # 2026-11-01 (step 1): each selection entry passes the checker `+` proof
-  # (one option line plus its import), and the selector's generic binary tail
-  # applies it (+7); the predicate itself lives in analysis/operand-admissibility.ts
-  - src/ir/select.ts
-  - src/codegen/index.ts
-  - src/ir/integration.ts
-  - src/ir/backend/linear-integration.ts
-  # 2026-11-01 (step 1): `makeIrAdditiveOperandProof` sits beside the other
-  # selection classifier factories, so codegen reaches it over its existing
-  # module-bindings import instead of a new codegen->ir edge (+11)
-  - src/ir/module-bindings.ts
-func-budget-allow:
-  # 2026-11-01 (step 1): the one `additiveOperandProof` option line in each selection call
-  - src/codegen/index.ts::planIrOverlay
-  - src/ir/integration.ts::compileIrPathFunctions
 ---
 # IR-first skipped slot with no legacy body after a build-time demote
 
@@ -64,36 +48,45 @@ on origin, and no PR exists. Re-claimed with `claim-issue.mjs --force` for
 default and legacy retirement umbrella): disjoint. #3518 changes routing and
 retires legacy bodies, and touches no `+` admission.
 
-## Step 1 (2026-11-01): one `+` predicate for selector and builder
+## Step 1 (2026-11-01, reworked after review): a mixed conditional is a dynamic `+` operand
 
-- `classifyPrimitiveProof` (the TS-type number/string proof the builder's
-  `+` gate uses) moves from `src/ir/from-ast.ts` to
-  `src/ir/analysis/operand-admissibility.ts`, beside
-  `additiveOperandsProvable`. The selector receives the same proof through a
-  new selection option, `additiveOperandProof` (`makeIrAdditiveOperandProof`),
-  wired where `classifyPrimitiveExpression` is.
-- The selector refuses a `+` (`operand-coercion-unsupported`,
-  `expr-additive-operands`) exactly when both operands are STATIC: literals
-  and their unary, binary or conditional compositions. For such an operand the
-  builder's proof is the checker's alone: it never yields the dynamic carrier,
-  and the lattice facts cover only parameters and calls. So the two sides
-  decide identically. Identifiers, member reads and calls keep their
-  admission, so a mixed `+` over them can still demote at build; step 2 makes
-  that demote safe.
-- This covers the repro above (`"v" + (n > 0 ? "p" : 0)`) and every
-  `S11.7.*_A4` file (`'#1: …' + (-1 << 0)`).
+The first cut of step 1 added a selector option (`additiveOperandProof`) and a
+static-operand refusal. Review (2026-11-01) found that it duplicated the
+existing `classifyPrimitiveExpression` option, that its static set was
+narrower than its own argument, and that it overlapped #7106 S0 (PR #7034).
+S0 refuses at selection every typed non-equality pair that
+`binaryOperandsAdmissible` refuses over proven families (`"x" + 1`,
+`null + 1`, …), and so already covers the `S11.*_A4` initializers.
+The rework is stacked on #7034 and keeps only the case S0 does not cover.
 
-**Measured** (A/B against main `4fe61ff7f2`):
-- **Repro:** compiles on gc, standalone and wasi, with and without a caller.
-  Main fails the caller-less form with `unpatched-slot` on every lane.
-- **Files:** the 47 mixed-`+` files from the #7106 census plus the 12
-  `S11.7.*_A4` files, on standalone and gc:
-  - 0 compile flips;
-  - `+` post-claim demotes go from 1 to 0 (`S9.6_A2.1`, which passes before
-    and after on both lanes);
-  - 0 files newly legacy-free, because the refused initializers stay on
-    legacy. On main the chunked ones (every `S11.7.*_A4`) are withdrawn before
-    their `+` is reached; the demote shows only once #7106's chunk lowering
-    admits them.
+- **Root cause:** a #5092 mixed-primitive conditional (`n > 0 ? "p" : 0`)
+  lowers to the dynamic carrier (`lowerConditional`). However,
+  `expressionProducesDynamic` read a conditional as the carrier only when
+  both arms were already the carrier. The `+` proof therefore fell back to the
+  checker's union (`"p" | 0`): unprovable, and demoted after the claim.
+- **Fix:** `expressionProducesDynamic` also answers the carrier for a
+  conditional that `proveMixedPrimitiveConditional` proves. That is the same
+  proof `lowerConditional` lowers it with. The `+` then takes the dynamic add
+  (`IR_DYN_ADD_FN`).
+- **Result:** the repro lowers instead of being refused. The IR-first gate
+  already typed `"prefix" + dynamic` as a string, and now the builder agrees,
+  so `"v" + (n > 0 ? s : 0)` with a string parameter lowers too. Before the
+  rework it failed with `unpatched-slot` on every lane.
+- **Footprint:** no selector change, no new option, no grants; `from-ast.ts`
+  grows by 4 lines (net).
+
+**Measured** (A/B against the #7034 merge without the edit):
+- **Repro and string-parameter variant:** both lower on gc, standalone and
+  wasi, with and without a caller. Both answer as node does (`b(1) === "vp"`,
+  `b(-1) === "v0"`; `b(1, "q") === "vq"`, `b(-1, "q") === "v0"`).
+- **Slice:** the 342 ES5 `S*` files of the addition, subtraction,
+  multiplication, division, modulus, shift and bitwise directories. This
+  includes the 7 files review named.
+  - 0 `+` post-claim demotes and 0 compile errors on both lanes.
+  - Binaries are identical to the base: no mixed conditional sits under a
+    `+` there.
 - **Bytes:** identical for the S1 chunk sample plus the playground (150/150
   programs, both lanes), legacy-only programs included.
+- **Tests:** `tests/issue-7066-concat-select-desync.test.ts` is rewritten
+  for the rework. It passes, as do the #5092, #7106 S0/S1, #3143 and #3203
+  suites.
