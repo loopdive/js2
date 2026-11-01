@@ -196,6 +196,7 @@ import {
   makeIrModuleBindingResolver,
   makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
+  type IrModuleBindingDeclaration,
   type IrModuleBindingResolver,
   type IrScriptVarHome,
 } from "../ir/module-bindings.js"; // (#2856 Capability C)
@@ -4220,7 +4221,10 @@ function compileMultiIrOverlaySource(
  *     `this.p = v`) resolves bare reads through the global-environment object;
  *   - a slot the declaration collector has not placed is not a home at all.
  */
-export function scriptVarHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): IrScriptVarHome | undefined {
+export function scriptVarHome(
+  ctx: CodegenContext,
+  declaration: IrModuleBindingDeclaration,
+): IrScriptVarHome | undefined {
   const type = scriptVarHomeSlot(ctx, declaration)?.type;
   switch (type?.kind) {
     case "externref":
@@ -4235,7 +4239,7 @@ export function scriptVarHome(ctx: CodegenContext, declaration: ts.VariableDecla
   }
 }
 
-function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclaration) {
+function scriptVarHomeSlot(ctx: CodegenContext, declaration: IrModuleBindingDeclaration) {
   if (!ts.isIdentifier(declaration.name)) return undefined;
   const name = declaration.name.text;
   const plan = ctx.runtimeEvalBoundaryPlan;

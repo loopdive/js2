@@ -24,6 +24,8 @@ import type { IrClassShape } from "./nodes.js";
 import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
+import { bindingDeclarationList } from "./binding-pattern-plan.js";
+import { isModuleInitVarList, moduleBindingDeclarationOrder } from "./module-init-vars.js";
 import {
   IrPlanningIdentityInvariantError,
   requireIrPlanningOwnerUnitId,
@@ -593,10 +595,13 @@ export { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-b
 // (#7108) Re-exported so the codegen driver reaches it over its existing edge to this module.
 export { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
 
+/** A module binding's declaration: a top-level identifier declaration or (#7106 S5) a script `var` leaf. */
+export type IrModuleBindingDeclaration = ts.VariableDeclaration | ts.BindingElement;
+
 /** Name-compatible binding evidence used only by the pre-R1 planning seam. */
 export interface IrLegacyModuleBindingIdentity {
   /** The checker-resolved top-level declaration. Node identity is the key. */
-  readonly declaration: ts.VariableDeclaration;
+  readonly declaration: IrModuleBindingDeclaration;
   readonly mutable: boolean;
   readonly valueKind: IrModuleBindingValueKind;
 }
@@ -665,7 +670,7 @@ export type IrLegacyModuleBindingInspection =
   | { readonly kind: "supported"; readonly identity: IrLegacyModuleBindingIdentity }
   | {
       readonly kind: "unsupported";
-      readonly declaration: ts.VariableDeclaration;
+      readonly declaration: IrModuleBindingDeclaration;
       readonly arm: IrModuleBindingRefusalArm;
     }
   | { readonly kind: "not-direct" };
@@ -674,7 +679,7 @@ export type IrModuleBindingInspection =
   | { readonly kind: "supported"; readonly identity: IrModuleBindingIdentity }
   | {
       readonly kind: "unsupported";
-      readonly declaration: ts.VariableDeclaration;
+      readonly declaration: IrModuleBindingDeclaration;
       readonly arm: IrModuleBindingRefusalArm;
     }
   | { readonly kind: "not-direct" };
@@ -849,7 +854,7 @@ export interface IrModuleBindingResolverOptions {
    * resolves only through that carrier's value kind. Absent ⇒ scripts stay
    * excluded (the pre-#7105 rule).
    */
-  readonly scriptVarHome?: (declaration: ts.VariableDeclaration) => IrScriptVarHome | undefined;
+  readonly scriptVarHome?: (declaration: IrModuleBindingDeclaration) => IrScriptVarHome | undefined;
 }
 
 const selectedTopLevelAccessorUnitIdsByContext = new WeakMap<IrPlanningIdentityContext, ReadonlySet<IrUnitId>>();
@@ -911,29 +916,36 @@ function bindingDeclarationCandidates(
   return [oracle.valueDeclarationOf(node), ...oracle.declarationsOf(node)];
 }
 
-function isDirectTopLevelVariableDeclaration(
+function isModuleBindingDeclaration(
   candidate: ts.Declaration | undefined,
   sourceFile: ts.SourceFile,
-): candidate is ts.VariableDeclaration {
-  if (!candidate || !ts.isVariableDeclaration(candidate)) return false;
-  if (candidate.getSourceFile() !== sourceFile || !ts.isIdentifier(candidate.name)) return false;
-  const list = candidate.parent;
-  if (!ts.isVariableDeclarationList(list)) return false;
-  const statement = list.parent;
-  return ts.isVariableStatement(statement) && statement.parent === sourceFile;
+): candidate is IrModuleBindingDeclaration {
+  if (!candidate || candidate.getSourceFile() !== sourceFile) return false;
+  if (ts.isVariableDeclaration(candidate)) {
+    const list = candidate.parent;
+    if (!ts.isIdentifier(candidate.name) || !ts.isVariableDeclarationList(list)) return false;
+    return ts.isVariableStatement(list.parent) && list.parent.parent === sourceFile;
+  }
+  // (#7106 S5) A leaf binds in a script's module-init `var` list.
+  return (
+    ts.isBindingElement(candidate) &&
+    ts.isIdentifier(candidate.name) &&
+    !ts.isExternalModule(sourceFile) &&
+    isModuleInitVarList(bindingDeclarationList(candidate))
+  );
 }
 
 function uniqueTopLevelVariableDeclaration(
   node: ts.Identifier,
   checker: ts.TypeChecker,
   allowRedeclaredVar = false,
-): ts.VariableDeclaration | undefined {
+): IrModuleBindingDeclaration | undefined {
   const sourceFile = node.getSourceFile();
   const candidates = bindingDeclarationCandidates(node, checker);
   if (candidates.length === 0) return undefined;
-  const directDeclarations = new Set<ts.VariableDeclaration>();
+  const directDeclarations = new Set<IrModuleBindingDeclaration>();
   for (const candidate of candidates) {
-    if (isDirectTopLevelVariableDeclaration(candidate, sourceFile)) directDeclarations.add(candidate);
+    if (isModuleBindingDeclaration(candidate, sourceFile)) directDeclarations.add(candidate);
   }
   if (directDeclarations.size === 1) return [...directDeclarations][0]!;
   // (#7106) A script may repeat `var x` (S11.6.1_A2.1_T1's `var x = 1; … var
@@ -942,21 +954,21 @@ function uniqueTopLevelVariableDeclaration(
   if (!allowRedeclaredVar || directDeclarations.size === 0) return undefined;
   const ordered = [...directDeclarations].sort((a, b) => a.pos - b.pos);
   const lexical = ts.NodeFlags.Let | ts.NodeFlags.Const;
-  return ordered.some((declaration) => declaration.parent.flags & lexical) ? undefined : ordered[0];
+  return ordered.some((declaration) => bindingDeclarationList(declaration)!.flags & lexical) ? undefined : ordered[0];
 }
 
 function directTopLevelDeclaration(
   node: ts.Identifier,
   checker: ts.TypeChecker,
   scriptVar?: Pick<IrModuleBindingResolverOptions, "scriptVarHome">,
-): ts.VariableDeclaration | undefined {
+): IrModuleBindingDeclaration | undefined {
   const sourceFile = node.getSourceFile();
   const script = !ts.isExternalModule(sourceFile);
   const declaration = uniqueTopLevelVariableDeclaration(node, checker, script);
   if (!declaration) return undefined;
   const candidates = bindingDeclarationCandidates(node, checker);
   if (candidates.length === 0) return undefined;
-  const list = declaration.parent as ts.VariableDeclarationList;
+  const list = bindingDeclarationList(declaration)!;
   if (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) return declaration;
 
   // #2949 Acorn follow-up — a unique top-level `var` in an ES module has one
@@ -991,7 +1003,7 @@ function directTopLevelDeclaration(
   // of the same name still rejects. A JS expando target (`o` in `o.p = 1`)
   // is a property declaration on the same binding, not a second binding.
   const allDirectVars = [...sameSourceDeclarations].every(
-    (candidate) => isDirectTopLevelVariableDeclaration(candidate, sourceFile) || isJsExpandoTarget(candidate),
+    (candidate) => isModuleBindingDeclaration(candidate, sourceFile) || isJsExpandoTarget(candidate),
   );
   return script && allDirectVars ? declaration : undefined;
 }
@@ -1001,10 +1013,10 @@ function directTopLevelDeclaration(
  * ES-module `var`, and wherever codegen names no home for the slot.
  */
 function scriptVarHomeOf(
-  declaration: ts.VariableDeclaration,
+  declaration: IrModuleBindingDeclaration,
   options: Pick<IrModuleBindingResolverOptions, "scriptVarHome"> | undefined,
 ): IrScriptVarHome | undefined {
-  if ((declaration.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0) return undefined;
+  if ((bindingDeclarationList(declaration)!.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0) return undefined;
   if (ts.isExternalModule(declaration.getSourceFile())) return undefined;
   return options?.scriptVarHome?.(declaration);
 }
@@ -1518,7 +1530,7 @@ export function moduleExternValueNeedsLegacy(expr: ts.Expression): boolean {
 
 function writeValueMatches(
   checker: ts.TypeChecker,
-  declaration: ts.VariableDeclaration,
+  declaration: IrModuleBindingDeclaration,
   targetType: ts.Type,
   targetKind: IrModuleBindingValueKind,
   value: ts.Expression,
@@ -1550,12 +1562,16 @@ function writeValueMatches(
     // declared type) so `"x" as string` cannot assert its way into the slot.
     return classifyPrimitiveExpression(valueExpr) === "string";
   }
+  // A capability kind is certified for a lexical, so identifier, declaration only.
   if (bindingValue.isCapabilityExternKind(targetKind))
-    return bindingValue.capabilityExternWriteMatches(
-      options.resolveCapabilityExternBinding,
-      declaration,
-      valueExpr,
-      targetKind,
+    return (
+      ts.isVariableDeclaration(declaration) &&
+      bindingValue.capabilityExternWriteMatches(
+        options.resolveCapabilityExternBinding,
+        declaration,
+        valueExpr,
+        targetKind,
+      )
     );
   if (targetKind.kind === "extern") {
     if (moduleExternValueNeedsLegacy(valueExpr)) return false;
@@ -1640,13 +1656,7 @@ function exactTopLevelVariableDeclaration(
   const declarations = new Set(
     candidates.filter(
       (candidate): candidate is ts.VariableDeclaration =>
-        candidate !== undefined &&
-        ts.isVariableDeclaration(candidate) &&
-        candidate.getSourceFile() === sourceFile &&
-        ts.isIdentifier(candidate.name) &&
-        ts.isVariableDeclarationList(candidate.parent) &&
-        ts.isVariableStatement(candidate.parent.parent) &&
-        candidate.parent.parent.parent === sourceFile,
+        isModuleBindingDeclaration(candidate, sourceFile) && ts.isVariableDeclaration(candidate),
     ),
   );
   return declarations.size === 1 ? [...declarations][0] : undefined;
@@ -2175,7 +2185,7 @@ export function makeIrLegacyModuleBindingResolver(
   const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrLegacyModuleBindingInspection => {
     const declaration = directTopLevelDeclaration(node, checker, options);
     if (!declaration) return { kind: "not-direct" };
-    const list = declaration.parent as ts.VariableDeclarationList;
+    const list = bindingDeclarationList(declaration)!;
     const statement = list.parent;
     // Ambient declarations establish a real checker identity but allocate no
     // legacy `__mod_*` slot. Keep them visible to isDirectModuleBinding below
@@ -2189,6 +2199,7 @@ export function makeIrLegacyModuleBindingResolver(
       return { kind: "unsupported", declaration, arm: "ambient-declaration" };
     }
     const isModuleVar = (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
+    const lexical = !isModuleVar && ts.isVariableDeclaration(declaration) ? declaration : undefined;
     const mutable = isModuleVar || (list.flags & ts.NodeFlags.Let) !== 0;
     if (writeValue !== undefined && !mutable) return { kind: "unsupported", declaration, arm: "write-to-immutable" };
 
@@ -2211,18 +2222,18 @@ export function makeIrLegacyModuleBindingResolver(
       home === "dynamic" || (options.numberStorage === "f64" && updateRetypesModuleBinding(checker, declaration))
         ? ({ kind: "dynamic" } as const)
         : (scalarKind(declaredType, options) ?? scriptVarReferenceKind(home, declaredType, checker));
-    if (!valueKind && !isModuleVar && options.allowHostExterns) {
+    if (!valueKind && lexical && options.allowHostExterns) {
       const className = externClassNameForType(declaredType, checker, options);
       if (className) {
         valueKind = { kind: "extern", className };
       }
     }
-    if (!valueKind && !isModuleVar)
-      valueKind = bindingValue.resolveCapabilityExternKind(resolveCapabilityExtern, declaration, writeValue);
+    if (!valueKind && lexical)
+      valueKind = bindingValue.resolveCapabilityExternKind(resolveCapabilityExtern, lexical, writeValue);
     // (#4461) Host-free carrier for the same builtin. Deliberately NOT folded
     // into the arm above: `allowHostExterns` is false on this lane, and the
     // resulting storage is the native `$Map` struct rather than an externref.
-    if (!valueKind && !isModuleVar && isNativeMapStorageType(declaredType, checker, options)) {
+    if (!valueKind && lexical && isNativeMapStorageType(declaredType, checker, options)) {
       valueKind = { kind: "native-map", className: "Map" } as const;
     }
     // (#3523 R4-M1) A `string` module binding. ONE kind for both string
@@ -2239,7 +2250,7 @@ export function makeIrLegacyModuleBindingResolver(
     // native lane is NOT the string carrier. That disagreement is only
     // reportable as a hard Program ABI invariant, never as a demote, so the
     // arm is excluded by construction rather than re-derived here.
-    if (!valueKind && !isModuleVar && isModuleStringStorageType(declaredType, checker)) {
+    if (!valueKind && lexical && isModuleStringStorageType(declaredType, checker)) {
       valueKind = { kind: "string" } as const;
     }
     // (#5289) An `any`/`unknown` module binding. ONE kind for both lanes,
@@ -2264,7 +2275,7 @@ export function makeIrLegacyModuleBindingResolver(
     // widened carrier is `externref`, which in FAST mode is not the dynamic
     // carrier. That disagreement is only reportable as a hard Program-ABI
     // invariant, never as a demote, so the arm excludes it by construction.
-    if (!valueKind && !isModuleVar && isModuleDynamicStorageType(declaredType)) {
+    if (!valueKind && lexical && isModuleDynamicStorageType(declaredType)) {
       valueKind = { kind: "dynamic" } as const;
     }
     if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
@@ -2483,7 +2494,7 @@ export function makeIrModuleBindingResolver(
 
   const ownerAt = (node: ts.Node): IrUnitId => requireIrPlanningOwnerUnitId(identityContext, node);
   const bindingLocation = (
-    declaration: ts.VariableDeclaration,
+    declaration: IrModuleBindingDeclaration,
   ): Pick<
     IrModuleBindingIdentity,
     "globalBindingId" | "tdzBindingId" | "storageOwnerUnitId" | "sourceId" | "declarationOrdinal"
@@ -2496,20 +2507,8 @@ export function makeIrModuleBindingResolver(
         `module binding source ${sourceFile.fileName} does not resolve back to the exact planning SourceFile`,
       );
     }
-    let declarationOrdinal = 0;
-    let found = false;
-    for (const statement of sourceFile.statements) {
-      if (!ts.isVariableStatement(statement)) continue;
-      for (const candidate of statement.declarationList.declarations) {
-        if (candidate === declaration) {
-          found = true;
-          break;
-        }
-        declarationOrdinal++;
-      }
-      if (found) break;
-    }
-    if (!found) {
+    const declarationOrdinal = moduleBindingDeclarationOrder(sourceFile).indexOf(declaration);
+    if (declarationOrdinal < 0) {
       return planningInvariant(
         "source-record-mismatch",
         `module binding declaration is not in the exact top-level population of ${sourceFile.fileName}`,

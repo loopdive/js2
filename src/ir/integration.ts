@@ -325,6 +325,7 @@ import {
   type IrLegacyModuleBindingIdentity,
   type IrLegacyModuleBindingResolver,
   type IrFnctorArrayMethodPlan,
+  type IrModuleBindingDeclaration,
   type IrModuleBindingIdentity,
   type IrModuleBindingInspection,
   type IrModuleBindingRefusal,
@@ -333,6 +334,8 @@ import {
   type IrStaticNumericArrayPlan,
   type IrStaticRegExpTestPlan,
 } from "./module-bindings.js";
+import { collectPatternBindingNames } from "./analysis/ast-scope.js";
+import { moduleInitBindings } from "./module-init-vars.js";
 import {
   lowerIrFunctionToWasm,
   lowerIrTypeToValType,
@@ -2408,7 +2411,7 @@ export function compileIrPathFunctions(
     stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
     // (#7105) Must agree with the selector-side option: a script `var` the
     // selector admitted is written here through the same slot classifier.
-    scriptVarHome: (declaration: ts.VariableDeclaration) => scriptVarHome(ctx, declaration),
+    scriptVarHome: (declaration: IrModuleBindingDeclaration) => scriptVarHome(ctx, declaration),
   };
   // Direct compatibility callers share this context; structural globals never fall back to declaration names.
   const compatibilityInventory = loweringPlans
@@ -6298,17 +6301,16 @@ function buildModuleBindingsMap(
 ): Map<string, ModuleBindingGlobal> {
   const map = new Map<string, ModuleBindingGlobal>();
   for (const stmt of population) {
-    if (!ts.isVariableStatement(stmt)) continue;
-    for (const d of stmt.declarationList.declarations) {
-      if (!ts.isIdentifier(d.name)) {
+    for (const entry of moduleInitBindings(stmt)) {
+      if ("unmapped" in entry) {
         throw new IrUnsupportedError(
           "module-init-legacy-coupling",
           "build",
           "module-init: top-level destructuring has no one-to-one legacy global mapping",
         );
       }
-      const name = d.name.text;
-      const inspected = resolveModuleBinding.inspectDirectBinding(d.name);
+      const name = entry.name.text;
+      const inspected = resolveModuleBinding.inspectDirectBinding(entry.name);
       if (inspected.kind === "unsupported") {
         throw new IrUnsupportedError(
           "module-init-legacy-coupling",
@@ -6323,7 +6325,7 @@ function buildModuleBindingsMap(
           `module-init: declaration '${name}' no longer resolves to the direct top-level binding selected for this unit`,
         );
       }
-      const observed = ctx.programAbiGlobals?.moduleBinding(d);
+      const observed = ctx.programAbiGlobals?.moduleBinding(entry.declaration);
       const binding = resolveModuleBindingGlobal(ctx, inspected.identity);
       // The lowering map must consume the allocator object authenticated for
       // this exact declaration.  A name-compatible global, or a global already
@@ -6413,7 +6415,7 @@ function surveyModuleBindingRefusals(
   checker: ts.TypeChecker,
 ): readonly IrModuleBindingRefusal[] {
   const refusals: IrModuleBindingRefusal[] = [];
-  const record = (name: string, declaration: ts.VariableDeclaration, arm: IrModuleBindingRefusal["arm"]): void => {
+  const record = (name: string, declaration: IrModuleBindingDeclaration, arm: IrModuleBindingRefusal["arm"]): void => {
     let declaredType = "<unresolved>";
     try {
       declaredType = checker.typeToString(checker.getTypeAtLocation(declaration.name));
@@ -6428,43 +6430,27 @@ function surveyModuleBindingRefusals(
     });
   };
   for (const stmt of population) {
-    if (!ts.isVariableStatement(stmt)) continue;
-    for (const d of stmt.declarationList.declarations) {
-      if (!ts.isIdentifier(d.name)) {
+    for (const entry of moduleInitBindings(stmt)) {
+      if ("unmapped" in entry) {
         // Same refusal `buildModuleBindingsMap` throws for, kept as a category
         // rather than a stop: a destructured top-level binding has no
         // one-to-one legacy global. Leaf `.text` names, never a source slice.
-        record(moduleBindingPatternLabel(d.name), d, "destructuring-pattern");
+        const pattern = entry.unmapped;
+        record([...collectPatternBindingNames(pattern.name)].join(","), pattern, "destructuring-pattern");
         continue;
       }
       let inspected: IrModuleBindingInspection;
       try {
-        inspected = resolveModuleBinding.inspectDirectBinding(d.name);
+        inspected = resolveModuleBinding.inspectDirectBinding(entry.name);
       } catch {
-        record(d.name.text, d, "inspection-threw");
+        record(entry.name.text, entry.declaration, "inspection-threw");
         continue;
       }
       if (inspected.kind !== "unsupported") continue;
-      record(d.name.text, d, inspected.arm);
+      record(entry.name.text, entry.declaration, inspected.arm);
     }
   }
   return refusals;
-}
-
-/** Leaf binding names of a top-level destructuring pattern, in source order. */
-function moduleBindingPatternLabel(pattern: ts.BindingPattern): string {
-  const names: string[] = [];
-  const visit = (node: ts.BindingName): void => {
-    if (ts.isIdentifier(node)) {
-      names.push(node.text);
-      return;
-    }
-    for (const element of node.elements) {
-      if (ts.isBindingElement(element)) visit(element.name);
-    }
-  };
-  visit(pattern);
-  return names.join(",");
 }
 
 /**

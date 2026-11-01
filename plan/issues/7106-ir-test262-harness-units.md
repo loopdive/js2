@@ -103,16 +103,19 @@ loc-budget-allow:
   - src/ir/core/nodes.ts
   - src/ir/core/dialect/js.ts
   # 2026-10-31 (boolean statics, round 4): the static-predicate arm, its host, the shared ambient-receiver helper and the name-parameterised unshadowed-global test (+25); the lowering lives in src/ir/static-predicates/
+  # 2026-11-01 (#7106 S5): the module-init `var` leaf binder and the slot write shared with the identifier arm, `storeModuleBinding` (+53); the list predicate, leaf walker and binding ordinals live in src/ir/module-init-vars.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/lower-generic.ts
   - src/ir/runtime/verify.ts
   # 2026-10-31 (boolean statics, round 5): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+89); the rule lives in src/ir/static-predicates/
+  # 2026-11-01 (#7106 S5): `moduleVarLeavesStorable`, the per-leaf slot fit of a module-init `var` pattern (+35)
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
   - src/ir/ambient-typeof.ts
   - src/ir/prepared-component-dependencies.ts
+  # 2026-11-01 (#7106 S5): `scriptVarHome` takes a leaf too, one type import (+1)
   - src/codegen/index.ts
   - src/ir/propagate.ts
   - src/codegen/dyn-read.ts
@@ -4036,18 +4039,27 @@ list of a top-level `var` statement, or the `var` head of a top-level
 pattern in such a list is a module binding: it owns its `__mod_<name>` slot,
 just as a top-level identifier declaration does.
 
-1. **One list predicate** (`src/ir/function-local-var.ts`).
+1. **One module for the module-init `var` vocabulary**
+   (`src/ir/module-init-vars.ts`, new, 92 lines).
    - `moduleInitVarList(statement)` and `isModuleInitVarList(node)` are the
      single answer to "which `var` list does `<module-init>` model".
-   - `collectIrSafeModuleVarDeclarationLists` maps it.
+   - `collectIrSafeModuleVarDeclarationLists` moves here from
+     `function-local-var.ts`, which keeps the function-local subset only, and
+     maps it.
    - from-ast's `moduleInitContainsNestedVar` skips exactly that list. That
      folds `isDirectSourceVarStatement`, the duplicate.
-   - `moduleInitVarLeaves(statement)` lists the leaves the list declares.
+   - `moduleInitBindings(statement)` lists what a statement binds: identifier
+     declarations, then the leaves of a modelled list. A lexical top-level
+     pattern is unmapped.
+   - `moduleBindingDeclarationOrder(sourceFile)` is the ordinal enumerator
+     (item 5).
 2. **One leaf walker** (`src/ir/binding-pattern-plan.ts`).
    - `patternLeaves(pattern)` yields `BindingLeaf`s.
    - The `isBindingLeaf` guard replaces `planFlatReads`' cast.
    - `patternRootDeclaration(leaf)` is the walk out of the patterns. It
      replaces the copy inside `literalLeafSource`.
+   - `bindingDeclarationList(declaration)` is a declaration's list, through
+     its pattern for a leaf.
 3. **Legacy hands the slot to the Program ABI** (`src/codegen/declarations.ts`).
    - `registerBindingNames` passes the leaf to `registerModuleGlobal`, as the
      top-level identifier path passes its declaration.
@@ -4064,18 +4076,20 @@ just as a top-level identifier declaration does.
      admits the direct-statement identifier declaration exactly as before,
      and, in a SCRIPT, a leaf of a module-init `var` list. ES modules and
      lexical patterns are unchanged, so the playground cannot move.
-   - `bindingDeclarationList` reads a leaf's list through its pattern. It
-     replaces the `declaration.parent as ts.VariableDeclarationList` casts.
+   - `exactTopLevelVariableDeclaration` reuses that predicate instead of its
+     own copy of the direct-statement filter.
+   - `bindingDeclarationList` replaces the
+     `declaration.parent as ts.VariableDeclarationList` casts.
    - The lexical-only arms read a `lexical` declaration, which is always an
      identifier declaration because a leaf binds only in a `var` list.
-5. **Ordinals.** `moduleBindingOrdinals(sourceFile)` numbers every
+5. **Ordinals.** `moduleBindingDeclarationOrder(sourceFile)` numbers every
    top-level statement declaration first, exactly as before and as
    `module-init-plan.ts` does. It then numbers the module-init `var` leaves in
-   source order. No existing binding id moves.
+   source order. No existing binding id moves. `bindingLocation` reads it
+   instead of its own loop.
 6. **`buildModuleBindingsMap`** (`src/ir/integration.ts`) maps each name
-   `moduleInitBindings(statement)` lists: identifier declarations, then
-   module-init `var` leaves. A lexical top-level pattern stays unmapped, as
-   before. The diagnostic twin `surveyModuleBindingRefusals` walks the same
+   `moduleInitBindings(statement)` lists, and throws on an unmapped pattern
+   as before. The diagnostic twin `surveyModuleBindingRefusals` walks the same
    list, and its private pattern-label walker folds into
    `collectPatternBindingNames`.
 7. **Selection** (`src/ir/select.ts`).

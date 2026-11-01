@@ -13052,6 +13052,14 @@
       "nextBoundary": "Frontend source-shape planner for destructuring over a fresh literal (#7106); move with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
+      "path": "src/ir/module-init-vars.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape classifier for the top-level `var` lists the module initializer models and the bindings they declare (#7106 S5); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/ir/binding-pattern-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
