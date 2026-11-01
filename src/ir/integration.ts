@@ -6123,10 +6123,13 @@ function resolveModuleBindingGlobal(
   let storageType: ValType;
   switch (identity.valueKind.kind) {
     case "f64":
+      type = { kind: "val", val: { kind: "f64" } };
+      storageType = { kind: "f64" };
+      break;
     case "i32":
       // The `i32` kind's one semantic is `boolean` (`scalarKind`), so its reads carry the #4503 brand.
-      type = identity.valueKind.kind === "f64" ? { kind: "val", val: { kind: "f64" } } : irBool();
-      storageType = { kind: identity.valueKind.kind };
+      type = irBool();
+      storageType = { kind: "i32" };
       break;
     case "dynamic":
       // (#4208 S2 / #5289) The dual-LANE arm, and the exact counterpart of the
