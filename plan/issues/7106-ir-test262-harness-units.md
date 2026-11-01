@@ -4283,6 +4283,39 @@ four are fixed in a9f1b70442, after a merge of main (#7024 has landed; main's
 S5 incidentally fixes `var {a} = {a: 2}; var a;`, which fails Wasm validation
 on main.
 
+#### Review round 2 (#7037, 2026-11-01)
+
+The verdict was request changes, with one gap; 35 further read positions held
+(0 lost claims across 155 rows), and the typed-slot decision was confirmed: an
+f64 slot would make `typeof a` before the pattern answer `"number"`.
+
+- **The gap.** `var [a] = [3]; var t = "v" + a;` was claimed and then demoted
+  ("initializer is dynamic but its global is string"). `writeValueMatches`
+  returned from its string arm before the carrier-leaf test, which sat in the
+  scalar arm only. **Fixed:** the test now runs right after the two `dynamic`
+  arms, so every other slot kind refuses a value that reads a carrier leaf.
+  The carrier slot still takes one: that write is exact.
+- **Minor.** `carrierLeafReads` reads the leaf names from the per-file cache
+  instead of rebuilding a set on every call.
+- **Tests.** One row per slot kind: string (`"v" + a`), boolean
+  (`f = a === 3`), and the carrier slot (`d = a`, claimed and correct).
+
+**Measured**, both lanes:
+- **The review's 55 + 35 cases** (180 rows): no S5 post-claim error. The one
+  left is `bool-ident`, main's identifier `var x = true`. `string-concat` is
+  refused at select; the 55 are unchanged from round 1.
+- **Main merged in** (`6abe68bb69`, #7024 and #7032 landed). Only the plan
+  conflicted; both sides' sections are kept. The 90 cases are identical before
+  and after the merge.
+- **The 320 files**, against main `6abe68bb69`:
+  - legacy-free 6 → 34 (+28, none lost);
+  - the 28 changed binaries are all newly claimed `<module-init>`s, and there
+    is no new post-claim error;
+  - 28/28 pass on main and on head (0 flips).
+- **Gates**, all green and run bare against main `6abe68bb69`, which is also
+  the merge base: loc, func, coercion, oracle, dead exports, typecheck, lint,
+  import cycles, compiler boundaries, IR fallbacks and `test:changed-root`.
+
 ## Writes to a `const`: refused at select (fixed 2026-11-01)
 
 **Symptom.** A write to a `const` binding is a TypeScript error that still
