@@ -487,3 +487,63 @@ IR scalar holds `undefined`, so no ToString may take such a value.
   instead of assuming `true`.
 - `irBackendCapabilityQuery` (`backend/legality.ts`) replaces the five copies
   of the profile projection plus capability call.
+
+**Measured.** The A/B compares the #7026 head `dc767af398` merged with this
+branch (`355c54e59f`) against the same merge without the lowering (the
+reworked step 1 plus #7034 `045e9a41f7`):
+- **The 59 files, both lanes:** +17 legacy-free (the same 17 as round 2),
+  0 compile flips, 0 `+` post-claim demotes, no new imports. The 17
+  binaries shrink 16% (8.17 MB to 6.88 MB on standalone). They are
+  byte-identical to round 2's. The conformance runner gives 17/17 passes
+  before and after on both lanes: 0 flips.
+- **Bytes:** the S1 chunk sample plus the playground are 150/150 identical,
+  including the 12 legacy-only programs.
+- **The element-read repros** (`"v" + a[i]`, `a[i] + "v"`,
+  `"v" + (c ? a[i] : 2)`, `` `v${a[i]}` ``, `String(a[i])`) all answer as
+  node on standalone, with no post-claim demote on gc, standalone or wasi.
+  `1 + a[i]` still lowers through the IR (`tests/issue-7066-mixed-concat-lowering.test.ts`).
+- `tests/issue-7144-operand-admissibility.test.ts` passes (12/12) after
+  the #7034 merge.
+- Gates, run bare: loc, func, coercion, oracle, dead exports, import cycles,
+  boundaries inventory, typecheck, lint, IR fallbacks, changed-root tests and
+  equivalence all pass. Against main's tip as base, loc flags only
+  `property-access.ts` and `loops.ts`, which main shrank and this branch
+  does not touch; the merge preview takes main's copies.
+
+**4. Perf of `"v" + n`: the IR inliner, not the lowering.**
+- The IR returns the concat helper's result with `call; return`.
+  `ir-tail-call.ts` still refuses a tail call whose callee has a different
+  arity from the caller, a guard #5270 removed from legacy as a proxy that
+  `return_call` does not need. So the IR user-function inliner (#4157)
+  inlines the concat helper into `f`, where legacy emits `return_call`.
+- The formatter call and the allocations are identical to legacy's.
+- With that guard dropped (a scratch probe, not in this PR), the module is
+  byte-identical to main's: 28,553 bytes, against 30,349 with the inlined
+  helper.
+- **The perf claim, corrected.** Round 2's "within 5%" does not hold for a
+  function that only returns `"v" + n`: it pays for the inlined helper, and
+  the reviewer measured about 1.2×. Here, standalone, 1e6 calls, median of 7
+  alternating rounds against main `22a6442977`: 1.00× called from JS and
+  1.11× from a wasm loop. The same run read the byte-identical control at
+  1.05× and 1.17×, so this box's noise is larger than the gap and cannot
+  confirm or bound it more tightly.
+- The three hot-loop kernels compile byte-identical to round 2's on both
+  lanes, so round 2's medians stand: 1.04×, 0.74× and 0.65×.
+
+**Follow-ups recorded in round 3, not fixed here:**
+- **`+=` on a string local ignores the rule.** `s += n` is claimed and then
+  demotes: the compound arm admits only a string value
+  (`compoundWriteAdmissible`), not the `+` rule's concatenable families.
+- **`s += cond ? "p" : 0` traps** (`illegal cast`) on standalone, in the
+  legacy body it falls back to (see round 2).
+- **A hole reads as 0.** `a[2] = 7; "v" + a[0]` gives `"v0"`; node gives
+  `"vundefined"`. The grow-on-write store fills the gap with zeros. Legacy
+  gives the same wrong answer, and so does main.
+- **A local holding an element read** (`const x = a[i]; "v" + x`, or
+  `` `v${x}` ``) prints `NaN` past the end. The f64 slot cannot hold
+  `undefined`, and legacy's cannot either.
+- **The IR tail-call arity guard** (part 4 above): `ir-tail-call.ts`
+  `callIsTailEligible` refuses a `return_call` whose callee arity differs
+  from the caller's. #5270 removed that guard from legacy. Dropping it from
+  the IR is a two-line change, but it moves every IR function with such a
+  tail call, so it needs its own byte and perf measurement.
