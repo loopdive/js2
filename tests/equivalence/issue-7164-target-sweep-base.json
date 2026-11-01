@@ -1,0 +1,19 @@
+{
+  "$base": "b60378d55a150e8cc0ed74749703c61b98fcc2d0",
+  "forOfElem5": { "gc": "wrong", "standalone": "wrong", "wasi": "wrong" },
+  "forOfLength": { "gc": "ce", "standalone": "ce", "wasi": "ce" },
+  "forInElem": { "standalone": "wrong", "wasi": "wrong" },
+  "arrayPatternLength": { "gc": "ce", "standalone": "ce", "wasi": "ce" },
+  "objectPatternLength": { "gc": "ce", "standalone": "ce", "wasi": "ce" },
+  "patternDefaultLength": { "gc": "ce", "standalone": "ce", "wasi": "ce" },
+  "arrayPatternElem": { "gc": "ce", "standalone": "ce", "wasi": "ce" },
+  "reversePatternLength": { "gc": "ce", "standalone": "ce", "wasi": "ce" },
+  "reversePlusEq": { "gc": "ce", "standalone": "ce", "wasi": "ce" },
+  "reverseAssign": { "gc": "trap", "standalone": "trap", "wasi": "trap" },
+  "asLength": { "gc": "ce", "standalone": "ce", "wasi": "ce" },
+  "nonNullLength": { "gc": "wrong", "standalone": "wrong", "wasi": "wrong" },
+  "asElem": { "gc": "ce", "standalone": "ce", "wasi": "ce" },
+  "parenLength": { "gc": "trap", "standalone": "trap", "wasi": "trap" },
+  "plainLength": { "gc": "trap", "standalone": "trap", "wasi": "trap" },
+  "plainPlusEq": { "gc": "ce", "standalone": "ce", "wasi": "ce" }
+}

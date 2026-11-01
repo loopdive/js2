@@ -71,7 +71,7 @@ The `length` setter growth path on `$__vec_externref` (`grep -rn "length" src/co
 
 Acceptance: node's output for all programs; no trap in `join` after `sort`; host-assisted gc bytes unchanged; equivalence gate no new regressions.
 
-## Resolution (2026-11-01, review round 10)
+## Resolution (2026-11-02, review round 11)
 
 **Design: only switched bindings change.** The new length store applies to the
 arrays it was built for. Every other array compiles as on `origin/main`.
@@ -87,7 +87,12 @@ arrays it was built for. Every other array compiles as on `origin/main`.
   access on the binding is safe only as a method called directly (the access,
   through parentheses, `as`, `<T>`, `!` and `satisfies`, is the callee of a
   call, and the name is a property name or a string-literal key), or as
-  `xs[i]` / `xs.length`. Every other shape escapes: a method value taken off
+  `xs[i]` / `xs.length` — and those two only as an rvalue or as the direct
+  target of a plain `=`, a compound assignment or `++` / `--` on the bare
+  binding (the stores the length and element store paths handle). A for-of
+  / for-in target, a destructuring-pattern position, a wrapped (`as`, `!`)
+  target, or a store through another receiver (`g.reverse().length += 7`)
+  escapes. Every other shape escapes: a method value taken off
   the vec (`(0, g.forEach)(cb)`, `c ? g.forEach : g.map`, `const f =
   g.reverse`), a computed key in a call, any other property. The receiver
   shapes the classifier already looked through (parentheses, `!`, `as`,
@@ -158,7 +163,7 @@ node --import ./scripts/record-7164-bases-loader.mjs --import tsx \
   `--check` recomputes both and fails when the entries differ from the
   committed file, so a stale entry cannot widen what the test allows; it warns
   when only `"$base"` is older. It takes about 26 minutes.
-- Recorded against `origin/main` 102b64e219; the length-update and leak entries are unchanged since
+- Recorded against `origin/main` b60378d55a; the length-update and leak entries are unchanged since
   b6250f09f8.
 
 **Tests.** `tests/equivalence/issue-7164-externref-vec-length-growth.test.ts`
@@ -174,7 +179,8 @@ are named `it.fails` rows.
 | Marker-leak detector, relative to `origin/main` | 9 setups × 3 lanes (37 cases each) |
 | Callbacks that grow the array | 14 methods × 2 × 3 |
 | Length-update sweep, head never worse than `origin/main` | 44 of 1,008 rows × 3 (all with `JS2WASM_FULL_SWEEP=1`) |
-| Callback-array escape sweep (34 receiver / callee shapes × 12 callback methods × 5 length updates), never worse than `origin/main` | 50 of 2,040 rows × 3 (all with `JS2WASM_FULL_SWEEP=1`) |
+| Callback-array escape sweep (36 receiver / callee shapes × 12 callback methods × 5 length updates), never worse than `origin/main` | 53 of 2,160 rows × 3 (all with `JS2WASM_FULL_SWEEP=1`) |
+| Assignment-target sweep (for-of / for-in targets, destructuring, wrapped and receiver-returning targets): head traps only where `origin/main` traps and fails to compile only where it does | 22 × 3 |
 
 Rounds 7–9 added guard rows for the mixed-array, parameter and literal-seeded
 grows ("same as `origin/main`"), the callback array-parameter escapes, the
@@ -201,17 +207,22 @@ round-8 attack sets it gives 0 new traps and 0 worse cells.
 - **Leak detector:** 0 leaks head adds; 576 leaks shared with `origin/main`.
   Mutant check (round 6): filling the grow with `null` again fails 18 of the
   27 detector rows.
-- **Fixtures** re-recorded against `origin/main` 102b64e219.
-- **Review probe sets r1–r9** (old0–5, U, V, W, X, L, L2, DB, A, B's rows
+- **Assignment-target sweep** (22 forms × 3 lanes = 66 cells): 0 new traps,
+  0 new compile errors, 0 worse; 9 better.
+- **Fixtures** re-recorded against `origin/main` b60378d55a.
+- **Review probe sets r1–r10** (old0–5, U, V, W, X, L, L2, DB, A, B's rows
   after the wasi hang, B2, C, D, E, E2, E3, F, G, H, I, round 7's P, Q, R,
-  IOF, IOF3, round 8's S, S2, T and round 9's N, N2: 1,751 programs × 3
-  lanes, head vs `origin/main`): 219 improved, 373 both match node, 1,050
-  both wrong identically, 101 both wrong differently, **8 regressed**, **0 new
-  traps or compile errors**. All 8 are the #7170 class below: 4 in L, 1 in L2,
-  3 in A. Set B's first 33 rows were not re-run (row 34 hangs on wasi on both
-  trees, see Left out); round 6 found no regression among them.
-- **Callback-array escape sweep** (2,040 rows × 3 lanes = 6,120 cells): 0 new
-  traps, 0 worse; 18 both match node, 6,102 both wrong (origin/main loses the
+  IOF, IOF3, round 8's S, S2, T, round 9's N, N2 and round 10's R10, R10b,
+  R10c, R10d: 1,909 programs × 3 lanes, head vs `origin/main`): 229 improved,
+  407 both match node, 1,164 both wrong identically, 101 both wrong
+  differently, **8 regressed**. **No new trap and no new compile error**,
+  counted per lane: head traps only where `origin/main` traps and fails to
+  compile only where it does. All 8 regressions are the #7170 class below: 4
+  in L, 1 in L2, 3 in A. Set B's first 33 rows were not re-run (row 34 hangs
+  on wasi on both trees, see Left out); round 6 found no regression among
+  them.
+- **Callback-array escape sweep** (2,160 rows × 3 lanes = 6,480 cells): 0 new
+  traps, 0 new compile errors, 0 worse; 18 both match node, 6,462 both wrong (origin/main loses the
   grow through the callback's array parameter, and so does head, since the
   binding is not switched).
 - **Non-switched stores are byte-identical to `origin/main`** on all three
@@ -248,6 +259,10 @@ and then trapped on any read past the backing. The cost is linear.
 - **#7170 (holes):** a grown index is present. `in`, `hasOwnProperty`,
   for-in, `Object.keys`, callbacks, `indexOf` and copies see it.
 - **#7171 (wasi):** `in` answers wrongly on dense and grown arrays.
+- **for-of into an element of an externref vec** (`for (g[0] of ['p'])` on
+  a mixed `any[]`) emits invalid wasm on `origin/main`: the store does not
+  coerce the iterated value to the element type. #7164 keeps such a binding
+  unswitched instead of fixing the store (follow-up).
 - **`k in g` after a grow** is true where node says false (the grown index is
   a present `undefined`): the same as `origin/main`, a #7170 item.
 - **Number-holding arrays:** an f64 carrier grows with `0`s, as on
