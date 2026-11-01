@@ -58,6 +58,7 @@ import {
   getCapturedBoxGlobal,
 } from "../property-access.js";
 import { coerceType, compileExpression } from "../shared.js";
+import { tryEmitNativeStringFieldAppend, tryEmitNativeStringGlobalAppend } from "./string-field-append.js";
 import { emitBoolToAnyStr, rhsStringForcesConcatLane } from "../string-compound-lane.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { patchStructNewForDynamicField } from "./extern.js";
@@ -2468,6 +2469,7 @@ export function emitCompoundOp(ctx: CodegenContext, fctx: FunctionContext, op: t
 function tryCompileExternrefStructFieldPlusEquals(
   ctx: CodegenContext,
   fctx: FunctionContext,
+  target: ts.Expression,
   rhs: ts.Expression,
   op: ts.SyntaxKind,
   fieldType: ValType,
@@ -2475,6 +2477,9 @@ function tryCompileExternrefStructFieldPlusEquals(
   typeIdx: number,
   fieldIdx: number,
 ): ValType | null | undefined {
+  // (#7214) A native-string field: `+=` concatenates (was ToNumber + f64.add).
+  const strAppend = tryEmitNativeStringFieldAppend(ctx, fctx, target, rhs, op, fieldType, objTmp, typeIdx, fieldIdx);
+  if (strAppend !== undefined) return strAppend;
   if (op !== ts.SyntaxKind.PlusEqualsToken || fieldType.kind !== "externref") return undefined;
 
   const leftTmp = allocTempLocal(fctx, { kind: "externref" });
@@ -2609,6 +2614,8 @@ function compilePropertyCompoundAssignment(
     if (globalIdx !== undefined) {
       // Read current value
       fctx.body.push({ op: "global.get", index: globalIdx });
+      const strAppend = tryEmitNativeStringGlobalAppend(ctx, fctx, target, rhs, op, globalIdx); // (#7214)
+      if (strAppend !== undefined) return strAppend;
       // Compile RHS
       const rhsType = compileExpression(ctx, fctx, rhs, { kind: "f64" });
       if (!rhsType) return null;
@@ -2752,6 +2759,7 @@ function compilePropertyCompoundAssignment(
   const externrefPlusEquals = tryCompileExternrefStructFieldPlusEquals(
     ctx,
     fctx,
+    target,
     rhs,
     op,
     fieldType,
@@ -2868,6 +2876,7 @@ function compilePropertyCompoundAssignmentExternref(
           const externrefPlusEquals = tryCompileExternrefStructFieldPlusEquals(
             ctx,
             fctx,
+            target,
             rhs,
             op,
             fieldType,

@@ -293,11 +293,12 @@ export function emitHostExternrefToNativeString(ctx: CodegenContext, fctx: Funct
  */
 
 // (#6651 H1) `specToString`: an argument's §7.1.17 ToString, not the lenient `+` one.
-function compileNativeConcatOperand(
+export function compileNativeConcatOperand(
   ctx: CodegenContext,
   fctx: FunctionContext,
   operand: ts.Expression,
   specToString = false,
+  onStack?: ValType, // (#7214) `operand`'s value, of this type, is already on the stack
 ): boolean {
   // Precondition: caller has established `noJsHost(ctx)` (WASI / --target
   // standalone). There, `number_toString` is the pure-Wasm helper whose
@@ -305,7 +306,7 @@ function compileNativeConcatOperand(
   // `ref.cast $AnyString` is valid), and dynamic refs route through the
   // in-module `$__any_to_string` dispatcher. No JS-host bridge is involved.
   const tsType = valueExprTsType(ctx, operand); // #2176 ambient-shadow safe
-  const opType = compileExpression(ctx, fctx, operand);
+  const opType = onStack ?? compileExpression(ctx, fctx, operand);
   if (!opType) {
     // void result → "undefined"
     compileStringLiteral(ctx, fctx, "undefined", operand);
