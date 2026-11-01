@@ -80,17 +80,45 @@ export function isUndefinedCompareOperand(expr: ts.Expression, isShadowed: (name
 }
 
 /**
- * Can `expr`'s value be an element read's? Past the end that value is
- * `undefined`, but the checker types it as the element, and the IR reads a
- * number there as NaN (GC lanes) or 0 (linear) and a boolean as `false`: no
- * ToString of that scalar prints `undefined`. Looks through parentheses, type
- * assertions and a conditional's arms. A local holding the read keeps it in a
- * scalar slot, as legacy's does, and loses the `undefined` there too.
+ * How a lane judges a `+`: whether it formats a number as a string (the
+ * `number-to-string` capability), and which identifiers are destructured
+ * leaves that read an array element (`patternLeafReadsElement`).
  */
-export function mayBeElementRead(expr: ts.Expression): boolean {
+export interface AdditiveLane {
+  readonly numberToString: boolean;
+  readonly leafReadsElement: (id: ts.Identifier) => boolean;
+}
+
+/**
+ * Can `expr`'s value be read from an array slot without a bounds proof? Past
+ * the end that value is `undefined`, but the checker types it as the element,
+ * and the IR reads a number there as NaN (GC lanes) or 0 (linear) and a
+ * boolean as `false`: no ToString of that scalar prints `undefined`. The IR
+ * reads an element in two places, an element access and an array-pattern leaf
+ * (`leafReadsElement`), and the value reaches `expr` unchanged through the
+ * expressions that forward an operand's: parentheses, type assertions, a
+ * conditional's arms, a comma's or an assignment's right side, and `&&`, `||`
+ * and `??`. A local initialised from a read keeps it in a scalar slot, as
+ * legacy's does, and loses the `undefined` there too.
+ */
+export function mayBeElementRead(expr: ts.Expression, leafReadsElement: (id: ts.Identifier) => boolean): boolean {
   const value = skipOuterExpressions(expr);
+  const forwards = (operand: ts.Expression): boolean => mayBeElementRead(operand, leafReadsElement);
   if (ts.isElementAccessExpression(value)) return true;
-  return ts.isConditionalExpression(value) && (mayBeElementRead(value.whenTrue) || mayBeElementRead(value.whenFalse));
+  if (ts.isIdentifier(value)) return leafReadsElement(value);
+  if (ts.isConditionalExpression(value)) return forwards(value.whenTrue) || forwards(value.whenFalse);
+  if (!ts.isBinaryExpression(value)) return false;
+  switch (value.operatorToken.kind) {
+    case ts.SyntaxKind.CommaToken:
+    case ts.SyntaxKind.EqualsToken:
+      return forwards(value.right);
+    case ts.SyntaxKind.AmpersandAmpersandToken:
+    case ts.SyntaxKind.BarBarToken:
+    case ts.SyntaxKind.QuestionQuestionToken:
+      return forwards(value.left) || forwards(value.right);
+    default:
+      return false;
+  }
 }
 
 /** A literal `void 0`: the value `undefined`, whatever the scope binds. */
@@ -120,22 +148,22 @@ export function boxableIntoDynamic(family: OperandFamily): boolean {
  * `+` (judged by {@link binaryOperandsAdmissible} once lowered). Beside a
  * string, `+` concatenates the other side's ToString (ES2024 13.15.3;
  * ToPrimitive is the identity on a primitive): a string, a boolean, or a
- * number where the lane formats numbers (`numberToString`, the
- * `number-to-string` capability), but no boolean or number that may be an
- * element read ({@link mayBeElementRead}). Otherwise both sides must be
+ * number where the lane formats numbers, but no boolean or number that may be
+ * an element read ({@link mayBeElementRead}). Otherwise both sides must be
  * numbers, the unboxed add.
  */
 export function additiveOperandsProvable(
   expr: ts.BinaryExpression,
   left: AdditiveProof,
   right: AdditiveProof,
-  numberToString: boolean,
+  lane: AdditiveLane,
 ): boolean {
   if (left === "dynamic" || right === "dynamic") return true;
   if (left === "string" || right === "string") {
     const concatenable = (operand: ts.Expression, proof: AdditiveProof): boolean =>
       proof === "string" ||
-      ((proof === "boolean" || (proof === "number" && numberToString)) && !mayBeElementRead(operand));
+      ((proof === "boolean" || (proof === "number" && lane.numberToString)) &&
+        !mayBeElementRead(operand, lane.leafReadsElement));
     return concatenable(expr.left, left) && concatenable(expr.right, right);
   }
   return left === "number" && right === "number";
@@ -161,10 +189,10 @@ export function additiveResultFamily(
   expr: ts.BinaryExpression,
   left: OperandFamily,
   right: OperandFamily,
-  numberToString: boolean,
+  lane: AdditiveLane,
 ): OperandFamily {
   if (left === "dynamic" || right === "dynamic") return "dynamic";
-  if (!additiveOperandsProvable(expr, additiveProofOf(left), additiveProofOf(right), numberToString)) return "unknown";
+  if (!additiveOperandsProvable(expr, additiveProofOf(left), additiveProofOf(right), lane)) return "unknown";
   return left === "string" || right === "string" ? "string" : "number";
 }
 
@@ -318,12 +346,12 @@ export function provenBinaryOperandsAdmissible(
   expr: ts.BinaryExpression,
   left: OperandFamily,
   right: OperandFamily,
-  numberToString: boolean,
+  lane: AdditiveLane,
 ): boolean {
   const op = expr.operatorToken.kind;
   if (
     op === ts.SyntaxKind.PlusToken &&
-    !additiveOperandsProvable(expr, additiveProofOf(left), additiveProofOf(right), numberToString)
+    !additiveOperandsProvable(expr, additiveProofOf(left), additiveProofOf(right), lane)
   ) {
     return false;
   }

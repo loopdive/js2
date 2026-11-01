@@ -73,6 +73,7 @@ import {
   conditionalJoinArmFamily,
   conditionalJoinFamily,
   throwOperandAdmissible,
+  type AdditiveLane,
   type AdditiveProof,
   type NumberBinaryOperator,
   type OperandFamily,
@@ -287,7 +288,7 @@ import {
   type SourceReadPlan,
 } from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
-import { planLiteralPattern } from "./literal-pattern-plan.js";
+import { patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   boundedMixedConditionalPrimitiveFamily,
@@ -305,6 +306,7 @@ import {
 import { openCarrierDefinePlan } from "./empty-object-literal.js";
 import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
 import {
+  localValueDeclaration,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrPrimitiveExpressionClassifier,
   type IrPrimitiveExpressionFamily,
@@ -14000,14 +14002,12 @@ function mixedPrimitiveConditionalClaim(
   if (!cx.checker) return null;
   const classifyPrimitive = makeIrPrimitiveExpressionClassifier(cx.checker);
   const classifyDeclared = makeIrDeclaredPrimitiveExpressionClassifier(cx.checker);
-  const whenTrue = boundedMixedConditionalPrimitiveFamily(expr.whenTrue, classifyPrimitive, classifyDeclared);
-  const whenFalse = boundedMixedConditionalPrimitiveFamily(expr.whenFalse, classifyPrimitive, classifyDeclared);
-  if (
-    whenTrue === undefined ||
-    whenFalse === undefined ||
-    whenTrue === whenFalse ||
-    boundedMixedConditionalPrimitiveFamily(expr.condition, classifyPrimitive, classifyDeclared) === undefined
-  ) {
+  const lane = additiveLaneOf(cx);
+  const familyOf = (e: ts.Expression) =>
+    boundedMixedConditionalPrimitiveFamily(e, classifyPrimitive, classifyDeclared, lane);
+  const whenTrue = familyOf(expr.whenTrue);
+  const whenFalse = familyOf(expr.whenFalse);
+  if (whenTrue === undefined || whenFalse === undefined || whenTrue === whenFalse || !familyOf(expr.condition)) {
     return null;
   }
   return { whenTrue, whenFalse };
@@ -14599,8 +14599,7 @@ function provenAdditiveOperands(
   const lProof = additiveOperandProof(expr.left, cx);
   const rProof = additiveOperandProof(expr.right, cx);
   if (lProof === null || rProof === null) return undefined;
-  const numberToString = cx.resolver?.supportsBackendCapability?.("number-to-string") === true;
-  if (!additiveOperandsProvable(expr, lProof, rProof, numberToString)) {
+  if (!additiveOperandsProvable(expr, lProof, rProof, additiveLaneOf(cx))) {
     throw new IrUnsupportedError(
       "operand-coercion-unsupported",
       "build",
@@ -14610,6 +14609,14 @@ function provenAdditiveOperands(
     );
   }
   return [lProof, rProof];
+}
+
+/** (#7066) How this compile judges a `+`: the selector's `additiveLane`, from the resolver and the checker. */
+function additiveLaneOf(cx: LowerCtx): AdditiveLane {
+  return {
+    numberToString: cx.resolver?.supportsBackendCapability?.("number-to-string") === true,
+    leafReadsElement: patternLeafReadsElement((id) => (cx.checker ? localValueDeclaration(id, cx.checker) : undefined)),
+  };
 }
 
 /**

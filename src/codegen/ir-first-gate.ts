@@ -15,7 +15,7 @@
 // so those predicates were deleted — git history preserves them if the
 // allowlist-widening track (#2855/#2856) ever wants to reference them.
 import ts from "typescript";
-import { additiveOperandsProvable } from "../ir/analysis/operand-admissibility.js";
+import { additiveOperandsProvable, type AdditiveLane } from "../ir/analysis/operand-admissibility.js";
 import { compareIrIdentity, type IrUnitId } from "../ir/identity.js";
 import { collectModuleInitPopulation } from "../ir/module-init.js";
 import {
@@ -115,6 +115,8 @@ export function irFirstBodyIsProvenLowerable(
   numberToString = false,
 ): boolean {
   if (!fn.body) return false;
+  // The subset admits no element access and no binding pattern, so no operand reads an element.
+  const lane: AdditiveLane = { numberToString, leafReadsElement: () => false };
   const params = new Set<string>();
   // Per-name value domain. Params seeded from the caller-provided domains
   // (default `number`); locals populated as their declarations are walked
@@ -229,7 +231,7 @@ export function irFirstBodyIsProvenLowerable(
           const right = exprDomain(b.right);
           if (left === null || right === null) return null;
           const proof = (d: ValueDomain) => (d === "bool" ? "boolean" : d);
-          if (!additiveOperandsProvable(b, proof(left), proof(right), numberToString)) return null;
+          if (!additiveOperandsProvable(b, proof(left), proof(right), lane)) return null;
           if (left === "string" || right === "string") return "string";
           return left === "number" && right === "number" ? "number" : null;
         }

@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { irFirstBodyIsProvenLowerable } from "../src/codegen/ir-first-gate.js";
 import { compile } from "../src/index.js";
-import { additiveOperandsProvable } from "../src/ir/analysis/operand-admissibility.js";
+import { additiveOperandsProvable, type AdditiveLane } from "../src/ir/analysis/operand-admissibility.js";
 
 type Value = number | boolean | string;
 
@@ -206,12 +206,40 @@ const ELEMENT_READS: readonly (readonly [string, string, (a: number[], i: number
   ],
   ["a template", "export function f(a: number[], i: number): string { return `v${a[i]}`; }", (a, i) => `v${a[i]}`],
   ["String(v)", "export function f(a: number[], i: number): string { return String(a[i]); }", (a, i) => String(a[i])],
+  // Review round 4: a comma, an assignment's value and `??` forward the read; an array-pattern leaf is one.
+  ["a comma", 'export function f(a: number[], i: number): string { return "v" + (0, a[i]); }', (a, i) => "v" + a[i]],
+  [
+    "`??`",
+    'export function f(a: number[], i: number): string { return "v" + (a[i] ?? 7); }',
+    (a, i) => "v" + (a[i] ?? 7),
+  ],
+  [
+    "an array-pattern leaf",
+    'export function f(a: number[], i: number): string { const [x] = a; return "v" + x + i; }',
+    (a, i) => {
+      const [x] = a;
+      return "v" + x + i;
+    },
+  ],
+  [
+    "a leaf in a template",
+    "export function f(a: number[], i: number): string { const [, y] = a; return `v${y}${i}`; }",
+    (a, i) => {
+      const [, y] = a;
+      return `v${y}${i}`;
+    },
+  ],
 ];
 
 describe("#7066 an element read past the end converts as `undefined`", () => {
   for (const [name, fn, node] of ELEMENT_READS) {
-    // node: f([1], 5) reads past the end ("undefined"); f([1], 0) reads 1.
-    const check = [5, 0].map((i) => `(f([1], ${i}) === ${JSON.stringify(node([1], i))} ? 1 : 0)`).join(" + ");
+    // node: f([1], 5) reads past the end ("undefined"), as does a leaf of f([]); f([1], 0) reads 1.
+    const calls = [
+      [[1], 5],
+      [[1], 0],
+      [[], 0],
+    ] as const;
+    const check = calls.map(([a, i]) => `(f([${a}], ${i}) === ${JSON.stringify(node([...a], i))} ? 1 : 0)`).join(" + ");
 
     it(`${name}: answers as node does, with no post-claim demote`, async () => {
       for (const target of ["gc", "standalone", "wasi"] as const) {
@@ -220,7 +248,7 @@ describe("#7066 an element read past the end converts as `undefined`", () => {
         expect(result.irPostClaimErrors ?? []).toEqual([]);
         if (target !== "standalone") continue;
         const { instance } = await WebAssembly.instantiate(result.binary, {});
-        expect((instance.exports.c as () => number)()).toBe(2);
+        expect((instance.exports.c as () => number)()).toBe(calls.length);
       }
     });
   }
@@ -241,24 +269,32 @@ describe("#7066 the one `+` rule", () => {
     return (statement as ts.ExpressionStatement).expression as ts.BinaryExpression;
   };
 
+  const lane = (numberToString: boolean): AdditiveLane => ({ numberToString, leafReadsElement: () => false });
+
   it("concatenates a string with a string, a boolean, or a number where the lane formats numbers", () => {
     const sides = plus("l + r");
-    expect(additiveOperandsProvable(sides, "string", "number", true)).toBe(true);
-    expect(additiveOperandsProvable(sides, "number", "string", false)).toBe(false);
-    expect(additiveOperandsProvable(sides, "boolean", "string", false)).toBe(true);
-    expect(additiveOperandsProvable(sides, "string", "unprovable", true)).toBe(false);
-    expect(additiveOperandsProvable(sides, "number", "number", false)).toBe(true);
-    expect(additiveOperandsProvable(sides, "boolean", "boolean", true)).toBe(false);
-    expect(additiveOperandsProvable(sides, "boolean", "number", true)).toBe(false);
-    expect(additiveOperandsProvable(sides, "dynamic", "unprovable", false)).toBe(true);
+    expect(additiveOperandsProvable(sides, "string", "number", lane(true))).toBe(true);
+    expect(additiveOperandsProvable(sides, "number", "string", lane(false))).toBe(false);
+    expect(additiveOperandsProvable(sides, "boolean", "string", lane(false))).toBe(true);
+    expect(additiveOperandsProvable(sides, "string", "unprovable", lane(true))).toBe(false);
+    expect(additiveOperandsProvable(sides, "number", "number", lane(false))).toBe(true);
+    expect(additiveOperandsProvable(sides, "boolean", "boolean", lane(true))).toBe(false);
+    expect(additiveOperandsProvable(sides, "boolean", "number", lane(true))).toBe(false);
+    expect(additiveOperandsProvable(sides, "dynamic", "unprovable", lane(false))).toBe(true);
   });
 
   it("adds an element read but does not concatenate one", () => {
-    expect(additiveOperandsProvable(plus('"v" + a[i]'), "string", "number", true)).toBe(false);
-    expect(additiveOperandsProvable(plus('(c ? a[i] : 2) + "v"'), "number", "string", true)).toBe(false);
-    expect(additiveOperandsProvable(plus('"v" + (a[i] as boolean)'), "string", "boolean", true)).toBe(false);
-    expect(additiveOperandsProvable(plus("1 + a[i]"), "number", "number", true)).toBe(true);
-    expect(additiveOperandsProvable(plus('"v" + s[i]'), "string", "string", true)).toBe(true);
+    expect(additiveOperandsProvable(plus('"v" + a[i]'), "string", "number", lane(true))).toBe(false);
+    expect(additiveOperandsProvable(plus('(c ? a[i] : 2) + "v"'), "number", "string", lane(true))).toBe(false);
+    expect(additiveOperandsProvable(plus('"v" + (a[i] as boolean)'), "string", "boolean", lane(true))).toBe(false);
+    expect(additiveOperandsProvable(plus("1 + a[i]"), "number", "number", lane(true))).toBe(true);
+    expect(additiveOperandsProvable(plus('"v" + s[i]'), "string", "string", lane(true))).toBe(true);
+    for (const forwarded of ["(0, a[i])", "(t = a[i])", "(a[i] ?? 7)", "(c && a[i])", "(a[i] || 7)"]) {
+      expect(additiveOperandsProvable(plus(`"v" + ${forwarded}`), "string", "number", lane(true))).toBe(false);
+    }
+    const leaf: AdditiveLane = { numberToString: true, leafReadsElement: (id) => id.text === "x" };
+    expect(additiveOperandsProvable(plus('"v" + x'), "string", "number", leaf)).toBe(false);
+    expect(additiveOperandsProvable(plus('"v" + n'), "string", "number", leaf)).toBe(true);
   });
 
   it("is the IR-first gate's `+` row, under the lane's flag", () => {

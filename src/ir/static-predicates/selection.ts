@@ -31,6 +31,7 @@ import {
   nullComparisonFolds,
   slotWriteVerdict,
   undefinedCompareOperandAdmissible,
+  type AdditiveLane,
   type OperandFamily,
 } from "../analysis/operand-admissibility.js";
 import { ts } from "../../ts-api.js";
@@ -52,8 +53,8 @@ export interface IrStaticPredicateSelection {
   readonly localDeclaration: (identifier: ts.Identifier) => ts.VariableDeclaration | undefined;
   /** The representation family the selector proves any other expression lowers to; `unknown` without a proof. */
   readonly family: (expression: ts.Expression) => OperandFamily;
-  /** The lane formats a number as a string (`number-to-string`): a string `+` concatenates it. */
-  readonly numberToString: boolean;
+  /** How the lane judges a `+` (`additiveOperandsProvable`). */
+  readonly additiveLane: AdditiveLane;
   /** A string method's call: its arguments need a ToString a boolean does not get. */
   readonly isStringMethodCall: (call: ts.CallExpression) => boolean;
   /** The family of the slot a type node declares (`unknown` for a kind no predicate answer fits). */
@@ -134,7 +135,7 @@ function expressionFamily(
   if (ts.isBinaryExpression(candidate)) {
     const op = candidate.operatorToken.kind;
     if (op === ts.SyntaxKind.PlusToken) {
-      return additiveResultFamily(candidate, family(candidate.left), family(candidate.right), options.numberToString);
+      return additiveResultFamily(candidate, family(candidate.left), family(candidate.right), options.additiveLane);
     }
     if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
       return logicalResultFamily(family(candidate.left), family(candidate.right));
@@ -142,7 +143,7 @@ function expressionFamily(
     if (op === ts.SyntaxKind.QuestionQuestionToken) return "unknown";
   }
   // Past the end an element read is `undefined`, which no IR scalar holds.
-  if (mayBeElementRead(candidate)) return "unknown";
+  if (mayBeElementRead(candidate, options.additiveLane.leafReadsElement)) return "unknown";
   if (ts.isConditionalExpression(candidate)) {
     return conditionalJoinFamily(family(candidate.whenTrue), family(candidate.whenFalse));
   }

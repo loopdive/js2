@@ -49,6 +49,7 @@ import {
   throwOperandAdmissible,
   type AdditiveProof,
   type OperandFamily,
+  type AdditiveLane,
 } from "./analysis/operand-admissibility.js";
 
 /** The selector's own family proofs the walk builds on. */
@@ -67,8 +68,8 @@ export interface PlannedClosureFamilySources {
   readonly nativeDynamicLooseEquality?: boolean;
   /** (#7113) The lane plans a direct call to a module function from a planned closure. */
   readonly directCalls?: boolean;
-  /** (#7066) The lane formats a number as a string (a string `+` concatenates it). */
-  readonly numberToString?: boolean;
+  /** (#7066) How the lane judges a `+` (`additiveOperandsProvable`). */
+  readonly additiveLane: AdditiveLane;
   /** (#7113) `undefined` here is the global (no module or enclosing binding shadows it). */
   readonly isGlobalUndefined?: (expr: ts.Expression) => boolean;
   /** (#7119) `recv.<name>(…arity args)` on the carrier takes the brand-dispatch wrapper on this lane. */
@@ -277,7 +278,6 @@ export function plannedClosureOperandRefusal(
   sources: PlannedClosureFamilySources,
 ): PlannedClosureOperandRefusal | null {
   const fn = plan.expression;
-  const numberToString = sources.numberToString === true;
   const dynamicParameterNames = new Set<string>();
   const numericParameterNames = new Set<string>();
   fn.parameters.forEach((parameter, index) => {
@@ -431,7 +431,7 @@ export function plannedClosureOperandRefusal(
     if (op === ts.SyntaxKind.PlusToken) {
       const left = operandProof(expr.left);
       const right = operandProof(expr.right);
-      const family = additiveResultFamily(expr, left.family, right.family, numberToString);
+      const family = additiveResultFamily(expr, left.family, right.family, sources.additiveLane);
       if (family === "dynamic") {
         return {
           family,
@@ -504,7 +504,7 @@ export function plannedClosureOperandRefusal(
     if (!carrierLooseEqualityAdmissible(op, leftProof.family, rightProof.family) && isNewShape()) {
       return { arm: "closure-carrier-loose-equality", node: expr };
     }
-    const additive = additiveOperandsProvable(expr, leftProof.additive, rightProof.additive, numberToString);
+    const additive = additiveOperandsProvable(expr, leftProof.additive, rightProof.additive, sources.additiveLane);
     if (op === ts.SyntaxKind.PlusToken && !additive) return { arm: "closure-additive-operands", node: expr };
     return binaryOperandsAdmissible(op, leftProof.family, rightProof.family)
       ? null

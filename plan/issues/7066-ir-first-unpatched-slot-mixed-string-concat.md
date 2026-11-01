@@ -547,3 +547,76 @@ reworked step 1 plus #7034 `045e9a41f7`):
   from the caller's. #5270 removed that guard from legacy. Dropping it from
   the IR is a two-line change, but it moves every IR function with such a
   tail call, so it needs its own byte and perf measurement.
+
+## Review round 4 (2026-11-01): the class of reads, not its spellings
+
+The round-4 review measured 22 past-the-end shapes on both lanes against
+main `27f7d02251`. Two still went wrong:
+- `"v" + (0, a[i])` printed `"vNaN"`: the comma hid the element read.
+- `const [x] = a; return "v" + x` trapped on `f([])`. The IR's
+  array-pattern reader (`elementReader`) uses an unchecked `vec.get`.
+
+**The rule, stated as a class.** The IR reads an array element without a
+bounds proof in exactly two places: an element access, and an array-pattern
+leaf. `mayBeElementRead` asks whether the value can come from either one
+unchanged, through the closed set of expressions whose value is one of
+their operands':
+- parentheses and type assertions;
+- a conditional's arms;
+- a comma's or an assignment's right side;
+- `&&`, `||` and `??`.
+
+Arithmetic produces a fresh number, so `"v" + (1 + a[i])` stays lowered.
+
+**The leaf question comes from #7024's pattern plan.**
+`patternLeafReadsElement` (`literal-pattern-plan.ts`) answers it. A leaf
+reads an element unless the literal plan decomposes its declaration. When
+the plan does decompose it, the leaf binds its source, and the question
+repeats on that source.
+- The selector resolves declarations through the module-binding resolver.
+- The builder resolves them through the checker, with the same
+  `localValueDeclaration` (now exported).
+- Both reach the rule as one `AdditiveLane`: the `number-to-string` flag
+  plus that leaf predicate.
+
+**Why not the alternatives.**
+- **An allowlist** of values that provably cannot be an absent element
+  (literals, operator results, parameters, locals never written from a
+  read) needs a write analysis of every local to keep `"k" + i` in a
+  counted loop.
+- **The marker test** (`emitF64IsUndefined` at the conversion) needs three
+  producer changes: the past-end vec read yields NaN today, not the marker;
+  the pattern reader traps; and the conversion itself. It would also change
+  the bytes of every unproven vec read. And the test is unsound after
+  `f64.abs` / `copysign`, which keep a signalling payload.
+
+So the refusal is the smaller sound rule. The cost is one interface and one
+predicate.
+
+**The two `+` classifiers** in `select.ts` now derive from
+`additiveResultFamily`:
+- `obviousModuleValueFamily` reads the module slot families as operand
+  families (`OBVIOUS_OPERAND_FAMILIES`).
+- `boundedMixedConditionalPrimitiveFamily` takes the lane. Selection and
+  build call it with the same lane.
+
+Templates and `String()` over an element read are refused at selection
+(round 3). Main claimed them and printed `NaN` past the end.
+
+**Measured on the 24 shapes**, gc and standalone, against main
+`27f7d02251`:
+- Every shape main answers right still answers right.
+- Main's wrong template and `String()` answers are now right, and so is its
+  trap on a leaf in a template.
+- No shape claims and then demotes; main had 14 that did.
+- Two shapes stay wrong on both, as legacy is: an assignment's value
+  `"v" + (t = a[i])` with `let t = 0`, and a local `const x = a[i]`. Both
+  keep the read in an f64 slot.
+
+**Main merged in** (`27f7d02251`, for #7024's plan):
+- #7034's S0 already judges a literal-pattern leaf by its source's family,
+  so main's separate judgment folds into it.
+- #7024's `mixedPlus` rows (`const [a, b] = [1, 'x']; a + b`) are now
+  claimed, and answer as node does.
+- `tests/issue-3529-ir-producer-parity.test.ts` "array-literal widening"
+  fails on main `27f7d02251` too: #7024 lowers that source now.
