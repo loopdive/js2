@@ -3169,9 +3169,14 @@ export function lowerIrFunctionBody<S, Slot>(
             ? allocScratchLocal("$finally_ran", { kind: "i32" })
             : undefined;
         const emitGuardedFinally = (target: Instr[]): void => {
-          const runFinally: Instr[] = finallyRanSlot === undefined ? target : [];
+          if (finallyRanSlot === undefined) {
+            emitBodyBuffer(instr.finallyBody!, target);
+            return;
+          }
+          const runFinally: Instr[] = [];
+          ctrlStack.push({ kind: "plain" }); // (#7106) the guard `if` below is one more Wasm label
           emitBodyBuffer(instr.finallyBody!, runFinally);
-          if (finallyRanSlot === undefined) return;
+          ctrlStack.pop();
           emitter.emitLocalGet(finallyRanSlot, target as unknown as S);
           emitter.emitIf({ kind: "empty" }, [] as unknown as S, runFinally as unknown as S, target as unknown as S);
         };
