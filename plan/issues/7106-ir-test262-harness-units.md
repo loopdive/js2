@@ -3651,6 +3651,83 @@ arms in the residual table.
   `lowerBindingPattern` / `isPhase1BindingPattern`; their call sites move.
   Announce the move on both issues before S1 lands.
 
+### Implementation (S1–S3, 2026-11-01)
+
+Built on `claude/7106-for-head-destructuring`, one commit per slice, measured
+against `21b452861d`:
+
+- S1 `30beb731d1`
+- S2 `a89e71f76a`
+- S3 `e590431daf`
+
+Each census uses `.tmp/dstr/census.mts` on both trees: the 858 files are the
+288 for-head files, 228 other literal-pattern files and a seeded random
+sample of 345 test262 files.
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| legacy-free, the 94 sole-blocker files (base → head) | 0 → **48** | 0 → **48** |
+| legacy-free, the 288 for-head files | 0 → 48 | 0 → 48 |
+| legacy-free, 228 literal-pattern files / 345-file sample | 0 → 0 / 7 → 10 (3 sample files are for/dstr) | same |
+| binaries changed, of 712 compiled | 48, each with a newly claimed `<module-init>` | 48, the same files |
+| pass→fail on the 48 changed files (`runTest262File`) | 0 (48/48 pass before and after) | 0 (48/48) |
+| post-claim errors | none new: the same 49 files carry the same pre-existing errors on both trees | same |
+| host imports added | 0 | 0 |
+| playground examples (13) | byte-identical | byte-identical |
+
+Unchanged binaries keep their verdicts, so there are no flips outside the 48.
+
+`src/ir` line delta: +601 / −277.
+- `select.ts`: −44.
+- `from-ast.ts`: −22.
+- New modules: `binding-pattern-plan.ts` 347 lines, `binding-pattern-lowering.ts` 46, `realm-keys.ts` 19.
+- No budget grant was added.
+- Gates, each run bare, all exit 0: loc, func, coercion-sites, oracle-ratchet, dead-exports, typecheck, lint,
+  ir-fallbacks, test:changed-root, import-cycles, compiler-boundaries (`--mode inventory`, as CI runs it).
+
+**Deviations from the plan.**
+
+- **Two walkers still exist.** `src/ir/binding-pattern-lowering.ts` holds
+  only the literal reader. The typed readers (`lowerObjectPattern` /
+  `lowerArrayPattern`) and the for-of walker stay in `from-ast.ts`. Merging
+  them changes behaviour (the for-of reader binds zero past the end, the
+  VariableStatement reader traps), so they are follow-ups (a) and (b).
+- **One leaf binder.** Literal leaves and typed leaves both bind through
+  `bindLocalName`. Parameter leaves keep the `param-pattern-mutation`
+  refusal (S4).
+- **`let` is admitted for literal sources only.** A typed (non-literal)
+  source keeps `vardecl-dstr-let`, because its leaves are not proven to have
+  a slot representation.
+- **Pattern leaves do not leak out of a for-head.** `recordForInitLeaks` (the
+  folded leak loop) leaks identifier names only. A pattern leaf stays inside
+  its loop, which is stricter and needs no sibling-redeclaration exemption.
+- **A `null` leaf is refused.** A bare `null` value has no carrier in that
+  position (`[x = 1] = [null]` demoted after the claim in the first build),
+  so the plan only ever skips or destructures a `null`.
+- **Already-claimed literal sources lower differently.** A function-local
+  `const { a } = { a: 1 }` that the object reader already claimed now goes
+  through the literal plan, with no allocation. None of the 858 files or the
+  playground examples has one.
+
+**Follow-ups.**
+
+- **(a)** Fold `declareForOfPatternLeafSlots` / `bindForOfArrayPatternLeaves`
+  into `binding-pattern-lowering.ts` as the `vec` reader. Keep the for-of
+  zero-past-the-end override, which needs its own A/B.
+- **(b)** Move the typed readers out of `from-ast.ts`. Replace their
+  unchecked `vec.get` with `emitSafeVecGet`. Admit `let` for typed sources.
+- **(c)** The call-graph scan still sees a default that the plan never runs
+  (`ary-ptrn-elem-ary-empty-iter`, 2 files: `external-call`).
+- **(d)** Legacy answers these wrongly (measured while writing the tests):
+  - `var u; const [x = 5] = [u]` (default on an undefined variable);
+  - `const { toString: t } = {}` (`t !== Object.prototype.toString`);
+  - `const [a = 1, b = a] = []`.
+
+  The IR refuses all three, so they stay legacy bugs.
+- **(e)** Pre-existing on main, unrelated: `tests/issue-1372-ir-destructuring-params.test.ts`
+  AC#1 and 22 cases of `tests/issue-2001-s1-hole-literal.test.ts` fail on
+  `21b452861d` too.
+
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
