@@ -158,6 +158,8 @@ import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-type
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
+  additiveOperandsProvable,
+  additiveProofOf,
   binaryOperandsAdmissible,
   conditionalJoinArmFamily,
   conditionalJoinFamily,
@@ -7283,6 +7285,7 @@ function isPhase1ClosureLiteral(
     nativeDynamicMemberRead:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-member-read") === true,
     directCalls: currentSelectionOptions?.supportsBackendCapability?.("planned-closure-direct-call") === true,
+    numberToString: laneFormatsNumbers(),
     nativeDynamicLooseEquality:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-loose-equality") === true,
     isGlobalUndefined: (expression) => isUnshadowedUndefinedIdentifier(expression, scope),
@@ -8888,7 +8891,11 @@ function selectorPrimitiveWrapperOrGenericBinary(
     leftWrapper ||
     rightWrapper ||
     (!isEquality && isTypedBinaryOperator(binOp) && left !== "unknown" && right !== "unknown");
-  if (judged && !binaryOperandsAdmissible(binOp, left, right)) {
+  // (#7066) A `+` also takes from-ast's `+` rule over the proofs the families carry.
+  const additive =
+    binOp !== ts.SyntaxKind.PlusToken ||
+    additiveOperandsProvable(additiveProofOf(left), additiveProofOf(right), laneFormatsNumbers());
+  if (judged && !(additive && binaryOperandsAdmissible(binOp, left, right))) {
     return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
   }
   return (
@@ -10684,14 +10691,14 @@ function templateSubstitutionFamily(
   scope: ReadonlySet<string>,
 ): "string" | "number" | "boolean" | undefined {
   if (declaredExpressionHasExactFamily(expression, "string", scope)) return "string";
-  if (
-    declaredExpressionHasExactFamily(expression, "number", scope) &&
-    currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true
-  ) {
-    return "number";
-  }
+  if (declaredExpressionHasExactFamily(expression, "number", scope) && laneFormatsNumbers()) return "number";
   if (declaredExpressionHasExactFamily(expression, "boolean", scope)) return "boolean";
   return undefined;
+}
+
+/** (#4467, #7066) The lane binds `IR_NUMBER_TO_STRING_FN`: a template or a `+` converts a number. */
+function laneFormatsNumbers(): boolean {
+  return currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true;
 }
 
 function declaredExpressionHasExactFamily(

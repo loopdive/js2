@@ -39,9 +39,12 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     // `<module-init>`; the legacy body carries the program instead. Pin that
     // truthfully — `legacyBodyEmitted: true` still fails if nothing is emitted
     // at all, and a return to IR emission will fail here and be re-examined.
+    // (2026-11-01, re-pinned in #7066) On main `<module-init>` now stops first on
+    // its host `console.log` surface (`host-surface-unavailable`), still at
+    // selection and still on the legacy body.
     expect(terminal(result).find((outcome) => outcome.displayName === "<module-init>")).toMatchObject({
       kind: "unsupported",
-      code: "call-graph-closure",
+      code: "host-surface-unavailable",
       stage: "select",
       legacyBodyEmitted: true,
       irBodyEmitted: false,
@@ -94,7 +97,7 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     ]);
   });
 
-  it("types mixed string/boolean addition as unsupported operand coercion", async () => {
+  it("lowers mixed string/boolean addition as a concatenation (#7066)", async () => {
     const result = await compile(
       `export function test(): string {
         return "result: " + (2 > 1);
@@ -103,12 +106,9 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
     expect(terminal(result).find((outcome) => outcome.displayName === "test")).toMatchObject({
-      kind: "unsupported",
-      code: "operand-coercion-unsupported",
-      stage: "build",
-      legacyBodyEmitted: true,
-      irBodyEmitted: false,
+      irBodyEmitted: true,
     });
   });
 });

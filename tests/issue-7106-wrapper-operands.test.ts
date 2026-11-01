@@ -128,11 +128,11 @@ describe("#7106 fresh-wrapper operator operands", () => {
     });
   }
 
-  // S0: a pair `lowerBinary` cannot type is refused before the claim.
+  // S0: a pair `lowerBinary` cannot type is refused before the claim. (`"x" + 1`
+  // lowers since #7066: tests/issue-7066-mixed-concat-lowering.test.ts.)
   const S0_REFUSED: Record<string, string> = {
     stringNumber: `"1" < 1`,
     booleanDivide: "true / 1",
-    mixedConcat: `"x" + 1`,
     nullPlus: "null + 1",
     stringNull: `"a" < null`,
     stringBitwise: `"1" & 1`,

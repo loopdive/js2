@@ -12764,6 +12764,14 @@
       "nextBoundary": "Native console producer emits logical strings and symbolic provider calls; keep physical provider selection outside the IR."
     },
     {
+      "path": "src/ir/primitive-to-string.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7066",
+      "nextBoundary": "ToString producer emits logical strings and the symbolic number-to-string provider call; keep physical provider selection outside the IR."
+    },
+    {
       "path": "src/ir/host-free-runtime.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

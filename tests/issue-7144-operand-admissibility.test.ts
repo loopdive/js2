@@ -37,7 +37,7 @@ interface Producer {
 }
 const PRODUCERS: Record<string, Producer> = {
   number: { expr: "n", family: "number", additive: "number" },
-  boolean: { expr: "true", family: "boolean", additive: "unprovable" },
+  boolean: { expr: "true", family: "boolean", additive: "boolean" },
   string: { expr: "s", family: "string", additive: "string" },
   dynamic: { expr: "m", family: "dynamic", additive: "dynamic" },
   vec: { expr: "a", family: "vec<number>", additive: "unprovable" },
@@ -119,7 +119,8 @@ describe("#7144 — binary operands: selector ⇔ from-ast", () => {
       for (const left of Object.values(PRODUCERS)) {
         for (const right of Object.values(PRODUCERS)) {
           const admissible =
-            (op !== ts.SyntaxKind.PlusToken || additiveOperandsProvable(left.additive, right.additive)) &&
+            // Every lane here formats numbers (#7066).
+            (op !== ts.SyntaxKind.PlusToken || additiveOperandsProvable(left.additive, right.additive, true)) &&
             binaryOperandsAdmissible(op, left.family, right.family);
           await expectAgreement(`var t = ${left.expr} ${spelling} ${right.expr}; throw m;`, admissible);
         }

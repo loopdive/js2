@@ -14,6 +14,8 @@ area: ir
 language_feature: ir-first, string-concat, demote
 goal: ir-full-coverage
 related: [7001, 2138, 3143, 7106, 7144]
+import-cycles-allow:
+  - codegen->ir: 302 # 2026-11-01 (#7066): the IR-first gate's `+` row reads the shared `+` rule (ir/analysis/operand-admissibility.ts) instead of keeping its own copy, which drifted twice
 ---
 # IR-first skipped slot with no legacy body after a build-time demote
 

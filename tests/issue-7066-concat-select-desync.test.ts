@@ -56,13 +56,13 @@ describe("#7066 a mixed-primitive conditional is a dynamic `+` operand", () => {
     ).toBe(11);
   });
 
-  it("refuses the S11.7.*_A4 initializer at selection instead of demoting it", async () => {
+  it("lowers the S11.7.*_A4 initializer with no post-claim demote (the concat lowers since the #7066 lowering)", async () => {
     const result = await compileHarnessBody(
       "if (-1 << 0 !== -1) { throw new Test262Error('#1: -1 << 0 === -1. Actual: ' + (-1 << 0)); }",
     );
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.irPostClaimErrors ?? []).toEqual([]);
-    expect(moduleInit(result)?.code).toBe("operand-coercion-unsupported");
+    expect(moduleInit(result)?.irBodyEmitted).toBe(true);
   });
 
   it("keeps a provable static `+` claimed", async () => {
