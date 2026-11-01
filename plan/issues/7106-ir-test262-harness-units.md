@@ -2206,6 +2206,50 @@ Left, as follow-ups of this issue:
     reads `undefined` instead of `null`; `F["helper"] = fn; F["helper"]()`
     throws.
 
+## f64 grow-gap fill in the shared vec store helper (2026-10-30)
+
+Split out of the IR vector element keys change (PR #6989) because it changes
+legacy's gc output; the byte-identity exception needs the project lead's
+sign-off.
+
+**Problem (measured on main `a514946a34`, gc and standalone, IR off and on).**
+`ensureVecElemSet` (`codegen/vec-elem-set.ts`), the `__vec_elem_set_<vecTypeIdx>`
+grow-store helper, filled an f64 grow gap with zeroes unless the module was
+standalone and tracked hole presence. Legacy's inline store
+(`compileElementAssignment`, #4491 T8/T11) marks the same gap on every lane.
+Legacy reaches the helper through `__extern_set` and `__vec_dp_value`, so after
+`const o: any = a; o[3] = 2` on `a = [1.5]` the gap read `0`: wrong for a plain
+read, a read through `o`, `typeof`, `??`, `join`, `JSON.stringify` and
+`includes`. The IR's stores use the same helper, so `a[3] = 3; a[1] + 1` gave
+1 instead of NaN.
+
+**Change.** The helper fills an f64 gap with the absence marker where the
+module tracks hole presence (as before, on standalone), else the undefined
+marker: the inline store's choice. `runtime/wasmgc/values/vector-grow-store.ts`
+needs no change. Its comments still say "standalone f64 sparse carriers"; they
+are left verbatim because `tests/issue-3518-vector-grow-store-body.test.ts`
+proves that construction is the donor's text by hashing it, comments included.
+
+**Byte identity, deliberately not kept.** Under `experimentalIR: false`, the f64
+instance of `__vec_elem_set_*` gains the gap-fill block (`array.new` with the
+marker plus an `array.fill`), and so do `__extern_set` (once) and
+`__vec_dp_value` (seven times), which inline it. In the PR #6989 review corpus
+(13 playground examples and 184 test262 files, main vs this change) that is 140
+of 197 compiles on gc and 145 on standalone, and nothing else changes;
+`S11.6.1_A1.js` on gc goes from 1,055,040 to 1,055,546 bytes.
+
+**Known side effect.** `reduce` over the gap: node skips holes (3.5); main's
+zeroes gave 3.5 by accident; the undefined marker is a present `undefined`, so
+the sum becomes NaN, the answer legacy's inline store already gives on main.
+Skipping needs the absence marker, which only modules that track holes use.
+
+**Tests.** `tests/issue-7106-f64-grow-gap-fill.test.ts`: nine observers of a gap
+written through an `any` alias answer as node on gc and standalone, with the IR
+off and on (main fails seven), and an IR store past the length reads NaN.
+`tests/issue-3518-vector-grow-store-donor.test.ts` re-pins the
+`ensureVecElemSet` shape and the gap-fill selection, and carries the registry
+re-pins that were already red on main (as PR #6989's `30d5b47623` does).
+
 ## Script `var` reference homes (2026-10-29)
 
 An independent implementation of the "script `var` reference homes" lever.
