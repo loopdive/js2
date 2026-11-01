@@ -163,7 +163,7 @@ node --import ./scripts/record-7164-bases-loader.mjs --import tsx \
   `--check` recomputes both and fails when the entries differ from the
   committed file, so a stale entry cannot widen what the test allows; it warns
   when only `"$base"` is older. It takes about 26 minutes.
-- Recorded against `origin/main` b60378d55a; the length-update and leak entries are unchanged since
+- Recorded against `origin/main` 5e4698bcbb; the length-update and leak entries are unchanged since
   b6250f09f8.
 
 **Tests.** `tests/equivalence/issue-7164-externref-vec-length-growth.test.ts`
@@ -209,7 +209,7 @@ round-8 attack sets it gives 0 new traps and 0 worse cells.
   27 detector rows.
 - **Assignment-target sweep** (22 forms × 3 lanes = 66 cells): 0 new traps,
   0 new compile errors, 0 worse; 9 better.
-- **Fixtures** re-recorded against `origin/main` b60378d55a.
+- **Fixtures** re-recorded against `origin/main` b60378d55a and checked (`--check`) against 5e4698bcbb.
 - **Review probe sets r1–r10** (old0–5, U, V, W, X, L, L2, DB, A, B's rows
   after the wasi hang, B2, C, D, E, E2, E3, F, G, H, I, round 7's P, Q, R,
   IOF, IOF3, round 8's S, S2, T, round 9's N, N2 and round 10's R10, R10b,
@@ -280,8 +280,8 @@ and then trapped on any read past the backing. The cost is linear.
 - **Pre-existing, not fixed here:** `[0, ...g]` with a literal-seeded string
   `any[]` reads the strings as `NaN`.
 
-**Bytes** (unoptimized, `origin/main` vs head). Corpus: 307 programs per
-lane — 13 playground examples, 4 benchmark suites and 290 array-using sources
+**Bytes** (unoptimized, `origin/main` vs head). Corpus: 308 programs per
+lane — 13 playground examples, 4 benchmark suites and 291 array-using sources
 extracted from `tests/equivalence`. No program changed compile status.
 
 | Lane | Playground | Benchmark suites | Equivalence sources |

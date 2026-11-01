@@ -1,5 +1,5 @@
 {
-  "$base": "b60378d55a150e8cc0ed74749703c61b98fcc2d0",
+  "$base": "5e4698bcbb0f2244252fdbcd2eb93c42e551436b",
   "forOfElem5": { "gc": "wrong", "standalone": "wrong", "wasi": "wrong" },
   "forOfLength": { "gc": "ce", "standalone": "ce", "wasi": "ce" },
   "forInElem": { "standalone": "wrong", "wasi": "wrong" },
