@@ -61,7 +61,7 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     expect(result.wat).toContain("__box_boolean");
   });
 
-  it("types array-literal widening as an unsupported representation", async () => {
+  it("claims a destructured array literal through the literal plan", async () => {
     const result = await compile(
       `export function test(): number {
         const [a, b, c] = [1, 2, 3];
@@ -77,14 +77,16 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     // row. Keep the exhaustive `toEqual` — the point of this pin is that `test`
     // is the *only* unit that demotes — and add the new row rather than relaxing
     // to a containment check that would hide an unexpected third outcome.
+    // (#7024) The literal plan lowers `const [a, b, c] = [1, 2, 3]` without an
+    // array, so `test` no longer demotes at build with
+    // `array-representation-unsupported`: it is claimed.
     expect(terminal(result)).toEqual([
       expect.objectContaining({
         displayName: "test",
-        kind: "unsupported",
-        code: "array-representation-unsupported",
-        stage: "build",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
+        kind: "emitted",
+        stage: "patch",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
       }),
       expect.objectContaining({
         displayName: "<module-init>",
