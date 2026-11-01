@@ -8098,6 +8098,8 @@ function isPhase1ConditionExpr(
   ) {
     truthinessOperand = unwrapPhase1Parens(truthinessOperand.operand);
   }
+  // A bare `null` lowers only into a reference (`nullValueAdmissible`), never the i32 a condition reads.
+  if (truthinessOperand.kind === ts.SyntaxKind.NullKeyword) return shapeNo("condition-null", expr);
   if (!trackedModuleInfluenceIsBoolean(truthinessOperand)) {
     return shapeNo("condition-module-value-nonbool", expr);
   }

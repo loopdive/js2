@@ -202,15 +202,31 @@ function directCallIdentityMismatch(detail: string): never {
   throw new Error(`ir/direct-call identity: ${detail}`);
 }
 
+/**
+ * The children `forEachChild` visits under one AST parent. Parsed nodes are
+ * immutable, so the set is computed once per parent: a module initializer
+ * checks every top-level statement against the same source file, which would
+ * otherwise rescan all its statements per check.
+ */
+const retainedChildren = new WeakMap<ts.Node, ReadonlySet<ts.Node>>();
+
+function retainedChildrenOf(parent: ts.Node): ReadonlySet<ts.Node> {
+  let children = retainedChildren.get(parent);
+  if (children === undefined) {
+    const collected = new Set<ts.Node>();
+    ts.forEachChild(parent, (child) => void collected.add(child));
+    retainedChildren.set(parent, (children = collected));
+  }
+  return children;
+}
+
 function requireExactDirectCallAst(node: ts.Node, sourceFile: ts.SourceFile, label: string): void {
   if (node.getSourceFile() !== sourceFile) {
     directCallIdentityMismatch(`${label} is detached from exact source ${sourceFile.fileName}`);
   }
   for (let current = node; current !== sourceFile; ) {
     const parent = current.parent;
-    let retainedByParent = false;
-    if (parent) ts.forEachChild(parent, (child) => void (retainedByParent ||= child === current));
-    if (!parent || !retainedByParent) {
+    if (!parent || !retainedChildrenOf(parent).has(current)) {
       directCallIdentityMismatch(`${label} is a copied or stale AST node in ${sourceFile.fileName}`);
     }
     current = parent;
