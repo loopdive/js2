@@ -1,7 +1,7 @@
 {
   "generated": "2026-11-01",
   "threshold": 1500,
-  "totalCeiling": 1052120,
+  "totalCeiling": 1052310,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4426,
@@ -41,7 +41,7 @@
     "src/codegen/expressions/identifiers.ts": 3367,
     "src/codegen/expressions/new-builtin-globals.ts": 2305,
     "src/codegen/expressions/new-super.ts": 8806,
-    "src/codegen/expressions/operator-assignment.ts": 3629,
+    "src/codegen/expressions/operator-assignment.ts": 3640,
     "src/codegen/expressions/unary-updates.ts": 1871,
     "src/codegen/extern-declarations.ts": 2201,
     "src/codegen/fnctor-escape-gate.ts": 2367,
@@ -78,7 +78,7 @@
     "src/codegen/statements/loops.ts": 4654,
     "src/codegen/statements/nested-declarations.ts": 4545,
     "src/codegen/statements/variables.ts": 2583,
-    "src/codegen/string-ops.ts": 4411,
+    "src/codegen/string-ops.ts": 4416,
     "src/codegen/ta-dyn-mop.ts": 1765,
     "src/codegen/type-coercion.ts": 5213,
     "src/codegen/typed-this.ts": 2312,
