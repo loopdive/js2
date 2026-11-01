@@ -279,7 +279,13 @@ import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts }
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import { collectPatternBindingNames } from "./analysis/ast-scope.js";
-import { planElementReads, planPropertyReads, type SourceReadPlan } from "./binding-pattern-plan.js";
+import {
+  isPatternDeclaration,
+  planElementReads,
+  planPropertyReads,
+  type PatternDeclaration,
+  type SourceReadPlan,
+} from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { planLiteralPattern } from "./literal-pattern-plan.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
@@ -1972,7 +1978,7 @@ export function lowerFunctionAstToIr(
   // `cx.scope`/`cx.builder`) but BEFORE `lowerStatementList(stmts, cx)`
   // so the body sees the leaves in scope from statement #0.
   for (const { pattern, value } of pendingDestructures) {
-    lowerBindingPattern(pattern, value, cx);
+    lowerBindingPattern(pattern, value, false, cx);
   }
 
   // (#3142 Slice 2) `<module-init>` unit — constructor-body precedent: every
@@ -4189,20 +4195,20 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
 /**
  * Slice 8a (#1169g): one field/index read per leaf of a flat pattern over a
  * typed source (a `const` declaration's or a parameter's), each leaf bound as
- * a `local` ScopeBinding. The source SSA value is read once per leaf: struct.get
- * and array.get are pure, so no single-store tee is needed for correctness.
+ * its declaration binds a name. The source SSA value is read once per leaf:
+ * struct.get and array.get are pure, so no single-store tee is needed.
  */
-function lowerBindingPattern(pattern: ts.BindingPattern, source: IrValueId, cx: LowerCtx): void {
+function lowerBindingPattern(pattern: ts.BindingPattern, source: IrValueId, isConst: boolean, cx: LowerCtx): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== pattern) {
-    withNodeSourceSite(cx, pattern, () => lowerBindingPattern(pattern, source, cx));
+    withNodeSourceSite(cx, pattern, () => lowerBindingPattern(pattern, source, isConst, cx));
     return;
   }
   if (ts.isObjectBindingPattern(pattern)) {
     const plan = admittedReads(planPropertyReads(pattern));
-    lowerPatternPlan(plan, patternLoweringHost(true, cx, fieldReader(source, cx)));
+    lowerPatternPlan(plan, patternLoweringHost(isConst, cx, fieldReader(source, cx)));
   } else {
     const plan = admittedReads(planElementReads(pattern));
-    lowerPatternPlan(plan, patternLoweringHost(true, cx, elementReader(source, cx)));
+    lowerPatternPlan(plan, patternLoweringHost(isConst, cx, elementReader(source, cx)));
   }
 }
 
@@ -4305,12 +4311,8 @@ function isRedeclaredModuleVar(d: ts.VariableDeclaration, name: string, cx: Lowe
 }
 
 /** A destructuring declaration (`VariableStatement` or `for (;;)` head); see "Binding pattern lowering". */
-function lowerDeclarationPattern(
-  d: ts.VariableDeclaration,
-  pattern: ts.BindingPattern,
-  isConst: boolean,
-  cx: LowerCtx,
-): void {
+function lowerDeclarationPattern(d: PatternDeclaration, isConst: boolean, cx: LowerCtx): void {
+  const pattern = d.name;
   if (!d.initializer) {
     // invariant (producer-promise): selection refuses a pattern without an initializer.
     throw new IrInvariantError(
@@ -4328,18 +4330,18 @@ function lowerDeclarationPattern(
       `ir/from-ast: module-level destructuring declaration not in module-init Slice 2 scope (${cx.funcName})`,
     );
   }
-  const literalPlan = planLiteralPattern(pattern, d.initializer, (name) => cx.scope.has(name));
+  const literalPlan = planLiteralPattern(pattern, d.initializer);
   if (literalPlan) {
     lowerPatternPlan(literalPlan, patternLoweringHost(isConst, cx, readsNoSource));
     return;
   }
-  lowerBindingPattern(pattern, lowerExpr(d.initializer, cx, irVal({ kind: "externref" })), cx);
+  lowerBindingPattern(pattern, lowerExpr(d.initializer, cx, irVal({ kind: "externref" })), isConst, cx);
 }
 
 /** Lower one variable declaration: a pattern, a module slot, a closure or a typed local. */
 function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, cx: LowerCtx): void {
-  if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
-    lowerDeclarationPattern(d, d.name, isConst, cx);
+  if (isPatternDeclaration(d)) {
+    lowerDeclarationPattern(d, isConst, cx);
     return;
   }
   if (!ts.isIdentifier(d.name)) {
@@ -17278,7 +17280,7 @@ function liftClosureBody(
   }
 
   for (const pending of pendingDestructures) {
-    lowerBindingPattern(pending.pattern, pending.value, innerCx);
+    lowerBindingPattern(pending.pattern, pending.value, false, innerCx);
   }
 
   if (ts.isArrowFunction(expr) && !ts.isBlock(body)) {

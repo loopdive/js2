@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { planLiteralPattern } from "../src/ir/literal-pattern-plan.js";
+import { programPatchesDestructuringRealm } from "../src/ir/realm-keys.js";
 import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 import { assembleHarnessBody, moduleInit } from "./helpers/harness-module-init.js";
@@ -111,6 +112,8 @@ const LEGACY: Record<string, string> = {
   // A written `let` leaf has no storage analysis behind it.
   reassignedLet:
     "var count = 0;\nfor (let [i, j] = [0, 6]; i < j; i++, j--) { count += 1; }\nassert.sameValue(count, 3);",
+  // Review round 2: a leaf's family reaches the operator check.
+  mixedPlus: loop("const [a, b] = [1, 'x']", "assert.sameValue(a + b, '1x');"),
   // A leaf never binds a literal whole: that would build it.
   wholeArray: loop("const [a] = [[1, 2]]", "assert.sameValue(a.length, 2); assert.sameValue(a[1], 2);"),
   wholeObjectWithNull: loop("const { a } = { a: { b: null } }", "assert.sameValue(a.b, null);"),
@@ -167,6 +170,12 @@ describe("#7106 for-head destructuring over a fresh literal", () => {
       6,
     ],
     indexPastTheEnd: ["export function f() { const { 3: a } = [1]; return a === undefined ? 7 : 0; }", 7],
+    // Review round 2: a leaf has its source value's family, so a mixed `+` is refused like `lowerBinary` refuses it.
+    mixedPlus: ["export function f() { const [a, b] = [1, 'x']; return (a + b).length; }", 2],
+    mixedPlusForHead: [
+      "export function f() { let n = 0; let s = ''; for (const [a, b] = [1, 'x']; n < 1; n++) { s = a + b; } return s.length; }",
+      2,
+    ],
   };
   const compileFunction = (source: string, target: Target) =>
     compile(source, {
@@ -195,17 +204,49 @@ describe("#7106 for-head destructuring over a fresh literal", () => {
     }
   }
 
+  const parse = (source: string) => ts.createSourceFile("plan.js", source, ts.ScriptTarget.ES2022, true);
+  const firstDeclaration = (source: string) =>
+    (parse(source).statements[0] as ts.VariableStatement).declarationList.declarations[0]!;
+
   it("the plan evaluates every literal expression in source order before any default", () => {
-    const source = "const [a, , b = d(), c] = [x(), y()];";
-    const declaration = (
-      ts.createSourceFile("plan.js", source, ts.ScriptTarget.ES2022, true).statements[0] as ts.VariableStatement
-    ).declarationList.declarations[0]!;
-    const plan = planLiteralPattern(declaration.name as ts.BindingPattern, declaration.initializer!, () => false)!;
+    const declaration = firstDeclaration("const [a, , b = d(), c] = [x(), y()];");
+    const plan = planLiteralPattern(declaration.name as ts.BindingPattern, declaration.initializer!)!;
     expect(plan.evaluations.map((expression) => expression.getText())).toEqual(["x()", "y()"]);
     expect(
       plan.steps.map((step) => (step.kind === "nested" ? "nested" : `${step.kind} ${step.leaf.name.text}`)),
     ).toEqual(["bind a", "default b", "bind c"]);
     expect(plan.steps[0]).toMatchObject({ value: { kind: "evaluated", index: 0 } });
     expect(plan.steps[2]).toMatchObject({ value: { kind: "undefined" } });
+  });
+
+  it("an `undefined` the program binds anywhere is not the global value (round 2)", () => {
+    const plain = firstDeclaration("const [a = 1] = [undefined];");
+    expect(planLiteralPattern(plain.name as ts.BindingPattern, plain.initializer!)).not.toBeNull();
+    // A later block-scoped `let undefined` holds the name in TDZ, so the default cannot be proven to run.
+    const tdz = firstDeclaration("const [a = 1] = [undefined]; let undefined = 5;");
+    expect(planLiteralPattern(tdz.name as ts.BindingPattern, tdz.initializer!)).toBeNull();
+  });
+
+  it("the realm guard sees every patch it can name, and no plain member read (round 2)", () => {
+    const patches = [
+      "Array.prototype[Symbol.iterator] = g;",
+      "delete Array.prototype[Symbol.iterator];",
+      "Reflect.defineProperty(Array.prototype, Symbol.iterator, { value: g });",
+      "Object.assign(Array.prototype, { 0: 1 });",
+      "Object.setPrototypeOf(Array.prototype, null);",
+      "globalThis.Array.prototype[Symbol.iterator] = g;",
+      "[Array.prototype[Symbol.iterator]] = [g];",
+      "Object.prototype.zz ??= 7;",
+      "Object.prototype.k += 1;",
+      "Object.prototype.__defineGetter__('zz', g);",
+      "var AP = Array.prototype;",
+    ];
+    for (const source of patches) expect(programPatchesDestructuringRealm(parse(source)), source).toBe(true);
+    const reads = [
+      "Array.prototype.map.call(xs, String);",
+      "Object.prototype.toString.call(v);",
+      "var join = Function.prototype.call.bind(Array.prototype.join);",
+    ];
+    for (const source of reads) expect(programPatchesDestructuringRealm(parse(source)), source).toBe(false);
   });
 });

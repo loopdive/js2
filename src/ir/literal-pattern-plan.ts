@@ -10,9 +10,10 @@
 // the realm's own: selection refuses every destructuring declaration of a
 // program that patches one (`programPatchesDestructuringRealm`). A missing key
 // that `Object.prototype` owns, and any key but `length` or an index inside an
-// array literal, is refused here.
+// array literal, is refused here. So is any `undefined` identifier as the
+// value `undefined` in a program that binds the name (`programBindsUndefined`).
 
-import { ts } from "../ts-api.js";
+import { forEachChild, ts } from "../ts-api.js";
 import { stripParens } from "../shared/binding-writes.js";
 import { isAnonymousFunctionDefinition } from "../shared/named-evaluation.js";
 import { collectPatternBindingNames, collectReferencedIdentifiers } from "./analysis/ast-scope.js";
@@ -20,9 +21,6 @@ import { isUndefinedCompareOperand } from "./analysis/operand-admissibility.js";
 import type { BindingLeaf, PatternLeafValue, PatternPlan, PatternStep } from "./binding-pattern-plan.js";
 import { phase1PropertyName } from "./property-key-fold.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
-
-/** Whether a name resolves to a binding of the program rather than the global (`undefined`). */
-export type IsShadowed = (name: string) => boolean;
 
 /** A position in the literal source. */
 type SourceNode =
@@ -44,7 +42,8 @@ type PendingStep =
   | Exclude<PatternStep<never>, { kind: "bind" }>;
 
 interface Reading {
-  readonly isShadowed: IsShadowed;
+  /** The identifier `undefined` is the global value: the program binds no other. */
+  readonly undefinedIsGlobal: boolean;
   /** Every leaf of the declaration: a default or source expression reading one is refused (TDZ). */
   readonly leaves: ReadonlySet<string>;
   readonly read: Set<SourceNode>;
@@ -52,12 +51,85 @@ interface Reading {
 }
 
 /** The plan of `pattern = source`, or null when `source` is not a literal the plan can decompose. */
-export function planLiteralPattern(
-  pattern: ts.BindingPattern,
-  source: ts.Expression,
-  isShadowed: IsShadowed,
-): PatternPlan | null {
-  return planOver(pattern, source, new Set(collectPatternBindingNames(pattern)), isShadowed);
+export function planLiteralPattern(pattern: ts.BindingPattern, source: ts.Expression): PatternPlan | null {
+  const undefinedIsGlobal = !programBindsUndefined(source.getSourceFile());
+  return planOver(pattern, source, new Set(collectPatternBindingNames(pattern)), undefinedIsGlobal);
+}
+
+/** What a leaf binds: an expression (its source position or its default), `undefined`, or an array's length. */
+export type LiteralLeafSource = ts.Expression | "undefined" | "length";
+
+/** The source of `leaf` when its declaration takes the literal plan; undefined otherwise. */
+export function literalLeafSource(leaf: ts.BindingElement): LiteralLeafSource | undefined {
+  let declaration: ts.Node = leaf;
+  while (
+    ts.isBindingElement(declaration) ||
+    ts.isObjectBindingPattern(declaration) ||
+    ts.isArrayBindingPattern(declaration)
+  ) {
+    declaration = declaration.parent;
+  }
+  if (!ts.isVariableDeclaration(declaration) || !declaration.initializer || ts.isIdentifier(declaration.name)) {
+    return undefined;
+  }
+  const plan = planLiteralPattern(declaration.name, declaration.initializer);
+  return plan ? sourceOfLeaf(plan, leaf) : undefined;
+}
+
+function sourceOfLeaf(plan: PatternPlan, leaf: ts.BindingElement): LiteralLeafSource | undefined {
+  for (const step of plan.steps) {
+    if (step.kind === "nested") {
+      const nested = sourceOfLeaf(step.plan, leaf);
+      if (nested !== undefined) return nested;
+    } else if (step.kind === "default" && step.leaf === leaf) {
+      return step.initializer;
+    } else if (step.kind === "bind" && step.leaf === leaf) {
+      const value = step.value;
+      if (value.kind === "read") return value.read;
+      return value.kind === "evaluated" ? plan.evaluations[value.index] : value.kind;
+    }
+  }
+  return undefined;
+}
+
+const programsBindingUndefined = new WeakMap<ts.SourceFile, boolean>();
+
+/**
+ * Whether the program declares a binding named `undefined` anywhere. Then no
+ * `undefined` identifier is proven to be the global value: a later block's
+ * `let undefined` holds it in TDZ, a hoisted `function undefined` replaces it.
+ */
+function programBindsUndefined(sourceFile: ts.SourceFile): boolean {
+  let binds = programsBindingUndefined.get(sourceFile);
+  if (binds === undefined) {
+    let found = false;
+    const visit = (node: ts.Node): void => {
+      if (found) return;
+      found = ts.isIdentifier(node) && node.text === "undefined" && declaresName(node);
+      if (!found) forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    binds = found;
+    programsBindingUndefined.set(sourceFile, binds);
+  }
+  return binds;
+}
+
+function declaresName(name: ts.Identifier): boolean {
+  const parent = name.parent;
+  return (
+    (ts.isVariableDeclaration(parent) ||
+      ts.isBindingElement(parent) ||
+      ts.isParameter(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isImportSpecifier(parent) ||
+      ts.isImportClause(parent) ||
+      ts.isNamespaceImport(parent)) &&
+    parent.name === name
+  );
 }
 
 /** Every expression the plan lowers: the evaluations, the defaults it runs, and those of its nested plans. */
@@ -74,9 +146,9 @@ function planOver(
   pattern: ts.BindingPattern,
   source: ts.Expression,
   leaves: ReadonlySet<string>,
-  isShadowed: IsShadowed,
+  undefinedIsGlobal: boolean,
 ): PatternPlan | null {
-  const reading: Reading = { isShadowed, leaves, read: new Set(), steps: [] };
+  const reading: Reading = { undefinedIsGlobal, leaves, read: new Set(), steps: [] };
   const root = sourceNode(source, reading);
   if (root === null || root.kind === "value") return null;
   if (!readPattern(pattern, root, reading)) return null;
@@ -98,7 +170,7 @@ function planLeafValue(node: SourceNode | number, indices: ReadonlyMap<SourceNod
 
 function sourceNode(expression: ts.Expression, reading: Reading): SourceNode | null {
   const node = stripParens(expression);
-  if (isUndefinedCompareOperand(node, reading.isShadowed)) return UNDEFINED;
+  if (isUndefinedCompareOperand(node, () => !reading.undefinedIsGlobal)) return UNDEFINED;
   if (node.kind === ts.SyntaxKind.NullKeyword) return NULL;
   if (ts.isArrayLiteralExpression(node)) return arraySource(node, reading);
   if (ts.isObjectLiteralExpression(node)) return objectSource(node, reading);
@@ -191,7 +263,7 @@ function readElement(element: ts.BindingElement, node: SourceNode, reading: Read
 function readDefault(element: ts.BindingElement, initializer: ts.Expression, reading: Reading): boolean {
   if (referencesLeaf(initializer, reading.leaves)) return false;
   if (!ts.isIdentifier(element.name)) {
-    const nested = planOver(element.name, initializer, reading.leaves, reading.isShadowed);
+    const nested = planOver(element.name, initializer, reading.leaves, reading.undefinedIsGlobal);
     if (nested) reading.steps.push({ kind: "nested", plan: nested });
     return nested !== null;
   }

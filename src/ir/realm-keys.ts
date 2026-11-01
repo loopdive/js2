@@ -6,7 +6,7 @@
 // program may have patched that chain.
 
 import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
-import { sourcePatchesPrototype } from "../shared/intrinsic-prototype-writes.js";
+import { sourceMayPatchPrototype } from "../shared/intrinsic-prototype-writes.js";
 import type { ts } from "../ts-api.js";
 
 /** The string keys the catalog gives the named intrinsics (Annex B members included). */
@@ -27,5 +27,5 @@ export const OBJECT_PROTOTYPE_KEYS = realmStringKeys("%Object.prototype%");
  * missing key (`Object.prototype`).
  */
 export function programPatchesDestructuringRealm(sourceFile: ts.SourceFile): boolean {
-  return sourcePatchesPrototype(sourceFile, "Array") || sourcePatchesPrototype(sourceFile, "Object");
+  return sourceMayPatchPrototype(sourceFile, "Array") || sourceMayPatchPrototype(sourceFile, "Object");
 }

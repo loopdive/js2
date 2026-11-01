@@ -123,10 +123,8 @@ function nullIsComparedOperand(node: ts.Node): boolean {
  * destructuring declaration the literal plan decomposes. That plan skips or
  * destructures a `null` and builds no literal around one.
  */
-function nullIsValue(nullLiteral: ts.Node, isClosureSlot: (name: string) => boolean): boolean {
+function nullIsValue(nullLiteral: ts.Node): boolean {
   if (nullIsComparedOperand(nullLiteral)) return false;
-  const isShadowed = (name: string): boolean =>
-    isClosureSlot(name) || moduleDeclares(nullLiteral.getSourceFile(), name, false);
   let child = nullLiteral;
   for (let parent = child.parent; parent; child = parent, parent = parent.parent) {
     if (
@@ -141,7 +139,7 @@ function nullIsValue(nullLiteral: ts.Node, isClosureSlot: (name: string) => bool
       ts.isVariableDeclaration(parent) &&
       parent.initializer === child &&
       !ts.isIdentifier(parent.name) &&
-      planLiteralPattern(parent.name, parent.initializer, isShadowed) !== null
+      planLiteralPattern(parent.name, parent.initializer) !== null
     );
   }
   return true;
@@ -629,7 +627,7 @@ export function plannedClosureOperandRefusal(
     else if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       refusal = memberReadRefusal(node);
     } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) refusal = updateRefusal(node);
-    else if (node.kind === ts.SyntaxKind.NullKeyword && nullIsValue(node, isClosureSlot)) {
+    else if (node.kind === ts.SyntaxKind.NullKeyword && nullIsValue(node)) {
       refusal = nullValueAdmissible(nullConsumerFamily(node)) ? null : { arm: "closure-null-value", node };
     } else if (ts.isVoidExpression(node) && !voidValueConsumerAdmissible(node, isClosureSlot, joinsOnCarrier)) {
       refusal = { arm: "closure-void-value", node };

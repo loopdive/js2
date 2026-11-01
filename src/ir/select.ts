@@ -157,18 +157,25 @@ import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
-import { isPhase1BindingPattern, type BindingLeaf } from "./binding-pattern-plan.js";
-import { literalPlanExpressions, planLiteralPattern } from "./literal-pattern-plan.js";
+import {
+  isPatternDeclaration,
+  isPhase1BindingPattern,
+  type BindingLeaf,
+  type PatternDeclaration,
+} from "./binding-pattern-plan.js";
+import { literalLeafSource, literalPlanExpressions, planLiteralPattern } from "./literal-pattern-plan.js";
 import { declarationBindingWritten } from "./const-binding-writes.js";
 import { programPatchesDestructuringRealm } from "./realm-keys.js";
 import { collectBindingPatternNames } from "./analysis/ast-scope.js";
 import {
   conditionalJoinArmFamily,
   conditionalJoinFamily,
+  binaryOperandsAdmissible,
   isComparisonResultOperator,
   isEqualityOperator,
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
+  isTypedBinaryOperator,
   nativeI32OperandsAdmissible,
   type OperandFamily,
 } from "./analysis/operand-admissibility.js";
@@ -5451,10 +5458,11 @@ function isPhase1ForStatementInScope(
         return shapeNo("for-init-var-kind", stmt.initializer);
       const isConst = !!(flags & ts.NodeFlags.Const);
       for (const d of stmt.initializer.declarations) {
-        if (!ts.isIdentifier(d.name)) {
-          if (!isPhase1DeclarationPattern(d, d.name, isConst, innerScope, localClasses)) return false;
+        if (isPatternDeclaration(d)) {
+          if (!isPhase1DeclarationPattern(d, isConst, innerScope, localClasses)) return false;
           continue;
         }
+        if (!ts.isIdentifier(d.name)) return shapeNo("for-init-name", d.name);
         if (!d.initializer) return shapeNo("for-init-noinit", d);
         // (#2856) A name a SIBLING for-init leaked into the flat scope set is
         // NOT a genuine duplicate — from-ast scopes each for-init in its own
@@ -6844,9 +6852,9 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
   for (const d of stmt.declarationList.declarations) {
     // A script-level pattern's leaves are `__mod_` slots the pattern lowering
     // does not write (S5 of the #7106 destructuring lever).
-    if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
+    if (isPatternDeclaration(d)) {
       if (currentSubjectIsModuleInit) return shapeNo("vardecl-module-destructuring", d.name);
-      if (!isPhase1DeclarationPattern(d, d.name, isConst, scope, localClasses)) return false;
+      if (!isPhase1DeclarationPattern(d, isConst, scope, localClasses)) return false;
       continue;
     }
     if (!ts.isIdentifier(d.name)) return shapeNo("vardecl-nonident-name", d.name);
@@ -7042,16 +7050,16 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
  *     storage analysis a reassigned identifier declaration gets.
  */
 function isPhase1DeclarationPattern(
-  d: ts.VariableDeclaration,
-  pattern: ts.BindingPattern,
+  d: PatternDeclaration,
   isConst: boolean,
   scope: Set<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  const pattern = d.name;
   if (!d.initializer) return shapeNo("vardecl-dstr-noinit", pattern);
   if (programPatchesDestructuringRealm(d.getSourceFile())) return shapeNo("vardecl-dstr-realm-patched", pattern);
   if (declarationBindingWritten(d)) return shapeNo("vardecl-dstr-leaf-written", pattern);
-  const literalPlan = planLiteralPattern(pattern, d.initializer, (name) => scope.has(name));
+  const literalPlan = planLiteralPattern(pattern, d.initializer);
   if (literalPlan) return isPhase1LiteralPattern(pattern, literalPlanExpressions(literalPlan), scope, localClasses);
   // A `for (;;)` head is admitted over a fresh literal only.
   if (ts.isForStatement(d.parent.parent)) return shapeNo("for-init-dstr-source", d.initializer);
@@ -8843,7 +8851,29 @@ function selectorPrimitiveWrapperOrGenericBinary(
     return capabilityNo("operand-coercion-unsupported", "expr-equality-reference-operands", expr);
   }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
+  // (#7106) A literal-pattern leaf has its source value's family, so an
+  // operator over one is judged here as `lowerBinary` would judge it.
+  if (!isEquality && isTypedBinaryOperator(binOp) && [expr.left, expr.right].some(isLiteralPatternLeaf)) {
+    const left = provenIrFamily(expr.left, scope);
+    const right = provenIrFamily(expr.right, scope);
+    if (left !== "unknown" && right !== "unknown" && !binaryOperandsAdmissible(binOp, left, right)) {
+      return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
+    }
+  }
   return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
+}
+
+/** The leaf of a destructuring declaration that takes the literal plan, read through `expression`. */
+function literalPatternLeaf(expression: ts.Expression): ts.BindingElement | undefined {
+  if (!ts.isIdentifier(expression)) return undefined;
+  const declaration = currentModuleBindingResolver?.localValueDeclaration(expression);
+  return declaration && ts.isBindingElement(declaration) && literalLeafSource(declaration) !== undefined
+    ? declaration
+    : undefined;
+}
+
+function isLiteralPatternLeaf(expression: ts.Expression): boolean {
+  return literalPatternLeaf(expression) !== undefined;
 }
 
 function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpression): boolean {
@@ -11088,6 +11118,12 @@ function isPhase1StaticPredicateCall(
  * initializer when the local is never rewritten).
  */
 function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): OperandFamily {
+  // A literal-pattern leaf binds its source value; `undefined` is the carrier's.
+  const leaf = literalPatternLeaf(expression);
+  if (leaf) {
+    const source = literalLeafSource(leaf)!;
+    return source === "undefined" ? "dynamic" : source === "length" ? "number" : provenIrFamily(source, scope);
+  }
   // An unannotated local: its family is its initializer's, which the caller traces.
   if (ts.isIdentifier(expression) && unannotatedLocal(expression) !== undefined) return "unknown";
   if (moduleBinding(expression) !== undefined) {
