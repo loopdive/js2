@@ -11,10 +11,9 @@
 // native JS; the joined result is read back one char code at a time so the
 // standalone lane needs no string marshalling.
 //
-// The wasi lane runs only the consumers it supports for ANY class instance
-// (`Object.keys` / spread); its JSON.stringify, for…in, getOwnPropertyNames and
-// Object.assign of a class instance answer `null` / empty even with a single
-// class, a separate pre-existing gap.
+// Every row also runs on wasi: #7201 gave its closed-struct consumers
+// (JSON.stringify, for…in, getOwnPropertyNames, Object.assign, hasOwnProperty,
+// `__extern_get`) the same finalize-time arms as standalone.
 import { describe, expect, it } from "vitest";
 import { compile } from "../../src/index.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
@@ -24,7 +23,6 @@ const ALL = [
   { lane: "standalone", options: { target: "standalone" } },
   { lane: "wasi", options: { target: "wasi" } },
 ] as const;
-const NO_WASI = ALL.slice(0, 2);
 
 const READ = `export function test(i: number) { const s = run(); return i < 0 ? s.length : s.charCodeAt(i); }`;
 
@@ -49,11 +47,11 @@ async function expectSameOnLanes(body: string, lanes: readonly (typeof ALL)[numb
 const CASES: Record<string, [string, readonly (typeof ALL)[number][]]> = {
   "private-only beside a public twin": [
     `class C { #x = 1 }\nclass D { y = 2 }\nfunction run(): string { return JSON.stringify(new C()) + JSON.stringify(new D()); }`,
-    NO_WASI,
+    ALL,
   ],
   "public twins: JSON.stringify": [
     `class A { a = 1 }\nclass B { b = 1 }\nfunction run(): string { return JSON.stringify(new A()) + JSON.stringify(new B()); }`,
-    NO_WASI,
+    ALL,
   ],
   "public twins: Object.keys of a spread": [
     `class A { a = 1 }\nclass B { b = 1 }\nfunction run(): string { new A(); return Object.keys({ ...new B() }).join(); }`,
@@ -61,7 +59,7 @@ const CASES: Record<string, [string, readonly (typeof ALL)[number][]]> = {
   ],
   "public twins: Object.assign": [
     `class A { a = 1 }\nclass B { b = 1 }\nfunction run(): string { new A(); return JSON.stringify(Object.assign({}, new B())); }`,
-    NO_WASI,
+    ALL,
   ],
   "public twins: Object.keys through any": [
     `class A { a = 1 }\nclass B { b = 1 }\nfunction run(): string { const a: any = new A(); const b: any = new B(); return Object.keys(a).join() + ";" + Object.keys(b).join(); }`,
@@ -69,15 +67,15 @@ const CASES: Record<string, [string, readonly (typeof ALL)[number][]]> = {
   ],
   "public twins: for-in through any": [
     `class A { a = 1 }\nclass B { b = 1 }\nfunction run(): string { new A(); const o: any = new B(); const k: string[] = []; for (const p in o) k.push(p); return k.join(); }`,
-    NO_WASI,
+    ALL,
   ],
   "public twins: getOwnPropertyNames through any": [
     `class A { a = 1 }\nclass B { b = 1 }\nfunction run(): string { new A(); const o: any = new B(); return Object.getOwnPropertyNames(o).join(); }`,
-    NO_WASI,
+    ALL,
   ],
   "three-way twins": [
     `class A { a = 1 }\nclass B { b = 1 }\nclass C { c = 1 }\nfunction run(): string { const xs: any[] = [new A(), new B(), new C()]; let s = ""; for (const o of xs) s += JSON.stringify(o) + Object.keys(o).join(); return s; }`,
-    NO_WASI,
+    ALL,
   ],
   "three-way twins: Object.keys": [
     `class A { a = 1 }\nclass B { b = 1 }\nclass C { c = 1 }\nfunction run(): string { const xs: any[] = [new A(), new B(), new C()]; let s = ""; for (const o of xs) s += Object.keys(o).join(); return s; }`,
@@ -85,7 +83,7 @@ const CASES: Record<string, [string, readonly (typeof ALL)[number][]]> = {
   ],
   "subclass pair over a shared base": [
     `class Base { z = 0 }\nclass A extends Base { a = 1 }\nclass B extends Base { b = 1 }\nfunction run(): string { return JSON.stringify(new A()) + JSON.stringify(new B()) + JSON.stringify(new Base()); }`,
-    NO_WASI,
+    ALL,
   ],
   "subclass pair: Object.keys": [
     `class Base { z = 0 }\nclass A extends Base { a = 1 }\nclass B extends Base { b = 1 }\nfunction run(): string { const xs: any[] = [new Base(), new A(), new B()]; let s = ""; for (const o of xs) s += Object.keys(o).join() + ";"; return s; }`,
@@ -93,19 +91,19 @@ const CASES: Record<string, [string, readonly (typeof ALL)[number][]]> = {
   ],
   "deep chain": [
     `class A { a = 1 }\nclass B extends A { b = 2 }\nclass C extends B { c = 3 }\nfunction run(): string { const xs: any[] = [new A(), new B(), new C()]; let s = ""; for (const o of xs) s += JSON.stringify(o) + Object.keys(o).join() + ";"; return s; }`,
-    NO_WASI,
+    ALL,
   ],
   "subclass without own fields reads its parent's names": [
     `class A { a = 1 }\nclass B extends A {}\nclass T { t = 1 }\nfunction run(): string { const o: any = new B(); return JSON.stringify(new B()) + Object.keys(o).join() + JSON.stringify(new T()); }`,
-    NO_WASI,
+    ALL,
   ],
   "mixed private and public beside a public twin": [
     `class C { #x = 1; y = 2 }\nclass D { u = 3; v = 4 }\nfunction run(): string { return JSON.stringify(new C()) + JSON.stringify(new D()) + JSON.stringify({ ...new C() }) + JSON.stringify({ ...new D() }); }`,
-    NO_WASI,
+    ALL,
   ],
   "expando on a twin": [
     `class A { a = 1 }\nclass B { b = 1 }\nfunction run(): string { const o: any = new B(); o.z = 5; return Object.keys(o).join() + JSON.stringify(new A()); }`,
-    NO_WASI,
+    ALL,
   ],
 };
 
@@ -139,7 +137,7 @@ describe("#7158 twin struct layouts keep their own enumeration arm", () => {
         (c) => `{ const o: any = new X(); s += ${c} + "|"; }\n{ const o: any = new Y(); s += ${c} + "|"; }`,
       );
       const body = `class X { ${x} }\nclass Y { ${y} }\nfunction run(): string { let s = "";\n${each.join("\n")}\nreturn s; }`;
-      await expectSameOnLanes(body, NO_WASI);
+      await expectSameOnLanes(body, ALL);
     });
   }
 });

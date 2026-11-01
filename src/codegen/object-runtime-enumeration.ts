@@ -24,7 +24,7 @@ import { registerObjectSameValueHelper } from "./object-same-value.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { getStringToNumberProvider, getToPrimitiveProvider } from "./coercion-engine.js";
-import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
@@ -1125,7 +1125,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   // Finalized once the complete closed-struct shape set is known. Keeping this
   // false while eager helpers are built prevents arbitrary externref sources
   // (builtins, strings, symbols, proxies) from being mistaken for structs.
-  const closedSourceClassifierIdx = ctx.standalone
+  const closedSourceClassifierIdx = noJsHost(ctx)
     ? registerNative(
         "__object_assign_closed_struct_source",
         [{ kind: "externref" }],
@@ -1181,7 +1181,6 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     // The finalized `__object_keys` and `__extern_get` helpers already model
     // closed-struct enumerable properties; reuse them only for that miss.
     const classifiedClosedStructSourceCopy: Instr[] =
-      ctx.standalone &&
       closedSourceClassifierIdx !== undefined &&
       objectKeysIdx !== undefined &&
       externLengthIdx !== undefined &&

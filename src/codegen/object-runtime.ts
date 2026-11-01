@@ -8486,7 +8486,7 @@ export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
  * all previously-baked call indices remain stable.
  */
 export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if (!noJsHost(ctx) || ctx.anyStrTypeIdx < 0) return;
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (flattenIdx === undefined || equalsIdx === undefined) return;
@@ -8993,7 +8993,7 @@ function buildClosedStructEnumerationArms(
 }
 
 export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!noJsHost(ctx)) return;
   const targets = ["__getOwnPropertyNames"]
     .map((name) => ctx.mod.functions.find((candidate) => candidate.name === name))
     .filter((f): f is NonNullable<typeof f> => f !== undefined);
@@ -9154,7 +9154,7 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
  * reports the physical field.
  */
 export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if (!noJsHost(ctx) || ctx.anyStrTypeIdx < 0) return;
   const inheritedSetGetMissActive = inheritedSetAnyDirty(ctx);
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
