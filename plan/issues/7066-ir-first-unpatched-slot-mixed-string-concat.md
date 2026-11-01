@@ -381,3 +381,38 @@ session.
     answers like node on gc, standalone and wasi.
   - Programs with no such demote are byte-identical.
   - No new `unpatched-slot` in the equivalence suite.
+
+## Review round 2 (2026-11-01): one PR, and a mixed conditional beside a string stays a string
+
+The round-2 review of #7033 merged the lowering into it (one PR). It found
+that the step-1 rework still failed one step later.
+
+**The failure.** The rework made a mixed conditional a dynamic `+` operand. So
+`"v" + (n > 0 ? "a" : 1)` produced the carrier, and these forms then demoted
+after the claim:
+- `s = "v" + (n > 0 ? "a" : 1)` into a `string` slot (`assignment to "s"
+  (string) got dynamic`);
+- `const s = "v" + (cond); return s.length`;
+- `c = c + s.length` in a loop.
+
+The boxing also cost about 2.4× on standalone.
+
+**The fix.**
+- Beside a proven string, the operand is converted arm by arm, exactly as
+  `String(c ? a : b)` converts it. #7034's `lowerBinaryOperands` calls
+  `lowerConvertedMixedConditional`, which is factored out of
+  `tryLowerExactMixedPrimitiveWrapperCall`.
+- ToPrimitive is the identity on the primitive arms, so the `+` is a string
+  concatenation, never boxed, and its result is a string.
+- `expressionProducesDynamic` reads `mixedPrimitiveConditionalClaim`, not the
+  tamper-sensitive proof.
+
+All four forms above lower with no post-claim demote on gc, standalone and
+wasi, and answer as node does (`tests/issue-7066-mixed-concat-lowering.test.ts`).
+
+**Follow-up, not fixed here: `s += n > 0 ? "p" : 0`.** The compound form is
+claimed and then demotes (`string-evidence-unsupported`): the `+=` into a
+string slot takes only a string value (`compoundWriteAdmissible`). The legacy
+body it falls back to traps with `illegal cast` on standalone. Both behaviours
+predate this PR. The fix is the same arm-wise conversion in the compound arm,
+plus the shared rule in `compoundWriteAdmissible`.

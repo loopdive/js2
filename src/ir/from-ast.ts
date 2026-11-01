@@ -14040,7 +14040,16 @@ function tryLowerExactMixedPrimitiveWrapperCall(expr: ts.CallExpression, cx: Low
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => tryLowerExactMixedPrimitiveWrapperCall(expr, cx));
   const proof = proveExactMixedPrimitiveWrapperCall(expr, cx);
-  if (proof === null) return null;
+  return proof === null ? null : lowerConvertedMixedConditional(proof, cx);
+}
+
+/**
+ * #5092 — `String(c ? a : b)` / `Number(c ? a : b)` over a proven mixed-primitive
+ * conditional, converted arm by arm: each arm's ToString / ToNumber runs in its
+ * own branch, so the value is never boxed into the carrier. (#7066) The string
+ * `+` converts such an operand the same way.
+ */
+function lowerConvertedMixedConditional(proof: ExactMixedPrimitiveWrapperProof, cx: LowerCtx): IrValueId {
   try {
     const rawCond = lowerExpr(proof.conditional.condition, cx, irVal({ kind: "i32" }));
     const cond = lowerToBooleanForCondition(rawCond, proof.conditional.condition, cx);
@@ -15221,11 +15230,11 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
       expressionProducesDynamic(candidate.expression.expression, cx)
     );
   }
-  // (#7066) A #5092 mixed-primitive conditional lowers to the carrier (`lowerConditional`).
+  // (#7066) A claimed #5092 mixed-primitive conditional lowers to the carrier (`lowerConditional`).
   if (ts.isConditionalExpression(candidate)) {
     return (
       (expressionProducesDynamic(candidate.whenTrue, cx) && expressionProducesDynamic(candidate.whenFalse, cx)) ||
-      proveMixedPrimitiveConditional(candidate, cx) !== null
+      mixedPrimitiveConditionalClaim(candidate, cx) !== null
     );
   }
   // A `+` over the carrier, or over a fresh wrapper's ToPrimitive, adds dynamically.
@@ -15429,7 +15438,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     isIrBitwiseOperatorToken(op) &&
     isI32PureExprIR(expr.left, cx.i32PureNames, cx.provenCharReads) &&
     isI32PureExprIR(expr.right, cx.i32PureNames, cx.provenCharReads);
-  const [lhs, rhs] = lowerBinaryOperands(expr, op, i32PureBitwiseOperands, cx);
+  const [lhs, rhs] = lowerBinaryOperands(expr, op, i32PureBitwiseOperands, additiveProofs, cx);
   const lt = typeOfValue(lhs, cx);
   const rt = typeOfValue(rhs, cx);
 
@@ -15667,17 +15676,26 @@ function lowerBinaryOperands(
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
   i32Pure: boolean,
+  additiveProofs: readonly [AdditiveProof, AdditiveProof] | undefined,
   cx: LowerCtx,
 ): readonly [IrValueId, IrValueId] {
-  const lower = (operand: ts.Expression): IrValueId => {
+  const lower = (operand: ts.Expression, otherProof: AdditiveProof | undefined): IrValueId => {
     if (i32Pure) return emitI32PureExpr(operand, cx);
     if (isNumericReaderOperator(op) && peelParensExpr(operand).kind === ts.SyntaxKind.NullKeyword) {
       return cx.builder.emitConst({ kind: "f64", value: 0 }, IR_F64);
     }
+    // (#7066) Beside a proven string, a #5092 mixed-primitive conditional is the
+    // string `String(c ? a : b)` makes of it: ToPrimitive is the identity on its
+    // primitive arms, so the `+` concatenates unboxed and stays a string.
+    const conditional = unwrapMixedPrimitiveProjection(operand);
+    if (otherProof === "string" && ts.isConditionalExpression(conditional)) {
+      const mixed = requireMixedPrimitiveConditionalProof(conditional, "string `+` operand", cx);
+      if (mixed !== null) return lowerConvertedMixedConditional({ kind: "String", conditional, mixed }, cx);
+    }
     return lowerExpr(operand, cx, irVal({ kind: "f64" }));
   };
-  const lhs = lower(expr.left);
-  const rhs = lower(expr.right);
+  const lhs = lower(expr.left, additiveProofs?.[1]);
+  const rhs = lower(expr.right, additiveProofs?.[0]);
   return [freshWrapperToDynamic(op, expr.left, lhs, cx), freshWrapperToDynamic(op, expr.right, rhs, cx)];
 }
 
