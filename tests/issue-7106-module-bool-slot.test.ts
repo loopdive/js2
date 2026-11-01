@@ -37,6 +37,8 @@ const CLAIMED: Record<string, string> = {
   flagWritten: "var executed = false;\nexecuted = true;\nassert.sameValue(executed, true);",
   comparisonInitializer: "var x = 1 < 2;\nassert.sameValue(x, true);",
   readInFunction: "var x = false;\nfunction k() { assert.sameValue(x, false); }\nk();",
+  // The main twin of the shapes S5 reaches (#7037 round 3).
+  comparisonOfVar: "var a = 3;\nvar b = a > 2;\nassert.sameValue(b, true);",
 };
 
 // Not a module binding on this branch; it must still never withdraw a claim.
