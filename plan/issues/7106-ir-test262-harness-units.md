@@ -111,13 +111,13 @@ loc-budget-allow:
   - src/ir/lower-generic.ts
   - src/ir/runtime/verify.ts
   # 2026-10-31 (boolean statics, round 5): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+89); the rule lives in src/ir/static-predicates/
-  # 2026-11-01 (#7106 S5): `moduleVarLeavesStorable`, the per-leaf slot fit of a module-init `var` pattern (+35)
+  # 2026-11-01 (#7106 S5): `moduleVarLeavesStorable`, the per-leaf slot fit of a module-init `var` pattern (+36)
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
   - src/ir/ambient-typeof.ts
   - src/ir/prepared-component-dependencies.ts
-  # 2026-11-01 (#7106 S5): `scriptVarHome` takes a leaf too, one type import (+1)
+  # 2026-11-01 (#7106 S5): `scriptVarHome` takes a leaf too: one type import and the signature prettier wraps (+4)
   - src/codegen/index.ts
   - src/ir/propagate.ts
   - src/codegen/dyn-read.ts
@@ -3988,50 +3988,6 @@ All of the following gates were run bare and exit 0:
 - test:changed-root (94 + 4);
 - import-cycles and compiler-boundaries (`--mode inventory`).
 
-## IR `finally` abrupt exit: the guard `if` was not a frame (fixed 2026-11-01)
-
-**Symptom.** Under the IR, `do { try { throw "x"; } finally { break; } }
-while (c < 2)` looped forever, in a function and at top level; legacy and node
-answer 11. The chunk-budget lever (#7026) exposes it: four ES5 rows that main
-sends to legacy only because they are chunk-sized fail once the IR claims them
-(`language/statements/try/S12.14_A9_T3` hangs; `S12.14_A9_T2`,
-`S12.14_A10_T2`, `S12.14_A10_T3` fail).
-
-**Root cause.** The `try` arm of `lowerIrFunctionBody`
-(`src/ir/lower-generic.ts`) emits each exception-path copy of the finally
-inside the `finallyRan` guard `if` (#6651 U4). That `if` is one Wasm label, but
-no `CtrlFrame` was pushed for it, so `resolveBrLabel` derived every `br` in
-that copy one frame short: a `break` re-entered the loop body, and a `continue`
-or labeled exit left the wrong frame. The normal-exit copy has no guard and was
-right.
-
-**Fix.** Push a plain frame while the guarded copy is emitted, the pattern
-every other structured arm uses (+4 lines in `lowerIrFunctionBody`, under the
-issue's `lower-generic.ts` grant). A `return`
-inside or across a `finally` does not share the bug: the selector refuses it
-(`earlyReturnBarrierDepth`), and legacy answers like node.
-
-**Measured** (head vs main `ac8dbbf406`, the base taken as a file-copy A/B of
-`lower-generic.ts`):
-
-- `tests/ir-finally-abrupt-exit.test.ts`, 11 IR-claimed shapes (throw, break,
-  continue and a catch rethrow overridden by the finally's break or continue;
-  nested finally; labeled continue and break across two finallys; a switch
-  break), each in a function and at top level, plus 3 `return` shapes left on
-  legacy: 28/28 on head; 14/28 on base, none hanging (every loop has a guard).
-- `runTest262File`, the 61 rows of `language/statements/{try,for,while,
-  do-while,switch}` that contain `finally`, standalone and gc: 0 flips, binary
-  sha identical 61/61 on each lane (main sends every break-in-finally row to
-  legacy). 54/61 pass on both; the other 7 need the QuickJS eval provider,
-  which is not built locally, and are refused at select on both trees.
-- Unchunked twins of the four rows (one file per `// CHECK#`, 26 files, so
-  the IR claims each `<module-init>`): 26/26 pass on head on both lanes; 22/26
-  on base (one failing check per row, the `S12.14_A9_T3` one hangs).
-- The 710 rows without `finally` cannot change (the edit only moves br depths
-  inside a guarded finally copy); a 60-row sample is sha-identical on gc and
-  standalone. Playground: 13/13 identical on both lanes (no example has a
-  `finally`).
-
 ### S5 of the destructuring lever: script `var` patterns and pattern `for` heads (plan, 2026-11-01)
 
 S5 stacks on the destructuring lever (`claude/7106-for-head-destructuring`,
@@ -4085,7 +4041,7 @@ pattern in such a list is a module binding: it owns its `__mod_<name>` slot,
 just as a top-level identifier declaration does.
 
 1. **One module for the module-init `var` vocabulary**
-   (`src/ir/module-init-vars.ts`, new, 92 lines).
+   (`src/ir/module-init-vars.ts`, new, 88 lines).
    - `moduleInitVarList(statement)` and `isModuleInitVarList(node)` are the
      single answer to "which `var` list does `<module-init>` model".
    - `collectIrSafeModuleVarDeclarationLists` moves here from
@@ -4174,8 +4130,8 @@ just as a top-level identifier declaration does.
 
 #### Acceptance
 
-- **Gain.** The legacy-free gain is measured on the 611 files with a `var`
-  pattern, both lanes, against 9df6bcaef0. The upper bound is 59.
+- **Gain.** The legacy-free gain is measured against the destructuring head,
+  both lanes, on the files with a `var` pattern. The upper bound is 59.
 - **No flips.** Pass/fail does not flip on any changed binary, in either lane.
 - **No claim-then-demote.** No new post-claim error.
 - **Legacy bytes identical.** No binary changes without a newly claimed unit.
@@ -4190,6 +4146,112 @@ just as a top-level identifier declaration does.
   - no `VariableDeclarationList` cast survives on the binding path;
   - no new budget grant;
   - net `src/ir` growth is stated.
+
+#### Measured (2026-11-01)
+
+S5 now stacks on e944943a2e, #7024 with main merged in at 22a6442977. The
+base is that commit; the head is b42ab1d75c plus this plan. One worker ran the
+census.
+
+**Population.** 320 files:
+- the 174 with a script-level `var` pattern;
+- every third of the other 437 files with a `var` pattern (for-of / for-in
+  heads, patterns nested in blocks). These 146 are there for legacy byte
+  identity.
+
+**Result, the same on both lanes:**
+- **Gain.** Legacy-free 6 → 34: +28, and none lost.
+- **Changed binaries.** All 28 that changed gain a claimed `<module-init>`.
+  The other 249 compiled binaries are byte-identical, the identity sample
+  included. That sample is where the Program ABI now observes each leaf.
+- **Post-claim errors.** None new. No status changes.
+- **Pass/fail.** The 28 pass on base and on head, in both lanes (`runTest262File`):
+  0 flips.
+- **Playground.** 26/26 identical.
+
+**What still blocks the other 51 of the 79 sole-blocker files:**
+
+| files | blocker |
+| --- | --- |
+| 20 | the literal plan refuses the pattern (NamedEvaluation default, rest, computed key) |
+| 16 | the test reads an unresolvable reference on purpose (`x` after `var { x: y } = …`), which the IR refuses |
+| 11 | the `for` head sits inside a function (`assert.throws(…, function () { for (var [[x]] = [null];;) … })`). That is a function-local `var` pattern head, which `collectIrSafeVarDeclarationLists` refuses. |
+| 2 | an array-`length` leaf source (refused here) |
+| 2 | `external-call` |
+
+**Size.** Net `src/ir` growth is +174 lines (+368/−194), including the new
+`module-init-vars.ts` (88 lines).
+- The selector grows by 36 lines and the builder by 53, both under the
+  issue's existing grants. Each grant has a dated S5 note.
+- `module-bindings.ts`, `integration.ts` and `codegen/declarations.ts` net 0
+  or below.
+- `codegen/index.ts` grows by 4 lines: a type import, plus the signature that
+  prettier wraps.
+
+**Gates.** All green, run bare: loc, func (both also against main
+22a6442977), coercion, oracle, dead exports, typecheck, lint, import cycles,
+compiler boundaries, IR fallbacks and `test:changed-root`.
+
+**Review round 0 (self).**
+- During the stack the S5 WIP had moved `vardecl-module-destructuring` into
+  `isPhase1DeclarationPattern`. There it also refused #7024's lexical `for`
+  heads in `<module-init>`, and 24 destructuring tests caught it. The refusal
+  is back on the statement (017d08ff38).
+- A boolean leaf slot (`var { x } = { x: true }; assert.sameValue(x, true)`)
+  claims and then demotes ("function member operand has no canonical
+  carrier"). So does the identifier twin `var x = true; …` on main: the
+  module read of a boolean slot is an unbranded i32. It is not in this
+  population; it is a follow-up for the identifier path.
+
+**Follow-ups.**
+1. Function-local `var` pattern heads (11 files).
+2. Array-`length` leaf sources (2 files).
+3. S6: identifier `for` heads at script level.
+4. The boolean module slot's i32 brand.
+
+## IR `finally` abrupt exit: the guard `if` was not a frame (fixed 2026-11-01)
+
+**Symptom.** Under the IR, `do { try { throw "x"; } finally { break; } }
+while (c < 2)` looped forever, in a function and at top level; legacy and node
+answer 11. The chunk-budget lever (#7026) exposes it: four ES5 rows that main
+sends to legacy only because they are chunk-sized fail once the IR claims them
+(`language/statements/try/S12.14_A9_T3` hangs; `S12.14_A9_T2`,
+`S12.14_A10_T2`, `S12.14_A10_T3` fail).
+
+**Root cause.** The `try` arm of `lowerIrFunctionBody`
+(`src/ir/lower-generic.ts`) emits each exception-path copy of the finally
+inside the `finallyRan` guard `if` (#6651 U4). That `if` is one Wasm label, but
+no `CtrlFrame` was pushed for it, so `resolveBrLabel` derived every `br` in
+that copy one frame short: a `break` re-entered the loop body, and a `continue`
+or labeled exit left the wrong frame. The normal-exit copy has no guard and was
+right.
+
+**Fix.** Push a plain frame while the guarded copy is emitted, the pattern
+every other structured arm uses (+4 lines in `lowerIrFunctionBody`, under the
+issue's `lower-generic.ts` grant). A `return`
+inside or across a `finally` does not share the bug: the selector refuses it
+(`earlyReturnBarrierDepth`), and legacy answers like node.
+
+**Measured** (head vs main `ac8dbbf406`, the base taken as a file-copy A/B of
+`lower-generic.ts`):
+
+- `tests/ir-finally-abrupt-exit.test.ts`, 11 IR-claimed shapes (throw, break,
+  continue and a catch rethrow overridden by the finally's break or continue;
+  nested finally; labeled continue and break across two finallys; a switch
+  break), each in a function and at top level, plus 3 `return` shapes left on
+  legacy: 28/28 on head; 14/28 on base, none hanging (every loop has a guard).
+- `runTest262File`, the 61 rows of `language/statements/{try,for,while,
+  do-while,switch}` that contain `finally`, standalone and gc: 0 flips, binary
+  sha identical 61/61 on each lane (main sends every break-in-finally row to
+  legacy). 54/61 pass on both; the other 7 need the QuickJS eval provider,
+  which is not built locally, and are refused at select on both trees.
+- Unchunked twins of the four rows (one file per `// CHECK#`, 26 files, so
+  the IR claims each `<module-init>`): 26/26 pass on head on both lanes; 22/26
+  on base (one failing check per row, the `S12.14_A9_T3` one hangs).
+- The 710 rows without `finally` cannot change (the edit only moves br depths
+  inside a guarded finally copy); a 60-row sample is sha-identical on gc and
+  standalone. Playground: 13/13 identical on both lanes (no example has a
+  `finally`).
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
