@@ -410,6 +410,33 @@ The boxing also cost about 2.4× on standalone.
 All four forms above lower with no post-claim demote on gc, standalone and
 wasi, and answer as node does (`tests/issue-7066-mixed-concat-lowering.test.ts`).
 
+**Measured.** The A/B compares the #7026 head `dc767af398` merged with this
+branch against the same merge without the lowering (the reworked step 1 plus
+#7034 `28dcbf366e`):
+- **The 59 files, both lanes:**
+  - **+17 legacy-free:** the 12 `S11.7.*_A4`, `S11.5.1_A4_T2`,
+    `S11.5.2_A4_T10`, `S9.6_A2.1`, `S11.10.1_A3_T2.3` and `S11.6.2_A3_T1.2`.
+  - 0 compile flips, 0 `+` post-claim demotes, no new imports.
+  - The 17 binaries shrink 16% (8.17 MB to 6.88 MB on standalone).
+  - The conformance runner gives 17/17 passes before and after on both lanes:
+    0 flips.
+- **Bytes:** the S1 chunk sample plus the playground are 150/150 identical,
+  including the 12 legacy-only programs.
+- **Run time** (standalone, median of 5 alternating rounds of 7 runs, against
+  main `22a6442977`):
+
+  | Kernel | Change vs main |
+  | --- | --- |
+  | `"k" + i` | 1.04× (within the 5% bar) |
+  | `"a" + i + "b" + i * 0.5` | 0.74× |
+  | `"v" + (i % 2 > 0 ? "a" : i)` | 0.65× (the round-2 shape, no longer boxed) |
+
+  The IR kernels import nothing. On gc the mixed kernel drops legacy's 18
+  boundary and memory-string host imports.
+- **Code size:** from-ast.ts shrinks by 21 lines against that base. The `+`
+  side conversion lives in `primitive-to-string.ts`
+  (`lowerConcatOperand`).
+
 **Follow-up, not fixed here: `s += n > 0 ? "p" : 0`.** The compound form is
 claimed and then demotes (`string-evidence-unsupported`): the `+=` into a
 string slot takes only a string value (`compoundWriteAdmissible`). The legacy
