@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { analyzeSource } from "../src/checker/index.js";
 import { generateModule } from "../src/codegen/index.js";
-import { disableForEachChildMeter, enableForEachChildMeter, readForEachChildCalls } from "../src/ts-api.js";
+import { disableForEachChildMeter, enableForEachChildMeter, readForEachChildCalls, ts } from "../src/ts-api.js";
 // Side-effect import: installs the statement/expression delegates used by
 // generateModule when this test bypasses the normal compile entry point.
 import "../src/codegen/expressions.js";
@@ -15,11 +15,12 @@ import {
   MODULE_INIT_CHUNK_MAX_ENTRIES,
   moduleInitChunksRequired,
   planModuleInitChunks,
-} from "../src/codegen/module-init-chunks.js";
+} from "../src/shared/module-init-chunk-plan.js";
 import { compile, compileMulti } from "../src/index.js";
 import type { Instr, WasmFunction, WasmModule } from "../src/ir/types.js";
 import { instantiateWasm } from "../src/runtime-instantiate.js";
 import { buildImports } from "../src/runtime.js";
+import { watCallTargets, watFunction, watFunctionNames, watInstructionCount } from "./helpers/wat-functions.js";
 
 const FILE_NAME = "issue-4376-module-init-chunking.ts";
 const EXPECTED_SEMANTIC_RESULT = 1_478_302;
@@ -120,63 +121,6 @@ function leafModuleInitHelpers(module: WasmModule): WasmFunction[] {
   return module.functions.filter((func) => /^__module_init_chunk_\d+$/.test(func.name));
 }
 
-/** Return one complete WAT function form without mistaking a helper prefix for the dispatcher. */
-function watFunction(wat: string, name: string): string {
-  const start = wat.indexOf(`(func $${name} `);
-  expect(start).toBeGreaterThanOrEqual(0);
-  let depth = 0;
-  let quote = false;
-  let escaped = false;
-  for (let index = start; index < wat.length; index++) {
-    const char = wat[index]!;
-    if (quote) {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') quote = false;
-      continue;
-    }
-    if (char === '"') {
-      quote = true;
-      continue;
-    }
-    if (char === "(") depth++;
-    else if (char === ")" && --depth === 0) return wat.slice(start, index + 1);
-  }
-  throw new Error(`unterminated WAT function ${name}`);
-}
-
-function watFunctionNames(wat: string): readonly string[] {
-  const imports = [...wat.matchAll(/^\s*\(import .+ \(func(?: \$([^\s(]+))?/gm)].map(
-    (match) => match[1] ?? "<anonymous-import>",
-  );
-  const definitions = [...wat.matchAll(/^\s*\(func \$([^\s(]+)/gm)].map((match) => match[1]!);
-  return [...imports, ...definitions];
-}
-
-/** Resolve WAT's numeric direct-call operands back to their final function names. */
-function watCallTargets(wat: string, body: string): readonly string[] {
-  const names = watFunctionNames(wat);
-  return [...body.matchAll(/\b(?:return_)?call (\d+)/g)].map((match) => names[Number(match[1])] ?? "<missing>");
-}
-
-/** Count final WAT instructions recursively, excluding WAT-only scope forms. */
-function watInstructionCount(body: string): number {
-  return body
-    .split("\n")
-    .slice(1, -1)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("(local "))
-    .filter(
-      (line) =>
-        line !== ")" &&
-        line !== "(then" &&
-        line !== "(else" &&
-        line !== "(do" &&
-        line !== "(catch_all" &&
-        !line.startsWith("(catch "),
-    ).length;
-}
-
 function watModuleInitLeafNames(wat: string): readonly string[] {
   return watFunctionNames(wat).filter((name) => /^__module_init_chunk_\d+$/.test(name));
 }
@@ -219,23 +163,33 @@ async function instantiateHost(result: Awaited<ReturnType<typeof compile>>): Pro
 
 async function expectLiveChunkedPublicDispatcher(
   options: { readonly disableIrFirst?: boolean; readonly experimentalIR?: boolean } = {},
-): Promise<void> {
+): Promise<readonly string[]> {
   const result = await compile(DEFAULT_PREPARED_ROUTE_SOURCE, {
     fileName: FILE_NAME,
     deferTopLevelInit: true,
+    trackIrOutcomes: true,
     ...options,
   });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(result.irOutcomes?.find((outcome) => outcome.unitKind === "module-init")?.irBodyEmitted).toBe(true);
   expect([...result.wat.matchAll(/\(func \$__module_init\b/g)]).toHaveLength(1);
   const dispatcher = watFunction(result.wat, "__module_init");
-  // Helpers alone could be dead after a late IR replacement. The exported
-  // dispatcher itself must retain the call edge to the bounded body.
-  expect(watCallTargets(result.wat, dispatcher)).toContain("__module_init_chunk_0");
+  // (#7106) The IR lowers the initializer one planned chunk per function.
+  // Helpers alone could be dead after a late IR replacement, so the exported
+  // dispatcher itself must call every bounded IR chunk.
+  const chunks = watCallTargets(result.wat, dispatcher).filter((name) => name.startsWith("__module_init_chunk_"));
+  expect(chunks).toHaveLength(3);
+  expect(Math.max(...chunks.map((name) => watInstructionCount(watFunction(result.wat, name))))).toBeLessThanOrEqual(
+    MODULE_INIT_CHUNK_MAX_ENTRIES * 8,
+  );
 
   const instance = await instantiateHost(result);
   const exports = instance.exports as { __module_init: () => void; probe: () => number };
   exports.__module_init();
   expect(exports.probe()).toBe(MODULE_INIT_CHUNK_MAX_ENTRIES * 2 + 8);
+  return watFunctionNames(result.wat).filter(
+    (name) => name.startsWith("__module_init_chunk_") && !chunks.includes(name),
+  );
 }
 
 /**
@@ -347,10 +301,11 @@ describe("#4376 — bounded module-init helpers", () => {
     // This user-visible name used to collide with the first private leaf. It
     // must remain an ordinary inlinable source function, while the allocator
     // gives the private leaf a distinct WAT name and records only that exact
-    // name as an inliner boundary.
+    // name as an inliner boundary. The user call stays out of tail position:
+    // a `return f(x)` becomes `return_call`, which the inliner never expands.
     const source = [
       `export function __module_init_chunk_0(value: number): number { return value${" + 1".repeat(16)}; }`,
-      "export function callUser(): number { return __module_init_chunk_0(83); }",
+      "export function callUser(): number { return 1 + __module_init_chunk_0(82); }",
       "let phase: number = 0;",
       ...Array.from({ length: MODULE_INIT_CHUNK_MAX_ENTRIES * 2 }, () => "phase = phase + 1;"),
       "export function probe(): number { return phase; }",
@@ -637,18 +592,16 @@ describe("#4376 — bounded module-init helpers", () => {
     }
   });
 
-  it("keeps the default public IR route on the direct chunked module-init path", async () => {
-    // `compile()` defaults experimentalIR to on. This exact lexical/scalar
-    // population is otherwise eligible for the prepared one-body IR owner;
-    // passing no experimentalIR option proves the admission fallback prevents
-    // that route from replacing the bounded direct dispatcher.
-    await expectLiveChunkedPublicDispatcher();
+  it("lowers a chunked initializer on the default public IR route behind the live dispatcher", async () => {
+    // `compile()` defaults experimentalIR to on, and this lexical/scalar
+    // population is eligible for the prepared IR owner. Legacy held its own
+    // chunks for the IR outcome, so none is left behind as a dead helper.
+    expect(await expectLiveChunkedPublicDispatcher()).toEqual([]);
   });
 
-  it("keeps the late experimental-IR overlay from replacing the live dispatcher", async () => {
-    // `disableIrFirst` deliberately leaves experimentalIR enabled but moves
-    // integration after direct body emission. It must obey the same central
-    // selection withdrawal as the default route.
+  it("lowers a chunked initializer on the late experimental-IR overlay behind the live dispatcher", async () => {
+    // `disableIrFirst` leaves experimentalIR enabled but moves integration
+    // after direct body emission; the overlay must keep the same chunk plan.
     await expectLiveChunkedPublicDispatcher({ experimentalIR: true, disableIrFirst: true });
   });
 
@@ -927,4 +880,53 @@ describe("#4376 — bounded module-init helpers", () => {
       expect(moduleInitHelpers(module)).toEqual([]);
     }
   });
+});
+
+/** Node's answer for a probe source: its `probe()` result, or `"throws"` when the initializer throws. */
+function nodeAnswer(source: string): number | "throws" {
+  const js = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const exports: { probe?: () => number } = {};
+  try {
+    new Function("exports", js)(exports);
+  } catch {
+    return "throws";
+  }
+  return exports.probe!();
+}
+
+describe("#7106 — the #4376 sources with the IR claiming the chunked initializer", () => {
+  // The IR claims these three. The const-mutation sources are either refused
+  // at selection (`+=`, `=`) or, for `locked++` / `++locked`, claimed and
+  // answered wrongly — a pre-existing IR bug its unchunked twin shows on main
+  // (plan, "S2 review round 1").
+  const sources: readonly (readonly [string, string])[] = [
+    ["default prepared route", DEFAULT_PREPARED_ROUTE_SOURCE],
+    ["user inliner boundary", INLINE_CALLER_BOUNDARY_SOURCE],
+    ["source inliner boundary", SOURCE_INLINE_CALLER_BOUNDARY_SOURCE],
+  ];
+  for (const [label, source] of sources) {
+    it(`${label}: the IR answers as node does`, async () => {
+      const result = await compile(source, {
+        fileName: FILE_NAME,
+        target: "standalone",
+        deferTopLevelInit: true,
+        trackIrOutcomes: true,
+      });
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(result.irOutcomes?.find((outcome) => outcome.unitKind === "module-init")?.irBodyEmitted).toBe(true);
+      expect(watModuleInitLeafNames(result.wat).length).toBeGreaterThan(1);
+      const { instance } = await WebAssembly.instantiate(result.binary, {});
+      const exports = instance.exports as { __module_init: () => void; probe: () => number };
+      let answer: number | "throws";
+      try {
+        exports.__module_init();
+        answer = exports.probe();
+      } catch {
+        answer = "throws";
+      }
+      expect(answer).toBe(nodeAnswer(source));
+    });
+  }
 });

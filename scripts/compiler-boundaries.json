@@ -11843,6 +11843,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/shared/module-init-chunk-plan.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure source-entry planner; becomes clean once src/ts-api.ts leaves migration debt."
+    },
+    {
       "path": "src/shared/binding-writes.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12981,6 +12989,14 @@
     },
     {
       "path": "src/ir/module-init-prologue-patch.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/module-init-chunk-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",

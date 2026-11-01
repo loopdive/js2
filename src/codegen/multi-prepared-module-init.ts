@@ -13,7 +13,7 @@ import type { FuncHandle, Instr, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext, CodegenOptions } from "./context/types.js";
 import { preallocateModuleInitCallable } from "./declarations.js";
-import { moduleInitChunksRequired } from "./module-init-chunks.js";
+import { moduleInitChunksRequired } from "../shared/module-init-chunk-plan.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
 import type { IrOverlayPlan } from "./index.js";
 import { prepareIrBodies, type PreparedIrModuleInitBody } from "./ir-prepared-free-functions.js";

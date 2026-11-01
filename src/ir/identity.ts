@@ -85,6 +85,20 @@ export interface IrSyntheticUnitProvenance {
 
 export type IrDerivedUnitProvenance = IrSyntheticUnitProvenance | IrLiftedSourceUnitProvenance;
 
+/** Record a lifted artifact's provenance beside it; integration joins the two by ID. */
+export function recordLiftedUnitProvenance(
+  identity: IrLiftedFunctionArtifactIdentity,
+  owner: { readonly liftedUnitProvenance: IrDerivedUnitProvenance[] },
+): void {
+  owner.liftedUnitProvenance.push({
+    id: identity.unitId,
+    parentId: identity.parentId,
+    role: identity.role,
+    ordinal: identity.ordinal,
+    ...(identity.sourceUnit ? { sourceUnit: true } : {}),
+  });
+}
+
 export type IrNestedClassFieldCallConstructorDeclaration =
   | ts.ConstructorDeclaration
   | ts.ClassDeclaration
