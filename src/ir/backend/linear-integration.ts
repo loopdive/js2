@@ -126,6 +126,7 @@ import {
 } from "../planning-identity.js";
 import { buildIrUnitTypeMap, projectIrUnitTypeMapToLegacy, type LatticeType } from "../propagate.js";
 import {
+  makeIrAdditiveOperandProof,
   makeIrArrayExpressionPredicate,
   makeIrAmbientBindingPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
@@ -672,6 +673,7 @@ function planLinearIrOverlay(
       trackFallbacks: true,
       recursiveTypeEvidence,
       classifyPrimitiveExpression: makeIrPrimitiveExpressionClassifier(ctx.checker),
+      additiveOperandProof: makeIrAdditiveOperandProof(ctx.checker),
       classifyDeclaredPrimitiveExpression: makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker),
       isArrayExpression: makeIrArrayExpressionPredicate(ctx.checker),
       isRegExpExpression: makeIrRegExpExpressionPredicate(ctx.checker),

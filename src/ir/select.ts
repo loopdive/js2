@@ -165,6 +165,7 @@ import {
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   nativeI32OperandsAdmissible,
+  staticAdditiveOperandsAdmissible,
   type OperandFamily,
 } from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
@@ -553,6 +554,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * `undefined`; this is evidence, not receiver routing.
    */
   readonly classifyPrimitiveExpression?: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
+  /** (#7066) The builder's checker proof of a `+` operand (`makeIrAdditiveOperandProof`). */
+  readonly additiveOperandProof?: (expr: ts.Expression) => "number" | "string" | "unprovable";
   /**
    * Declared checker family used only to route builtin-named method calls.
    * Mixed/nullable primitive unions return `primitive-union`; pure
@@ -8875,6 +8878,10 @@ function selectorPrimitiveWrapperOrGenericBinary(
     return capabilityNo("operand-coercion-unsupported", "expr-equality-reference-operands", expr);
   }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
+  const additiveProof = currentSelectionOptions?.additiveOperandProof;
+  if (binOp === ts.SyntaxKind.PlusToken && additiveProof && !staticAdditiveOperandsAdmissible(expr, additiveProof)) {
+    return capabilityNo("operand-coercion-unsupported", "expr-additive-operands", expr);
+  }
   return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
 }
 

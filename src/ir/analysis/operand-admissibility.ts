@@ -92,6 +92,53 @@ export function boxableIntoDynamic(family: OperandFamily): boolean {
 }
 
 /**
+ * #2781 (hybrid Row 7) — TS-type-keyed primitive classifier. The reusable
+ * operand-type proof shared by the binary fast paths (and, going forward, rows
+ * 3 packed-`i32` and 5 unboxed-number-locals, which need the same "provably
+ * number / does-not-escape-to-`any`" judgement).
+ *
+ * Returns the provable primitive class of a TS type for the purpose of
+ * discharging a fast-path safety predicate `P`:
+ *   - `"number"`  — provably a pure number: `NumberLike` (`Number |
+ *     NumberLiteral`, incl. numeric enum literals), or a union whose EVERY
+ *     constituent is provably number.
+ *   - `"string"`  — provably a pure string: `StringLike` (`String |
+ *     StringLiteral`), template-literal / string-mapping types (always strings
+ *     at runtime), or an all-string union.
+ *   - `"unprovable"` — `any` / `unknown` / `object` / `boolean` (= the
+ *     `true | false` union of non-number/string literals) / `bigint` /
+ *     `symbol` / `null` / `undefined` / a MIXED `number | string` union /
+ *     intersections / anything else. Only the SAFE dynamic lowering is correct.
+ *
+ * CRITICAL (the Row-7 trap that parked two prior attempts): this keys on the TS
+ * *type*, NEVER the lowered Wasm kind. `number`, `boolean` and `symbol` all
+ * collapse to `i32` / `f64` at the Wasm level, so the kind cannot distinguish a
+ * numeric-add operand from a boolean / `any` one.
+ */
+export const STRING_PROOF_FLAGS = ts.TypeFlags.StringLike | ts.TypeFlags.TemplateLiteral | ts.TypeFlags.StringMapping;
+
+export function classifyPrimitiveProof(t: ts.Type): "number" | "string" | "unprovable" {
+  // Union (incl. the intrinsic `boolean`, which is internally `true | false`):
+  // every constituent must share the SAME provable class. Any unprovable
+  // constituent, a mixed number/string union, or an empty (`never`) union →
+  // unprovable.
+  if (t.isUnion()) {
+    let acc: "number" | "string" | null = null;
+    for (const c of t.types) {
+      const cc = classifyPrimitiveProof(c);
+      if (cc === "unprovable") return "unprovable";
+      if (acc === null) acc = cc;
+      else if (acc !== cc) return "unprovable";
+    }
+    return acc ?? "unprovable";
+  }
+  const f = t.flags;
+  if (f & ts.TypeFlags.NumberLike) return "number";
+  if (f & STRING_PROOF_FLAGS) return "string";
+  return "unprovable";
+}
+
+/**
  * #2781 — `+` takes the unboxed numeric add or the string concat only when
  * both operands are proved number or both string; an operand that produces the
  * dynamic carrier takes the dynamic `+` instead (judged by
@@ -100,6 +147,35 @@ export function boxableIntoDynamic(family: OperandFamily): boolean {
 export function additiveOperandsProvable(left: AdditiveProof, right: AdditiveProof): boolean {
   if (left === "dynamic" || right === "dynamic") return true;
   return left === right && left !== "unprovable";
+}
+
+/**
+ * (#7066) The `+` gate, decided before the claim wherever that is exact. A
+ * STATIC operand (a literal, or a unary, binary or conditional composition of
+ * literals) never yields the dynamic carrier, and the lattice facts cover only
+ * parameters and calls, so the builder's proof for it is the checker's alone.
+ * With either operand not static the selector cannot tell, and admits.
+ */
+export function staticAdditiveOperandsAdmissible(
+  expr: ts.BinaryExpression,
+  proof: (operand: ts.Expression) => "number" | "string" | "unprovable",
+): boolean {
+  if (!isStaticOperand(expr.left) || !isStaticOperand(expr.right)) return true;
+  return additiveOperandsProvable(proof(expr.left), proof(expr.right));
+}
+
+function isStaticOperand(expr: ts.Expression): boolean {
+  if (ts.isParenthesizedExpression(expr)) return isStaticOperand(expr.expression);
+  if (ts.isStringLiteralLike(expr) || ts.isNumericLiteral(expr)) return true;
+  if (expr.kind === ts.SyntaxKind.TrueKeyword || expr.kind === ts.SyntaxKind.FalseKeyword) return true;
+  if (ts.isPrefixUnaryExpression(expr)) return isStaticOperand(expr.operand);
+  if (ts.isConditionalExpression(expr)) return isStaticOperand(expr.whenTrue) && isStaticOperand(expr.whenFalse);
+  if (!ts.isBinaryExpression(expr)) return false;
+  const op = expr.operatorToken.kind;
+  if (op === ts.SyntaxKind.CommaToken || (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment)) {
+    return false;
+  }
+  return isStaticOperand(expr.left) && isStaticOperand(expr.right);
 }
 
 /**
