@@ -107,6 +107,7 @@ loc-budget-allow:
   - src/ir/core/dialect/js.ts
   # 2026-10-31 (boolean statics, round 4): the static-predicate arm, its host, the shared ambient-receiver helper and the name-parameterised unshadowed-global test (+25); the lowering lives in src/ir/static-predicates/
   - src/ir/from-ast.ts
+  # 2026-11-01 (boolean module slot): the `irBool` import and the i32 arm's one-line why (+2); the arms stay separate for readability
   - src/ir/integration.ts
   # 2026-11-01 (finally abrupt exit, #7030 review): the guarded finally copy returns early when unguarded, then pushes, emits and pops its own CtrlFrame (+4)
   - src/ir/lower-generic.ts
@@ -4760,6 +4761,61 @@ inside or across a `finally` does not share the bug: the selector refuses it
   inside a guarded finally copy); a 60-row sample is sha-identical on gc and
   standalone. Playground: 13/13 identical on both lanes (no example has a
   `finally`).
+
+## `<module-init>` boolean module slot (plan, 2026-11-01)
+
+**Root cause.** A script `var` that holds a boolean (`var x = true`,
+`var b = a > 2`) binds through the resolver's `i32` value kind, whose one
+semantic is `boolean` (`scalarKind`, `module-bindings.ts`). Legacy stores a
+JS boolean in that `i32` slot, but `resolveModuleBindingGlobal` typed the
+IR read as a bare `i32`. A consumer that needs the carrier, such as an
+argument of `assert.sameValue`, cannot box an unbranded `i32`
+(`boxConcreteToDynamic`). So the unit was claimed and then withdrawn after
+the claim: "function member operand has no canonical carrier".
+
+**Change.** One arm in `src/ir/integration.ts`, `resolveModuleBindingGlobal`:
+the `i32` kind reads as `irBool()`.
+- It reuses the #4503 boolean brand (`boolean-brand.ts`). The brand changes
+  no representation, and `irTypeEquals` erases it, so no join, slot write or
+  verifier check changes. No second boolean rule is added; the value kind
+  already says `boolean`.
+- The `f64` and `i32` arms stay separate. `integration.ts` grows by 2 lines
+  (the import and the one-line why), under its existing grant with a dated
+  note.
+
+**Why it lands before #7037.** S5 newly reaches this withdrawal: a boolean
+`var` read beside a pattern (`var [a = 1] = [3]; var b = a > 2;`) is claimed
+there, where main refuses the pattern. Main's twin without a pattern,
+`var a = 3; var b = a > 2;`, already withdraws. Fixing the slot first keeps
+S5 free of claim-then-demote, as #7032 landed before #7026. Once both have
+landed, S5's boolean-leaf refusal can go.
+
+**Measured** (standalone, the 792-file sample plus the 1,525 test262 files
+with a top-level boolean `var`; 2,292 files, 2,176 compiled):
+- 1 file has this withdrawal on main (`S12.13_A1.js`), and it is that file's
+  only legacy unit;
+- 2 files have it with #7026, #7037 and #7033 merged in.
+
+So the direct gain is 1 to 2 files. The fix is worth landing because S5
+depends on it, not for its own gain.
+- **The review's 127 #7037 cases** (254 rows), main plus this fix:
+  - `bool-ident` and `plain-var-bool` are newly claimed and right;
+  - no other post-claim error but main's own `shadow-param-str` parity
+    mismatch;
+  - 0 lost claims and 0 value regressions.
+- **With S5 merged in:** `no-leaf-bool` and `default-leaf-bool` are claimed
+  and right too.
+
+**Acceptance.**
+- **Correctness:** no claim-then-demote for a boolean module `var`, 0 flips
+  on both lanes, and legacy bytes and the playground identical.
+- **Tests:** `tests/issue-7106-module-bool-slot.test.ts`, both lanes: six
+  claimed shapes, and the S5 boolean-leaf shape, which withdraws nothing.
+- **Code quality:**
+  - one arm changed;
+  - no new predicate or boolean rule (the existing brand and value kind are
+    reused);
+  - no new function.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 

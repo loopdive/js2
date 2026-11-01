@@ -46,6 +46,7 @@ export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
 import { irPlatformExternClassPredicate } from "./host-extern.js"; // (#7091)
+import { irBool } from "./boolean-brand.js";
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
 import { irTypeKey } from "./type-key.js";
 export { irTypeKey } from "./type-key.js";
@@ -6139,7 +6140,8 @@ function resolveModuleBindingGlobal(
       storageType = { kind: "f64" };
       break;
     case "i32":
-      type = { kind: "val", val: { kind: "i32" } };
+      // The `i32` kind's one semantic is `boolean` (`scalarKind`), so its reads carry the #4503 brand.
+      type = irBool();
       storageType = { kind: "i32" };
       break;
     case "dynamic":
