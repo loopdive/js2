@@ -3938,6 +3938,41 @@ the 628-file chunked sample, the 30 heaviest and the four `S12.14_A9_T2/T3`,
   boundaries inventory, typecheck, lint, IR fallbacks, changed-root tests and
   equivalence all pass.
 
+### S2 review round 2 (2026-11-01)
+
+Verdict: approve with nits. Main `27f7d02251` (#7032 const writes, #7024
+for-head destructuring) is merged in; only this plan conflicted.
+
+| finding | resolution |
+| --- | --- |
+| a const `++` in a chunked initializer answers 2, node 11 | Through `compile`, legacy now lowers the initializer (#7032 refuses the const write at selection) and both lanes answer 11 (`k++`, `++k`, `k--`; TS and JS). Through the prepared whole-program entry (`test262-prepared-entry`) both lanes still answer 2, and so does main `27f7d02251`, chunked or not (one `__module_init` there). That route is not this PR's; filed below |
+| 3 of 248 files claim, then demote | known costs, below; S12.5 fixed |
+| `generateModule` (+4), `makeFromAstResolver` (+2) under standing grants | dated S2 notes added to the frontmatter; the acceptance line names the `identity.ts` (+14) grant |
+| the trailing-`return` drop sat in the tail-call pass | its own step, `withoutVoidReturn` (integration.ts), applied after tail calls; `ir-tail-call.ts` is main's again and `compileIrPathFunctions` does not grow |
+| "IR chunks run 1.6–2×" | reworded: 0.45–1.02× per chunk on 30 of 31 shapes; ToInt32-heavy shapes reach 2× |
+
+**Known costs: files that still claim, then demote.**
+- `S11.7.2_A5.2_T1`, `S11.7.3_A5.2_T1`: the `'…' + n` concatenation, which
+  #7033 (#7066) lowers.
+- `S12.5_A1.1_T2`, fixed here: `if (null)` was claimed, then demoted,
+  because a bare `null` lowers only into a reference, never the i32 a
+  condition reads. `isPhase1ConditionExpr` now refuses it (one line). The
+  unchunked twin demoted on main too.
+
+**Byte identity, corrected.** Programs with no IR-claimed unit are
+byte-identical to main. A program with an IR-claimed void function is not:
+each such body loses its trailing `return` (1 byte). On the playground, 2 of
+13 gc and 5 of 13 standalone binaries shrink by 1–6 B.
+
+**Follow-ups, not fixed here.**
+- **Prepared entry, const update.** `const k = 1; try { k++ } catch { … }`
+  answers as if the write succeeded on the prepared whole-program entry, on
+  both lanes, on main as well. #7032's selection refusal does not reach that
+  route.
+- **Dead legacy chunks on the `disableIrFirst` route** (runtime eval): an
+  N=300 initializer still carries 21 dead legacy chunk helpers, since the
+  hold-and-release seam runs only on the IR-first route.
+
 ## `<module-init>` lever: destructuring binding patterns (plan, 2026-11-01)
 
 Plan only; nothing here is implemented. Measured on `a7f413918c` (origin/main,
