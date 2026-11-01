@@ -103,10 +103,12 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    // #7034 S0: a typed operator whose operand families `lowerBinary` refuses is
+    // refused at select, before the claim, instead of demoting at build.
     expect(terminal(result).find((outcome) => outcome.displayName === "test")).toMatchObject({
       kind: "unsupported",
       code: "operand-coercion-unsupported",
-      stage: "build",
+      stage: "select",
       legacyBodyEmitted: true,
       irBodyEmitted: false,
     });

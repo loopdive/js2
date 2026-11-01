@@ -106,6 +106,39 @@ export function i32IdentityBitwiseOperand(expr: ts.BinaryExpression): ts.Express
   return i32LiteralValue(expr.right) === 0 ? expr.left : null;
 }
 
+/**
+ * The fused-i32 identity a selector can see: `x | 0` / `x ^ 0` over an `x`
+ * that lowers as an exact i32 without a promoted slot (`(k < 1) | 0`). from-ast
+ * takes it before any operand family is judged, so no family check refuses it.
+ */
+export function isSlotFreeI32Identity(expr: ts.BinaryExpression): boolean {
+  const operand = i32IdentityBitwiseOperand(expr);
+  return operand !== null && isWrapI32Lowerable(operand, () => false);
+}
+
+/**
+ * Whether from-ast lowers `expr` natively in i32 inside a slot-free fused-i32
+ * identity: the identity itself, or a bitwise or slot-free `+` / `-` node of
+ * its operand (`((k < 1) + (k < 2)) | 0`). None of these takes `lowerBinary`'s
+ * operand-family check; a comparison inside one still does.
+ */
+export function isSlotFreeI32IdentityLowered(expr: ts.BinaryExpression): boolean {
+  for (let node = expr; !isSlotFreeI32Identity(node); ) {
+    const k = node.operatorToken.kind;
+    const native =
+      jsBitwiseBinop(k) !== null ||
+      ((k === ts.SyntaxKind.PlusToken || k === ts.SyntaxKind.MinusToken) && isWrapI32Lowerable(node, () => false));
+    if (!native) return false;
+    let child: ts.Node = node;
+    while (child.parent !== undefined && ts.isParenthesizedExpression(child.parent)) child = child.parent;
+    const parent = child.parent;
+    if (parent === undefined || !ts.isBinaryExpression(parent)) return false;
+    if (isSlotFreeI32Identity(parent)) return parent.left === child;
+    node = parent;
+  }
+  return true;
+}
+
 export function i32LiteralValue(e: ts.Expression): number | null {
   const inner = peelExpr(e);
   if (ts.isNumericLiteral(inner)) {

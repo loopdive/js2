@@ -165,13 +165,13 @@ import {
   isEqualityOperator,
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
-  isToNumericOperator,
   isTypedBinaryOperator,
   isVoidZero,
   wrapperComparisonIsIdentity,
   nativeI32OperandsAdmissible,
   type OperandFamily,
 } from "./analysis/operand-admissibility.js";
+import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
@@ -8868,24 +8868,18 @@ function selectorPrimitiveWrapperOrGenericBinary(
   const leftWrapper = selectorPrimitiveWrapperConstruction(expr.left, scope, localClasses) !== null;
   const rightWrapper = selectorPrimitiveWrapperConstruction(expr.right, scope, localClasses) !== null;
   const isEquality = isEqualityOperator(binOp);
-  const left = leftWrapper ? "dynamic" : binaryOperandFamily(expr.left, scope);
-  const right = rightWrapper ? "dynamic" : binaryOperandFamily(expr.right, scope);
+  const left = binaryOperandFamily(expr.left, scope, localClasses);
+  const right = binaryOperandFamily(expr.right, scope, localClasses);
   if (leftWrapper || rightWrapper) {
     if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") !== true) {
       return capabilityNo("operand-coercion-unsupported", "expr-wrapper-to-primitive-target", expr);
     }
     const other = leftWrapper ? right : left;
-    const otherIsWrapper = leftWrapper && rightWrapper;
     if (
       wrapperComparisonIsIdentity(binOp, leftWrapper, rightWrapper) ||
       (isEquality && other !== "boolean" && other !== "number")
     ) {
       return capabilityNo("operand-coercion-unsupported", "expr-wrapper-equality", expr);
-    }
-    // `+`, the relationals and `==` take both ToPrimitives before anything
-    // else; a carrier operand's own ToPrimitive would run after the wrapper's.
-    if (!isToNumericOperator(binOp) && !otherIsWrapper && other === "dynamic") {
-      return capabilityNo("operand-coercion-unsupported", "expr-wrapper-carrier-order", expr);
     }
   } else if (
     isEquality &&
@@ -8895,10 +8889,19 @@ function selectorPrimitiveWrapperOrGenericBinary(
     return capabilityNo("operand-coercion-unsupported", "expr-equality-reference-operands", expr);
   }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
+  const carrierOperand = left === "dynamic" || right === "dynamic";
+  if (binOp === ts.SyntaxKind.PlusToken && carrierOperand && !carrierAdditionConsumed(expr)) {
+    return capabilityNo("operand-coercion-unsupported", "expr-wrapper-carrier-position", expr);
+  }
+  // S0 refuses exactly what `lowerBinary`'s family check refuses, so not what
+  // the fused-i32 identity lowers before it (#7034 round 2).
   const judged =
-    leftWrapper ||
-    rightWrapper ||
-    (!isEquality && isTypedBinaryOperator(binOp) && left !== "unknown" && right !== "unknown");
+    carrierOperand ||
+    (!isEquality &&
+      isTypedBinaryOperator(binOp) &&
+      left !== "unknown" &&
+      right !== "unknown" &&
+      !isSlotFreeI32IdentityLowered(expr));
   if (judged && !binaryOperandsAdmissible(binOp, left, right)) {
     return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
   }
@@ -8909,15 +8912,53 @@ function selectorPrimitiveWrapperOrGenericBinary(
 }
 
 /**
- * The family a binary operand lowers to (`irOperandFamily` once lowered): the
- * `null` literal is `nullish` and the global `undefined` `undefined`, as the
- * operator arms read them; anything else is {@link provenIrFamily}'s answer.
+ * The family a binary operand lowers to (`irOperandFamily` once lowered): a
+ * fresh wrapper, and a `+` over one, is the dynamic carrier; the `null` literal
+ * is `nullish` and the global `undefined` `undefined`, as the operator arms read
+ * them; anything else is {@link provenIrFamily}'s answer.
  */
-function binaryOperandFamily(operand: ts.Expression, scope: ReadonlySet<string>): OperandFamily {
+function binaryOperandFamily(
+  operand: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): OperandFamily {
   const candidate = unwrapPhase1Parens(operand);
+  if (selectorCarrierValue(candidate, scope, localClasses)) return "dynamic";
   if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
   if (isUnshadowedUndefinedIdentifier(candidate, scope) || isVoidZero(candidate)) return "undefined";
   return provenIrFamily(operand, scope);
+}
+
+/**
+ * A value from-ast lowers to the dynamic carrier (`addsAsCarrier`): a fresh
+ * wrapper's ToPrimitive, or a `+` over one. The checker types the `+` as a
+ * string or a number, so only an operator that reads the carrier may take it.
+ */
+function selectorCarrierValue(
+  expression: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const e = unwrapPhase1Parens(expression);
+  if (selectorPrimitiveWrapperConstruction(e, scope, localClasses) !== null) return true;
+  return (
+    ts.isBinaryExpression(e) &&
+    e.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+    (selectorCarrierValue(e.left, scope, localClasses) || selectorCarrierValue(e.right, scope, localClasses))
+  );
+}
+
+/**
+ * Whether the consumer of a carrier `+` reads the carrier: a typed or equality
+ * operator (S0 judges the `dynamic` operand), `typeof` or `!`. A local, a
+ * write, an argument or a return would type it as the checker does (#7034
+ * round 2: `var r = new String("ab") + 1; … r.length` withdrew after the claim).
+ */
+function carrierAdditionConsumed(expr: ts.BinaryExpression): boolean {
+  const parent = outermostParenthesized(expr).parent;
+  if (ts.isBinaryExpression(parent)) return isTypedBinaryOperator(parent.operatorToken.kind);
+  if (ts.isTypeOfExpression(parent)) return true;
+  return ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken;
 }
 
 function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpression): boolean {
