@@ -158,9 +158,7 @@ import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-type
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
-  additiveOperandsProvable,
-  additiveProofOf,
-  binaryOperandsAdmissible,
+  provenBinaryOperandsAdmissible,
   conditionalJoinArmFamily,
   conditionalJoinFamily,
   isComparisonResultOperator,
@@ -8891,11 +8889,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
     leftWrapper ||
     rightWrapper ||
     (!isEquality && isTypedBinaryOperator(binOp) && left !== "unknown" && right !== "unknown");
-  // (#7066) A `+` also takes from-ast's `+` rule over the proofs the families carry.
-  const additive =
-    binOp !== ts.SyntaxKind.PlusToken ||
-    additiveOperandsProvable(additiveProofOf(left), additiveProofOf(right), laneFormatsNumbers());
-  if (judged && !(additive && binaryOperandsAdmissible(binOp, left, right))) {
+  if (judged && !provenBinaryOperandsAdmissible(binOp, left, right, laneFormatsNumbers())) {
     return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
   }
   return (
@@ -10697,9 +10691,8 @@ function templateSubstitutionFamily(
 }
 
 /** (#4467, #7066) The lane binds `IR_NUMBER_TO_STRING_FN`: a template or a `+` converts a number. */
-function laneFormatsNumbers(): boolean {
-  return currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true;
-}
+const laneFormatsNumbers = (): boolean =>
+  currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true;
 
 function declaredExpressionHasExactFamily(
   expression: ts.Expression,

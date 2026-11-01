@@ -117,7 +117,7 @@ export function additiveOperandsProvable(left: AdditiveProof, right: AdditivePro
  * The `+` proof a proven family carries. An `int32` may be a boolean the
  * brand has not reached, so it proves nothing.
  */
-export function additiveProofOf(family: OperandFamily): AdditiveProof {
+function additiveProofOf(family: OperandFamily): AdditiveProof {
   return family === "number" || family === "string" || family === "boolean" || family === "dynamic"
     ? family
     : "unprovable";
@@ -279,6 +279,21 @@ export function binaryOperandsAdmissible(op: ts.SyntaxKind, left: OperandFamily,
     return (left === "number" && right === "number") || (isI32Carrier(left) && isI32Carrier(right));
   }
   return false;
+}
+
+/**
+ * (#7066) from-ast's two typing gates for a binary over families a selector
+ * proved before lowering: for `+`, the `+` rule over the proofs those families
+ * carry ({@link additiveOperandsProvable}); then {@link binaryOperandsAdmissible}.
+ */
+export function provenBinaryOperandsAdmissible(
+  op: ts.SyntaxKind,
+  left: OperandFamily,
+  right: OperandFamily,
+  numberToString: boolean,
+): boolean {
+  const additive = additiveOperandsProvable(additiveProofOf(left), additiveProofOf(right), numberToString);
+  return (op !== ts.SyntaxKind.PlusToken || additive) && binaryOperandsAdmissible(op, left, right);
 }
 
 /**
