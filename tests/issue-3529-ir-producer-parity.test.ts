@@ -61,7 +61,9 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     expect(result.wat).toContain("__box_boolean");
   });
 
-  it("types array-literal widening as an unsupported representation", async () => {
+  // #7024 decomposes a fresh array literal (`literal-pattern-plan.ts`), so this
+  // source no longer reaches the vec reader that refused the widened literal.
+  it("lowers a destructured array literal through the literal pattern plan", async () => {
     const result = await compile(
       `export function test(): number {
         const [a, b, c] = [1, 2, 3];
@@ -74,17 +76,13 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     // `22a72e500a` (feat(3523) R4 gap 4, 2026-08-31, "record a truthful
     // non-executable module-init outcome row") stopped leaving a source with an
     // empty module-init population silent, so the ledger now carries a second
-    // row. Keep the exhaustive `toEqual` — the point of this pin is that `test`
-    // is the *only* unit that demotes — and add the new row rather than relaxing
-    // to a containment check that would hide an unexpected third outcome.
+    // row. Keep the exhaustive `toEqual`, so an unexpected third outcome shows.
     expect(terminal(result)).toEqual([
       expect.objectContaining({
         displayName: "test",
-        kind: "unsupported",
-        code: "array-representation-unsupported",
-        stage: "build",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
       }),
       expect.objectContaining({
         displayName: "<module-init>",

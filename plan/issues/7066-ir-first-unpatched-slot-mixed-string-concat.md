@@ -619,4 +619,17 @@ Templates and `String()` over an element read are refused at selection
 - #7024's `mixedPlus` rows (`const [a, b] = [1, 'x']; a + b`) are now
   claimed, and answer as node does.
 - `tests/issue-3529-ir-producer-parity.test.ts` "array-literal widening"
-  fails on main `27f7d02251` too: #7024 lowers that source now.
+  failed on main `27f7d02251` too, because #7024 lowers that source now.
+  It is re-pinned here as the literal plan's claim.
+
+**The 59 files, both lanes.** Measured on the #7026 head merged with this
+branch, against the #7026 head alone (both on main `27f7d02251`):
+- +17 legacy-free.
+- 0 compile flips, 0 `+` post-claim demotes (the base has 15), no new
+  imports.
+- The 17 binaries shrink 16%, and they are byte-identical to round 3's.
+- 17/17 pass before and after on both lanes: 0 flips.
+
+Gates, run bare, pass: loc, func, coercion, oracle, dead exports, import
+cycles, boundaries inventory, typecheck, lint, IR fallbacks, equivalence
+and changed-root tests.
