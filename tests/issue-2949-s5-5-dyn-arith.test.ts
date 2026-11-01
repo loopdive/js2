@@ -216,12 +216,13 @@ describe("#2949 S5.5 — from-ast lowers dynamic numeric arithmetic via dyn.to_n
     expect(div.blocks.flatMap((b) => b.instrs).find((i) => i.kind === "binary")).toMatchObject({ op: "f64.div" });
   });
 
-  it("`x % y` routes through the shared exact-__fmod helper (#2945), not a hand-rolled sequence", () => {
+  it("`x % y` takes the number remainder, whose exact fallback is the shared __fmod helper (#2945)", () => {
+    // (#7106) The dynamic arm ToNumbers each side, then `emitNumberBinary`'s
+    // remainder: an integer fast path behind a guard, `__fmod` otherwise.
     const fn = irFromSource(`export function mod(x, y) { return x % y; }`, [DYN, DYN], F64);
     expect(verifyIrFunction(fn)).toEqual([]);
     expect(instrKinds(fn).filter((k) => k === "dyn.to_number")).toHaveLength(2);
-    const call = fn.blocks.flatMap((b) => b.instrs).find((i) => i.kind === "call");
-    expect(call).toMatchObject({ kind: "call", target: { kind: "func", name: FMOD_FN } });
+    expect(JSON.stringify(fn.blocks)).toContain(`"name":"${FMOD_FN}"`);
   });
 
   it("unary `-x` is ToNumber + f64.neg; unary `+x` is a BARE dyn.to_number (§13.5.4 IS ToNumber)", () => {
@@ -246,7 +247,7 @@ describe("#2949 S5.5 — from-ast lowers dynamic numeric arithmetic via dyn.to_n
     expect(fn.blocks.flatMap((b) => b.instrs).find((i) => i.kind === "unary")).toMatchObject({ op: "i32.eqz" });
   });
 
-  it("`+` stays EXCLUDED from the numeric arm (concat dispatch), and non-f64 concrete counter-operands demote", () => {
+  it("`+` stays EXCLUDED from the numeric arm (concat dispatch), a non-f64 counter-operand demotes, bitwise lowers", () => {
     // `x + 1` on a dynamic operand must NOT take a numeric fast path — JS `+`
     // is ToPrimitive + concat-or-add, so ToNumber-ing the operand is wrong.
     //
@@ -266,8 +267,10 @@ describe("#2949 S5.5 — from-ast lowers dynamic numeric arithmetic via dyn.to_n
     // A string counter-operand cannot feed the numeric arm (relOperandToF64
     // returns null) — the mixed string/dynamic pair demotes.
     expect(() => irFromSource(`export function subs(x) { return x - "a"; }`, [DYN], F64)).toThrow();
-    // Bitwise ops are ToInt32 territory — not in this slice; demote.
-    expect(() => irFromSource(`export function band(x) { return x & 1; }`, [DYN], F64)).toThrow();
+    // (#7106) A bitwise operator is a ToNumber reader too: ToNumber, then ToInt32.
+    const band = irFromSource(`export function band(x) { return x & 1; }`, [DYN], F64);
+    expect(verifyIrFunction(band)).toEqual([]);
+    expect(instrKinds(band)).toContain("dyn.to_number");
   });
 });
 
