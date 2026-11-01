@@ -4138,12 +4138,13 @@ just as a top-level identifier declaration does.
    list, and its private pattern-label walker folds into
    `collectPatternBindingNames`.
 7. **Selection** (`src/ir/select.ts`).
-   - `isPhase1DeclarationPattern` owns the `<module-init>` rule.
-     `vardecl-module-destructuring` now refuses only a pattern outside a
-     module-init `var` list.
-   - On the literal path, `moduleVarLeavesStorable` requires each leaf to
-     resolve (`vardecl-module-storage-unrepresentable`) and its literal source
-     to fit the slot (`vardecl-module-value-flow`). The fit is:
+   - `vardecl-module-destructuring` stays on the `<module-init>` statement,
+     with one exception: a module-init `var` list. A `let`/`const` `for` head
+     is untouched, so #7024 still claims it as locals.
+   - On the literal path of such a list's pattern, `moduleVarLeavesStorable`
+     requires each leaf to resolve (`vardecl-module-storage-unrepresentable`)
+     and its literal source to fit the slot (`vardecl-module-value-flow`).
+     The fit is:
      - `undefined`, or a `boxableIntoDynamic` family, in the dynamic carrier;
      - the resolver's own `bindingValueMatches` in a typed or string slot.
 
