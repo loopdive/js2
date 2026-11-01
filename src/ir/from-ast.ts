@@ -50,7 +50,6 @@ import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./
 import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { isLexicalBindingWrite } from "../shared/binding-writes.js";
-import { bodyWritesIdentifier, isWriteToConstDeclaration } from "./const-binding-writes.js"; // (#7014)
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import {
   additiveOperandsProvable,
@@ -11530,16 +11529,6 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
   // anonymous. `__forof_elem` is the slot name either way, so the placeholder
   // never reaches the emitted module.
   const loopVarName = headPattern ? "__forof_pattern_elem" : (decl.name as ts.Identifier).text;
-  // (#7014) `for (const x of xs) { x++ }` — a write to the const loop binding is
-  // a TS error that still emits code, and must throw TypeError at run time. The
-  // name-based mutation pre-pass bound `x` as a mutable slot, so the IR silently
-  // performed the write; only the legacy lowering raises the TypeError.
-  if (!headPattern && init.flags & ts.NodeFlags.Const && bodyWritesIdentifier(stmt.statement, loopVarName)) {
-    demoteToLegacy(
-      "compound-assign-unsupported",
-      `ir/from-ast: write to const for-of binding "${loopVarName}" (${cx.funcName})`,
-    );
-  }
 
   // 3. Strategy dispatch.
   //
@@ -13575,9 +13564,6 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     return;
   }
   if (binding.kind !== "slot") {
-    if (isWriteToConstDeclaration(id)) {
-      demoteToLegacy("property-write-unsupported", `ir/from-ast: assignment to const "${id.text}" in ${cx.funcName}`);
-    }
     // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
     throw new Error(
       `ir/from-ast: assignment to non-slot binding "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
@@ -13642,12 +13628,6 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
   }
   const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
   if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
-    if (isWriteToConstDeclaration(id)) {
-      demoteToLegacy(
-        "compound-assign-unsupported",
-        `ir/from-ast: compound assign to const "${id.text}" in ${cx.funcName}`,
-      );
-    }
     // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
     throw new Error(
       `ir/from-ast: compound assign to non-slot binding "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
@@ -13811,12 +13791,6 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   }
   const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
   if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
-    if (isWriteToConstDeclaration(id)) {
-      demoteToLegacy(
-        "compound-assign-unsupported",
-        `ir/from-ast: increment/decrement of const "${id.text}" in ${cx.funcName}`,
-      );
-    }
     // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
     throw new Error(
       `ir/from-ast: increment/decrement of non-slot "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,

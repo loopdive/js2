@@ -143,6 +143,7 @@ import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
+import { firstConstBindingWrite } from "./const-binding-writes.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
   IrLegacyLocalClassExpressionResolver,
@@ -2224,7 +2225,7 @@ function whyNotIrClaimable(
   }
 
   const body = fn.body;
-  if (!body) return "body-shape-rejected";
+  if (!body || constBindingWriteRefused(body)) return "body-shape-rejected";
   if (prepareFunctionBodySelection(fn, scope, body)) return "string-builder-candidate";
   // (#2856 C1) Reset the early-return context for this function's walk.
   earlyReturnLoopDepth = 0;
@@ -4295,18 +4296,29 @@ function phase1MutatingStatementVerdict(
   }
   // S0 — local `x++;`, top level only.
   if (!topLevel || !ts.isIdentifier(operand)) return null;
-  if (isUnrepresentableModuleBinding(operand)) {
-    return { ok: false, arm: "module-storage-unrepresentable", node: expr };
-  }
-  if (currentModuleBindingResolver?.(operand) && !currentSubjectIsModuleInit) {
-    return { ok: false, arm: "module-update", node: expr };
-  }
-  if (!scope.has(operand.text)) return { ok: false, arm: "incdec-scope", node: operand };
-  if (projectionBindingMutationIsUnsupported(operand.text, expr)) {
-    return { ok: false, arm: "incdec-projection", node: expr };
-  }
+  const refusal = identifierUpdateRefusal(operand, expr, scope);
+  if (refusal !== undefined) return { ok: false, ...refusal };
   clearProjectionBinding(operand.text);
   return { ok: true };
+}
+
+/** Why `++`/`--` on `id` is not claimable: the one gate of the three update arms. */
+function identifierUpdateRefusal(
+  id: ts.Identifier,
+  expr: ts.Node,
+  scope: ReadonlySet<string>,
+): { readonly arm: string; readonly node: ts.Node } | undefined {
+  if (isUnrepresentableModuleBinding(id)) return { arm: "module-storage-unrepresentable", node: expr };
+  if (currentModuleBindingResolver?.(id) && !currentSubjectIsModuleInit) return { arm: "module-update", node: expr };
+  if (!scope.has(id.text)) return { arm: "incdec-scope", node: id };
+  if (projectionBindingMutationIsUnsupported(id.text, expr)) return { arm: "incdec-projection", node: expr };
+  return undefined;
+}
+
+/** A write to a `const` must throw TypeError, which only legacy raises: refuse the subject whole, not per write arm. */
+function constBindingWriteRefused(root: ts.Node): boolean {
+  const write = firstConstBindingWrite(root);
+  return write !== undefined && !shapeNo("const-write", write);
 }
 
 function stableDynamicStoreReceiverHasAdmittedRoot(receiver: ts.Expression): boolean {
@@ -5560,10 +5572,7 @@ function isPhase1ForUpdateExpr(
     const op = expr.operator;
     if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
       if (!ts.isIdentifier(expr.operand)) return false;
-      if (isUnrepresentableModuleBinding(expr.operand)) return false;
-      if (currentModuleBindingResolver?.(expr.operand) && !currentSubjectIsModuleInit) return false;
-      if (!scope.has(expr.operand.text)) return false;
-      if (projectionBindingMutationIsUnsupported(expr.operand.text, expr)) return false;
+      if (identifierUpdateRefusal(expr.operand, expr, scope) !== undefined) return false;
       clearProjectionBinding(expr.operand.text);
       return true;
     }
@@ -6010,14 +6019,8 @@ function isPhase1BodyStatement(
       const op = stmt.expression.operator;
       if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
         if (!ts.isIdentifier(stmt.expression.operand)) return false;
-        if (isUnrepresentableModuleBinding(stmt.expression.operand)) {
-          return shapeNo("body-module-storage-unrepresentable", stmt.expression);
-        }
-        if (currentModuleBindingResolver?.(stmt.expression.operand) && !currentSubjectIsModuleInit) {
-          return shapeNo("body-module-update", stmt.expression);
-        }
-        if (!scope.has(stmt.expression.operand.text)) return false;
-        if (projectionBindingMutationIsUnsupported(stmt.expression.operand.text, stmt.expression)) return false;
+        const refusal = identifierUpdateRefusal(stmt.expression.operand, stmt.expression, scope);
+        if (refusal !== undefined) return shapeNo(`body-${refusal.arm}`, refusal.node);
         clearProjectionBinding(stmt.expression.operand.text);
         return true;
       }
@@ -12957,7 +12960,7 @@ export function assessModuleInit(
   currentDynamicParamNames = new Set<string>(); // (#7106 S3a) no parameters at module init
   const maskedRejects: ModuleInitReject[] | undefined = MODULE_INIT_ALL_REJECTS_ON ? [] : undefined;
   for (const stmt of population) {
-    if (!isPhase1BodyStatement(stmt, scope, localClasses)) {
+    if (constBindingWriteRefused(stmt) || !isPhase1BodyStatement(stmt, scope, localClasses)) {
       const reason = typedShapeRejectReason ?? "body-shape-rejected";
       if (maskedRejects) {
         recordMaskedModuleInitReject(maskedRejects, reason, stmt, scope);

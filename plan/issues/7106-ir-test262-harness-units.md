@@ -3914,7 +3914,6 @@ S1–S3 table):
   (`for (const [a] of rows) a = 2`) silently succeeds in the IR. This is on
   main, and belongs to (a).
 
-
 ### Review round 2 (2026-11-01)
 
 The verdict was approve with nits. The reviewer's probes (`cases*.json`, base
@@ -4283,6 +4282,119 @@ four are fixed in a9f1b70442, after a merge of main (#7024 has landed; main's
 
 S5 incidentally fixes `var {a} = {a: 2}; var a;`, which fails Wasm validation
 on main.
+
+## Writes to a `const`: refused at select (fixed 2026-11-01)
+
+**Symptom.** A write to a `const` binding is a TypeScript error that still
+emits code and must throw TypeError at run time; only legacy raises it.
+- A module `const` update (`const locked = 1; locked++;`) was claimed and
+  lowered as a plain module-global write: the initializer ran on.
+- Every function-local `const` write (`k++`, `k = 5`, `k += 2`, `a = k = 5`,
+  `x = (k = 5)`, a `for` update) was claimed and then demoted by from-ast's
+  `isWriteToConstDeclaration` check: right answer, but a claim-then-demote.
+- Module `const` assignment was already refused, through the module-binding
+  resolver. The chunk lever (#7026) widens the reach of the update case.
+
+**Root cause.** Each write arm (three update arms, the body, top-level,
+chained, tail and value assignment arms, the `for` update clause) checked
+scope and module storage but not constness.
+
+**Fix.** One subject gate instead of one check per arm:
+`firstConstBindingWrite` (`src/ir/const-binding-writes.ts`, built from the
+shared `isLexicalBindingWrite` and the #7014 `isWriteToConstDeclaration`) finds
+any write to a const, and the selector refuses the whole subject
+(`constBindingWriteRefused`, called from `whyNotIrClaimable` and per statement
+in `assessModuleInit`). The three update arms, which repeated the same four
+checks, share `identifierUpdateRefusal`. `select.ts` net -1 line, no grant.
+
+**Measured** (head vs main `4fe61ff7f2`, file-copy A/B of `select.ts`):
+- Probes: 112 sources, 224 runs on standalone and gc (update and assignment
+  writes to a const, let or var; statement, chain, value, loop and
+  `for`-update positions; in a function and at top level) all match node.
+  Post-claim errors drop from 48 to 0; the let/var binaries are unchanged.
+- `tests/ir-const-update-refusal.test.ts`: 62/62 on head, 30 fail on main.
+- test262: of 1,412 candidate rows (all of `assignment/` and
+  `compound-assignment/`, the `++`/`--` directories, and every row a text scan
+  flags), 14 contain a const write by the real predicate. On those 14: 0 flips
+  on both lanes, 13/14 binaries identical, and
+  `const/syntax/const-invalid-assignment-next-expression-for.js` moves from a
+  post-claim demote to a select refusal (still pass). The other 1,398 rows
+  cannot change.
+- Playground: 13/13 identical on both lanes.
+
+### Review round 1 (2026-11-01)
+
+Stacked on #7024 (`claude/7106-for-head-destructuring`, merged in) for its one
+pattern-leaf collector; this PR lands after #7024.
+
+- **Destructured const leaves (major).** The resolver matched identifier
+  declarators only, so `for (const [a, b] of rows) { a = 5 }` was claimed and
+  wrote silently (7, node throws). `isWriteToConstDeclaration` now matches
+  pattern leaves through `collectPatternBindingNames` in declarations and
+  loop heads.
+- **Over-refusal (minor).** The resolver now honours catch parameters,
+  `getFunctionOwnLocals` (parameters, destructured parameters, hoisted
+  `var`s), block `class` declarations and a named function or class
+  expression's own name. `const x = 1; … catch (x) { x = "z" }` is claimed
+  again, as on main.
+- **Dead demotes (nit).** The four #7014 builder demotes in `from-ast.ts` are
+  removed: the three before the #4502 invariant, and the for-of loop-variable
+  demote with its name-based detector `bodyWritesIdentifier`. The selector
+  refuses every one of those subjects first, with the same resolver.
+- **Diagnostic node (nit).** `identifierUpdateRefusal` returns its arm and
+  node together.
+
+Re-measured against the #7024 tip `42c09a6cb8` (file-copy A/B of the three
+changed files):
+- Probes: 238 runs, all match node. Post-claim errors 54 → 2 (both are
+  `catch (x) { x = "z" }`, a pre-existing catch-slot demote, identical on
+  base). The for-of pattern probes were wrong on base (3 and 7) and now throw.
+- `tests/ir-const-update-refusal.test.ts` 81/81, including an 11-case
+  resolver table.
+- test262: by the real predicate, 23 of 53,575 rows write a const (the 14
+  above plus `for-of/dstr/*-put-const`, `for-await-of/*-put-const` and two
+  `await-using` rows). Both lanes: 0 flips, 22/23 binaries identical, 0 hangs.
+- Playground: 13/13 identical on both lanes.
+
+**Follow-ups (not in this PR):**
+- Legacy throws no TypeError for `const a = 0; a ||= 5` / `a &&= 5`.
+- Legacy throws no TypeError when a for-in/for-of head writes an outer const.
+- `(x) => { x = x + 1 }` fails the whole compile on main.
+
+### Review round 2 (2026-11-01)
+
+The verdict was approve with nits: no regression, and no route bypasses the
+selector. Both findings are fixed.
+
+- **A `const` from an earlier `case` (minor).** The resolver searched only the
+  clause that holds the write. `switch (k) { case 0: const a = 1; case 1:
+  a = 2; }` was claimed, hit the #4502 invariant, and failed the compile on
+  both lanes; node throws a TypeError. A `case` clause now resolves against its
+  whole `switch` body. The rule is one helper, `blockScopeOf`, which #7024's
+  `bindingScopeOf` now uses too.
+- **Immutable own names (nit, latent).** A named function expression's own
+  name, and a class's name inside its body, are immutable bindings. A write
+  throws in strict and class code and is ignored in sloppy code. The resolver
+  now counts them as `const`. A parameter or `var` of the same name still
+  shadows them.
+
+Re-measured with a file-copy A/B of `const-binding-writes.ts` against
+`5a8480ffe9`, both lanes:
+
+- **Probes:** the 238 runs above and the reviewer's 39 cases (R2–R4). One
+  answer changes: `switchSiblingCase` failed to compile on the base and now
+  answers 100, as node does. The base did not claim the own-name cases either,
+  so their binaries are unchanged.
+- **Tests:** `tests/ir-const-update-refusal.test.ts` 91/91. It adds the switch
+  repro and an own-name write on both lanes, and 7 resolver rows. On the base,
+  the switch tests and 4 resolver rows fail. The own-name end-to-end test
+  passes on the base too, because the IR does not claim that closure yet; the
+  resolver rows pin the rule.
+- **test262:** the predicate now matches 50 of 53,575 rows, 27 more than
+  before. They are function, generator and async expressions that reassign
+  their own name, and class name-binding tests; no row writes a const from
+  another `case`. All 50 binaries are identical to the base, with 0 status
+  flips.
 
 ## IR `finally` abrupt exit: the guard `if` was not a frame (fixed 2026-11-01)
 
