@@ -70,7 +70,6 @@ import { forInReceiverIsDynamic } from "../builtin-instance-key-presence.js";
 import { blockLoop, restoreBlockScopedShadows, saveBlockScopedShadows, shiftLoopDepths } from "./shared.js";
 import {
   bodyHasMatchingCharRead,
-  collectBindingNames,
   collectForInHeadClosureCaptures,
   detectI32LoopVar,
   findAllNamesCapturedByClosuresInLoop,
@@ -1541,7 +1540,7 @@ function compileForOfNativeMapEntries(
   const { M_ENTRIES, M_ENTRYCOUNT, F_KEY, F_VALUE, F_HASH, TOMBSTONE_BIT } = MAP_LAYOUT;
   const isConst = !!(stmt.initializer.flags & ts.NodeFlags.Const);
   if (isConst) {
-    (ts.isIdentifier(decl.name) ? [decl.name.text] : collectBindingNames(decl.name)).forEach((n) => {
+    (ts.isIdentifier(decl.name) ? [decl.name.text] : [...collectPatternBindingNames(decl.name)]).forEach((n) => {
       if (!fctx.constBindings) fctx.constBindings = new Set();
       fctx.constBindings.add(n);
     });
@@ -2215,7 +2214,7 @@ function compileForOfArray(
       elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, readElemType);
       // Track const bindings for all identifiers in the destructuring pattern
       if (isConst) {
-        collectBindingNames(decl.name).forEach((n) => {
+        [...collectPatternBindingNames(decl.name)].forEach((n) => {
           if (!fctx.constBindings) fctx.constBindings = new Set();
           fctx.constBindings.add(n);
         });
@@ -2503,7 +2502,7 @@ function compileForOfArrayEntries(
     }
     pattern = decl.name;
     if (stmt.initializer.flags & ts.NodeFlags.Const) {
-      collectBindingNames(decl.name).forEach((n) => {
+      [...collectPatternBindingNames(decl.name)].forEach((n) => {
         if (!fctx.constBindings) fctx.constBindings = new Set();
         fctx.constBindings.add(n);
       });
@@ -2864,7 +2863,7 @@ function compileForOfDirectIterator(
       destructPatternIter = decl.name;
       elemLocal = allocLocal(fctx, `__forit_elem_${fctx.locals.length}`, elemType);
       if (isConst) {
-        collectBindingNames(decl.name).forEach((n) => {
+        [...collectPatternBindingNames(decl.name)].forEach((n) => {
           if (!fctx.constBindings) fctx.constBindings = new Set();
           fctx.constBindings.add(n);
         });
@@ -3323,7 +3322,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
       destructPatternIter = decl.name;
       elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, elemType);
       if (isConst) {
-        collectBindingNames(decl.name).forEach((n) => {
+        [...collectPatternBindingNames(decl.name)].forEach((n) => {
           if (!fctx.constBindings) fctx.constBindings = new Set();
           fctx.constBindings.add(n);
         });
