@@ -9,6 +9,8 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { firstConstBindingWrite } from "../src/ir/const-binding-writes.js";
+import { ts } from "../src/ts-api.js";
 import { buildImports } from "../src/runtime.js";
 import { instantiateWasm } from "../src/runtime-instantiate.js";
 
@@ -141,5 +143,56 @@ export function probe(): number { return work(); }`;
 export function probe(): number { return work(); }`;
     const outcome = await run(source, lane);
     expect(outcome).toMatchObject({ init: "ok", value: 103, postClaimErrors: 0 });
+  });
+
+  // Review round 1: a const bound by a destructuring pattern is a const too.
+  it.each([
+    ["a for-of head pattern leaf", "for (const [a, b] of rows) { s = a + b; a = 5; }", 103],
+    ["a declaration pattern leaf", "const [a] = rows[0]!; s = a; a = 5;", 101],
+    ["a declaration pattern leaf, ++", "const { length: a } = rows; s = a; a++;", 101],
+  ])("%s: the write throws TypeError, refused at select", async (_, write, expected) => {
+    const source = `function work(rows: number[][]): number {
+  let caught: number = 0;
+  let s: number = 0;
+  try { ${write} } catch (e) { caught = e instanceof TypeError ? 100 : 200; }
+  return caught + s;
+}
+export function probe(): number { return work([[1, 2]]); }`;
+    const outcome = await run(source, lane);
+    expect(outcome).toMatchObject({ init: "ok", value: expected, postClaimErrors: 0 });
+    expect(outcome.irUnits).not.toContain("work");
+  });
+
+  // Review round 1: a catch parameter shadowing a module const is its own binding; the subject stays claimed.
+  it("a catch parameter shadowing a module const is not a const write", async () => {
+    const source = `const x: number = 1;
+let r: number = 0;
+function work(): number { try { throw "q"; } catch (x) { x = "z"; r = 5; } return r; }
+export function probe(): number { return work() * 10 + x; }`;
+    const outcome = await run(source, lane);
+    expect(outcome.irUnits).toContain("work");
+    expect(outcome).toMatchObject({ init: "ok", value: 51 });
+  });
+});
+
+/** The write the selector refuses a subject for, by name, or "-" when none. */
+const constWriteIn = (source: string): string =>
+  firstConstBindingWrite(ts.createSourceFile("t.ts", source, ts.ScriptTarget.ES2022, true))?.text ?? "-";
+
+describe("firstConstBindingWrite resolves the nearest binding", () => {
+  it.each([
+    ["a for-of head pattern leaf", "function w(rows) { for (const [a] of rows) { a = 5; } }", "a"],
+    ["a nested object pattern leaf", "function w(rows) { for (const { a: [b] } of rows) { b++; } }", "b"],
+    ["a declaration rest leaf", "function w(o) { const { ...r } = o; r = 5; }", "r"],
+    ["a for-in head", 'function w(o) { for (const k in o) { k = "z"; } }', "k"],
+    ["a const written from a nested function", "function w() { const k = 1; function g() { k += 1; } }", "k"],
+    ["a catch parameter", "const x = 1;\nfunction w() { try { throw 1; } catch (x) { x = 2; } }", "-"],
+    ["a catch pattern", "const x = 1;\nfunction w() { try { throw {}; } catch ({ x }) { x = 2; } }", "-"],
+    ["a hoisted nested var", "const x = 1;\nfunction w(n) { if (n) { var x = 4; } x = 7; }", "-"],
+    ["a block class", "const x = 1;\nfunction w() { { class x {} x = 2; } }", "-"],
+    ["a destructured parameter", "const x = 1;\nfunction w({ x }) { x = 2; }", "-"],
+    ["a named function expression", "const x = 1;\nconst g = function x() { x = 2; };", "-"],
+  ])("%s", (_, source, expected) => {
+    expect(constWriteIn(source)).toBe(expected);
   });
 });

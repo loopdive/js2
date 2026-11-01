@@ -4286,17 +4286,21 @@ function phase1MutatingStatementVerdict(
   // S0 — local `x++;`, top level only.
   if (!topLevel || !ts.isIdentifier(operand)) return null;
   const refusal = identifierUpdateRefusal(operand, expr, scope);
-  if (refusal !== undefined) return { ok: false, arm: refusal, node: refusal === "incdec-scope" ? operand : expr };
+  if (refusal !== undefined) return { ok: false, ...refusal };
   clearProjectionBinding(operand.text);
   return { ok: true };
 }
 
 /** Why `++`/`--` on `id` is not claimable: the one gate of the three update arms. */
-function identifierUpdateRefusal(id: ts.Identifier, expr: ts.Node, scope: ReadonlySet<string>): string | undefined {
-  if (isUnrepresentableModuleBinding(id)) return "module-storage-unrepresentable";
-  if (currentModuleBindingResolver?.(id) && !currentSubjectIsModuleInit) return "module-update";
-  if (!scope.has(id.text)) return "incdec-scope";
-  if (projectionBindingMutationIsUnsupported(id.text, expr)) return "incdec-projection";
+function identifierUpdateRefusal(
+  id: ts.Identifier,
+  expr: ts.Node,
+  scope: ReadonlySet<string>,
+): { readonly arm: string; readonly node: ts.Node } | undefined {
+  if (isUnrepresentableModuleBinding(id)) return { arm: "module-storage-unrepresentable", node: expr };
+  if (currentModuleBindingResolver?.(id) && !currentSubjectIsModuleInit) return { arm: "module-update", node: expr };
+  if (!scope.has(id.text)) return { arm: "incdec-scope", node: id };
+  if (projectionBindingMutationIsUnsupported(id.text, expr)) return { arm: "incdec-projection", node: expr };
   return undefined;
 }
 
@@ -6004,7 +6008,7 @@ function isPhase1BodyStatement(
       if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
         if (!ts.isIdentifier(stmt.expression.operand)) return false;
         const refusal = identifierUpdateRefusal(stmt.expression.operand, stmt.expression, scope);
-        if (refusal !== undefined) return shapeNo(`body-${refusal}`, stmt.expression);
+        if (refusal !== undefined) return shapeNo(`body-${refusal.arm}`, refusal.node);
         clearProjectionBinding(stmt.expression.operand.text);
         return true;
       }
