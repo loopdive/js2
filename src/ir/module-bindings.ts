@@ -1551,6 +1551,8 @@ function writeValueMatches(
     // has an object-to-dynamic materializer.
     return classifyPrimitiveExpression(valueExpr) !== undefined;
   }
+  // (#7106 S5) Only the carrier takes a carrier leaf's read: its checker type is no evidence.
+  if (carrierLeafReads(valueExpr, resolve).length > 0) return false;
   if (targetKind.kind === "native-map") {
     // The native `$Map` carrier has exactly one producer in this slice.
     return isNativeMapConstruction(checker, valueExpr);
@@ -1642,7 +1644,7 @@ function writeValueMatches(
     node.forEachChild(checkScalarShape);
   };
   checkScalarShape(valueExpr);
-  if (!scalarShapeIsLowerable || carrierLeafReads(valueExpr, resolve).length > 0) return false;
+  if (!scalarShapeIsLowerable) return false;
   const valueKind = scalarKind(checker.getTypeAtLocation(valueExpr), options);
   if (!valueKind || valueKind.kind !== targetKind.kind) return false;
   return targetKind.kind !== "i32" || (valueKind.kind === "i32" && valueKind.semantic === targetKind.semantic);

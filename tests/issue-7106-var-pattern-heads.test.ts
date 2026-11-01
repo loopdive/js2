@@ -87,6 +87,10 @@ const NO_WITHDRAWAL: Record<string, string> = {
   booleanLeaf: "var { x } = { x: true };\nassert.sameValue(x, true);",
   additionToVar: "var [a] = [3];\nvar b = a + 1;",
   assignment: "var b = 0;\nvar [a] = [3];\nb = a;",
+  // Review round 2: every slot kind but the carrier refuses the read.
+  stringSlot: 'var [a] = [3];\nvar t = "v" + a;',
+  booleanSlot: "var f = false;\nvar [a] = [3];\nf = a === 3;",
+  dynamicSlot: "var d;\nvar [a] = [3];\nd = a;\nassert.sameValue(d, 3);",
 };
 
 describe("#7106 S5 script `var` patterns", () => {

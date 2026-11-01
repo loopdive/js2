@@ -80,20 +80,26 @@ export function moduleBindingLexicalFlags(declaration: ts.VariableDeclaration | 
     : ts.NodeFlags.None;
 }
 
-const leavesBySource = new WeakMap<ts.SourceFile, readonly BindingLeaf[]>();
+interface ModuleInitLeaves {
+  readonly leaves: readonly BindingLeaf[];
+  readonly names: ReadonlySet<string>;
+}
+
+const leavesBySource = new WeakMap<ts.SourceFile, ModuleInitLeaves>();
 
 /** Every leaf the module-init statements of `sourceFile` bind ({@link moduleInitBindings}), in source order. */
-function moduleInitLeaves(sourceFile: ts.SourceFile): readonly BindingLeaf[] {
-  let leaves = leavesBySource.get(sourceFile);
-  if (!leaves) {
-    leaves = sourceFile.statements
+function moduleInitLeaves(sourceFile: ts.SourceFile): ModuleInitLeaves {
+  let cached = leavesBySource.get(sourceFile);
+  if (!cached) {
+    const leaves = sourceFile.statements
       .flatMap(moduleInitBindings)
       .flatMap((binding) =>
         "name" in binding && ts.isBindingElement(binding.declaration) ? [binding.declaration] : [],
       );
-    leavesBySource.set(sourceFile, leaves);
+    cached = { leaves, names: new Set(leaves.map((leaf) => leaf.name.text)) };
+    leavesBySource.set(sourceFile, cached);
   }
-  return leaves;
+  return cached;
 }
 
 /**
@@ -106,7 +112,7 @@ export function moduleBindingDeclarationOrder(sourceFile: ts.SourceFile): readon
   const declarations = sourceFile.statements.flatMap((statement): readonly ts.Node[] =>
     ts.isVariableStatement(statement) ? statement.declarationList.declarations : [],
   );
-  return [...declarations, ...moduleInitLeaves(sourceFile)];
+  return [...declarations, ...moduleInitLeaves(sourceFile).leaves];
 }
 
 /**
@@ -130,7 +136,7 @@ export function carrierLeafReads(
   node: ts.Node,
   resolve: (identifier: ts.Identifier) => ModuleBindingRepresentation | undefined,
 ): ts.Identifier[] {
-  const names = new Set(moduleInitLeaves(node.getSourceFile()).map((leaf) => leaf.name.text));
+  const { names } = moduleInitLeaves(node.getSourceFile());
   const reads: ts.Identifier[] = [];
   const visit = (child: ts.Node): void => {
     if (!ts.isIdentifier(child)) child.forEachChild(visit);
