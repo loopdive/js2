@@ -152,6 +152,7 @@ import {
   type IrBackendTargetCapability,
 } from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
+import { holdModuleInitChunksForIr, releaseModuleInitChunks } from "./module-init-chunks.js";
 import { literalComputedInstanceMethodKey } from "../ir/class-method-names.js";
 import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import {
@@ -6016,6 +6017,9 @@ export function generateModule(
       irPreserveBodies = routing.preserveBodies;
       irSkipBodyUnitIds = routing.skipBodyUnitIds;
       irPreserveBodyUnitIds = routing.preserveBodyUnitIds;
+      if (!preparedModuleInit && (preparedSelection ?? irPlan.safeSelection).moduleInit?.reason === null) {
+        holdModuleInitChunksForIr(ctx);
+      }
     }
     // Third pass: compile function bodies
     // (#1058) Batch throw-message string imports until the bodies are done.
@@ -6169,6 +6173,7 @@ export function generateModule(
         irSkippedModuleInitUnitIds,
       );
     }
+    releaseModuleInitChunks(ctx);
 
     // (#6615) Same post-bodies arming as the multi-source path — see
     // `armExternRefArgTypeGuardForLinkedProvider`.

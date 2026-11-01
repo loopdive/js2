@@ -31,6 +31,35 @@ export const MODULE_INIT_CHUNK_MAX_AST_NODES = 1024;
  */
 export const MODULE_INIT_CHUNK_FUNCTION_PREFIX = "__module_init_chunk_";
 
+/** The function name space a chunk helper name is reserved in (legacy's codegen context). */
+export interface ModuleInitChunkNameSpace {
+  readonly moduleInitChunkHelperNames: Set<string>;
+  readonly funcMap: ReadonlyMap<string, number>;
+  readonly mod: {
+    readonly functions: readonly { readonly name: string }[];
+    readonly imports: readonly { readonly name: string; readonly desc: { readonly kind: string } }[];
+  };
+}
+
+/**
+ * Reserve a WAT-visible private chunk helper name without claiming user
+ * spellings, and record it as a chunk so no inliner folds it back.
+ */
+export function reserveModuleInitChunkHelperName(space: ModuleInitChunkNameSpace, preferred: string): string {
+  let name = preferred;
+  let duplicate = 0;
+  while (
+    space.moduleInitChunkHelperNames.has(name) ||
+    space.funcMap.has(name) ||
+    space.mod.functions.some((func) => func.name === name) ||
+    space.mod.imports.some((entry) => entry.desc.kind === "func" && entry.name === name)
+  ) {
+    name = `${preferred}_${++duplicate}`;
+  }
+  space.moduleInitChunkHelperNames.add(name);
+  return name;
+}
+
 /** Minimal shape shared by statement and declaration-static init entries. */
 export interface ModuleInitChunkEntry {
   readonly node: ts.Node;

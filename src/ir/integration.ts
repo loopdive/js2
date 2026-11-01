@@ -135,6 +135,7 @@ import {
   irInstanceOfFunctionHelperName,
   irSelfGuardedConstructorValue,
 } from "../codegen/ir-dynamic-construct.js";
+import { reserveModuleInitChunkHelperName } from "../shared/module-init-chunk-plan.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import { builtinNamespaceConstantValue } from "../codegen/builtin-value-read.js"; // (#7106 module-init lever A)
 import { ensureIrNumberFromValueHelper } from "../codegen/helpers/ir-number-from-value.js"; // (#7106 module-init lever B)
@@ -3840,7 +3841,6 @@ export function compileIrPathFunctions(
           ]
         : [];
   const moduleInitSourceByUnitId = new Map<IrUnitId, ts.SourceFile>(); // (#7106) prologue source
-  const moduleInitChunkUnitIds = new Set<IrUnitId>(); // (#7106) chunk and dispatcher artifacts
   const moduleInitPrologueUnavailable = !!(options?.preparedModuleInitBatch || options?.deferPreparedPublication);
   for (const moduleInitInput of moduleInitBuildSources) {
     const moduleInitSourceFile = moduleInitInput.sourceFile;
@@ -3955,7 +3955,6 @@ export function compileIrPathFunctions(
         );
         if (!anyLiftedFailed) {
           moduleInitSourceByUnitId.set(result.main.unitId, moduleInitSourceFile);
-          for (const unitId of result.moduleInitChunks ?? []) moduleInitChunkUnitIds.add(unitId);
           built.push({
             artifactUnitId: result.main.unitId,
             terminalOwnerUnitId: moduleInitSourceOwner.unitId,
@@ -5030,11 +5029,6 @@ export function compileIrPathFunctions(
       funcIdx,
       terminalOwnerUnitId: entry.terminalOwnerUnitId,
     });
-  }
-  // (#7106) The late user-function inliner must not fold an IR chunk back into its single caller.
-  for (const unitId of moduleInitChunkUnitIds) {
-    const chunk = ctx.irUnitFuncMap.get(unitId);
-    if (chunk) ctx.moduleInitChunkHelperNames.add(chunk.name);
   }
 
   // -------------------------------------------------------------------------
@@ -6959,6 +6953,8 @@ function makeFromAstResolver(
   const functionPrototypeCall = integrationFunctionPrototypeCallPolicy(ctx);
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
+    // (#7106) A reserved chunk name also keeps the late user-function inliner off it.
+    moduleInitChunkName: (preferred) => reserveModuleInitChunkHelperName(ctx, preferred),
     hostIndirectEvalTarget() {
       if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings) return null;
       const functionIndex = ctx.funcMap.get("__extern_eval");

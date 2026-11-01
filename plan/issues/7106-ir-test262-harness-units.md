@@ -118,6 +118,10 @@ loc-budget-allow:
   - src/codegen/dyn-read.ts
   - src/codegen/fnctor-escape-gate.ts
   - src/codegen/expressions/new-super.ts
+  # 2026-11-01 (chunk-budget S2 review round 1): `recordLiftedUnitProvenance`
+  # moves here from from-ast.ts, beside `allocateLiftedFunctionArtifact`, so the
+  # chunk lowering reuses it instead of a copy (+14; from-ast.ts nets −10)
+  - src/ir/identity.ts
 ---
 
 ## Problem
@@ -3781,16 +3785,23 @@ as before):
     with the IR claiming the initializer: TDZ and const assignment across
     chunks, destructuring, closure shadowing, the inline caller boundary.
     Each must give the same answer from IR, legacy and node.
-  - New cases: a throw in chunk k (later chunks do not run), and a closure
-    created in chunk 1 that is called from chunk 3.
+  - New cases: a throw in chunk k (later chunks do not run). A closure
+    created in chunk 1 and called from chunk 3 cannot be tested: selection
+    refuses a module-scope closure binding (`module-init-legacy-coupling`), so
+    no claimed initializer holds one.
 - **Scoped A/B, standalone and gc.** The 618 sampled chunked files plus the
   30 heaviest: 0 pass→fail.
-- **Bound.**
-  - Every IR chunk artifact is at most 1.25× the body bytes of legacy's helper
-    for the same chunk.
-  - `<module-init>` holds only the prologue and the dispatch.
-  - On the stress source, the largest IR function stays in legacy's
-    2 KB class at every N, and IR compile time at N=20000 is at most 2× legacy.
+- **Bound.** (Restated in review round 1 with the measured numbers.)
+  - No IR body is unbounded: every chunk holds at most 16 complete entries or
+    1024 AST nodes, the same plan as legacy's helpers.
+  - `<module-init>` holds only the prologue and the dispatch: 1.2–1.5 KB.
+  - IR chunks run 1.6–2× legacy's helper for the same entries. For example,
+    16 × `assert.sameValue(Math.clz32(k), …)` gives 3,769 B against 1,926 B.
+    The cause is not chunking: the IR inlines ToInt32 as about 45
+    instructions per use and 75 locals per chunk. Follow-up: an out-of-line
+    ToInt32 helper (not built here).
+  - On the stress source, the largest function stays in legacy's 2 KB class
+    at every N. IR compile time at N=20000 is at most 2× legacy.
 - **Gain.** `ir_only_pass` +≈260 (CI 130–510). The floor is the 8 named files.
 - **gc byte identity.**
   - S1 is a pure move: compile the 618 files and
@@ -3812,10 +3823,15 @@ as before):
 
 ### Risks and coordination
 
-- **Dead legacy helpers.** In the overlay route, legacy still emits its chunk
-  helpers, and they become dead once the IR claims the initializer. The
-  prototype's binaries were still smaller. They disappear when the
-  initializer moves to the prepared route (#3523 R4).
+- **Dead legacy helpers.** In the overlay route, legacy compiles its chunks
+  before the IR replaces the initializer. Resolved in S2 review: on the
+  IR-first route legacy holds the chunks until the overlay settles
+  (`holdModuleInitChunksForIr` / `releaseModuleInitChunks`,
+  `src/codegen/module-init-chunks.ts`), and emits them only if the IR
+  demotes. The late route (`disableIrFirst`) decides the claim after legacy
+  compiles, so dead helpers remain there.
+  - Legacy still pays for compiling the discarded chunks; that goes away when
+    the initializer moves to the prepared route (#3523 R4).
 - **Masked co-blockers.** Chunked tests are long, so they carry more
   co-blockers (mixed `'…' + n`, script-var storage). This lever's value grows
   as those land: in the greedy order, storage, then class expressions, then
@@ -3834,6 +3850,52 @@ as before):
 
 **Slice order.** S1 → S2 → S3. Horizon M for an Opus lane. S2 carries the
 gain and the stress acceptance.
+
+### S2 review: claim-then-demote classes (2026-11-01)
+
+These are chunk-sized initializers that the selector accepts and the lowering
+then demotes, now that the withdrawal is gone. Measured on the 628-file
+chunked sample (3 files) and the 30 heaviest chunked tests (13 files).
+
+All three classes are pre-existing. An unchunked twin (the one statement
+behind the 10-statement harness, so a single chunk) demotes the same way on
+main `2082c87777`, with the same code and detail.
+
+| code | statement shape | files | unchunked twin on main |
+| --- | --- | --- | --- |
+| `operand-coercion-unsupported` | mixed string/number `+`: `throw new Test262Error('#1: …' + (-1 << 0))` | `S11.7.{1,2,3}_A4_T*`, `S11.7.2_A5.1_T1` (14) | `if (-1 << 0 !== -1) { throw new Test262Error('#1: -1 << 0 === -1. Actual: ' + (-1 << 0)); }` |
+| `nullish-value-unsupported` | bare `null` as a dynamic `??` operand: `x = null ?? undefined ?? 42` | `coalesce/chainable` (1) | `var x; x = null ?? undefined ?? 42; assert.sameValue(x, 42, "…");` |
+| `array-representation-unsupported` | empty array literal with no vec hint: `[];` | `staging/sm/regress/regress-561031` (1) | `try { if (2 == 0) { } else { []; } } catch (e) {}` |
+
+The selector gaps stay open: each class is a whole-IR gap, not a chunking
+one. The mixed `+` is #7066 (its step 1, the shared both-number/both-string
+predicate in the selector, is the next PR).
+
+When a claimed initializer demotes, legacy emits the chunks it held for the
+IR outcome, so the initializer stays bounded.
+
+### S2 review round 1 (2026-11-01)
+
+| finding | resolution |
+| --- | --- |
+| blocker: break/continue out of a `finally` entered by a throw (`S12.14_A9_T2/T3`, `S12.14_A10_T2/T3`) | pre-existing IR bug, fixed separately on `claude/ir-finally-abrupt-exit`, merged here once it lands; the S12.14 rows join the A/B |
+| `compileIrPathFunctions` grew 7 lines | net 0: chunk names are reserved when the chunk is lifted, through the from-ast resolver (`moduleInitChunkName`, built in `makeFromAstResolver`); `reserveModuleInitChunkHelperName` moved to the shared planner, so the IR needs no codegen import |
+| IR chunks 1.6–2× legacy's size | acceptance restated above (bounded shape, ToInt32 inlining); out-of-line ToInt32 helper filed as a follow-up |
+| dead legacy chunk stubs | removed through one seam: on the IR-first route legacy holds its chunks until the overlay settles (`holdModuleInitChunksForIr` / `releaseModuleInitChunks`) and emits them only on a demote. IR void bodies also drop their trailing `return`. Stress bytes at N=1000/5000/20000 are at most main's |
+| claim-then-demote | classified above; all pre-existing. The `+` class is #7066 step 1, a separate PR |
+| `liftChunkFunction` duplicated `recordLiftedUnitProvenance` | moved to `src/ir/identity.ts`, used by both |
+| source-map demote could not fire | deleted with the `sourceMap` host field (the prepared route refuses source maps first) |
+| IR chunk names not reserved | reserved in the module's name space, so they stay inside Binaryen's `no-full-inline@__module_init_chunk_*`. After a demote, legacy's chunks take a numeric suffix, still under the prefix |
+| missing plan tests | the #4376 sources the IR claims (prepared route, both inliner boundaries) run against node; a prepared whole-IR route test (n=400 → 26 chunks, gc and standalone); a demote test (legacy's held chunks are emitted and called) |
+
+**New pre-existing bug found by the node re-run.** The IR claims
+`locked++` / `++locked` on a module `const` and answers without throwing;
+node throws a TypeError. The unchunked twin
+(`const locked: number = 1; …; locked++;`) gives the same wrong answer on
+main `2082c87777`. Chunked initializers were withdrawn on main, so this PR
+widens its reach. The compound and plain assignments are refused at
+selection; the update arm needs the same refusal. It needs its own fix before
+this PR merges.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 

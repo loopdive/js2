@@ -256,6 +256,7 @@ import { IR_CONSOLE_METHODS, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-r
 import type { IrLowerResolver, IrVecLowering } from "./lower.js";
 import {
   allocateLiftedFunctionArtifact,
+  recordLiftedUnitProvenance,
   type IrDerivedUnitProvenance,
   type IrFunctionIdentity,
   type IrLiftedFunctionArtifactIdentity,
@@ -480,6 +481,8 @@ export interface IrExternClassMeta {
  * until Phase 3, so from-ast doesn't see them.
  */
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+  /** (#7106) Reserve one `<module-init>` chunk function's Wasm name in the module's name space. */
+  moduleInitChunkName?(preferred: string): string;
   /** Exact complete-source proof of a local closure's primordial call/apply member. */
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
@@ -1398,8 +1401,6 @@ export interface LoweredFunctionResult {
   readonly liftedUnitProvenance: readonly IrDerivedUnitProvenance[];
   /** Plans actually consumed by this exact source artifact. */
   readonly countedStringAppendPlans?: readonly IrCountedStringAppendLoweringPlan[];
-  /** `<module-init>` only: the chunk and dispatcher artifacts in `lifted` (`module-init-chunk-lowering.ts`). */
-  readonly moduleInitChunks?: readonly IrUnitId[];
 }
 
 function isDirectSourceVarStatement(statement: ts.Statement): boolean {
@@ -1991,10 +1992,10 @@ export function lowerFunctionAstToIr(
       );
     }
     // A top-level break/continue can't appear (the selector rejects it), so no dead-code guard is needed.
-    const moduleInitChunks = lowerModuleInitStatements(stmts, cx, lowerStmt);
+    lowerModuleInitStatements(stmts, cx, lowerStmt);
     terminateImplicitSourceReturn(cx, []);
     checkLogicalVectorConsumption(cx);
-    return { main: builder.finish(), lifted, liftedUnitProvenance, moduleInitChunks, ...sourceMapResult(cx) };
+    return { main: builder.finish(), lifted, liftedUnitProvenance, ...sourceMapResult(cx) };
   }
 
   if (isCtor) {
@@ -16526,16 +16527,6 @@ function tryLowerDynamicArithmetic(
 // ---------------------------------------------------------------------------
 // Closure / nested-function lowering (#1169c — IR Phase 4 Slice 3)
 // ---------------------------------------------------------------------------
-
-function recordLiftedUnitProvenance(identity: IrLiftedFunctionArtifactIdentity, cx: LowerCtx): void {
-  cx.liftedUnitProvenance.push({
-    id: identity.unitId,
-    parentId: identity.parentId,
-    role: identity.role,
-    ordinal: identity.ordinal,
-    ...(identity.sourceUnit ? { sourceUnit: true } : {}),
-  });
-}
 
 function allocateLoweredLiftedFunctionArtifact(
   declaration: ts.FunctionDeclaration | IrClosureLiteral,

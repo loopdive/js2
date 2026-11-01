@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { MODULE_INIT_CHUNK_MAX_ENTRIES } from "../src/shared/module-init-chunk-plan.js";
+import { compile as compilePrepared } from "../src/test262/test262-prepared-entry.js";
+import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
   compileHarnessBody,
   moduleInit,
@@ -29,7 +31,7 @@ function expectIrChunks(result: HarnessCompileResult): readonly string[] {
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(result.irPostClaimErrors ?? []).toEqual([]);
   expect(moduleInit(result)?.irBodyEmitted).toBe(true);
-  const chunks = watFunctionNames(result.wat).filter((name) => /^__module_init_chunk_ir_\d+$/.test(name));
+  const chunks = watFunctionNames(result.wat).filter((name) => /^__module_init_chunk_\d+$/.test(name));
   expect(chunks.length).toBeGreaterThan(1);
   return chunks;
 }
@@ -63,7 +65,7 @@ describe("#7106 chunked <module-init> lowered by the IR", () => {
       "export function probe(): number { return tick; }",
     ]);
     // 1 declaration + 33 statements: chunks of 16, 16 and 2 entries.
-    expect(chunks).toEqual(["__module_init_chunk_ir_0", "__module_init_chunk_ir_1", "__module_init_chunk_ir_2"]);
+    expect(chunks).toEqual(["__module_init_chunk_0", "__module_init_chunk_1", "__module_init_chunk_2"]);
     const dispatched = watCallTargets(wat, watFunction(wat, "__module_init"));
     expect(dispatched.filter((name) => chunks.includes(name))).toEqual(chunks);
     for (const name of chunks) {
@@ -114,6 +116,28 @@ describe("#7106 chunked <module-init> lowered by the IR", () => {
     expect(exports.probe()).toBe(FILLER_SUM);
   });
 
+  it("emits legacy's held chunks, and no IR chunk, when a claimed initializer demotes", async () => {
+    // A mixed string/number `+` is claimed at selection and demoted while
+    // lowering, so the legacy initializer stays and needs its bounded chunks.
+    const result = await compileHarnessBody(
+      [
+        "var tick = 0;",
+        ...FILLER,
+        "if (-1 << 0 !== -1) { throw new Test262Error('#1: -1 << 0 === -1. Actual: ' + (-1 << 0)); }",
+      ].join("\n"),
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(moduleInit(result)?.code).toBe("operand-coercion-unsupported");
+    // The IR reserved the plain chunk names before it demoted, so legacy's take a suffix.
+    const chunks = watFunctionNames(result.wat).filter((name) => /^__module_init_chunk_\d+_\d+$/.test(name));
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(watCallTargets(result.wat, watFunction(result.wat, "__module_init"))).toEqual(
+      expect.arrayContaining(chunks),
+    );
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    (instance.exports.__module_init as () => void)();
+  });
+
   it("dispatches more chunks than one dispatcher holds in source order", async () => {
     const steps = Array.from(
       { length: (MODULE_INIT_CHUNK_MAX_ENTRIES + 2) * MODULE_INIT_CHUNK_MAX_ENTRIES },
@@ -124,8 +148,41 @@ describe("#7106 chunked <module-init> lowered by the IR", () => {
       "export function probe(): number { return tick; }",
     ]);
     expect(chunks.length).toBeGreaterThan(MODULE_INIT_CHUNK_MAX_ENTRIES);
-    expect(watFunctionNames(wat)).toContain("__module_init_chunk_ir_dispatch_0_0");
+    expect(watFunctionNames(wat)).toContain("__module_init_chunk_dispatch_0_0");
     exports.__module_init();
     expect(exports.probe()).toBe(steps.reduce((tick, step) => (tick * 31 + step) % 1000003, 0));
   });
+
+  it(
+    "chunks the initializer on the prepared whole-IR route, which used to emit one unbounded body",
+    { timeout: 180_000 },
+    async () => {
+      const steps = Array.from({ length: 400 }, (_, i) => i);
+      for (const target of ["gc", "standalone"] as const) {
+        const result = await compilePrepared(
+          [
+            "let tick: number = 0;",
+            ...steps.map((step) => `tick = (tick * 31 + ${step}) % 1000003;`),
+            "export function main(): number { return tick; }",
+          ].join("\n"),
+          {
+            wholeProgram: { kind: "prepared-program-required", version: 1 },
+            target,
+            backend: "wasmgc",
+            sourceMap: false,
+            optimize: false,
+            emitWat: true,
+            fileName: "entry.ts",
+          },
+        );
+        expect(result.success, JSON.stringify(result.errors)).toBe(true);
+        // 1 declaration + 400 statements in chunks of 16: 26 chunks, two dispatchers.
+        expect([...(result.wat ?? "").matchAll(/\(func \$__module_init_chunk_\d+ /g)]).toHaveLength(26);
+        const exports = instantiatePreparedArtifact(result).instance.exports as Record<string, () => number>;
+        // The initializer runs from the start section unless the route exports it.
+        (exports.__module_init ?? exports._start)?.();
+        expect(exports.main!()).toBe(steps.reduce((tick, step) => (tick * 31 + step) % 1000003, 0));
+      }
+    },
+  );
 });

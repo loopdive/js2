@@ -194,13 +194,8 @@ import {
   planModuleClosurePreLift,
   PRELIFT_DISABLE_SEAM,
 } from "./declarations/module-init-closure-prelift.js";
-import { reserveModuleInitChunkHelperName } from "./module-init-chunks.js";
-import {
-  MODULE_INIT_CHUNK_FUNCTION_PREFIX,
-  moduleInitChunksRequired,
-  planModuleInitChunkDispatch,
-  planModuleInitChunks,
-} from "../shared/module-init-chunk-plan.js";
+import { dispatchModuleInitChunks, emitModuleInitChunk } from "./module-init-chunks.js";
+import { moduleInitChunksRequired, planModuleInitChunks } from "../shared/module-init-chunk-plan.js";
 import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js"; // (#7106) GDI prologue
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
@@ -6135,33 +6130,6 @@ export function compileDeclarations(
     };
   }
 
-  /**
-   * Keep the public initializer a compact dispatcher even for a graph with so
-   * many chunks that one direct call per chunk would itself become a large
-   * Cranelift body. Every intermediate node stays private and `[] -> []`.
-   */
-  function appendModuleInitChunkDispatch(
-    initFctx: FunctionContext,
-    initialHandles: readonly FuncHandle[],
-    helperTypeIdx: number,
-  ): void {
-    const roots = planModuleInitChunkDispatch(initialHandles, (members, level, ordinal) => {
-      const body: Instr[] = members.map((funcIdx) => ({ op: "call", funcIdx }));
-      // Build the full body before minting the handle. This keeps the helper
-      // safe even if a future dispatch-body extension emits dependencies.
-      const funcIdx = mintDefinedFunc(ctx);
-      pushDefinedFunc(ctx, funcIdx, {
-        name: reserveModuleInitChunkHelperName(ctx, `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}dispatch_${level}_${ordinal}`),
-        typeIdx: helperTypeIdx,
-        locals: [],
-        body,
-        exported: false,
-      });
-      return funcIdx;
-    });
-    for (const funcIdx of roots) initFctx.body.push({ op: "call", funcIdx });
-  }
-
   function compileModuleInitBody(
     targetFctx?: FunctionContext,
     includeModuleStatements = true,
@@ -6228,18 +6196,11 @@ export function compileDeclarations(
           // entries above. Only then mint and push this helper's stable handle,
           // so no late helper registration can steal its function slot.
           chunkTypeIdx ??= addFuncType(ctx, [], [], "__module_init_chunk_type");
-          const funcIdx = mintDefinedFunc(ctx);
-          pushDefinedFunc(ctx, funcIdx, {
-            name: reserveModuleInitChunkHelperName(ctx, `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}${chunkOrdinal++}`),
-            typeIdx: chunkTypeIdx,
-            locals: chunkFctx.locals,
-            body: chunkFctx.body,
-            exported: false,
-          });
-          chunkHandles.push(funcIdx);
+          const funcIdx = emitModuleInitChunk(ctx, chunkOrdinal++, chunkTypeIdx, chunkFctx);
+          if (funcIdx !== undefined) chunkHandles.push(funcIdx);
         }
         ctx.currentFunc = initFctx;
-        if (chunkTypeIdx !== undefined) appendModuleInitChunkDispatch(initFctx, chunkHandles, chunkTypeIdx);
+        if (chunkTypeIdx !== undefined) dispatchModuleInitChunks(ctx, initFctx.body, chunkHandles, chunkTypeIdx);
       } finally {
         if (!outerBodyWasLive) ctx.liveBodies.delete(initFctx.body);
       }

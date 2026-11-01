@@ -17,9 +17,13 @@ import type { ts } from "../ts-api.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { IrFunctionBuilder } from "./builder.js";
 import { irUnitFuncRef } from "./callable-bindings.js";
-import { allocateLiftedFunctionArtifact, type IrDerivedUnitProvenance, type IrUnitId } from "./identity.js";
+import {
+  allocateLiftedFunctionArtifact,
+  recordLiftedUnitProvenance,
+  type IrDerivedUnitProvenance,
+  type IrUnitId,
+} from "./identity.js";
 import type { IrFuncRef, IrFunction } from "./nodes.js";
-import { demoteToLegacy } from "./outcomes.js";
 import {
   MODULE_INIT_CHUNK_FUNCTION_PREFIX,
   planModuleInitChunkDispatch,
@@ -34,42 +38,37 @@ export interface ModuleInitChunkHost {
   readonly lifted: IrFunction[];
   readonly liftedUnitProvenance: IrDerivedUnitProvenance[];
   readonly allocRegistry?: AllocSiteRegistry;
-  readonly sourceMap?: object;
+  /** Reserves each chunk's Wasm name in the module being built (absent: the name as planned). */
+  readonly resolver?: { moduleInitChunkName?(preferred: string): string };
 }
 
 /**
  * Lower the initializer's statements with `lowerStatement`: in place when they
  * fit one chunk, else one derived function per planned chunk plus the dispatch
- * calls.  Returns the derived functions' unit ids (chunks and dispatchers),
- * which no later inliner may fold back into the initializer.
+ * calls.
  */
 export function lowerModuleInitStatements<C extends ModuleInitChunkHost>(
   statements: readonly ts.Statement[],
   cx: C,
   lowerStatement: (statement: ts.Statement, cx: C) => void,
-): readonly IrUnitId[] {
+): void {
   const chunks = planModuleInitChunks(statements.map((node) => ({ node })));
   if (chunks.length <= 1) {
     for (const statement of statements) lowerStatement(statement, cx);
-    return [];
+    return;
   }
-  if (cx.sourceMap) {
-    demoteToLegacy("module-init-legacy-coupling", "ir/module-init: chunked initializer under source maps");
-  }
-  const derived: IrUnitId[] = [];
   const leaves = chunks.map((chunk, index) =>
-    liftChunkFunction(cx, derived, `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}ir_${index}`, (builder) => {
+    liftChunkFunction(cx, `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}${index}`, (builder) => {
       const chunkCx = { ...cx, builder };
       for (const entry of chunk) lowerStatement(entry.node, chunkCx);
     }),
   );
   const roots = planModuleInitChunkDispatch(leaves, (members, level, ordinal) =>
-    liftChunkFunction(cx, derived, `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}ir_dispatch_${level}_${ordinal}`, (builder) =>
+    liftChunkFunction(cx, `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}dispatch_${level}_${ordinal}`, (builder) =>
       emitDispatch(builder, members),
     ),
   );
   emitDispatch(cx.builder, roots);
-  return derived;
 }
 
 function emitDispatch(builder: IrFunctionBuilder, callees: readonly IrFuncRef[]): void {
@@ -79,18 +78,12 @@ function emitDispatch(builder: IrFunctionBuilder, callees: readonly IrFuncRef[])
 /** One private `[] -> []` derived function of the initializer. */
 function liftChunkFunction(
   cx: ModuleInitChunkHost,
-  derived: IrUnitId[],
-  name: string,
+  preferredName: string,
   fill: (builder: IrFunctionBuilder) => void,
 ): IrFuncRef {
+  const name = cx.resolver?.moduleInitChunkName?.(preferredName) ?? preferredName;
   const identity = allocateLiftedFunctionArtifact(cx, () => name);
-  cx.liftedUnitProvenance.push({
-    id: identity.unitId,
-    parentId: identity.parentId,
-    role: identity.role,
-    ordinal: identity.ordinal,
-  });
-  derived.push(identity.unitId);
+  recordLiftedUnitProvenance(identity, cx);
   const builder = new IrFunctionBuilder(identity, [], false, cx.allocRegistry);
   builder.openBlock();
   fill(builder);

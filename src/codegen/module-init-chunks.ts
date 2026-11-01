@@ -8,22 +8,135 @@
  * materializing the group as an unexported `[] -> []` helper.
  */
 import { ts } from "../ts-api.js";
+import type { FuncHandle, Instr, LocalDef } from "../ir/types.js";
+import {
+  MODULE_INIT_CHUNK_FUNCTION_PREFIX,
+  planModuleInitChunkDispatch,
+  reserveModuleInitChunkHelperName,
+} from "../shared/module-init-chunk-plan.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 
-/** Reserve a WAT-visible private helper name without claiming user spellings. */
-export function reserveModuleInitChunkHelperName(ctx: CodegenContext, preferred: string): string {
-  let name = preferred;
-  let duplicate = 0;
-  while (
-    ctx.moduleInitChunkHelperNames.has(name) ||
-    ctx.funcMap.has(name) ||
-    ctx.mod.functions.some((func) => func.name === name) ||
-    ctx.mod.imports.some((entry) => entry.desc.kind === "func" && entry.name === name)
-  ) {
-    name = `${preferred}_${++duplicate}`;
+/** Mint and push one private `[] -> []` helper; returns its stable handle. */
+function pushModuleInitChunkHelper(
+  ctx: CodegenContext,
+  name: string,
+  typeIdx: number,
+  locals: LocalDef[],
+  body: Instr[],
+): FuncHandle {
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: reserveModuleInitChunkHelperName(ctx, name),
+    typeIdx,
+    locals,
+    body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/**
+ * Keep the public initializer a compact dispatcher even for a graph with so
+ * many chunks that one direct call per chunk would itself become a large
+ * Cranelift body. Every intermediate node stays private and `[] -> []`.
+ */
+function moduleInitChunkDispatchCalls(ctx: CodegenContext, handles: readonly FuncHandle[], typeIdx: number): Instr[] {
+  const roots = planModuleInitChunkDispatch(handles, (members, level, ordinal) =>
+    pushModuleInitChunkHelper(
+      ctx,
+      `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}dispatch_${level}_${ordinal}`,
+      typeIdx,
+      [],
+      members.map((funcIdx): Instr => ({ op: "call", funcIdx })),
+    ),
+  );
+  return roots.map((funcIdx): Instr => ({ op: "call", funcIdx }));
+}
+
+/**
+ * (#7106) The one seam between legacy chunk emission and an IR-claimed
+ * initializer. The IR overlay replaces the initializer after legacy compiled
+ * it, so the chunks legacy compiles meanwhile are held instead of emitted:
+ * an installed IR initializer leaves them dead, while a demoted one needs them
+ * as its bounded legacy body (`releaseModuleInitChunks`).
+ */
+export function holdModuleInitChunksForIr(ctx: CodegenContext): void {
+  heldChunks.set(ctx, { chunks: [] });
+}
+
+interface HeldModuleInitChunks {
+  readonly chunks: { readonly locals: LocalDef[]; readonly body: Instr[] }[];
+  dispatch?: { readonly initBody: Instr[]; readonly placeholder: Instr; readonly typeIdx: number };
+}
+
+const heldChunks = new WeakMap<CodegenContext, HeldModuleInitChunks>();
+
+/** Emit one compiled chunk as a private helper, or hold it for the IR outcome. */
+export function emitModuleInitChunk(
+  ctx: CodegenContext,
+  ordinal: number,
+  typeIdx: number,
+  chunk: FunctionContext,
+): FuncHandle | undefined {
+  const held = heldChunks.get(ctx);
+  if (!held) {
+    return pushModuleInitChunkHelper(
+      ctx,
+      `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}${ordinal}`,
+      typeIdx,
+      chunk.locals,
+      chunk.body,
+    );
   }
-  ctx.moduleInitChunkHelperNames.add(name);
-  return name;
+  // Held bodies stay visible to late index repairs until they are emitted or dropped.
+  ctx.liveBodies.add(chunk.body);
+  held.chunks.push({ locals: chunk.locals, body: chunk.body });
+  return undefined;
+}
+
+/**
+ * Call the emitted chunks from the initializer. A held set instead reserves
+ * the dispatch's place with a `nop` that `releaseModuleInitChunks` replaces.
+ */
+export function dispatchModuleInitChunks(
+  ctx: CodegenContext,
+  initBody: Instr[],
+  handles: readonly FuncHandle[],
+  typeIdx: number,
+): void {
+  const held = heldChunks.get(ctx);
+  if (!held) {
+    initBody.push(...moduleInitChunkDispatchCalls(ctx, handles, typeIdx));
+    return;
+  }
+  const placeholder: Instr = { op: "nop" };
+  initBody.push(placeholder);
+  held.dispatch = { initBody, placeholder, typeIdx };
+}
+
+/**
+ * After the IR overlay: drop the held chunks when the IR replaced the legacy
+ * initializer body, else emit them and their dispatch under the body it kept.
+ */
+export function releaseModuleInitChunks(ctx: CodegenContext): void {
+  const held = heldChunks.get(ctx);
+  if (!held) return;
+  heldChunks.delete(ctx);
+  for (const chunk of held.chunks) ctx.liveBodies.delete(chunk.body);
+  const dispatch = held.dispatch;
+  if (!dispatch || !ctx.mod.functions.some((func) => func.body === dispatch.initBody)) return;
+  const handles = held.chunks.map((chunk, ordinal) =>
+    pushModuleInitChunkHelper(
+      ctx,
+      `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}${ordinal}`,
+      dispatch.typeIdx,
+      chunk.locals,
+      chunk.body,
+    ),
+  );
+  const calls = moduleInitChunkDispatchCalls(ctx, handles, dispatch.typeIdx);
+  dispatch.initBody.splice(dispatch.initBody.indexOf(dispatch.placeholder), 1, ...calls);
 }
 
 export function isModuleInitChunkFunctionContext(fctx: FunctionContext): boolean {

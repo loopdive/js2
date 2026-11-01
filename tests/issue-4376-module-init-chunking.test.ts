@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { analyzeSource } from "../src/checker/index.js";
 import { generateModule } from "../src/codegen/index.js";
-import { disableForEachChildMeter, enableForEachChildMeter, readForEachChildCalls } from "../src/ts-api.js";
+import { disableForEachChildMeter, enableForEachChildMeter, readForEachChildCalls, ts } from "../src/ts-api.js";
 // Side-effect import: installs the statement/expression delegates used by
 // generateModule when this test bypasses the normal compile entry point.
 import "../src/codegen/expressions.js";
@@ -163,20 +163,22 @@ async function instantiateHost(result: Awaited<ReturnType<typeof compile>>): Pro
 
 async function expectLiveChunkedPublicDispatcher(
   options: { readonly disableIrFirst?: boolean; readonly experimentalIR?: boolean } = {},
-): Promise<void> {
+): Promise<readonly string[]> {
   const result = await compile(DEFAULT_PREPARED_ROUTE_SOURCE, {
     fileName: FILE_NAME,
     deferTopLevelInit: true,
+    trackIrOutcomes: true,
     ...options,
   });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(result.irOutcomes?.find((outcome) => outcome.unitKind === "module-init")?.irBodyEmitted).toBe(true);
   expect([...result.wat.matchAll(/\(func \$__module_init\b/g)]).toHaveLength(1);
   const dispatcher = watFunction(result.wat, "__module_init");
   // (#7106) The IR lowers the initializer one planned chunk per function.
   // Helpers alone could be dead after a late IR replacement, so the exported
   // dispatcher itself must call every bounded IR chunk.
-  const chunks = watCallTargets(result.wat, dispatcher).filter((name) => name.startsWith("__module_init_chunk_ir_"));
-  expect(chunks).toEqual(["__module_init_chunk_ir_0", "__module_init_chunk_ir_1", "__module_init_chunk_ir_2"]);
+  const chunks = watCallTargets(result.wat, dispatcher).filter((name) => name.startsWith("__module_init_chunk_"));
+  expect(chunks).toHaveLength(3);
   expect(Math.max(...chunks.map((name) => watInstructionCount(watFunction(result.wat, name))))).toBeLessThanOrEqual(
     MODULE_INIT_CHUNK_MAX_ENTRIES * 8,
   );
@@ -185,6 +187,9 @@ async function expectLiveChunkedPublicDispatcher(
   const exports = instance.exports as { __module_init: () => void; probe: () => number };
   exports.__module_init();
   expect(exports.probe()).toBe(MODULE_INIT_CHUNK_MAX_ENTRIES * 2 + 8);
+  return watFunctionNames(result.wat).filter(
+    (name) => name.startsWith("__module_init_chunk_") && !chunks.includes(name),
+  );
 }
 
 /**
@@ -589,8 +594,9 @@ describe("#4376 — bounded module-init helpers", () => {
 
   it("lowers a chunked initializer on the default public IR route behind the live dispatcher", async () => {
     // `compile()` defaults experimentalIR to on, and this lexical/scalar
-    // population is eligible for the prepared IR owner.
-    await expectLiveChunkedPublicDispatcher();
+    // population is eligible for the prepared IR owner. Legacy held its own
+    // chunks for the IR outcome, so none is left behind as a dead helper.
+    expect(await expectLiveChunkedPublicDispatcher()).toEqual([]);
   });
 
   it("lowers a chunked initializer on the late experimental-IR overlay behind the live dispatcher", async () => {
@@ -874,4 +880,53 @@ describe("#4376 — bounded module-init helpers", () => {
       expect(moduleInitHelpers(module)).toEqual([]);
     }
   });
+});
+
+/** Node's answer for a probe source: its `probe()` result, or `"throws"` when the initializer throws. */
+function nodeAnswer(source: string): number | "throws" {
+  const js = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const exports: { probe?: () => number } = {};
+  try {
+    new Function("exports", js)(exports);
+  } catch {
+    return "throws";
+  }
+  return exports.probe!();
+}
+
+describe("#7106 — the #4376 sources with the IR claiming the chunked initializer", () => {
+  // The IR claims these three. The const-mutation sources are either refused
+  // at selection (`+=`, `=`) or, for `locked++` / `++locked`, claimed and
+  // answered wrongly — a pre-existing IR bug its unchunked twin shows on main
+  // (plan, "S2 review round 1").
+  const sources: readonly (readonly [string, string])[] = [
+    ["default prepared route", DEFAULT_PREPARED_ROUTE_SOURCE],
+    ["user inliner boundary", INLINE_CALLER_BOUNDARY_SOURCE],
+    ["source inliner boundary", SOURCE_INLINE_CALLER_BOUNDARY_SOURCE],
+  ];
+  for (const [label, source] of sources) {
+    it(`${label}: the IR answers as node does`, async () => {
+      const result = await compile(source, {
+        fileName: FILE_NAME,
+        target: "standalone",
+        deferTopLevelInit: true,
+        trackIrOutcomes: true,
+      });
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(result.irOutcomes?.find((outcome) => outcome.unitKind === "module-init")?.irBodyEmitted).toBe(true);
+      expect(watModuleInitLeafNames(result.wat).length).toBeGreaterThan(1);
+      const { instance } = await WebAssembly.instantiate(result.binary, {});
+      const exports = instance.exports as { __module_init: () => void; probe: () => number };
+      let answer: number | "throws";
+      try {
+        exports.__module_init();
+        answer = exports.probe();
+      } catch {
+        answer = "throws";
+      }
+      expect(answer).toBe(nodeAnswer(source));
+    });
+  }
 });
