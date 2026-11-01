@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-10-30
+updated: 2026-11-01
 priority: high
 horizon: l
 feasibility: hard
@@ -2448,6 +2448,306 @@ need struct agreement:
 - legacy keeps source field order and adds `$$shape` / `$$shapeBrand`;
 - the IR sorts fields by name;
 - untyped JS constructors are `class-projection-unsupported`.
+
+## `<module-init>` lever: destructuring binding patterns (plan, 2026-11-01)
+
+Plan only; nothing here is implemented. Measured on `a7f413918c` (origin/main,
+2026-11-01), standalone unless a row says gc. Every census compiles the
+conformance runner's harness assembly (`assembleOriginalHarness`) with
+`JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, so each refused
+`<module-init>` statement reports its refusal, not only the first one.
+Pass/fail is `runTest262File` (sloppy run plus strict rerun). The scripts live
+in the planning worktree's `.tmp/dstr/` (`census.mts`, `shapes.mts`,
+`ceiling.mts`, `run.mts`, `compare.mjs`). The prototype is
+`.tmp/proto/proto.diff` plus `.tmp/proto/proto-literal-pattern.ts`, gated by
+`PROTO_DSTR`, `PROTO_DSTR_LET`, `PROTO_LIT` and `PROTO_THROW`.
+
+### Population
+
+- 288 test262 files have a binding pattern in a `for (;;)` head: 285 in
+  `language/statements/for/dstr/`, 2 in `staging/sm/lexical-environment/`,
+  1 in `language/statements/for/`. 18 are negative, so 270 compile.
+- `for-init-name` (`select.ts:5458`) is refused in 150 of them: in
+  `<module-init>` in 146, in a function unit in 4.
+- It is the **only** refusal of any unit in **94**: the 47 generated
+  `for/dstr` cases, each once as `let` and once as `const`. All 94 pass on
+  main on both lanes, through legacy.
+- The request's 70 / 214 came from a first-wins census on `ecf6d64de5`.
+  With every refusal unmasked on `a7f413918c` the figures are 94 / 150.
+- The 95 `var` heads never reach `for-init-name`. A script-level
+  `for (var …)` is refused first as `for-init-var-kind` (72 files), because
+  `collectIrSafeModuleVarDeclarationLists` (`function-local-var.ts:171`)
+  admits only `VariableStatement` lists. A `var` leaf is a hoisted script
+  var with a `__mod_` slot, so it belongs with S5 below.
+
+### Shapes
+
+The 47 cases (each counts twice, `let` and `const`):
+
+| group | cases | example | what it needs |
+| --- | --- | --- | --- |
+| A in-range reads | 5: `ary-name-iter-val`, `ary-ptrn-elem-id-iter-val`, `obj-ptrn-id-trailing-comma`, `obj-ptrn-prop-id`, `obj-ptrn-prop-id-trailing-comma` | `[x, y, z] = [1, 2, 3]` | one read per leaf |
+| B `undefined` leaf | 6: `ary-ptrn-elem-id-iter-complete`, `-iter-done`, `-init-exhausted`, `-init-hole`, `-init-undef`, `obj-ptrn-prop-id-init` | `[x = 23] = [,]` | past-the-end, hole and `undefined` read as `undefined`; the default runs only then |
+| C nested | 12: `ary-ptrn-elem-ary-elem-init`, `-elem-iter`, `-ary-empty-iter`, `ary-ptrn-elem-obj-id(-init)`, `ary-ptrn-elem-obj-prop-id(-init)`, `obj-ptrn-prop-ary(-init, -trailing-comma)`, `obj-ptrn-prop-obj(-init)` | `[{ x, y, z } = { x: 44, y: 55, z: 66 }] = []` | recursion; a nested pattern's default is its source |
+| D rest | 5: `ary-ptrn-rest-ary-elem`, `-id-direct`, `-id-exhausted`, `-obj-id`, `-obj-prop-id` | `[...{ length }] = [1, 2, 3]` | the remaining elements as a list; `length` and index keys on it |
+| E TypeError | 8: `ary-ptrn-elem-ary-val-null`, `ary-ptrn-elem-obj-val-null`, `-obj-val-undef`, `obj-init-null`, `obj-init-undefined`, `obj-ptrn-prop-ary-value-null`, `obj-ptrn-prop-obj-value-null`, `-obj-value-undef` | `{} = null` | throw TypeError when `null`/`undefined` is destructured |
+| F function-name defaults | 8: ary/obj × arrow, cover, fn, gen | `[fn = function () {}] = []` | an anonymous function as a value, named by its leaf |
+| G unresolvable default | 3: `*-id-init-unresolvable`, `obj-ptrn-prop-id-init-unresolvable` | `[x = unresolvableReference] = []` | ReferenceError for an undeclared global |
+
+Feature counts (files):
+
+| feature | 94 sole | 146 module-init carriers | 288 for-head files |
+| --- | --- | --- | --- |
+| array pattern / object pattern | 54 / 40 | 93 / 53 | 188 / 100 |
+| any default | 58 | 78 | 141 |
+| nested pattern | 42 | 58 | 99 |
+| elision in the pattern / hole in the source literal | 2 / 2 | 14 / 2 | 30 / 3 |
+| array rest / object rest | 10 / 0 | 24 / 4 | 66 / 9 |
+| anonymous function default (name inference) | 12 | 16 | 24 |
+| source: array literal / object literal / `null`,`undefined` | 54 / 36 / 4 | 74 / 46 / 4 | 132 / 81 / 6 |
+| source: identifier / call (iterable, generator) | 0 / 0 | 18 / 4 | 63 / 6 |
+| head inside a function (`assert.throws(…, function () { for … })`) | 22 | 24 | 84 |
+
+- **Iterator protocol.** None of the 94 destructures a non-literal source.
+  Generators appear in 4 of them only as `function* () {}` defaults (group
+  F). Custom iterables, generator sources and `return()` closing
+  (`ary-init-iter-close`, `-iter-no-close`, `ary-ptrn-elision`,
+  `-iter-step-err`, …) are in the 52 non-sole carriers, which also carry
+  `Symbol`, `objectlit-empty` or generator-unit refusals.
+- **TDZ.** No file in the 288 reads a pattern's own leaf from a default or
+  from the source. The 24 ReferenceError files among the 94 test
+  unresolvable references instead: group G, and
+  `assert.throws(ReferenceError, () => x)` where `x` is a property key that
+  is not bound.
+
+### Existing IR support
+
+The IR already lowers destructuring for locals, so this lever extends that
+lowering. It must not add a second one.
+
+- **Selector.** `isPhase1BindingPattern` (`select.ts:7068`) admits flat
+  identifier leaves, elisions and renames. It refuses defaults, rest,
+  nesting and computed keys. Four consumers call it:
+  - `VariableStatement` (`isPhase1VarDecl`, `:6830`): `const` only
+    (`vardecl-dstr-let`), and every pattern at module init
+    (`vardecl-module-destructuring`, `:6846`);
+  - parameters (`:2141`): typed only. An untyped pattern parameter is
+    `param-type-not-resolvable`, and a reassigned leaf is
+    `param-pattern-mutation`;
+  - for-of heads (`:5037`): array patterns only;
+  - closure parameters (`select-closure-literal.ts:66`).
+- **Builder.** `lowerBindingPattern` (`from-ast.ts:4199`) dispatches to:
+  - `lowerObjectPattern` (`:4565`): `object.get` / `class.get` on a closed
+    shape; a key outside the shape demotes after the claim;
+  - `lowerArrayPattern` (`:4649`): an **unchecked** `vec.get`, which traps
+    when the source is shorter than the pattern.
+  Leaves bind as SSA locals.
+- **A second array walker** exists for for-of heads:
+  `declareForOfPatternLeafSlots` / `bindForOfArrayPatternLeaves`
+  (`:12702` / `:12741`). It binds slots and reads through the bounds-checked
+  `emitSafeVecGet`, with the element's zero as the out-of-range value
+  (legacy parity).
+- **The for-head already lowers.** `lowerForStatement` (`:12316`) hands the
+  init to `lowerVarDecl` → `lowerVariableDeclaration` (`:4238`), which
+  reaches `lowerBindingPattern`. Only the selector arm refuses.
+- **Leaf names are collected four ways:**
+  - `collectPatternNames` (`select.ts:7115`, flat only);
+  - `collectBindingNames` (`analysis/loop-shape.ts:627`);
+  - `collectBindingPatternNames` (`analysis/ast-scope.ts:52`);
+  - the inline `leafIsModuleBinding` in `lowerVariableDeclaration`.
+- **No dynamic reader.** `dyn.member_get` and `iter.new/next/done/value/return`
+  exist, with native `__dyn_member_get` / `__iterator*` on standalone, but no
+  pattern reads through them.
+- **Defect on main.** In a `.js` file,
+  `function f() { const [x, y, z] = [1, 2, 3]; … }` is claimed at select and
+  demoted at build on both lanes ("array literal flows into a
+  widening/heterogeneous sink"): the checker types the literal as a tuple of
+  `any`. Under S1 below, the for-head `[x] = []` and `[_, x] = []` fail the
+  same way ("empty array literal needs a vec-typed hint").
+
+### Measured with an uncommitted prototype
+
+Each slice includes the ones above it. "Demoted after claim" counts
+`<module-init>`s that selection admitted and the build then demoted.
+
+| slice | change | legacy-free, 94 sole (standalone / gc) | legacy-free, 288 | demoted after claim | lost |
+| --- | --- | --- | --- | --- | --- |
+| base | — | 0 / 0 | 0 | 0 | — |
+| S1 | the for-init arm calls the `VariableStatement` pattern check; `let` admitted | 2 / 2 | 2 | **8** (`[x, y, z] = [1, 2, 3]`, `[x] = []`, `[_, x] = []`) | 0 |
+| S1+S2 | plus a literal-source reader | 32 / 32 | 32 | 0 | 0 |
+| S1–S3 | plus TypeError for a `null`/`undefined` (sub)source | **48 / 48** | **48** | 0 | 0 |
+
+S2 frees 16 cases: 3 of group A, 5 of B, 5 of C and 3 of D. The rest of
+A–D are blocked by the arms in the residual table below. S3 adds all 8 cases
+of group E. All 48 S1–S3 files pass on both lanes (`runTest262File`, 48/48
+standalone, 48/48 gc), so there are 0 pass→fail flips.
+
+The remaining 46 of the 94 are blocked outside this lever:
+
+| blocker | files | what unblocks it |
+| --- | --- | --- |
+| a read of an undeclared global must throw ReferenceError (`expr-ident-not-in-scope` on `unresolvableReference` ×6, or on the unbound key `x` ×6, `w` ×8, `u` ×4) | 24 | an unresolvable-reference arm |
+| an anonymous function or generator as a value (`closure-return-type` ×12, `closure-generator` ×4) | 16 | function objects as values, then named evaluation |
+| rest bound to an identifier (`[...x]`, `[, , ...x]`); the tests then call `Array.isArray` | 4 | a fresh vec from the remaining values, and `Array` as a value |
+| `ary-ptrn-elem-ary-empty-iter`: the never-evaluated IIFE default still reaches the call-graph scan (`external-call`) | 2 | the scan skips defaults the plan does not run |
+
+**Byte identity (S1–S3 prototype vs `a7f413918c`, sha256 of each binary).**
+The population is 516 files: the 288 for-head files plus 228 other files
+with a lexical pattern over a literal source (`let/dstr`, `const/dstr`,
+`for-of/dstr`, `for-await-of`, …). 409 compile on both sides, 47 fail to
+compile on both, and 60 are skipped (negative, raw or module).
+
+| lane | binaries changed | of which a newly claimed `<module-init>` | other changes |
+| --- | --- | --- | --- |
+| standalone | 48 / 409 | 48 | 0 |
+| gc | 48 / 409 | 48 | 0 |
+
+No file outside the 288 changed. The 1/60 corpus sample and the playground
+examples were not measured.
+
+### Target structure
+
+**Modules.**
+
+- `src/ir/binding-pattern-plan.ts` (new, pure AST, no builder). It holds
+  `planBindingPattern(pattern, source, facts)`, which returns either a refusal
+  code or a plan:
+  - the source expressions to evaluate, in source order;
+  - one read per leaf, in pattern order;
+  - each default, and whether it runs;
+  - nested sub-plans;
+  - a TypeError step.
+  The selector checks every expression in the plan with `isPhase1Expr` and
+  every leaf name against the scope. The builder lowers exactly the same plan.
+  Select and build cannot disagree, because both consume one function's
+  output; that fixes the claim-then-demote defect above. The module replaces
+  `isPhase1BindingPattern` and `collectPatternNames`.
+- `src/ir/binding-pattern-lowering.ts` (new, AST→IR, beside
+  `array-element-lowering.ts`, no import of `from-ast.ts`). It receives the
+  builder and two callbacks: lower an expression, bind a leaf. It is one
+  walker over the plan, with one reader per source kind:
+  - `literal` (S2): a fresh array or object literal. Reads are compile-time,
+    and no aggregate is built.
+  - `vec`: a typed array value. Reads go through `emitSafeVecGet`, never the
+    unchecked `vec.get`.
+  - `object` / `class`: a closed shape. A key outside the shape is refused
+    at select.
+  - `dynamic` (S4): `dyn.member_get` per key after RequireObjectCoercible;
+    `iter.new` / `iter.next` / `iter.done` / `iter.value` per element, and
+    `iter.return` when the pattern ends before `done` (IteratorClose).
+  `lowerBindingPattern`, `lowerObjectPattern`, `lowerArrayPattern`,
+  `declareForOfPatternLeafSlots` and `bindForOfArrayPatternLeaves` move here
+  and become this walker.
+- **Leaf binding.** Extract the identifier tail of `lowerVariableDeclaration`
+  into one `bindDeclaredName(name, value, isConst, cx)`:
+  - a module binding writes its `__mod_` global;
+  - a reassigned `let` gets a slot through
+    `resolveMutableLocalRepresentation`;
+  - anything else is an SSA local.
+  Identifier declarations, pattern leaves and parameter leaves call it. The
+  for-of head passes its pre-declared slots as the sink. That retires
+  `vardecl-dstr-let` and `param-pattern-mutation`.
+- **Selector.**
+  - The pattern branch of `isPhase1VarDecl` becomes
+    `isPhase1DeclarationPattern(d, isConst, scope)`, called by the
+    `VariableStatement` arm and the for-init arm (`:5458`).
+  - The two copies of the for-init "leak" loop (`:4763`, `:6021`) become one
+    `recordForInitLeaks`, which also leaks pattern leaves.
+  - `nullConsumerFamily` (`select-planned-closure-operands.ts:159`) asks the
+    plan whether a `null` inside a pattern source is evaluated. A `null`
+    that is only destructured is never a value; without this, every group-E
+    `null` case is refused as `closure-null-value`.
+  - The call-graph scan skips defaults the plan does not run.
+- **Realm keys.** The literal reader may answer `undefined` for a key the
+  literal lacks only if `%Object.prototype%` (for an object literal) or
+  `%Array.prototype%` + `%Object.prototype%` (for an array literal) do not
+  own it. One exported `realmStringKeys(...ids)` over `NATIVE_REALM_CATALOG`
+  replaces `OBJECT_PROTOTYPE_KEYS` (`empty-object-literal.ts:113`) and
+  `FUNCTION_REALM_MEMBER_NAMES` (`select-expression-structure.ts:114`).
+- **TypeError.** The TypeError step reuses `emitThrowTypeErrorIf`
+  (`throw-type-error.ts:8`) through the native `__new_TypeError`; it adds no
+  import.
+
+**Duplicates removed.**
+
+- One leaf-name collector, `collectBindingPatternNames`, instead of four.
+- One array walker instead of two.
+- One leaf binder instead of three mutation policies (`const` only, the
+  `param-pattern-mutation` refusal, for-of slots).
+- One realm-key helper instead of two copies.
+- One for-init leak loop instead of two.
+
+**Code-quality acceptance criterion.**
+
+- `src/ir/select.ts` and `src/ir/from-ast.ts` do not grow; the moved pattern
+  code makes both net negative.
+- Each new module stays under 400 lines, and no function exceeds 80 lines.
+- No `func-budget-allow:` or `loc-budget-allow:` grant.
+- No pattern-shape predicate outside `binding-pattern-plan.ts`.
+- The pattern lowering contains no `demoteToLegacy`; a selector/builder
+  disagreement there is an `IrInvariantError`.
+- No host import on standalone. The runner rejects one there, and the
+  prototype's 48 newly claimed files pass on standalone.
+- gc and standalone binaries are byte-identical for every program in which
+  no unit changes owner. Measure with the census sha on the 516 files above,
+  the 1/60 corpus sample and `website/playground/examples`.
+- The fresh-context adversarial review asks specifically for a second walker,
+  a second shape predicate, or an arm that differs from its sibling only by
+  source kind.
+
+**Correctness acceptance criterion.**
+
+- 0 pass→fail on the 288 for-head files and the 228 other literal-pattern
+  files, on both lanes. Every newly claimed file passes on both lanes.
+- A unit test per rule:
+  - every literal element is evaluated before any default, in source order;
+  - a default runs on `undefined` (missing, elision, hole, literal
+    `undefined`) and not on `null`, `0` or `""`;
+  - `{ toString } = {}` and `[...{ map }] = [1]` stay legacy (realm keys);
+  - a reassigned `let` leaf reads its slot after the write;
+  - a nested pattern takes its default literal as its source;
+  - `[...{ length, 0: a, 9: b }] = [1, 2]` binds `2`, `1`, `undefined`;
+  - `{} = null` throws TypeError inside `assert.throws`;
+  - `function f() { const [x, y, z] = [1, 2, 3]; … }` in a `.js` file is
+    claimed and not demoted.
+
+### Slices
+
+| slice | scope | measured gain (94 sole, both lanes) |
+| --- | --- | --- |
+| S1 | Structure only: the two new modules, the shared predicate, binder and name collector, for-head routing, `let` leaves. Today's flat shapes keep today's readers, but a shape the builder cannot type (an `any`-typed or empty array literal) is refused at select. | +2, and the 8 claim-then-demote files go back to a select refusal |
+| S2 | The literal reader: defaults, elisions, holes, nesting, rest into a nested pattern, `length` and index keys on an array literal. | +30 (32 total) |
+| S3 | The TypeError step, and the `nullConsumerFamily` question to the plan. | +16 (48 total) |
+| S4 | The dynamic reader for untyped sources (identifiers, calls, generators), with IteratorClose. Unblocks untyped pattern parameters (`param-type-not-resolvable`) and for-of object heads (`forof-head-object-pattern`). Coordinate with #3522 R3 (closure-parameter destructuring reuses `lowerBindingPattern`) and #7126 item 3 (class shape for destructured method parameters). | not measured; the 22 non-sole carriers with identifier or call sources also need `Symbol` / generator units |
+| S5 | Script-level patterns: `var` for-heads and `vardecl-module-destructuring`. `buildModuleBindingsMap` maps each leaf (it throws today, `integration.ts:6307`), and `bindDeclaredName`'s module-binding arm writes the slot. | not measured |
+
+Recommendation: ship S1 and S2 as one PR, because S1 alone frees 2 files.
+Then S3. Together they make 48 of the 94 files legacy-free, with no new
+runtime helper and no host import on standalone. The other 46 wait on the three non-destructuring
+arms in the residual table.
+
+### Risks
+
+- **Realm integrity.** The literal reader assumes the array iterator and
+  `Object.prototype` are unpatched. The IR's vec for-of path and
+  `lowerArrayPattern` already assume this. Programs that patch
+  `Array.prototype[Symbol.iterator]`, `%ArrayIteratorPrototype%.next` or
+  `Object.prototype` must stay legacy through one program-level fact
+  (`*-array-prototype` for/dstr files exist). In this measurement they
+  already carry other refusals, so the guard is untested by the 288.
+- **Out-of-range parity.** The for-of reader binds the element's zero past
+  the end, for legacy parity (`emitSafeVecGet`'s `oobOverride`). JavaScript
+  binds `undefined`. When the two walkers merge, keep the override only on
+  the for-of `vec` reader. Fixing it is a separate behaviour change with its
+  own A/B.
+- **Per-iteration `let`.** A closure that captures a for-head `let` leaf sees
+  a fresh binding per iteration. Keep whatever rule identifier for-heads use
+  today (no such capture occurs in the 94).
+- **Conflicts.** `select.ts` and `from-ast.ts` are the busiest IR files.
+  Move the pattern code in one short-lived PR, and rebase nothing onto it.
+- **Overlap.** #3522's closure-parameter destructuring and #7126 item 3 call
+  `lowerBindingPattern` / `isPhase1BindingPattern`; their call sites move.
+  Announce the move on both issues before S1 lands.
 
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
