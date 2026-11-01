@@ -104,17 +104,20 @@ loc-budget-allow:
   - src/ir/core/nodes.ts
   - src/ir/core/dialect/js.ts
   # 2026-10-31 (boolean statics, round 4): the static-predicate arm, its host, the shared ambient-receiver helper and the name-parameterised unshadowed-global test (+25); the lowering lives in src/ir/static-predicates/
+  # 2026-11-01 (#7106 S5): the module-init `var` leaf binder and the slot write shared with the identifier arm, `storeModuleBinding` (+53); the list predicate, leaf walker and binding ordinals live in src/ir/module-init-vars.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   # 2026-11-01 (finally abrupt exit, #7030 review): the guarded finally copy returns early when unguarded, then pushes, emits and pops its own CtrlFrame (+4)
   - src/ir/lower-generic.ts
   - src/ir/runtime/verify.ts
   # 2026-10-31 (boolean statics, round 5): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+89); the rule lives in src/ir/static-predicates/
+  # 2026-11-01 (#7106 S5): `moduleVarLeavesStorable`, the per-leaf slot fit of a module-init `var` pattern (+36)
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
   - src/ir/ambient-typeof.ts
   - src/ir/prepared-component-dependencies.ts
+  # 2026-11-01 (#7106 S5): `scriptVarHome` takes a leaf too: one type import and the signature prettier wraps (+4)
   - src/codegen/index.ts
   - src/ir/propagate.ts
   - src/codegen/dyn-read.ts
@@ -3983,6 +3986,361 @@ All of the following gates were run bare and exit 0:
 - ir-fallbacks;
 - test:changed-root (94 + 4);
 - import-cycles and compiler-boundaries (`--mode inventory`).
+
+### S5 of the destructuring lever: script `var` patterns and pattern `for` heads (plan, 2026-11-01)
+
+S5 stacks on the destructuring lever (`claude/7106-for-head-destructuring`,
+9df6bcaef0) and lives on `claude/7106-var-pattern-heads`. It is the
+`<module-init>` half of that lever.
+
+#### Problem (measured)
+
+The base is the destructuring head at 42c09a6cb8, standalone, one worker. The
+population is the 174 candidate files with a script-level `var` pattern: 95
+`for (var <pattern> = …;;)` heads (`for/dstr/var-*`) and 79
+`var <pattern> = …;` statements.
+
+- 12 files are skipped by the runner.
+- 146 files carry a var-pattern refusal: `for-init-var-kind` on the head, or
+  `vardecl-module-destructuring` on the statement.
+- In 79 of them (47 for-head, 32 script), every refusal is either that one or a
+  read of one of its own leaves (`expr-ident-not-in-scope`). That is the upper
+  bound.
+- 59 of the 79 (36 for-head, 23 script) have a pattern the literal plan admits.
+  The other 20 have:
+  - an anonymous-function default (16), which needs NamedEvaluation;
+  - a rest element (3);
+  - a computed key (1).
+
+**Why the statement is refused.** Each leaf is its own script `var`: legacy
+gives it a `__mod_<leaf>` slot (`registerBindingNames`). That slot has no IR
+identity:
+
+- the module-binding resolver only knows a `VariableDeclaration` with an
+  identifier name in a direct `VariableStatement`;
+- `buildModuleBindingsMap` throws on a pattern;
+- legacy never hands the leaf to the Program ABI. `registerBindingNames` calls
+  `registerModuleGlobal` without the declaration, so there is no
+  `observeModuleValue`, and `resolveModuleBindingGlobal` would find no
+  observation.
+
+**Why the head is refused.** On top of the same missing identity, three twin
+checks treat a nested `var` as hoisting the IR does not model:
+
+- `collectIrSafeModuleVarDeclarationLists` (selection);
+- `isDirectSourceVarStatement` + `moduleInitContainsNestedVar` (the builder's
+  claim-then-demote backstop).
+
+#### Implementation Plan
+
+One idea runs through every layer. A **module-init `var` list** is the `var`
+list of a top-level `var` statement, or the `var` head of a top-level
+`for (;;)` whose declarations are all patterns. In a script, each leaf of a
+pattern in such a list is a module binding: it owns its `__mod_<name>` slot,
+just as a top-level identifier declaration does.
+
+1. **One module for the module-init `var` vocabulary**
+   (`src/ir/module-init-vars.ts`, new, 88 lines).
+   - `moduleInitVarList(statement)` and `isModuleInitVarList(node)` are the
+     single answer to "which `var` list does `<module-init>` model".
+   - `collectIrSafeModuleVarDeclarationLists` moves here from
+     `function-local-var.ts`, which keeps the function-local subset only, and
+     maps it.
+   - from-ast's `moduleInitContainsNestedVar` skips exactly that list. That
+     folds `isDirectSourceVarStatement`, the duplicate.
+   - `moduleInitBindings(statement)` lists what a statement binds: identifier
+     declarations, then the leaves of a modelled list. A lexical top-level
+     pattern is unmapped.
+   - `moduleBindingDeclarationOrder(sourceFile)` is the ordinal enumerator
+     (item 5).
+2. **One leaf walker** (`src/ir/binding-pattern-plan.ts`).
+   - `patternLeaves(pattern)` yields `BindingLeaf`s.
+   - The `isBindingLeaf` guard replaces `planFlatReads`' cast.
+   - `patternRootDeclaration(leaf)` is the walk out of the patterns. It
+     replaces the copy inside `literalLeafSource`.
+   - `bindingDeclarationList(declaration)` is a declaration's list, through
+     its pattern for a leaf.
+3. **Legacy hands the slot to the Program ABI** (`src/codegen/declarations.ts`).
+   - `registerBindingNames` passes the leaf to `registerModuleGlobal`, as the
+     top-level identifier path passes its declaration.
+   - Observation is a map entry, not an allocation, so legacy bytes do not
+     change.
+   - The two behaviours that key on the declaration's presence:
+     - `shadowsConversionHook`: a leaf named `toString`/`valueOf`, which no
+       test262 file declares at script level;
+     - `functionIsFromAnotherSource`: multi-source.
+4. **The resolver knows a leaf** (`src/ir/module-bindings.ts`).
+   - `IrModuleBindingDeclaration = ts.VariableDeclaration | ts.BindingElement`
+     is the identity's declaration type, the type Program ABI already uses.
+   - `isModuleBindingDeclaration` (was `isDirectTopLevelVariableDeclaration`)
+     admits the direct-statement identifier declaration exactly as before,
+     and, in a SCRIPT, a leaf of a module-init `var` list. ES modules and
+     lexical patterns are unchanged, so the playground cannot move.
+   - `exactTopLevelVariableDeclaration` reuses that predicate instead of its
+     own copy of the direct-statement filter.
+   - `bindingDeclarationList` replaces the
+     `declaration.parent as ts.VariableDeclarationList` casts.
+   - The lexical-only arms read a `lexical` declaration, which is always an
+     identifier declaration because a leaf binds only in a `var` list.
+5. **Ordinals.** `moduleBindingDeclarationOrder(sourceFile)` numbers every
+   top-level statement declaration first, exactly as before and as
+   `module-init-plan.ts` does. It then numbers the module-init `var` leaves in
+   source order. No existing binding id moves. `bindingLocation` reads it
+   instead of its own loop.
+6. **`buildModuleBindingsMap`** (`src/ir/integration.ts`) maps each name
+   `moduleInitBindings(statement)` lists, and throws on an unmapped pattern
+   as before. The diagnostic twin `surveyModuleBindingRefusals` walks the same
+   list, and its private pattern-label walker folds into
+   `collectPatternBindingNames`.
+7. **Selection** (`src/ir/select.ts`).
+   - `vardecl-module-destructuring` stays on the `<module-init>` statement,
+     with one exception: a module-init `var` list. A `let`/`const` `for` head
+     is untouched, so #7024 still claims it as locals.
+   - On the literal path of such a list's pattern, `moduleVarLeavesStorable`
+     requires each leaf to resolve (`vardecl-module-storage-unrepresentable`)
+     and its literal source to fit the slot (`vardecl-module-value-flow`).
+     The fit is:
+     - `undefined`, or a `boxableIntoDynamic` family, in the dynamic carrier;
+     - the resolver's own `bindingValueMatches` in a typed or string slot.
+
+     An array-length source has no expression and stays refused.
+   - `literalPatternLeaf` excludes a module binding: a script `var` leaf's
+     family is its slot's, not its literal's.
+8. **The builder** (`src/ir/from-ast.ts`).
+   - `patternLoweringHost` takes its `bind` strategy as a parameter:
+     - `localLeafBinder` binds a local, as before;
+     - `moduleLeafBinder` writes a module-init `var` leaf's slot. A dynamic
+       slot is boxed first, through `boxConcreteToDynamic` over the leaf's
+       `literalLeafSource`.
+   - `storeModuleBinding` is the slot write: compatibility check,
+     `global.set`, TDZ flag, `moduleGlobal` scope entry. It is the tail of
+     `lowerVariableDeclaration`'s module arm, extracted so the identifier and
+     the leaf share it.
+
+#### Not in S5
+
+- **Identifier `for` heads** (`for (var i = 0;;)` at script level, about 1,434
+  test262 files). The list predicate admits them once its pattern-only clause
+  is dropped. They change about ten times as many binaries, so they get their
+  own census as S6.
+- **NamedEvaluation defaults, rest elements and computed keys.** These are
+  the literal plan's existing refusals.
+- **Array-length leaf sources.**
+
+#### Acceptance
+
+- **Gain.** The legacy-free gain is measured against the destructuring head,
+  both lanes, on the files with a `var` pattern. The upper bound is 59.
+- **No flips.** Pass/fail does not flip on any changed binary, in either lane.
+- **No claim-then-demote.** No new post-claim error.
+- **Legacy bytes identical.** No binary changes without a newly claimed unit.
+  The playground is identical.
+- **Tests.** A unit test runs, on both lanes:
+  - claimed statements and heads;
+  - leaf reads after the loop, from a function and before the declaration;
+  - the refused shapes.
+- **Code quality.** These must hold:
+  - one list predicate, one leaf walker and one ordinal enumerator;
+  - the module slot write is shared by the identifier and the leaf;
+  - no `VariableDeclarationList` cast survives on the binding path;
+  - no new budget grant;
+  - net `src/ir` growth is stated.
+
+#### Measured (2026-11-01)
+
+S5 now stacks on e944943a2e, #7024 with main merged in at 22a6442977. The
+base is that commit; the head is b42ab1d75c plus this plan. One worker ran the
+census.
+
+**Population.** 320 files:
+- the 174 with a script-level `var` pattern;
+- every third of the other 437 files with a `var` pattern (for-of / for-in
+  heads, patterns nested in blocks). These 146 are there for legacy byte
+  identity.
+
+**Result, the same on both lanes:**
+- **Gain.** Legacy-free 6 → 34: +28, and none lost.
+- **Changed binaries.** All 28 that changed gain a claimed `<module-init>`.
+  The other 249 compiled binaries are byte-identical, the identity sample
+  included. That sample is where the Program ABI now observes each leaf.
+- **Post-claim errors.** None new. No status changes.
+- **Pass/fail.** The 28 pass on base and on head, in both lanes (`runTest262File`):
+  0 flips.
+- **Playground.** 26/26 identical.
+
+**What still blocks the other 51 of the 79 sole-blocker files:**
+
+| files | blocker |
+| --- | --- |
+| 20 | the literal plan refuses the pattern (NamedEvaluation default, rest, computed key) |
+| 16 | the test reads an unresolvable reference on purpose (`x` after `var { x: y } = …`), which the IR refuses |
+| 11 | the `for` head sits inside a function (`assert.throws(…, function () { for (var [[x]] = [null];;) … })`). That is a function-local `var` pattern head, which `collectIrSafeVarDeclarationLists` refuses. |
+| 2 | an array-`length` leaf source (refused here) |
+| 2 | `external-call` |
+
+**Size.** Net `src/ir` growth is +174 lines (+368/−194), including the new
+`module-init-vars.ts` (88 lines).
+- The selector grows by 36 lines and the builder by 53, both under the
+  issue's existing grants. Each grant has a dated S5 note.
+- `module-bindings.ts`, `integration.ts` and `codegen/declarations.ts` net 0
+  or below.
+- `codegen/index.ts` grows by 4 lines: a type import, plus the signature that
+  prettier wraps.
+
+**Gates.** All green, run bare: loc, func (both also against main
+22a6442977), coercion, oracle, dead exports, typecheck, lint, import cycles,
+compiler boundaries, IR fallbacks and `test:changed-root`.
+
+**Review round 0 (self).**
+- During the stack the S5 WIP had moved `vardecl-module-destructuring` into
+  `isPhase1DeclarationPattern`. There it also refused #7024's lexical `for`
+  heads in `<module-init>`, and 24 destructuring tests caught it. The refusal
+  is back on the statement (017d08ff38).
+- A boolean leaf slot (`var { x } = { x: true }; assert.sameValue(x, true)`)
+  claims and then demotes ("function member operand has no canonical
+  carrier"). So does the identifier twin `var x = true; …` on main: the
+  module read of a boolean slot is an unbranded i32. It is not in this
+  population; it is a follow-up for the identifier path.
+
+**Follow-ups.**
+1. Function-local `var` pattern heads (11 files).
+2. Array-`length` leaf sources (2 files).
+3. S6: identifier `for` heads at script level.
+4. The boolean module slot's i32 brand.
+
+#### Review round 1 (#7037, 2026-11-01)
+
+The verdict was request changes: one major finding and three minor ones. All
+four are fixed in a9f1b70442, after a merge of main (#7024 has landed; main's
+`src` equals the S5 base `e944943a2e`).
+
+1. **Claim-then-demote on a number leaf's read.** Legacy widens a no-default
+   number leaf's slot to the carrier so that `undefined` survives (#3423); the
+   checker still types the leaf as a number. Seven review shapes claimed a
+   body that then demoted: a copy into a `var` (also before the pattern, also
+   with a `for` head), `s += a` in a `for` body, `return a` and `s += a` in a
+   function with or without a caller, and a boolean leaf.
+   - **Not the typed slot.** Giving the leaf the f64 slot an identifier `var`
+     gets would change legacy's #3423 allocation for every such script,
+     claimed or not. It would also read `undefined` as NaN for a leaf read
+     before its pattern or written later.
+   - **The leaf's read is a dynamic value.** `carrierLeafReads`
+     (`module-init-vars.ts`) finds the reads of a leaf whose slot is the
+     carrier. Three consumers take it:
+     - a function: each read name joins the move-only scan's dynamic names, as
+       #7128's open carriers do, so the scan judges every use. `return a` into
+       a number result and `s += a` are refused there;
+     - the resolver's scalar arm: a scalar module slot takes no value that
+       reads one (`var b = a`, `b = a`, `var b = a + 1`);
+     - `isSelectableNumberCompound`: a number compound's right side reads
+       none. `<module-init>` has no move-only scan, so this is its only gate
+       for `s += a`.
+   - **A boolean leaf is refused** (`moduleVarLeavesStorable`): its slot reads
+     back as an unbranded i32. The identifier `var x = true;
+     assert.sameValue(x, true)` demotes on main for the same reason.
+2. **Unchecked casts.** The four `bindingDeclarationList(declaration)!` are
+   gone.
+   - `moduleBindingLexicalFlags` reads the `let`/`const` flag from a
+     declaration's own list. A leaf has none, because it binds as a module
+     global only from a module-init `var` list.
+   - The ambient-declaration check reads `declaration.parent.parent`.
+   - `writeValueMatches` takes the target type from the declaration, so
+     neither caller passes it any more.
+3. **One enumeration.** `moduleBindingDeclarationOrder` takes its leaves from
+   `moduleInitBindings`, cached per source file. `carrierLeafReads` uses the
+   same list to skip every name that is not a leaf.
+4. **Labelled heads.** `moduleInitVarList` and `isModuleInitVarList` see
+   through labels, so `outer: for (var {k} = {k: 2};;)` is claimed.
+
+**Measured**, both lanes:
+- **The review's 55 cases** (110 rows):
+  - no post-claim error from S5. The one that remains is `bool-ident`, the
+    identifier `var x = true` above, which demotes on main too;
+  - 17 `<module-init>` claims per lane, where main has none;
+  - 0 value regressions against the review's main run.
+- **The 320 files:** byte-identical to the previous S5 head on both lanes,
+  so its pass/fail A/B still holds:
+  - legacy-free 6 → 34 (+28, none lost);
+  - 28/28 pass (0 flips);
+  - no new post-claim error, and no status change.
+- **Tests:** the S5 and `for`-head destructuring files pass 148/148, including
+  the ten review shapes (no post-claim error) and the labelled head.
+- **Gates**, all green and run bare: loc, func, coercion, oracle, dead
+  exports, typecheck, lint, import cycles, compiler boundaries, IR fallbacks
+  and `test:changed-root`. Main `2a23598849` is also the merge base, so the
+  run against main is the same run.
+- **Size.** This round adds 51 lines to `src/ir`: `module-init-vars.ts` +53,
+  `select.ts` +5, `module-bindings.ts` −7. The resolver function is back at
+  its 300-line budget, and no new grant is needed.
+
+**Follow-ups, wrong on main too:**
+- a read before the pattern throws instead of answering `undefined`
+  (`var r = a; var {a} = {a: 1};`);
+- `function g() { return a; }` called before the pattern throws;
+- `var {a} = {a: 1}; function w() { a = 2; } w();` leaves `a === 1`;
+- the boolean slot's unbranded i32 read, for an identifier and a leaf alike.
+
+S5 incidentally fixes `var {a} = {a: 2}; var a;`, which fails Wasm validation
+on main.
+
+#### Review round 2 (#7037, 2026-11-01)
+
+The verdict was request changes, with one gap; 35 further read positions held
+(0 lost claims across 155 rows), and the typed-slot decision was confirmed: an
+f64 slot would make `typeof a` before the pattern answer `"number"`.
+
+- **The gap.** `var [a] = [3]; var t = "v" + a;` was claimed and then demoted
+  ("initializer is dynamic but its global is string"). `writeValueMatches`
+  returned from its string arm before the carrier-leaf test, which sat in the
+  scalar arm only. **Fixed:** the test now runs right after the two `dynamic`
+  arms, so every other slot kind refuses a value that reads a carrier leaf.
+  The carrier slot still takes one: that write is exact.
+- **Minor.** `carrierLeafReads` reads the leaf names from the per-file cache
+  instead of rebuilding a set on every call.
+- **Tests.** One row per slot kind: string (`"v" + a`), boolean
+  (`f = a === 3`), and the carrier slot (`d = a`, claimed and correct).
+
+**Measured**, both lanes:
+- **The review's 55 + 35 cases** (180 rows): no post-claim error from S5's
+  own lowering. `bool-ident`, main's identifier `var x = true`, still
+  withdraws; round 3 found more boolean-slot shapes that S5 newly reaches
+  (below). `string-concat` is refused at select; the 55 are unchanged from
+  round 1.
+- **Main merged in** (`6abe68bb69`, #7024 and #7032 landed). Only the plan
+  conflicted; both sides' sections are kept. The 90 cases are identical before
+  and after the merge.
+- **The 320 files**, against main `6abe68bb69`:
+  - legacy-free 6 → 34 (+28, none lost);
+  - the 28 changed binaries are all newly claimed `<module-init>`s, and there
+    is no new post-claim error;
+  - 28/28 pass on main and on head (0 flips).
+- **Gates**, all green and run bare against main `6abe68bb69`, which is also
+  the merge base: loc, func, coercion, oracle, dead exports, typecheck, lint,
+  import cycles, compiler boundaries, IR fallbacks and `test:changed-root`.
+
+#### Review round 3 (#7037, 2026-11-01)
+
+Approve, with one finding: S5 newly reaches main's boolean-slot withdrawal,
+"function member operand has no canonical carrier". Main refuses these only
+because of the pattern. The answers are right through legacy, and none of
+them is in the 320 files.
+
+**Post-claim withdrawals S5 newly reaches**, each with its main twin:
+- A boolean module `var` initialized by a comparison, read as an argument:
+  `var x = 3; var [q] = [1]; var b = x > 2; assert.sameValue(b, true);` and
+  `var [a = 1] = [3]; var b = a > 2; …`. The slot reads back as an
+  unbranded i32. The main twin, `var a = 3; var b = a > 2;
+  assert.sameValue(b, true);`, withdraws the same way.
+
+**Root fix:** the boolean-slot PR, branch `claude/ir-module-bool-slot`. Its
+`i32` module slot reads back with the #4503 boolean brand. It lands before
+#7037, as #7032 landed before #7026. With it, these shapes and `bool-ident`
+are claimed and right on both lanes. Over the review's 127 cases (254 rows):
+- no post-claim error, except main's own `shadow-param-str` parity mismatch;
+- 0 lost claims and 0 value regressions against main.
+
+Once both have landed, S5's boolean-leaf refusal in `moduleVarLeavesStorable`
+can go (follow-up).
 
 ## Writes to a `const`: refused at select (fixed 2026-11-01)
 

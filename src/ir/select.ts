@@ -74,7 +74,8 @@ import {
   type IrAsyncSelectionOptions,
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
-import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
+import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
+import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists, isModuleInitVarList } from "./module-init-vars.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
@@ -161,6 +162,7 @@ import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.
 import {
   isPatternDeclaration,
   isPhase1BindingPattern,
+  patternLeaves,
   type BindingLeaf,
   type PatternDeclaration,
 } from "./binding-pattern-plan.js";
@@ -172,6 +174,7 @@ import {
   conditionalJoinArmFamily,
   conditionalJoinFamily,
   binaryOperandsAdmissible,
+  boxableIntoDynamic,
   isComparisonResultOperator,
   isEqualityOperator,
   isNumberCompoundAssignOperator,
@@ -2302,6 +2305,7 @@ function whyNotIrClaimable(
   // yield machinery has no dynamic arm yet.
   // -------------------------------------------------------------------------
   for (const name of currentOpenCarrierNames) dynNames.add(name); // (#7128 S1)
+  for (const read of carrierLeafReads(body, moduleBinding)) dynNames.add(read.text); // (#7106 S5)
   if (dynNames.size > 0 && isGenerator) return "param-type-not-resolvable";
   if (
     dynNames.size > 0 ||
@@ -6853,10 +6857,11 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
   if (stmt.modifiers && stmt.modifiers.length > 0) return shapeNo("vardecl-modifier", stmt);
   const isConst = !!(flags & ts.NodeFlags.Const);
   for (const d of stmt.declarationList.declarations) {
-    // A script-level pattern's leaves are `__mod_` slots the pattern lowering
-    // does not write (S5 of the #7106 destructuring lever).
     if (isPatternDeclaration(d)) {
-      if (currentSubjectIsModuleInit) return shapeNo("vardecl-module-destructuring", d.name);
+      // A `<module-init>` statement's leaves are module globals: only a module-init `var` list writes them (S5).
+      if (currentSubjectIsModuleInit && !isModuleInitVarList(stmt.declarationList)) {
+        return shapeNo("vardecl-module-destructuring", d.name);
+      }
       if (!isPhase1DeclarationPattern(d, isConst, scope, localClasses)) return false;
       continue;
     }
@@ -7063,7 +7068,11 @@ function isPhase1DeclarationPattern(
   if (programPatchesDestructuringRealm(d.getSourceFile())) return shapeNo("vardecl-dstr-realm-patched", pattern);
   if (declarationBindingWritten(d)) return shapeNo("vardecl-dstr-leaf-written", pattern);
   const literalPlan = planLiteralPattern(pattern, d.initializer);
-  if (literalPlan) return isPhase1LiteralPattern(pattern, literalPlanExpressions(literalPlan), scope, localClasses);
+  if (literalPlan) {
+    const moduleVars = currentSubjectIsModuleInit && isModuleInitVarList(d.parent);
+    if (moduleVars && !moduleVarLeavesStorable(pattern, scope)) return false;
+    return isPhase1LiteralPattern(pattern, literalPlanExpressions(literalPlan), scope, localClasses);
+  }
   // A `for (;;)` head is admitted over a fresh literal only.
   if (ts.isForStatement(d.parent.parent)) return shapeNo("for-init-dstr-source", d.initializer);
   if (!isConst) return shapeNo("vardecl-dstr-let", pattern);
@@ -7079,6 +7088,35 @@ function isPhase1DeclarationPattern(
   if (!isPhase1Expr(d.initializer, initializerScope, localClasses)) return shapeNo("vardecl-dstr-init", d.initializer);
   if (ts.isObjectBindingPattern(pattern)) recordDestructuredObjectMethodProjections(pattern, d.initializer, scope);
   collectBindingPatternNames(pattern, scope);
+  return true;
+}
+
+/**
+ * (#7106 S5) Each leaf of a module-init `var` pattern writes its own
+ * `__mod_<name>` slot, so its literal source must fit that slot: `undefined`
+ * or a boxable family in the dynamic carrier, a matching value in a typed one.
+ * An array length has no source expression and stays refused.
+ */
+function moduleVarLeavesStorable(pattern: ts.BindingPattern, scope: ReadonlySet<string>): boolean {
+  const resolver = currentModuleBindingResolver;
+  if (resolver === null) return shapeNo("vardecl-module-storage-unrepresentable", pattern);
+  for (const leaf of patternLeaves(pattern)) {
+    const binding = resolver(leaf.name);
+    if (binding === undefined) return shapeNo("vardecl-module-storage-unrepresentable", leaf);
+    const source = literalLeafSource(leaf);
+    const dynamicSlot = binding.valueKind.kind === "dynamic";
+    // A boolean slot reads back as an unbranded i32, as an identifier `var`'s does.
+    const fits =
+      binding.valueKind.kind !== "i32" &&
+      (source === "undefined"
+        ? dynamicSlot
+        : source !== undefined &&
+          source !== "length" &&
+          (dynamicSlot
+            ? boxableIntoDynamic(provenIrFamily(source, scope))
+            : resolver.bindingValueMatches(leaf.name, source)));
+    if (!fits) return shapeNo("vardecl-module-value-flow", leaf);
+  }
   return true;
 }
 
@@ -8868,7 +8906,8 @@ function selectorPrimitiveWrapperOrGenericBinary(
 
 /** The leaf of a destructuring declaration that takes the literal plan, read through `expression`. */
 function literalPatternLeaf(expression: ts.Expression): ts.BindingElement | undefined {
-  if (!ts.isIdentifier(expression)) return undefined;
+  // A script `var` leaf is its module slot: the slot's carrier is its family (#7106 S5).
+  if (!ts.isIdentifier(expression) || moduleBinding(expression) !== undefined) return undefined;
   const declaration = currentModuleBindingResolver?.localValueDeclaration(expression);
   return declaration && ts.isBindingElement(declaration) && literalLeafSource(declaration) !== undefined
     ? declaration
@@ -8910,7 +8949,9 @@ function isSelectableNumberCompound(
   if (expr.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken) {
     return exactNumericExponentiationAdmissible(expr, scope, localClasses);
   }
-  return isNumberCompoundAssignOperator(expr.operatorToken.kind);
+  if (!isNumberCompoundAssignOperator(expr.operatorToken.kind)) return false;
+  // (#7106 S5) A carrier leaf's read is no number, whatever the checker says.
+  return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
 }
 
 /**

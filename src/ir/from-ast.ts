@@ -282,11 +282,13 @@ import {
   isPatternDeclaration,
   planElementReads,
   planPropertyReads,
+  type BindingLeaf,
   type PatternDeclaration,
   type SourceReadPlan,
 } from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
-import { planLiteralPattern } from "./literal-pattern-plan.js";
+import { literalLeafSource, planLiteralPattern } from "./literal-pattern-plan.js";
+import { isModuleInitVarList, moduleInitVarList } from "./module-init-vars.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   boundedMixedConditionalPrimitiveFamily,
@@ -1408,30 +1410,27 @@ export interface LoweredFunctionResult {
   readonly countedStringAppendPlans?: readonly IrCountedStringAppendLoweringPlan[];
 }
 
-function isDirectSourceVarStatement(statement: ts.Statement): boolean {
-  return (
-    ts.isVariableStatement(statement) &&
-    (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
-  );
-}
-
-/** Direct module `var`s have persistent globals; nested/for-init `var`s still need hoisting support. */
+/** A `var` list `moduleInitVarList` models has persistent globals; any other `var` still needs hoisting support. */
 function moduleInitContainsNestedVar(statements: readonly ts.Statement[]): boolean {
-  const findVarDecl = (node: ts.Node): boolean => {
-    if (
-      ts.isFunctionDeclaration(node) ||
-      ts.isFunctionExpression(node) ||
-      ts.isArrowFunction(node) ||
-      ts.isMethodDeclaration(node)
-    ) {
-      return false;
-    }
-    if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
-      return true;
-    }
-    return ts.forEachChild(node, findVarDecl) === true;
-  };
-  return statements.some((statement) => !isDirectSourceVarStatement(statement) && findVarDecl(statement));
+  return statements.some((statement) => {
+    const modelled = moduleInitVarList(statement);
+    const findVarDecl = (node: ts.Node): boolean => {
+      if (
+        node === modelled ||
+        ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node)
+      ) {
+        return false;
+      }
+      if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
+        return true;
+      }
+      return ts.forEachChild(node, findVarDecl) === true;
+    };
+    return findVarDecl(statement);
+  });
 }
 
 function nestedSourceScope(
@@ -4204,10 +4203,10 @@ function lowerBindingPattern(pattern: ts.BindingPattern, source: IrValueId, isCo
   }
   if (ts.isObjectBindingPattern(pattern)) {
     const plan = admittedReads(planPropertyReads(pattern));
-    lowerPatternPlan(plan, patternLoweringHost(isConst, cx, fieldReader(source, cx)));
+    lowerPatternPlan(plan, patternLoweringHost(cx, fieldReader(source, cx), localLeafBinder(isConst, cx)));
   } else {
     const plan = admittedReads(planElementReads(pattern));
-    lowerPatternPlan(plan, patternLoweringHost(isConst, cx, elementReader(source, cx)));
+    lowerPatternPlan(plan, patternLoweringHost(cx, elementReader(source, cx), localLeafBinder(isConst, cx)));
   }
 }
 
@@ -4220,24 +4219,56 @@ function admittedReads<Read>(plan: SourceReadPlan<Read> | null): SourceReadPlan<
   return plan;
 }
 
-/** How a pattern leaf of `cx` binds: as its declaration binds a name, a redeclaration demoting like one. */
+/** How a pattern of `cx` reads its source and binds each leaf. */
 function patternLoweringHost<Read>(
-  isConst: boolean,
   cx: LowerCtx,
   read: (read: Read) => IrValueId,
+  bind: LeafBinder,
 ): PatternLoweringHost<Read> {
   return {
     builder: cx.builder,
     // The externref hint is advisory: each value keeps its own IR type.
     lowerValue: (expression) => lowerExpr(expression, cx, irVal({ kind: "externref" })),
     read,
-    bind: (leaf, value) => {
-      if (cx.scope.has(leaf.name.text)) {
-        demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${leaf.name.text}' in ${cx.funcName}`);
-      }
-      bindLocalName(leaf, leaf.name.text, value, isConst, cx);
-    },
+    bind,
   };
+}
+
+type LeafBinder = (leaf: BindingLeaf, value: IrValueId) => void;
+
+/** A leaf binds as its declaration binds a name, a redeclaration demoting like one. */
+function localLeafBinder(isConst: boolean, cx: LowerCtx): LeafBinder {
+  return (leaf, value) => {
+    if (cx.scope.has(leaf.name.text)) {
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${leaf.name.text}' in ${cx.funcName}`);
+    }
+    bindLocalName(leaf, leaf.name.text, value, isConst, cx);
+  };
+}
+
+/** (#7106 S5) A module-init `var` leaf writes its own `__mod_<name>` slot, boxed into a dynamic one. */
+function moduleLeafBinder(cx: LowerCtx): LeafBinder {
+  return (leaf, value) => {
+    const binding = cx.moduleBindings?.get(leaf.name.text);
+    const carried = binding?.type.kind === "dynamic" ? leafAsDynamic(leaf, value, cx) : value;
+    if (!binding || carried === null) {
+      // invariant (producer-promise): selection resolves each leaf to a slot its source fits.
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: module-init var leaf '${leaf.name.text}' has no slot its value fits`,
+      );
+    }
+    storeModuleBinding(leaf.name.text, binding, carried, cx);
+  };
+}
+
+/** A leaf's value as the dynamic carrier: already one, or its literal source's box. */
+function leafAsDynamic(leaf: BindingLeaf, value: IrValueId, cx: LowerCtx): IrValueId | null {
+  const type = cx.builder.typeOf(value);
+  if (type.kind === "dynamic") return value;
+  const source = literalLeafSource(leaf);
+  return source === undefined || typeof source === "string" ? null : boxConcreteToDynamic(value, type, source, cx);
 }
 
 /**
@@ -4320,18 +4351,27 @@ function lowerDeclarationPattern(d: PatternDeclaration, isConst: boolean, cx: Lo
       "ir/from-ast: binding pattern without initializer",
     );
   }
-  // (#3142 Slice 2) Top-level destructuring in the module-init unit: the
-  // leaves are module globals on the legacy path, but the pattern lowerer
-  // binds them as plain locals — demote instead of splitting the storage.
+  const literalPlan = planLiteralPattern(pattern, d.initializer);
+  // (#7106 S5) A module-init `var` pattern writes its leaves' module globals.
+  if (cx.moduleBindings && isModuleInitVarList(d.parent)) {
+    if (!literalPlan) {
+      // invariant (producer-promise): selection admits a `var` pattern over a fresh literal only.
+      throw new IrInvariantError("selection-preparation-mismatch", "build", "ir/from-ast: module-init var pattern");
+    }
+    lowerPatternPlan(literalPlan, patternLoweringHost(cx, readsNoSource, moduleLeafBinder(cx)));
+    return;
+  }
+  // (#3142 Slice 2) Any other top-level destructuring in the module-init
+  // unit: its leaves are module globals on the legacy path, but the pattern
+  // lowerer binds them as plain locals — demote instead of splitting the storage.
   if (cx.moduleBindings && [...collectPatternBindingNames(pattern)].some((name) => cx.moduleBindings!.has(name))) {
     demoteToLegacy(
       "module-init-legacy-coupling",
       `ir/from-ast: module-level destructuring declaration not in module-init Slice 2 scope (${cx.funcName})`,
     );
   }
-  const literalPlan = planLiteralPattern(pattern, d.initializer);
   if (literalPlan) {
-    lowerPatternPlan(literalPlan, patternLoweringHost(isConst, cx, readsNoSource));
+    lowerPatternPlan(literalPlan, patternLoweringHost(cx, readsNoSource, localLeafBinder(isConst, cx)));
     return;
   }
   lowerBindingPattern(pattern, lowerExpr(d.initializer, cx, irVal({ kind: "externref" })), isConst, cx);
@@ -4526,35 +4566,48 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
         `any); demote to the SAFE boxed legacy lowering in ${cx.funcName} (#2782/#2790)`,
     );
   }
-  // (#3142 Slice 2) Module-scope binding: write the legacy-allocated
-  // `__mod_<name>` global (symbolic ref — the lowerer's `resolveGlobal`
-  // maps it to the concrete index) and bind as `moduleGlobal` so body
-  // reads/writes route through global.get/set. Mutation needs no slot —
-  // the global IS the mutable storage. Mirrors legacy `emitTdzInit`: when
-  // a TDZ flag global exists for the name, set it to 1 AFTER the value
-  // write so cross-function TDZ checks observe initialization.
   if (moduleBinding) {
-    if (!moduleStorageCompatible(inferred, moduleBinding.type)) {
-      demoteToLegacy(
-        "module-init-legacy-coupling",
-        `ir/from-ast: module binding '${name}' initializer is ${describeIrType(inferred)} but its global is ` +
-          `${describeIrType(moduleBinding.type)} in ${cx.funcName}`,
-      );
-    }
-    cx.builder.emitGlobalSet(moduleBinding.globalRef, value);
-    if (moduleBinding.tdzGlobalRef) {
-      const one = cx.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
-      cx.builder.emitGlobalSet(moduleBinding.tdzGlobalRef, one);
-    }
-    cx.scope.set(name, {
-      kind: "moduleGlobal",
-      globalRef: moduleBinding.globalRef,
-      type: moduleBinding.type,
-      ...(stringEncoding ? { stringEncoding } : {}),
-    });
+    storeModuleBinding(name, moduleBinding, value, cx, stringEncoding);
     return;
   }
   bindLocalName(d, name, value, isConst, cx, { widenDynamic, promoteI32Slot, stringEncoding });
+}
+
+/**
+ * (#3142 Slice 2) Module-scope binding: write the legacy-allocated
+ * `__mod_<name>` global (symbolic ref — the lowerer's `resolveGlobal` maps it
+ * to the concrete index) and bind as `moduleGlobal` so body reads/writes route
+ * through global.get/set. Mutation needs no slot — the global IS the mutable
+ * storage. Mirrors legacy `emitTdzInit`: when a TDZ flag global exists for the
+ * name, set it to 1 AFTER the value write so cross-function TDZ checks observe
+ * initialization.
+ */
+function storeModuleBinding(
+  name: string,
+  binding: ModuleBindingGlobal,
+  value: IrValueId,
+  cx: LowerCtx,
+  stringEncoding?: Encoding,
+): void {
+  const valueType = cx.builder.typeOf(value);
+  if (!moduleStorageCompatible(valueType, binding.type)) {
+    demoteToLegacy(
+      "module-init-legacy-coupling",
+      `ir/from-ast: module binding '${name}' initializer is ${describeIrType(valueType)} but its global is ` +
+        `${describeIrType(binding.type)} in ${cx.funcName}`,
+    );
+  }
+  cx.builder.emitGlobalSet(binding.globalRef, value);
+  if (binding.tdzGlobalRef) {
+    const one = cx.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
+    cx.builder.emitGlobalSet(binding.tdzGlobalRef, one);
+  }
+  cx.scope.set(name, {
+    kind: "moduleGlobal",
+    globalRef: binding.globalRef,
+    type: binding.type,
+    ...(stringEncoding ? { stringEncoding } : {}),
+  });
 }
 
 /** How a reassigned `let` name is stored, as its declaration decided it. */

@@ -3418,7 +3418,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // otherwise local→global sync either loses identity or emits a
         // mismatched global.set.
         const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
-        registerModuleGlobal(ctx, element.name.text, wasmType);
+        registerModuleGlobal(ctx, element.name.text, wasmType, element);
         if (lexical && ctx.moduleGlobals.has(element.name.text)) registerModulePatternTdzGlobal(ctx, element);
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         registerBindingNames(element.name, lexical);
