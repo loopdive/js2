@@ -8950,14 +8950,18 @@ function selectorCarrierValue(
 
 /**
  * Whether the consumer of a carrier `+` reads the carrier: a typed or equality
- * operator (S0 judges the `dynamic` operand), `typeof` or `!`. A local, a
- * write, an argument or a return would type it as the checker does (#7034
- * round 2: `var r = new String("ab") + 1; … r.length` withdrew after the claim).
+ * operator (S0 judges the `dynamic` operand), `typeof`, `!`, or an argument of
+ * a dynamic construct (`new Test262Error(msg + …)`, whose arguments are
+ * carriers). A local, a write, any other argument or a return would type it as
+ * the checker does (#7034 round 2: `var r = new String("ab") + 1; … r.length`
+ * withdrew after the claim).
  */
 function carrierAdditionConsumed(expr: ts.BinaryExpression): boolean {
-  const parent = outermostParenthesized(expr).parent;
+  const node = outermostParenthesized(expr);
+  const parent = node.parent;
   if (ts.isBinaryExpression(parent)) return isTypedBinaryOperator(parent.operatorToken.kind);
   if (ts.isTypeOfExpression(parent)) return true;
+  if (ts.isNewExpression(parent)) return parent.expression !== node && dynamicConstructCallee(parent) !== null;
   return ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken;
 }
 
