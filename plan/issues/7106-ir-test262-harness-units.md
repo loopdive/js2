@@ -3614,6 +3614,58 @@ that keeps the lever honest.
 **Size.** Opus lane, horizon S. Touches `select.ts`, `from-ast.ts`,
 `operand-admissibility.ts`, `legality.ts`, and one test.
 
+### Review round 1 of S0 + S1 (#7034, 2026-11-01)
+
+The verdict was approve with nits. S0 + S1 is on `claude/7106-wrapper-operand-arm`: b7ccca3403, 33d02c3e0c, and the fixes in 2d59ac4896. Each finding is fixed.
+
+1. **ToNumeric order regressed against main. Fixed.**
+   - §13.15.3 has an operator that ToNumerics its operands complete the left
+     one before it runs ToPrimitive on the right one.
+   - `lowerBinaryOperands` now ToNumbers each carrier in turn. With a
+     `valueOf` that returns a Symbol, `new Number(1) - new Number(2)` calls it
+     once, as node and main do (`toNumericOrder` probe).
+   - `+`, the relationals and `==` take both ToPrimitives first. A wrapper
+     beside a carrier that is not a wrapper is refused for them
+     (`expr-wrapper-carrier-order`), because the carrier's own ToPrimitive
+     would run second.
+2. **Two spellings of wrapper identity. Fixed.**
+   `wrapperComparisonIsIdentity` (`operand-admissibility.ts`) is the one
+   predicate. Selection refuses an identity comparison, and the builder
+   asserts it. The builder's unreachable `===` skip is gone.
+3. **A duplicated check. Fixed.** `addsAsCarrier` is the one "adds
+   dynamically" check, and `isToNumericOperator` is the one ToNumeric
+   operator set, which `tryLowerDynamicArithmetic` also reads.
+4. **Two family judges. Fixed.**
+   - The wrapper `==` rule judges the other operand with
+     `binaryOperandFamily`, S0's own judge, so `new Number(4) == 2 * 2`
+     claims.
+   - `binaryOperandFamily` reads `void 0` as `undefined` (`isVoidZero`), so
+     `void 0 + 2` is refused at selection.
+
+S0's API is unchanged: `binaryOperandFamily`, `binaryOperandsAdmissible` and
+`expr-binary-operand-families`.
+
+**Re-measured** against `358a17971e` on the 1,334 candidate files, both lanes,
+one worker:
+
+- **Byte-identical to the measured head.** Every binary matches the one
+  33d02c3e0c produced, on both lanes. None of the three shapes the round fixes
+  reaches a claimed candidate. The pass/fail A/B on 33d02c3e0c therefore stands
+  for these binaries: 0 flips.
+- **Against the base, unchanged:**
+  - legacy-free 8 → 25;
+  - 23 binaries changed: 17 gain a claimed `<module-init>`, and 6 are S0
+    refusals of main's claim-then-demote (`*_A3_T1.4`);
+  - no new post-claim error and no status change.
+- **Playground identical.**
+- **Gates green, run bare:** lint, loc, func (also against main), coercion,
+  oracle, dead exports, import cycles, compiler boundaries, IR fallbacks and
+  `test:changed-root`.
+
+**Size.** Net `src/ir` growth since the merge base is +33 lines (+218/−185).
+Before this round it was −20. The ToNumeric-order fix, the two predicates and
+their doc comments cost 53 lines.
+
 ### Follow-ups (not this lever)
 
 1. **The class-expression chain, in order:**

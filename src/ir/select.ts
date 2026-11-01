@@ -165,7 +165,10 @@ import {
   isEqualityOperator,
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
+  isToNumericOperator,
   isTypedBinaryOperator,
+  isVoidZero,
+  wrapperComparisonIsIdentity,
   nativeI32OperandsAdmissible,
   type OperandFamily,
 } from "./analysis/operand-admissibility.js";
@@ -8866,14 +8869,24 @@ function selectorPrimitiveWrapperOrGenericBinary(
   const leftWrapper = selectorPrimitiveWrapperConstruction(expr.left, scope, localClasses) !== null;
   const rightWrapper = selectorPrimitiveWrapperConstruction(expr.right, scope, localClasses) !== null;
   const isEquality = isEqualityOperator(binOp);
+  const left = leftWrapper ? "dynamic" : binaryOperandFamily(expr.left, scope);
+  const right = rightWrapper ? "dynamic" : binaryOperandFamily(expr.right, scope);
   if (leftWrapper || rightWrapper) {
     if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") !== true) {
       return capabilityNo("operand-coercion-unsupported", "expr-wrapper-to-primitive-target", expr);
     }
-    const otherFamily = obviousSelectorValueFamily(leftWrapper ? expr.right : expr.left, scope);
-    const identity = isStrictEqualityOperator(binOp) || (leftWrapper && rightWrapper);
-    if (isEquality && (identity || (otherFamily !== "boolean" && otherFamily !== "number"))) {
+    const other = leftWrapper ? right : left;
+    const otherIsWrapper = leftWrapper && rightWrapper;
+    if (
+      wrapperComparisonIsIdentity(binOp, leftWrapper, rightWrapper) ||
+      (isEquality && other !== "boolean" && other !== "number")
+    ) {
       return capabilityNo("operand-coercion-unsupported", "expr-wrapper-equality", expr);
+    }
+    // `+`, the relationals and `==` take both ToPrimitives before anything
+    // else; a carrier operand's own ToPrimitive would run after the wrapper's.
+    if (!isToNumericOperator(binOp) && !otherIsWrapper && other === "dynamic") {
+      return capabilityNo("operand-coercion-unsupported", "expr-wrapper-carrier-order", expr);
     }
   } else if (
     isEquality &&
@@ -8883,8 +8896,6 @@ function selectorPrimitiveWrapperOrGenericBinary(
     return capabilityNo("operand-coercion-unsupported", "expr-equality-reference-operands", expr);
   }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
-  const left = leftWrapper ? "dynamic" : binaryOperandFamily(expr.left, scope);
-  const right = rightWrapper ? "dynamic" : binaryOperandFamily(expr.right, scope);
   const judged =
     leftWrapper ||
     rightWrapper ||
@@ -8904,8 +8915,9 @@ function selectorPrimitiveWrapperOrGenericBinary(
  * operator arms read them; anything else is {@link provenIrFamily}'s answer.
  */
 function binaryOperandFamily(operand: ts.Expression, scope: ReadonlySet<string>): OperandFamily {
-  if (unwrapPhase1Parens(operand).kind === ts.SyntaxKind.NullKeyword) return "nullish";
-  if (isUnshadowedUndefinedIdentifier(operand, scope)) return "undefined";
+  const candidate = unwrapPhase1Parens(operand);
+  if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
+  if (isUnshadowedUndefinedIdentifier(candidate, scope) || isVoidZero(candidate)) return "undefined";
   return provenIrFamily(operand, scope);
 }
 

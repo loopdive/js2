@@ -75,6 +75,11 @@ export type AdditiveProof = PrimitiveProof | "dynamic";
  */
 export function isUndefinedCompareOperand(expr: ts.Expression, isShadowed: (name: string) => boolean): boolean {
   if (ts.isIdentifier(expr)) return expr.text === "undefined" && !isShadowed(expr.text);
+  return isVoidZero(expr);
+}
+
+/** A literal `void 0`: the value `undefined`, whatever the scope binds. */
+export function isVoidZero(expr: ts.Expression): boolean {
   return ts.isVoidExpression(expr) && ts.isNumericLiteral(expr.expression) && Number(expr.expression.text) === 0;
 }
 
@@ -423,6 +428,23 @@ const NUMBER_BINARY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set(Object.value
 
 export function isNumberBinaryOperator(op: ts.SyntaxKind): op is NumberBinaryOperator {
   return NUMBER_BINARY_OPERATORS.has(op);
+}
+
+/**
+ * (#7106) The number operators that ToNumeric each operand in turn — every one
+ * but `+`, which takes both ToPrimitives first (§13.15.3).
+ */
+export function isToNumericOperator(op: ts.SyntaxKind): op is NumberBinaryOperator {
+  return op !== ts.SyntaxKind.PlusToken && isNumberBinaryOperator(op);
+}
+
+/**
+ * (#7106) A comparison with a fresh primitive wrapper that observes the
+ * wrapper's identity, not its ToPrimitive: strict equality, or loose equality
+ * between two wrappers. Selection refuses it; the builder never sees one.
+ */
+export function wrapperComparisonIsIdentity(op: ts.SyntaxKind, leftWrapper: boolean, rightWrapper: boolean): boolean {
+  return isStrictEqualityOperator(op) || (isEqualityOperator(op) && leftWrapper && rightWrapper);
 }
 
 /** The binary operator a numeric compound assignment applies, or `undefined`. */
