@@ -9,7 +9,7 @@
 // walk-until-found shape and have no dependency on `CodegenContext`.
 
 import { ts, forEachChild } from "../ts-api.js";
-import { sourcePatchesPrototype } from "../shared/intrinsic-prototype-writes.js";
+import { sourceWritesPrototype } from "../shared/intrinsic-prototype-writes.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
@@ -744,10 +744,10 @@ export function sourceContainsWithStatement(sourceFile: ts.SourceFile): boolean 
 /**
  * (#1719 S1) Whole-program pre-scan for the `ITER_OVERRIDDEN` brand of the
  * array object-value representation track: true iff the source may
- * monkeypatch `Array.prototype` — any member assignment or `delete`, or
- * `Object.defineProperty`/`defineProperties` on it (the shared
- * `sourcePatchesPrototype` scan, which the IR's literal destructuring reader
- * also reads, #7106).
+ * monkeypatch `Array.prototype` — a member `=` assignment or `delete`, or
+ * `Object.defineProperty`/`defineProperties` on it (`sourceWritesPrototype`,
+ * the narrow question of the walk the IR's destructuring readers also use,
+ * #7106).
  *
  * When this returns false (the overwhelming common case), the array
  * destructuring / spread / for-of fast paths are provably unaffected by any
@@ -761,7 +761,7 @@ export function sourceContainsWithStatement(sourceFile: ts.SourceFile): boolean 
  * `Array.prototype` LHS.
  */
 export function sourceOverridesArrayIterator(sourceFile: ts.SourceFile): boolean {
-  return sourcePatchesPrototype(sourceFile, "Array");
+  return sourceWritesPrototype(sourceFile, "Array");
 }
 
 /**

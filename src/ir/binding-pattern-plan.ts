@@ -12,6 +12,13 @@
 import { ts } from "../ts-api.js";
 import { collectPatternBindingNames } from "./analysis/ast-scope.js";
 
+/** A destructuring declaration: its name is a binding pattern. */
+export type PatternDeclaration = ts.VariableDeclaration & { readonly name: ts.BindingPattern };
+
+export function isPatternDeclaration(declaration: ts.VariableDeclaration): declaration is PatternDeclaration {
+  return !ts.isIdentifier(declaration.name);
+}
+
 /** A destructuring leaf: a binding element that binds an identifier. */
 export type BindingLeaf = ts.BindingElement & { readonly name: ts.Identifier };
 

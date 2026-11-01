@@ -3760,7 +3760,7 @@ Fixed:
 | shape | fix |
 | --- | --- |
 | reassigned `let` leaf (all four repros) | refused by the written-leaf rule from finding 1 |
-| `const [a] = [[1, 2, 3]]`, `const { a } = { a: { b: null } }` | the plan no longer binds a literal whole, since that would build it |
+| `const [a] = [[1, 2, 3]]`, `const { a } = { a: { b: null } }` | in a `for (;;)` head, refused: the plan no longer binds a literal whole. In a function body (corrected in round 2): the typed reader still claims, then demotes, unchanged from main; follow-up (g) |
 | `const { 3: a } = [1]` | an index past the end of an array literal is refused: it reads `Array.prototype` |
 | `for (const { x } = { __proto__: … };;)`, `for (const [a, b] = 'xy';;)` | a `for (;;)` head takes the literal plan only (`for-init-dstr-source`); main refused every head pattern |
 
@@ -3771,10 +3771,10 @@ Rebutted:
   `assert.throws(TypeError, function () { f(); return; })` produces the same
   `direct call to "f" has no exact AST-site plan` post-claim error. Follow-up
   (f).
-- **`const [a, b] = [1, 'x']; return a + b`.** On main,
-  `const a = 1, b = 'x'; return a + b` produces the same `'+' operands not
-  provably…` error. The wrapper-operand lever's S0 refuses it at selection
-  (`expr-binary-operand-families`).
+- **`const [a, b] = [1, 'x']; return a + b`. Withdrawn in round 2.** The
+  identifier twin fails the same way on main, but main refused this
+  declaration, so this PR created the new claims. Round 2 refuses them at
+  selection.
 - **A function-body `VariableStatement` the plan refuses still goes to the
   typed reader.** That reader produces the same post-claim errors as on main,
   for example `const [a] = [[1, 2, 3]]`, `const { a } = { a: { b: null } }`
@@ -3819,12 +3819,9 @@ Rebutted:
 
 **5. A duplicated `undefined`-shadow guard. Fixed.**
 
-- `planLiteralPattern(pattern, source, isShadowed)` takes the predicate.
-  `undefined` is recognised by `isUndefinedCompareOperand`
-  (`operand-admissibility.ts`).
-- The selector, the builder and the closure-null check each pass their own
-  scope. The closure check passes its closure slots and the module's
-  declarations.
+- Superseded in round 2 (finding 4): one program-wide fact replaces the
+  per-caller predicate, because a flat scope misses a later block's
+  `let undefined`.
 
 **6. Nits. Fixed; one claim rebutted.**
 
@@ -3911,6 +3908,79 @@ S1–S3 table):
 - **(h)** A write to a `const` for-of head pattern leaf
   (`for (const [a] of rows) a = 2`) silently succeeds in the IR. This is on
   main, and belongs to (a).
+
+### Review round 2 (2026-11-01)
+
+The verdict was approve with nits. The reviewer's probes (`cases*.json`, base
+`6c732c42ea`) were re-run on the new head; each finding below is fixed.
+
+1. **A new claim-then-demote for a mixed `+` over leaves. Fixed.**
+   - A literal-pattern leaf now has its source value's family.
+     `provenIrFamily` reads it through `literalLeafSource`
+     (`literal-pattern-plan.ts`): a leaf bound `undefined` is the carrier
+     (`dynamic`), and a `length` leaf is a number.
+   - The generic binary tail judges an operator over such a leaf with the
+     shared `binaryOperandsAdmissible`, as `lowerBinary` would at build.
+   - `const [a, b] = [1, 'x']; return a + b` (`.js` and `.ts`), the function
+     for-head and the harness for-head are now refused at selection
+     (`expr-binary-operand-families`), and run correctly through legacy.
+   - The round-1 rebuttal is withdrawn: main refused these declarations, so
+     this PR created the claims.
+   - The wrapper lever's S0 (#7034) generalises the same judge to every
+     typed operator. The leaf family then reaches it through
+     `provenIrFamily` with no further change.
+2. **The plan table overstated a fix. Corrected.** In a function body,
+   `const [a] = [[1, 2, 3]]` and `const { a } = { a: { b: null } }` still
+   claim and then demote through the typed reader, unchanged from main
+   (follow-up (g)). The table now says so.
+3. **The realm guard missed patches. Fixed; the guard is now conservative.**
+   - `sourceMayPatchPrototype` counts any mention of `Array.prototype` or
+     `Object.prototype` that is not the object of a plain member read. A
+     `globalThis.` receiver counts too. That covers:
+     - stored-into members, including compound, logical and destructuring
+       targets, through the new shared `isStoreTarget` in `binding-writes.ts`;
+     - deleted members;
+     - a call with the prototype as `this` (`__defineGetter__`);
+     - every escape: `Reflect.*`, `Object.assign` / `defineProperty` /
+       `setPrototypeOf`, aliases, operands.
+   - The #1719 brand keeps its exact narrower set (`sourceWritesPrototype`),
+     computed in the same walk, so legacy output is unchanged.
+   - Every reviewer probe is now refused, and legacy answers each the way
+     main did.
+   - `%ArrayIteratorPrototype%` reached through `Object.getPrototypeOf` stays
+     unseen. That is documented; legacy also gets it wrong.
+4. **The TDZ `undefined` case. Fixed.**
+   - A program that binds the name `undefined` anywhere is not trusted: no
+     `undefined` identifier is proven global there (`programBindsUndefined`).
+   - This replaces round 1's per-caller `isShadowed` predicate, so the
+     selector, builder and closure-null check now ask one fact.
+5. **A duplicate unwrap helper. Fixed.** `skipOuterExpressions` is exported
+   from `binding-writes.ts` and reused.
+6. **A misleading flag and a dead parameter. Fixed.**
+   - `lowerBindingPattern` takes the declaration's real `isConst`;
+     parameter leaves pass `false`.
+   - `isPhase1DeclarationPattern` and `lowerDeclarationPattern` take a
+     `PatternDeclaration` (`binding-pattern-plan.ts`) instead of a separate
+     `pattern` argument.
+
+**Re-measured** against the round-1 base census (`6c732c42ea`):
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| legacy-free, the 94 / the 288 for-head files | 0 → **46** / 0 → 46 | same |
+| binaries changed, of 712 compiled (all 858 files) | 46, the round-1 set, each with a newly claimed `<module-init>`; 0 of the other 570 files | same |
+| pass→fail on the 46 | 0 (46/46 before and after) | 0 |
+| new post-claim errors, imports, status changes | 0, 0, 0 | 0, 0, 0 |
+| playground examples | byte-identical | byte-identical |
+
+All of the following gates were run bare and exit 0:
+
+- loc and func, against the merge base and against `origin/main` `4fe61ff7f2`;
+- coercion-sites, oracle-ratchet, dead-exports;
+- typecheck and lint;
+- ir-fallbacks;
+- test:changed-root (94 + 4);
+- import-cycles and compiler-boundaries (`--mode inventory`).
 
 ## Writes to a `const`: refused at select (fixed 2026-11-01)
 
