@@ -3729,6 +3729,190 @@ Unchanged binaries keep their verdicts, so there are no flips outside the 48.
   `21b452861d` too.
 
 
+### Review round 1 (2026-11-01)
+
+The #7024 review asked for changes: one blocker, four majors, two groups of
+nits. Each is fixed or rebutted below, measured on a base tree of `6c732c42ea`
+(the `origin/main` this branch merged). The reviewer's probes (`c1`–`c3`,
+`t1`) were re-run on that base and on the new head. Every repro they flagged
+either runs correctly now or behaves exactly as on main, where it fails the
+same way without any destructuring.
+
+**1. Blocker: a write to a `const` leaf failed the compile. Fixed.**
+
+- The selector now refuses a declaration with any written leaf, through
+  `declarationBindingWritten` (`const-binding-writes.ts`). A write is an
+  assignment, update, destructuring or for-in/of target, or a later `var`
+  re-declaration, nested functions included. The scope is the leaf's block,
+  `switch` case block or `for` statement (`let`/`const`), or its function
+  (`var`).
+- This applies to both readers. Main also failed the compile on
+  `const { a } = { a: 1 }; a += 1` and `const { a } = o; a = 2`; both now
+  throw the TypeError through legacy.
+- `isWriteToConstDeclaration` stays identifier-only. No claimed pattern leaf
+  can reach it now: written declaration leaves are refused, and for-of head
+  leaves are slots. Follow-up (h) covers the for-of case.
+
+**2. New claim-then-demote shapes. Fixed; three rebutted with measurements.**
+
+Fixed:
+
+| shape | fix |
+| --- | --- |
+| reassigned `let` leaf (all four repros) | refused by the written-leaf rule from finding 1 |
+| `const [a] = [[1, 2, 3]]`, `const { a } = { a: { b: null } }` | the plan no longer binds a literal whole, since that would build it |
+| `const { 3: a } = [1]` | an index past the end of an array literal is refused: it reads `Array.prototype` |
+| `for (const { x } = { __proto__: … };;)`, `for (const [a, b] = 'xy';;)` | a `for (;;)` head takes the literal plan only (`for-init-dstr-source`); main refused every head pattern |
+
+Rebutted:
+
+- **The `f()` call inside an `assert.throws` closure.** This gap is older
+  than destructuring. On main,
+  `assert.throws(TypeError, function () { f(); return; })` produces the same
+  `direct call to "f" has no exact AST-site plan` post-claim error. Follow-up
+  (f).
+- **`const [a, b] = [1, 'x']; return a + b`.** On main,
+  `const a = 1, b = 'x'; return a + b` produces the same `'+' operands not
+  provably…` error. The wrapper-operand lever's S0 refuses it at selection
+  (`expr-binary-operand-families`).
+- **A function-body `VariableStatement` the plan refuses still goes to the
+  typed reader.** That reader produces the same post-claim errors as on main,
+  for example `const [a] = [[1, 2, 3]]`, `const { a } = { a: { b: null } }`
+  and `const { a } = null as any` (`tsNestedWhole`, `jsNullInWhole_js` and
+  `tsTypeErrNull` in `t1`, unchanged from main). Follow-up (b) owns the typed
+  reader.
+
+**3. No realm guard. Fixed.**
+
+- `programPatchesDestructuringRealm` (`realm-keys.ts`) refuses both readers
+  in a program that patches `Array.prototype` or `Object.prototype`: a member
+  assignment, a `delete`, or `Object.defineProperty`/`defineProperties`.
+- It reads `sourcePatchesPrototype`, the #1719 scan moved to
+  `src/shared/intrinsic-prototype-writes.ts`. That scan now answers for both
+  intrinsics.
+- The #1719 brand (`sourceOverridesArrayIterator`) delegates to the same
+  scan, so the two cannot disagree. Its exact-statement seam
+  `directArrayProtoIteratorAssignment` was subsumed by the general assignment
+  match, so it is removed along with its two unit tests.
+- Results: `fC3` and `fC4` now run correctly through legacy. The first build
+  claimed them and answered wrongly; main claimed them through the typed
+  reader, then demoted.
+- Limit: the scan misses a patch made through an alias or
+  `%ArrayIteratorPrototype%` (`fC5`). Legacy gets that case wrong too: it
+  threw on main.
+
+**4. A third walker. Fixed.**
+
+- `lowerPatternPlan` (`binding-pattern-lowering.ts`) now lowers every
+  declaration and parameter pattern. The source is a strategy of the host:
+  - a typed source answers `read`, with `fieldReader` / `elementReader` in
+    `from-ast.ts`;
+  - a literal plan reads nothing (`readsNoSource`).
+- The typed plans are `planPropertyReads` / `planElementReads`, and
+  `isPhase1BindingPattern` is defined by them. `lowerObjectPattern` /
+  `lowerArrayPattern` are gone.
+- The for-of head keeps its own binder, for a structural reason. Its leaves
+  are slots declared once outside the body, and each iteration writes them
+  through a bounds-checked read with legacy's zero override. A single-pass
+  walker does not model that.
+- Its leaf enumeration does come from `planElementReads` now.
+
+**5. A duplicated `undefined`-shadow guard. Fixed.**
+
+- `planLiteralPattern(pattern, source, isShadowed)` takes the predicate.
+  `undefined` is recognised by `isUndefinedCompareOperand`
+  (`operand-admissibility.ts`).
+- The selector, the builder and the closure-null check each pass their own
+  scope. The closure check passes its closure slots and the module's
+  declarations.
+
+**6. Nits. Fixed; one claim rebutted.**
+
+- `skipParentheses` → `stripParens` (`src/shared/binding-writes.ts`).
+- `isUndefinedLiteral` → `isUndefinedCompareOperand`.
+- `isAnonymousFunctionDefinition` moved verbatim to
+  `src/shared/named-evaluation.ts`. Codegen imports it from there too; an
+  `ir/analysis` home would have added two codegen→ir edges to the
+  import-cycle ratchet.
+- `propertyKey` and the three private `phase1PropertyName` copies
+  (`select.ts`, `from-ast.ts`, `propagate.ts`) are now one exported
+  `phase1PropertyName` in `property-key-fold.ts`.
+  - **Rebutted:** the review said that copy lacks numeric canonicalisation.
+    It does not: TypeScript's scanner already stores the canonical form in
+    `NumericLiteral.text`. `property-key-fold.ts` records 16 spellings, and
+    re-checked here: `1.0`→`1`, `0x2`→`2`, `1e21`→`1e+21`, `0b11`→`3`,
+    `.5`→`0.5`. `String(Number(text))` was a no-op.
+- `BindingLeaf` replaces the inline type at both `select.ts` sites.
+
+**7. Nits. Fixed.**
+
+- The impossible leaf-shape demotes are gone. A typed plan holds identifier
+  leaves only, and a pattern the selector should not have admitted is one
+  `IrInvariantError` (`admittedReads`).
+- `!d.initializer` in `lowerDeclarationPattern` is an `IrInvariantError` now.
+- A leaf already in scope demotes as `redeclaration of …`, the same way an
+  identifier declaration does. Literal and typed leaves share that binder.
+- The two `leafValue` functions are now `planLeafValue` (planner) and
+  `lowerLeafValue` (walker).
+- Leaf-name collectors: `loop-shape.ts`'s array copy `collectBindingNames`
+  is deleted, and its two codegen callers use the generator
+  `collectPatternBindingNames`. `collectBindingPatternNames` stays: it is the
+  set-adding form, and over 20 legacy codegen sites use it.
+- `binding-pattern-plan.ts` is split by concern:
+  - plan types and typed reads: `binding-pattern-plan.ts`, 94 lines;
+  - the literal planner: `literal-pattern-plan.ts`, 254 lines;
+  - the closure-null predicate: moved into its only consumer
+    (`select-planned-closure-operands.ts`) and folded with
+    `nullIsComparedOperand` as `nullIsValue`.
+
+**Re-measured** (base `6c732c42ea`, same 858-file census and scripts as the
+S1–S3 table):
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| legacy-free, the 94 sole-blocker files (base → head) | 0 → **46** | 0 → **46** |
+| legacy-free, the 288 for-head files | 0 → 46 | 0 → 46 |
+| legacy-free, 231 literal-pattern files / 345-file sample | 0 → 0 / 7 → 10 (3 sample files are for/dstr) | same |
+| binaries changed, of 712 compiled | 46, each with a newly claimed `<module-init>` | the same 46 |
+| pass→fail on the 46 changed files (`runTest262File`) | 0 (46/46 pass before and after) | 0 (46/46) |
+| post-claim errors | none new: 0 files on the 94; the same pre-existing errors elsewhere | same |
+| host imports added, status (CE/skip) changes | 0, 0 | 0, 0 |
+| playground examples (13) | byte-identical | byte-identical |
+
+- **48 → 46.** The two `{const,let}-ary-ptrn-rest-obj-prop-id.js` files read
+  `3: y` past the end of the rest array `[7, 8, 9]`. TypeScript types that
+  read as an element (`number`), but the plan binds `undefined`, so the
+  index-past-the-end refusal from finding 2 now covers them. Both stay legacy
+  and pass, with binaries identical to main.
+- **Line counts.** This round's `src/ir` change is +586 / −569, and `src`
+  overall +720 / −707. The PR against main is now `src/ir` +815 / −478.
+  - `binding-pattern-plan.ts`: 347 → 94 lines;
+    `literal-pattern-plan.ts`: 254 new.
+  - `from-ast.ts`: −76.
+  - The codegen scan and seam lose 115 lines, net of the delegate.
+- **Grants.** None added.
+- **Gates.** Each run bare, all exit 0: loc and func (against the merge base
+  and against `origin/main` `4fe61ff7f2`), coercion-sites, oracle-ratchet,
+  dead-exports, typecheck, lint, ir-fallbacks, test:changed-root (88 + 4),
+  import-cycles, and compiler-boundaries (`--mode inventory --base
+  6c732c42ea`).
+- **Pre-existing test failures.** Two cases of
+  `tests/issue-3522-ir-closure-destructuring-ownership.test.ts` (gc
+  `__unwrap_for_wasm`) and `issue-1372` AC#1 fail on the base tree too.
+
+**New follow-ups.**
+
+- **(f)** A direct call to a top-level function from a planned
+  `<module-init>` closure claims and then demotes. This is on main, without
+  destructuring.
+- **(g)** The typed reader over an array literal demotes after the claim,
+  because the pattern's contextual element type is `any`. This is on main,
+  and belongs to (b).
+- **(h)** A write to a `const` for-of head pattern leaf
+  (`for (const [a] of rows) a = 2`) silently succeeds in the IR. This is on
+  main, and belongs to (a).
+
+
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
 The following 115 lines are preserved verbatim from the completed #6876 plan
