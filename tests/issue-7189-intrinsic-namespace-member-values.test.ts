@@ -4,7 +4,8 @@
 // VALUE (`var __isArray = Array.isArray`, the propertyHelper.js prelude) is a
 // realm read in an IR body: `dyn.member_get` off the #7118 intrinsic value.
 // Calls (`Object.getPrototypeOf(x)`) and every other member read stay on the
-// legacy path.
+// legacy path; the boolean statics #7106 lowers natively (`Array.isArray(x)`,
+// `issue-7106-ambient-static-calls.test.ts`) never read the namespace value.
 
 import { describe, expect, it } from "vitest";
 
@@ -56,16 +57,18 @@ const CLAIMING: Record<string, string> = Object.fromEntries(
 CLAIMING.propertyHelperPrelude = `var __isArray = Array.isArray;
 var __defineProperty = Object.defineProperty;
 if (typeof __isArray !== "function" || __defineProperty.length !== 3) { throw "#prelude"; }`;
+// (#7106) A boolean static's call claims too, lowered natively by operand family.
+CLAIMING.isArrayCall = `if (Array.isArray(1) !== false) { throw "#5"; }`;
 
-// Refused shapes: a call (legacy's type-directed static arm; the dynamic route
-// answers `Object.getPrototypeOf(1)` wrongly), a further read, an unmeasured
-// or absent member, a write, and a static read through an alias.
+// Refused shapes: a call outside #7106's boolean statics (legacy's
+// type-directed static arm; the dynamic route answers `Object.getPrototypeOf(1)`
+// wrongly), a further read, an unmeasured or absent member, a write, and a
+// static read through an alias.
 const REFUSED: Record<string, string> = {
   primitiveCall: `if (Object.getPrototypeOf(1) !== Number.prototype) { throw "#1"; }`,
   stringCall: `if (Object.getPrototypeOf("a") !== String.prototype) { throw "#2"; }`,
   nullProtoCall: `var o = Object.create(null); if (Object.getPrototypeOf(o) !== null) { throw "#3"; }`,
   functionCall: `if (Object.getPrototypeOf(function () {}) !== Function.prototype) { throw "#4"; }`,
-  isArrayCall: `if (Array.isArray(1) !== false) { throw "#5"; }`,
   furtherRead: `if (Object.keys.length !== 1) { throw "#6"; }`,
   absentMember: `if (typeof Object.nope !== "undefined") { throw "#7"; }`,
   unmeasured: `if (typeof Object.groupBy !== "function") { throw "#8"; }`,

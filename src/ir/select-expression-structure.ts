@@ -61,9 +61,7 @@ export function effectiveIrParamTypeNode(param: ts.ParameterDeclaration): ts.Typ
  * mapping. In particular, this helper does not turn an unannotated, `any`,
  * union, or otherwise unsupported signature into a primitive claim.
  */
-export function effectiveIrReturnTypeNode(
-  fn: ts.FunctionDeclaration | ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
-): ts.TypeNode | undefined {
+export function effectiveIrReturnTypeNode(fn: ts.SignatureDeclaration): ts.TypeNode | undefined {
   return fn.type ?? ts.getJSDocReturnType(fn);
 }
 

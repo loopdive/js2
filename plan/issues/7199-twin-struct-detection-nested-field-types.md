@@ -1,10 +1,11 @@
 ---
 id: 7199
 title: "Twin-layout guard misses classes whose fields point to different but structurally identical structs"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-10-31
 updated: 2026-10-31
+completed: 2026-10-31
 priority: medium
 horizon: s
 feasibility: medium
@@ -44,3 +45,30 @@ The same happens with `P[]` vs `Q[]` fields.
 2. Tests: extend `tests/equivalence/issue-7158-twin-struct-layouts.test.ts` with
    nested-struct and array-field twins on all 3 lanes against node.
 3. Programs without twins must stay byte-identical.
+
+## Resolution (2026-10-31)
+
+`src/codegen/class-arm-tag-guard.ts` now decides "layout twin" with
+`mayShareCanonicalLayout`: field kinds must match, and a referenced type is
+compared by SHAPE (struct fields, array element, func params/results),
+recursively and coinductively (a pair already being compared is assumed equal,
+which accepts self- and mutually-recursive types). Both consumers of the twin
+decision use it: the #7158 enumeration arms (JSON.stringify, Object.keys,
+for…in, getOwnPropertyNames, Object.assign, spread) and the #4618/#6608
+per-name method ladders, which had the same bug (`b.name()` ran `A`'s body).
+
+Why an over-approximation and not exact isorecursive equality: rec groups are
+planned at EMIT time (`planPhysicalTypeSection`, from forward references, after
+DCE), so the exact canonical identity is not known when the arms are built. The
+walk therefore ignores what can only SEPARATE two types (mutability,
+supertype/finality, the later rec-group split) and answers "maybe" for an index
+it cannot resolve. A false "maybe" costs one redundant, still-correct `__tag`
+test; equal indices still answer "equal", so the guarded set only grows.
+
+Evidence: 29 programs (the #7158 rows, its sweep bodies, 8 class-heavy programs
+without twins) x 3 lanes = 87 binaries are byte-identical to base.
+`tests/equivalence/issue-7199-twin-nested-field-types.test.ts` (45 rows) fails
+37 rows on base and passes on head.
+
+Not in scope: `hasOwnProperty` / `in` on twins (#7200); wasi enumeration of a
+class instance answering `null` / empty (#7201).

@@ -21,6 +21,7 @@ import type { IrFunctionMemberClosurePlan } from "./function-member-closure-plan
 import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
 import {
   additiveOperandsProvable,
+  additiveResultFamily,
   binaryOperandsAdmissible,
   carrierHelperCall,
   carrierInReceiver,
@@ -36,6 +37,7 @@ import {
   isStrictEqualityOperator,
   isTypedBinaryOperator,
   isUndefinedCompareOperand,
+  logicalResultFamily,
   nullComparisonFolds,
   undefinedCompareOperandAdmissible,
   nullishLeftAdmissible,
@@ -391,23 +393,20 @@ export function plannedClosureOperandRefusal(
       return ts.isIdentifier(target) ? operandProof(target) : UNKNOWN;
     }
     if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
-      const left = operandProof(expr.left);
-      const right = operandProof(expr.right);
-      return left.family === "boolean" && right.family === "boolean" ? BOOLEAN : UNKNOWN;
+      const family = logicalResultFamily(operandProof(expr.left).family, operandProof(expr.right).family);
+      return family === "boolean" ? BOOLEAN : UNKNOWN;
     }
     if (op === ts.SyntaxKind.PlusToken) {
       const left = operandProof(expr.left);
       const right = operandProof(expr.right);
-      if (left.family === "dynamic" || right.family === "dynamic") {
+      const family = additiveResultFamily(left.family, right.family);
+      if (family === "dynamic") {
         return {
-          family: "dynamic",
+          family,
           additive: left.additive === "dynamic" || right.additive === "dynamic" ? "dynamic" : "unprovable",
         };
       }
-      if (left.family === right.family && (left.family === "number" || left.family === "string")) {
-        return left.family === "number" ? NUMBER : STRING;
-      }
-      return UNKNOWN;
+      return family === "number" ? NUMBER : family === "string" ? STRING : UNKNOWN;
     }
     if (isTypedBinaryOperator(op)) return NUMBER;
     return UNKNOWN;
