@@ -317,7 +317,6 @@ export { exactPreparedUnitCallableBindingId } from "./prepared-callable-resoluti
 import { prepareIrVectorSupport } from "./prepared-vector-support.js";
 import { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
 import {
-  makeIrAdditiveOperandProof,
   makeIrArrayExpressionPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrModuleBindingResolver,
@@ -2570,7 +2569,6 @@ export function compileIrPathFunctions(
       ...(supportsDateSnapshots ? { hostDateSnapshots: makeIrHostDateSnapshotResolver(ctx.checker) } : {}),
       resolveModuleBinding: moduleBindingResolver,
       classifyPrimitiveExpression,
-      additiveOperandProof: makeIrAdditiveOperandProof(ctx.checker),
       classifyDeclaredPrimitiveExpression,
       isArrayExpression,
       classifyArrayElementFamily,
