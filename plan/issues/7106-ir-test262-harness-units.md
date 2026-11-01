@@ -3899,6 +3899,38 @@ widens its reach. The compound and plain assignments are refused at
 selection; the update arm needs the same refusal. It needs its own fix before
 this PR merges.
 
+### S2 after the #7030 merge (2026-11-01)
+
+`origin/main` `22a6442977`, which carries the #7030 `finally` fix, is merged
+in (`dc767af398`). The scoped A/B was re-run against that main, both lanes, on
+the 628-file chunked sample, the 30 heaviest and the four `S12.14_A9_T2/T3`,
+`S12.14_A10_T2/T3` rows.
+
+**A regression from review round 1, found and fixed.**
+- The A/B found one compile flip, `staging/sm/class/className.js`: it compiled
+  on main and failed on #7026 ("prepared class … member … has no exact
+  installed callable").
+- The cause was round 1's trailing-`return` drop in `applyIrTailCalls`. It
+  emptied the body of `static m() {}`, and `prepared-class-body-cutover.ts`
+  reads an empty body as an uninstalled callable.
+- The fix: a body that is only `return` keeps it.
+- The earlier S2 A/B predates round 1, which is why it missed this.
+- Test: `tests/issue-7106-module-init-chunks.test.ts`, "compiles a class whose
+  static method is empty".
+
+**Measured after the fix.**
+- 0 compile flips.
+- 17 files newly legacy-free, including all four S12.14 rows.
+- 34 binaries differ per lane. On those 34 the conformance runner finds 0
+  flips on both lanes (31/31 passes before and after), and all four S12.14
+  rows pass.
+- 13 `+` post-claim demotes remain on #7026 alone: the 12 `S11.7.*_A4` and
+  `S11.5.2_A4_T10`, the pre-existing class in the table above. #7033 (#7066)
+  lowers them.
+- Gates, run bare: loc, func, coercion, oracle, dead exports, import cycles,
+  boundaries inventory, typecheck, lint, IR fallbacks, changed-root tests and
+  equivalence all pass.
+
 ## IR `finally` abrupt exit: the guard `if` was not a frame (fixed 2026-11-01)
 
 **Symptom.** Under the IR, `do { try { throw "x"; } finally { break; } }
