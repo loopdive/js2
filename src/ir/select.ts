@@ -142,6 +142,7 @@ import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
+import { firstConstBindingWrite } from "./const-binding-writes.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
   IrLegacyLocalClassExpressionResolver,
@@ -157,7 +158,6 @@ import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
-import { isWriteToConstDeclaration } from "./const-binding-writes.js";
 import {
   conditionalJoinArmFamily,
   conditionalJoinFamily,
@@ -2210,7 +2210,7 @@ function whyNotIrClaimable(
   }
 
   const body = fn.body;
-  if (!body) return "body-shape-rejected";
+  if (!body || constBindingWriteRefused(body)) return "body-shape-rejected";
   if (prepareFunctionBodySelection(fn, scope, body)) return "string-builder-candidate";
   // (#2856 C1) Reset the early-return context for this function's walk.
   earlyReturnLoopDepth = 0;
@@ -4286,19 +4286,19 @@ function phase1MutatingStatementVerdict(
   return { ok: true };
 }
 
-/** Why `++`/`--` on `operand` is not claimable, for all three update arms. A `const` target must throw
- * TypeError, which only legacy raises: the IR would write the module global or demote after the claim. */
-function identifierUpdateRefusal(
-  operand: ts.Identifier,
-  expr: ts.Node,
-  scope: ReadonlySet<string>,
-): string | undefined {
-  if (isUnrepresentableModuleBinding(operand)) return "module-storage-unrepresentable";
-  if (currentModuleBindingResolver?.(operand) && !currentSubjectIsModuleInit) return "module-update";
-  if (isWriteToConstDeclaration(operand)) return "const-update";
-  if (!scope.has(operand.text)) return "incdec-scope";
-  if (projectionBindingMutationIsUnsupported(operand.text, expr)) return "incdec-projection";
+/** Why `++`/`--` on `id` is not claimable: the one gate of the three update arms. */
+function identifierUpdateRefusal(id: ts.Identifier, expr: ts.Node, scope: ReadonlySet<string>): string | undefined {
+  if (isUnrepresentableModuleBinding(id)) return "module-storage-unrepresentable";
+  if (currentModuleBindingResolver?.(id) && !currentSubjectIsModuleInit) return "module-update";
+  if (!scope.has(id.text)) return "incdec-scope";
+  if (projectionBindingMutationIsUnsupported(id.text, expr)) return "incdec-projection";
   return undefined;
+}
+
+/** A write to a `const` must throw TypeError, which only legacy raises: refuse the subject whole, not per write arm. */
+function constBindingWriteRefused(root: ts.Node): boolean {
+  const write = firstConstBindingWrite(root);
+  return write !== undefined && !shapeNo("const-write", write);
 }
 
 function stableDynamicStoreReceiverHasAdmittedRoot(receiver: ts.Expression): boolean {
@@ -12929,7 +12929,7 @@ export function assessModuleInit(
   currentDynamicParamNames = new Set<string>(); // (#7106 S3a) no parameters at module init
   const maskedRejects: ModuleInitReject[] | undefined = MODULE_INIT_ALL_REJECTS_ON ? [] : undefined;
   for (const stmt of population) {
-    if (!isPhase1BodyStatement(stmt, scope, localClasses)) {
+    if (constBindingWriteRefused(stmt) || !isPhase1BodyStatement(stmt, scope, localClasses)) {
       const reason = typedShapeRejectReason ?? "body-shape-rejected";
       if (maskedRejects) {
         recordMaskedModuleInitReject(maskedRejects, reason, stmt, scope);

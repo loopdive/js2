@@ -3351,6 +3351,45 @@ token in GH_TOKEN is invalid", rechecked 2026-10-31 after the third review).
 Reserving without the scan (`--no-pr-scan --allow-unscanned`) risks a
 duplicate id, so I did not.
 
+## Writes to a `const`: refused at select (fixed 2026-11-01)
+
+**Symptom.** A write to a `const` binding is a TypeScript error that still
+emits code and must throw TypeError at run time; only legacy raises it.
+- A module `const` update (`const locked = 1; locked++;`) was claimed and
+  lowered as a plain module-global write: the initializer ran on.
+- Every function-local `const` write (`k++`, `k = 5`, `k += 2`, `a = k = 5`,
+  `x = (k = 5)`, a `for` update) was claimed and then demoted by from-ast's
+  `isWriteToConstDeclaration` check: right answer, but a claim-then-demote.
+- Module `const` assignment was already refused, through the module-binding
+  resolver. The chunk lever (#7026) widens the reach of the update case.
+
+**Root cause.** Each write arm (three update arms, the body, top-level,
+chained, tail and value assignment arms, the `for` update clause) checked
+scope and module storage but not constness.
+
+**Fix.** One subject gate instead of one check per arm:
+`firstConstBindingWrite` (`src/ir/const-binding-writes.ts`, built from the
+shared `isLexicalBindingWrite` and the #7014 `isWriteToConstDeclaration`) finds
+any write to a const, and the selector refuses the whole subject
+(`constBindingWriteRefused`, called from `whyNotIrClaimable` and per statement
+in `assessModuleInit`). The three update arms, which repeated the same four
+checks, share `identifierUpdateRefusal`. `select.ts` net -1 line, no grant.
+
+**Measured** (head vs main `4fe61ff7f2`, file-copy A/B of `select.ts`):
+- Probes: 112 sources, 224 runs on standalone and gc (update and assignment
+  writes to a const, let or var; statement, chain, value, loop and
+  `for`-update positions; in a function and at top level) all match node.
+  Post-claim errors drop from 48 to 0; the let/var binaries are unchanged.
+- `tests/ir-const-update-refusal.test.ts`: 62/62 on head, 30 fail on main.
+- test262: of 1,412 candidate rows (all of `assignment/` and
+  `compound-assignment/`, the `++`/`--` directories, and every row a text scan
+  flags), 14 contain a const write by the real predicate. On those 14: 0 flips
+  on both lanes, 13/14 binaries identical, and
+  `const/syntax/const-invalid-assignment-next-expression-for.js` moves from a
+  post-claim demote to a select refusal (still pass). The other 1,398 rows
+  cannot change.
+- Playground: 13/13 identical on both lanes.
+
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
 The following 115 lines are preserved verbatim from the completed #6876 plan

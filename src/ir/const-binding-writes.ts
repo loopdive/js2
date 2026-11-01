@@ -9,6 +9,7 @@
  * lowering — the path that raises the TypeError — instead of failing an
  * invariant or silently performing the write.
  */
+import { isLexicalBindingWrite } from "../shared/binding-writes.js";
 import { ts, forEachChild } from "../ts-api.js";
 
 /** (#7014) Does `body` assign / compound-assign / ++/-- the identifier `name` (nested functions excluded)? */
@@ -40,6 +41,22 @@ export function bodyWritesIdentifier(body: ts.Node, name: string): boolean {
   };
   visit(body);
   return found;
+}
+
+/**
+ * The first identifier in `root` that writes a `const` binding: any assignment,
+ * `++`/`--`, destructuring or loop-head target, nested functions included. The
+ * selector refuses such a subject whole (`constBindingWriteRefused`).
+ */
+export function firstConstBindingWrite(root: ts.Node): ts.Identifier | undefined {
+  let write: ts.Identifier | undefined;
+  const visit = (node: ts.Node): void => {
+    if (write) return;
+    if (ts.isIdentifier(node) && isLexicalBindingWrite(node) && isWriteToConstDeclaration(node)) write = node;
+    else forEachChild(node, visit);
+  };
+  visit(root);
+  return write;
 }
 
 /**
