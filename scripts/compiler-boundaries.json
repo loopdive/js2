@@ -13041,7 +13041,15 @@
       "layer": "mixed-needs-split",
       "destination": "frontend-ts",
       "owner": "7106",
-      "nextBoundary": "Frontend source-shape planner for destructuring declarations (#7106): the flat-pattern predicate and the literal-source plan the selector and builder share; move with the other source-admission helpers when the frontend inventory is split from ir-core."
+      "nextBoundary": "Frontend source-shape planner for destructuring declarations (#7106): the plan types and the typed-source reads the selector and builder share; move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/literal-pattern-plan.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape planner for destructuring over a fresh literal (#7106); move with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/binding-pattern-lowering.ts",
@@ -13049,7 +13057,23 @@
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "7106",
-      "nextBoundary": "Lowers a literal-source destructuring plan into IR values (#7106); takes its AST-facing operations from the builder host, so it splits with from-ast's lowering seams."
+      "nextBoundary": "The one walker that lowers a destructuring plan into IR values (#7106); takes its AST-facing operations from the builder host, so it splits with from-ast's lowering seams."
+    },
+    {
+      "path": "src/shared/named-evaluation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106",
+      "nextBoundary": "Pure-AST IsAnonymousFunctionDefinition shared by codegen naming and the IR destructuring planner; becomes a frontend fact when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/shared/intrinsic-prototype-writes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106",
+      "nextBoundary": "Pure-AST scan for Array.prototype / Object.prototype patches shared by the #1719 iteration brand and the IR destructuring readers; becomes a frontend fact when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/realm-keys.ts",

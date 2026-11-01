@@ -83,7 +83,7 @@ import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
-import { objectLiteralDataPropertyName } from "./property-key-fold.js";
+import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
 import { emptyObjectLiteralBinding, isOpenCarrierUse, type EmptyObjectLiteralBinding } from "./empty-object-literal.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
@@ -157,7 +157,10 @@ import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
-import { isPhase1BindingPattern, literalPlanExpressions, planLiteralPattern } from "./binding-pattern-plan.js";
+import { isPhase1BindingPattern, type BindingLeaf } from "./binding-pattern-plan.js";
+import { literalPlanExpressions, planLiteralPattern } from "./literal-pattern-plan.js";
+import { declarationBindingWritten } from "./const-binding-writes.js";
+import { programPatchesDestructuringRealm } from "./realm-keys.js";
 import { collectBindingPatternNames } from "./analysis/ast-scope.js";
 import {
   conditionalJoinArmFamily,
@@ -7030,8 +7033,13 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
  * A destructuring declaration (`VariableStatement` or `for (;;)` head): its
  * initializer and leaves are selectable, and every leaf enters `scope`. A
  * fresh literal source is checked through the plan the builder lowers. Any
- * other source goes to the typed readers, which bind leaves as SSA locals, so
- * there a `let` pattern is refused.
+ * other source goes to the typed readers (a `VariableStatement` only), which
+ * bind leaves as SSA locals, so there a `let` pattern is refused. Both readers
+ * are refused:
+ *   - in a program that patches the prototypes they assume are the realm's own;
+ *   - when a leaf is written: a `const` write must throw, which only legacy
+ *     raises, and a leaf binds its source value's representation without the
+ *     storage analysis a reassigned identifier declaration gets.
  */
 function isPhase1DeclarationPattern(
   d: ts.VariableDeclaration,
@@ -7041,8 +7049,12 @@ function isPhase1DeclarationPattern(
   localClasses: ReadonlySet<string>,
 ): boolean {
   if (!d.initializer) return shapeNo("vardecl-dstr-noinit", pattern);
-  const literalPlan = scope.has("undefined") ? null : planLiteralPattern(pattern, d.initializer);
+  if (programPatchesDestructuringRealm(d.getSourceFile())) return shapeNo("vardecl-dstr-realm-patched", pattern);
+  if (declarationBindingWritten(d)) return shapeNo("vardecl-dstr-leaf-written", pattern);
+  const literalPlan = planLiteralPattern(pattern, d.initializer, (name) => scope.has(name));
   if (literalPlan) return isPhase1LiteralPattern(pattern, literalPlanExpressions(literalPlan), scope, localClasses);
+  // A `for (;;)` head is admitted over a fresh literal only.
+  if (ts.isForStatement(d.parent.parent)) return shapeNo("for-init-dstr-source", d.initializer);
   if (!isConst) return shapeNo("vardecl-dstr-let", pattern);
   if (!isPhase1BindingPattern(pattern, scope)) return shapeNo("vardecl-dstr-pattern", pattern);
   const patternNames = new Set<string>();
@@ -9929,7 +9941,7 @@ type DirectDestructuredObjectMethodReceiver = {
 };
 
 type DirectDestructuredObjectMethodProjection = {
-  readonly element: ts.BindingElement & { readonly name: ts.Identifier };
+  readonly element: BindingLeaf;
   readonly method: ts.MethodDeclaration;
 };
 
@@ -10499,7 +10511,7 @@ function directDestructuredObjectMethodProjections(
         phase1PropertyName(property.name) === propertyName,
     );
     if (!method) return null;
-    projections.push({ element: element as ts.BindingElement & { readonly name: ts.Identifier }, method });
+    projections.push({ element: element as BindingLeaf, method });
   }
   return projections.length > 0 ? projections : null;
 }
@@ -12644,24 +12656,6 @@ function isAmbientObjectDefineProperty(call: ts.CallExpression): boolean {
     callee.name.text === "defineProperty" &&
     selectorSeesAmbientBinding(callee.expression)
   );
-}
-
-/**
- * Resolve a property name to a string. Identifier and StringLiteral keys
- * produce their text; NumericLiteral keys produce `.text`, already canonical.
- * ComputedPropertyName always returns null.
- *
- * (#4513) The object-literal DATA-PROPERTY site no longer calls this — it uses
- * `objectLiteralDataPropertyName`, which adds the computed-key fold. This
- * function keeps rejecting computed names because its remaining callers are
- * class-member / OrdinaryToPrimitive / prepared-scope method naming, where a
- * computed name means something different (see `phase1MemberName`).
- */
-function phase1PropertyName(name: ts.PropertyName): string | null {
-  if (ts.isIdentifier(name)) return name.text;
-  if (ts.isStringLiteral(name)) return name.text;
-  if (ts.isNumericLiteral(name)) return name.text; // matches JS — `{ 0: x }` → "0"
-  return null;
 }
 
 /**

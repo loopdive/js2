@@ -173,7 +173,7 @@ import {
   isCapturedByOrdinaryDescriptor,
 } from "./closure-captures.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
-import { objectLiteralDataPropertyName } from "./property-key-fold.js";
+import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { coercibleStandaloneDomArgumentBoundary } from "./dom-boundary.js";
 import { fmodRefFor, FMOD_FN } from "./fmod-selection.js";
@@ -279,8 +279,9 @@ import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts }
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import { collectPatternBindingNames } from "./analysis/ast-scope.js";
-import { planLiteralPattern } from "./binding-pattern-plan.js";
-import { lowerLiteralPatternPlan } from "./binding-pattern-lowering.js";
+import { planElementReads, planPropertyReads, type SourceReadPlan } from "./binding-pattern-plan.js";
+import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
+import { planLiteralPattern } from "./literal-pattern-plan.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   boundedMixedConditionalPrimitiveFamily,
@@ -1967,7 +1968,7 @@ export function lowerFunctionAstToIr(
   // #1372 — emit destructuring preamble for binding-pattern params. Each
   // leaf becomes a `local` ScopeBinding via `lowerBindingPattern`; the
   // user-body code then sees the leaf identifiers as regular locals.
-  // Emitted AFTER cx is built (lowerObjectPattern/lowerArrayPattern need
+  // Emitted AFTER cx is built (the pattern readers need
   // `cx.scope`/`cx.builder`) but BEFORE `lowerStatementList(stmts, cx)`
   // so the body sees the leaves in scope from statement #0.
   for (const { pattern, value } of pendingDestructures) {
@@ -4178,19 +4179,18 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
 // Binding pattern lowering
 // ---------------------------------------------------------------------------
 //
-// A fresh literal source lowers through its plan (`binding-pattern-plan.ts`,
-// #7106). Any other source is read by its IR type (slice 8a, #1169g): an
-// object or class leaf emits `object.get` / `class.get`, an array leaf
-// `vec.get`. Iterables that need the iterator protocol stay on legacy.
+// Every pattern lowers through the plan the selector admitted and the one
+// walker in `binding-pattern-lowering.ts` (#7106). A fresh literal source is
+// decomposed (`literal-pattern-plan.ts`); any other source is read by its IR
+// type (slice 8a, #1169g): an object or class leaf emits `object.get` /
+// `class.get`, an array leaf `vec.get`. Iterables that need the iterator
+// protocol stay on legacy.
 
 /**
- * Slice 8a (#1169g): walk a destructuring binding pattern and emit one
- * field/index read per leaf, binding each name as a `local` ScopeBinding.
- *
- * The source SSA value is read once per leaf. The IR's CSE / DCE passes
- * coalesce repeated reads when safe; even without that, struct.get and
- * array.get are pure ops cheap enough that a single-store tee isn't
- * required for correctness.
+ * Slice 8a (#1169g): one field/index read per leaf of a flat pattern over a
+ * typed source (a `const` declaration's or a parameter's), each leaf bound as
+ * a `local` ScopeBinding. The source SSA value is read once per leaf: struct.get
+ * and array.get are pure, so no single-store tee is needed for correctness.
  */
 function lowerBindingPattern(pattern: ts.BindingPattern, source: IrValueId, cx: LowerCtx): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== pattern) {
@@ -4198,10 +4198,89 @@ function lowerBindingPattern(pattern: ts.BindingPattern, source: IrValueId, cx: 
     return;
   }
   if (ts.isObjectBindingPattern(pattern)) {
-    lowerObjectPattern(pattern, source, cx);
-    return;
+    const plan = admittedReads(planPropertyReads(pattern));
+    lowerPatternPlan(plan, patternLoweringHost(true, cx, fieldReader(source, cx)));
+  } else {
+    const plan = admittedReads(planElementReads(pattern));
+    lowerPatternPlan(plan, patternLoweringHost(true, cx, elementReader(source, cx)));
   }
-  lowerArrayPattern(pattern, source, cx);
+}
+
+/** The plan of a pattern selection admitted through `isPhase1BindingPattern`. */
+function admittedReads<Read>(plan: SourceReadPlan<Read> | null): SourceReadPlan<Read> {
+  if (plan === null) {
+    // invariant (producer-promise): `isPhase1BindingPattern` admits flat patterns only.
+    throw new IrInvariantError("selection-preparation-mismatch", "build", "ir/from-ast: binding pattern is not flat");
+  }
+  return plan;
+}
+
+/** How a pattern leaf of `cx` binds: as its declaration binds a name, a redeclaration demoting like one. */
+function patternLoweringHost<Read>(
+  isConst: boolean,
+  cx: LowerCtx,
+  read: (read: Read) => IrValueId,
+): PatternLoweringHost<Read> {
+  return {
+    builder: cx.builder,
+    // The externref hint is advisory: each value keeps its own IR type.
+    lowerValue: (expression) => lowerExpr(expression, cx, irVal({ kind: "externref" })),
+    read,
+    bind: (leaf, value) => {
+      if (cx.scope.has(leaf.name.text)) {
+        demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${leaf.name.text}' in ${cx.funcName}`);
+      }
+      bindLocalName(leaf, leaf.name.text, value, isConst, cx);
+    },
+  };
+}
+
+/**
+ * An object or class source reads a leaf's key as a field (#1372: a class
+ * instance destructures exactly like an object literal, through `class.get`).
+ */
+function fieldReader(source: IrValueId, cx: LowerCtx): (key: string) => IrValueId {
+  const sourceType = cx.builder.typeOf(source);
+  if (sourceType.kind !== "object" && sourceType.kind !== "class") {
+    demoteToLegacy(
+      "destructuring-param-complex",
+      `ir/from-ast: object destructuring source must be IrType.object or IrType.class (got ${describeIrType(sourceType)}) in ${cx.funcName}`,
+    );
+  }
+  return (key) => {
+    const field = sourceType.shape.fields.find((f) => f.name === key);
+    if (!field) {
+      demoteToLegacy(
+        "destructuring-param-complex",
+        `ir/from-ast: object pattern reads unknown field "${key}" (shape: ${describeIrType(sourceType)}) in ${cx.funcName}`,
+      );
+    }
+    return sourceType.kind === "class"
+      ? numericFieldSourceValue(cx.builder, cx.builder.emitClassGet(source, key, field.type))
+      : cx.builder.emitObjectGet(source, key, field.type);
+  };
+}
+
+/**
+ * A vec source reads a leaf's index with `vec.get`, which traps out of bounds
+ * — the same semantics as legacy's array path (an unchecked `array.get`).
+ * Anything else (string, externref, class) demotes to legacy.
+ */
+function elementReader(source: IrValueId, cx: LowerCtx): (index: number) => IrValueId {
+  const sourceType = cx.builder.typeOf(source);
+  const resolved = resolveIrVecType(sourceType, cx);
+  if (!resolved) {
+    demoteToLegacy(
+      "array-representation-unsupported",
+      `ir/from-ast: array destructuring source is not a recognisable vec (${describeIrType(sourceType)}) in ${cx.funcName}`,
+    );
+  }
+  return (index) =>
+    cx.builder.emitVecGet(
+      source,
+      cx.builder.emitConst({ kind: "i32", value: index }, irVal({ kind: "i32" })),
+      resolved.elementType,
+    );
 }
 
 /** (#7106) A first bare script `var x;`: the module-init prologue seeded the
@@ -4233,9 +4312,11 @@ function lowerDeclarationPattern(
   cx: LowerCtx,
 ): void {
   if (!d.initializer) {
-    demoteToLegacy(
-      "module-init-legacy-coupling",
-      `ir/from-ast: binding pattern requires an initializer (${cx.funcName})`,
+    // invariant (producer-promise): selection refuses a pattern without an initializer.
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      "ir/from-ast: binding pattern without initializer",
     );
   }
   // (#3142 Slice 2) Top-level destructuring in the module-init unit: the
@@ -4247,24 +4328,12 @@ function lowerDeclarationPattern(
       `ir/from-ast: module-level destructuring declaration not in module-init Slice 2 scope (${cx.funcName})`,
     );
   }
-  const literalPlan = cx.scope.has("undefined") ? null : planLiteralPattern(pattern, d.initializer);
+  const literalPlan = planLiteralPattern(pattern, d.initializer, (name) => cx.scope.has(name));
   if (literalPlan) {
-    lowerLiteralPatternPlan(literalPlan, {
-      builder: cx.builder,
-      lowerValue: (expression) => lowerExpr(expression, cx, irVal({ kind: "externref" })),
-      bind: (leaf, value) => {
-        if (cx.scope.has(leaf.name.text)) {
-          // invariant (producer-promise): selection refused a leaf already in scope.
-          throw new IrInvariantError("selection-preparation-mismatch", "build", `leaf '${leaf.name.text}' rebinds`);
-        }
-        bindLocalName(leaf, leaf.name.text, value, isConst, cx);
-      },
-    });
+    lowerPatternPlan(literalPlan, patternLoweringHost(isConst, cx, readsNoSource));
     return;
   }
-  // The externref hint is advisory: the readers dispatch on the source's own IR type.
-  const initValue = lowerExpr(d.initializer, cx, irVal({ kind: "externref" }));
-  lowerBindingPattern(pattern, initValue, cx);
+  lowerBindingPattern(pattern, lowerExpr(d.initializer, cx, irVal({ kind: "externref" })), cx);
 }
 
 /** Lower one variable declaration: a pattern, a module slot, a closure or a typed local. */
@@ -4579,117 +4648,6 @@ function lowerUninitializedVar(d: ts.VariableDeclaration, name: string, isConst:
     type: representation.bindingType,
     ...(representation.asType ? { asType: representation.asType } : {}),
   });
-}
-
-function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId, cx: LowerCtx): void {
-  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== pattern) {
-    withNodeSourceSite(cx, pattern, () => lowerObjectPattern(pattern, source, cx));
-    return;
-  }
-  const sourceType = cx.builder.typeOf(source);
-  // #1372 — destructuring a class instance ({ x, y }: Vec2) is identical at
-  // the IR level to destructuring an object literal: each leaf reads one
-  // named field. The only difference is the emit op (class.get vs object.get).
-  if (sourceType.kind !== "object" && sourceType.kind !== "class") {
-    demoteToLegacy(
-      "destructuring-param-complex",
-      `ir/from-ast: object destructuring source must be IrType.object or IrType.class (got ${describeIrType(sourceType)}) in ${cx.funcName}`,
-    );
-  }
-  for (const elem of pattern.elements) {
-    // `isPhase1BindingPattern` admitted identifier leaves only.
-    if (elem.dotDotDotToken || elem.initializer || !ts.isIdentifier(elem.name)) {
-      demoteToLegacy(
-        "destructuring-param-complex",
-        `ir/from-ast: object pattern leaf not in slice 8a (${cx.funcName})`,
-      );
-    }
-    // The property name being read out of the source. `propertyName`
-    // is set when the pattern uses renaming (`{ a: x }` — propName is
-    // "a", localName is "x"); shorthand patterns leave it null.
-    const propName = elem.propertyName
-      ? ts.isIdentifier(elem.propertyName)
-        ? elem.propertyName.text
-        : ts.isStringLiteral(elem.propertyName)
-          ? elem.propertyName.text
-          : null
-      : elem.name.text;
-    if (propName === null) {
-      demoteToLegacy(
-        "destructuring-param-complex",
-        `ir/from-ast: object pattern property name must be Identifier or StringLiteral (${cx.funcName})`,
-      );
-    }
-    const localName = elem.name.text;
-    if (cx.scope.has(localName)) {
-      demoteToLegacy(
-        "destructuring-param-complex",
-        `ir/from-ast: redeclaration of '${localName}' in pattern in ${cx.funcName}`,
-      );
-    }
-    const field = sourceType.shape.fields.find((f) => f.name === propName);
-    if (!field) {
-      demoteToLegacy(
-        "destructuring-param-complex",
-        `ir/from-ast: object pattern reads unknown field "${propName}" (shape: ${describeIrType(sourceType)}) in ${cx.funcName}`,
-      );
-    }
-    const v =
-      sourceType.kind === "class"
-        ? numericFieldSourceValue(cx.builder, cx.builder.emitClassGet(source, propName, field.type))
-        : cx.builder.emitObjectGet(source, propName, field.type);
-    bindLocalName(elem, localName, v, true, cx);
-  }
-}
-
-/**
- * Slice 8a (#1169g): decompose `const [x, y, z] = arr` into per-index
- * `vec.get` reads on a vec source. `vec.get` traps on out-of-bounds at
- * runtime — same semantics as legacy destructuring's array path
- * (legacy uses array.get without a bounds check too).
- *
- * The source must lower to a `(ref|ref_null) $vec_*` IrType.val. Anything
- * else (string, externref, class) routes to legacy via a clean throw.
- */
-function lowerArrayPattern(pattern: ts.ArrayBindingPattern, source: IrValueId, cx: LowerCtx): void {
-  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== pattern) {
-    withNodeSourceSite(cx, pattern, () => lowerArrayPattern(pattern, source, cx));
-    return;
-  }
-  const sourceType = cx.builder.typeOf(source);
-  const resolved = resolveIrVecType(sourceType, cx);
-  if (!resolved) {
-    demoteToLegacy(
-      "array-representation-unsupported",
-      `ir/from-ast: array destructuring source is not a recognisable vec (${describeIrType(sourceType)}) in ${cx.funcName}`,
-    );
-  }
-  const elemIrType = resolved.elementType;
-
-  let i = 0;
-  for (const elem of pattern.elements) {
-    if (ts.isOmittedExpression(elem)) {
-      i++;
-      continue;
-    }
-    // `isPhase1BindingPattern` admitted identifier leaves only.
-    if (elem.dotDotDotToken || elem.initializer || !ts.isIdentifier(elem.name)) {
-      demoteToLegacy(
-        "array-representation-unsupported",
-        `ir/from-ast: array pattern leaf not in slice 8a (${cx.funcName})`,
-      );
-    }
-    const localName = elem.name.text;
-    if (cx.scope.has(localName)) {
-      demoteToLegacy(
-        "array-representation-unsupported",
-        `ir/from-ast: redeclaration of '${localName}' in pattern in ${cx.funcName}`,
-      );
-    }
-    const idx = cx.builder.emitConst({ kind: "i32", value: i }, irVal({ kind: "i32" }));
-    bindLocalName(elem, localName, cx.builder.emitVecGet(source, idx, elemIrType), true, cx);
-    i++;
-  }
 }
 
 // #2956 L1: exported so the linear IR driver (backend/linear-integration.ts)
@@ -7423,25 +7381,6 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
     "build",
     `ir/from-ast: element access on ${describeIrType(recvType)} with index ${ts.SyntaxKind[arg.kind]} not in slice 12 (${cx.funcName})`,
   );
-}
-
-/**
- * Resolve a property name to a string. Identifier and StringLiteral keys
- * produce their text; NumericLiteral keys produce `.text`, already canonical.
- * ComputedPropertyName always returns null. Duplicated locally from select.ts
- * to avoid a circular import.
- *
- * (#4513) The object-literal DATA-PROPERTY site uses
- * `objectLiteralDataPropertyName` (leaf module `property-key-fold.ts`) instead,
- * so the computed-key fold is a single text shared with the selector rather
- * than a third copy here. The remaining callers below are method / prepared-
- * scope naming, which stays computed-name-rejecting.
- */
-function phase1PropertyName(name: ts.PropertyName): string | null {
-  if (ts.isIdentifier(name)) return name.text;
-  if (ts.isStringLiteral(name)) return name.text;
-  if (ts.isNumericLiteral(name)) return name.text;
-  return null;
 }
 
 /**
@@ -12688,7 +12627,7 @@ function lowerForOfString(stmt: ts.ForOfStatement, cx: LowerCtx, strV: IrValueId
  *
  * Each leaf is a bounds-checked read with the element type's ZERO as the
  * out-of-bounds value — legacy's observable for a missing leaf, see the
- * `oobOverride` contract on `emitSafeVecGet`. `lowerArrayPattern` (the
+ * `oobOverride` contract on `emitSafeVecGet`. `elementReader` (the
  * VariableStatement destructuring row) is deliberately NOT reused: its
  * `vec.get` is unchecked and TRAPS on a short row, which would turn
  * `for (const [a, b] of rows)` over ragged data from a working legacy program
@@ -12714,26 +12653,11 @@ function declareForOfPatternLeafSlots(
   rowElemValType: ValType,
   cx: LowerCtx,
 ): ForOfPatternLeaf[] {
-  const leaves: ForOfPatternLeaf[] = [];
-  let i = 0;
-  for (const elem of pattern.elements) {
-    if (ts.isOmittedExpression(elem)) {
-      i++;
-      continue;
-    }
-    if (elem.dotDotDotToken || elem.initializer || !ts.isIdentifier(elem.name)) {
-      // `isPhase1BindingPattern` already excluded all three at select, so
-      // reaching here is a selector<->builder desync, not a capability gap.
-      demoteToLegacy(
-        "body-shape-rejected",
-        `ir/from-ast: for-of array-pattern head leaf shape not in scope (${cx.funcName})`,
-      );
-    }
-    const name = (elem.name as ts.Identifier).text;
-    leaves.push({ name, index: i, slotIndex: cx.builder.declareSlot(name, rowElemValType) });
-    i++;
-  }
-  return leaves;
+  return admittedReads(planElementReads(pattern)).steps.map(({ leaf, value }) => ({
+    name: leaf.name.text,
+    index: value.read,
+    slotIndex: cx.builder.declareSlot(leaf.name.text, rowElemValType),
+  }));
 }
 
 /**
@@ -12742,7 +12666,7 @@ function declareForOfPatternLeafSlots(
  *
  * Each leaf is a bounds-checked read with the element type's ZERO as the
  * out-of-bounds value — legacy's observable for a missing leaf, see the
- * `oobOverride` contract on `emitSafeVecGet`. `lowerArrayPattern` (the
+ * `oobOverride` contract on `emitSafeVecGet`. `elementReader` (the
  * VariableStatement destructuring row) is deliberately NOT reused: its
  * `vec.get` is unchecked and TRAPS on a short row, which would turn
  * `for (const [a, b] of rows)` over ragged data from a working legacy program

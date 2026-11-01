@@ -7,9 +7,13 @@
  * (and the name-based mutation pre-pass can bind a const for-of variable as a
  * slot), so these helpers let `from-ast.ts` demote such functions to the legacy
  * lowering — the path that raises the TypeError — instead of failing an
- * invariant or silently performing the write.
+ * invariant or silently performing the write. (#7106) The selector refuses a
+ * destructuring declaration whose leaf is written at all
+ * (`declarationBindingWritten`).
  */
 import { ts, forEachChild } from "../ts-api.js";
+import { isLexicalBindingWrite, varDeclaratorWrittenNames } from "../shared/binding-writes.js";
+import { collectPatternBindingNames, isFunctionScopeBoundary } from "./analysis/ast-scope.js";
 
 /** (#7014) Does `body` assign / compound-assign / ++/-- the identifier `name` (nested functions excluded)? */
 export function bodyWritesIdentifier(body: ts.Node, name: string): boolean {
@@ -73,4 +77,38 @@ export function isWriteToConstDeclaration(id: ts.Identifier): boolean {
     }
   }
   return false;
+}
+
+/**
+ * (#7106) Is a name `declaration` binds written anywhere in its scope — an
+ * assignment, update, destructuring or for-in/of target, or a later `var`
+ * re-declaration, nested functions included? The scope is the enclosing block,
+ * `switch` case block or `for` statement of a `let`/`const`, the function or
+ * script of a `var`. Syntactic, so a write to a same-named inner binding counts
+ * too.
+ */
+export function declarationBindingWritten(declaration: ts.VariableDeclaration): boolean {
+  const names = new Set(collectPatternBindingNames(declaration.name));
+  let written = false;
+  const visit = (node: ts.Node): void => {
+    if (written) return;
+    written =
+      (ts.isIdentifier(node) && names.has(node.text) && isLexicalBindingWrite(node)) ||
+      (node !== declaration && varDeclaratorWrittenNames(node).some((id) => names.has(id.text)));
+    if (!written) forEachChild(node, visit);
+  };
+  visit(bindingScopeOf(declaration));
+  return written;
+}
+
+function bindingScopeOf(declaration: ts.VariableDeclaration): ts.Node {
+  const list = declaration.parent;
+  if (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) {
+    if (!ts.isVariableStatement(list.parent)) return list.parent;
+    const block = list.parent.parent;
+    return ts.isCaseClause(block) || ts.isDefaultClause(block) ? block.parent : block;
+  }
+  let scope: ts.Node = list;
+  while (scope.parent && !isFunctionScopeBoundary(scope)) scope = scope.parent;
+  return scope;
 }

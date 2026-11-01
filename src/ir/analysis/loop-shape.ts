@@ -623,11 +623,6 @@ export function findBodyLocalLexicalNames(stmt: ts.IterationStatement): Set<stri
   return names;
 }
 
-/** Every identifier a binding pattern binds, at any depth, in source order. */
-export function collectBindingNames(pattern: ts.BindingPattern): string[] {
-  return [...collectPatternBindingNames(pattern)];
-}
-
 export function forOfDstrNeedsInboundsUndef(stmt: ts.ForOfStatement): boolean {
   if (!ts.isArrayLiteralExpression(stmt.expression)) return false;
   // Extract the for-of binding pattern (declaration or assignment form).

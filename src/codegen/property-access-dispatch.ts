@@ -1,4 +1,5 @@
 import { ensureNativeDelegatedResultHelpers } from "./generators-delegation-runtime.js";
+import { isAnonymousFunctionDefinition } from "../shared/named-evaluation.js";
 import { NATIVE_GENERATOR_FACTORY_PROTO } from "./generators-native-protocol.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
@@ -210,7 +211,6 @@ import {
   emitThisReceiverGuardConvert,
   findAlternateStructsForField,
   getIteratorResultValueType,
-  isAnonymousFunctionDefinition,
   isBindResultExpr,
   isGeneratorIteratorResultLike,
   isGetProtoOfWiredViewProtoCall,
