@@ -16,7 +16,7 @@
 // `undefined`), literals and operators produce their result family.
 
 import { forEachChild, ts } from "../ts-api.js";
-import { i32IdentityBitwiseOperand, isWrapI32Lowerable } from "./analysis/i32-slots.js";
+import { isSlotFreeI32Identity } from "./analysis/i32-slots.js";
 import { planLiteralPattern } from "./literal-pattern-plan.js";
 import type { IrFunctionMemberClosurePlan } from "./function-member-closure-plan.js";
 import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
@@ -49,6 +49,7 @@ import {
   throwOperandAdmissible,
   type AdditiveProof,
   type OperandFamily,
+  type AdditiveLane,
 } from "./analysis/operand-admissibility.js";
 
 /** The selector's own family proofs the walk builds on. */
@@ -67,6 +68,8 @@ export interface PlannedClosureFamilySources {
   readonly nativeDynamicLooseEquality?: boolean;
   /** (#7113) The lane plans a direct call to a module function from a planned closure. */
   readonly directCalls?: boolean;
+  /** (#7066) How the lane judges a `+` (`additiveOperandsProvable`). */
+  readonly additiveLane: AdditiveLane;
   /** (#7113) `undefined` here is the global (no module or enclosing binding shadows it). */
   readonly isGlobalUndefined?: (expr: ts.Expression) => boolean;
   /** (#7119) `recv.<name>(…arity args)` on the carrier takes the brand-dispatch wrapper on this lane. */
@@ -90,7 +93,7 @@ const UNKNOWN: OperandProof = { family: "unknown", additive: "unprovable" };
 const DYNAMIC: OperandProof = { family: "dynamic", additive: "dynamic" };
 const NUMBER: OperandProof = { family: "number", additive: "number" };
 const STRING: OperandProof = { family: "string", additive: "string" };
-const BOOLEAN: OperandProof = { family: "boolean", additive: "unprovable" };
+const BOOLEAN: OperandProof = { family: "boolean", additive: "boolean" };
 
 function unwrapParens(expr: ts.Expression): ts.Expression {
   let current = expr;
@@ -428,7 +431,7 @@ export function plannedClosureOperandRefusal(
     if (op === ts.SyntaxKind.PlusToken) {
       const left = operandProof(expr.left);
       const right = operandProof(expr.right);
-      const family = additiveResultFamily(left.family, right.family);
+      const family = additiveResultFamily(expr, left.family, right.family, sources.additiveLane);
       if (family === "dynamic") {
         return {
           family,
@@ -481,10 +484,7 @@ export function plannedClosureOperandRefusal(
         ? null
         : { arm: "closure-null-compare", node: expr };
     }
-    // `x | 0` with an i32-lowerable `x` takes from-ast's fused-i32 identity
-    // (no promoted slot is visible here, so only the slot-free shapes).
-    const identityOperand = i32IdentityBitwiseOperand(expr);
-    if (identityOperand !== null && isWrapI32Lowerable(identityOperand, () => false)) return null;
+    if (isSlotFreeI32Identity(expr)) return null;
     // The strict `undefined` compare has its own lowering (`tryLowerUndefinedCompare`).
     const isShadowed = (name: string): boolean => locals.has(name);
     const leftUndefined = isUndefinedCompareOperand(expr.left, isShadowed);
@@ -504,9 +504,8 @@ export function plannedClosureOperandRefusal(
     if (!carrierLooseEqualityAdmissible(op, leftProof.family, rightProof.family) && isNewShape()) {
       return { arm: "closure-carrier-loose-equality", node: expr };
     }
-    if (op === ts.SyntaxKind.PlusToken && !additiveOperandsProvable(leftProof.additive, rightProof.additive)) {
-      return { arm: "closure-additive-operands", node: expr };
-    }
+    const additive = additiveOperandsProvable(expr, leftProof.additive, rightProof.additive, sources.additiveLane);
+    if (op === ts.SyntaxKind.PlusToken && !additive) return { arm: "closure-additive-operands", node: expr };
     return binaryOperandsAdmissible(op, leftProof.family, rightProof.family)
       ? null
       : { arm: "closure-binary-operands", node: expr };

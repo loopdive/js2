@@ -125,6 +125,7 @@ describe("#3520 IR overlay safety projections", () => {
         overridesByUnitId,
         potentiallyBlockedOwnerUnitIds: new Set([blockedId]),
         generatorsSkippable: true,
+        numberToString: true,
       }),
     ).toEqual(new Set());
   });

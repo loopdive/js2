@@ -1044,7 +1044,7 @@ function localVariableDeclaration(node: ts.Identifier, checker: ts.TypeChecker):
   );
 }
 
-function localValueDeclaration(node: ts.Identifier, checker: ts.TypeChecker): ts.Declaration | undefined {
+export function localValueDeclaration(node: ts.Identifier, checker: ts.TypeChecker): ts.Declaration | undefined {
   const sourceFile = node.getSourceFile();
   const candidates = bindingDeclarationCandidates(node, checker);
   return candidates.find(

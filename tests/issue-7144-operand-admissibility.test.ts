@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { compile, type CompileResult } from "../src/index.js";
 import {
   additiveOperandsProvable,
+  type AdditiveLane,
   binaryOperandsAdmissible,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
@@ -37,7 +38,7 @@ interface Producer {
 }
 const PRODUCERS: Record<string, Producer> = {
   number: { expr: "n", family: "number", additive: "number" },
-  boolean: { expr: "true", family: "boolean", additive: "unprovable" },
+  boolean: { expr: "true", family: "boolean", additive: "boolean" },
   string: { expr: "s", family: "string", additive: "string" },
   dynamic: { expr: "m", family: "dynamic", additive: "dynamic" },
   vec: { expr: "a", family: "vec<number>", additive: "unprovable" },
@@ -113,13 +114,24 @@ const OPERATORS: Record<string, ts.SyntaxKind> = {
   "===": ts.SyntaxKind.EqualsEqualsEqualsToken,
 };
 
+/** Every lane here formats numbers (#7066); no producer is a destructured leaf. */
+const LANE: AdditiveLane = { numberToString: true, leafReadsElement: () => false };
+
+/** `text` (`l op r`) parsed, for the `+` rule, which reads its operands' syntax. */
+function binary(text: string): ts.BinaryExpression {
+  const statement = ts.createSourceFile("pair.ts", text, ts.ScriptTarget.ES2022, true).statements[0]!;
+  return (statement as ts.ExpressionStatement).expression as ts.BinaryExpression;
+}
+
 describe("#7144 — binary operands: selector ⇔ from-ast", () => {
   for (const [spelling, op] of Object.entries(OPERATORS)) {
     it(`'${spelling}' over every pair of operand families`, async () => {
       for (const left of Object.values(PRODUCERS)) {
         for (const right of Object.values(PRODUCERS)) {
+          const pair = binary(`${left.expr} ${spelling} ${right.expr}`);
           const admissible =
-            (op !== ts.SyntaxKind.PlusToken || additiveOperandsProvable(left.additive, right.additive)) &&
+            // Every lane here formats numbers (#7066).
+            (op !== ts.SyntaxKind.PlusToken || additiveOperandsProvable(pair, left.additive, right.additive, LANE)) &&
             binaryOperandsAdmissible(op, left.family, right.family);
           await expectAgreement(`var t = ${left.expr} ${spelling} ${right.expr}; throw m;`, admissible);
         }

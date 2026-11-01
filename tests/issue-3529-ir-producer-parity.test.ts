@@ -39,9 +39,12 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     // `<module-init>`; the legacy body carries the program instead. Pin that
     // truthfully — `legacyBodyEmitted: true` still fails if nothing is emitted
     // at all, and a return to IR emission will fail here and be re-examined.
+    // (2026-11-01, re-pinned in #7066) On main `<module-init>` now stops first on
+    // its host `console.log` surface (`host-surface-unavailable`), still at
+    // selection and still on the legacy body.
     expect(terminal(result).find((outcome) => outcome.displayName === "<module-init>")).toMatchObject({
       kind: "unsupported",
-      code: "call-graph-closure",
+      code: "host-surface-unavailable",
       stage: "select",
       legacyBodyEmitted: true,
       irBodyEmitted: false,
@@ -58,7 +61,9 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     expect(result.wat).toContain("__box_boolean");
   });
 
-  it("types array-literal widening as an unsupported representation", async () => {
+  // #7024 decomposes a fresh array literal (`literal-pattern-plan.ts`), so this
+  // source no longer reaches the vec reader that refused the widened literal.
+  it("lowers a destructured array literal through the literal pattern plan", async () => {
     const result = await compile(
       `export function test(): number {
         const [a, b, c] = [1, 2, 3];
@@ -71,17 +76,13 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     // `22a72e500a` (feat(3523) R4 gap 4, 2026-08-31, "record a truthful
     // non-executable module-init outcome row") stopped leaving a source with an
     // empty module-init population silent, so the ledger now carries a second
-    // row. Keep the exhaustive `toEqual` — the point of this pin is that `test`
-    // is the *only* unit that demotes — and add the new row rather than relaxing
-    // to a containment check that would hide an unexpected third outcome.
+    // row. Keep the exhaustive `toEqual`, so an unexpected third outcome shows.
     expect(terminal(result)).toEqual([
       expect.objectContaining({
         displayName: "test",
-        kind: "unsupported",
-        code: "array-representation-unsupported",
-        stage: "build",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
       }),
       expect.objectContaining({
         displayName: "<module-init>",
@@ -94,7 +95,7 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     ]);
   });
 
-  it("types mixed string/boolean addition as unsupported operand coercion", async () => {
+  it("lowers mixed string/boolean addition as a concatenation (#7066)", async () => {
     const result = await compile(
       `export function test(): string {
         return "result: " + (2 > 1);
@@ -103,12 +104,9 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
     expect(terminal(result).find((outcome) => outcome.displayName === "test")).toMatchObject({
-      kind: "unsupported",
-      code: "operand-coercion-unsupported",
-      stage: "build",
-      legacyBodyEmitted: true,
-      irBodyEmitted: false,
+      irBodyEmitted: true,
     });
   });
 });

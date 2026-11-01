@@ -15,6 +15,7 @@
 // so those predicates were deleted — git history preserves them if the
 // allowlist-widening track (#2855/#2856) ever wants to reference them.
 import ts from "typescript";
+import { additiveOperandsProvable, type AdditiveLane } from "../ir/analysis/operand-admissibility.js";
 import { compareIrIdentity, type IrUnitId } from "../ir/identity.js";
 import { collectModuleInitPopulation } from "../ir/module-init.js";
 import {
@@ -77,6 +78,10 @@ export type ValueDomain = "number" | "bool" | "string" | "dynamic";
  *     behaviour and the 2-arg call sites).
  *   - `returnDomain` — the function's return domain (`"void"` for a
  *     value-less body). Defaults to `number`.
+ *   - `numberToString` — the lane formats a number as a string (the
+ *     `number-to-string` capability the selector and the builder read), so
+ *     the `+` rule concatenates a number. Omitted ⇒ false, as for a bare
+ *     selector caller.
  *
  * **Domain-tracked, safe-by-construction (#3203 widen).** Every identifier is
  * resolved to a primitive domain via a per-name map (params seeded from
@@ -88,8 +93,11 @@ export type ValueDomain = "number" | "bool" | "string" | "dynamic";
  *   - `&&` / `||` / `!` over BOOLS → bool;
  *   - `?:` — bool condition, same-domain branches → that domain; two different
  *     exact number/bool/string branches → the #5092 dynamic carrier;
- *   - `"prefix" + dynamic`, direct mixed-conditional `String` / `Number`,
- *     and `typeof dynamic` retain their exact result domains;
+ *   - `+` follows from-ast's `+` rule (`additiveOperandsProvable`): two
+ *     numbers → number; a string beside a string, a bool, a number or the
+ *     dynamic carrier → string;
+ *   - direct mixed-conditional `String` / `Number` and `typeof dynamic`
+ *     retain their exact result domains;
  *   - `=` preserves the target local's domain; `+=`…`^=` and `++`/`--` are
  *     number-only local mutation (PARAMETER mutation is rejected);
  *   - a call to a claimed pure-`f64` callee with exact arity and number args →
@@ -104,8 +112,11 @@ export function irFirstBodyIsProvenLowerable(
   claimedArity: ReadonlyMap<string, number>,
   paramDomains?: readonly ValueDomain[],
   returnDomain: ValueDomain | "void" = "number",
+  numberToString = false,
 ): boolean {
   if (!fn.body) return false;
+  // The subset admits no element access and no binding pattern, so no operand reads an element.
+  const lane: AdditiveLane = { numberToString, leafReadsElement: () => false };
   const params = new Set<string>();
   // Per-name value domain. Params seeded from the caller-provided domains
   // (default `number`); locals populated as their declarations are walked
@@ -213,21 +224,16 @@ export function irFirstBodyIsProvenLowerable(
           return exprDomain(b.right) === "number" ? "number" : null;
         }
         if (op === ts.SyntaxKind.PlusToken) {
+          // (#7066) Admitted exactly when from-ast's `+` rule admits the
+          // domains' proofs: a row of its own drifted from the builder before
+          // (2026-08-28, #3529).
           const left = exprDomain(b.left);
           const right = exprDomain(b.right);
-          if (left === "number" && right === "number") return "number";
-          // (2026-08-28) Concatenation is admitted ONLY for the operand pairs
-          // from-ast actually lowers: two strings, or a string beside the
-          // #5092 dynamic carrier. The wider "either side is a string" row this
-          // replaces promised `"a" + 1` and `"a" + (2 > 1)`, which have no IR
-          // producer — so the legacy body was skipped and an ordinary
-          // concatenation became an `unpatched-slot` invariant with an EMPTY
-          // binary (caught by #3529 producer parity).
-          if (left === "string" && right === "string") return "string";
-          if ((left === "string" && right === "dynamic") || (left === "dynamic" && right === "string")) {
-            return "string";
-          }
-          return null;
+          if (left === null || right === null) return null;
+          const proof = (d: ValueDomain) => (d === "bool" ? "boolean" : d);
+          if (!additiveOperandsProvable(b, proof(left), proof(right), lane)) return null;
+          if (left === "string" || right === "string") return "string";
+          return left === "number" && right === "number" ? "number" : null;
         }
         if (isNumericBinaryToken(op)) {
           return exprDomain(b.left) === "number" && exprDomain(b.right) === "number" ? "number" : null;
