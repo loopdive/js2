@@ -4097,6 +4097,22 @@ Re-measured with a file-copy A/B of `const-binding-writes.ts` against
   another `case`. All 50 binaries are identical to the base, with 0 status
   flips.
 
+### Follow-up: one declaration table per scope (2026-11-01)
+
+The resolver rescanned every statement of each enclosing block for every
+write, so a write found its name in O(statements). A block of N writes to a
+binding it does not declare cost O(N²). Each block-level scope (a whole
+`switch` body for a `case`) now builds its name → `const` table once, and a
+write looks the name up.
+
+- **Gate alone** (`firstConstBindingWrite` over a script with N top-level
+  writes and a function with N writes to the outer `var`): 970 ms → 29 ms at
+  N = 3,000. With the writes to a local declared first in the block, the scan
+  already stopped at once, and the gate stays at about 25 ms.
+- **Whole compile against main**, standalone, best of 3: the delta is within
+  noise (+0.7 % to +3.2 %) on a function of 1,500 writes, a script of 3,000 +
+  3,000 writes and the outer-write script.
+
 ## IR `finally` abrupt exit: the guard `if` was not a frame (fixed 2026-11-01)
 
 **Symptom.** Under the IR, `do { try { throw "x"; } finally { break; } }

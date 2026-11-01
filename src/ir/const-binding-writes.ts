@@ -42,13 +42,8 @@ function isWriteToConstDeclaration(id: ts.Identifier): boolean {
   const declares = (list: ts.VariableDeclarationList): boolean => list.declarations.some((d) => binds(d.name));
   for (let n: ts.Node | undefined = id.parent; n; n = n.parent) {
     if (ts.isBlock(n) || ts.isSourceFile(n) || ts.isModuleBlock(n) || ts.isCaseClause(n) || ts.isDefaultClause(n)) {
-      const scope = blockScopeOf(n);
-      for (const st of ts.isCaseBlock(scope) ? scope.clauses.flatMap((clause) => clause.statements) : n.statements) {
-        if (ts.isVariableStatement(st) && declares(st.declarationList)) {
-          return (st.declarationList.flags & ts.NodeFlags.Const) !== 0;
-        }
-        if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && st.name?.text === id.text) return false;
-      }
+      const declaredConst = blockDeclarations(n).get(id.text);
+      if (declaredConst !== undefined) return declaredConst;
     }
     if ((ts.isForOfStatement(n) || ts.isForInStatement(n) || ts.isForStatement(n)) && n.initializer) {
       const init = n.initializer;
@@ -96,4 +91,38 @@ function bindingScopeOf(declaration: ts.VariableDeclaration): ts.Node {
 /** The scope of a block-level declaration in `statements`: a `case` clause's is its whole `switch` body. */
 function blockScopeOf(statements: ts.Node): ts.Node {
   return ts.isCaseClause(statements) || ts.isDefaultClause(statements) ? statements.parent : statements;
+}
+
+const declarationsByScope = new WeakMap<ts.Node, ReadonlyMap<string, boolean>>();
+
+/**
+ * Each name the block-level scope of `statements` declares, mapped to whether
+ * its first declaration there is `const`: a `let`/`const`/`var` (pattern leaves
+ * included), or a function or class, which is mutable. Built once per scope
+ * (parsed nodes are immutable), so a write looks its name up instead of
+ * rescanning the scope's statements.
+ */
+function blockDeclarations(
+  statements: ts.Block | ts.SourceFile | ts.ModuleBlock | ts.CaseOrDefaultClause,
+): ReadonlyMap<string, boolean> {
+  const scope = blockScopeOf(statements);
+  let declared = declarationsByScope.get(scope);
+  if (declared) return declared;
+  const table = new Map<string, boolean>();
+  const declare = (name: string, isConst: boolean): void => {
+    if (!table.has(name)) table.set(name, isConst);
+  };
+  const list = ts.isCaseBlock(scope) ? scope.clauses.flatMap((clause) => clause.statements) : statements.statements;
+  for (const st of list) {
+    if (ts.isVariableStatement(st)) {
+      const isConst = (st.declarationList.flags & ts.NodeFlags.Const) !== 0;
+      for (const d of st.declarationList.declarations) {
+        for (const name of collectPatternBindingNames(d.name)) declare(name, isConst);
+      }
+    } else if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && st.name) {
+      declare(st.name.text, false);
+    }
+  }
+  declarationsByScope.set(scope, (declared = table));
+  return declared;
 }
