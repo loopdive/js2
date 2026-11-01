@@ -7,7 +7,7 @@
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
-import { classifyPrimitiveProof } from "./analysis/operand-admissibility.js";
+import { classifyPrimitiveProof, type PrimitiveProof } from "./analysis/operand-admissibility.js";
 import * as bindingValue from "./module-binding-value-kinds.js";
 import { updateRetypesModuleBinding } from "./update-retyped-bindings.js";
 import { isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
@@ -539,9 +539,7 @@ export function makeIrDeclaredPrimitiveExpressionClassifier(
  * (#7066) The checker half of the `+` operand proof: from-ast discharges its
  * gate with it, and the selector receives it as `additiveOperandProof`.
  */
-export function makeIrAdditiveOperandProof(
-  checker: ts.TypeChecker,
-): (expr: ts.Expression) => "number" | "string" | "unprovable" {
+export function makeIrAdditiveOperandProof(checker: ts.TypeChecker): (expr: ts.Expression) => PrimitiveProof {
   return (expr) => classifyPrimitiveProof(checker.getTypeAtLocation(expr));
 }
 

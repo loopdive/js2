@@ -22,6 +22,9 @@ loc-budget-allow:
   - src/codegen/index.ts
   - src/ir/integration.ts
   - src/ir/backend/linear-integration.ts
+  # 2026-11-01 (lowering WIP): the IR-first skip input threads the lane's
+  # number-to-string flag to the gate (+2); revisited with the step-1 rework
+  - src/codegen/ir-prepared-free-functions.ts
   # 2026-11-01 (step 1): `makeIrAdditiveOperandProof` sits beside the other
   # selection classifier factories, so codegen reaches it over its existing
   # module-bindings import instead of a new codegen->ir edge (+11)
@@ -30,6 +33,10 @@ func-budget-allow:
   # 2026-11-01 (step 1): the one `additiveOperandProof` option line in each selection call
   - src/codegen/index.ts::planIrOverlay
   - src/ir/integration.ts::compileIrPathFunctions
+  # 2026-11-01 (lowering WIP, parked for the step-1 rework): the gate keeps
+  # its proofs for the string `+` arm, and the closure gate passes the lane flag
+  - src/ir/from-ast.ts::lowerBinary
+  - src/ir/select-planned-closure-operands.ts::plannedClosureOperandRefusal
 ---
 # IR-first skipped slot with no legacy body after a build-time demote
 

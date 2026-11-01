@@ -75,6 +75,7 @@ import {
   type AdditiveProof,
   type NumberBinaryOperator,
   type OperandFamily,
+  type PrimitiveProof,
 } from "./analysis/operand-admissibility.js"; // (#7144)
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
 import {
@@ -159,15 +160,11 @@ import {
   irUnitFuncRef,
   sameIrCallableBinding,
 } from "./callable-bindings.js";
-import {
-  IR_NUMBER_TO_FIXED_FN,
-  IR_NUMBER_TO_STRING_FN,
-  IR_STRING_REPEAT_FN,
-  irCountedStringRepeatFitsNativeKernel,
-} from "./string-runtime.js";
+import { IR_NUMBER_TO_FIXED_FN, IR_STRING_REPEAT_FN, irCountedStringRepeatFitsNativeKernel } from "./string-runtime.js";
 import { irCountedStringAppendSiteIdIsCurrent } from "./counted-string-append-provenance.js";
 import { timerArg, timerResult } from "./timer-shim-lowering.js";
-import { irBool, irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
+import { irBool, irTypeIsBoolean } from "./boolean-brand.js";
+import { carrierStringFamily, lowerPrimitiveToString } from "./primitive-to-string.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import {
   collectOuterWrites,
@@ -5853,17 +5850,7 @@ function lowerTemplateExpression(expr: ts.TemplateExpression, cx: LowerCtx): IrV
     // directly into the carrier, and a numeric/boolean one ignores the hint and
     // hands back its scalar, which the conversions below pick up.
     const sub = lowerExpr(span.expression, cx, { kind: "string" });
-    const subType = cx.builder.typeOf(sub);
-    // (#4503) BRAND FIRST, and only then the numeric conversion — a boolean and
-    // a native-annotated number share the `i32` carrier, so asking the brand
-    // before the carrier is what keeps `${true}` from lowering as `${1}`.
-    const asString =
-      subType.kind === "string"
-        ? sub
-        : irTypeIsBoolean(subType)
-          ? lowerBooleanToString(cx.builder, sub)
-          : lowerNumericSubstitutionToString(sub, subType, span.expression, cx);
-    acc = cx.builder.emitStringConcat(acc, asString);
+    acc = cx.builder.emitStringConcat(acc, templateSubstitutionToString(sub, span.expression, cx));
     if (span.literal.text) {
       const lit = cx.builder.emitStringConst(span.literal.text);
       acc = cx.builder.emitStringConcat(acc, lit);
@@ -5873,67 +5860,46 @@ function lowerTemplateExpression(expr: ts.TemplateExpression, cx: LowerCtx): IrV
 }
 
 /**
- * (#4467) Convert a lowered NUMERIC substitution to the lane's string carrier.
+ * (#4467, #4503) A lowered substitution as the string carrier. The selector
+ * proved its checker family string, number or boolean; the carrier it lands
+ * in is the lowerer's choice, so the conversion follows the family the carrier
+ * shows (`carrierStringFamily`, brand first). A carrier the family proof did
+ * not anticipate (a boxed/dynamic value, say) demotes with the SAME reason the
+ * selector uses, keeping the claim⇔lowering boundary reported under one bucket.
  *
- * The selector proved the checker family is `number`, but the IR carrier it
- * lands in is the lowerer's choice: a plain `number` is `f64`, while the
- * native `type i32 = number` / `type i64 = number` annotations keep their
- * integer carrier. All three widen to `f64` first — signed, matching the
- * legacy native template arm (`src/codegen/string-ops.ts`) — and then go
- * through the single `(f64) -> string` provider, so this site asks no mode
- * question and both string carriers work.
- *
- * A carrier the selector's family proof did not anticipate (a boxed/dynamic
- * value, say) demotes with the SAME reason the selector uses, keeping the
- * claim⇔lowering boundary reported under one bucket.
- *
- * (#4503) UNBRANDED-`i32` GUARD. The selector now also admits the boolean
- * family, so an `i32` reaching here is numeric only if it is NOT a boolean some
- * producer failed to brand — and that gap would print `${true}` as `"1"`. An
- * `i32` whose source the checker proves boolean therefore demotes instead, at
- * the selector's own reason. The brand is the fast path (no checker query for
- * the branded case); this is the backstop for a producer the brand has not
- * reached, and absent a checker it answers "not proven boolean", which is only
- * reachable in bare-selector configurations whose boolean admission is the
- * syntactic set the brand does cover (`!x`, comparisons, `true`/`false`).
+ * (#4503) UNBRANDED-`i32` GUARD. An `i32` is numeric only if it is NOT a
+ * boolean some producer failed to brand — and that gap would print `${true}`
+ * as `"1"`. An `i32` whose source the checker proves boolean therefore demotes
+ * instead, at the selector's own reason. The brand is the fast path (no
+ * checker query for the branded case); this is the backstop for a producer the
+ * brand has not reached, and absent a checker it answers "not proven boolean",
+ * which is only reachable in bare-selector configurations whose boolean
+ * admission is the syntactic set the brand does cover (`!x`, comparisons,
+ * `true`/`false`).
  */
-function lowerNumericSubstitutionToString(
-  value: IrValueId,
-  type: IrType,
-  source: ts.Expression,
-  cx: LowerCtx,
-): IrValueId {
-  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== source)
-    return withNodeSourceSite(cx, source, () => lowerNumericSubstitutionToString(value, type, source, cx));
-  const scalar = type.kind === "val" ? type.val.kind : undefined;
-  if (scalar === "i32" && checkerOperandFamily(source, cx) === "boolean") {
-    throw new IrUnsupportedError(
-      "template-substitution-unsupported",
-      "build",
-      `ir/from-ast: boolean template substitution reached the numeric conversion unbranded (${cx.funcName})`,
-    );
+function templateSubstitutionToString(value: IrValueId, source: ts.Expression, cx: LowerCtx): IrValueId {
+  const type = cx.builder.typeOf(value);
+  const family = carrierStringFamily(type);
+  if (family === "number") {
+    if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== source)
+      return withNodeSourceSite(cx, source, () => templateSubstitutionToString(value, source, cx));
+    if (type.kind === "val" && type.val.kind === "i32" && checkerOperandFamily(source, cx) === "boolean") {
+      throw new IrUnsupportedError(
+        "template-substitution-unsupported",
+        "build",
+        `ir/from-ast: boolean template substitution reached the numeric conversion unbranded (${cx.funcName})`,
+      );
+    }
   }
-  const asF64 =
-    scalar === "f64"
-      ? value
-      : scalar === "i32"
-        ? cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64)
-        : scalar === "i64"
-          ? cx.builder.emitUnary("f64.convert_i64_s", value, IR_F64)
-          : null;
-  if (asF64 === null) {
+  const asString = lowerPrimitiveToString(cx.builder, value, family);
+  if (asString === null) {
     throw new IrUnsupportedError(
       "template-substitution-unsupported",
       "build",
       `ir/from-ast: template substitution lowered to ${describeIrType(type)}, which has no number→string provider (${cx.funcName})`,
     );
   }
-  const result = cx.builder.emitCall(irIntrinsicFuncRef(IR_NUMBER_TO_STRING_FN), [asF64], { kind: "string" });
-  if (result === null) {
-    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-    throw new Error(`ir/from-ast: ${IR_NUMBER_TO_STRING_FN} produced no result in ${cx.funcName}`);
-  }
-  return result;
+  return asString;
 }
 
 /** Strip the type-erased assertion wrappers `lowerExpr` already lowers through. */
@@ -13993,11 +13959,8 @@ function convertMixedPrimitiveArm(
     );
   }
 
-  if (kind === "String") {
-    if (family === "string") return value;
-    if (family === "boolean") return lowerBooleanToString(cx.builder, value);
-    return lowerNumericSubstitutionToString(value, type, expression, cx);
-  }
+  // The representation matches the family, so the conversion exists.
+  if (kind === "String") return lowerPrimitiveToString(cx.builder, value, family)!;
   if (family === "number") return value;
   if (family === "boolean") {
     return cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
@@ -14039,9 +14002,10 @@ function tryLowerAmbientStringToStringCall(expr: ts.CallExpression, cx: LowerCtx
   const value = lowerExpr(argument, cx, irDynamic());
   const type = cx.builder.typeOf(value);
   if (type.kind === "dynamic") return cx.builder.emitDynToString(value);
-  if (type.kind === "string") return value;
-  if (irTypeIsBoolean(type)) return lowerBooleanToString(cx.builder, value);
-  if (asVal(type)?.kind === "f64") return lowerNumericSubstitutionToString(value, type, argument, cx);
+  // A string, a branded boolean or an f64: an unbranded `i32` may be a boolean.
+  if (type.kind === "string" || irTypeIsBoolean(type) || asVal(type)?.kind === "f64") {
+    return lowerPrimitiveToString(cx.builder, value, carrierStringFamily(type))!;
+  }
   demoteToLegacy(
     "operand-coercion-unsupported",
     `ir/from-ast: String() of ${describeIrType(type)} operand is deferred (${cx.funcName})`,
@@ -14631,7 +14595,7 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
  * existing kind-based dispatch unchanged (mirrors #2780's no-checker arm: with
  * no checker there is no specialization whose unsoundness we would be masking).
  */
-function proveAdditiveOperand(node: ts.Expression, cx: LowerCtx): "number" | "string" | "unprovable" | "no-checker" {
+function proveAdditiveOperand(node: ts.Expression, cx: LowerCtx): PrimitiveProof | "no-checker" {
   const checker = cx.checker;
   if (!checker) return "no-checker";
   const byChecker = classifyPrimitiveProof(checker.getTypeAtLocation(node));
@@ -14652,13 +14616,38 @@ function proveAdditiveOperand(node: ts.Expression, cx: LowerCtx): "number" | "st
 /**
  * (#7144) The `+` operand proof {@link additiveOperandsProvable} judges: an
  * operand that produces the dynamic carrier takes the dynamic `+`; otherwise
- * the checker's number / string proof. `null` = no checker, so no
- * T-directed specialization to guard (the kind-based dispatch stands).
+ * the checker's primitive proof. `null` = no checker, so no T-directed
+ * specialization to guard (the kind-based dispatch stands).
  */
 function additiveOperandProof(node: ts.Expression, cx: LowerCtx): AdditiveProof | null {
   if (expressionProducesDynamic(node, cx)) return "dynamic";
   const proof = proveAdditiveOperand(node, cx);
   return proof === "no-checker" ? null : proof;
+}
+
+/**
+ * (#7066) One side of a string `+` as the string carrier, converted as the
+ * family its `+` proof names — the proof, not the carrier, so an unbranded
+ * boolean `i32` still prints `"true"`. A side without a primitive proof (no
+ * checker) converts as its carrier shows. A carrier the family has no
+ * conversion for demotes.
+ */
+function concatOperandToString(
+  value: IrValueId,
+  type: IrType,
+  proof: AdditiveProof | undefined,
+  cx: LowerCtx,
+): IrValueId {
+  const family = proof === "string" || proof === "number" || proof === "boolean" ? proof : carrierStringFamily(type);
+  const asString = lowerPrimitiveToString(cx.builder, value, family);
+  if (asString === null) {
+    throw new IrUnsupportedError(
+      "operand-coercion-unsupported",
+      "build",
+      `ir/from-ast: '+' operand proved ${family} lowered as ${describeIrType(type)} in ${cx.funcName}`,
+    );
+  }
+  return asString;
 }
 
 /**
@@ -15314,26 +15303,29 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   // all collapse to f64 / i32, so the kind alone cannot tell a genuine
   // numeric-add operand from an `any` / string / `string | number` one the f64
   // hint coerced opaquely (the Row-7 trap). Prove BOTH operands number (→ the
-  // unboxed numeric add below) or BOTH string (→ `emitStringConcat`); anything
-  // unprovable — `any` / union / a MIXED number+string pair — demotes to the
-  // SAFE legacy dynamic `+` (`binary-ops.ts` `emitAnyAdd`, ToPrimitive +
-  // string-concat-or-add). No checker → leave the existing kind-based dispatch
-  // unchanged (#2780's no-checker arm). The same operand proof
-  // (`proveAdditiveOperand` / `classifyPrimitiveProof`) is the reusable
+  // unboxed numeric add below), or a string beside a string, a boolean or —
+  // where the lane formats numbers — a number (→ `emitStringConcat` of each
+  // side's ToString, #7066); anything unprovable — `any` / object / union —
+  // demotes to the SAFE legacy dynamic `+` (`binary-ops.ts` `emitAnyAdd`,
+  // ToPrimitive + string-concat-or-add). No checker → leave the existing
+  // kind-based dispatch unchanged (#2780's no-checker arm). The same operand
+  // proof (`proveAdditiveOperand` / `classifyPrimitiveProof`) is the reusable
   // infrastructure rows 3 / 5 adopt.
+  let additiveProofs: readonly [AdditiveProof, AdditiveProof] | undefined;
   if (op === ts.SyntaxKind.PlusToken) {
     const lProof = additiveOperandProof(expr.left, cx);
     const rProof = additiveOperandProof(expr.right, cx);
     if (lProof !== null && rProof !== null) {
-      if (!additiveOperandsProvable(lProof, rProof)) {
+      if (!additiveOperandsProvable(lProof, rProof, cx.resolver?.nativeNumberToStringAvailable?.() === true)) {
         throw new IrUnsupportedError(
           "operand-coercion-unsupported",
           "build",
-          `ir/from-ast: '+' operands not provably both-number or both-string ` +
+          `ir/from-ast: '+' operands not provably both-number or string-concatenable ` +
             `(${lProof}/${rProof}) — the unboxed numeric-add / string-concat fast ` +
             `path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in ${cx.funcName}`,
         );
       }
+      additiveProofs = [lProof, rProof];
     }
   }
 
@@ -15453,7 +15445,11 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     }
     switch (op) {
       case ts.SyntaxKind.PlusToken:
-        return cx.builder.emitStringConcat(lhs, rhs, inferStringEncoding(expr, cx));
+        return cx.builder.emitStringConcat(
+          concatOperandToString(lhs, lt, additiveProofs?.[0], cx),
+          concatOperandToString(rhs, rt, additiveProofs?.[1], cx),
+          inferStringEncoding(expr, cx),
+        );
       case ts.SyntaxKind.EqualsEqualsEqualsToken:
       case ts.SyntaxKind.EqualsEqualsToken:
         return cx.builder.emitStringEq(lhs, rhs, false);

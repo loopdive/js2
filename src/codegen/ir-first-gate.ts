@@ -15,6 +15,7 @@
 // so those predicates were deleted — git history preserves them if the
 // allowlist-widening track (#2855/#2856) ever wants to reference them.
 import ts from "typescript";
+import { additiveOperandsProvable, type AdditiveProof } from "../ir/analysis/operand-admissibility.js";
 import { compareIrIdentity, type IrUnitId } from "../ir/identity.js";
 import { collectModuleInitPopulation } from "../ir/module-init.js";
 import {
@@ -88,8 +89,11 @@ export type ValueDomain = "number" | "bool" | "string" | "dynamic";
  *   - `&&` / `||` / `!` over BOOLS → bool;
  *   - `?:` — bool condition, same-domain branches → that domain; two different
  *     exact number/bool/string branches → the #5092 dynamic carrier;
- *   - `"prefix" + dynamic`, direct mixed-conditional `String` / `Number`,
- *     and `typeof dynamic` retain their exact result domains;
+ *   - `+` follows from-ast's shared `+` rule (`additiveOperandsProvable`):
+ *     two numbers → number; a string beside a string, a bool, a dynamic
+ *     local or — with `numberToString` — a number → string;
+ *   - direct mixed-conditional `String` / `Number` and `typeof dynamic`
+ *     retain their exact result domains;
  *   - `=` preserves the target local's domain; `+=`…`^=` and `++`/`--` are
  *     number-only local mutation (PARAMETER mutation is rejected);
  *   - a call to a claimed pure-`f64` callee with exact arity and number args →
@@ -104,6 +108,7 @@ export function irFirstBodyIsProvenLowerable(
   claimedArity: ReadonlyMap<string, number>,
   paramDomains?: readonly ValueDomain[],
   returnDomain: ValueDomain | "void" = "number",
+  numberToString = false,
 ): boolean {
   if (!fn.body) return false;
   const params = new Set<string>();
@@ -154,6 +159,21 @@ export function irFirstBodyIsProvenLowerable(
   // from-ast non-slot throw; a mutated `let` slot-promotes).
   const isAssignableLocal = (e: ts.Expression): boolean =>
     ts.isIdentifier(e) && domain.has(e.text) && !params.has(e.text);
+
+  // from-ast's `+` proof of an operand of domain `d` (`additiveOperandProof`):
+  // the carrier only where `expressionProducesDynamic` sees one — a dynamic
+  // local, or a conditional whose arms both are. A mixed-primitive conditional
+  // is the checker's union there, which proves nothing.
+  const producesCarrier = (e: ts.Expression): boolean => {
+    let x = e;
+    while (ts.isParenthesizedExpression(x)) x = x.expression;
+    if (ts.isIdentifier(x)) return domain.get(x.text) === "dynamic";
+    return ts.isConditionalExpression(x) && producesCarrier(x.whenTrue) && producesCarrier(x.whenFalse);
+  };
+  const additiveProof = (e: ts.Expression, d: ValueDomain): AdditiveProof => {
+    if (d === "dynamic") return producesCarrier(e) ? "dynamic" : "unprovable";
+    return d === "bool" ? "boolean" : d;
+  };
 
   // The value domain of `e`, or `null` when outside the proven-lowerable subset.
   const exprDomain = (e: ts.Expression): ValueDomain | null => {
@@ -213,21 +233,20 @@ export function irFirstBodyIsProvenLowerable(
           return exprDomain(b.right) === "number" ? "number" : null;
         }
         if (op === ts.SyntaxKind.PlusToken) {
+          // (#7066) Admitted exactly when from-ast's `+` rule admits the
+          // operands, judged on the proofs from-ast takes of them. A row of
+          // its own drifted twice: it promised `"a" + 1` before from-ast had
+          // a producer (2026-08-28, #3529), and `"v" + (n > 0 ? s : 0)`, a
+          // mixed conditional from-ast proves as the checker's union — both an
+          // `unpatched-slot` with the legacy body skipped.
           const left = exprDomain(b.left);
           const right = exprDomain(b.right);
-          if (left === "number" && right === "number") return "number";
-          // (2026-08-28) Concatenation is admitted ONLY for the operand pairs
-          // from-ast actually lowers: two strings, or a string beside the
-          // #5092 dynamic carrier. The wider "either side is a string" row this
-          // replaces promised `"a" + 1` and `"a" + (2 > 1)`, which have no IR
-          // producer — so the legacy body was skipped and an ordinary
-          // concatenation became an `unpatched-slot` invariant with an EMPTY
-          // binary (caught by #3529 producer parity).
-          if (left === "string" && right === "string") return "string";
-          if ((left === "string" && right === "dynamic") || (left === "dynamic" && right === "string")) {
-            return "string";
+          if (left === null || right === null) return null;
+          if (!additiveOperandsProvable(additiveProof(b.left, left), additiveProof(b.right, right), numberToString)) {
+            return null;
           }
-          return null;
+          if (left === "string" || right === "string") return "string";
+          return left === "number" && right === "number" ? "number" : null;
         }
         if (isNumericBinaryToken(op)) {
           return exprDomain(b.left) === "number" && exprDomain(b.right) === "number" ? "number" : null;

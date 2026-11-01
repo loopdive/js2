@@ -324,6 +324,8 @@ export interface IrFirstSkipIdentityInput {
   >;
   readonly potentiallyBlockedOwnerUnitIds: ReadonlySet<IrUnitId>;
   readonly generatorsSkippable: boolean;
+  /** The lane formats numbers (`number-to-string`): a string `+` concatenates one. */
+  readonly numberToString: boolean;
 }
 
 /** Exact-ID IR-first allowlist, caller fixpoint, and late-feature closure. */
@@ -402,7 +404,16 @@ export function computeIrFirstSkipUnitIds(input: IrFirstSkipIdentityInput): Read
     const fn = claim.declaration;
     if (fn.asteriskToken && !input.generatorsSkippable) continue;
     const signature = signatureDomains(fn, override);
-    if (signature && irFirstBodyIsProvenLowerable(fn, claimedArity, signature.paramDomains, signature.returnDomain)) {
+    if (
+      signature &&
+      irFirstBodyIsProvenLowerable(
+        fn,
+        claimedArity,
+        signature.paramDomains,
+        signature.returnDomain,
+        input.numberToString,
+      )
+    ) {
       skip.add(unitId);
     }
   }

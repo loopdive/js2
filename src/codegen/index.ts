@@ -4870,6 +4870,7 @@ function planIrFirstBodyRouting(
       ...plan.suspendingAsyncUnitIds,
     ]),
     generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
+    numberToString: irNativeNumberToStringAvailable(ctx),
     fast: ctx.fast,
   };
   const timerRouting = irTimerShim.inspectIrCompilerTimerShimRouting(plan);

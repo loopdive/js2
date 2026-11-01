@@ -167,6 +167,7 @@ import {
   nativeI32OperandsAdmissible,
   staticAdditiveOperandsAdmissible,
   type OperandFamily,
+  type PrimitiveProof,
 } from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
@@ -555,7 +556,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly classifyPrimitiveExpression?: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
   /** (#7066) The builder's checker proof of a `+` operand (`makeIrAdditiveOperandProof`). */
-  readonly additiveOperandProof?: (expr: ts.Expression) => "number" | "string" | "unprovable";
+  readonly additiveOperandProof?: (expr: ts.Expression) => PrimitiveProof;
   /**
    * Declared checker family used only to route builtin-named method calls.
    * Mixed/nullable primitive unions return `primitive-union`; pure
@@ -7284,6 +7285,7 @@ function isPhase1ClosureLiteral(
     nativeDynamicMemberRead:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-member-read") === true,
     directCalls: currentSelectionOptions?.supportsBackendCapability?.("planned-closure-direct-call") === true,
+    numberToString: laneFormatsNumbers(),
     nativeDynamicLooseEquality:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-loose-equality") === true,
     isGlobalUndefined: (expression) => isUnshadowedUndefinedIdentifier(expression, scope),
@@ -8879,7 +8881,11 @@ function selectorPrimitiveWrapperOrGenericBinary(
   }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
   const additiveProof = currentSelectionOptions?.additiveOperandProof;
-  if (binOp === ts.SyntaxKind.PlusToken && additiveProof && !staticAdditiveOperandsAdmissible(expr, additiveProof)) {
+  if (
+    binOp === ts.SyntaxKind.PlusToken &&
+    additiveProof &&
+    !staticAdditiveOperandsAdmissible(expr, additiveProof, laneFormatsNumbers())
+  ) {
     return capabilityNo("operand-coercion-unsupported", "expr-additive-operands", expr);
   }
   return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
@@ -10661,14 +10667,14 @@ function templateSubstitutionFamily(
   scope: ReadonlySet<string>,
 ): "string" | "number" | "boolean" | undefined {
   if (declaredExpressionHasExactFamily(expression, "string", scope)) return "string";
-  if (
-    declaredExpressionHasExactFamily(expression, "number", scope) &&
-    currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true
-  ) {
-    return "number";
-  }
+  if (declaredExpressionHasExactFamily(expression, "number", scope) && laneFormatsNumbers()) return "number";
   if (declaredExpressionHasExactFamily(expression, "boolean", scope)) return "boolean";
   return undefined;
+}
+
+/** (#4467, #7066) The lane binds `IR_NUMBER_TO_STRING_FN`: a number converts to a string in a template or a `+`. */
+function laneFormatsNumbers(): boolean {
+  return currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true;
 }
 
 function declaredExpressionHasExactFamily(

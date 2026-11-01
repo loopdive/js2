@@ -58,11 +58,14 @@ export type OperandFamily =
   | "other"
   | "unknown";
 
+/** The checker's primitive proof of a value ({@link classifyPrimitiveProof}). */
+export type PrimitiveProof = "number" | "string" | "boolean" | "unprovable";
+
 /**
- * The `+` operand proof (#2781): a TS-level number / string proof, or the
- * operand produces the dynamic carrier (which takes the dynamic `+`).
+ * The `+` operand proof (#2781): the checker's primitive proof, or the operand
+ * produces the dynamic carrier (which takes the dynamic `+`).
  */
-export type AdditiveProof = "number" | "string" | "dynamic" | "unprovable";
+export type AdditiveProof = PrimitiveProof | "dynamic";
 
 /**
  * `tryLowerUndefinedCompare`'s `undefined` operand of a strict equality: the
@@ -105,10 +108,11 @@ export function boxableIntoDynamic(family: OperandFamily): boolean {
  *   - `"string"`  — provably a pure string: `StringLike` (`String |
  *     StringLiteral`), template-literal / string-mapping types (always strings
  *     at runtime), or an all-string union.
- *   - `"unprovable"` — `any` / `unknown` / `object` / `boolean` (= the
- *     `true | false` union of non-number/string literals) / `bigint` /
- *     `symbol` / `null` / `undefined` / a MIXED `number | string` union /
- *     intersections / anything else. Only the SAFE dynamic lowering is correct.
+ *   - `"boolean"` — provably a pure boolean: `BooleanLike`, or an all-boolean
+ *     union (the intrinsic `boolean` is `true | false`).
+ *   - `"unprovable"` — `any` / `unknown` / `object` / `bigint` / `symbol` /
+ *     `null` / `undefined` / a MIXED union / intersections / anything else.
+ *     Only the SAFE dynamic lowering is correct.
  *
  * CRITICAL (the Row-7 trap that parked two prior attempts): this keys on the TS
  * *type*, NEVER the lowered Wasm kind. `number`, `boolean` and `symbol` all
@@ -117,13 +121,12 @@ export function boxableIntoDynamic(family: OperandFamily): boolean {
  */
 export const STRING_PROOF_FLAGS = ts.TypeFlags.StringLike | ts.TypeFlags.TemplateLiteral | ts.TypeFlags.StringMapping;
 
-export function classifyPrimitiveProof(t: ts.Type): "number" | "string" | "unprovable" {
+export function classifyPrimitiveProof(t: ts.Type): PrimitiveProof {
   // Union (incl. the intrinsic `boolean`, which is internally `true | false`):
   // every constituent must share the SAME provable class. Any unprovable
-  // constituent, a mixed number/string union, or an empty (`never`) union →
-  // unprovable.
+  // constituent, a mixed union, or an empty (`never`) union → unprovable.
   if (t.isUnion()) {
-    let acc: "number" | "string" | null = null;
+    let acc: PrimitiveProof | null = null;
     for (const c of t.types) {
       const cc = classifyPrimitiveProof(c);
       if (cc === "unprovable") return "unprovable";
@@ -135,18 +138,27 @@ export function classifyPrimitiveProof(t: ts.Type): "number" | "string" | "unpro
   const f = t.flags;
   if (f & ts.TypeFlags.NumberLike) return "number";
   if (f & STRING_PROOF_FLAGS) return "string";
+  if (f & ts.TypeFlags.BooleanLike) return "boolean";
   return "unprovable";
 }
 
 /**
- * #2781 — `+` takes the unboxed numeric add or the string concat only when
- * both operands are proved number or both string; an operand that produces the
- * dynamic carrier takes the dynamic `+` instead (judged by
- * {@link binaryOperandsAdmissible} once lowered).
+ * #2781 / #7066 — the `+` rule. An operand that produces the dynamic carrier
+ * takes the dynamic `+` (judged by {@link binaryOperandsAdmissible} once
+ * lowered). Beside a string, `+` concatenates the other side's ToString
+ * (ES2024 13.15.3; ToPrimitive is the identity on a primitive): a string, a
+ * boolean, or a number where the lane formats numbers (`numberToString`, the
+ * `number-to-string` capability). Otherwise both sides must be numbers, the
+ * unboxed add.
  */
-export function additiveOperandsProvable(left: AdditiveProof, right: AdditiveProof): boolean {
+export function additiveOperandsProvable(left: AdditiveProof, right: AdditiveProof, numberToString: boolean): boolean {
   if (left === "dynamic" || right === "dynamic") return true;
-  return left === right && left !== "unprovable";
+  if (left === "string" || right === "string") {
+    const concatenable = (proof: AdditiveProof): boolean =>
+      proof === "string" || proof === "boolean" || (proof === "number" && numberToString);
+    return concatenable(left) && concatenable(right);
+  }
+  return left === "number" && right === "number";
 }
 
 /**
@@ -158,10 +170,11 @@ export function additiveOperandsProvable(left: AdditiveProof, right: AdditivePro
  */
 export function staticAdditiveOperandsAdmissible(
   expr: ts.BinaryExpression,
-  proof: (operand: ts.Expression) => "number" | "string" | "unprovable",
+  proof: (operand: ts.Expression) => PrimitiveProof,
+  numberToString: boolean,
 ): boolean {
   if (!isStaticOperand(expr.left) || !isStaticOperand(expr.right)) return true;
-  return additiveOperandsProvable(proof(expr.left), proof(expr.right));
+  return additiveOperandsProvable(proof(expr.left), proof(expr.right), numberToString);
 }
 
 function isStaticOperand(expr: ts.Expression): boolean {
@@ -180,12 +193,21 @@ function isStaticOperand(expr: ts.Expression): boolean {
 
 /**
  * The family `+` produces over its operands' families: the carrier when either
- * side is dynamic (the dynamic `+`), a number or a string over two of the
- * same, and nothing a selector can name otherwise.
+ * side is dynamic (the dynamic `+`), a string over a string and a family it
+ * concatenates, a number over two numbers, and nothing a selector can name
+ * otherwise.
  */
 export function additiveResultFamily(left: OperandFamily, right: OperandFamily): OperandFamily {
   if (left === "dynamic" || right === "dynamic") return "dynamic";
-  return left === right && (left === "number" || left === "string") ? left : "unknown";
+  if (left === "string" || right === "string") {
+    return concatenatesToString(left) && concatenatesToString(right) ? "string" : "unknown";
+  }
+  return left === "number" && right === "number" ? "number" : "unknown";
+}
+
+/** The lowered families a string `+` converts with ToString (`lowerPrimitiveToString`). */
+function concatenatesToString(family: OperandFamily): boolean {
+  return family === "string" || family === "number" || family === "int32" || family === "boolean";
 }
 
 /** The family `&&` / `||` produce: a boolean over two booleans, nothing a selector can name otherwise. */
@@ -278,8 +300,8 @@ function isI32Carrier(family: OperandFamily): boolean {
  *   `IR_DYN_ADD_FN`); relational and `- * / %` ToNumber it, so the other side
  *   must be the carrier or an f64 (`tryLowerDynamicRelational`,
  *   `tryLowerDynamicArithmetic`). Bitwise operators have no dynamic arm.
- * - a string operand: the other side must be a string, and only `+`, the
- *   equalities and the relationals have a string lowering.
+ * - a string operand: `+` concatenates a string, number or boolean other side
+ *   (#7066); the equalities and the relationals need a string on both sides.
  * - otherwise one carrier on both sides: `+ - * / %` need f64; relational,
  *   equality and bitwise take f64 or i32.
  */
@@ -300,7 +322,8 @@ export function binaryOperandsAdmissible(op: ts.SyntaxKind, left: OperandFamily,
     return false;
   }
   if (left === "string" || right === "string") {
-    return left === right && (op === ts.SyntaxKind.PlusToken || isEqualityOperator(op) || isRelationalOperator(op));
+    if (op === ts.SyntaxKind.PlusToken) return additiveResultFamily(left, right) === "string";
+    return left === right && (isEqualityOperator(op) || isRelationalOperator(op));
   }
   if (op === ts.SyntaxKind.PlusToken || isNumericArithmeticOperator(op)) {
     return left === "number" && right === "number";
