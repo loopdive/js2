@@ -25,7 +25,12 @@ import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fncto
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
-import { isModuleInitVarList, moduleBindingDeclarationOrder } from "./module-init-vars.js";
+import {
+  carrierLeafReads,
+  isModuleInitVarList,
+  moduleBindingDeclarationOrder,
+  moduleBindingLexicalFlags as lexicalFlags,
+} from "./module-init-vars.js";
 import {
   IrPlanningIdentityInvariantError,
   requireIrPlanningOwnerUnitId,
@@ -953,8 +958,7 @@ function uniqueTopLevelVariableDeclaration(
   // the canonical identity and each later one is a write.
   if (!allowRedeclaredVar || directDeclarations.size === 0) return undefined;
   const ordered = [...directDeclarations].sort((a, b) => a.pos - b.pos);
-  const lexical = ts.NodeFlags.Let | ts.NodeFlags.Const;
-  return ordered.some((declaration) => bindingDeclarationList(declaration)!.flags & lexical) ? undefined : ordered[0];
+  return ordered.some((declaration) => lexicalFlags(declaration) !== 0) ? undefined : ordered[0];
 }
 
 function directTopLevelDeclaration(
@@ -968,8 +972,7 @@ function directTopLevelDeclaration(
   if (!declaration) return undefined;
   const candidates = bindingDeclarationCandidates(node, checker);
   if (candidates.length === 0) return undefined;
-  const list = bindingDeclarationList(declaration)!;
-  if (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) return declaration;
+  if (lexicalFlags(declaration) !== 0) return declaration;
 
   // #2949 Acorn follow-up — a unique top-level `var` in an ES module has one
   // checker identity and one legacy `__mod_*` slot, so scalar reads/writes can
@@ -1016,7 +1019,7 @@ function scriptVarHomeOf(
   declaration: IrModuleBindingDeclaration,
   options: Pick<IrModuleBindingResolverOptions, "scriptVarHome"> | undefined,
 ): IrScriptVarHome | undefined {
-  if ((bindingDeclarationList(declaration)!.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0) return undefined;
+  if (lexicalFlags(declaration) !== 0) return undefined;
   if (ts.isExternalModule(declaration.getSourceFile())) return undefined;
   return options?.scriptVarHome?.(declaration);
 }
@@ -1531,11 +1534,11 @@ export function moduleExternValueNeedsLegacy(expr: ts.Expression): boolean {
 function writeValueMatches(
   checker: ts.TypeChecker,
   declaration: IrModuleBindingDeclaration,
-  targetType: ts.Type,
   targetKind: IrModuleBindingValueKind,
   value: ts.Expression,
   options: IrModuleBindingResolverOptions,
   classifyPrimitiveExpression: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined,
+  resolve: (node: ts.Identifier) => IrLegacyModuleBindingIdentity | undefined,
 ): boolean {
   const valueExpr = unwrapParens(value);
   // (#7106) The script dynamic home accepts any value: the IR lowers it to the
@@ -1579,7 +1582,7 @@ function writeValueMatches(
     try {
       return (
         externValueSourceIsProven(checker, valueExpr, options) &&
-        checker.isTypeAssignableTo(checker.getTypeAtLocation(valueExpr), targetType)
+        checker.isTypeAssignableTo(checker.getTypeAtLocation(valueExpr), checker.getTypeAtLocation(declaration.name))
       );
     } catch {
       return false;
@@ -1639,7 +1642,7 @@ function writeValueMatches(
     node.forEachChild(checkScalarShape);
   };
   checkScalarShape(valueExpr);
-  if (!scalarShapeIsLowerable) return false;
+  if (!scalarShapeIsLowerable || carrierLeafReads(valueExpr, resolve).length > 0) return false;
   const valueKind = scalarKind(checker.getTypeAtLocation(valueExpr), options);
   if (!valueKind || valueKind.kind !== targetKind.kind) return false;
   return targetKind.kind !== "i32" || (valueKind.kind === "i32" && valueKind.semantic === targetKind.semantic);
@@ -2185,8 +2188,7 @@ export function makeIrLegacyModuleBindingResolver(
   const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrLegacyModuleBindingInspection => {
     const declaration = directTopLevelDeclaration(node, checker, options);
     if (!declaration) return { kind: "not-direct" };
-    const list = bindingDeclarationList(declaration)!;
-    const statement = list.parent;
+    const statement = declaration.parent.parent;
     // Ambient declarations establish a real checker identity but allocate no
     // legacy `__mod_*` slot. Keep them visible to isDirectModuleBinding below
     // so leaked flat scope names cannot impersonate them, while declining
@@ -2198,9 +2200,9 @@ export function makeIrLegacyModuleBindingResolver(
     ) {
       return { kind: "unsupported", declaration, arm: "ambient-declaration" };
     }
-    const isModuleVar = (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
-    const lexical = !isModuleVar && ts.isVariableDeclaration(declaration) ? declaration : undefined;
-    const mutable = isModuleVar || (list.flags & ts.NodeFlags.Let) !== 0;
+    const declaredLexical = lexicalFlags(declaration);
+    const lexical = declaredLexical !== 0 && ts.isVariableDeclaration(declaration) ? declaration : undefined;
+    const mutable = (declaredLexical & ts.NodeFlags.Const) === 0;
     if (writeValue !== undefined && !mutable) return { kind: "unsupported", declaration, arm: "write-to-immutable" };
 
     // #4204/#4206 — direct codegen widens this binding's compatibility slot
@@ -2281,15 +2283,7 @@ export function makeIrLegacyModuleBindingResolver(
     if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
     if (
       writeValue !== undefined &&
-      !writeValueMatches(
-        checker,
-        declaration,
-        declaredType,
-        valueKind,
-        writeValue,
-        options,
-        classifyPrimitiveExpression,
-      )
+      !writeValueMatches(checker, declaration, valueKind, writeValue, options, classifyPrimitiveExpression, resolve)
     ) {
       return { kind: "unsupported", declaration, arm: "write-value-mismatch" };
     }
@@ -2422,15 +2416,14 @@ export function makeIrLegacyModuleBindingResolver(
       try {
         const identity = resolve(node);
         if (!identity) return false;
-        const declaredType = checker.getTypeAtLocation(identity.declaration.name);
         return writeValueMatches(
           checker,
           identity.declaration,
-          declaredType,
           identity.valueKind,
           value,
           options,
           classifyPrimitiveExpression,
+          resolve,
         );
       } catch {
         return false;

@@ -51,6 +51,8 @@ const CLAIMED: Record<string, string> = {
   typedSlots: "var [t = 23, { s }] = [, { s: 's' }];\nassert.sameValue(t + 1, 24);\nassert.sameValue(s, 's');",
   readFromFunction: "var [s] = ['s'];\nfunction f() { return s; }\nassert.sameValue(f(), 's');",
   readBeforeDeclaration: "assert.sameValue(h, undefined);\nvar [h] = [1];\nassert.sameValue(h, 1);",
+  // Review round 1: a labelled head is still the statement's head.
+  labelledHead: loop("var { k } = { k: 2 }", "assert.sameValue(k, 2);").replace("for (", "outer: for ("),
 };
 
 // Refused at selection.
@@ -70,6 +72,23 @@ const REFUSED: Record<string, string> = {
   functionDefault: "var [fn = function () {}] = [];\nassert.sameValue(fn.name, 'fn');",
 };
 
+// Review round 1: a no-default number leaf's slot is the carrier (#3423), so its
+// read is a dynamic value although the checker types it as a number; a boolean
+// leaf's slot reads back as an unbranded i32. Each of these was claimed and
+// then withdrawn after the claim; now nothing is.
+const NO_WITHDRAWAL: Record<string, string> = {
+  copyToVar: "var [a] = [3];\nvar b = a;",
+  readBefore: "var r = a;\nvar { a } = { a: 1 };",
+  readBeforeHead: "var r = a;\nfor (var [a] = [1]; ; ) { break; }",
+  compoundInHead: "var s = 0, n = 0;\nfor (var [a] = [4]; n < 3; n++) { s += a; }",
+  returnRead: "var { a } = { a: 5 };\nfunction g() { return a; }\ng();",
+  returnReadNoCaller: "var { a } = { a: 5 };\nfunction g() { return a; }",
+  compoundLocal: "var { a } = { a: 5 };\nfunction m() { var s = 0; s += a; return s; }",
+  booleanLeaf: "var { x } = { x: true };\nassert.sameValue(x, true);",
+  additionToVar: "var [a] = [3];\nvar b = a + 1;",
+  assignment: "var b = 0;\nvar [a] = [3];\nb = a;",
+};
+
 describe("#7106 S5 script `var` patterns", () => {
   for (const target of TARGETS) {
     describe(lane(target), () => {
@@ -81,6 +100,11 @@ describe("#7106 S5 script `var` patterns", () => {
       for (const [name, body] of Object.entries(REFUSED)) {
         it(`stays legacy and runs: ${name}`, async () => {
           expect(await runHarness(target, body)).toBe(false);
+        });
+      }
+      for (const [name, body] of Object.entries(NO_WITHDRAWAL)) {
+        it(`withdraws no claim: ${name}`, async () => {
+          await compileHarness(target, body);
         });
       }
     });
