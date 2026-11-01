@@ -6854,6 +6854,10 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
   const isConst = !!(flags & ts.NodeFlags.Const);
   for (const d of stmt.declarationList.declarations) {
     if (isPatternDeclaration(d)) {
+      // A `<module-init>` statement's leaves are module globals: only a module-init `var` list writes them (S5).
+      if (currentSubjectIsModuleInit && !isModuleInitVarList(stmt.declarationList)) {
+        return shapeNo("vardecl-module-destructuring", d.name);
+      }
       if (!isPhase1DeclarationPattern(d, isConst, scope, localClasses)) return false;
       continue;
     }
@@ -7057,15 +7061,12 @@ function isPhase1DeclarationPattern(
 ): boolean {
   const pattern = d.name;
   if (!d.initializer) return shapeNo("vardecl-dstr-noinit", pattern);
-  // In `<module-init>` a pattern's leaves are script `var`s: only a module-init `var` list declares them.
-  if (currentSubjectIsModuleInit && !isModuleInitVarList(d.parent)) {
-    return shapeNo("vardecl-module-destructuring", pattern);
-  }
   if (programPatchesDestructuringRealm(d.getSourceFile())) return shapeNo("vardecl-dstr-realm-patched", pattern);
   if (declarationBindingWritten(d)) return shapeNo("vardecl-dstr-leaf-written", pattern);
   const literalPlan = planLiteralPattern(pattern, d.initializer);
   if (literalPlan) {
-    if (currentSubjectIsModuleInit && !moduleVarLeavesStorable(pattern, scope)) return false;
+    const moduleVars = currentSubjectIsModuleInit && isModuleInitVarList(d.parent);
+    if (moduleVars && !moduleVarLeavesStorable(pattern, scope)) return false;
     return isPhase1LiteralPattern(pattern, literalPlanExpressions(literalPlan), scope, localClasses);
   }
   // A `for (;;)` head is admitted over a fresh literal only.
