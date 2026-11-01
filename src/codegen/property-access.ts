@@ -3064,16 +3064,15 @@ export function tryEmitDeleteAwareDynamicGet(
   // at RUNTIME works. Reserve the deferred-fill `__get_member_<name>` dispatcher
   // (a HOST-FREE ref.test+struct.get over the complete finalize-time candidate
   // set, with `__extern_get` as its own terminal) and branch on the
-  // `__in_module_init` flag: during init read the slot via the dispatcher (no
-  // exports needed; nothing has been `delete`d yet, so the tombstone is moot), at
-  // runtime keep the tombstone-aware host `__extern_get`. Falls back to the bare
-  // host read when the dispatcher/flag can't be set up (byte-identical legacy).
-  // The `__in_module_init` gate is a gc/host concern only: the host start-section
-  // timing is what breaks `__extern_get`'s struct read at init. WASI/standalone
-  // have no host `__extern_get` (and this whole function is already gated
-  // `!ctx.standalone`); keep WASI on the legacy bare read so `__module_init`'s
-  // lazy-init guard wrap stays untouched.
-  const getMemberIdx = ctx.wasi ? undefined : reserveMemberGetDispatch(ctx, propName, fctx);
+  // `__in_module_init` flag: during nondeferred init read the slot without host
+  // exports; at runtime keep the tombstone-aware host read. Deferred init runs
+  // after the caller binds the genuine Instance, so its reads must use
+  // `__extern_get` even during init to observe earlier deletes (#6878).
+  // Falls back to the bare host read when the dispatcher can't be set up.
+  // This gate is a gc/host concern: start-section timing breaks the host struct
+  // read. Standalone is excluded above; keep WASI on the legacy bare read so
+  // `__module_init`'s lazy-init guard wrap stays untouched.
+  const getMemberIdx = ctx.wasi || ctx.deferTopLevelInit ? undefined : reserveMemberGetDispatch(ctx, propName, fctx);
   addStringConstantGlobal(ctx, propName);
   flushLateImportShifts(ctx, fctx);
 
