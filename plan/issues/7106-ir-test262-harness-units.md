@@ -4301,9 +4301,11 @@ f64 slot would make `typeof a` before the pattern answer `"number"`.
   (`f = a === 3`), and the carrier slot (`d = a`, claimed and correct).
 
 **Measured**, both lanes:
-- **The review's 55 + 35 cases** (180 rows): no S5 post-claim error. The one
-  left is `bool-ident`, main's identifier `var x = true`. `string-concat` is
-  refused at select; the 55 are unchanged from round 1.
+- **The review's 55 + 35 cases** (180 rows): no post-claim error from S5's
+  own lowering. `bool-ident`, main's identifier `var x = true`, still
+  withdraws; round 3 found more boolean-slot shapes that S5 newly reaches
+  (below). `string-concat` is refused at select; the 55 are unchanged from
+  round 1.
 - **Main merged in** (`6abe68bb69`, #7024 and #7032 landed). Only the plan
   conflicted; both sides' sections are kept. The 90 cases are identical before
   and after the merge.
@@ -4315,6 +4317,30 @@ f64 slot would make `typeof a` before the pattern answer `"number"`.
 - **Gates**, all green and run bare against main `6abe68bb69`, which is also
   the merge base: loc, func, coercion, oracle, dead exports, typecheck, lint,
   import cycles, compiler boundaries, IR fallbacks and `test:changed-root`.
+
+#### Review round 3 (#7037, 2026-11-01)
+
+Approve, with one finding: S5 newly reaches main's boolean-slot withdrawal,
+"function member operand has no canonical carrier". Main refuses these only
+because of the pattern. The answers are right through legacy, and none of
+them is in the 320 files.
+
+**Post-claim withdrawals S5 newly reaches**, each with its main twin:
+- A boolean module `var` initialized by a comparison, read as an argument:
+  `var x = 3; var [q] = [1]; var b = x > 2; assert.sameValue(b, true);` and
+  `var [a = 1] = [3]; var b = a > 2; …`. The slot reads back as an
+  unbranded i32. The main twin, `var a = 3; var b = a > 2;
+  assert.sameValue(b, true);`, withdraws the same way.
+
+**Root fix:** the boolean-slot PR, branch `claude/ir-module-bool-slot`. Its
+`i32` module slot reads back with the #4503 boolean brand. It lands before
+#7037, as #7032 landed before #7026. With it, these shapes and `bool-ident`
+are claimed and right on both lanes. Over the review's 127 cases (254 rows):
+- no post-claim error, except main's own `shadow-param-str` parity mismatch;
+- 0 lost claims and 0 value regressions against main.
+
+Once both have landed, S5's boolean-leaf refusal in `moduleVarLeavesStorable`
+can go (follow-up).
 
 ## Writes to a `const`: refused at select (fixed 2026-11-01)
 
