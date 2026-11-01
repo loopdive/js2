@@ -3756,6 +3756,99 @@ not from #7034.
   predicates, the carrier family and the position rule; the dead
   carrier-order arm is gone.
 
+### Review round 3 of S0 + S1 (#7034, 2026-11-01)
+
+The verdict was approve with nits: every round-2 finding verified fixed, 0
+lost claims, 0 post-claim errors, 149 tests passing. Three nits are
+duplication, which the IR quality rule does not allow; the fourth is size.
+
+1. **Two family judges in one function.** The equality-reference refusal asked
+   `obviousSelectorValueFamily`; the rest of
+   `selectorPrimitiveWrapperOrGenericBinary` asked `binaryOperandFamily`.
+   - `binaryOperandFamily` now names an object, an array, a closure or a local
+     class value `reference` where `provenIrFamily` has no answer, and the
+     refusal reads the two operand families.
+   - S0 therefore also judges `reference` under a typed non-equality
+     operator. `binaryOperandsAdmissible` refuses every pair with one, as it
+     refuses from-ast's `ref`, `vec` and `reference`. So `({ a: 1 }) - 1` and
+     `[1] * 2` are now refused at select, where main claimed them and demoted
+     at build.
+   - The wrapper test runs once per operand: a fresh wrapper is `dynamic`
+     directly, and `binaryOperandFamily` judges only the other operands.
+2. **Two copies of the carrier `+` rule.** `isCarrierAddition`
+   (`analysis/operand-admissibility.ts`) is now the one rule: a `+` with an
+   operand that adds as the carrier. from-ast's `expressionProducesDynamic` and
+   the selector's `selectorCarrierValue` both call it. Each judges the operand
+   with its own facts; only from-ast knows a dynamic value.
+3. **Two identity predicates.** The planned-closure walk now calls
+   `isSlotFreeI32IdentityLowered`, as the function selector does, so
+   `((k < 1) + (k < 2)) | 0` is claimed in a closure too (main refuses it in
+   both). `isSlotFreeI32Identity` is no longer exported. The #7144 `void` test
+   gains that row. Round 2's item 1 said the walk calls `isSlotFreeI32Identity`;
+   that is superseded here.
+4. **Size.** See below.
+
+Also, the orphaned `i32LiteralValue` doc line in `i32-slots.ts` (already
+orphaned on main) sits on its function again.
+
+**Matrices**, both lanes, against main `358a17971e`:
+
+| matrix | expressions | main claims lost | value regressions | demoted at build, per lane |
+| --- | --- | --- | --- | --- |
+| wrapper (round 2's, unchanged) | 2,000 | 0 | 0 | 60, all main's own primitive equalities; identical to round 2 |
+| reference (new) | 2,640 | 0 | 0 | main 823, head 403 |
+
+The reference matrix crosses six reference operands (an object, an array, an
+arrow, a local class instance, a function, an object local) with themselves and
+eight others, under the 20 operators. The 420 shapes per lane that main
+claimed and then demoted are now refused at select. Every head demote is
+main's too: it has the unannotated local `o`, whose family the selector does
+not trace.
+
+**Census.** All 1,334 candidate files compile byte-identical to round 2, on
+both lanes. So round 1's pass/fail A/B still holds: 0 flips, and legacy-free
+8 → 25 against main.
+
+**Tests.** The wrapper and #3529 producer-parity files pass 137/137, and the
+#7144 file 12/12.
+
+**Gates**, run bare: loc, func (also against main `2a23598849`), coercion,
+oracle, dead exports, typecheck, lint, import cycles, compiler boundaries, IR
+fallbacks and `test:changed-root` are green. `check-loc-budget` against main
+`2a23598849` flags only `codegen/property-access.ts` and
+`codegen/statements/loops.ts`. #7034 does not touch either file: main shrank
+them after this branch's base, and a merge takes main's copies.
+
+**Size.** Net `src/ir` growth since the merge base is +109 lines (+308/−199),
++1 on round 2. The shared predicate adds 12 lines and removes 3 in from-ast;
+the single family judge and shorter doc comments remove 9 in the selector.
+
+| file | net | what it holds |
+| --- | --- | --- |
+| `from-ast.ts` | −49 | the `==`-only wrapper producer folded into one ToPrimitive for every operator; dynamic arithmetic now uses `emitNumberBinary` |
+| `analysis/operand-admissibility.ts` | +49 | predicates both halves call: `isVoidZero`, `isNumericReaderOperator`, the `null` arm, `isToNumericOperator`, `wrapperComparisonIsIdentity`, `isCarrierAddition` |
+| `analysis/i32-slots.ts` | +34 | the fused-i32 identity as a selector sees it |
+| `select.ts` | +78 | S0: the operand family, the identity exception, the carrier-position rule |
+| the others | −3 | |
+
+Why the plan's ≤ 0 is not met:
+- The plan expected S0 to be one `binaryOperandsAdmissible` call over two
+  families. The reviews found three from-ast facts the selector had no
+  spelling for: the ToNumeric order (round 1), the fused-i32 identity, and the
+  carrier `+` that only an operator may read (round 2). Leaving any one out
+  either loses a claim main has or claims a body that then demotes; each was
+  measured.
+- S0 cannot leave this PR. Without it, S1 claims wrapper pairs the builder
+  cannot type.
+- Moving it to another module would not change the net.
+
+The cut that remains is a follow-up, not part of this lever: `select.ts` has
+two family provers, `obviousSelectorValueFamily` and `provenIrFamily`, and
+`binaryOperandFamily` reads both. Folding the first into the
+`OperandFamily` vocabulary would remove that second reading and the
+duplicate literal arms. It touches the static predicates, so it needs its own
+measurement.
+
 ### Follow-ups (not this lever)
 
 1. **The class-expression chain, in order:**
