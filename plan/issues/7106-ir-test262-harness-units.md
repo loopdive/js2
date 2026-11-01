@@ -4209,6 +4209,81 @@ compiler boundaries, IR fallbacks and `test:changed-root`.
 3. S6: identifier `for` heads at script level.
 4. The boolean module slot's i32 brand.
 
+#### Review round 1 (#7037, 2026-11-01)
+
+The verdict was request changes: one major finding and three minor ones. All
+four are fixed in a9f1b70442, after a merge of main (#7024 has landed; main's
+`src` equals the S5 base `e944943a2e`).
+
+1. **Claim-then-demote on a number leaf's read.** Legacy widens a no-default
+   number leaf's slot to the carrier so that `undefined` survives (#3423); the
+   checker still types the leaf as a number. Seven review shapes claimed a
+   body that then demoted: a copy into a `var` (also before the pattern, also
+   with a `for` head), `s += a` in a `for` body, `return a` and `s += a` in a
+   function with or without a caller, and a boolean leaf.
+   - **Not the typed slot.** Giving the leaf the f64 slot an identifier `var`
+     gets would change legacy's #3423 allocation for every such script,
+     claimed or not. It would also read `undefined` as NaN for a leaf read
+     before its pattern or written later.
+   - **The leaf's read is a dynamic value.** `carrierLeafReads`
+     (`module-init-vars.ts`) finds the reads of a leaf whose slot is the
+     carrier. Three consumers take it:
+     - a function: each read name joins the move-only scan's dynamic names, as
+       #7128's open carriers do, so the scan judges every use. `return a` into
+       a number result and `s += a` are refused there;
+     - the resolver's scalar arm: a scalar module slot takes no value that
+       reads one (`var b = a`, `b = a`, `var b = a + 1`);
+     - `isSelectableNumberCompound`: a number compound's right side reads
+       none. `<module-init>` has no move-only scan, so this is its only gate
+       for `s += a`.
+   - **A boolean leaf is refused** (`moduleVarLeavesStorable`): its slot reads
+     back as an unbranded i32. The identifier `var x = true;
+     assert.sameValue(x, true)` demotes on main for the same reason.
+2. **Unchecked casts.** The four `bindingDeclarationList(declaration)!` are
+   gone.
+   - `moduleBindingLexicalFlags` reads the `let`/`const` flag from a
+     declaration's own list. A leaf has none, because it binds as a module
+     global only from a module-init `var` list.
+   - The ambient-declaration check reads `declaration.parent.parent`.
+   - `writeValueMatches` takes the target type from the declaration, so
+     neither caller passes it any more.
+3. **One enumeration.** `moduleBindingDeclarationOrder` takes its leaves from
+   `moduleInitBindings`, cached per source file. `carrierLeafReads` uses the
+   same list to skip every name that is not a leaf.
+4. **Labelled heads.** `moduleInitVarList` and `isModuleInitVarList` see
+   through labels, so `outer: for (var {k} = {k: 2};;)` is claimed.
+
+**Measured**, both lanes:
+- **The review's 55 cases** (110 rows):
+  - no post-claim error from S5. The one that remains is `bool-ident`, the
+    identifier `var x = true` above, which demotes on main too;
+  - 17 `<module-init>` claims per lane, where main has none;
+  - 0 value regressions against the review's main run.
+- **The 320 files:** byte-identical to the previous S5 head on both lanes,
+  so its pass/fail A/B still holds:
+  - legacy-free 6 → 34 (+28, none lost);
+  - 28/28 pass (0 flips);
+  - no new post-claim error, and no status change.
+- **Tests:** the S5 and `for`-head destructuring files pass 148/148, including
+  the ten review shapes (no post-claim error) and the labelled head.
+- **Gates**, all green and run bare: loc, func, coercion, oracle, dead
+  exports, typecheck, lint, import cycles, compiler boundaries, IR fallbacks
+  and `test:changed-root`. Main `2a23598849` is also the merge base, so the
+  run against main is the same run.
+- **Size.** This round adds 51 lines to `src/ir`: `module-init-vars.ts` +53,
+  `select.ts` +5, `module-bindings.ts` −7. The resolver function is back at
+  its 300-line budget, and no new grant is needed.
+
+**Follow-ups, wrong on main too:**
+- a read before the pattern throws instead of answering `undefined`
+  (`var r = a; var {a} = {a: 1};`);
+- `function g() { return a; }` called before the pattern throws;
+- `var {a} = {a: 1}; function w() { a = 2; } w();` leaves `a === 1`;
+- the boolean slot's unbranded i32 read, for an identifier and a leaf alike.
+
+S5 incidentally fixes `var {a} = {a: 2}; var a;`, which fails Wasm validation
+on main.
+
 ## IR `finally` abrupt exit: the guard `if` was not a frame (fixed 2026-11-01)
 
 **Symptom.** Under the IR, `do { try { throw "x"; } finally { break; } }
