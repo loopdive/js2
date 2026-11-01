@@ -66,8 +66,6 @@ export interface PlannedClosureFamilySources {
   readonly nativeDynamicLooseEquality?: boolean;
   /** (#7113) The lane plans a direct call to a module function from a planned closure. */
   readonly directCalls?: boolean;
-  /** (#7066) The lane formats a number as a string (a string `+` concatenates it). */
-  readonly numberToString?: boolean;
   /** (#7113) `undefined` here is the global (no module or enclosing binding shadows it). */
   readonly isGlobalUndefined?: (expr: ts.Expression) => boolean;
   /** (#7119) `recv.<name>(…arity args)` on the carrier takes the brand-dispatch wrapper on this lane. */
@@ -91,7 +89,7 @@ const UNKNOWN: OperandProof = { family: "unknown", additive: "unprovable" };
 const DYNAMIC: OperandProof = { family: "dynamic", additive: "dynamic" };
 const NUMBER: OperandProof = { family: "number", additive: "number" };
 const STRING: OperandProof = { family: "string", additive: "string" };
-const BOOLEAN: OperandProof = { family: "boolean", additive: "boolean" };
+const BOOLEAN: OperandProof = { family: "boolean", additive: "unprovable" };
 
 function unwrapParens(expr: ts.Expression): ts.Expression {
   let current = expr;
@@ -477,10 +475,7 @@ export function plannedClosureOperandRefusal(
     if (!carrierLooseEqualityAdmissible(op, leftProof.family, rightProof.family) && isNewShape()) {
       return { arm: "closure-carrier-loose-equality", node: expr };
     }
-    if (
-      op === ts.SyntaxKind.PlusToken &&
-      !additiveOperandsProvable(leftProof.additive, rightProof.additive, sources.numberToString === true)
-    ) {
+    if (op === ts.SyntaxKind.PlusToken && !additiveOperandsProvable(leftProof.additive, rightProof.additive)) {
       return { arm: "closure-additive-operands", node: expr };
     }
     return binaryOperandsAdmissible(op, leftProof.family, rightProof.family)

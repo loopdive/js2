@@ -158,16 +158,16 @@ import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-type
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
+  binaryOperandsAdmissible,
   conditionalJoinArmFamily,
   conditionalJoinFamily,
   isComparisonResultOperator,
   isEqualityOperator,
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
+  isTypedBinaryOperator,
   nativeI32OperandsAdmissible,
-  staticAdditiveOperandsAdmissible,
   type OperandFamily,
-  type PrimitiveProof,
 } from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
@@ -555,8 +555,6 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * `undefined`; this is evidence, not receiver routing.
    */
   readonly classifyPrimitiveExpression?: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
-  /** (#7066) The builder's checker proof of a `+` operand (`makeIrAdditiveOperandProof`). */
-  readonly additiveOperandProof?: (expr: ts.Expression) => PrimitiveProof;
   /**
    * Declared checker family used only to route builtin-named method calls.
    * Mixed/nullable primitive unions return `primitive-union`; pure
@@ -784,7 +782,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "standalone-function-prototype-call"
       | "standalone-native-regexp-test-carrier"
       | "standalone-wrapper-instanceof"
-      | "primitive-wrapper-loose-equality"
+      | "primitive-wrapper-to-primitive"
       | "legacy-numeric-array-global"
       | "number-to-string"
       | "native-json-codec"
@@ -7285,7 +7283,6 @@ function isPhase1ClosureLiteral(
     nativeDynamicMemberRead:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-member-read") === true,
     directCalls: currentSelectionOptions?.supportsBackendCapability?.("planned-closure-direct-call") === true,
-    numberToString: laneFormatsNumbers(),
     nativeDynamicLooseEquality:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-loose-equality") === true,
     isGlobalUndefined: (expression) => isUnshadowedUndefinedIdentifier(expression, scope),
@@ -8737,8 +8734,8 @@ function selectorSupportsStandaloneWrapperInstanceOf(node: ts.Identifier): boole
 }
 
 /**
- * #4208 S4 — recognize only the ambient primitive-wrapper constructions used
- * by the residual ES5 abstract-equality family. The constructor argument must
+ * #4208 S4 — recognize only the ambient primitive-wrapper constructions an
+ * operator converts with ToPrimitive (#7106). The constructor argument must
  * already have the exact primitive family consumed by the legacy wrapper ABI;
  * general constructor coercion remains legacy-owned.
  */
@@ -8850,29 +8847,34 @@ function selectorDynamicLaneIn(
   );
 }
 
-/** #4208 S4 — bounded wrapper coercion followed by the generic binary tail. */
+/**
+ * The generic binary tail (#7144, #7106). A fresh primitive wrapper operand is
+ * the dynamic carrier of its ToPrimitive (#4208 S4); on a wrapper, equality is
+ * identity (`===`, wrapper against wrapper), and `==` keeps S4's number or
+ * boolean other side. A pair `lowerBinary` cannot type is refused here, not
+ * after the claim (S0): every wrapper pair, and a typed non-equality operator
+ * over two proven families. Equality has its own folds (`tryFoldNullCompare`,
+ * the `undefined` compare), so the predicate alone does not decide it.
+ */
 function selectorPrimitiveWrapperOrGenericBinary(
   expr: ts.BinaryExpression,
   binOp: ts.SyntaxKind,
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
-  if (binOp === ts.SyntaxKind.EqualsEqualsToken || binOp === ts.SyntaxKind.ExclamationEqualsToken) {
-    const leftWrapper = selectorPrimitiveWrapperConstruction(expr.left, scope, localClasses);
-    const rightWrapper = selectorPrimitiveWrapperConstruction(expr.right, scope, localClasses);
-    if ((leftWrapper === null) !== (rightWrapper === null)) {
-      const primitive = leftWrapper === null ? expr.left : expr.right;
-      const family = obviousSelectorValueFamily(primitive, scope);
-      if (family === "boolean" || family === "number") {
-        if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-loose-equality") !== true) {
-          return capabilityNo("operand-coercion-unsupported", "expr-wrapper-loose-equality-target", expr);
-        }
-        return isPhase1Expr(primitive, scope, localClasses);
-      }
-    }
-  }
+  const leftWrapper = selectorPrimitiveWrapperConstruction(expr.left, scope, localClasses) !== null;
+  const rightWrapper = selectorPrimitiveWrapperConstruction(expr.right, scope, localClasses) !== null;
   const isEquality = isEqualityOperator(binOp);
-  if (
+  if (leftWrapper || rightWrapper) {
+    if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") !== true) {
+      return capabilityNo("operand-coercion-unsupported", "expr-wrapper-to-primitive-target", expr);
+    }
+    const otherFamily = obviousSelectorValueFamily(leftWrapper ? expr.right : expr.left, scope);
+    const identity = isStrictEqualityOperator(binOp) || (leftWrapper && rightWrapper);
+    if (isEquality && (identity || (otherFamily !== "boolean" && otherFamily !== "number"))) {
+      return capabilityNo("operand-coercion-unsupported", "expr-wrapper-equality", expr);
+    }
+  } else if (
     isEquality &&
     obviousSelectorValueFamily(expr.left, scope) === "reference" &&
     obviousSelectorValueFamily(expr.right, scope) === "reference"
@@ -8880,15 +8882,30 @@ function selectorPrimitiveWrapperOrGenericBinary(
     return capabilityNo("operand-coercion-unsupported", "expr-equality-reference-operands", expr);
   }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
-  const additiveProof = currentSelectionOptions?.additiveOperandProof;
-  if (
-    binOp === ts.SyntaxKind.PlusToken &&
-    additiveProof &&
-    !staticAdditiveOperandsAdmissible(expr, additiveProof, laneFormatsNumbers())
-  ) {
-    return capabilityNo("operand-coercion-unsupported", "expr-additive-operands", expr);
+  const left = leftWrapper ? "dynamic" : binaryOperandFamily(expr.left, scope);
+  const right = rightWrapper ? "dynamic" : binaryOperandFamily(expr.right, scope);
+  const judged =
+    leftWrapper ||
+    rightWrapper ||
+    (!isEquality && isTypedBinaryOperator(binOp) && left !== "unknown" && right !== "unknown");
+  if (judged && !binaryOperandsAdmissible(binOp, left, right)) {
+    return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
   }
-  return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
+  return (
+    (leftWrapper || isPhase1Expr(expr.left, scope, localClasses)) &&
+    (rightWrapper || isPhase1Expr(expr.right, scope, localClasses))
+  );
+}
+
+/**
+ * The family a binary operand lowers to (`irOperandFamily` once lowered): the
+ * `null` literal is `nullish` and the global `undefined` `undefined`, as the
+ * operator arms read them; anything else is {@link provenIrFamily}'s answer.
+ */
+function binaryOperandFamily(operand: ts.Expression, scope: ReadonlySet<string>): OperandFamily {
+  if (unwrapPhase1Parens(operand).kind === ts.SyntaxKind.NullKeyword) return "nullish";
+  if (isUnshadowedUndefinedIdentifier(operand, scope)) return "undefined";
+  return provenIrFamily(operand, scope);
 }
 
 function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpression): boolean {
@@ -10667,14 +10684,14 @@ function templateSubstitutionFamily(
   scope: ReadonlySet<string>,
 ): "string" | "number" | "boolean" | undefined {
   if (declaredExpressionHasExactFamily(expression, "string", scope)) return "string";
-  if (declaredExpressionHasExactFamily(expression, "number", scope) && laneFormatsNumbers()) return "number";
+  if (
+    declaredExpressionHasExactFamily(expression, "number", scope) &&
+    currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true
+  ) {
+    return "number";
+  }
   if (declaredExpressionHasExactFamily(expression, "boolean", scope)) return "boolean";
   return undefined;
-}
-
-/** (#4467, #7066) The lane binds `IR_NUMBER_TO_STRING_FN`: a number converts to a string in a template or a `+`. */
-function laneFormatsNumbers(): boolean {
-  return currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true;
 }
 
 function declaredExpressionHasExactFamily(
@@ -13044,7 +13061,7 @@ export function buildLocalCallGraph(
               (currentModuleBindingResolver === null ||
                 currentModuleBindingResolver.isAmbientBinding(node.expression))) ||
             (selectorSeesAmbientWrapperConstructor(node.expression) &&
-              currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-loose-equality") === true))
+              currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") === true))
         ) {
           // Slice 4: local class — `<Class>_new` has a stable signature.
           // Slice 10 (#1169i): known extern class — `<Class>_new` is

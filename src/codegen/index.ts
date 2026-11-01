@@ -189,7 +189,6 @@ import {
   type IrPromiseDelayLoweringPlans,
 } from "../ir/promise-delay-lowering.js";
 import {
-  makeIrAdditiveOperandProof,
   makeIrArrayElementFamilyClassifier,
   makeIrArrayExpressionPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
@@ -3267,7 +3266,6 @@ function planIrOverlay(
       ...(resolvePromiseDelay ? { promiseDelays: resolvePromiseDelay } : {}),
       ...(resolveModuleBinding ? { resolveModuleBinding } : {}),
       classifyPrimitiveExpression,
-      additiveOperandProof: makeIrAdditiveOperandProof(ast.checker),
       classifyDeclaredPrimitiveExpression,
       isArrayExpression,
       classifyArrayElementFamily,
@@ -4870,7 +4868,6 @@ function planIrFirstBodyRouting(
       ...plan.suspendingAsyncUnitIds,
     ]),
     generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
-    numberToString: irNativeNumberToStringAvailable(ctx),
     fast: ctx.fast,
   };
   const timerRouting = irTimerShim.inspectIrCompilerTimerShimRouting(plan);

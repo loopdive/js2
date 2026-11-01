@@ -73,7 +73,6 @@ export function computePreparedInheritedIrFirstSkipUnitIds(input: {
   >;
   readonly potentiallyBlockedOwnerUnitIds: ReadonlySet<IrUnitId>;
   readonly generatorsSkippable: boolean;
-  readonly numberToString: boolean;
   readonly fast: boolean;
 }): Set<IrUnitId> {
   const requestedSkipUnitIds = new Set(
@@ -85,7 +84,6 @@ export function computePreparedInheritedIrFirstSkipUnitIds(input: {
       overridesByUnitId: input.overridesByUnitId,
       potentiallyBlockedOwnerUnitIds: input.potentiallyBlockedOwnerUnitIds,
       generatorsSkippable: input.generatorsSkippable,
-      numberToString: input.numberToString,
     }),
   );
   // Keep the inherited fast route to its annotation-proven boolean subset.

@@ -14,29 +14,6 @@ area: ir
 language_feature: ir-first, string-concat, demote
 goal: ir-full-coverage
 related: [7001, 2138, 3143, 7106, 7144]
-loc-budget-allow:
-  # 2026-11-01 (step 1): each selection entry passes the checker `+` proof
-  # (one option line plus its import), and the selector's generic binary tail
-  # applies it (+7); the predicate itself lives in analysis/operand-admissibility.ts
-  - src/ir/select.ts
-  - src/codegen/index.ts
-  - src/ir/integration.ts
-  - src/ir/backend/linear-integration.ts
-  # 2026-11-01 (lowering WIP): the IR-first skip input threads the lane's
-  # number-to-string flag to the gate (+2); revisited with the step-1 rework
-  - src/codegen/ir-prepared-free-functions.ts
-  # 2026-11-01 (step 1): `makeIrAdditiveOperandProof` sits beside the other
-  # selection classifier factories, so codegen reaches it over its existing
-  # module-bindings import instead of a new codegen->ir edge (+11)
-  - src/ir/module-bindings.ts
-func-budget-allow:
-  # 2026-11-01 (step 1): the one `additiveOperandProof` option line in each selection call
-  - src/codegen/index.ts::planIrOverlay
-  - src/ir/integration.ts::compileIrPathFunctions
-  # 2026-11-01 (lowering WIP, parked for the step-1 rework): the gate keeps
-  # its proofs for the string `+` arm, and the closure gate passes the lane flag
-  - src/ir/from-ast.ts::lowerBinary
-  - src/ir/select-planned-closure-operands.ts::plannedClosureOperandRefusal
 ---
 # IR-first skipped slot with no legacy body after a build-time demote
 
@@ -71,39 +48,48 @@ on origin, and no PR exists. Re-claimed with `claim-issue.mjs --force` for
 default and legacy retirement umbrella): disjoint. #3518 changes routing and
 retires legacy bodies, and touches no `+` admission.
 
-## Step 1 (2026-11-01): one `+` predicate for selector and builder
+## Step 1 (2026-11-01, reworked after review): a mixed conditional is a dynamic `+` operand
 
-- `classifyPrimitiveProof` (the TS-type number/string proof the builder's
-  `+` gate uses) moves from `src/ir/from-ast.ts` to
-  `src/ir/analysis/operand-admissibility.ts`, beside
-  `additiveOperandsProvable`. The selector receives the same proof through a
-  new selection option, `additiveOperandProof` (`makeIrAdditiveOperandProof`),
-  wired where `classifyPrimitiveExpression` is.
-- The selector refuses a `+` (`operand-coercion-unsupported`,
-  `expr-additive-operands`) exactly when both operands are STATIC: literals
-  and their unary, binary or conditional compositions. For such an operand the
-  builder's proof is the checker's alone: it never yields the dynamic carrier,
-  and the lattice facts cover only parameters and calls. So the two sides
-  decide identically. Identifiers, member reads and calls keep their
-  admission, so a mixed `+` over them can still demote at build; step 2 makes
-  that demote safe.
-- This covers the repro above (`"v" + (n > 0 ? "p" : 0)`) and every
-  `S11.7.*_A4` file (`'#1: …' + (-1 << 0)`).
+The first cut of step 1 added a selector option (`additiveOperandProof`) and a
+static-operand refusal. Review (2026-11-01) found that it duplicated the
+existing `classifyPrimitiveExpression` option, that its static set was
+narrower than its own argument, and that it overlapped #7106 S0 (PR #7034).
+S0 refuses at selection every typed non-equality pair that
+`binaryOperandsAdmissible` refuses over proven families (`"x" + 1`,
+`null + 1`, …), and so already covers the `S11.*_A4` initializers.
+The rework is stacked on #7034 and keeps only the case S0 does not cover.
 
-**Measured** (A/B against main `4fe61ff7f2`):
-- **Repro:** compiles on gc, standalone and wasi, with and without a caller.
-  Main fails the caller-less form with `unpatched-slot` on every lane.
-- **Files:** the 47 mixed-`+` files from the #7106 census plus the 12
-  `S11.7.*_A4` files, on standalone and gc:
-  - 0 compile flips;
-  - `+` post-claim demotes go from 1 to 0 (`S9.6_A2.1`, which passes before
-    and after on both lanes);
-  - 0 files newly legacy-free, because the refused initializers stay on
-    legacy. On main the chunked ones (every `S11.7.*_A4`) are withdrawn before
-    their `+` is reached; the demote shows only once #7106's chunk lowering
-    admits them.
+- **Root cause:** a #5092 mixed-primitive conditional (`n > 0 ? "p" : 0`)
+  lowers to the dynamic carrier (`lowerConditional`). However,
+  `expressionProducesDynamic` read a conditional as the carrier only when
+  both arms were already the carrier. The `+` proof therefore fell back to the
+  checker's union (`"p" | 0`): unprovable, and demoted after the claim.
+- **Fix:** `expressionProducesDynamic` also answers the carrier for a
+  conditional that `proveMixedPrimitiveConditional` proves. That is the same
+  proof `lowerConditional` lowers it with. The `+` then takes the dynamic add
+  (`IR_DYN_ADD_FN`).
+- **Result:** the repro lowers instead of being refused. The IR-first gate
+  already typed `"prefix" + dynamic` as a string, and now the builder agrees,
+  so `"v" + (n > 0 ? s : 0)` with a string parameter lowers too. Before the
+  rework it failed with `unpatched-slot` on every lane.
+- **Footprint:** no selector change, no new option, no grants; `from-ast.ts`
+  grows by 4 lines (net).
+
+**Measured** (A/B against the #7034 merge without the edit):
+- **Repro and string-parameter variant:** both lower on gc, standalone and
+  wasi, with and without a caller. Both answer as node does (`b(1) === "vp"`,
+  `b(-1) === "v0"`; `b(1, "q") === "vq"`, `b(-1, "q") === "v0"`).
+- **Slice:** the 342 ES5 `S*` files of the addition, subtraction,
+  multiplication, division, modulus, shift and bitwise directories. This
+  includes the 7 files review named.
+  - 0 `+` post-claim demotes and 0 compile errors on both lanes.
+  - Binaries are identical to the base: no mixed conditional sits under a
+    `+` there.
 - **Bytes:** identical for the S1 chunk sample plus the playground (150/150
   programs, both lanes), legacy-only programs included.
+- **Tests:** `tests/issue-7066-concat-select-desync.test.ts` is rewritten
+  for the rework. It passes, as do the #5092, #7106 S0/S1, #3143 and #3203
+  suites.
 
 ## Mixed concat lowering plan (2026-11-01)
 
@@ -294,6 +280,56 @@ Both are within the ±10% run spread: parity.
   sample plus the playground (150/150). Files that become IR-claimed must not
   grow.
 
+### 4b. Design, rebased on the reworked step 1 (2026-11-01)
+
+Since the rework, step 1 sits on #7106 S0 (PR #7034). S0 refuses at selection
+a typed non-equality pair whose proven families `binaryOperandsAdmissible`
+refuses. The reworked step 1 makes a #5092 mixed conditional a dynamic `+`
+operand. The lowering therefore widens one rule that already has four
+readers, instead of adding a selector path of its own.
+
+| Reader | Today | After |
+| --- | --- | --- |
+| builder gate (`lowerBinary`, #2781) | `additiveOperandsProvable(lProof, rProof)` | the same call with the lane flag (`nativeNumberToStringAvailable`) |
+| selector, `selectorPrimitiveWrapperOrGenericBinary` (S0) | `binaryOperandsAdmissible` over proven families | for `+`, also `additiveOperandsProvable` over `additiveProofOf(family)`, with the `number-to-string` capability |
+| planned closures (`closure-additive-operands`) | `additiveOperandsProvable` | the same call with `sources.numberToString` |
+| IR-first gate (`irFirstBodyIsProvenLowerable`) | a hand-written `+` row | `additiveOperandsProvable` over its domains; the row is deleted |
+
+- **The rule.** `additiveOperandsProvable(left, right, numberToString)`:
+  - a dynamic side admits;
+  - beside a string, the other side must be a string, a boolean, or a number
+    when the lane formats numbers;
+  - otherwise both sides must be numbers.
+
+  `AdditiveProof` gains `boolean`; `classifyPrimitiveProof` returns it for an
+  all-boolean type. `additiveProofOf(family)` is the one map from a proven
+  family to a proof (number, string, boolean, dynamic; anything else is
+  unprovable). `int32` maps to unprovable because it may be an unbranded
+  boolean.
+- **Carrier typing.** `binaryOperandsAdmissible`'s string `+` row accepts a
+  string beside a string, number, `int32` or boolean carrier
+  (`additiveResultFamily`). The rule above has already decided admission, so
+  this row only types the producer.
+- **The lane flag in the IR-first gate.** The gate is a constant `true`
+  there: the skip set exists only on the WasmGC backend, whose lanes all bind
+  the formatter (`number-to-string`, `backend/legality.ts`). This avoids
+  threading the flag through three codegen files.
+  - The gate's import of the rule is one new `codegen->ir` edge. It is
+    granted, because it replaces a duplicate rule.
+  - Its mixed-conditional special case is gone: since the rework, from-ast
+    proves that conditional dynamic too.
+- **The lowering.** `src/ir/primitive-to-string.ts`:
+  - `lowerPrimitiveToString(builder, value, family)` is the one primitive
+    ToString. Template literals, `String(v)`, the #5092 `String` arm and the
+    string `+` all use it.
+  - The `+` converts each side by its proof family (so an unbranded boolean
+    still prints `"true"`), through a helper outside `lowerBinary`.
+  - The #2781 gate moves into a helper that returns the proofs, so
+    `lowerBinary` does not grow.
+- **Out of scope:** `null` / `undefined` beside a string (no census file needs
+  them, and `undefined` lowers to the NaN sentinel), and `+=` into a string
+  slot.
+
 ### 5. Step 2: not made moot
 
 The lowering removes the mixed-primitive share of the `+` post-claim demotes,
@@ -313,3 +349,33 @@ but not the IR-first `unpatched-slot` class:
     the claim compiles its legacy body. It is the net for every other gate row
     that can drift from the builder (the 2026-08-28 note in the gate records
     one such drift already).
+
+**Update (2026-11-01, after the step-1 rework).** The counterexample above now
+lowers: the builder proves the mixed conditional dynamic, which is what the
+IR-first gate already assumed. Step 2 stays a general net and is filed below.
+
+## Follow-up: step 2, a legacy fallback for an IR-first-skipped unit (filed here 2026-11-01)
+
+Not a separate issue file: `claim-issue.mjs --allocate` cannot run in this
+session.
+
+- **Problem.** Under IR-first, a function in the skip set
+  (`irFirstBodyIsProvenLowerable`) gets no legacy body. If from-ast then
+  demotes it after the claim, the overlay finds the slot unpatched and the
+  compile fails (`unpatched-slot`). The gate is a syntactic proof, so every
+  row can drift from the builder's proofs. It has drifted twice on `+` alone:
+  `"a" + 1` (2026-08-28, #3529) and the #7066 mixed conditional.
+- **Proposal.**
+  - A skipped unit that demotes after the claim compiles its legacy body
+    instead (the pre-#3143 order for that unit), and the compile succeeds.
+  - The post-claim error stays a diagnostic.
+  - `STRICT_IR_POSTCLAIM_CODES` (`src/codegen/index.ts`) still decides which
+    codes are invariants rather than demotes.
+- **Where.** The IR-first routing in `src/codegen/index.ts`
+  (`planIrFirstBodyRouting` and the overlay patch that reports
+  `unpatched-slot`).
+- **Acceptance.**
+  - A forced post-claim demote in a skipped, caller-less function compiles and
+    answers like node on gc, standalone and wasi.
+  - Programs with no such demote are byte-identical.
+  - No new `unpatched-slot` in the equivalence suite.
