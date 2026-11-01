@@ -68,6 +68,7 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerPropertyAccess
   - src/ir/select.ts::scanExprInner
   - src/ir/from-ast.ts::lowerFunctionAstToIr
+  # 2026-11-01 (finally abrupt exit, #7030 review): the guarded finally copy returns early when unguarded, then pushes, emits and pops its own CtrlFrame (+4)
   - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/lower-generic.ts::emitInstrTree
   - src/ir/integration.ts::makeDynamicLowering
@@ -105,6 +106,7 @@ loc-budget-allow:
   # 2026-10-31 (boolean statics, round 4): the static-predicate arm, its host, the shared ambient-receiver helper and the name-parameterised unshadowed-global test (+25); the lowering lives in src/ir/static-predicates/
   - src/ir/from-ast.ts
   - src/ir/integration.ts
+  # 2026-11-01 (finally abrupt exit, #7030 review): the guarded finally copy returns early when unguarded, then pushes, emits and pops its own CtrlFrame (+4)
   - src/ir/lower-generic.ts
   - src/ir/runtime/verify.ts
   # 2026-10-31 (boolean statics, round 5): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+89); the rule lives in src/ir/static-predicates/
@@ -3896,6 +3898,50 @@ main `2082c87777`. Chunked initializers were withdrawn on main, so this PR
 widens its reach. The compound and plain assignments are refused at
 selection; the update arm needs the same refusal. It needs its own fix before
 this PR merges.
+
+## IR `finally` abrupt exit: the guard `if` was not a frame (fixed 2026-11-01)
+
+**Symptom.** Under the IR, `do { try { throw "x"; } finally { break; } }
+while (c < 2)` looped forever, in a function and at top level; legacy and node
+answer 11. The chunk-budget lever (#7026) exposes it: four ES5 rows that main
+sends to legacy only because they are chunk-sized fail once the IR claims them
+(`language/statements/try/S12.14_A9_T3` hangs; `S12.14_A9_T2`,
+`S12.14_A10_T2`, `S12.14_A10_T3` fail).
+
+**Root cause.** The `try` arm of `lowerIrFunctionBody`
+(`src/ir/lower-generic.ts`) emits each exception-path copy of the finally
+inside the `finallyRan` guard `if` (#6651 U4). That `if` is one Wasm label, but
+no `CtrlFrame` was pushed for it, so `resolveBrLabel` derived every `br` in
+that copy one frame short: a `break` re-entered the loop body, and a `continue`
+or labeled exit left the wrong frame. The normal-exit copy has no guard and was
+right.
+
+**Fix.** Push a plain frame while the guarded copy is emitted, the pattern
+every other structured arm uses (+4 lines in `lowerIrFunctionBody`, under the
+issue's `lower-generic.ts` grant). A `return`
+inside or across a `finally` does not share the bug: the selector refuses it
+(`earlyReturnBarrierDepth`), and legacy answers like node.
+
+**Measured** (head vs main `ac8dbbf406`, the base taken as a file-copy A/B of
+`lower-generic.ts`):
+
+- `tests/ir-finally-abrupt-exit.test.ts`, 11 IR-claimed shapes (throw, break,
+  continue and a catch rethrow overridden by the finally's break or continue;
+  nested finally; labeled continue and break across two finallys; a switch
+  break), each in a function and at top level, plus 3 `return` shapes left on
+  legacy: 28/28 on head; 14/28 on base, none hanging (every loop has a guard).
+- `runTest262File`, the 61 rows of `language/statements/{try,for,while,
+  do-while,switch}` that contain `finally`, standalone and gc: 0 flips, binary
+  sha identical 61/61 on each lane (main sends every break-in-finally row to
+  legacy). 54/61 pass on both; the other 7 need the QuickJS eval provider,
+  which is not built locally, and are refused at select on both trees.
+- Unchunked twins of the four rows (one file per `// CHECK#`, 26 files, so
+  the IR claims each `<module-init>`): 26/26 pass on head on both lanes; 22/26
+  on base (one failing check per row, the `S12.14_A9_T3` one hangs).
+- The 710 rows without `finally` cannot change (the edit only moves br depths
+  inside a guarded finally copy); a 60-row sample is sha-identical on gc and
+  standalone. Playground: 13/13 identical on both lanes (no example has a
+  `finally`).
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
