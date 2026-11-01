@@ -140,6 +140,8 @@ describe("#7106 fresh-wrapper operator operands", () => {
     wrapperIdentity: "new Number(1) == new Number(1)",
     wrapperString: 'new Boolean(true) == "1"',
     wrapperArgument: "new Number(true) < 1",
+    // Review round 1: `void 0` is `undefined`, which `+` never takes.
+    voidPlus: "void 0 + 2",
   };
   for (const target of TARGETS) {
     it(`S0 refuses at selection (${lane(target)})`, async () => {
@@ -155,6 +157,15 @@ describe("#7106 fresh-wrapper operator operands", () => {
 
   // The hint follows the operator, and a user method is observed.
   const PROBES: Record<string, string> = {
+    // Review round 1: ToNumeric(left) completes before ToPrimitive(right) (§13.15.3).
+    toNumericOrder: `var n = 0;
+      Number.prototype.valueOf = function () { n++; return Symbol(); };
+      function sub() { return new Number(1) - new Number(2); }
+      try { sub(); } catch (e) {}
+      if (n !== 1) { throw "#toNumericOrder"; }`,
+    // Review round 1: one family judge proves 2 * 2 a number for the wrapper == rule.
+    provenNumberEquality: `function eq() { return new Number(4) == 2 * 2; }
+      if (eq() !== true) { throw "#provenNumberEquality"; }`,
     // A wrapper `+` adds dynamically, so an enclosing `+` takes the carrier too.
     nestedAdd: `function nested() { return "x" + (new String("1") + "1") + ("1" + new String("2")); }
       if (nested() !== "x1112") { throw "#nestedAdd"; }`,

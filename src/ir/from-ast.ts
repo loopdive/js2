@@ -62,6 +62,8 @@ import {
   isNumberCompoundAssignOperator,
   isNumericReaderOperator,
   isStrictEqualityOperator,
+  isToNumericOperator,
+  wrapperComparisonIsIdentity,
   isUndefinedCompareOperand,
   nullComparisonFolds,
   undefinedCompareOperandAdmissible,
@@ -8642,8 +8644,7 @@ function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx)
  * `default` for `+` and the loose equalities, `number` for the numeric
  * readers. The box is untagged, since a user method may answer any primitive.
  */
-function freshWrapperToDynamic(op: ts.SyntaxKind, operand: ts.Expression, value: IrValueId, cx: LowerCtx): IrValueId {
-  if (isStrictEqualityOperator(op) || primitiveWrapperConstructorName(operand, cx) === null) return value;
+function freshWrapperToDynamic(op: ts.SyntaxKind, value: IrValueId, cx: LowerCtx): IrValueId {
   if (cx.resolver?.dynamicCarrierIsExternref?.() !== true) {
     demoteToLegacy(
       "operand-coercion-unsupported",
@@ -14727,7 +14728,7 @@ function proveAdditiveOperand(node: ts.Expression, cx: LowerCtx): "number" | "st
  * T-directed specialization to guard (the kind-based dispatch stands).
  */
 function additiveOperandProof(node: ts.Expression, cx: LowerCtx): AdditiveProof | null {
-  if (expressionProducesDynamic(node, cx) || primitiveWrapperConstructorName(node, cx) !== null) return "dynamic";
+  if (addsAsCarrier(node, cx)) return "dynamic";
   const proof = proveAdditiveOperand(node, cx);
   return proof === "no-checker" ? null : proof;
 }
@@ -15196,14 +15197,16 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   if (ts.isConditionalExpression(candidate)) {
     return expressionProducesDynamic(candidate.whenTrue, cx) && expressionProducesDynamic(candidate.whenFalse, cx);
   }
-  // A `+` over the carrier, or over a fresh wrapper's ToPrimitive, adds dynamically.
   return (
     ts.isBinaryExpression(candidate) &&
     candidate.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-    [candidate.left, candidate.right].some(
-      (side) => expressionProducesDynamic(side, cx) || primitiveWrapperConstructorName(side, cx) !== null,
-    )
+    (addsAsCarrier(candidate.left, cx) || addsAsCarrier(candidate.right, cx))
   );
+}
+
+/** A `+` operand that adds as the carrier: a dynamic value, or a fresh wrapper's ToPrimitive. */
+function addsAsCarrier(operand: ts.Expression, cx: LowerCtx): boolean {
+  return expressionProducesDynamic(operand, cx) || primitiveWrapperConstructorName(operand, cx) !== null;
 }
 
 /**
@@ -15658,7 +15661,9 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
  * Lower an eager operator's operands, left then right. A `null` operand of a
  * numeric reader is ToNumber(null) = +0. A fresh primitive wrapper becomes the
  * carrier of its ToPrimitive only after BOTH operands are evaluated, where the
- * operator's own ToPrimitive runs (#4208 S4, #7106).
+ * operator's own ToPrimitive runs (#4208 S4, #7106). An operator that
+ * ToNumerics its operands completes the left one before the right one's
+ * ToPrimitive (§13.15.3), so each carrier is ToNumber'd in turn there.
  */
 function lowerBinaryOperands(
   expr: ts.BinaryExpression,
@@ -15675,7 +15680,21 @@ function lowerBinaryOperands(
   };
   const lhs = lower(expr.left);
   const rhs = lower(expr.right);
-  return [freshWrapperToDynamic(op, expr.left, lhs, cx), freshWrapperToDynamic(op, expr.right, rhs, cx)];
+  const leftWrapper = primitiveWrapperConstructorName(expr.left, cx) !== null;
+  const rightWrapper = primitiveWrapperConstructorName(expr.right, cx) !== null;
+  if (!leftWrapper && !rightWrapper) return [lhs, rhs];
+  if (wrapperComparisonIsIdentity(op, leftWrapper, rightWrapper)) {
+    // invariant (producer-promise): selection refuses an identity comparison of a fresh wrapper.
+    throw new IrInvariantError("selection-preparation-mismatch", "build", "ir/from-ast: fresh-wrapper identity");
+  }
+  const operand = (wrapper: boolean, value: IrValueId): IrValueId => {
+    const primitive = wrapper ? freshWrapperToDynamic(op, value, cx) : value;
+    return isToNumericOperator(op) && cx.builder.typeOf(primitive).kind === "dynamic"
+      ? cx.builder.emitDynToNumber(primitive)
+      : primitive;
+  };
+  const left = operand(leftWrapper, lhs);
+  return [left, operand(rightWrapper, rhs)];
 }
 
 /**
@@ -16450,7 +16469,7 @@ function tryLowerDynamicArithmetic(
   rt: IrType,
   cx: LowerCtx,
 ): IrValueId | null {
-  if (op === ts.SyntaxKind.PlusToken || !isNumberBinaryOperator(op)) return null;
+  if (!isToNumericOperator(op)) return null;
   const lf = relOperandToF64(lhs, lt, cx);
   if (lf === null) return null;
   const rf = relOperandToF64(rhs, rt, cx);
