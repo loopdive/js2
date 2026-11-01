@@ -83,7 +83,7 @@ import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
-import { objectLiteralDataPropertyName } from "./property-key-fold.js";
+import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
 import { emptyObjectLiteralBinding, isOpenCarrierUse, type EmptyObjectLiteralBinding } from "./empty-object-literal.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
@@ -142,6 +142,7 @@ import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
+import { firstConstBindingWrite } from "./const-binding-writes.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
   IrLegacyLocalClassExpressionResolver,
@@ -157,6 +158,16 @@ import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
+import {
+  isPatternDeclaration,
+  isPhase1BindingPattern,
+  type BindingLeaf,
+  type PatternDeclaration,
+} from "./binding-pattern-plan.js";
+import { literalLeafSource, literalPlanExpressions, planLiteralPattern } from "./literal-pattern-plan.js";
+import { declarationBindingWritten } from "./const-binding-writes.js";
+import { programPatchesDestructuringRealm } from "./realm-keys.js";
+import { collectBindingPatternNames } from "./analysis/ast-scope.js";
 import {
   binaryOperandsAdmissible,
   conditionalJoinArmFamily,
@@ -2161,13 +2172,13 @@ function whyNotIrClaimable(
       if (paramResolved === "dynamic") return "param-type-not-resolvable";
 
       const patternNames = new Set<string>();
-      collectPatternNames(p.name, patternNames);
+      collectBindingPatternNames(p.name, patternNames);
       if ([...patternNames].some((name) => directMutationNames.has(name))) {
         shapeNo("param-pattern-mutation", p.name);
         return "body-shape-rejected";
       }
 
-      collectPatternNames(p.name, scope);
+      collectBindingPatternNames(p.name, scope);
       for (const name of patternNames) clearProjectionBinding(name);
       continue;
     }
@@ -2215,7 +2226,7 @@ function whyNotIrClaimable(
   }
 
   const body = fn.body;
-  if (!body) return "body-shape-rejected";
+  if (!body || constBindingWriteRefused(body)) return "body-shape-rejected";
   if (prepareFunctionBodySelection(fn, scope, body)) return "string-builder-candidate";
   // (#2856 C1) Reset the early-return context for this function's walk.
   earlyReturnLoopDepth = 0;
@@ -4285,18 +4296,29 @@ function phase1MutatingStatementVerdict(
   }
   // S0 — local `x++;`, top level only.
   if (!topLevel || !ts.isIdentifier(operand)) return null;
-  if (isUnrepresentableModuleBinding(operand)) {
-    return { ok: false, arm: "module-storage-unrepresentable", node: expr };
-  }
-  if (currentModuleBindingResolver?.(operand) && !currentSubjectIsModuleInit) {
-    return { ok: false, arm: "module-update", node: expr };
-  }
-  if (!scope.has(operand.text)) return { ok: false, arm: "incdec-scope", node: operand };
-  if (projectionBindingMutationIsUnsupported(operand.text, expr)) {
-    return { ok: false, arm: "incdec-projection", node: expr };
-  }
+  const refusal = identifierUpdateRefusal(operand, expr, scope);
+  if (refusal !== undefined) return { ok: false, ...refusal };
   clearProjectionBinding(operand.text);
   return { ok: true };
+}
+
+/** Why `++`/`--` on `id` is not claimable: the one gate of the three update arms. */
+function identifierUpdateRefusal(
+  id: ts.Identifier,
+  expr: ts.Node,
+  scope: ReadonlySet<string>,
+): { readonly arm: string; readonly node: ts.Node } | undefined {
+  if (isUnrepresentableModuleBinding(id)) return { arm: "module-storage-unrepresentable", node: expr };
+  if (currentModuleBindingResolver?.(id) && !currentSubjectIsModuleInit) return { arm: "module-update", node: expr };
+  if (!scope.has(id.text)) return { arm: "incdec-scope", node: id };
+  if (projectionBindingMutationIsUnsupported(id.text, expr)) return { arm: "incdec-projection", node: expr };
+  return undefined;
+}
+
+/** A write to a `const` must throw TypeError, which only legacy raises: refuse the subject whole, not per write arm. */
+function constBindingWriteRefused(root: ts.Node): boolean {
+  const write = firstConstBindingWrite(root);
+  return write !== undefined && !shapeNo("const-write", write);
 }
 
 function stableDynamicStoreReceiverHasAdmittedRoot(receiver: ts.Expression): boolean {
@@ -4764,19 +4786,7 @@ function isPhase1StatementListInScope(
     }
     if (ts.isForStatement(s)) {
       if (!isPhase1ForStatement(s, scope, localClasses)) return shapeNo("nontail-for", s);
-      // Add init's let-declared names into outer scope so subsequent
-      // statements can reference the loop counter (TypeScript would
-      // narrow scope to the for-statement, but our scope tracker is
-      // a flat set; the conservative addition is fine for shape check).
-      // (#2856) Record the leak so a SIBLING for-init may re-declare it.
-      if (s.initializer && ts.isVariableDeclarationList(s.initializer)) {
-        for (const d of s.initializer.declarations) {
-          if (ts.isIdentifier(d.name) && !scope.has(d.name.text)) {
-            scope.add(d.name.text);
-            forInitLeakedNames.add(d.name.text);
-          }
-        }
-      }
+      recordForInitLeaks(s, scope);
       continue;
     }
     // #2952 slice 1 — `do { body } while (cond)` as a non-tail statement.
@@ -5054,7 +5064,7 @@ function isPhase1ForOfInScope(
   const innerScope = new Set(scope);
   const headNames = new Set<string>();
   if (ts.isIdentifier(decl.name)) headNames.add(decl.name.text);
-  else collectPatternNames(decl.name, headNames);
+  else collectBindingPatternNames(decl.name, headNames);
   for (const name of headNames) {
     clearProjectionBinding(name);
     innerScope.add(name);
@@ -5462,7 +5472,12 @@ function isPhase1ForStatementInScope(
       const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
       if (!isLexical && !currentIrSafeVarDeclarationLists.has(stmt.initializer))
         return shapeNo("for-init-var-kind", stmt.initializer);
+      const isConst = !!(flags & ts.NodeFlags.Const);
       for (const d of stmt.initializer.declarations) {
+        if (isPatternDeclaration(d)) {
+          if (!isPhase1DeclarationPattern(d, isConst, innerScope, localClasses)) return false;
+          continue;
+        }
         if (!ts.isIdentifier(d.name)) return shapeNo("for-init-name", d.name);
         if (!d.initializer) return shapeNo("for-init-noinit", d);
         // (#2856) A name a SIBLING for-init leaked into the flat scope set is
@@ -5511,6 +5526,21 @@ function isPhase1ForStatementInScope(
 }
 
 /**
+ * Add a for-init's identifier names to the outer flat scope, so later
+ * statements may read the loop counter, and record the leak so a SIBLING
+ * for-init may re-declare it (#2856). Pattern leaves stay inside the loop.
+ */
+function recordForInitLeaks(stmt: ts.ForStatement, scope: Set<string>): void {
+  if (!stmt.initializer || !ts.isVariableDeclarationList(stmt.initializer)) return;
+  for (const d of stmt.initializer.declarations) {
+    if (ts.isIdentifier(d.name) && !scope.has(d.name.text)) {
+      scope.add(d.name.text);
+      forInitLeakedNames.add(d.name.text);
+    }
+  }
+}
+
+/**
  * Slice 12 (#1280): the `update` clause of a `for` loop. Same as
  * Phase-1 expressions plus postfix `i++` / `i--` on identifiers in
  * scope (which the body-statement layer accepts as an
@@ -5542,10 +5572,7 @@ function isPhase1ForUpdateExpr(
     const op = expr.operator;
     if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
       if (!ts.isIdentifier(expr.operand)) return false;
-      if (isUnrepresentableModuleBinding(expr.operand)) return false;
-      if (currentModuleBindingResolver?.(expr.operand) && !currentSubjectIsModuleInit) return false;
-      if (!scope.has(expr.operand.text)) return false;
-      if (projectionBindingMutationIsUnsupported(expr.operand.text, expr)) return false;
+      if (identifierUpdateRefusal(expr.operand, expr, scope) !== undefined) return false;
       clearProjectionBinding(expr.operand.text);
       return true;
     }
@@ -5992,14 +6019,8 @@ function isPhase1BodyStatement(
       const op = stmt.expression.operator;
       if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
         if (!ts.isIdentifier(stmt.expression.operand)) return false;
-        if (isUnrepresentableModuleBinding(stmt.expression.operand)) {
-          return shapeNo("body-module-storage-unrepresentable", stmt.expression);
-        }
-        if (currentModuleBindingResolver?.(stmt.expression.operand) && !currentSubjectIsModuleInit) {
-          return shapeNo("body-module-update", stmt.expression);
-        }
-        if (!scope.has(stmt.expression.operand.text)) return false;
-        if (projectionBindingMutationIsUnsupported(stmt.expression.operand.text, stmt.expression)) return false;
+        const refusal = identifierUpdateRefusal(stmt.expression.operand, stmt.expression, scope);
+        if (refusal !== undefined) return shapeNo(`body-${refusal.arm}`, refusal.node);
         clearProjectionBinding(stmt.expression.operand.text);
         return true;
       }
@@ -6026,15 +6047,7 @@ function isPhase1BodyStatement(
   }
   if (ts.isForStatement(stmt)) {
     if (!isPhase1ForStatement(stmt, scope, localClasses, labels, breaks)) return false;
-    // (#2856) Record the leak so a SIBLING for-init may re-declare it.
-    if (stmt.initializer && ts.isVariableDeclarationList(stmt.initializer)) {
-      for (const d of stmt.initializer.declarations) {
-        if (ts.isIdentifier(d.name) && !scope.has(d.name.text)) {
-          scope.add(d.name.text);
-          forInitLeakedNames.add(d.name.text);
-        }
-      }
-    }
+    recordForInitLeaks(stmt, scope);
     return true;
   }
   // #2952 slice 1 — nested `do { body } while (cond)` inside a body buffer.
@@ -6844,38 +6857,11 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
   if (stmt.modifiers && stmt.modifiers.length > 0) return shapeNo("vardecl-modifier", stmt);
   const isConst = !!(flags & ts.NodeFlags.Const);
   for (const d of stmt.declarationList.declarations) {
-    // Slice 8a (#1169g): destructuring binding patterns for `const`-bound
-    // declarations only. Object pattern: identifier-only properties with
-    // optional renaming, no defaults, no nesting, no rest. Array pattern:
-    // identifier-only positional bindings, no defaults, no nesting, no
-    // rest. Anything wider (rest, defaults, nested patterns) defers to
-    // slice 8.5+ — the legacy `destructuring.ts` path remains for those.
-    if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
+    // A script-level pattern's leaves are `__mod_` slots the pattern lowering
+    // does not write (S5 of the #7106 destructuring lever).
+    if (isPatternDeclaration(d)) {
       if (currentSubjectIsModuleInit) return shapeNo("vardecl-module-destructuring", d.name);
-      if (!isConst) return shapeNo("vardecl-dstr-let", d.name);
-      if (!d.initializer) return shapeNo("vardecl-dstr-noinit", d.name);
-      if (!isPhase1BindingPattern(d.name, scope)) return shapeNo("vardecl-dstr-pattern", d.name);
-      const patternNames = new Set<string>();
-      collectPatternNames(d.name, patternNames);
-      for (const name of patternNames) clearProjectionBinding(name);
-      const initializerScope = new Set(scope);
-      for (const name of patternNames) initializerScope.add(name);
-      if (expressionTouchesTrackedModuleValue(d.initializer)) {
-        return shapeNo("vardecl-dstr-module-value", d.initializer);
-      }
-      // Initializer must be Phase-1 expressible. The lowerer inspects
-      // its IrType to decide between object.get (object pattern) and
-      // vec.get (array pattern); if the resolved IrType isn't compatible
-      // with the pattern shape, lowering throws and the function falls
-      // back to legacy.
-      if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
-        return shapeNo("vardecl-dstr-init", d.initializer);
-      if (ts.isObjectBindingPattern(d.name)) {
-        recordDestructuredObjectMethodProjections(d.name, d.initializer, scope);
-      }
-      // Pre-add every leaf identifier to scope so subsequent statements
-      // see the new names.
-      collectPatternNames(d.name, scope);
+      if (!isPhase1DeclarationPattern(d, isConst, scope, localClasses)) return false;
       continue;
     }
     if (!ts.isIdentifier(d.name)) return shapeNo("vardecl-nonident-name", d.name);
@@ -7059,72 +7045,66 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
 }
 
 /**
- * Slice 8a (#1169g): shape-check a destructuring binding pattern. Only
- * identifier-leaf, no-default, no-rest, no-nested patterns are accepted
- * — the lowerer expands these into a sequence of single-name `object.get`
- * / `vec.get` reads at compile time. Wider shapes (rest, defaults,
- * nested) defer to slice 8.5; the function falls back to legacy.
- *
- * Object patterns:
- *   - { a, b }                   — shorthand
- *   - { a: x, b: y }             — renaming (computed key rejected)
- *
- * Array patterns:
- *   - [a, b, c]
- *   - [, b, , d]                 — omitted slots (sparse) accepted
+ * A destructuring declaration (`VariableStatement` or `for (;;)` head): its
+ * initializer and leaves are selectable, and every leaf enters `scope`. A
+ * fresh literal source is checked through the plan the builder lowers. Any
+ * other source goes to the typed readers (a `VariableStatement` only), which
+ * bind leaves as SSA locals, so there a `let` pattern is refused. Both readers
+ * are refused:
+ *   - in a program that patches the prototypes they assume are the realm's own;
+ *   - when a leaf is written: a `const` write must throw, which only legacy
+ *     raises, and a leaf binds its source value's representation without the
+ *     storage analysis a reassigned identifier declaration gets.
  */
-function isPhase1BindingPattern(p: ts.BindingPattern, scope: ReadonlySet<string>): boolean {
-  if (ts.isObjectBindingPattern(p)) {
-    if (p.elements.length === 0) return false; // empty pattern — nothing to bind
-    const localNames = new Set<string>();
-    for (const elem of p.elements) {
-      // Rest deferred — slice 8b adds object spread/rest collection.
-      if (elem.dotDotDotToken) return false;
-      // Default value `{ a = 1 }` deferred — needs runtime undefined check.
-      if (elem.initializer) return false;
-      // Property name must be Identifier or StringLiteral (no computed).
-      if (elem.propertyName) {
-        if (!ts.isIdentifier(elem.propertyName) && !ts.isStringLiteral(elem.propertyName)) return false;
-      }
-      // Binding target must be a plain identifier (no nested patterns).
-      if (!ts.isIdentifier(elem.name)) return false;
-      const name = elem.name.text;
-      if (scope.has(name) || localNames.has(name)) return false;
-      localNames.add(name);
-    }
-    return true;
-  }
-  if (ts.isArrayBindingPattern(p)) {
-    if (p.elements.length === 0) return false; // empty `[] = expr` — defer
-    const localNames = new Set<string>();
-    for (const elem of p.elements) {
-      // Omitted (sparse) slots are allowed — `[a, , c]` skips index 1.
-      if (ts.isOmittedExpression(elem)) continue;
-      // Rest deferred — slice 8b adds vec slice / iter drain.
-      if (elem.dotDotDotToken) return false;
-      // Default value deferred.
-      if (elem.initializer) return false;
-      // Binding target must be a plain identifier (no nested patterns).
-      if (!ts.isIdentifier(elem.name)) return false;
-      const name = elem.name.text;
-      if (scope.has(name) || localNames.has(name)) return false;
-      localNames.add(name);
-    }
-    return true;
-  }
-  return false;
+function isPhase1DeclarationPattern(
+  d: PatternDeclaration,
+  isConst: boolean,
+  scope: Set<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const pattern = d.name;
+  if (!d.initializer) return shapeNo("vardecl-dstr-noinit", pattern);
+  if (programPatchesDestructuringRealm(d.getSourceFile())) return shapeNo("vardecl-dstr-realm-patched", pattern);
+  if (declarationBindingWritten(d)) return shapeNo("vardecl-dstr-leaf-written", pattern);
+  const literalPlan = planLiteralPattern(pattern, d.initializer);
+  if (literalPlan) return isPhase1LiteralPattern(pattern, literalPlanExpressions(literalPlan), scope, localClasses);
+  // A `for (;;)` head is admitted over a fresh literal only.
+  if (ts.isForStatement(d.parent.parent)) return shapeNo("for-init-dstr-source", d.initializer);
+  if (!isConst) return shapeNo("vardecl-dstr-let", pattern);
+  if (!isPhase1BindingPattern(pattern, scope)) return shapeNo("vardecl-dstr-pattern", pattern);
+  const patternNames = new Set<string>();
+  collectBindingPatternNames(pattern, patternNames);
+  for (const name of patternNames) clearProjectionBinding(name);
+  const initializerScope = new Set(scope);
+  for (const name of patternNames) initializerScope.add(name);
+  if (expressionTouchesTrackedModuleValue(d.initializer)) return shapeNo("vardecl-dstr-module-value", d.initializer);
+  // The builder reads the initializer's IrType: object.get for an object
+  // pattern, vec.get for an array pattern.
+  if (!isPhase1Expr(d.initializer, initializerScope, localClasses)) return shapeNo("vardecl-dstr-init", d.initializer);
+  if (ts.isObjectBindingPattern(pattern)) recordDestructuredObjectMethodProjections(pattern, d.initializer, scope);
+  collectBindingPatternNames(pattern, scope);
+  return true;
 }
 
-/**
- * Slice 8a (#1169g): collect every identifier name introduced by a binding
- * pattern (the leaves) into the given scope. Mirrors the Phase-1 var-decl
- * scope-tracking machinery.
- */
-function collectPatternNames(p: ts.BindingPattern, scope: Set<string>): void {
-  for (const elem of p.elements) {
-    if (ts.isOmittedExpression(elem)) continue;
-    if (ts.isIdentifier(elem.name)) scope.add(elem.name.text);
+/** A pattern over a fresh literal: no leaf shadows, and every expression the plan lowers is selectable. */
+function isPhase1LiteralPattern(
+  pattern: ts.BindingPattern,
+  expressions: readonly ts.Expression[],
+  scope: Set<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const leaves = new Set<string>();
+  collectBindingPatternNames(pattern, leaves);
+  if ([...leaves].some((name) => scope.has(name))) return shapeNo("vardecl-dstr-shadow", pattern);
+  for (const expression of expressions) {
+    if (expressionTouchesTrackedModuleValue(expression)) return shapeNo("vardecl-dstr-module-value", expression);
+    if (!isPhase1Expr(expression, scope, localClasses)) return shapeNo("vardecl-dstr-init", expression);
   }
+  for (const name of leaves) {
+    clearProjectionBinding(name);
+    scope.add(name);
+  }
+  return true;
 }
 
 /**
@@ -7200,7 +7180,6 @@ function closureLiteralDefaultParamStart(
   return plannedClosureDefaultStart(parameters, allowNumericDefaultSuffix, outerScope, {
     unwrapProjectionExpression,
     expressionIsProvenNumber,
-    collectPatternNames,
   });
 }
 
@@ -7259,8 +7238,6 @@ function isPhase1ClosureLiteral(
     annotationToResolvedKind,
     closureLiteralDefaultParamStart,
     isPhase1ClosureParameterTypeNode,
-    isPhase1BindingPattern,
-    collectPatternNames,
     enterProjectionBindingScope,
     recordCallableProjection,
     isExpressionBuildable: isPhase1Expr,
@@ -8956,6 +8933,15 @@ function carrierAdditionConsumed(expr: ts.BinaryExpression): boolean {
   return ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken;
 }
 
+/** The leaf of a destructuring declaration that takes the literal plan, read through `expression`. */
+function literalPatternLeaf(expression: ts.Expression): ts.BindingElement | undefined {
+  if (!ts.isIdentifier(expression)) return undefined;
+  const declaration = currentModuleBindingResolver?.localValueDeclaration(expression);
+  return declaration && ts.isBindingElement(declaration) && literalLeafSource(declaration) !== undefined
+    ? declaration
+    : undefined;
+}
+
 function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpression): boolean {
   if (
     call.questionDotToken !== undefined ||
@@ -10051,7 +10037,7 @@ type DirectDestructuredObjectMethodReceiver = {
 };
 
 type DirectDestructuredObjectMethodProjection = {
-  readonly element: ts.BindingElement & { readonly name: ts.Identifier };
+  readonly element: BindingLeaf;
   readonly method: ts.MethodDeclaration;
 };
 
@@ -10621,7 +10607,7 @@ function directDestructuredObjectMethodProjections(
         phase1PropertyName(property.name) === propertyName,
     );
     if (!method) return null;
-    projections.push({ element: element as ts.BindingElement & { readonly name: ts.Identifier }, method });
+    projections.push({ element: element as BindingLeaf, method });
   }
   return projections.length > 0 ? projections : null;
 }
@@ -11198,6 +11184,12 @@ function isPhase1StaticPredicateCall(
  * initializer when the local is never rewritten).
  */
 function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): OperandFamily {
+  // A literal-pattern leaf binds its source value; `undefined` is the carrier's.
+  const leaf = literalPatternLeaf(expression);
+  if (leaf) {
+    const source = literalLeafSource(leaf)!;
+    return source === "undefined" ? "dynamic" : source === "length" ? "number" : provenIrFamily(source, scope);
+  }
   // An unannotated local: its family is its initializer's, which the caller traces.
   if (ts.isIdentifier(expression) && unannotatedLocal(expression) !== undefined) return "unknown";
   if (moduleBinding(expression) !== undefined) {
@@ -12769,24 +12761,6 @@ function isAmbientObjectDefineProperty(call: ts.CallExpression): boolean {
 }
 
 /**
- * Resolve a property name to a string. Identifier and StringLiteral keys
- * produce their text; NumericLiteral keys produce `.text`, already canonical.
- * ComputedPropertyName always returns null.
- *
- * (#4513) The object-literal DATA-PROPERTY site no longer calls this — it uses
- * `objectLiteralDataPropertyName`, which adds the computed-key fold. This
- * function keeps rejecting computed names because its remaining callers are
- * class-member / OrdinaryToPrimitive / prepared-scope method naming, where a
- * computed name means something different (see `phase1MemberName`).
- */
-function phase1PropertyName(name: ts.PropertyName): string | null {
-  if (ts.isIdentifier(name)) return name.text;
-  if (ts.isStringLiteral(name)) return name.text;
-  if (ts.isNumericLiteral(name)) return name.text; // matches JS — `{ 0: x }` → "0"
-  return null;
-}
-
-/**
  * #1370 Phase A: extract a class-member's name as a string suitable for the
  * `${className}_${methodName}` synthetic key the legacy `class-bodies.ts`
  * registers in `ctx.funcMap`. Mirrors `phase1PropertyName`'s acceptance set
@@ -13008,7 +12982,7 @@ export function assessModuleInit(
   currentDynamicParamNames = new Set<string>(); // (#7106 S3a) no parameters at module init
   const maskedRejects: ModuleInitReject[] | undefined = MODULE_INIT_ALL_REJECTS_ON ? [] : undefined;
   for (const stmt of population) {
-    if (!isPhase1BodyStatement(stmt, scope, localClasses)) {
+    if (constBindingWriteRefused(stmt) || !isPhase1BodyStatement(stmt, scope, localClasses)) {
       const reason = typedShapeRejectReason ?? "body-shape-rejected";
       if (maskedRejects) {
         recordMaskedModuleInitReject(maskedRejects, reason, stmt, scope);

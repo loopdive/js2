@@ -12,8 +12,8 @@
  *     later `o.k` can read; an IR `object.new` could serve neither.
  */
 
-import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
 import { ts } from "../ts-api.js";
+import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 
 export interface EmptyObjectLiteralBinding {
   readonly literal: ts.ObjectLiteralExpression;
@@ -108,13 +108,6 @@ export function isOpenCarrierUse(
     isProvenReadConsumer(parent)
   );
 }
-
-/** The string keys `Object.prototype` owns (§20.1.3, Annex B.2.2 included). */
-const OBJECT_PROTOTYPE_KEYS: ReadonlySet<string> = new Set(
-  NATIVE_REALM_CATALOG.intrinsics
-    .find((intrinsic) => intrinsic.id === "%Object.prototype%")!
-    .properties.flatMap((property) => (property.key.kind === "string" ? [property.key.value] : [])),
-);
 
 /**
  * The one consumer a U2 read `o.k` is proven for — consumed DIRECTLY, never
