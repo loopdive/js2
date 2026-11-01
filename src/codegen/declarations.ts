@@ -196,6 +196,7 @@ import {
 } from "./declarations/module-init-closure-prelift.js";
 import { reserveModuleInitChunkHelperName } from "./module-init-chunks.js";
 import {
+  MODULE_INIT_CHUNK_FUNCTION_PREFIX,
   moduleInitChunksRequired,
   planModuleInitChunkDispatch,
   planModuleInitChunks,
@@ -6150,7 +6151,7 @@ export function compileDeclarations(
       // safe even if a future dispatch-body extension emits dependencies.
       const funcIdx = mintDefinedFunc(ctx);
       pushDefinedFunc(ctx, funcIdx, {
-        name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_dispatch_${level}_${ordinal}`),
+        name: reserveModuleInitChunkHelperName(ctx, `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}dispatch_${level}_${ordinal}`),
         typeIdx: helperTypeIdx,
         locals: [],
         body,
@@ -6229,7 +6230,7 @@ export function compileDeclarations(
           chunkTypeIdx ??= addFuncType(ctx, [], [], "__module_init_chunk_type");
           const funcIdx = mintDefinedFunc(ctx);
           pushDefinedFunc(ctx, funcIdx, {
-            name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_${chunkOrdinal++}`),
+            name: reserveModuleInitChunkHelperName(ctx, `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}${chunkOrdinal++}`),
             typeIdx: chunkTypeIdx,
             locals: chunkFctx.locals,
             body: chunkFctx.body,

@@ -148,6 +148,7 @@ import type {
 } from "../shared/contracts/ir-unit-inventory.js";
 import { irFnctorShapeEquals } from "./fnctor-abi.js";
 import { emitNumberRemainder } from "./remainder-fast-path.js";
+import { lowerModuleInitStatements } from "./module-init-chunk-lowering.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
 import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
 import {
@@ -1397,6 +1398,8 @@ export interface LoweredFunctionResult {
   readonly liftedUnitProvenance: readonly IrDerivedUnitProvenance[];
   /** Plans actually consumed by this exact source artifact. */
   readonly countedStringAppendPlans?: readonly IrCountedStringAppendLoweringPlan[];
+  /** `<module-init>` only: the chunk and dispatcher artifacts in `lifted` (`module-init-chunk-lowering.ts`). */
+  readonly moduleInitChunks?: readonly IrUnitId[];
 }
 
 function isDirectSourceVarStatement(statement: ts.Statement): boolean {
@@ -1987,14 +1990,11 @@ export function lowerFunctionAstToIr(
         `ir/from-ast: module-init unit contains a nested var declaration (${name})`,
       );
     }
-    for (const s of stmts) {
-      lowerStmt(s, cx);
-      // A top-level break/continue can't appear (no enclosing loop — the
-      // selector rejects it), so no dead-code guard is needed.
-    }
+    // A top-level break/continue can't appear (the selector rejects it), so no dead-code guard is needed.
+    const moduleInitChunks = lowerModuleInitStatements(stmts, cx, lowerStmt);
     terminateImplicitSourceReturn(cx, []);
     checkLogicalVectorConsumption(cx);
-    return { main: builder.finish(), lifted, liftedUnitProvenance, ...sourceMapResult(cx) };
+    return { main: builder.finish(), lifted, liftedUnitProvenance, moduleInitChunks, ...sourceMapResult(cx) };
   }
 
   if (isCtor) {

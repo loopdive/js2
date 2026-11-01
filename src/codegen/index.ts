@@ -153,7 +153,6 @@ import {
 } from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import { literalComputedInstanceMethodKey } from "../ir/class-method-names.js";
-import { moduleInitChunksRequired } from "../shared/module-init-chunk-plan.js";
 import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import {
   buildIrModuleInitPlan,
@@ -2598,34 +2597,6 @@ export interface IrOverlayPlan {
   readonly preparedNumberCall: (call: ts.CallExpression) => boolean;
 }
 
-/**
- * IR module-init lowering emits one physical Wasm body. Keep a large source
- * population on the direct route, whose complete-entry dispatcher is the only
- * representation with a bounded body. This runs while both IR-first and the
- * late overlay still share the same mutable safe-selection object.
- */
-function withdrawChunkedModuleInitFromIrSelection(
-  sourceFile: ts.SourceFile,
-  safeSelection: { moduleInit?: import("../ir/select.js").IrModuleInitAssessment },
-  recordPreparationFailure: (name: string, failure: IrPreparationFailure) => void,
-): void {
-  const moduleInit = safeSelection.moduleInit;
-  if (
-    moduleInit?.reason !== null ||
-    moduleInit.stmtCount === 0 ||
-    !moduleInitChunksRequired(collectModuleInitPopulation(sourceFile).map((node) => ({ node })))
-  ) {
-    return;
-  }
-  recordPreparationFailure(MODULE_INIT_UNIT_NAME, {
-    kind: "unsupported",
-    code: "late-preparation-unsupported",
-    stage: "resolve",
-    detail: "module initialization exceeds the complete-entry Wasm body budget and uses direct chunked emission",
-  });
-  safeSelection.moduleInit = undefined;
-}
-
 function recordWholeSourceFailure(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -3510,7 +3481,6 @@ function planIrOverlay(
     // `calleeTypes` from safeSelection.funcs, so this unit returns to legacy.
     moduleInit: selection.moduleInit,
   };
-  withdrawChunkedModuleInitFromIrSelection(ast.sourceFile, safeSelection, recordPreparationFailure);
   // (#2928) The linked runtime-eval carrier is currently owned by the legacy
   // WasmGC closure/object runtime. Its recursive cross-module types may be
   // registered while module-init writes are compiled, after legacy function

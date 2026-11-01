@@ -3840,6 +3840,7 @@ export function compileIrPathFunctions(
           ]
         : [];
   const moduleInitSourceByUnitId = new Map<IrUnitId, ts.SourceFile>(); // (#7106) prologue source
+  const moduleInitChunkUnitIds = new Set<IrUnitId>(); // (#7106) chunk and dispatcher artifacts
   const moduleInitPrologueUnavailable = !!(options?.preparedModuleInitBatch || options?.deferPreparedPublication);
   for (const moduleInitInput of moduleInitBuildSources) {
     const moduleInitSourceFile = moduleInitInput.sourceFile;
@@ -3954,6 +3955,7 @@ export function compileIrPathFunctions(
         );
         if (!anyLiftedFailed) {
           moduleInitSourceByUnitId.set(result.main.unitId, moduleInitSourceFile);
+          for (const unitId of result.moduleInitChunks ?? []) moduleInitChunkUnitIds.add(unitId);
           built.push({
             artifactUnitId: result.main.unitId,
             terminalOwnerUnitId: moduleInitSourceOwner.unitId,
@@ -5028,6 +5030,11 @@ export function compileIrPathFunctions(
       funcIdx,
       terminalOwnerUnitId: entry.terminalOwnerUnitId,
     });
+  }
+  // (#7106) The late user-function inliner must not fold an IR chunk back into its single caller.
+  for (const unitId of moduleInitChunkUnitIds) {
+    const chunk = ctx.irUnitFuncMap.get(unitId);
+    if (chunk) ctx.moduleInitChunkHelperNames.add(chunk.name);
   }
 
   // -------------------------------------------------------------------------

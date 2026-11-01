@@ -25,6 +25,12 @@ export const MODULE_INIT_CHUNK_MAX_ENTRIES = 16;
 /** Conservative source-level proxy for generated instruction volume. */
 export const MODULE_INIT_CHUNK_MAX_AST_NODES = 1024;
 
+/**
+ * Wasm name prefix of every chunk and intermediate dispatcher, legacy and IR
+ * alike.  `src/optimize.ts` keeps Binaryen's full inliner off this prefix.
+ */
+export const MODULE_INIT_CHUNK_FUNCTION_PREFIX = "__module_init_chunk_";
+
 /** Minimal shape shared by statement and declaration-static init entries. */
 export interface ModuleInitChunkEntry {
   readonly node: ts.Node;

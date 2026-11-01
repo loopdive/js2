@@ -10,9 +10,6 @@
 import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
-/** Private function-name prefix reserved for module-init chunk implementation. */
-export const MODULE_INIT_CHUNK_FUNCTION_PREFIX = "__module_init_chunk_";
-
 /** Reserve a WAT-visible private helper name without claiming user spellings. */
 export function reserveModuleInitChunkHelperName(ctx: CodegenContext, preferred: string): string {
   let name = preferred;

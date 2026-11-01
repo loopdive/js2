@@ -20,6 +20,7 @@ import { compile, compileMulti } from "../src/index.js";
 import type { Instr, WasmFunction, WasmModule } from "../src/ir/types.js";
 import { instantiateWasm } from "../src/runtime-instantiate.js";
 import { buildImports } from "../src/runtime.js";
+import { watCallTargets, watFunction, watFunctionNames, watInstructionCount } from "./helpers/wat-functions.js";
 
 const FILE_NAME = "issue-4376-module-init-chunking.ts";
 const EXPECTED_SEMANTIC_RESULT = 1_478_302;
@@ -120,63 +121,6 @@ function leafModuleInitHelpers(module: WasmModule): WasmFunction[] {
   return module.functions.filter((func) => /^__module_init_chunk_\d+$/.test(func.name));
 }
 
-/** Return one complete WAT function form without mistaking a helper prefix for the dispatcher. */
-function watFunction(wat: string, name: string): string {
-  const start = wat.indexOf(`(func $${name} `);
-  expect(start).toBeGreaterThanOrEqual(0);
-  let depth = 0;
-  let quote = false;
-  let escaped = false;
-  for (let index = start; index < wat.length; index++) {
-    const char = wat[index]!;
-    if (quote) {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') quote = false;
-      continue;
-    }
-    if (char === '"') {
-      quote = true;
-      continue;
-    }
-    if (char === "(") depth++;
-    else if (char === ")" && --depth === 0) return wat.slice(start, index + 1);
-  }
-  throw new Error(`unterminated WAT function ${name}`);
-}
-
-function watFunctionNames(wat: string): readonly string[] {
-  const imports = [...wat.matchAll(/^\s*\(import .+ \(func(?: \$([^\s(]+))?/gm)].map(
-    (match) => match[1] ?? "<anonymous-import>",
-  );
-  const definitions = [...wat.matchAll(/^\s*\(func \$([^\s(]+)/gm)].map((match) => match[1]!);
-  return [...imports, ...definitions];
-}
-
-/** Resolve WAT's numeric direct-call operands back to their final function names. */
-function watCallTargets(wat: string, body: string): readonly string[] {
-  const names = watFunctionNames(wat);
-  return [...body.matchAll(/\b(?:return_)?call (\d+)/g)].map((match) => names[Number(match[1])] ?? "<missing>");
-}
-
-/** Count final WAT instructions recursively, excluding WAT-only scope forms. */
-function watInstructionCount(body: string): number {
-  return body
-    .split("\n")
-    .slice(1, -1)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("(local "))
-    .filter(
-      (line) =>
-        line !== ")" &&
-        line !== "(then" &&
-        line !== "(else" &&
-        line !== "(do" &&
-        line !== "(catch_all" &&
-        !line.startsWith("(catch "),
-    ).length;
-}
-
 function watModuleInitLeafNames(wat: string): readonly string[] {
   return watFunctionNames(wat).filter((name) => /^__module_init_chunk_\d+$/.test(name));
 }
@@ -228,9 +172,14 @@ async function expectLiveChunkedPublicDispatcher(
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect([...result.wat.matchAll(/\(func \$__module_init\b/g)]).toHaveLength(1);
   const dispatcher = watFunction(result.wat, "__module_init");
-  // Helpers alone could be dead after a late IR replacement. The exported
-  // dispatcher itself must retain the call edge to the bounded body.
-  expect(watCallTargets(result.wat, dispatcher)).toContain("__module_init_chunk_0");
+  // (#7106) The IR lowers the initializer one planned chunk per function.
+  // Helpers alone could be dead after a late IR replacement, so the exported
+  // dispatcher itself must call every bounded IR chunk.
+  const chunks = watCallTargets(result.wat, dispatcher).filter((name) => name.startsWith("__module_init_chunk_ir_"));
+  expect(chunks).toEqual(["__module_init_chunk_ir_0", "__module_init_chunk_ir_1", "__module_init_chunk_ir_2"]);
+  expect(Math.max(...chunks.map((name) => watInstructionCount(watFunction(result.wat, name))))).toBeLessThanOrEqual(
+    MODULE_INIT_CHUNK_MAX_ENTRIES * 8,
+  );
 
   const instance = await instantiateHost(result);
   const exports = instance.exports as { __module_init: () => void; probe: () => number };
@@ -638,18 +587,15 @@ describe("#4376 — bounded module-init helpers", () => {
     }
   });
 
-  it("keeps the default public IR route on the direct chunked module-init path", async () => {
-    // `compile()` defaults experimentalIR to on. This exact lexical/scalar
-    // population is otherwise eligible for the prepared one-body IR owner;
-    // passing no experimentalIR option proves the admission fallback prevents
-    // that route from replacing the bounded direct dispatcher.
+  it("lowers a chunked initializer on the default public IR route behind the live dispatcher", async () => {
+    // `compile()` defaults experimentalIR to on, and this lexical/scalar
+    // population is eligible for the prepared IR owner.
     await expectLiveChunkedPublicDispatcher();
   });
 
-  it("keeps the late experimental-IR overlay from replacing the live dispatcher", async () => {
-    // `disableIrFirst` deliberately leaves experimentalIR enabled but moves
-    // integration after direct body emission. It must obey the same central
-    // selection withdrawal as the default route.
+  it("lowers a chunked initializer on the late experimental-IR overlay behind the live dispatcher", async () => {
+    // `disableIrFirst` leaves experimentalIR enabled but moves integration
+    // after direct body emission; the overlay must keep the same chunk plan.
     await expectLiveChunkedPublicDispatcher({ experimentalIR: true, disableIrFirst: true });
   });
 
