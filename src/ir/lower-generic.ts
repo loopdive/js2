@@ -3152,25 +3152,30 @@ export function lowerIrFunctionBody<S, Slot>(
           }
         };
 
-        // #2952 slice 2 — one CtrlFrame per Wasm label. The try frame carries
-        // the ACTIVE finallyBody only while the try-body buffer is emitted: a
-        // br.label crossing out of the try body inlines the finally before its
-        // br. Elsewhere (the finally's own copies; the catch path, owned by the
-        // inner-try frame below) it is masked: a finally never re-runs itself.
-        // (#6651 U4) §14.15.3: a throw BY the finally completes the try; its
-        // handlers must not see it (`finally { i++; throw }` ran twice). Each
-        // finally copy raises `finallyRan` first and each handler skips its work
-        // while it is set; the guard `if` is a frame too (#7106). Async bodies
-        // are out of scope (see `statements/finally-ran-guard.ts`).
+        // #2952 slice 2 — one CtrlFrame for the try op (it is exactly one
+        // Wasm label). The frame carries the ACTIVE finallyBody only while
+        // the try-body buffer is emitted: a br.label crossing out of the try
+        // body must inline the finally before its br. Everywhere else (the
+        // finally's own inline emissions, the catch path) it is masked —
+        // the catch path's finally obligations are owned by the dedicated
+        // inner-try frame below, and a finally must never re-run itself.
+        // (#6651 U4) §14.15.3: a throw BY the finally completes the try; this
+        // statement's handlers must not see it (`finally { i++; throw }` ran
+        // twice). Every inlined finally copy raises `finallyRan` first and
+        // every handler skips its own work while it is set. Async bodies are
+        // out of scope (see `statements/finally-ran-guard.ts`).
         const finallyRanSlot =
           instr.finallyBody && func.funcKind !== "async"
             ? allocScratchLocal("$finally_ran", { kind: "i32" })
             : undefined;
         const emitGuardedFinally = (target: Instr[]): void => {
-          const runFinally: Instr[] = finallyRanSlot === undefined ? target : [];
-          if (finallyRanSlot !== undefined) ctrlStack.push({ kind: "plain" });
+          if (finallyRanSlot === undefined) {
+            emitBodyBuffer(instr.finallyBody!, target);
+            return;
+          }
+          const runFinally: Instr[] = [];
+          ctrlStack.push({ kind: "plain" }); // (#7106) the guard `if` below is one more Wasm label
           emitBodyBuffer(instr.finallyBody!, runFinally);
-          if (finallyRanSlot === undefined) return;
           ctrlStack.pop();
           emitter.emitLocalGet(finallyRanSlot, target as unknown as S);
           emitter.emitIf({ kind: "empty" }, [] as unknown as S, runFinally as unknown as S, target as unknown as S);

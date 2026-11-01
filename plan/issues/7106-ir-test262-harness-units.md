@@ -68,6 +68,7 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerPropertyAccess
   - src/ir/select.ts::scanExprInner
   - src/ir/from-ast.ts::lowerFunctionAstToIr
+  # 2026-11-01 (finally abrupt exit, #7030 review): the guarded finally copy returns early when unguarded, then pushes, emits and pops its own CtrlFrame (+4)
   - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/lower-generic.ts::emitInstrTree
   - src/ir/integration.ts::makeDynamicLowering
@@ -105,6 +106,7 @@ loc-budget-allow:
   # 2026-10-31 (boolean statics, round 4): the static-predicate arm, its host, the shared ambient-receiver helper and the name-parameterised unshadowed-global test (+25); the lowering lives in src/ir/static-predicates/
   - src/ir/from-ast.ts
   - src/ir/integration.ts
+  # 2026-11-01 (finally abrupt exit, #7030 review): the guarded finally copy returns early when unguarded, then pushes, emits and pops its own CtrlFrame (+4)
   - src/ir/lower-generic.ts
   - src/ir/runtime/verify.ts
   # 2026-10-31 (boolean statics, round 5): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+89); the rule lives in src/ir/static-predicates/
@@ -3369,7 +3371,8 @@ or labeled exit left the wrong frame. The normal-exit copy has no guard and was
 right.
 
 **Fix.** Push a plain frame while the guarded copy is emitted, the pattern
-every other structured arm uses. Net 0 lines, no budget grant. A `return`
+every other structured arm uses (+4 lines in `lowerIrFunctionBody`, under the
+issue's `lower-generic.ts` grant). A `return`
 inside or across a `finally` does not share the bug: the selector refuses it
 (`earlyReturnBarrierDepth`), and legacy answers like node.
 
