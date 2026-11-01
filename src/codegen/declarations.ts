@@ -194,12 +194,12 @@ import {
   planModuleClosurePreLift,
   PRELIFT_DISABLE_SEAM,
 } from "./declarations/module-init-closure-prelift.js";
+import { reserveModuleInitChunkHelperName } from "./module-init-chunks.js";
 import {
-  MODULE_INIT_CHUNK_MAX_ENTRIES,
   moduleInitChunksRequired,
+  planModuleInitChunkDispatch,
   planModuleInitChunks,
-  reserveModuleInitChunkHelperName,
-} from "./module-init-chunks.js";
+} from "../shared/module-init-chunk-plan.js";
 import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js"; // (#7106) GDI prologue
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
@@ -6144,31 +6144,21 @@ export function compileDeclarations(
     initialHandles: readonly FuncHandle[],
     helperTypeIdx: number,
   ): void {
-    let handles = [...initialHandles];
-    let level = 0;
-    let ordinal = 0;
-    while (handles.length > MODULE_INIT_CHUNK_MAX_ENTRIES) {
-      const nextLevel: FuncHandle[] = [];
-      for (let start = 0; start < handles.length; start += MODULE_INIT_CHUNK_MAX_ENTRIES) {
-        const body: Instr[] = handles
-          .slice(start, start + MODULE_INIT_CHUNK_MAX_ENTRIES)
-          .map((funcIdx) => ({ op: "call", funcIdx }));
-        // Build the full body before minting the handle. This keeps the helper
-        // safe even if a future dispatch-body extension emits dependencies.
-        const funcIdx = mintDefinedFunc(ctx);
-        pushDefinedFunc(ctx, funcIdx, {
-          name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_dispatch_${level}_${ordinal++}`),
-          typeIdx: helperTypeIdx,
-          locals: [],
-          body,
-          exported: false,
-        });
-        nextLevel.push(funcIdx);
-      }
-      handles = nextLevel;
-      level++;
-    }
-    for (const funcIdx of handles) initFctx.body.push({ op: "call", funcIdx });
+    const roots = planModuleInitChunkDispatch(initialHandles, (members, level, ordinal) => {
+      const body: Instr[] = members.map((funcIdx) => ({ op: "call", funcIdx }));
+      // Build the full body before minting the handle. This keeps the helper
+      // safe even if a future dispatch-body extension emits dependencies.
+      const funcIdx = mintDefinedFunc(ctx);
+      pushDefinedFunc(ctx, funcIdx, {
+        name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_dispatch_${level}_${ordinal}`),
+        typeIdx: helperTypeIdx,
+        locals: [],
+        body,
+        exported: false,
+      });
+      return funcIdx;
+    });
+    for (const funcIdx of roots) initFctx.body.push({ op: "call", funcIdx });
   }
 
   function compileModuleInitBody(

@@ -15,7 +15,7 @@ import {
   MODULE_INIT_CHUNK_MAX_ENTRIES,
   moduleInitChunksRequired,
   planModuleInitChunks,
-} from "../src/codegen/module-init-chunks.js";
+} from "../src/shared/module-init-chunk-plan.js";
 import { compile, compileMulti } from "../src/index.js";
 import type { Instr, WasmFunction, WasmModule } from "../src/ir/types.js";
 import { instantiateWasm } from "../src/runtime-instantiate.js";

@@ -153,7 +153,7 @@ import {
 } from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import { literalComputedInstanceMethodKey } from "../ir/class-method-names.js";
-import { moduleInitChunksRequired } from "./module-init-chunks.js";
+import { moduleInitChunksRequired } from "../shared/module-init-chunk-plan.js";
 import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import {
   buildIrModuleInitPlan,
