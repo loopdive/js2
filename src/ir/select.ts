@@ -157,6 +157,7 @@ import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
+import { isWriteToConstDeclaration } from "./const-binding-writes.js";
 import {
   conditionalJoinArmFamily,
   conditionalJoinFamily,
@@ -4279,18 +4280,25 @@ function phase1MutatingStatementVerdict(
   }
   // S0 — local `x++;`, top level only.
   if (!topLevel || !ts.isIdentifier(operand)) return null;
-  if (isUnrepresentableModuleBinding(operand)) {
-    return { ok: false, arm: "module-storage-unrepresentable", node: expr };
-  }
-  if (currentModuleBindingResolver?.(operand) && !currentSubjectIsModuleInit) {
-    return { ok: false, arm: "module-update", node: expr };
-  }
-  if (!scope.has(operand.text)) return { ok: false, arm: "incdec-scope", node: operand };
-  if (projectionBindingMutationIsUnsupported(operand.text, expr)) {
-    return { ok: false, arm: "incdec-projection", node: expr };
-  }
+  const refusal = identifierUpdateRefusal(operand, expr, scope);
+  if (refusal !== undefined) return { ok: false, arm: refusal, node: refusal === "incdec-scope" ? operand : expr };
   clearProjectionBinding(operand.text);
   return { ok: true };
+}
+
+/** Why `++`/`--` on `operand` is not claimable, for all three update arms. A `const` target must throw
+ * TypeError, which only legacy raises: the IR would write the module global or demote after the claim. */
+function identifierUpdateRefusal(
+  operand: ts.Identifier,
+  expr: ts.Node,
+  scope: ReadonlySet<string>,
+): string | undefined {
+  if (isUnrepresentableModuleBinding(operand)) return "module-storage-unrepresentable";
+  if (currentModuleBindingResolver?.(operand) && !currentSubjectIsModuleInit) return "module-update";
+  if (isWriteToConstDeclaration(operand)) return "const-update";
+  if (!scope.has(operand.text)) return "incdec-scope";
+  if (projectionBindingMutationIsUnsupported(operand.text, expr)) return "incdec-projection";
+  return undefined;
 }
 
 function stableDynamicStoreReceiverHasAdmittedRoot(receiver: ts.Expression): boolean {
@@ -5536,10 +5544,7 @@ function isPhase1ForUpdateExpr(
     const op = expr.operator;
     if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
       if (!ts.isIdentifier(expr.operand)) return false;
-      if (isUnrepresentableModuleBinding(expr.operand)) return false;
-      if (currentModuleBindingResolver?.(expr.operand) && !currentSubjectIsModuleInit) return false;
-      if (!scope.has(expr.operand.text)) return false;
-      if (projectionBindingMutationIsUnsupported(expr.operand.text, expr)) return false;
+      if (identifierUpdateRefusal(expr.operand, expr, scope) !== undefined) return false;
       clearProjectionBinding(expr.operand.text);
       return true;
     }
@@ -5986,14 +5991,8 @@ function isPhase1BodyStatement(
       const op = stmt.expression.operator;
       if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
         if (!ts.isIdentifier(stmt.expression.operand)) return false;
-        if (isUnrepresentableModuleBinding(stmt.expression.operand)) {
-          return shapeNo("body-module-storage-unrepresentable", stmt.expression);
-        }
-        if (currentModuleBindingResolver?.(stmt.expression.operand) && !currentSubjectIsModuleInit) {
-          return shapeNo("body-module-update", stmt.expression);
-        }
-        if (!scope.has(stmt.expression.operand.text)) return false;
-        if (projectionBindingMutationIsUnsupported(stmt.expression.operand.text, stmt.expression)) return false;
+        const refusal = identifierUpdateRefusal(stmt.expression.operand, stmt.expression, scope);
+        if (refusal !== undefined) return shapeNo(`body-${refusal}`, stmt.expression);
         clearProjectionBinding(stmt.expression.operand.text);
         return true;
       }
