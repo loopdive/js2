@@ -72,6 +72,14 @@ const CLAIMED: Record<string, string> = {
   // Each reassigned `let` leaf is a slot.
   reassignedLet:
     "var count = 0;\nfor (let [i, j] = [0, 6]; i < j; i++, j--) { count += 1; }\nassert.sameValue(count, 3);",
+  // Destructuring `null` or `undefined` throws a TypeError, after the source is evaluated.
+  typeErrorNull: "assert.throws(TypeError, function () {\n  for (const {} = null; ; ) { return; }\n});",
+  typeErrorNestedUndefined:
+    "assert.throws(TypeError, function () {\n  for (let [[x]] = [undefined]; ; ) { return; }\n});",
+  typeErrorNestedNull:
+    "assert.throws(TypeError, function () {\n  for (const { w: [x, y] = [4, 5] } = { w: null }; ; ) { return; }\n});",
+  typeErrorDefaultUndefined:
+    "assert.throws(TypeError, function () {\n  for (const { w: { x } = undefined } = {}; ; ) { return; }\n});",
   functionLocal: "function f() { const [a, b = 2] = [1]; return a + b; }\nassert.sameValue(f(), 3);",
 };
 

@@ -17,6 +17,7 @@
 
 import { forEachChild, ts } from "../ts-api.js";
 import { i32IdentityBitwiseOperand, isWrapI32Lowerable } from "./analysis/i32-slots.js";
+import { isDestructuredNull } from "./binding-pattern-plan.js";
 import type { IrFunctionMemberClosurePlan } from "./function-member-closure-plan.js";
 import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
 import {
@@ -598,7 +599,7 @@ export function plannedClosureOperandRefusal(
     else if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       refusal = memberReadRefusal(node);
     } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) refusal = updateRefusal(node);
-    else if (node.kind === ts.SyntaxKind.NullKeyword && !nullIsComparedOperand(node)) {
+    else if (node.kind === ts.SyntaxKind.NullKeyword && !nullIsComparedOperand(node) && !isDestructuredNull(node)) {
       refusal = nullValueAdmissible(nullConsumerFamily(node)) ? null : { arm: "closure-null-value", node };
     } else if (ts.isVoidExpression(node) && !voidValueConsumerAdmissible(node, isClosureSlot, joinsOnCarrier)) {
       refusal = { arm: "closure-void-value", node };

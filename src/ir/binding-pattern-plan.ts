@@ -48,13 +48,16 @@ export type LiteralLeafValue =
 export type LiteralPatternStep =
   | { readonly kind: "bind"; readonly leaf: BindingLeaf; readonly value: LiteralLeafValue }
   | { readonly kind: "default"; readonly leaf: BindingLeaf; readonly initializer: ts.Expression }
-  | { readonly kind: "nested"; readonly plan: LiteralPatternPlan };
+  | { readonly kind: "nested"; readonly plan: LiteralPatternPlan }
+  /** RequireObjectCoercible / GetIterator on `null` or `undefined`. */
+  | { readonly kind: "throw-type-error" };
 
 /**
  * `pattern = <fresh array or object literal>` as scalar steps. The literal is
  * never built: its expressions are evaluated in source order, then each step
  * binds a leaf to the expression at its position, to `undefined` (past the
  * end, a hole, a missing key) or to its default, which runs only then.
+ * Destructuring `null` or `undefined` throws a TypeError.
  *
  * Sound while the array iterator and `Object.prototype` are the realm's own,
  * which the IR's vec readers already assume. A missing key that
@@ -116,7 +119,7 @@ function planOver(
   leaves: ReadonlySet<string>,
 ): LiteralPatternPlan | null {
   const root = sourceNode(source);
-  if (root?.kind !== "array" && root?.kind !== "object") return null;
+  if (root === null || root.kind === "value") return null;
   const reading: Reading = { leaves, whole: new Set(), read: new Set(), steps: [] };
   if (!readPattern(pattern, root, reading)) return null;
   const evaluations: ts.Expression[] = [];
@@ -177,6 +180,11 @@ function objectSource(literal: ts.ObjectLiteralExpression): SourceNode | null {
 }
 
 function readPattern(pattern: ts.BindingPattern, node: SourceNode, reading: Reading): boolean {
+  if (node.kind === "undefined" || node.kind === "null") {
+    reading.steps.push({ kind: "throw-type-error" });
+    bindUnreachableLeaves(pattern, reading);
+    return true;
+  }
   if (node.kind === "array") return readList(pattern, node.elements, reading);
   if (node.kind !== "object" || ts.isArrayBindingPattern(pattern)) return false;
   return pattern.elements.every((element) => {
@@ -236,9 +244,44 @@ function readDefault(element: ts.BindingElement, initializer: ts.Expression, rea
   return true;
 }
 
+/** The leaves a TypeError skips still bind (`undefined`), so the code after the throw compiles. */
+function bindUnreachableLeaves(pattern: ts.BindingPattern, reading: Reading): void {
+  for (const element of pattern.elements) {
+    if (ts.isOmittedExpression(element)) continue;
+    if (ts.isIdentifier(element.name)) pushBind(element, UNDEFINED, reading);
+    else bindUnreachableLeaves(element.name, reading);
+  }
+}
+
 function pushBind(element: ts.BindingElement, node: SourceNode | number, reading: Reading): true {
   reading.steps.push({ kind: "bind", leaf: element as BindingLeaf, node });
   return true;
+}
+
+/**
+ * Whether `nullLiteral` sits in the literal source of a planned destructuring
+ * declaration. The plan never binds a `null` (it only skips or destructures
+ * one), so it is not a value there.
+ */
+export function isDestructuredNull(nullLiteral: ts.Node): boolean {
+  let child = nullLiteral;
+  for (let parent = child.parent; parent; child = parent, parent = parent.parent) {
+    if (
+      ts.isParenthesizedExpression(parent) ||
+      ts.isArrayLiteralExpression(parent) ||
+      ts.isObjectLiteralExpression(parent) ||
+      ts.isPropertyAssignment(parent)
+    ) {
+      continue;
+    }
+    return (
+      ts.isVariableDeclaration(parent) &&
+      parent.initializer === child &&
+      !ts.isIdentifier(parent.name) &&
+      planLiteralPattern(parent.name, parent.initializer) !== null
+    );
+  }
+  return false;
 }
 
 /** Assign evaluation indices in source order; a literal bound whole is evaluated as one expression. */
