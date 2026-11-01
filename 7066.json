@@ -1,10 +1,10 @@
 {
   "id": "7066",
-  "assignee": "ttraenkler/codex-session-b",
-  "requested_by": "ttraenkler/codex-session-b",
+  "assignee": "ttraenkler/claude-7106-lane",
+  "requested_by": "ttraenkler/claude-7106-lane",
   "status": "in-progress",
-  "branch": "codex/7066-ir-mixed-concat-20261022",
-  "claimed_at": "2026-10-22T15:59:37Z",
-  "updated_at": "2026-10-22T15:59:37Z",
-  "write_id": "16159-ybaoilrw"
+  "branch": "claude/7066-concat-select-desync",
+  "claimed_at": "2026-11-01T06:22:10Z",
+  "updated_at": "2026-11-01T06:22:10Z",
+  "write_id": "26050-dpfdmlhj"
 }
