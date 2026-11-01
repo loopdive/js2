@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-10-31
+updated: 2026-11-01
 priority: high
 horizon: l
 feasibility: hard
@@ -2452,6 +2452,286 @@ need struct agreement:
 - the IR sorts fields by name;
 - untyped JS constructors are `class-projection-unsupported`.
 
+## `<module-init>` lever: class expressions and constructor resolution (plan, 2026-10-31)
+
+**Verdict.** The two codes are not one lever, and neither is the lever the
+sample suggested.
+
+- **Class expressions** gain nothing by themselves. They stay refused (see
+  "What stays refused").
+- **Constructors.** The one exact, cheap slice is a fresh primitive wrapper used
+  as an operator operand: the #4208 S4 producer, generalised from `==` to the
+  ToPrimitive operators. It ships with the `null` operand of the numeric
+  operators, which the same tests use.
+
+Measured with a prototype on the full candidate set: **`ir_only_pass` +16**.
+Every one of the 16 passes on standalone and gc, on main and with the
+prototype. The sample suggested 33 × 60 ≈ 2000.
+
+### Problem (measured)
+
+Setup:
+
+- Main `9e82d60c42`, standalone, the conformance runner's harness assembly.
+- Every `<module-init>` refusal recorded
+  (`JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`).
+- Full candidate set: every file with a top-level `var|let|const X = class`
+  (4100), with a `new Number|String|Boolean|Object(` (1308), or with a `null`
+  operand of a numeric operator (68; 26 outside the 1308).
+- Probes (not committed): a per-file legacy-unit census, `runTest262File` for
+  pass status, and a patched copy of `src/` for the prototype.
+
+**Why the 1/60 sample overstated it: three masks the census does not see.**
+
+1. **First-wins.** The walk stops at the first refused statement.
+   - Unmasked, 12 of the 17 class-expression sample files have more
+     `<module-init>` refusals.
+   - So do 11 of the 16 constructor sample files.
+2. **Gate 2 runs only when every statement passes Gate 1.** `isNaN(…)` is an
+   `external-call`, which no shape census reports.
+3. **Build.** The selector admits two operand shapes that from-ast then refuses
+   after the claim (`'…' + n` and `x <op> null`, details below).
+   - None of the 5 constructor-only sample files gains. The 3 wrapper ones stop
+     at a `'…' + n` message, at `isNaN`, and at a `"1" > null`. The other two
+     are `new Object(NaN)` and `new Proxy(…)`.
+
+**Class expressions.** A static scan, plus the census over the first 2695 of
+the 4100 files (path order, through
+`language/expressions/class/elements/after-same-line-static-*`; 65 do not
+compile):
+
+| | files |
+| --- | --- |
+| top-level class-expression bindings (static scan) | 3943, of which 218 are the bounded #3522 family (`isBoundedPreparedNestedOrdinaryClass`) |
+| census: carry `vardecl-class-expression-unprepared` | 2404 |
+| census: it is the only refusal and there is no other legacy unit | 192 |
+| … of those, bounded #3522 class | **0** |
+| … with a destructuring parameter / generator or async-generator method / static accessor | 164 / 104 / 17 |
+
+- **The members of an unbounded class expression are support units of
+  `<module-init>`.** In `ir/identity.ts` `processClass`, a class that is not a
+  top-level declaration and not promoted (`promoteNestedMember`) does not mint
+  terminal units for its members, so they never appear in `irOutcomes`.
+  Admitting the binding while legacy compiles those bodies would report an IR
+  `<module-init>` whose members are legacy: an `ir_only_pass` the metric cannot
+  see through.
+- **The neighbouring declaration form shows the next walls.**
+  `class C { m() {…} }` already claims `C_m` on main. Its `<module-init>` then
+  stops at:
+  - `var obj = new C()` (`vardecl-module-storage-unrepresentable`, follow-up
+    (h) above);
+  - `C.method(…)` arity;
+  - module-global writes from methods (#7126 item 1);
+  - `arguments` in methods.
+- In the sample, `language/statements/class` is 0 of 66 legacy-free.
+- `new C()` on a class-expression binding is the largest
+  `expr-new-ctor-unknown` identity (498 files). It moves with the class work,
+  not here.
+
+**Constructors.** `expr-new-ctor-unknown`, files carrying it (census rows):
+
+| identity | files | disposition |
+| --- | --- | --- |
+| `C` (class-expression binding) | 498 | the class chain (follow-ups) |
+| `String` / `Number` / `Boolean` | 287 / 177 / 96 | this lever, operand positions only |
+| `Object` | 86 | refused: `new Object(x)` is ToObject, a wrapper value |
+| `Proxy`, `Array`, function constructors, other | 7, 2, 3, 1 | refused |
+
+Where the wrappers sit (static scan of the 1308 files):
+
+- Mostly they are a `var` initializer or a member receiver. That is Lever C
+  above: a wrapper object as a value.
+- In 236 files a wrapper is a binary-operator operand.
+- In 213 of those, every site is a module-level operand with a literal
+  argument: the ES5 `S11.*` operator tests. All 213 pass on main standalone.
+
+**Prototype measurement.** The prototype is an uncommitted copy of `src/`:
+
+- the selector arm and the from-ast step below;
+- the dynamic bitwise arm;
+- the `null` fold.
+
+Its census covered the 1334 files (1308 + 26), with every refusal recorded.
+
+| | legacy-free (standalone) |
+| --- | --- |
+| main | 8 (the S4 `S11.9.{1,2}_A7.{2–5}` files) |
+| + wrapper operand arm | 16 |
+| + `null` numeric operand | **24** (+16) |
+
+The 16 gains:
+
+- `language/expressions/{less-than,less-than-or-equal,greater-than,greater-than-or-equal}/S11.8.{1–4}_A3.1_{T1.2,T1.3,T2.3,T2.4}.js`.
+- On gc the claimed `<module-init>` imports nothing legacy does not (23 → 23
+  imports). Standalone has 0 imports.
+
+All 194 files the prototype changes differ in `<module-init>` only:
+
+| outcome under the prototype | files | owner |
+| --- | --- | --- |
+| legacy-free | 16 | this lever |
+| `'…' + n` mixed concatenation in a throw message (`'+' operands not provably …`, a build demote) | 48 | a selector/build desync on main, unmasked here (#7066 step 1) |
+| chunked `<module-init>` (`late-preparation-unsupported`, body budget) | 41 | the longest `S11.*` tests, 2–3 per operator; out of scope |
+| `isNaN` (`external-call`) | 25 | out of scope |
+| a mismatched operand pair (`"1" < 1`, `"1" & 1`, `true / 1`, `new String("1") < "1"`) | 64 | the generic tail admits these on main (claim-then-demote), and the prototype's arm did not consult the predicate; S0 and S1 refuse them at select |
+
+**A/B on the 194 changed files** (the conformance runner, main against the
+prototype):
+
+- standalone: 194 pass → pass;
+- gc: 194 pass → pass.
+
+The A/B ran with the operator-dependent hint below. The census used the
+default hint; the hint does not change selection.
+
+**Two correctness findings from the prototype** (probes compared with node, on
+standalone and gc):
+
+- **The ToPrimitive hint must follow the operator.** S4 passes the `default`
+  hint (`null`), which is right for `==` and `+`. The relational and numeric
+  operators need `"number"`. With
+  `Number.prototype[Symbol.toPrimitive] = h => h === "number" ? 1 : 2`:
+  - `new Number(5) < 1.5` answered `false` with the default hint (node:
+    `true`). The `"number"` hint fixes it.
+  - Legacy answers correctly.
+- **An overridden `valueOf` is observed.** With
+  `Number.prototype.valueOf = () => 10` and
+  `String.prototype.valueOf = () => 1`, the claimed functions answer node: the
+  externref carrier re-reads the primitive.
+
+### Implementation Plan
+
+**S0 — refuse at select what `lowerBinary` refuses.** This is the precondition
+that keeps the lever honest.
+
+- **Where.** The generic tail of `selectorPrimitiveWrapperOrGenericBinary`
+  (`ir/select.ts` ~8847).
+- **Rule.** For a non-equality typed operator (`+`, `- * / %`, the bitwise
+  operators, the relationals), refuse at select, as
+  `operand-coercion-unsupported`, a pair whose operands both have proven
+  families when `lowerBinary` would refuse it:
+  - `binaryOperandsAdmissible` refuses the pair;
+  - or, for `+`, the two proven primitive families differ (from-ast's
+    `additiveOperandsProvable` gate).
+- **Equality is excluded.** Its pre-arms (`tryFoldNullCompare`,
+  `tryLowerUndefinedCompare`, the typeof folds) lower pairs the predicate
+  alone would refuse.
+- **Families.**
+  - Literals, `null`, `undefined`, and the fresh wrapper below.
+  - #6995's `provenIrFamily`. Stack on #6995 and reuse it; do not add a third
+    family prover.
+  - An `unknown` family keeps today's admission.
+- **Measure.** No file may move from a select refusal to a post-claim demote.
+  With S0 in place, the 112 rows above (48 + 64) stay refused at select under
+  their real reason. On main they are masked by the wrapper refusal, or they
+  demote after the claim.
+
+**S1 — one fresh-wrapper operand arm.**
+
+| piece | where | change | removes |
+| --- | --- | --- | --- |
+| admissibility | `ir/analysis/operand-admissibility.ts` `binaryOperandsAdmissible` (:195) | the bitwise operators join the dynamic ToNumber readers (`other` is dynamic or number). `nullish` reads as `number` for the pure numeric readers, as `undefined` already does; never for `+` or equality (`tryFoldNullCompare` owns those) | the "bitwise operators have no dynamic arm" gap |
+| selector | `selectorPrimitiveWrapperOrGenericBinary` | one arm. A `selectorPrimitiveWrapperConstruction` operand has family `dynamic`, the other operand its proven family, and the verdict is `binaryOperandsAdmissible`. S4's `==`/`!=` rule (the other side a proven number or boolean) stays as a family restriction of the same arm. `===`/`!==` and wrapper-vs-wrapper equality stay refused. A refusal is `capabilityNo(…)` at select | the separate `==`-only S4 block (:8853–8866) |
+| capability | `ir/backend/legality.ts` (:113), `select.ts` (:781, :8860, :12945) | rename `primitive-wrapper-loose-equality` → `primitive-wrapper-to-primitive`. Same lanes: non-fast; host gc, standalone, wasi | — |
+| from-ast | `lowerBinary` (:15235) | once both operands are lowered (left, then right, the S4 order), each fresh-wrapper operand of a non-strict typed operator becomes `dyn` through `freshWrapperToDynamic`. The hint is `default` for `==`/`!=`/`+` and `"number"` otherwise (`emitStringConst` + `emitCoerceToExternref`). The existing dynamic dispatch then runs | `tryLowerPrimitiveWrapperLooseEquality` (:16226): its tail is `tryLowerDynamicEq` verbatim |
+| conversion | `freshWrapperToDynamic(operand, value, type, hint, cx)` beside `lowerPrimitiveWrapperConstruction` (:8592) | the S4 sequence (`__to_primitive` + `box`), extracted once. Box with the untagged `irDynamic()` if the box lowering allows it. S4 tags the box with the wrapper kind, which a user `valueOf` can contradict | — |
+| dynamic numeric arm | `tryLowerDynamicArithmetic` (:16460) | ToNumber each dynamic operand (`relOperandToF64`), then `emitNumberBinary` (:15620) for every number operator except `+` | its private `- * / %` switch and `__fmod` call |
+| `null` operand | `lowerBinary` operand lowering | a `null` operand of a pure numeric reader is `f64.const 0` (ToNumber(null) = +0), behind the same predicate the selector uses | the claim-then-demote on main: 10 of the 26 null-operand files demote at build with `nullish-value-unsupported` |
+
+**What stays refused, and why.**
+
+- **`var|let|const C = class {…}` at module scope**
+  (`vardecl-class-expression-unprepared`, `select.ts` :6913). Unchanged:
+  - the members of an unbounded class are invisible support units;
+  - no measured file is bounded;
+  - every measured file stops at a later wall.
+- **A wrapper bound to a variable or used as a receiver.** That is Lever C,
+  which needs a typed wrapper-object carrier.
+- **A wrapper under `===`/`!==`, or a wrapper compared with a wrapper.** That
+  is identity, not ToPrimitive (14 files). An exact fold exists, but it is a
+  separate arm.
+- **`new Number(true)` and other argument-family mismatches.** The S4 ABI rule.
+- **`new Object(x)`, `new Proxy(…)`, `FinalizationRegistry`, `WeakRef`,
+  `DisposableStack`.** No host-free arm.
+- **A `null` operand of `+`, of a string relational, or of a bitwise operator
+  with a string.**
+
+**Acceptance.**
+
+- **Correctness.** A new test, `tests/issue-7106-wrapper-operator-operands.test.ts`:
+  - Cases: `Boolean`/`Number`/`String` × every typed operator except
+    `===`/`!==` × {number literal, `undefined`, `null`, wrapper}, both operand
+    orders, in a function and in `<module-init>`.
+  - The IR body is emitted on standalone, and the answer is the same from IR,
+    legacy and node on standalone and gc.
+  - It includes the `Symbol.toPrimitive` hint probe and the overridden
+    `valueOf` probe.
+  - Refused rows (`===`, wrapper-vs-wrapper `==`, `new Number(true) < 1`,
+    `null + 1`, `"a" < null`, `'x' + 1` under S0) refuse at stage `select`,
+    with no post-claim error.
+- **Scoped test262 A/B, standalone and gc.** On the 194 changed files: 0
+  pass→fail (the prototype's result is above). Before release, re-run on the
+  full 1334-file candidate set.
+- **`ir_only_pass`.** +16 on the full corpus: exactly the 16 files named above.
+- **Byte identity.**
+  - The eight S4 binaries are identical on standalone and gc. Measured
+    identical with the prototype, which kept S4; the fold must keep them so.
+  - Compile the 1334 files and `website/playground/examples` on gc before and
+    after. Every program with no IR-claimed unit on either side is
+    byte-identical.
+  - A claimed gc program imports nothing that legacy's binary of the same
+    program does not.
+- **Code quality.**
+  - `src/ir/` LOC net ≤ 0: two wrapper arms fold into one, and one operator
+    switch folds into `emitNumberBinary`.
+  - `lowerBinary` (375 lines, over the 300 ceiling) does not grow. The
+    conversion replaces the S4 call site, and the `null` fold enters through
+    the operand-lowering call it replaces.
+  - No new capability, runtime symbol, IR kind or family prover.
+  - No new `func-budget-allow` or `loc-budget-allow` grant.
+  - One wrapper predicate per side (`selectorPrimitiveWrapperConstruction`,
+    `primitiveWrapperConstructorName`) and one conversion helper.
+  - The adversarial review is asked to find a second copy of either.
+
+**Risks.**
+
+- **`%` through `emitNumberBinary`.** It takes `emitNumberRemainder` with a
+  fast-path plan read from the source operands. For a dynamic `%` that is
+  already claimed, the instruction sequence may change. The existing `%` tests
+  (#2945) pin correctness, and the byte change must be disclosed.
+- **Coordination.**
+  - #6995 adds `additiveResultFamily` and `logicalResultFamily` to
+    `operand-admissibility.ts`, and `provenIrFamily` to `select.ts`. Land
+    after it.
+  - #6878 edits `boxConcreteToDynamic` and `expressionProducesDynamic`, which
+    this arm calls. Rebase on whichever lands first.
+  - #6989 edits the neighbouring `tryLowerExactMixedPrimitiveWrapperCall`.
+  - #6866 and #6990 touch none of these functions.
+- **The arithmetic, bitwise and `+` operators gain 0 test262 files today.**
+  Their tests stop at the mixed `'…' + n` message, `isNaN` and the chunked
+  `<module-init>`. They are in the arm because the predicate covers them at no
+  extra code, and the unit test pins them.
+
+**Size.** Opus lane, horizon S. Touches `select.ts`, `from-ast.ts`,
+`operand-admissibility.ts`, `legality.ts`, and one test.
+
+### Follow-ups (not this lever)
+
+1. **The class-expression chain, in order:**
+   - (h): a script var holding a class instance;
+   - #7126-1: module-global writes from methods;
+   - method destructuring parameters and generators (#7126-3, #3522; 164 and
+     104 of the 192);
+   - only then module-level `var C = class` preparation, through the #3522
+     bounded family, which already promotes members to visible terminals.
+
+   Never admit a class whose members are support units of `<module-init>`.
+2. **Mixed `string + number` concatenation.** 48 files here. It is the ES5
+   throw-message pattern, and #7066 owns the selector half.
+3. **`isNaN`** (25 here) and the **chunked `<module-init>`** (41 here).
+4. **The fresh-wrapper identity fold** for `===`/`!==` and wrapper-vs-wrapper
+   `==` (14 here).
+
 ## Ambient boolean statics, lowered by operand family (built 2026-10-31)
 
 Planned as the `<module-init>` static-call lever. "Problem" and "Measurements"
@@ -3350,6 +3630,210 @@ and `gh` has had no valid token in these sessions (`gh auth status`: "The
 token in GH_TOKEN is invalid", rechecked 2026-10-31 after the third review).
 Reserving without the scan (`--no-pr-scan --allow-unscanned`) risks a
 duplicate id, so I did not.
+
+## `<module-init>` chunk-budget lever (plan, 2026-11-01)
+
+**Verdict.** Lower a chunk-sized `<module-init>` through the IR one chunk at
+a time. Legacy and the IR then share one chunk planner, and every Wasm body
+stays inside the budget legacy enforces.
+
+- **Measured gain.** About **+260 `ir_only_pass`** (95% CI 130–510).
+- **Do not drop the budget for the IR.** A prototype that lowers one
+  unbounded body shows superlinear compile time in both V8 and the IR
+  pipeline.
+- **Correction to the 2026-10-31 lever ranking** (sent to the coordinator).
+  That ranking overstated this lever:
+  - carried by 303 of 691 sample files, not 414;
+  - the only blocker in 5 sample files, not 8;
+  - 20,040 chunked corpus files, not 27,100.
+
+  The census skipped the standalone dead-binding elision described below.
+  With the corrected numbers, the script-var storage lever ranks first and
+  this lever fourth in the greedy order.
+
+### Why the budget exists
+
+| | |
+| --- | --- |
+| origin | commit `21dbaf5aa0` (#4376, the Deno-core/Wasmtime spike): "avoiding monolithic Wasm bodies that exceed practical Cranelift compilation limits" |
+| bound | `src/codegen/module-init-chunks.ts`: at most 16 complete top-level entries (`MODULE_INIT_CHUNK_MAX_ENTRIES`) or 1024 AST nodes (`MODULE_INIT_CHUNK_MAX_AST_NODES`) per helper |
+| what it protects | compile time and memory of ONE function body in an optimizing backend (Cranelift's register allocation is superlinear). It is not a V8 limit: V8 allows 7,654,321 bytes and 50,000 locals per function, and nothing measured below comes close |
+| legacy shape (`compileModuleInitBody`, `src/codegen/declarations.ts` ~6216) | each chunk is a private `[] -> []` helper with its own `FunctionContext` (`moduleInitChunk: true`, still named `__module_init` at compile time) |
+| how state crosses chunks | in chunk mode, top-level bindings are durable module globals (`currentSourceModuleGlobalIndex`); no local crosses a helper boundary |
+| the dispatcher | `__module_init` holds the GDI prologue plus a dispatch tree with fan-out 16 (`appendModuleInitChunkDispatch`, ~6142) |
+| what stays whole | async graph init, module-scope `using`, and a single entry over the AST budget |
+| inliner | legacy's source inliner refuses to inline into a chunk past the leaf bound |
+| IR today | the IR lowers one body (`lowerFunctionAstToIr`'s module-init loop, `src/ir/from-ast.ts` ~1980) |
+| where the IR is refused | `withdrawChunkedModuleInitFromIrSelection` (`src/codegen/index.ts:2607`, called at :3513) withdraws every chunk-sized `<module-init>` after selection; `rejectBeforeReservation` (`src/codegen/multi-prepared-module-init.ts:145`) repeats the same gate for the env-gated M2 route |
+
+### Measured
+
+Setup: main `ecf6d64de5` plus a local-only switch that skips the withdrawal.
+With the switch on, the IR lowers the whole `<module-init>` as one body: this
+is the "no budget" option, used as the prototype.
+
+**Population.**
+- Standalone first elides the dead runner prelude (`var print`, `var $262`;
+  `src/deadcode-elide.ts`). That leaves 10 harness statements, so a test body
+  of 6 or fewer statements fits in one chunk.
+- 20,040 of 48,242 live corpus files (41.5%) need chunks. 13,838 of them need
+  only 2; 26 need more than 16.
+
+**Files where the budget is the only blocker** (every other refusal measured
+as before):
+
+| sample | chunked files | budget-only |
+| --- | ---: | ---: |
+| 1/60 census sample | 303 | 5 |
+| 300 seeded random chunked candidates (237 really chunked) | 237 | 2 |
+| 120 random chunked candidates | 78 | 1 |
+| **total** | 618 | **8** (1.3%, Wilson 95% 0.66–2.5% → ≈260, CI 130–510, of 20,040) |
+
+**The 8 files.**
+- `S11.8.1_A4.12_T2`, `S11.8.4_A4.1`, `S7.8.3_A{2.1_T3,3.3_T4,5.1_T2}`,
+  `String/prototype/toLowerCase/special_casing`, `Math/clz32/int32bit`,
+  `Math/log1p/specific-results`.
+- With the prototype, all 8 have an IR `<module-init>` and are legacy-free on
+  standalone and gc.
+- They pass 8/8 on standalone and gc, on main and with the prototype: 0 flips.
+- Binaries shrink from 370–406 KB to 349–388 KB. Compile time is unchanged
+  (1.2–3.3 s, within noise).
+
+**Why the gain is small.** Most chunked files are refused earlier:
+- In the random 300, 2 of 237 chunked files change outcome; the rest fail
+  selection before the budget is ever checked.
+- None of the 30 heaviest chunked tests becomes IR-claimable through this
+  lever alone. The `S11.7.*_A4` shift tests (522 statements) stop at the mixed
+  `'…' + n`; the Temporal and staging tests stop at other refusals.
+
+**Engine and pipeline limits.** Synthetic script of N simple statements, standalone:
+
+| N | compile time, legacy chunked / IR one body | largest function, legacy / IR | eager TurboFan compile, legacy / IR |
+| --- | --- | --- | --- |
+| 1000 | 3.8 s / 3.1 s | 1,896 B / 25,021 B | 24 / 38 ms |
+| 5000 | 5.2 s / 27.7 s | 1,896 B / 125,040 B | 42 / 115 ms |
+| 20000 | 17.8 s / **707 s** | 1,896 B / 500,040 B | 61 / 433 ms |
+
+- The answers agree, and no V8 limit is hit (at most 438 locals).
+- The cost of one unbounded body is superlinear compile time. This shows both
+  in TurboFan (7× at N=20000) and in the IR pipeline itself (40×).
+- Cranelift could not be measured: installing Wasmtime was not permitted in
+  this session.
+
+### Options
+
+| option | verdict |
+| --- | --- |
+| (b) a larger budget, or none, for the IR route | rejected: the stress table above, and it removes the Cranelift protection on exactly the lanes the IR serves (standalone and WASI run on Wasmtime) |
+| (c1) raise the shared budget | rejected: it changes legacy gc bytes for every chunked program |
+| (c2) the IR patches legacy's chunk-helper slots | rejected: it ties the IR to legacy emission order and the overlay route, and the IR-first/prepared route has no legacy helpers to patch |
+| **(a) IR lowering per chunk on the shared planner** | **chosen**: the bound holds by construction; nothing new crosses a chunk, because the IR already binds every top-level declaration to a module global (`cx.moduleBindings`; anything else is refused at selection as `vardecl-module-storage-unrepresentable`) |
+
+### Implementation Plan
+
+**S1 — one planner (pure move; byte-identical).**
+- Move the pure planner into `src/shared/module-init-chunk-plan.ts`: the two
+  budget constants, `sourceNodeWeight`, `planModuleInitChunks`,
+  `moduleInitChunksRequired`.
+- Add `planModuleInitChunkDispatch(count)`: the fan-out-16 tree that
+  `appendModuleInitChunkDispatch` builds inline today. Legacy then emits from
+  that tree instead of building it itself.
+- `src/codegen/module-init-chunks.ts` keeps only the codegen pieces: helper
+  name reservation and the `FunctionContext` predicates.
+- The shared module imports only `ts-api`, so the IR uses it without a new
+  ir→codegen edge.
+
+**S2 — IR lowering per chunk (the gain).**
+- **New module `src/ir/module-init-chunk-lowering.ts`.**
+  - Given the population and the shared plan, it lowers each chunk's
+    statements into a derived artifact: role `module-init-chunk`, ordinal i,
+    `[] -> []`, module-init semantics, and the same `moduleBindings`.
+  - It allocates them through the existing lifted-artifact path
+    (`allocateLoweredLiftedFunctionArtifact`), the way async and Promise-delay
+    lowering already add derived units.
+  - The main `<module-init>` body is the GDI prologue plus the planned
+    dispatch of direct calls.
+- **from-ast.** `lowerFunctionAstToIr`'s module-init branch (its
+  `for (const s of stmts) lowerStmt(s, cx)` loop) calls this module when
+  `moduleInitChunksRequired` holds. The function does not grow: it is at 334
+  lines, over the 300 ceiling.
+- **Delete `withdrawChunkedModuleInitFromIrSelection` and its call** in
+  `src/codegen/index.ts`.
+- **What stays whole** is decided by the same planner and the same
+  conditions legacy uses: async graph init, module-scope `using`, a single
+  over-budget entry. The selector already refuses the first two for the IR.
+- **Inliner.** The module-scope inline pass (`ir/passes/inline-small.ts`)
+  treats a chunk artifact like legacy's chunk context: no inlining that grows
+  a chunk past the planner's bound.
+
+**S3 — the M2 route.**
+- Remove the chunk fallback in `rejectBeforeReservation` once M2 reserves
+  ABI slots for chunk artifacts the way it does for lifted closures.
+- M2 sits behind `JS2WASM_MULTI_PREPARED_MODULE_INIT_CUTOVER`, so S3 changes
+  no test262 row.
+
+### Acceptance
+
+- **Correctness.**
+  - The 8 files above: IR `<module-init>`, legacy-free, pass on standalone
+    and gc.
+  - The sources in `tests/issue-4376-module-init-chunking.test.ts` re-run
+    with the IR claiming the initializer: TDZ and const assignment across
+    chunks, destructuring, closure shadowing, the inline caller boundary.
+    Each must give the same answer from IR, legacy and node.
+  - New cases: a throw in chunk k (later chunks do not run), and a closure
+    created in chunk 1 that is called from chunk 3.
+- **Scoped A/B, standalone and gc.** The 618 sampled chunked files plus the
+  30 heaviest: 0 pass→fail.
+- **Bound.**
+  - Every IR chunk artifact is at most 1.25× the body bytes of legacy's helper
+    for the same chunk.
+  - `<module-init>` holds only the prologue and the dispatch.
+  - On the stress source, the largest IR function stays in legacy's
+    2 KB class at every N, and IR compile time at N=20000 is at most 2× legacy.
+- **Gain.** `ir_only_pass` +≈260 (CI 130–510). The floor is the 8 named files.
+- **gc byte identity.**
+  - S1 is a pure move: compile the 618 files and
+    `website/playground/examples` on gc before and after; every program with
+    no IR-claimed unit must be byte-identical.
+  - A claimed program imports nothing that legacy's binary of the same
+    program does not.
+- **Code quality.**
+  - No new `func-budget-allow` or `loc-budget-allow` grant.
+  - `lowerFunctionAstToIr`, `lowerBinary`, `compileIrPathFunctions` and
+    `planIrOverlay` do not grow, and `src/codegen/index.ts` shrinks.
+  - One planner and one dispatch shape, shared by legacy and the IR.
+  - The duplicate chunk gates go: the overlay withdrawal in S2, and the M2
+    fallback in S3.
+  - No new host import, runtime symbol or IR instruction kind. The only
+    addition is one derived-unit role.
+- **Cranelift.** A #4376 lane compiles the stress binaries in Wasmtime. Per
+  function, IR-chunked compile time must be at most legacy-chunked + 20%.
+
+### Risks and coordination
+
+- **Dead legacy helpers.** In the overlay route, legacy still emits its chunk
+  helpers, and they become dead once the IR claims the initializer. The
+  prototype's binaries were still smaller. They disappear when the
+  initializer moves to the prepared route (#3523 R4).
+- **Masked co-blockers.** Chunked tests are long, so they carry more
+  co-blockers (mixed `'…' + n`, script-var storage). This lever's value grows
+  as those land: in the greedy order, storage, then class expressions, then
+  destructuring, then this lever.
+- **#6995.** Merged (2026-11-01 00:11), so no conflict.
+- **The class plan (S0+S1).** Shares only `src/ir/from-ast.ts`, in different
+  functions (`lowerBinary`, `tryLowerDynamicArithmetic` versus the module-init
+  branch of `lowerFunctionAstToIr`).
+- **#7190 and #7128.** Their pushed branches are in main. Their landed
+  slices touched `src/codegen/index.ts`, `src/ir/from-ast.ts` and
+  `src/ir/select.ts`. Expect textual conflicts in `src/codegen/index.ts` (the
+  `planIrOverlay` call site of the withdrawal) and `src/ir/from-ast.ts`; this
+  plan does not touch `select.ts`.
+- **#7128's open-object script vars** are module globals, so they cross
+  chunk boundaries like every other script var.
+
+**Slice order.** S1 → S2 → S3. Horizon M for an Opus lane. S2 carries the
+gain and the stress acceptance.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
