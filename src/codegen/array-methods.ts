@@ -81,6 +81,7 @@ import { tryEmitProtoOverrideTwoArm } from "./builtin-proto-member-override.js";
 import { isStandaloneArraySubclass, withArraySubclassReceiverAsVec } from "./array-subclass-receiver.js"; // (#2917)
 import { withOwnKeyListReceiverAsVec } from "./object-model/object-own-key-order.js"; // (#6770 S5)
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
+import { isGrowthSwitchedReceiver } from "./statements/array-share-group.js";
 import {
   compileArrowAsClosure,
   compileExpression,
@@ -96,7 +97,12 @@ import {
   evalSearchFromIndex,
 } from "./array-includes-search-value.js";
 import { emitUndefined, ensureGetUndefined } from "./expressions/late-imports.js";
-import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper, undefinedExternInstrs } from "./any-helpers.js";
+import {
+  canonicalUndefinedExternInstrs,
+  ensureExternSameValueZeroHelper,
+  ensureExternStrictEqHelper,
+  undefinedExternInstrs,
+} from "./any-helpers.js";
 import {
   ensureNativeStringHelpers,
   nativeStringLiteralInstrs,
@@ -3552,6 +3558,34 @@ function compileArrayAt(
 }
 
 /**
+ * (#7164) A `fromIndex` whose `valueOf` grows the array can reallocate an
+ * externref vec's backing (`length =` past capacity, or `push`). The scan reads
+ * elements live (Get at each index), so re-read the backing after `fromIndex`
+ * and clamp the scan to it; `len` stays the value read before (§23.1.3.14 step 2).
+ */
+function reloadSearchBacking(
+  vecTmp: number,
+  vecTypeIdx: number,
+  dataTmp: number,
+  lenTmp: number,
+  effLenTmp: number,
+): Instr[] {
+  return [
+    { op: "local.get", index: vecTmp },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.tee", index: dataTmp },
+    { op: "array.len" },
+    { op: "local.get", index: lenTmp },
+    { op: "local.get", index: dataTmp },
+    { op: "array.len" },
+    { op: "local.get", index: lenTmp },
+    { op: "i32.lt_s" },
+    { op: "select" },
+    { op: "local.set", index: effLenTmp },
+  ];
+}
+
+/**
  * arr.indexOf(val) -> loop through array, return index (as f64) or -1.
  * Receiver is a vec struct; extract data and length from it.
  */
@@ -3635,6 +3669,8 @@ function compileArrayIndexOf(
   // the loop bound (effLenTmp == 0) then falls through to the -1 result.
   if (callExpr.arguments.length >= 2) {
     emitForwardSearchStart(ctx, fctx, callExpr.arguments[1]!, lenTmp, iTmp, "arr_iof");
+    if (elemType.kind === "externref")
+      fctx.body.push(...reloadSearchBacking(vecTmp, vecTypeIdx, dataTmp, lenTmp, effLenTmp));
   } else {
     fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "local.set", index: iTmp });
@@ -3660,6 +3696,8 @@ function compileArrayIndexOf(
     // mode keeps the `__host_eq` host import. Mirrors the standalone arm in
     // `compileArrayLikePrototypeSearch` (the `.call(...)` form).
     const nativeCmp = ctx.standalone || ctx.wasi;
+    // (#7164) The native helper needs the box types; register them if no earlier use did.
+    if (nativeCmp) addUnionImports(ctx);
     const cmpIdx = nativeCmp
       ? ensureExternStrictEqHelper(ctx)
       : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
@@ -3799,6 +3837,8 @@ function compileArrayIncludes(
     fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "local.set", index: iTmp });
   }
+  if (callExpr.arguments.length >= 2 && elemType.kind === "externref")
+    fctx.body.push(...reloadSearchBacking(vecTmp, vecTypeIdx, dataTmp, lenTmp, effLenTmp));
 
   // (#2648) View-name-driven signedness for the packed i8/i16 element load.
   const getOp = elemGetOp(elemType, typedArraySearchSignedness(ctx, propAccess.expression));
@@ -3858,6 +3898,8 @@ function compileArrayIncludes(
     // is unsatisfiable. Route SameValueZero through the pure-Wasm
     // `__extern_same_value_zero` helper there; host/gc mode keeps the import.
     const nativeCmp = ctx.standalone || ctx.wasi;
+    // (#7164) The native helper needs the box types; register them if no earlier use did.
+    if (nativeCmp) addUnionImports(ctx);
     const svzIdx = nativeCmp
       ? ensureExternSameValueZeroHelper(ctx)
       : ensureLateImport(ctx, "__same_value_zero", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
@@ -5771,6 +5813,10 @@ function compileArrayJoinNative(
     elementToLocaleStringTail(ctx, anyStrTypeIdx, localizedArm),
   );
   const joinBoundsCheckedElemToStr: Instr[] = [
+    // (#7164) An element's toString can replace the backing (push / grow): re-read it.
+    { op: "local.get", index: vecTmp },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: dataTmp },
     { op: "local.get", index: foldLocals.iTmp },
     { op: "local.get", index: dataTmp },
     { op: "array.len" },
@@ -6024,6 +6070,10 @@ function compileArrayJoin(
   // slots (`[1,2,3]; a.length=6; a.join(",")` === "1,2,3,,,"). No-op for dense
   // arrays (backing ≥ length ⇒ the guard is always true).
   const joinBoundsCheckedElemToStr: Instr[] = [
+    // (#7164) An element's toString can replace the backing (push / grow): re-read it.
+    { op: "local.get", index: vecTmp },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: dataTmp },
     { op: "local.get", index: foldLocals.iTmp },
     { op: "local.get", index: dataTmp },
     { op: "array.len" },
@@ -6687,6 +6737,8 @@ interface ArrayLoopLocals {
   logicalLenTmp: number;
   iTmp: number;
   getOp: "array.get_u" | "array.get_s" | "array.get";
+  /** (#7164) The receiver's vec type: the loop re-reads `data` from it each iteration. */
+  vecTypeIdx?: number;
 }
 
 /** Substitute closure parameter reads with the HOF loop's concrete operands. */
@@ -6794,7 +6846,8 @@ function setupArrayLoop(
   fctx.body.push({ op: "local.set", index: iTmp });
 
   const getOp = elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
-  return { vecTmp, recvExternTmp, dataTmp, lenTmp, logicalLenTmp, iTmp, getOp };
+  const reload = loopMayNeedReload(ctx, propAccess) ? vecTypeIdx : undefined;
+  return { vecTmp, recvExternTmp, dataTmp, lenTmp, logicalLenTmp, iTmp, getOp, vecTypeIdx: reload };
 }
 
 /**
@@ -7332,6 +7385,15 @@ function gateHoleFlag(
 
 /**
  * Build the standard loop-exit check: if (i >= len) br 1.
+ *
+ * (#7164) A callback can replace the receiver's backing array (`push` or a
+ * `length =` grow past the capacity reallocates it), so each iteration adopts
+ * the vec's current backing when it still covers `i`; reading only the array
+ * loaded before the loop would miss every write the callback makes after the
+ * reallocation. A backing that no longer covers `i` is not adopted: the loop
+ * keeps reading the earlier one exactly as before #7164, so no iteration ends
+ * early (find / findIndex must still visit every index up to the original
+ * length).
  */
 function loopExitCheck(loop: ArrayLoopLocals): Instr[] {
   return [
@@ -7339,7 +7401,84 @@ function loopExitCheck(loop: ArrayLoopLocals): Instr[] {
     { op: "local.get", index: loop.lenTmp },
     { op: "i32.ge_s" },
     { op: "br_if", depth: 1 },
+    ...reloadLoopData(loop),
   ];
+}
+
+/**
+ * (#7164) `if (vec.data !== data && i < array.len(vec.data)) data = vec.data`;
+ * nothing when the loop has no vec type. The identity test keeps the common
+ * (unchanged backing) path to one field read and a compare.
+ */
+function reloadLoopData(loop: ArrayLoopLocals): Instr[] {
+  const vecTypeIdx = loop.vecTypeIdx;
+  if (vecTypeIdx === undefined) return [];
+  const current = (): Instr[] => [
+    { op: "local.get", index: loop.vecTmp },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+  ];
+  return [
+    ...current(),
+    { op: "local.get", index: loop.dataTmp },
+    { op: "ref.eq" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: loop.iTmp },
+        ...current(),
+        { op: "array.len" },
+        { op: "i32.lt_u" },
+        { op: "if", blockType: { kind: "empty" }, then: [...current(), { op: "local.set", index: loop.dataTmp }] },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#7164) A switched binding's `length =` reallocates, and a getter or
+ * `valueOf` the callback reaches without a call can run one, so its loops
+ * always re-read the backing. Other receivers skip it for a pure callback.
+ */
+function loopMayNeedReload(ctx: CodegenContext, propAccess: ts.PropertyAccessExpression): boolean {
+  return isGrowthSwitchedReceiver(ctx, propAccess.expression) || callbackMayReplaceBacking(propAccess.parent);
+}
+
+/**
+ * (#7164) Whether the HOF's callback can replace the receiver's backing array.
+ * An inline arrow / function expression with no call, `new`, tagged template,
+ * assignment, `++` / `--` or `delete` runs no code that replaces a
+ * non-switched receiver's backing except through a getter or `valueOf` that
+ * pushes — and there the loop reads the earlier backing, as before #7164.
+ */
+function callbackMayReplaceBacking(call: ts.Node): boolean {
+  if (!ts.isCallExpression(call)) return true;
+  let callback: ts.Expression | undefined = call.arguments[0];
+  while (callback && ts.isParenthesizedExpression(callback)) callback = callback.expression;
+  if (!callback || (!ts.isArrowFunction(callback) && !ts.isFunctionExpression(callback))) return true;
+  let mutates = false;
+  const visit = (node: ts.Node): void => {
+    if (mutates) return;
+    if (
+      ts.isCallExpression(node) ||
+      ts.isNewExpression(node) ||
+      ts.isTaggedTemplateExpression(node) ||
+      ts.isDeleteExpression(node) ||
+      (ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+      ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken))
+    ) {
+      mutates = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(callback.body);
+  for (const parameter of callback.parameters) visit(parameter);
+  return mutates;
 }
 
 /**
@@ -8008,6 +8147,7 @@ function compileArrayReduceRight(
     logicalLenTmp,
     iTmp,
     getOp,
+    vecTypeIdx: loopMayNeedReload(ctx, propAccess) ? vecTypeIdx : undefined,
   };
 
   // Compile initial value or use the last present element as the default seed.
@@ -8142,11 +8282,8 @@ function compileArrayReduceRight(
   const holeGate = shouldHoleSkip(ctx, elemType);
   // Loop: while (i >= 0) { acc = cb(acc, data[i], i, arr); i--; }
   const loopBody: Instr[] = [
-    // Exit check: if (i < 0) break
-    { op: "local.get", index: iTmp },
-    { op: "i32.const", value: 0 },
-    { op: "i32.lt_s" },
-    { op: "br_if", depth: 1 },
+    // Exit check: if (i < 0) break; (#7164) re-reads `data` as the other HOF loops do.
+    ...loopExitCheckReverse(loop),
     // Callback
     ...(holeGate
       ? ([
@@ -8289,7 +8426,8 @@ function compileArrayFind(
   if (refElemResType) {
     fctx.body.push({ op: "ref.null", typeIdx: refElemResType.typeIdx });
   } else if (elemIsExternref) {
-    fctx.body.push({ op: "ref.null.extern" });
+    // (#7164) "Not found" is `undefined`, not the null externref (`=== undefined` held false).
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
   } else if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
   } else {
@@ -8432,13 +8570,14 @@ function setupArrayLoopReverse(
   return loop;
 }
 
-/** Reverse loop-exit check: if (i < 0) br 1. */
+/** Reverse loop-exit check: if (i < 0) br 1. (#7164) Then adopts a reallocated backing as {@link loopExitCheck} does. */
 function loopExitCheckReverse(loop: ArrayLoopLocals): Instr[] {
   return [
     { op: "local.get", index: loop.iTmp },
     { op: "i32.const", value: 0 },
     { op: "i32.lt_s" },
     { op: "br_if", depth: 1 },
+    ...reloadLoopData(loop),
   ];
 }
 
@@ -8516,7 +8655,7 @@ function compileArrayFindLast(
   if (refElemResType) {
     fctx.body.push({ op: "ref.null", typeIdx: refElemResType.typeIdx });
   } else if (elemIsExternref) {
-    fctx.body.push({ op: "ref.null.extern" });
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx)); // (#7164) not found → `undefined`
   } else if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
   } else {
@@ -10153,6 +10292,8 @@ function compileArrayLastIndexOf(
     // `__extern_strict_eq` helper instead of the unsatisfiable `__host_eq` import;
     // host/gc mode keeps the import. Mirrors indexOf / the `.call(...)` form.
     const nativeCmp = ctx.standalone || ctx.wasi;
+    // (#7164) The native helper needs the box types; register them if no earlier use did.
+    if (nativeCmp) addUnionImports(ctx);
     const cmpIdx = nativeCmp
       ? ensureExternStrictEqHelper(ctx)
       : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
