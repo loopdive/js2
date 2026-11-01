@@ -142,6 +142,8 @@ describe("#7106 fresh-wrapper operator operands", () => {
     wrapperArgument: "new Number(true) < 1",
     // Review round 1: `void 0` is `undefined`, which `+` never takes.
     voidPlus: "void 0 + 2",
+    // Review round 2: a comparison is a boolean beside a number, except in the identity below.
+    compareAnd: "(0.5 < 1) & 1",
   };
   for (const target of TARGETS) {
     it(`S0 refuses at selection (${lane(target)})`, async () => {
@@ -151,6 +153,58 @@ describe("#7106 fresh-wrapper operator operands", () => {
       const result = await compileSource(target, source);
       for (const name of Object.keys(S0_REFUSED)) {
         expect(unit(result, name), name).toMatchObject({ irBodyEmitted: false, stage: "select" });
+      }
+    });
+  }
+
+  // Review round 2: a `+` over a wrapper is the dynamic carrier, which only an
+  // operator, `typeof` or `!` reads. Kept anywhere else, the checker would type
+  // it: the first repro was claimed, then withdrew ("ternary branches have
+  // different types (dynamic vs f64)").
+  const CARRIER_POSITIONS: Record<string, [string, boolean, number]> = {
+    local: ['var r = new String("ab") + new Number(1); return typeof r === "string" ? r.length : -1;', false, 3],
+    write: ['var r = ""; r = new String("a") + "b"; return r.length;', false, 2],
+    compound: ["var t = 1; t += new Number(1) + 1; return t;", false, 3],
+    stringRelational: ['return (new String("1") + 1) < "2" ? 1 : 0;', false, 1],
+    method: ['return (new String("ab") + 1).charCodeAt(0);', false, 97],
+    typeofRead: ['return typeof (new String("ab") + new Number(1)) === "string" ? 1 : -1;', true, 1],
+    notRead: ['return !(new String("") + "") ? 1 : 0;', true, 1],
+    numericRead: ["return (new Number(1) + 1) - 2;", true, 0],
+    equalityRead: ['return (new String("1") + 1) === "11" ? 1 : 0;', true, 1],
+  };
+  for (const target of TARGETS) {
+    it(`a carrier \`+\` is read only by an operator, \`typeof\` or \`!\` (${lane(target)})`, async () => {
+      const source = Object.entries(CARRIER_POSITIONS)
+        .map(([name, [body]]) => `export function ${name}() { ${body} }`)
+        .join("\n");
+      const result = await compileSource(target, source);
+      const exports = await exportsOf(target, result);
+      for (const [name, [, claimed, expected]] of Object.entries(CARRIER_POSITIONS)) {
+        expect(unit(result, name), name).toMatchObject(
+          claimed ? { irBodyEmitted: true } : { irBodyEmitted: false, stage: "select" },
+        );
+        expect(Number(exports[name]!()), name).toBe(expected);
+      }
+    });
+  }
+
+  // Review round 2: `x | 0` / `x ^ 0` over an i32-lowerable `x` is lowered before
+  // any family check (from-ast's fused-i32 identity), so S0 keeps it.
+  const S0_KEPT: Record<string, string> = {
+    compareOrZero: "(k < 1) | 0",
+    compareXorZero: "(k < 1) ^ 0",
+    compareSumOrZero: "((k < 1) + (k < 2)) | 0",
+  };
+  for (const target of TARGETS) {
+    it(`S0 keeps the fused-i32 identity (${lane(target)})`, async () => {
+      const source = Object.entries(S0_KEPT)
+        .map(([name, expression]) => `export function ${name}() { var k = 0.5; return ${expression}; }`)
+        .join("\n");
+      const result = await compileSource(target, source);
+      const exports = await exportsOf(target, result);
+      for (const [name, expression] of Object.entries(S0_KEPT)) {
+        expect(unit(result, name), name).toMatchObject({ irBodyEmitted: true });
+        expect(Number(exports[name]!()), name).toBe(new Function(`var k = 0.5; return ${expression};`)());
       }
     });
   }
@@ -167,8 +221,8 @@ describe("#7106 fresh-wrapper operator operands", () => {
     provenNumberEquality: `function eq() { return new Number(4) == 2 * 2; }
       if (eq() !== true) { throw "#provenNumberEquality"; }`,
     // A wrapper `+` adds dynamically, so an enclosing `+` takes the carrier too.
-    nestedAdd: `function nested() { return "x" + (new String("1") + "1") + ("1" + new String("2")); }
-      if (nested() !== "x1112") { throw "#nestedAdd"; }`,
+    nestedAdd: `function nested() { return ("x" + (new String("1") + "1") + ("1" + new String("2"))) === "x1112"; }
+      if (nested() !== true) { throw "#nestedAdd"; }`,
     toPrimitiveHint: `Number.prototype[Symbol.toPrimitive] = function (hint) { return hint === "number" ? 1 : 2; };
       function check() {
         if ((new Number(5) < 1.5) !== true) { throw "#lt"; }

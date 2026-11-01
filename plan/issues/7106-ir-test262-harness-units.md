@@ -3625,9 +3625,11 @@ The verdict was approve with nits. S0 + S1 is on `claude/7106-wrapper-operand-ar
      `valueOf` that returns a Symbol, `new Number(1) - new Number(2)` calls it
      once, as node and main do (`toNumericOrder` probe).
    - `+`, the relationals and `==` take both ToPrimitives first. A wrapper
-     beside a carrier that is not a wrapper is refused for them
-     (`expr-wrapper-carrier-order`), because the carrier's own ToPrimitive
-     would run second.
+     beside a carrier that is not a wrapper would run the carrier's
+     ToPrimitive second. (Round 2 correction: no such carrier reaches the
+     wrapper arm. `expr-binary-operand-families` refuses it, so the
+     `expr-wrapper-carrier-order` arm this round added was dead and is
+     deleted.)
 2. **Two spellings of wrapper identity. Fixed.**
    `wrapperComparisonIsIdentity` (`operand-admissibility.ts`) is the one
    predicate. Selection refuses an identity comparison, and the builder
@@ -3665,6 +3667,94 @@ one worker:
 **Size.** Net `src/ir` growth since the merge base is +33 lines (+218/−185).
 Before this round it was −20. The ToNumeric-order fix, the two predicates and
 their doc comments cost 53 lines.
+
+### Review round 2 of S0 + S1 (#7034, 2026-11-01)
+
+The verdict was request changes, with four findings. All four are fixed in
+403c29c7e9 and 72059439b0.
+
+1. **S0 refused what main claims.** The shapes were `(k < 1) | 0` and
+   `(k < 1) ^ 0`, per lane: the `void` test of the #7144 suite.
+   - **Cause.** `lowerBinary` takes the fused-i32 identity first: `x | 0` or
+     `x ^ 0` over an `x` it can lower as an exact i32
+     (`tryLowerFusedI32Binary`, #3741). No operand family is judged there.
+   - **Why not `isI32PureExprIR`.** That path is not this one: a comparison is
+     not i32-pure.
+   - **Fixed.** `isSlotFreeI32Identity` (`analysis/i32-slots.ts`) is the one
+     spelling of the identity a selector can see; no promoted slot is visible
+     there. The planned-closure walk's private copy now calls it.
+     `isSlotFreeI32IdentityLowered` adds the bitwise and `+`/`-` nodes the
+     identity lowers natively, so `((k < 1) + (k < 2)) | 0` keeps its claim
+     too. S0 judges neither. A comparison inside the identity still goes
+     through `lowerBinary`, and S0 still judges it.
+2. **The #3529 pin.** `"result: " + (2 > 1)` is now refused at select, where
+   main claimed it and demoted at build. The pin moves to stage `select` and
+   cites S0. The "boolean identity" pin already fails on main; it is left
+   alone for another branch.
+3. **`expr-wrapper-carrier-order` could never fire.** It needed a non-wrapper
+   operand of family `dynamic`, and none has one. The arm and its code are
+   deleted. Round 1's note was wrong: such a carrier is refused by
+   `expr-binary-operand-families`. The ToNumber of a carrier operand stays,
+   because it is reached.
+4. **A wrapper `+` was claimed and then withdrawn.** Repro:
+   `var r = new String("ab") + new Number(1); … r.length`. The builder lowers
+   the `+` to the dynamic carrier (`addsAsCarrier`), but every consumer of the
+   local typed it as the checker does (string). **Fixed:**
+   - `binaryOperandFamily` gives a fresh wrapper, and a `+` over one
+     (`selectorCarrierValue`), the `dynamic` family.
+   - `carrierAdditionConsumed` admits that `+` only as an operand of a typed
+     or equality operator, `typeof` or `!`, where S0 judges the carrier. It
+     also admits it as an argument of a dynamic construct, whose arguments are
+     carriers: `new Test262Error("#2: " + (new String("1") + "1"))`, which
+     `S11.6.1_A3.2_T1.1` needs.
+   - Everywhere else it is refused at select (`expr-wrapper-carrier-position`):
+     a local, a write, a compound write, an argument, a return, a method
+     receiver. Measured before the fix, the local, the write, the compound
+     write, a typed argument and a string `<` were all claimed and then
+     demoted.
+
+**Matrix.** 20 operators × 10 × 10 operands, as `(x op y) === <node's answer>`,
+per lane. The operands are the three wrappers, `1.5`, `"3"`, `true`, `null`,
+`undefined`, a carrier `+` and `(k < 1)`.
+
+| per lane | main (`358a17971e`) | head |
+| --- | --- | --- |
+| claimed | 205 | 941 |
+| claimed, then demoted at build | 516 | 60 |
+| main claims lost | — | 0 |
+| value regressions | — | 0 |
+
+The 60 head demotes are main's own: equality between two plain primitives
+(`1.5 == "3"`, `null == null`). S0 leaves equality alone. No demote has a
+wrapper or carrier operand.
+
+The boolean-operand census (2,205 pairs) and the review's 646-pair S0 probe
+both lose 0 of main's claims, with 0 value regressions. Fourteen promoted-slot
+and identity programs keep every claim main has.
+
+**Tests.** The #7144, wrapper and three #3529 files pass 218/219; the one
+failure is the stale pin above. `issue-3529-{dataflow-outcomes,
+equivalence-error-imports,integration-preflight}` have 13 failures. Those
+fail identically on the base tree `358a17971e`, so they come from the base,
+not from #7034.
+
+**Re-measured** against `358a17971e` on the 1,334 candidate files, both lanes:
+
+- **Byte-identical to the round-1 head.** On both lanes, every binary matches
+  2d59ac4896's (`n1`). So round 1's pass/fail A/B still holds: 0 flips.
+- **Against the base, unchanged:**
+  - legacy-free 8 → 25;
+  - 23 binaries changed: 17 newly claimed `<module-init>`s and the 6
+    `*_A3_T1.4` S0 refusals;
+  - no new post-claim error and no status change.
+- **Gates green, run bare**, except `test:changed-root`: it stops at the stale
+  #3529 pin, which already fails on main. The other changed test files pass
+  when run directly.
+- **Playground identical.**
+- **Size.** Net `src/ir` growth since the merge base is +108 lines
+  (+298/−190); it was +33 after round 1. The growth is the identity
+  predicates, the carrier family and the position rule; the dead
+  carrier-order arm is gone.
 
 ### Follow-ups (not this lever)
 
