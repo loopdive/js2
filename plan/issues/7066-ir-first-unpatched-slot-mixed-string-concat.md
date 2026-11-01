@@ -16,6 +16,12 @@ goal: ir-full-coverage
 related: [7001, 2138, 3143, 7106, 7144]
 import-cycles-allow:
   - codegen->ir: 302 # 2026-11-01 (#7066): the IR-first gate's `+` row reads the shared `+` rule (ir/analysis/operand-admissibility.ts) instead of keeping its own copy, which drifted twice
+loc-budget-allow:
+  # 2026-11-01 (#7066 review round 3, +13): a template substitution and String(v) refuse a scalar element read before the claim (`scalarMayBeElementRead`, beside the template family it guards), and the static predicates get the lane's number-to-string flag; restated here so it does not ride on #7106's grant
+  - src/ir/select.ts
+func-budget-allow:
+  # 2026-11-01 (#7066 review round 3, +3): String(v) refuses a scalar element read before it claims
+  - src/ir/select.ts::isPhase1Expr
 ---
 # IR-first skipped slot with no legacy body after a build-time demote
 
@@ -443,3 +449,41 @@ string slot takes only a string value (`compoundWriteAdmissible`). The legacy
 body it falls back to traps with `illegal cast` on standalone. Both behaviours
 predate this PR. The fix is the same arm-wise conversion in the compound arm,
 plus the shared rule in `compoundWriteAdmissible`.
+
+## Review round 3 (2026-11-01): element reads, one rule, one flag
+
+**1. An element read past the end printed `NaN`.** `"v" + a[i]` with
+`f([1], 5)` gave `"vNaN"`; node and main give `"vundefined"`. The checker
+types `a[i]` as `number`, but past the end the value is `undefined`, and the
+IR reads it as NaN (0 on linear; a boolean element would read `false`). No
+IR scalar holds `undefined`, so no ToString may take such a value.
+- `mayBeElementRead` (`operand-admissibility.ts`) looks through parentheses,
+  type assertions and a conditional's arms.
+- The `+` rule does not concatenate a number or boolean for which it holds.
+  It still adds one as a number (NaN is ToNumber(undefined)).
+- The selector refuses the same operand as a template substitution and as
+  `String(v)`'s argument (`scalarMayBeElementRead`, `select.ts`). Both were
+  wrong on main too: `` `v${a[i]}` `` and `String(a[i])` were claimed and
+  printed `NaN`.
+- No in-bounds proof is reused: the counted-loop proof
+  (`isProvenInBoundsIr`) lives in the builder's loop context, which the
+  selector cannot see. So `"," + a[i]` inside `for (i < a.length)` stays
+  legacy, as on main.
+- The static predicates' own element-read rule now calls the same predicate.
+
+**2. One `+` rule.**
+- `additiveOperandsProvable(expr, left, right, numberToString)` is the rule.
+  It takes the expression so it can see an element read.
+- `additiveResultFamily` is derived from it. `concatenatesToString` is gone,
+  and with it the int32 disagreement and the missing lane flag.
+- `binaryOperandsAdmissible` leaves a string `+` to the rule. Every caller
+  that can see a `+` beside a string applies the rule first.
+
+**3. One lane flag: the `number-to-string` capability.**
+- The selector reads it through its `supportsBackendCapability` option.
+- The builder reads the same query through the resolver's
+  `supportsBackendCapability`, instead of `nativeNumberToStringAvailable`.
+- The IR-first gate gets it through `IrFirstSkipIdentityInput.numberToString`
+  instead of assuming `true`.
+- `irBackendCapabilityQuery` (`backend/legality.ts`) replaces the five copies
+  of the profile projection plus capability call.

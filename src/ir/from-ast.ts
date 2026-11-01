@@ -566,6 +566,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   nativeNumberToStringAvailable?(): boolean;
   /**
+   * (#7066) The selector's `supportsBackendCapability` for this compile: the
+   * claim and the lowering read one capability (`number-to-string` for a `+`).
+   */
+  supportsBackendCapability?(capability: "number-to-string"): boolean;
+  /**
    * Does this lane own a host-free `Number::toFixed` provider whose result is
    * already the IR string carrier? The bounded literal-digits lowering asks
    * this separately from the host import capability so host behavior remains
@@ -14691,12 +14696,6 @@ function proveAdditiveOperand(node: ts.Expression, cx: LowerCtx): PrimitiveProof
 }
 
 /**
- * (#7144) The `+` operand proof {@link additiveOperandsProvable} judges: an
- * operand that produces the dynamic carrier takes the dynamic `+`; otherwise
- * the checker's number / string proof. `null` = no checker, so no
- * T-directed specialization to guard (the kind-based dispatch stands).
- */
-/**
  * #2781 (hybrid Row 7) — the `+` operand-type proof gate, run BEFORE operand
  * lowering so no dead operand instrs are emitted. A T-directed `+` must be
  * discharged by a proof on the TS *type*, never the Wasm kind: number /
@@ -14712,7 +14711,8 @@ function provenAdditiveOperands(
   const lProof = additiveOperandProof(expr.left, cx);
   const rProof = additiveOperandProof(expr.right, cx);
   if (lProof === null || rProof === null) return undefined;
-  if (!additiveOperandsProvable(lProof, rProof, cx.resolver?.nativeNumberToStringAvailable?.() === true)) {
+  const numberToString = cx.resolver?.supportsBackendCapability?.("number-to-string") === true;
+  if (!additiveOperandsProvable(expr, lProof, rProof, numberToString)) {
     throw new IrUnsupportedError(
       "operand-coercion-unsupported",
       "build",
@@ -14724,6 +14724,12 @@ function provenAdditiveOperands(
   return [lProof, rProof];
 }
 
+/**
+ * (#7144) The `+` operand proof {@link additiveOperandsProvable} judges: an
+ * operand that produces the dynamic carrier takes the dynamic `+`; otherwise
+ * the checker's proof. `null` = no checker, so no T-directed specialization to
+ * guard (the kind-based dispatch stands).
+ */
 function additiveOperandProof(node: ts.Expression, cx: LowerCtx): AdditiveProof | null {
   if (addsAsCarrier(node, cx)) return "dynamic";
   const proof = proveAdditiveOperand(node, cx);

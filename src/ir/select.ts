@@ -167,6 +167,7 @@ import {
   isStrictEqualityOperator,
   isTypedBinaryOperator,
   isVoidZero,
+  mayBeElementRead,
   wrapperComparisonIsIdentity,
   nativeI32OperandsAdmissible,
   type OperandFamily,
@@ -8903,7 +8904,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
       left !== "unknown" &&
       right !== "unknown" &&
       !isSlotFreeI32IdentityLowered(expr));
-  if (judged && !provenBinaryOperandsAdmissible(binOp, left, right, laneFormatsNumbers())) {
+  if (judged && !provenBinaryOperandsAdmissible(expr, left, right, laneFormatsNumbers())) {
     return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
   }
   return (
@@ -10742,6 +10743,7 @@ function templateSubstitutionFamily(
   scope: ReadonlySet<string>,
 ): "string" | "number" | "boolean" | undefined {
   if (declaredExpressionHasExactFamily(expression, "string", scope)) return "string";
+  if (scalarMayBeElementRead(expression, scope)) return undefined;
   if (declaredExpressionHasExactFamily(expression, "number", scope) && laneFormatsNumbers()) return "number";
   if (declaredExpressionHasExactFamily(expression, "boolean", scope)) return "boolean";
   return undefined;
@@ -10750,6 +10752,13 @@ function templateSubstitutionFamily(
 /** (#4467, #7066) The lane binds `IR_NUMBER_TO_STRING_FN`: a template or a `+` converts a number. */
 const laneFormatsNumbers = (): boolean =>
   currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true;
+
+/** (#7066) A ToString operand that lowers to a scalar and may be an element read ({@link mayBeElementRead}). */
+function scalarMayBeElementRead(operand: ts.Expression, scope: ReadonlySet<string>): boolean {
+  if (!mayBeElementRead(operand)) return false;
+  const family = provenIrFamily(operand, scope);
+  return family === "number" || family === "boolean";
+}
 
 function declaredExpressionHasExactFamily(
   expression: ts.Expression,
@@ -11177,6 +11186,7 @@ function isPhase1StaticPredicateCall(
     isGlobalUndefined: (operand) => isUnshadowedUndefinedIdentifier(operand, scope),
     localDeclaration: closureLocalDeclaration,
     family: (expression) => provenIrFamily(expression, scope),
+    numberToString: laneFormatsNumbers(),
     isStringMethodCall: (call) =>
       ts.isPropertyAccessExpression(call.expression) &&
       currentSelectionOptions?.classifyPrimitiveExpression?.(call.expression.expression) === "string",
@@ -12242,6 +12252,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // `dyn.to_string` (the dynamic scan gates that on the runtime being
     // buildable); a concrete primitive operand folds inline in from-ast.
     const toStringArg = scope.has("String") ? null : ambientStringToStringCall(expr);
+    if (toStringArg !== null && scalarMayBeElementRead(toStringArg, scope)) {
+      return capabilityNo("operand-coercion-unsupported", "expr-string-element-read", toStringArg);
+    }
     if (toStringArg !== null) return isPhase1Expr(toStringArg, scope, localClasses);
     // (#7106 module-init lever B) `Number(v)` under the source-bound plan.
     const toNumberArgs = preparedNumberConversionCall(expr);

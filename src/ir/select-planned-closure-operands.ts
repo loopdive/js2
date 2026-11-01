@@ -248,6 +248,7 @@ export function plannedClosureOperandRefusal(
   sources: PlannedClosureFamilySources,
 ): PlannedClosureOperandRefusal | null {
   const fn = plan.expression;
+  const numberToString = sources.numberToString === true;
   const dynamicParameterNames = new Set<string>();
   const numericParameterNames = new Set<string>();
   fn.parameters.forEach((parameter, index) => {
@@ -401,7 +402,7 @@ export function plannedClosureOperandRefusal(
     if (op === ts.SyntaxKind.PlusToken) {
       const left = operandProof(expr.left);
       const right = operandProof(expr.right);
-      const family = additiveResultFamily(left.family, right.family);
+      const family = additiveResultFamily(expr, left.family, right.family, numberToString);
       if (family === "dynamic") {
         return {
           family,
@@ -474,7 +475,7 @@ export function plannedClosureOperandRefusal(
     if (!carrierLooseEqualityAdmissible(op, leftProof.family, rightProof.family) && isNewShape()) {
       return { arm: "closure-carrier-loose-equality", node: expr };
     }
-    const additive = additiveOperandsProvable(leftProof.additive, rightProof.additive, sources.numberToString === true);
+    const additive = additiveOperandsProvable(expr, leftProof.additive, rightProof.additive, numberToString);
     if (op === ts.SyntaxKind.PlusToken && !additive) return { arm: "closure-additive-operands", node: expr };
     return binaryOperandsAdmissible(op, leftProof.family, rightProof.family)
       ? null

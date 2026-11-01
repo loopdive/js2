@@ -90,7 +90,7 @@ export function stripParens(expr: ts.Expression): ts.Expression {
 }
 
 /** Parentheses and TS type wrappers (`as`, `!`, `satisfies`, `<T>x`) — transparent around a target or a source. */
-function skipOuterExpressions(expr: ts.Expression): ts.Expression {
+export function skipOuterExpressions(expr: ts.Expression): ts.Expression {
   while (
     ts.isParenthesizedExpression(expr) ||
     ts.isAsExpression(expr) ||

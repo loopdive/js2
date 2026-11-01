@@ -78,6 +78,10 @@ export type ValueDomain = "number" | "bool" | "string" | "dynamic";
  *     behaviour and the 2-arg call sites).
  *   - `returnDomain` — the function's return domain (`"void"` for a
  *     value-less body). Defaults to `number`.
+ *   - `numberToString` — the lane formats a number as a string (the
+ *     `number-to-string` capability the selector and the builder read), so
+ *     the `+` rule concatenates a number. Omitted ⇒ false, as for a bare
+ *     selector caller.
  *
  * **Domain-tracked, safe-by-construction (#3203 widen).** Every identifier is
  * resolved to a primitive domain via a per-name map (params seeded from
@@ -108,6 +112,7 @@ export function irFirstBodyIsProvenLowerable(
   claimedArity: ReadonlyMap<string, number>,
   paramDomains?: readonly ValueDomain[],
   returnDomain: ValueDomain | "void" = "number",
+  numberToString = false,
 ): boolean {
   if (!fn.body) return false;
   const params = new Set<string>();
@@ -219,13 +224,12 @@ export function irFirstBodyIsProvenLowerable(
         if (op === ts.SyntaxKind.PlusToken) {
           // (#7066) Admitted exactly when from-ast's `+` rule admits the
           // domains' proofs: a row of its own drifted from the builder before
-          // (2026-08-28, #3529). The skip set exists only on the WasmGC
-          // backend, whose lanes all format numbers (`number-to-string`).
+          // (2026-08-28, #3529).
           const left = exprDomain(b.left);
           const right = exprDomain(b.right);
           if (left === null || right === null) return null;
           const proof = (d: ValueDomain) => (d === "bool" ? "boolean" : d);
-          if (!additiveOperandsProvable(proof(left), proof(right), true)) return null;
+          if (!additiveOperandsProvable(b, proof(left), proof(right), numberToString)) return null;
           if (left === "string" || right === "string") return "string";
           return left === "number" && right === "number" ? "number" : null;
         }

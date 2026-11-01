@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { projectIrBackendTargetProfile, supportsIrBackendTargetCapability } from "../ir/backend/legality.js";
+import { irBackendCapabilityQuery } from "../ir/backend/legality.js";
 import type { IrHostVoidCallbackLoweringPlan, IrImportedCallLoweringPlan } from "../ir/ast-lowering-plans.js";
 import type { IrUnitId } from "../ir/identity.js";
 import { IrInvariantError, type IrPreparationFailure } from "../ir/outcomes.js";
@@ -83,10 +83,7 @@ export function prepareHostDateSnapshotPreflight(
       plan.identityPlan.safeFunctionUnitIds.has(ownerUnitId) || ownerUnitId === retainedModuleInitUnitId,
   );
   const supported =
-    supportsIrBackendTargetCapability(
-      projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }),
-      "host-date-snapshot",
-    ) || ctx.requiresStandaloneClockCapability === true;
+    irBackendCapabilityQuery(ctx)("host-date-snapshot") || ctx.requiresStandaloneClockCapability === true;
   const retention = prepareHostDateSnapshotLoweringByIdentity(
     ctx,
     sourceFile,

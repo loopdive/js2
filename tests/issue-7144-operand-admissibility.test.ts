@@ -113,14 +113,21 @@ const OPERATORS: Record<string, ts.SyntaxKind> = {
   "===": ts.SyntaxKind.EqualsEqualsEqualsToken,
 };
 
+/** `text` (`l op r`) parsed, for the `+` rule, which reads its operands' syntax. */
+function binary(text: string): ts.BinaryExpression {
+  const statement = ts.createSourceFile("pair.ts", text, ts.ScriptTarget.ES2022, true).statements[0]!;
+  return (statement as ts.ExpressionStatement).expression as ts.BinaryExpression;
+}
+
 describe("#7144 — binary operands: selector ⇔ from-ast", () => {
   for (const [spelling, op] of Object.entries(OPERATORS)) {
     it(`'${spelling}' over every pair of operand families`, async () => {
       for (const left of Object.values(PRODUCERS)) {
         for (const right of Object.values(PRODUCERS)) {
+          const pair = binary(`${left.expr} ${spelling} ${right.expr}`);
           const admissible =
             // Every lane here formats numbers (#7066).
-            (op !== ts.SyntaxKind.PlusToken || additiveOperandsProvable(left.additive, right.additive, true)) &&
+            (op !== ts.SyntaxKind.PlusToken || additiveOperandsProvable(pair, left.additive, right.additive, true)) &&
             binaryOperandsAdmissible(op, left.family, right.family);
           await expectAgreement(`var t = ${left.expr} ${spelling} ${right.expr}; throw m;`, admissible);
         }

@@ -3,9 +3,9 @@
 // #7066 — the IR lowers a string `+` beside a number or a boolean as the
 // concatenation of each side's ToString, instead of refusing it. One `+` rule
 // (`additiveOperandsProvable`) decides for the builder, the selector, planned
-// closures and the IR-first gate; one ToString (`lowerPrimitiveToString`)
-// serves `+`, template literals and `String(v)`. Every answer is checked
-// against node's.
+// closures and the IR-first gate, with one lane flag (`number-to-string`); one
+// ToString (`lowerPrimitiveToString`) serves `+`, template literals and
+// `String(v)`. Every answer is checked against node's.
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
@@ -190,25 +190,85 @@ describe("#7066 a mixed-primitive conditional beside a string stays a string", (
   }
 });
 
+// Review round 3: past the end an element read is `undefined`, which no IR
+// scalar holds (a number reads NaN), so no ToString takes one; legacy answers.
+const ELEMENT_READS: readonly (readonly [string, string, (a: number[], i: number) => string])[] = [
+  [
+    "`+` beside a string",
+    'export function f(a: number[], i: number): string { return "v" + a[i]; }',
+    (a, i) => "v" + a[i],
+  ],
+  ["`+` on the left", 'export function f(a: number[], i: number): string { return a[i] + "v"; }', (a, i) => a[i] + "v"],
+  [
+    "a conditional arm",
+    'export function f(a: number[], i: number): string { return "v" + (i > 0 ? a[i] : 2); }',
+    (a, i) => "v" + (i > 0 ? a[i] : 2),
+  ],
+  ["a template", "export function f(a: number[], i: number): string { return `v${a[i]}`; }", (a, i) => `v${a[i]}`],
+  ["String(v)", "export function f(a: number[], i: number): string { return String(a[i]); }", (a, i) => String(a[i])],
+];
+
+describe("#7066 an element read past the end converts as `undefined`", () => {
+  for (const [name, fn, node] of ELEMENT_READS) {
+    // node: f([1], 5) reads past the end ("undefined"); f([1], 0) reads 1.
+    const check = [5, 0].map((i) => `(f([1], ${i}) === ${JSON.stringify(node([1], i))} ? 1 : 0)`).join(" + ");
+
+    it(`${name}: answers as node does, with no post-claim demote`, async () => {
+      for (const target of ["gc", "standalone", "wasi"] as const) {
+        const result = await compileOn(`${fn}\nexport function c(): number { return ${check}; }`, target);
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
+        if (target !== "standalone") continue;
+        const { instance } = await WebAssembly.instantiate(result.binary, {});
+        expect((instance.exports.c as () => number)()).toBe(2);
+      }
+    });
+  }
+
+  it("still adds an element read as a number through the IR", async () => {
+    const result = await compileOn(
+      "export function f(a: number[], i: number): number { return 1 + a[i]; }",
+      "standalone",
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irOutcomes?.find((outcome) => outcome.displayName === "f")?.irBodyEmitted).toBe(true);
+  });
+});
+
 describe("#7066 the one `+` rule", () => {
+  const plus = (source: string): ts.BinaryExpression => {
+    const statement = ts.createSourceFile("rule.ts", source, ts.ScriptTarget.ES2022, true).statements[0]!;
+    return (statement as ts.ExpressionStatement).expression as ts.BinaryExpression;
+  };
+
   it("concatenates a string with a string, a boolean, or a number where the lane formats numbers", () => {
-    expect(additiveOperandsProvable("string", "number", true)).toBe(true);
-    expect(additiveOperandsProvable("number", "string", false)).toBe(false);
-    expect(additiveOperandsProvable("boolean", "string", false)).toBe(true);
-    expect(additiveOperandsProvable("string", "unprovable", true)).toBe(false);
-    expect(additiveOperandsProvable("number", "number", false)).toBe(true);
-    expect(additiveOperandsProvable("boolean", "boolean", true)).toBe(false);
-    expect(additiveOperandsProvable("boolean", "number", true)).toBe(false);
-    expect(additiveOperandsProvable("dynamic", "unprovable", false)).toBe(true);
+    const sides = plus("l + r");
+    expect(additiveOperandsProvable(sides, "string", "number", true)).toBe(true);
+    expect(additiveOperandsProvable(sides, "number", "string", false)).toBe(false);
+    expect(additiveOperandsProvable(sides, "boolean", "string", false)).toBe(true);
+    expect(additiveOperandsProvable(sides, "string", "unprovable", true)).toBe(false);
+    expect(additiveOperandsProvable(sides, "number", "number", false)).toBe(true);
+    expect(additiveOperandsProvable(sides, "boolean", "boolean", true)).toBe(false);
+    expect(additiveOperandsProvable(sides, "boolean", "number", true)).toBe(false);
+    expect(additiveOperandsProvable(sides, "dynamic", "unprovable", false)).toBe(true);
   });
 
-  it("is the IR-first gate's `+` row", () => {
+  it("adds an element read but does not concatenate one", () => {
+    expect(additiveOperandsProvable(plus('"v" + a[i]'), "string", "number", true)).toBe(false);
+    expect(additiveOperandsProvable(plus('(c ? a[i] : 2) + "v"'), "number", "string", true)).toBe(false);
+    expect(additiveOperandsProvable(plus('"v" + (a[i] as boolean)'), "string", "boolean", true)).toBe(false);
+    expect(additiveOperandsProvable(plus("1 + a[i]"), "number", "number", true)).toBe(true);
+    expect(additiveOperandsProvable(plus('"v" + s[i]'), "string", "string", true)).toBe(true);
+  });
+
+  it("is the IR-first gate's `+` row, under the lane's flag", () => {
     const fn = (source: string) =>
       ts.createSourceFile("gate.ts", source, ts.ScriptTarget.ES2022, true).statements.find(ts.isFunctionDeclaration)!;
-    const gate = (source: string, params: ("number" | "bool" | "string")[]) =>
-      irFirstBodyIsProvenLowerable(fn(source), new Map(), params, "string");
+    const gate = (source: string, params: ("number" | "bool" | "string")[], numberToString = true) =>
+      irFirstBodyIsProvenLowerable(fn(source), new Map(), params, "string", numberToString);
     expect(gate('function f(n: number): string { return "v" + n; }', ["number"])).toBe(true);
-    expect(gate('function f(b: boolean): string { return "v" + b; }', ["bool"])).toBe(true);
+    expect(gate('function f(n: number): string { return "v" + n; }', ["number"], false)).toBe(false);
+    expect(gate('function f(b: boolean): string { return "v" + b; }', ["bool"], false)).toBe(true);
     expect(
       gate('function f(n: number, s: string): string { return "v" + (n > 0 ? s : 0); }', ["number", "string"]),
     ).toBe(true);
