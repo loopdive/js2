@@ -13036,6 +13036,30 @@
       "nextBoundary": "Frontend source-shape certifier for the empty-object-literal arms (#4471 inert, #7128 S1 open carrier); move with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
+      "path": "src/ir/binding-pattern-plan.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape planner for destructuring declarations (#7106): the flat-pattern predicate and the literal-source plan the selector and builder share; move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/binding-pattern-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106",
+      "nextBoundary": "Lowers a literal-source destructuring plan into IR values (#7106); takes its AST-facing operations from the builder host, so it splits with from-ast's lowering seams."
+    },
+    {
+      "path": "src/ir/realm-keys.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106",
+      "nextBoundary": "Reads intrinsic property keys from the native realm catalog for selector key-absence proofs; becomes a pure IR contract once the realm catalog is a shared contract."
+    },
+    {
       "path": "src/ir/open-object-carrier.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

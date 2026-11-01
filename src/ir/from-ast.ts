@@ -279,6 +279,8 @@ import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts }
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import { collectPatternBindingNames } from "./analysis/ast-scope.js";
+import { planLiteralPattern } from "./binding-pattern-plan.js";
+import { lowerLiteralPatternPlan } from "./binding-pattern-lowering.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   boundedMixedConditionalPrimitiveFamily,
@@ -4173,25 +4175,13 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
 }
 
 // ---------------------------------------------------------------------------
-// Binding pattern lowering (slice 8a — #1169g)
+// Binding pattern lowering
 // ---------------------------------------------------------------------------
 //
-// Destructuring patterns decompose at compile time into a sequence of
-// single-name bindings. Object pattern leaves emit `object.get`; array
-// pattern leaves emit `vec.get` (when the source is a vec ref).
-//
-// Slice 8a scope: identifier-leaf, no-default, no-rest, no-nested patterns.
-// Anything wider is rejected by the selector and stays on the legacy
-// destructuring path. Mixed array/object patterns over generic iterables
-// (Map, Set) require iter.next protocol and are deferred to slice 8b.
-//
-// Why hint with externref for the initializer in `lowerVarDecl`? The
-// pattern's source type isn't known until lowering — it could be
-// IrType.object, IrType.class (for class instances treated like objects
-// — out of scope), or `(ref $vec_*)`. The externref hint is advisory;
-// `lowerExpr`'s producers inspect their own type rather than coercing
-// to the hint, so an object literal stays IrType.object and a vec ref
-// stays `(ref $vec_*)`.
+// A fresh literal source lowers through its plan (`binding-pattern-plan.ts`,
+// #7106). Any other source is read by its IR type (slice 8a, #1169g): an
+// object or class leaf emits `object.get` / `class.get`, an array leaf
+// `vec.get`. Iterables that need the iterator protocol stay on legacy.
 
 /**
  * Slice 8a (#1169g): walk a destructuring binding pattern and emit one
@@ -4235,12 +4225,13 @@ function isRedeclaredModuleVar(d: ts.VariableDeclaration, name: string, cx: Lowe
   );
 }
 
-/**
- * Slice 8a (#1169g): a destructuring declaration (`VariableStatement` or
- * `for (;;)` head; the selector admits `const` only). The initializer lowers
- * ONCE; each leaf then reads one `object.get` / `vec.get` off it.
- */
-function lowerDeclarationPattern(d: ts.VariableDeclaration, pattern: ts.BindingPattern, cx: LowerCtx): void {
+/** A destructuring declaration (`VariableStatement` or `for (;;)` head); see "Binding pattern lowering". */
+function lowerDeclarationPattern(
+  d: ts.VariableDeclaration,
+  pattern: ts.BindingPattern,
+  isConst: boolean,
+  cx: LowerCtx,
+): void {
   if (!d.initializer) {
     demoteToLegacy(
       "module-init-legacy-coupling",
@@ -4256,8 +4247,22 @@ function lowerDeclarationPattern(d: ts.VariableDeclaration, pattern: ts.BindingP
       `ir/from-ast: module-level destructuring declaration not in module-init Slice 2 scope (${cx.funcName})`,
     );
   }
-  // The externref hint is advisory: an object literal stays IrType.object and
-  // a vec stays `(ref $vec_*)`, which is what the pattern lowerer dispatches on.
+  const literalPlan = cx.scope.has("undefined") ? null : planLiteralPattern(pattern, d.initializer);
+  if (literalPlan) {
+    lowerLiteralPatternPlan(literalPlan, {
+      builder: cx.builder,
+      lowerValue: (expression) => lowerExpr(expression, cx, irVal({ kind: "externref" })),
+      bind: (leaf, value) => {
+        if (cx.scope.has(leaf.name.text)) {
+          // invariant (producer-promise): selection refused a leaf already in scope.
+          throw new IrInvariantError("selection-preparation-mismatch", "build", `leaf '${leaf.name.text}' rebinds`);
+        }
+        bindLocalName(leaf, leaf.name.text, value, isConst, cx);
+      },
+    });
+    return;
+  }
+  // The externref hint is advisory: the readers dispatch on the source's own IR type.
   const initValue = lowerExpr(d.initializer, cx, irVal({ kind: "externref" }));
   lowerBindingPattern(pattern, initValue, cx);
 }
@@ -4265,7 +4270,7 @@ function lowerDeclarationPattern(d: ts.VariableDeclaration, pattern: ts.BindingP
 /** Lower one variable declaration: a pattern, a module slot, a closure or a typed local. */
 function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, cx: LowerCtx): void {
   if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
-    lowerDeclarationPattern(d, d.name, cx);
+    lowerDeclarationPattern(d, d.name, isConst, cx);
     return;
   }
   if (!ts.isIdentifier(d.name)) {
@@ -4592,25 +4597,11 @@ function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId,
     );
   }
   for (const elem of pattern.elements) {
-    // Selector enforces no rest / no default / identifier-leaf only;
-    // defensive checks here surface selector regressions as clean throws
-    // rather than silent miscompiles.
-    if (elem.dotDotDotToken) {
+    // `isPhase1BindingPattern` admitted identifier leaves only.
+    if (elem.dotDotDotToken || elem.initializer || !ts.isIdentifier(elem.name)) {
       demoteToLegacy(
         "destructuring-param-complex",
-        `ir/from-ast: object rest pattern not in slice 8a (${cx.funcName})`,
-      );
-    }
-    if (elem.initializer) {
-      demoteToLegacy(
-        "destructuring-param-complex",
-        `ir/from-ast: pattern default values not in slice 8a (${cx.funcName})`,
-      );
-    }
-    if (!ts.isIdentifier(elem.name)) {
-      demoteToLegacy(
-        "destructuring-param-complex",
-        `ir/from-ast: nested binding patterns not in slice 8a (${cx.funcName})`,
+        `ir/from-ast: object pattern leaf not in slice 8a (${cx.funcName})`,
       );
     }
     // The property name being read out of the source. `propertyName`
@@ -4681,22 +4672,11 @@ function lowerArrayPattern(pattern: ts.ArrayBindingPattern, source: IrValueId, c
       i++;
       continue;
     }
-    if (elem.dotDotDotToken) {
+    // `isPhase1BindingPattern` admitted identifier leaves only.
+    if (elem.dotDotDotToken || elem.initializer || !ts.isIdentifier(elem.name)) {
       demoteToLegacy(
         "array-representation-unsupported",
-        `ir/from-ast: array rest pattern not in slice 8a (${cx.funcName})`,
-      );
-    }
-    if (elem.initializer) {
-      demoteToLegacy(
-        "array-representation-unsupported",
-        `ir/from-ast: pattern default values not in slice 8a (${cx.funcName})`,
-      );
-    }
-    if (!ts.isIdentifier(elem.name)) {
-      demoteToLegacy(
-        "array-representation-unsupported",
-        `ir/from-ast: nested binding patterns not in slice 8a (${cx.funcName})`,
+        `ir/from-ast: array pattern leaf not in slice 8a (${cx.funcName})`,
       );
     }
     const localName = elem.name.text;

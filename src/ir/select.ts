@@ -157,7 +157,7 @@ import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
-import { isPhase1BindingPattern } from "./binding-pattern-plan.js";
+import { isPhase1BindingPattern, literalPlanExpressions, planLiteralPattern } from "./binding-pattern-plan.js";
 import { collectBindingPatternNames } from "./analysis/ast-scope.js";
 import {
   conditionalJoinArmFamily,
@@ -7028,8 +7028,10 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
 
 /**
  * A destructuring declaration (`VariableStatement` or `for (;;)` head): its
- * initializer and leaves are selectable, and every leaf enters `scope`. The
- * typed readers bind leaves as SSA locals, so a `let` pattern is refused.
+ * initializer and leaves are selectable, and every leaf enters `scope`. A
+ * fresh literal source is checked through the plan the builder lowers. Any
+ * other source goes to the typed readers, which bind leaves as SSA locals, so
+ * there a `let` pattern is refused.
  */
 function isPhase1DeclarationPattern(
   d: ts.VariableDeclaration,
@@ -7038,8 +7040,10 @@ function isPhase1DeclarationPattern(
   scope: Set<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
-  if (!isConst) return shapeNo("vardecl-dstr-let", pattern);
   if (!d.initializer) return shapeNo("vardecl-dstr-noinit", pattern);
+  const literalPlan = scope.has("undefined") ? null : planLiteralPattern(pattern, d.initializer);
+  if (literalPlan) return isPhase1LiteralPattern(pattern, literalPlanExpressions(literalPlan), scope, localClasses);
+  if (!isConst) return shapeNo("vardecl-dstr-let", pattern);
   if (!isPhase1BindingPattern(pattern, scope)) return shapeNo("vardecl-dstr-pattern", pattern);
   const patternNames = new Set<string>();
   collectBindingPatternNames(pattern, patternNames);
@@ -7052,6 +7056,27 @@ function isPhase1DeclarationPattern(
   if (!isPhase1Expr(d.initializer, initializerScope, localClasses)) return shapeNo("vardecl-dstr-init", d.initializer);
   if (ts.isObjectBindingPattern(pattern)) recordDestructuredObjectMethodProjections(pattern, d.initializer, scope);
   collectBindingPatternNames(pattern, scope);
+  return true;
+}
+
+/** A pattern over a fresh literal: no leaf shadows, and every expression the plan lowers is selectable. */
+function isPhase1LiteralPattern(
+  pattern: ts.BindingPattern,
+  expressions: readonly ts.Expression[],
+  scope: Set<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const leaves = new Set<string>();
+  collectBindingPatternNames(pattern, leaves);
+  if ([...leaves].some((name) => scope.has(name))) return shapeNo("vardecl-dstr-shadow", pattern);
+  for (const expression of expressions) {
+    if (expressionTouchesTrackedModuleValue(expression)) return shapeNo("vardecl-dstr-module-value", expression);
+    if (!isPhase1Expr(expression, scope, localClasses)) return shapeNo("vardecl-dstr-init", expression);
+  }
+  for (const name of leaves) {
+    clearProjectionBinding(name);
+    scope.add(name);
+  }
   return true;
 }
 
