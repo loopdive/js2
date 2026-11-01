@@ -165,8 +165,10 @@ import {
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   nativeI32OperandsAdmissible,
+  type OperandFamily,
 } from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
+import { selectStaticPredicateCall } from "./static-predicates/selection.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 // excluded here (eval, non-selected with shapes, import(), Proxy)
 
@@ -11072,6 +11074,90 @@ function isPhase1ArraySearchOrJoin(
   );
 }
 
+/**
+ * (#7106) `Number.isNaN(x)`, `Object.is(a, b)`, `Array.isArray(x)` on the
+ * unshadowed ambient namespace: `undefined` when the call is not one, else the
+ * Phase-1 verdict (`static-predicates/selection.ts`).
+ */
+function isPhase1StaticPredicateCall(
+  expr: ts.CallExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  const verdict = selectStaticPredicateCall(expr, {
+    // The Math arms' ambient test: a module or source binding of the name is not ambient.
+    isAmbientNamespace: (receiver) => !scope.has(receiver.text) && selectorSeesAmbientBinding(receiver),
+    isGlobalUndefined: (operand) => isUnshadowedUndefinedIdentifier(operand, scope),
+    localDeclaration: closureLocalDeclaration,
+    family: (expression) => provenIrFamily(expression, scope),
+    isStringMethodCall: (call) =>
+      ts.isPropertyAccessExpression(call.expression) &&
+      currentSelectionOptions?.classifyPrimitiveExpression?.(call.expression.expression) === "string",
+    declaredSlotFamily: (type) => resolvedKindFamily(resolveReturnTypeNode(type)),
+    // A top-level function's parameter takes the verdict its own claim resolves its signature with; any
+    // other callee the source declares (a local, a module `const h = (b) => …`) is not resolved here.
+    argumentSlotFamily: (call, index) => {
+      if (!ts.isIdentifier(call.expression)) return undefined;
+      const name = call.expression.text;
+      const local = scope.has(name);
+      if (!local && currentDynScanDecls?.has(name)) {
+        return resolvedKindFamily(calleeParamResolvedKind(name, index, currentClaimTypeMap));
+      }
+      const declared = local || currentModuleBindingResolver?.localValueDeclaration(call.expression) !== undefined;
+      return declared ? "unknown" : undefined;
+    },
+  });
+  if (verdict === undefined) return undefined;
+  if (!verdict.admitted) return capabilityNo(verdict.reason, verdict.arm, verdict.node);
+  return verdict.lowered.every((operand) => isPhase1Expr(operand, scope, localClasses));
+}
+
+/**
+ * The IR representation family the selector proves `expression` lowers to —
+ * `irOperandFamily`'s, not the checker's type: a module binding is its slot
+ * (an f64, or an i32 read without the boolean brand), a native-i32 slot read
+ * (#7136) an i32, and an unannotated local unknown (its caller traces the
+ * initializer when the local is never rewritten).
+ */
+function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): OperandFamily {
+  // An unannotated local: its family is its initializer's, which the caller traces.
+  if (ts.isIdentifier(expression) && unannotatedLocal(expression) !== undefined) return "unknown";
+  if (moduleBinding(expression) !== undefined) {
+    const slot = obviousModuleValueFamily(expression);
+    return slot === "f64" ? "number" : slot === "boolean" ? "int32" : "unknown";
+  }
+  if (currentSelectionOptions?.isNativeI32SlotRead?.(expression) === true) return "int32";
+  if (expressionIsProvenNumber(expression)) return "number";
+  if (expressionIsProvenString(expression)) return "string";
+  // An ambient `String(v)` is a string when from-ast renders `v`: a number or a string, never an unbranded i32.
+  const toStringArg = ts.isCallExpression(expression) && !scope.has("String") && ambientStringToStringCall(expression);
+  if (toStringArg) {
+    const argument = provenIrFamily(toStringArg, scope);
+    return argument === "number" || argument === "string" ? "string" : "unknown";
+  }
+  const obvious = obviousSelectorValueFamily(expression, scope);
+  if (obvious === "string" || obvious === "boolean") return obvious;
+  return "unknown";
+}
+
+const RESOLVED_KIND_FAMILIES: Partial<Record<NonNullable<ResolvedKind>, OperandFamily>> = {
+  f64: "number",
+  bool: "boolean",
+  string: "string",
+  dynamic: "dynamic",
+};
+
+/** The family of a resolved parameter or slot kind; `unknown` for a kind no predicate answer fits. */
+function resolvedKindFamily(kind: ResolvedKind): OperandFamily {
+  return (kind !== null && RESOLVED_KIND_FAMILIES[kind]) || "unknown";
+}
+
+/** The unannotated function or block local `identifier` names; from-ast types its slot from the initializer. */
+function unannotatedLocal(identifier: ts.Identifier): ts.VariableDeclaration | undefined {
+  const declaration = closureLocalDeclaration(identifier);
+  return declaration?.type === undefined ? declaration : undefined;
+}
+
 function functionObjectCallIsPhase1(
   expr: ts.CallExpression,
   scope: ReadonlySet<string>,
@@ -11806,6 +11892,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       ) {
         return shapeNo("expr-math-call-shape", expr);
       }
+      // (#7106) `Number.isNaN(x)`, `Object.is(a, b)`, `Array.isArray(x)`: typed by operand family, like Math.
+      const staticPredicate = isPhase1StaticPredicateCall(expr, scope, localClasses);
+      if (staticPredicate !== undefined) return staticPredicate;
       // #3787 — exact ambient String.fromCharCode(...). Each argument is
       // lowered independently through the mode-selected unary helper, then
       // concatenated left-to-right. The numeric proof is required because

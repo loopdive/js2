@@ -31,6 +31,7 @@
 import { ts } from "../../ts-api.js";
 import type { IrFunctionBuilder } from "../builder.js";
 import { irBool } from "../boolean-brand.js";
+import { emitF64IsUndefined } from "../f64-undefined-marker.js";
 import { irIntrinsicFuncRef } from "../callable-bindings.js";
 import { asVal, irVal, type IrType, type IrValueId } from "../nodes.js";
 import { demoteToLegacy } from "../outcomes.js";
@@ -42,12 +43,7 @@ export const IR_VEC_SEARCH_JOIN_METHODS: ReadonlySet<string> = new Set(["indexOf
 
 const I32: IrType = irVal({ kind: "i32" });
 const F64: IrType = irVal({ kind: "f64" });
-const I64: IrType = irVal({ kind: "i64" });
 const STRING: IrType = { kind: "string" };
-/** Legacy f64 `undefined` marker (`UNDEF_F64_BITS`, codegen/value-tags.ts). */
-const F64_UNDEFINED_BITS = 0x7ff00000deadc0den;
-/** Legacy f64 absence marker (`HOLE_F64_BITS`, #4491 T11). */
-const F64_HOLE_BITS = 0x7ff00000deadc01en;
 
 /** What the caller already resolved about the receiver vec. */
 export interface IrVecSearchJoinReceiver {
@@ -119,14 +115,6 @@ function readElement(receiver: IrVecSearchJoinReceiver, kind: ElementKind, index
   return b.emitVecGet(receiver.recv, index, kind === "string" ? STRING : irVal(receiver.elementValType));
 }
 
-/** An f64 element holding legacy's `undefined` or absence marker. */
-function isF64Hole(value: IrValueId, b: IrFunctionBuilder): IrValueId {
-  const bits = b.emitUnary("i64.reinterpret_f64", value, I64);
-  const isUndefined = b.emitBinary("i64.eq", bits, b.emitConst({ kind: "i64", value: F64_UNDEFINED_BITS }, I64), I32);
-  const isAbsent = b.emitBinary("i64.eq", bits, b.emitConst({ kind: "i64", value: F64_HOLE_BITS }, I64), I32);
-  return b.emitBinary("i32.or", isUndefined, isAbsent, I32);
-}
-
 /** Lower the search value to the element family's carrier (f64 or string). */
 function lowerNeedle(arg: ts.Expression, kind: ElementKind, host: IrVecSearchJoinHost): IrValueId {
   const b = host.builder;
@@ -179,7 +167,7 @@ function emitMatch(
   // `undefined` and is never SameValueZero to a number.
   const elementNaN = b.emitBinary("f64.ne", element, element, I32);
   const needleNaN = b.emitBinary("f64.ne", needle, needle, I32);
-  const notHole = b.emitUnary("i32.eqz", isF64Hole(element, b), I32);
+  const notHole = b.emitUnary("i32.eqz", emitF64IsUndefined(element, b), I32);
   const bothNaN = b.emitBinary("i32.and", b.emitBinary("i32.and", elementNaN, needleNaN, I32), notHole, I32);
   return b.emitBinary("i32.or", eq, bothNaN, I32);
 }
@@ -257,7 +245,11 @@ function emitAppendElement(
     return;
   }
   const isHole =
-    kind === "f64" ? isF64Hole(raw, b) : stringElementNullable(receiver) ? b.emitUnary("ref.is_null", raw, I32) : null;
+    kind === "f64"
+      ? emitF64IsUndefined(raw, b)
+      : stringElementNullable(receiver)
+        ? b.emitUnary("ref.is_null", raw, I32)
+        : null;
   if (isHole === null) {
     append(() => raw);
     return;
