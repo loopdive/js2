@@ -166,7 +166,7 @@ import { IR_NUMBER_TO_FIXED_FN, IR_STRING_REPEAT_FN, irCountedStringRepeatFitsNa
 import { irCountedStringAppendSiteIdIsCurrent } from "./counted-string-append-provenance.js";
 import { timerArg, timerResult } from "./timer-shim-lowering.js";
 import { irBool, irTypeIsBoolean } from "./boolean-brand.js";
-import { carrierStringFamily, lowerPrimitiveToString } from "./primitive-to-string.js";
+import { carrierStringFamily, lowerConcatOperand, lowerPrimitiveToString } from "./primitive-to-string.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import {
   collectOuterWrites,
@@ -14044,12 +14044,7 @@ function tryLowerExactMixedPrimitiveWrapperCall(expr: ts.CallExpression, cx: Low
   return proof === null ? null : lowerConvertedMixedConditional(proof, cx);
 }
 
-/**
- * #5092 — `String(c ? a : b)` / `Number(c ? a : b)` over a proven mixed-primitive
- * conditional, converted arm by arm: each arm's ToString / ToNumber runs in its
- * own branch, so the value is never boxed into the carrier. (#7066) The string
- * `+` converts such an operand the same way.
- */
+/** #5092 — `String` / `Number` of a proven mixed-primitive conditional, arm by arm (never boxed); #7066 `+` too. */
 function lowerConvertedMixedConditional(proof: ExactMixedPrimitiveWrapperProof, cx: LowerCtx): IrValueId {
   try {
     const rawCond = lowerExpr(proof.conditional.condition, cx, irVal({ kind: "i32" }));
@@ -14703,22 +14698,12 @@ function proveAdditiveOperand(node: ts.Expression, cx: LowerCtx): PrimitiveProof
  */
 /**
  * #2781 (hybrid Row 7) — the `+` operand-type proof gate, run BEFORE operand
- * lowering (mirrors #2780's pre-element widening gate), so no dead operand
- * instrs are emitted and the demotion cause is the explicit HI reason rather
- * than an incidental downstream operand-family throw. `+` is
- * string-concat-OR-numeric-add chosen at RUNTIME (ToPrimitive on each operand,
- * then "if either is a string → concatenate, else add"). Per the Hybrid
- * Invariant a T-directed specialization must be discharged by a proof on the
- * TS *type*, never the Wasm kind: number / boolean / symbol all collapse to
- * f64 / i32, so the kind alone cannot tell a genuine numeric-add operand from
- * an `any` / string / `string | number` one the f64 hint coerced opaquely (the
- * Row-7 trap). The pair must satisfy the shared `+` rule
- * ({@link additiveOperandsProvable}, #7066): both numbers (the unboxed add), or
- * a string beside a string, a boolean or — where the lane formats numbers — a
- * number (the concat of each side's ToString). Anything else (`any` / object /
- * union) demotes to the SAFE legacy dynamic `+` (`binary-ops.ts` `emitAnyAdd`).
- * No checker → `undefined`, and the existing kind-based dispatch stands
- * (#2780's no-checker arm).
+ * lowering so no dead operand instrs are emitted. A T-directed `+` must be
+ * discharged by a proof on the TS *type*, never the Wasm kind: number /
+ * boolean / symbol all collapse to f64 / i32 (the Row-7 trap). The pair must
+ * satisfy the shared `+` rule ({@link additiveOperandsProvable}, #7066);
+ * anything else demotes to the SAFE legacy dynamic `+` (`emitAnyAdd`). No
+ * checker → `undefined`, and the kind-based dispatch stands (#2780).
  */
 function provenAdditiveOperands(
   expr: ts.BinaryExpression,
@@ -14737,31 +14722,6 @@ function provenAdditiveOperands(
     );
   }
   return [lProof, rProof];
-}
-
-/**
- * (#7066) One side of a string `+` as the string carrier, converted as the
- * family its `+` proof names — the proof, not the carrier, so an unbranded
- * boolean `i32` still prints `"true"`. A side without a primitive proof (no
- * checker) converts as its carrier shows. A carrier the family has no
- * conversion for demotes.
- */
-function concatOperandToString(
-  value: IrValueId,
-  type: IrType,
-  proof: AdditiveProof | undefined,
-  cx: LowerCtx,
-): IrValueId {
-  const family = proof === "string" || proof === "number" || proof === "boolean" ? proof : carrierStringFamily(type);
-  const asString = lowerPrimitiveToString(cx.builder, value, family);
-  if (asString === null) {
-    throw new IrUnsupportedError(
-      "operand-coercion-unsupported",
-      "build",
-      `ir/from-ast: '+' operand proved ${family} lowered as ${describeIrType(type)} in ${cx.funcName}`,
-    );
-  }
-  return asString;
 }
 
 function additiveOperandProof(node: ts.Expression, cx: LowerCtx): AdditiveProof | null {
@@ -15529,12 +15489,15 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
       throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
     }
     switch (op) {
-      case ts.SyntaxKind.PlusToken:
-        return cx.builder.emitStringConcat(
-          concatOperandToString(lhs, lt, additiveProofs?.[0], cx),
-          concatOperandToString(rhs, rt, additiveProofs?.[1], cx),
-          inferStringEncoding(expr, cx),
-        );
+      case ts.SyntaxKind.PlusToken: {
+        const left = lowerConcatOperand(cx.builder, lhs, additiveProofs?.[0]);
+        const right = lowerConcatOperand(cx.builder, rhs, additiveProofs?.[1]);
+        if (left === null || right === null) {
+          const detail = `ir/from-ast: '+' operand ${describeIrType(left === null ? lt : rt)} has no ToString in ${cx.funcName}`;
+          throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
+        }
+        return cx.builder.emitStringConcat(left, right, inferStringEncoding(expr, cx));
+      }
       case ts.SyntaxKind.EqualsEqualsEqualsToken:
       case ts.SyntaxKind.EqualsEqualsToken:
         return cx.builder.emitStringEq(lhs, rhs, false);
@@ -15689,9 +15652,8 @@ function lowerBinaryOperands(
     if (isNumericReaderOperator(op) && peelParensExpr(operand).kind === ts.SyntaxKind.NullKeyword) {
       return cx.builder.emitConst({ kind: "f64", value: 0 }, IR_F64);
     }
-    // (#7066) Beside a proven string, a #5092 mixed-primitive conditional is the
-    // string `String(c ? a : b)` makes of it: ToPrimitive is the identity on its
-    // primitive arms, so the `+` concatenates unboxed and stays a string.
+    // (#7066) Beside a proven string, a mixed-primitive conditional is its `String(c ? a : b)`:
+    // ToPrimitive is the identity on primitive arms, so the `+` stays an unboxed string.
     const conditional = unwrapMixedPrimitiveProjection(operand);
     if (otherProof === "string" && ts.isConditionalExpression(conditional)) {
       const mixed = requireMixedPrimitiveConditionalProof(conditional, "string `+` operand", cx);

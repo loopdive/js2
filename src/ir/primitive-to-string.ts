@@ -4,6 +4,7 @@
 // template literal and the string `+`: the one place the IR turns a number or
 // a boolean into the string carrier.
 
+import type { AdditiveProof } from "./analysis/operand-admissibility.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
 import { irIntrinsicFuncRef } from "./callable-bindings.js";
@@ -52,4 +53,18 @@ export function lowerPrimitiveToString(
   // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (result === null) throw new Error(`ir: ${IR_NUMBER_TO_STRING_FN} produced no result`);
   return result;
+}
+
+/**
+ * One side of a string `+`, converted as the family its `+` proof names — the
+ * proof, not the carrier, so an unbranded boolean `i32` still prints "true".
+ * Without a primitive proof (no checker) the carrier decides.
+ */
+export function lowerConcatOperand(
+  builder: IrFunctionBuilder,
+  value: IrValueId,
+  proof: AdditiveProof | undefined,
+): IrValueId | null {
+  const proven = proof === "string" || proof === "number" || proof === "boolean";
+  return lowerPrimitiveToString(builder, value, proven ? proof : carrierStringFamily(builder.typeOf(value)));
 }
