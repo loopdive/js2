@@ -295,13 +295,13 @@ export function identifierWritesOf(
 }
 
 /**
- * The node whose stores `identifier` may be a target of: the first assignment,
+ * The node whose stores `node` may be a target of: the first assignment,
  * update or for-in/for-of head reached by climbing through destructuring
  * containers (array/object literal, spread, shorthand, property value) and
  * transparent wrappers. Never a member receiver, a computed key or a default.
  */
-function writeRootOf(identifier: ts.Identifier): ts.Node | undefined {
-  let target: ts.Node = identifier;
+function writeRootOf(node: ts.Expression): ts.Node | undefined {
+  let target: ts.Node = node;
   for (;;) {
     const parent = target.parent;
     if (!parent) return undefined;
@@ -332,6 +332,26 @@ function writeRootOf(identifier: ts.Identifier): ts.Node | undefined {
     }
     return undefined;
   }
+}
+
+/**
+ * True when `target` — any expression, a member access included — is stored
+ * into: the left side of an assignment (plain, compound, logical), possibly
+ * inside a destructuring pattern, a `++`/`--` operand, or a for-in/for-of head.
+ */
+export function isStoreTarget(target: ts.Expression): boolean {
+  const root = writeRootOf(target);
+  if (root === undefined) return false;
+  let side: ts.Node = target;
+  while (side.parent !== root) side = side.parent;
+  if (ts.isBinaryExpression(root)) {
+    const operator = root.operatorToken.kind;
+    return side === root.left && operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment;
+  }
+  if (ts.isPrefixUnaryExpression(root) || ts.isPostfixUnaryExpression(root)) {
+    return root.operator === ts.SyntaxKind.PlusPlusToken || root.operator === ts.SyntaxKind.MinusMinusToken;
+  }
+  return side === (root as ts.ForInStatement | ts.ForOfStatement).initializer;
 }
 
 /** True when `identifier` is a target {@link identifierWritesOf} reports — a `var` declarator's own name excluded. */

@@ -93,6 +93,7 @@ import {
   type IrPlanningIdentityContext,
 } from "./planning-identity.js";
 import { readEnv } from "../env.js";
+import { phase1PropertyName } from "./property-key-fold.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
 
 // ---------------------------------------------------------------------------
@@ -1061,7 +1062,7 @@ function inferObjectLiteralAtom(
     let name: string | null;
     let valExpr: ts.Expression;
     if (ts.isPropertyAssignment(prop)) {
-      name = phase1ObjectPropertyName(prop.name);
+      name = phase1PropertyName(prop.name);
       if (name === null) return DYNAMIC;
       valExpr = prop.initializer;
     } else if (ts.isShorthandPropertyAssignment(prop)) {
@@ -1141,20 +1142,6 @@ function inferElementAccessAtom(
   const field = recvType.fields.find((f) => f.name === propName);
   if (!field) return DYNAMIC;
   return field.type;
-}
-
-/**
- * Resolve an object literal's PropertyName to its canonical text key.
- * Identifier and StringLiteral keys produce their text; NumericLiteral
- * keys produce their canonical JS toString. Computed keys widen to
- * legacy by returning null. Mirrors the helper in `from-ast.ts` —
- * duplicated here to keep `propagate.ts` self-contained.
- */
-function phase1ObjectPropertyName(name: ts.PropertyName): string | null {
-  if (ts.isIdentifier(name)) return name.text;
-  if (ts.isStringLiteral(name)) return name.text;
-  if (ts.isNumericLiteral(name)) return name.text;
-  return null;
 }
 
 /**
