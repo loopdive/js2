@@ -1,7 +1,7 @@
 {
   "generated": "2026-11-01",
   "threshold": 1500,
-  "totalCeiling": 1052310,
+  "totalCeiling": 1052315,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4426,
@@ -101,7 +101,7 @@
     "src/ir/from-ast.ts": 17714,
     "src/ir/identity.ts": 1503,
     "src/ir/integration.ts": 10868,
-    "src/ir/lower-generic.ts": 4528,
+    "src/ir/lower-generic.ts": 4533,
     "src/ir/module-bindings.ts": 2771,
     "src/ir/prepared-component-dependencies.ts": 1789,
     "src/ir/program-consumer.ts": 1524,
