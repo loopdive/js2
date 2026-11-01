@@ -173,6 +173,24 @@ export function probe(): number { return work() * 10 + x; }`;
     expect(outcome.irUnits).toContain("work");
     expect(outcome).toMatchObject({ init: "ok", value: 51 });
   });
+
+  // Review round 2: node answers 100 for both.
+  it.each([
+    [
+      "a const from an earlier switch case",
+      "switch (k) { case 0: const a: number = 1; case 1: try { a = 2; } catch (e) { c = 100; } }",
+    ],
+    [
+      "a function expression's own name",
+      "const g = function f(): number { f = g; return 0; }; try { g(); } catch (e) { c = 100; }",
+    ],
+  ])("%s: the write throws TypeError, refused at select", async (_, body) => {
+    const source = `function work(k: number): number { let c = 0; ${body} return c; }
+export function probe(): number { return work(0); }`;
+    const outcome = await run(source, lane);
+    expect(outcome).toMatchObject({ init: "ok", value: 100, postClaimErrors: 0 });
+    expect(outcome.irUnits).not.toContain("work");
+  });
 });
 
 /** The write the selector refuses a subject for, by name, or "-" when none. */
@@ -191,7 +209,14 @@ describe("firstConstBindingWrite resolves the nearest binding", () => {
     ["a hoisted nested var", "const x = 1;\nfunction w(n) { if (n) { var x = 4; } x = 7; }", "-"],
     ["a block class", "const x = 1;\nfunction w() { { class x {} x = 2; } }", "-"],
     ["a destructured parameter", "const x = 1;\nfunction w({ x }) { x = 2; }", "-"],
-    ["a named function expression", "const x = 1;\nconst g = function x() { x = 2; };", "-"],
+    // Review round 2: a `switch` body is one scope; a function or class's own name is immutable inside it.
+    ["a const in an earlier case", "function w(k) { switch (k) { case 0: const a = 1; case 1: a = 2; } }", "a"],
+    ["a let in an earlier case", "function w(k) { switch (k) { case 0: let a = 1; default: a = 2; } }", "-"],
+    ["a named function expression's own name", "const x = 1;\nconst g = function x() { x = 2; };", "x"],
+    ["a parameter shadowing that name", "const g = function x(x) { x = 2; };", "-"],
+    ["a class expression's own name", "const C = class K { m() { K = 1; } };", "K"],
+    ["a class's name inside its body", "class K { static { K = 1; } }", "K"],
+    ["a class's name outside its body", "class K {}\nK = 1;", "-"],
   ])("%s", (_, source, expected) => {
     expect(constWriteIn(source)).toBe(expected);
   });

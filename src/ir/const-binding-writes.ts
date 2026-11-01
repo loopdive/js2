@@ -31,17 +31,19 @@ export function firstConstBindingWrite(root: ts.Node): ts.Identifier | undefined
 
 /**
  * (#7014) Does the write target `id` resolve to a `const` binding? Syntactic:
- * the nearest enclosing declaration of the name wins — a block's
- * `let`/`const`/`var` (pattern leaves included), function or class; a loop
- * head; a catch parameter; a function's own locals (parameters, hoisted
- * `var`s); a named function or class expression's own name.
+ * the nearest enclosing declaration of the name wins — a block's (a whole
+ * `switch` body's) `let`/`const`/`var` (pattern leaves included), function or
+ * class; a loop head; a catch parameter; a function's own locals (parameters,
+ * hoisted `var`s). A named function expression's own name, and a class's name
+ * inside its body, are immutable bindings, so they count as `const`.
  */
 function isWriteToConstDeclaration(id: ts.Identifier): boolean {
   const binds = (name: ts.BindingName): boolean => [...collectPatternBindingNames(name)].includes(id.text);
   const declares = (list: ts.VariableDeclarationList): boolean => list.declarations.some((d) => binds(d.name));
   for (let n: ts.Node | undefined = id.parent; n; n = n.parent) {
     if (ts.isBlock(n) || ts.isSourceFile(n) || ts.isModuleBlock(n) || ts.isCaseClause(n) || ts.isDefaultClause(n)) {
-      for (const st of n.statements) {
+      const scope = blockScopeOf(n);
+      for (const st of ts.isCaseBlock(scope) ? scope.clauses.flatMap((clause) => clause.statements) : n.statements) {
         if (ts.isVariableStatement(st) && declares(st.declarationList)) {
           return (st.declarationList.flags & ts.NodeFlags.Const) !== 0;
         }
@@ -53,8 +55,8 @@ function isWriteToConstDeclaration(id: ts.Identifier): boolean {
       if (ts.isVariableDeclarationList(init) && declares(init)) return (init.flags & ts.NodeFlags.Const) !== 0;
     }
     if (ts.isCatchClause(n) && n.variableDeclaration && binds(n.variableDeclaration.name)) return false;
-    if ((ts.isFunctionExpression(n) || ts.isClassExpression(n)) && n.name?.text === id.text) return false;
     if (isFunctionScopeBoundary(n) && getFunctionOwnLocals(n).has(id.text)) return false;
+    if ((ts.isFunctionExpression(n) || ts.isClassLike(n)) && n.name?.text === id.text) return true;
   }
   return false;
 }
@@ -84,11 +86,14 @@ export function declarationBindingWritten(declaration: ts.VariableDeclaration): 
 function bindingScopeOf(declaration: ts.VariableDeclaration): ts.Node {
   const list = declaration.parent;
   if (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) {
-    if (!ts.isVariableStatement(list.parent)) return list.parent;
-    const block = list.parent.parent;
-    return ts.isCaseClause(block) || ts.isDefaultClause(block) ? block.parent : block;
+    return ts.isVariableStatement(list.parent) ? blockScopeOf(list.parent.parent) : list.parent;
   }
   let scope: ts.Node = list;
   while (scope.parent && !isFunctionScopeBoundary(scope)) scope = scope.parent;
   return scope;
+}
+
+/** The scope of a block-level declaration in `statements`: a `case` clause's is its whole `switch` body. */
+function blockScopeOf(statements: ts.Node): ts.Node {
+  return ts.isCaseClause(statements) || ts.isDefaultClause(statements) ? statements.parent : statements;
 }

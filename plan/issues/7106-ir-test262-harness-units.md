@@ -4060,6 +4060,41 @@ changed files):
 - Legacy throws no TypeError when a for-in/for-of head writes an outer const.
 - `(x) => { x = x + 1 }` fails the whole compile on main.
 
+### Review round 2 (2026-11-01)
+
+The verdict was approve with nits: no regression, and no route bypasses the
+selector. Both findings are fixed.
+
+- **A `const` from an earlier `case` (minor).** The resolver searched only the
+  clause that holds the write. `switch (k) { case 0: const a = 1; case 1:
+  a = 2; }` was claimed, hit the #4502 invariant, and failed the compile on
+  both lanes; node throws a TypeError. A `case` clause now resolves against its
+  whole `switch` body. The rule is one helper, `blockScopeOf`, which #7024's
+  `bindingScopeOf` now uses too.
+- **Immutable own names (nit, latent).** A named function expression's own
+  name, and a class's name inside its body, are immutable bindings. A write
+  throws in strict and class code and is ignored in sloppy code. The resolver
+  now counts them as `const`. A parameter or `var` of the same name still
+  shadows them.
+
+Re-measured with a file-copy A/B of `const-binding-writes.ts` against
+`5a8480ffe9`, both lanes:
+
+- **Probes:** the 238 runs above and the reviewer's 39 cases (R2–R4). One
+  answer changes: `switchSiblingCase` failed to compile on the base and now
+  answers 100, as node does. The base did not claim the own-name cases either,
+  so their binaries are unchanged.
+- **Tests:** `tests/ir-const-update-refusal.test.ts` 91/91. It adds the switch
+  repro and an own-name write on both lanes, and 7 resolver rows. On the base,
+  the switch tests and 4 resolver rows fail. The own-name end-to-end test
+  passes on the base too, because the IR does not claim that closure yet; the
+  resolver rows pin the rule.
+- **test262:** the predicate now matches 50 of 53,575 rows, 27 more than
+  before. They are function, generator and async expressions that reassign
+  their own name, and class name-binding tests; no row writes a const from
+  another `case`. All 50 binaries are identical to the base, with 0 status
+  flips.
+
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
 The following 115 lines are preserved verbatim from the completed #6876 plan
