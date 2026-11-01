@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { collectBindingPatternNames } from "./analysis/ast-scope.js";
+import { isPhase1BindingPattern } from "./binding-pattern-plan.js";
 import type { IrFunctionMemberClosurePlan } from "./function-member-closure-plan.js";
 
 type Literal = ts.ArrowFunction | ts.FunctionExpression | ts.MethodDeclaration;
@@ -13,8 +15,6 @@ interface ClosureSelectorHost<Projection> {
     scope: ReadonlySet<string>,
   ): number | null;
   isPhase1ClosureParameterTypeNode(node: ts.TypeNode, parameter: ts.ParameterDeclaration, expression: Literal): boolean;
-  isPhase1BindingPattern(pattern: ts.BindingPattern, scope: ReadonlySet<string>): boolean;
-  collectPatternNames(pattern: ts.BindingPattern, scope: Set<string>): void;
   enterProjectionBindingScope(parameters: readonly ts.ParameterDeclaration[]): Projection;
   recordCallableProjection(name: string, arity: { min: number; max: number }, result: ts.TypeNode | undefined): void;
   isExpressionBuildable(expression: ts.Expression, scope: ReadonlySet<string>, classes: ReadonlySet<string>): boolean;
@@ -63,8 +63,8 @@ export function closureLiteralIsBuildable<Projection>(
       inner.add(p.name.text);
       continue;
     }
-    if (!host.isPhase1BindingPattern(p.name, inner)) return host.shapeNo("closure-param-name", p.name);
-    host.collectPatternNames(p.name, inner);
+    if (!isPhase1BindingPattern(p.name, inner)) return host.shapeNo("closure-param-name", p.name);
+    collectBindingPatternNames(p.name, inner);
   }
   const projectionBindings = host.enterProjectionBindingScope(expr.parameters);
   if (ts.isFunctionExpression(expr) && expr.name)
@@ -85,7 +85,6 @@ export function closureLiteralIsBuildable<Projection>(
 interface ClosureDefaultHost {
   unwrapProjectionExpression(expression: ts.Expression): ts.Expression;
   expressionIsProvenNumber(expression: ts.Expression): boolean;
-  collectPatternNames(pattern: ts.BindingPattern, names: Set<string>): void;
 }
 
 function closureNumericDefaultInitializerIsIrSafe(
@@ -137,7 +136,7 @@ export function closureLiteralDefaultParamStart(
   const ownParamNames = new Set<string>();
   for (const parameter of parameters) {
     if (ts.isIdentifier(parameter.name)) ownParamNames.add(parameter.name.text);
-    else host.collectPatternNames(parameter.name, ownParamNames);
+    else collectBindingPatternNames(parameter.name, ownParamNames);
   }
   for (let index = 0; index < parameters.length; index++) {
     const parameter = parameters[index]!;
