@@ -95,18 +95,15 @@ function hasLayoutTwin(ctx: CodegenContext, structName: string): boolean {
 }
 
 /**
- * The i32 condition `receiver.__tag ∈ {own} ∪ {descendants}`, or `undefined`
- * when no guard is needed (see the module comment).
+ * The `__tag` values `receiver.__tag ∈ {own} ∪ {descendants}` accepts for
+ * `structName`'s arm, or `undefined` when no guard is needed (see the module
+ * comment).
  *
- * `receiverLocal` must hold the receiver as an `anyref` — the condition casts
- * it to `typeIdx`, so it is only valid inside the arm's own `ref.test` `then`.
+ * (#7200) Also the guard set for the closed-struct OWN-PROPERTY arms
+ * (`fillClosedStructHasOwnArms`): a field declared on `structName` is an own
+ * property of every instance of it or a subclass, and of nothing else.
  */
-export function classArmTagCondition(
-  ctx: CodegenContext,
-  structName: string,
-  typeIdx: number,
-  receiverLocal: number,
-): Instr[] | undefined {
+export function classArmTags(ctx: CodegenContext, structName: string): number[] | undefined {
   const fields = ctx.structFields.get(structName);
   if (!fields || fields.length === 0 || fields[0]!.name !== "__tag") return undefined;
   // Compare against every emitted struct, not only the ones that also declare
@@ -132,6 +129,24 @@ export function classArmTagCondition(
   for (const [childName, tag] of ctx.classTagMap) {
     if (childName !== structName && isDescendantOf(childName) && !tags.includes(tag)) tags.push(tag);
   }
+  return tags;
+}
+
+/**
+ * The i32 condition `receiver.__tag ∈ {own} ∪ {descendants}`, or `undefined`
+ * when no guard is needed (see the module comment).
+ *
+ * `receiverLocal` must hold the receiver as an `anyref` — the condition casts
+ * it to `typeIdx`, so it is only valid inside the arm's own `ref.test` `then`.
+ */
+export function classArmTagCondition(
+  ctx: CodegenContext,
+  structName: string,
+  typeIdx: number,
+  receiverLocal: number,
+): Instr[] | undefined {
+  const tags = classArmTags(ctx, structName);
+  if (tags === undefined) return undefined;
   const readTag: Instr[] = [
     { op: "local.get", index: receiverLocal },
     { op: "ref.cast", typeIdx },
