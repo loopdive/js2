@@ -15196,10 +15196,13 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   if (ts.isConditionalExpression(candidate)) {
     return expressionProducesDynamic(candidate.whenTrue, cx) && expressionProducesDynamic(candidate.whenFalse, cx);
   }
+  // A `+` over the carrier, or over a fresh wrapper's ToPrimitive, adds dynamically.
   return (
     ts.isBinaryExpression(candidate) &&
     candidate.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-    (expressionProducesDynamic(candidate.left, cx) || expressionProducesDynamic(candidate.right, cx))
+    [candidate.left, candidate.right].some(
+      (side) => expressionProducesDynamic(side, cx) || primitiveWrapperConstructorName(side, cx) !== null,
+    )
   );
 }
 

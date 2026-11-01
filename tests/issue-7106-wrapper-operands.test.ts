@@ -155,6 +155,9 @@ describe("#7106 fresh-wrapper operator operands", () => {
 
   // The hint follows the operator, and a user method is observed.
   const PROBES: Record<string, string> = {
+    // A wrapper `+` adds dynamically, so an enclosing `+` takes the carrier too.
+    nestedAdd: `function nested() { return "x" + (new String("1") + "1") + ("1" + new String("2")); }
+      if (nested() !== "x1112") { throw "#nestedAdd"; }`,
     toPrimitiveHint: `Number.prototype[Symbol.toPrimitive] = function (hint) { return hint === "number" ? 1 : 2; };
       function check() {
         if ((new Number(5) < 1.5) !== true) { throw "#lt"; }
