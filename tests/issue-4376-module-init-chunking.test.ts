@@ -347,10 +347,11 @@ describe("#4376 — bounded module-init helpers", () => {
     // This user-visible name used to collide with the first private leaf. It
     // must remain an ordinary inlinable source function, while the allocator
     // gives the private leaf a distinct WAT name and records only that exact
-    // name as an inliner boundary.
+    // name as an inliner boundary. The user call stays out of tail position:
+    // a `return f(x)` becomes `return_call`, which the inliner never expands.
     const source = [
       `export function __module_init_chunk_0(value: number): number { return value${" + 1".repeat(16)}; }`,
-      "export function callUser(): number { return __module_init_chunk_0(83); }",
+      "export function callUser(): number { return 1 + __module_init_chunk_0(82); }",
       "let phase: number = 0;",
       ...Array.from({ length: MODULE_INIT_CHUNK_MAX_ENTRIES * 2 }, () => "phase = phase + 1;"),
       "export function probe(): number { return phase; }",
