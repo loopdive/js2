@@ -229,10 +229,6 @@ function convertBuffer(ctx: CodegenContext, body: Instr[], caller: CallerSig): I
  * Apply tail-call optimization to an IR-lowered function body in place.
  * `funcTypeIdx` is the lowered function's own type index. Returns the rewritten
  * body (a new top-level array; nested arms are mutated in place).
- *
- * A void body's trailing plain `return` is then dropped: the IR lowering ends
- * every body with its return terminator, and with nothing to return the
- * function's `end` does the same (the lowering leaves the stack balanced).
  */
 export function applyIrTailCalls(ctx: CodegenContext, body: Instr[], funcTypeIdx: number): Instr[] {
   const ft = funcTypeOf(ctx, funcTypeIdx);
@@ -241,9 +237,5 @@ export function applyIrTailCalls(ctx: CodegenContext, body: Instr[], funcTypeIdx
     paramCount: ft.params.length,
     returnType: ft.results.length > 0 ? ft.results[0]! : null,
   };
-  const out = convertBuffer(ctx, body, caller);
-  // A body that is only `return` keeps it: an empty body reads as an uninstalled
-  // callable to the prepared-class cutover (`static m() {}`).
-  if (caller.returnType === null && out.length > 1 && out.at(-1)?.op === "return") out.pop();
-  return out;
+  return convertBuffer(ctx, body, caller);
 }

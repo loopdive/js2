@@ -199,4 +199,30 @@ describe("#7106 chunked <module-init> lowered by the IR", () => {
       expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     }
   });
+
+  // Review round 2: `if (null)` was claimed, then demoted, since a bare `null` lowers only
+  // into a reference (S12.5_A1.1_T2). Selection refuses it, chunked or not.
+  it("refuses a bare null condition before the claim", async () => {
+    for (const filler of [0, 40]) {
+      const source = [
+        "let c: number = 0;",
+        "let t: number = 0;",
+        ...Array.from({ length: filler }, () => "t = t + 1;"),
+        "if (null) { c = 2; } else { c = c + 1; }",
+        "export function probe(): number { return c; }",
+      ].join("\n");
+      for (const target of ["gc", "standalone"] as const) {
+        const result = await compile(source, {
+          fileName: "null-condition.ts",
+          trackIrOutcomes: true,
+          ...(target === "gc" ? {} : { target }),
+        } as Parameters<typeof compile>[1]);
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
+        if (target !== "standalone") continue;
+        const { instance } = await WebAssembly.instantiate(result.binary, {});
+        expect((instance.exports.probe as () => number)()).toBe(1);
+      }
+    }
+  });
 });

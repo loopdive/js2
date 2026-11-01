@@ -5700,7 +5700,8 @@ export function compileIrPathFunctions(
           wasiGuard.planted = { doneGet, eqz, guard: guardIf };
         }
       } else {
-        finalBody = applyIrTailCalls(ctx, wasmFunc.body, wasmFunc.typeIdx);
+        const tailCalled = applyIrTailCalls(ctx, wasmFunc.body, wasmFunc.typeIdx);
+        finalBody = withoutTrailingVoidReturn(ctx, tailCalled, wasmFunc.typeIdx);
       }
       pendingPatches.push({ entry, funcIdx, existing, wasmFunc, finalBody });
     } catch (e) {
@@ -6064,6 +6065,18 @@ function bodyContainsReturnClassOp(body: readonly Instr[]): boolean {
     }
   }
   return false;
+}
+
+/**
+ * (#7106) A void IR body ends with the lowering's `return` terminator, which
+ * the function's `end` repeats: drop it (each module-init chunk pays it
+ * otherwise). A body that is only `return` keeps it: the prepared-class
+ * cutover reads an empty body as an uninstalled callable (`static m() {}`).
+ */
+function withoutTrailingVoidReturn(ctx: CodegenContext, body: Instr[], typeIdx: number): Instr[] {
+  const type = ctx.mod.types[typeIdx];
+  const isVoid = type?.kind === "func" && type.results.length === 0;
+  return isVoid && body.length > 1 && body.at(-1)?.op === "return" ? body.slice(0, -1) : body;
 }
 
 /** Resolve a checker-owned module declaration to its exact structural/legacy slot pair. */

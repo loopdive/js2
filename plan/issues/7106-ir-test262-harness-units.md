@@ -61,6 +61,7 @@ import-cycles-allow:
 func-budget-allow:
   # 2026-10-22 (module-init lever A): one resolver entry for the namespace-constant fold
   # 2026-10-22 (propertyHelper arm 3): the dynamicDeleteSymbol method
+  # 2026-11-01 (chunk-budget S2, +2): `moduleInitChunkName`, the chunk-name reservation the IR chunk lowering asks for
   - src/ir/integration.ts::makeFromAstResolver
   # 2026-10-22 (lever B): one intrinsic→provider branch
   - src/ir/integration.ts::resolveAndObserveCallableProvider
@@ -90,6 +91,7 @@ func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/codegen/fnctor-escape-gate.ts::analyzeFnctorEscapeGate
   - src/codegen/expressions/new-super.ts::compileNewExpression
+  # 2026-11-01 (chunk-budget S2, +4): legacy holds its module-init chunks while the IR owns the initializer, and releases them after the overlay settles
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
@@ -3797,7 +3799,8 @@ as before):
   - No IR body is unbounded: every chunk holds at most 16 complete entries or
     1024 AST nodes, the same plan as legacy's helpers.
   - `<module-init>` holds only the prologue and the dispatch: 1.2–1.5 KB.
-  - IR chunks run 1.6–2× legacy's helper for the same entries. For example,
+  - Per chunk, the IR is 0.45–1.02× legacy's helper for the same entries on
+    30 of 31 shapes; ToInt32-heavy shapes reach 2×. For example,
     16 × `assert.sameValue(Math.clz32(k), …)` gives 3,769 B against 1,926 B.
     The cause is not chunking: the IR inlines ToInt32 as about 45
     instructions per use and 75 locals per chunk. Follow-up: an out-of-line
@@ -3812,7 +3815,11 @@ as before):
   - A claimed program imports nothing that legacy's binary of the same
     program does not.
 - **Code quality.**
-  - No new `func-budget-allow` or `loc-budget-allow` grant.
+  - No new `func-budget-allow` or `loc-budget-allow` grant, except
+    `src/ir/identity.ts` (+14): `recordLiftedUnitProvenance` moves there and
+    both lifts share it (from-ast.ts nets −10). `generateModule` (+4) and
+    `makeFromAstResolver` (+2) grow under standing #7106 grants, each with a
+    dated S2 note.
   - `lowerFunctionAstToIr`, `lowerBinary`, `compileIrPathFunctions` and
     `planIrOverlay` do not grow, and `src/codegen/index.ts` shrinks.
   - One planner and one dispatch shape, shared by legacy and the IR.
@@ -3882,8 +3889,8 @@ IR outcome, so the initializer stays bounded.
 | --- | --- |
 | blocker: break/continue out of a `finally` entered by a throw (`S12.14_A9_T2/T3`, `S12.14_A10_T2/T3`) | pre-existing IR bug, fixed separately on `claude/ir-finally-abrupt-exit`, merged here once it lands; the S12.14 rows join the A/B |
 | `compileIrPathFunctions` grew 7 lines | net 0: chunk names are reserved when the chunk is lifted, through the from-ast resolver (`moduleInitChunkName`, built in `makeFromAstResolver`); `reserveModuleInitChunkHelperName` moved to the shared planner, so the IR needs no codegen import |
-| IR chunks 1.6–2× legacy's size | acceptance restated above (bounded shape, ToInt32 inlining); out-of-line ToInt32 helper filed as a follow-up |
-| dead legacy chunk stubs | removed through one seam: on the IR-first route legacy holds its chunks until the overlay settles (`holdModuleInitChunksForIr` / `releaseModuleInitChunks`) and emits them only on a demote. IR void bodies also drop their trailing `return`. Stress bytes at N=1000/5000/20000 are at most main's |
+| IR chunks larger than legacy's | acceptance restated above: 0.45–1.02× per chunk on 30 of 31 shapes, ToInt32-heavy shapes reach 2× (inlined ToInt32); out-of-line ToInt32 helper filed as a follow-up |
+| dead legacy chunk stubs | removed through one seam: on the IR-first route legacy holds its chunks until the overlay settles (`holdModuleInitChunksForIr` / `releaseModuleInitChunks`) and emits them only on a demote. IR void bodies also drop their trailing `return` (since round 2 its own step, `withoutTrailingVoidReturn`). Stress bytes at N=1000/5000/20000 are at most main's |
 | claim-then-demote | classified above; all pre-existing. The `+` class is #7066 step 1, a separate PR |
 | `liftChunkFunction` duplicated `recordLiftedUnitProvenance` | moved to `src/ir/identity.ts`, used by both |
 | source-map demote could not fire | deleted with the `sourceMap` host field (the prepared route refuses source maps first) |
