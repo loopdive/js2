@@ -93,7 +93,6 @@ export function peelExpr(e: ts.Expression): ts.Expression {
   }
 }
 
-/** `expr` is an integer literal that fits in a signed 32-bit int. */
 /**
  * (#7144) `x | 0` / `x ^ 0` is the identity on the ToInt32 bit pattern, so
  * the operator disappears when `x` is i32-lowerable — from-ast's fused-i32 arm
@@ -111,7 +110,7 @@ export function i32IdentityBitwiseOperand(expr: ts.BinaryExpression): ts.Express
  * that lowers as an exact i32 without a promoted slot (`(k < 1) | 0`). from-ast
  * takes it before any operand family is judged, so no family check refuses it.
  */
-export function isSlotFreeI32Identity(expr: ts.BinaryExpression): boolean {
+function isSlotFreeI32Identity(expr: ts.BinaryExpression): boolean {
   const operand = i32IdentityBitwiseOperand(expr);
   return operand !== null && isWrapI32Lowerable(operand, () => false);
 }
@@ -120,7 +119,8 @@ export function isSlotFreeI32Identity(expr: ts.BinaryExpression): boolean {
  * Whether from-ast lowers `expr` natively in i32 inside a slot-free fused-i32
  * identity: the identity itself, or a bitwise or slot-free `+` / `-` node of
  * its operand (`((k < 1) + (k < 2)) | 0`). None of these takes `lowerBinary`'s
- * operand-family check; a comparison inside one still does.
+ * operand-family check; a comparison inside one still does. Both selector
+ * family judges, the binary tail and the planned-closure walk, skip these.
  */
 export function isSlotFreeI32IdentityLowered(expr: ts.BinaryExpression): boolean {
   for (let node = expr; !isSlotFreeI32Identity(node); ) {
@@ -139,6 +139,7 @@ export function isSlotFreeI32IdentityLowered(expr: ts.BinaryExpression): boolean
   return true;
 }
 
+/** `expr` is an integer literal that fits in a signed 32-bit int. */
 export function i32LiteralValue(e: ts.Expression): number | null {
   const inner = peelExpr(e);
   if (ts.isNumericLiteral(inner)) {

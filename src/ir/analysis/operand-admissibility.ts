@@ -117,6 +117,18 @@ export function additiveResultFamily(left: OperandFamily, right: OperandFamily):
   return left === right && (left === "number" || left === "string") ? left : "unknown";
 }
 
+/**
+ * (#7106) {@link additiveResultFamily}'s carrier rule on the AST: a `+` with an
+ * operand that adds as the carrier, as from-ast or the selector judges one.
+ */
+export function isCarrierAddition(e: ts.Expression, addsAsCarrier: (operand: ts.Expression) => boolean): boolean {
+  return (
+    ts.isBinaryExpression(e) &&
+    e.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+    (addsAsCarrier(e.left) || addsAsCarrier(e.right))
+  );
+}
+
 /** The family `&&` / `||` produce: a boolean over two booleans, nothing a selector can name otherwise. */
 export function logicalResultFamily(left: OperandFamily, right: OperandFamily): OperandFamily {
   return left === "boolean" && right === "boolean" ? "boolean" : "unknown";

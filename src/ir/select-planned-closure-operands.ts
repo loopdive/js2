@@ -16,7 +16,7 @@
 // `undefined`), literals and operators produce their result family.
 
 import { forEachChild, ts } from "../ts-api.js";
-import { isSlotFreeI32Identity } from "./analysis/i32-slots.js";
+import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import type { IrFunctionMemberClosurePlan } from "./function-member-closure-plan.js";
 import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
 import {
@@ -452,7 +452,7 @@ export function plannedClosureOperandRefusal(
         ? null
         : { arm: "closure-null-compare", node: expr };
     }
-    if (isSlotFreeI32Identity(expr)) return null;
+    if (isSlotFreeI32IdentityLowered(expr)) return null;
     // The strict `undefined` compare has its own lowering (`tryLowerUndefinedCompare`).
     const isShadowed = (name: string): boolean => locals.has(name);
     const leftUndefined = isUndefinedCompareOperand(expr.left, isShadowed);

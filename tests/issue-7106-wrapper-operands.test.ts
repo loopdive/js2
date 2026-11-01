@@ -144,6 +144,9 @@ describe("#7106 fresh-wrapper operator operands", () => {
     voidPlus: "void 0 + 2",
     // Review round 2: a comparison is a boolean beside a number, except in the identity below.
     compareAnd: "(0.5 < 1) & 1",
+    // Review round 3: the one family judge names an object or an array `reference`.
+    objectMinus: "({ a: 1 }) - 1",
+    arrayTimes: "[1] * 2",
   };
   for (const target of TARGETS) {
     it(`S0 refuses at selection (${lane(target)})`, async () => {

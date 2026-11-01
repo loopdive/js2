@@ -57,6 +57,7 @@ import {
   binaryOperandsAdmissible,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
+  isCarrierAddition,
   isEqualityOperator,
   isNumberBinaryOperator,
   isNumberCompoundAssignOperator,
@@ -15197,11 +15198,7 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   if (ts.isConditionalExpression(candidate)) {
     return expressionProducesDynamic(candidate.whenTrue, cx) && expressionProducesDynamic(candidate.whenFalse, cx);
   }
-  return (
-    ts.isBinaryExpression(candidate) &&
-    candidate.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-    (addsAsCarrier(candidate.left, cx) || addsAsCarrier(candidate.right, cx))
-  );
+  return isCarrierAddition(candidate, (operand) => addsAsCarrier(operand, cx));
 }
 
 /** A `+` operand that adds as the carrier: a dynamic value, or a fresh wrapper's ToPrimitive. */

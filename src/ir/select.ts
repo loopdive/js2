@@ -161,6 +161,7 @@ import {
   binaryOperandsAdmissible,
   conditionalJoinArmFamily,
   conditionalJoinFamily,
+  isCarrierAddition,
   isComparisonResultOperator,
   isEqualityOperator,
   isNumberCompoundAssignOperator,
@@ -8852,12 +8853,10 @@ function selectorDynamicLaneIn(
 
 /**
  * The generic binary tail (#7144, #7106). A fresh primitive wrapper operand is
- * the dynamic carrier of its ToPrimitive (#4208 S4); on a wrapper, equality is
- * identity (`===`, wrapper against wrapper), and `==` keeps S4's number or
- * boolean other side. A pair `lowerBinary` cannot type is refused here, not
- * after the claim (S0): every wrapper pair, and a typed non-equality operator
- * over two proven families. Equality has its own folds (`tryFoldNullCompare`,
- * the `undefined` compare), so the predicate alone does not decide it.
+ * the dynamic carrier of its ToPrimitive (#4208 S4), and compares by identity
+ * under `===` or against another wrapper. S0 refuses before the claim a pair
+ * `lowerBinary` cannot type; equality has its own folds (`tryFoldNullCompare`,
+ * the `undefined` compare), so only a carrier operand puts it to the predicate.
  */
 function selectorPrimitiveWrapperOrGenericBinary(
   expr: ts.BinaryExpression,
@@ -8868,8 +8867,8 @@ function selectorPrimitiveWrapperOrGenericBinary(
   const leftWrapper = selectorPrimitiveWrapperConstruction(expr.left, scope, localClasses) !== null;
   const rightWrapper = selectorPrimitiveWrapperConstruction(expr.right, scope, localClasses) !== null;
   const isEquality = isEqualityOperator(binOp);
-  const left = binaryOperandFamily(expr.left, scope, localClasses);
-  const right = binaryOperandFamily(expr.right, scope, localClasses);
+  const left = leftWrapper ? "dynamic" : binaryOperandFamily(expr.left, scope, localClasses);
+  const right = rightWrapper ? "dynamic" : binaryOperandFamily(expr.right, scope, localClasses);
   if (leftWrapper || rightWrapper) {
     if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") !== true) {
       return capabilityNo("operand-coercion-unsupported", "expr-wrapper-to-primitive-target", expr);
@@ -8881,11 +8880,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
     ) {
       return capabilityNo("operand-coercion-unsupported", "expr-wrapper-equality", expr);
     }
-  } else if (
-    isEquality &&
-    obviousSelectorValueFamily(expr.left, scope) === "reference" &&
-    obviousSelectorValueFamily(expr.right, scope) === "reference"
-  ) {
+  } else if (isEquality && left === "reference" && right === "reference") {
     return capabilityNo("operand-coercion-unsupported", "expr-equality-reference-operands", expr);
   }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
@@ -8912,10 +8907,10 @@ function selectorPrimitiveWrapperOrGenericBinary(
 }
 
 /**
- * The family a binary operand lowers to (`irOperandFamily` once lowered): a
- * fresh wrapper, and a `+` over one, is the dynamic carrier; the `null` literal
- * is `nullish` and the global `undefined` `undefined`, as the operator arms read
- * them; anything else is {@link provenIrFamily}'s answer.
+ * A non-wrapper binary operand's family, as `irOperandFamily` names it once
+ * lowered: a carrier `+` is `dynamic`, `null` `nullish`, the global `undefined`
+ * `undefined`; then {@link provenIrFamily}'s answer, or `reference` for an
+ * object, a closure or a local class value.
  */
 function binaryOperandFamily(
   operand: ts.Expression,
@@ -8923,16 +8918,17 @@ function binaryOperandFamily(
   localClasses: ReadonlySet<string>,
 ): OperandFamily {
   const candidate = unwrapPhase1Parens(operand);
-  if (selectorCarrierValue(candidate, scope, localClasses)) return "dynamic";
+  if (isCarrierAddition(candidate, (side) => selectorCarrierValue(side, scope, localClasses))) return "dynamic";
   if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
   if (isUnshadowedUndefinedIdentifier(candidate, scope) || isVoidZero(candidate)) return "undefined";
-  return provenIrFamily(operand, scope);
+  const proven = provenIrFamily(operand, scope);
+  return proven === "unknown" && obviousSelectorValueFamily(operand, scope) === "reference" ? "reference" : proven;
 }
 
 /**
- * A value from-ast lowers to the dynamic carrier (`addsAsCarrier`): a fresh
- * wrapper's ToPrimitive, or a `+` over one. The checker types the `+` as a
- * string or a number, so only an operator that reads the carrier may take it.
+ * A value from-ast lowers to the dynamic carrier: a fresh wrapper's
+ * ToPrimitive, or a `+` over one. The checker types the `+` as a string or a
+ * number, so only an operator that reads the carrier may take it.
  */
 function selectorCarrierValue(
   expression: ts.Expression,
@@ -8940,21 +8936,16 @@ function selectorCarrierValue(
   localClasses: ReadonlySet<string>,
 ): boolean {
   const e = unwrapPhase1Parens(expression);
-  if (selectorPrimitiveWrapperConstruction(e, scope, localClasses) !== null) return true;
   return (
-    ts.isBinaryExpression(e) &&
-    e.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-    (selectorCarrierValue(e.left, scope, localClasses) || selectorCarrierValue(e.right, scope, localClasses))
+    selectorPrimitiveWrapperConstruction(e, scope, localClasses) !== null ||
+    isCarrierAddition(e, (side) => selectorCarrierValue(side, scope, localClasses))
   );
 }
 
 /**
- * Whether the consumer of a carrier `+` reads the carrier: a typed or equality
- * operator (S0 judges the `dynamic` operand), `typeof`, `!`, or an argument of
- * a dynamic construct (`new Test262Error(msg + …)`, whose arguments are
- * carriers). A local, a write, any other argument or a return would type it as
- * the checker does (#7034 round 2: `var r = new String("ab") + 1; … r.length`
- * withdrew after the claim).
+ * Whether the consumer of a carrier `+` reads the carrier: a typed operator (S0
+ * judges it), `typeof`, `!`, or a dynamic construct's argument. Anywhere else
+ * it would be typed as the checker's string or number (#7034 round 2).
  */
 function carrierAdditionConsumed(expr: ts.BinaryExpression): boolean {
   const node = outermostParenthesized(expr);
