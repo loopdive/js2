@@ -3984,6 +3984,153 @@ All of the following gates were run bare and exit 0:
 - import-cycles and compiler-boundaries (`--mode inventory`).
 
 
+### S5 of the destructuring lever: script `var` patterns and pattern `for` heads (plan, 2026-11-01)
+
+S5 stacks on the destructuring lever (`claude/7106-for-head-destructuring`,
+9df6bcaef0) and lives on `claude/7106-var-pattern-heads`. It is the
+`<module-init>` half of that lever.
+
+#### Problem (measured)
+
+The base is the destructuring head at 42c09a6cb8, standalone, one worker. The
+population is the 174 candidate files with a script-level `var` pattern: 95
+`for (var <pattern> = …;;)` heads (`for/dstr/var-*`) and 79
+`var <pattern> = …;` statements.
+
+- 12 files are skipped by the runner.
+- 146 files carry a var-pattern refusal: `for-init-var-kind` on the head, or
+  `vardecl-module-destructuring` on the statement.
+- In 79 of them (47 for-head, 32 script), every refusal is either that one or a
+  read of one of its own leaves (`expr-ident-not-in-scope`). That is the upper
+  bound.
+- 59 of the 79 (36 for-head, 23 script) have a pattern the literal plan admits.
+  The other 20 have:
+  - an anonymous-function default (16), which needs NamedEvaluation;
+  - a rest element (3);
+  - a computed key (1).
+
+**Why the statement is refused.** Each leaf is its own script `var`: legacy
+gives it a `__mod_<leaf>` slot (`registerBindingNames`). That slot has no IR
+identity:
+
+- the module-binding resolver only knows a `VariableDeclaration` with an
+  identifier name in a direct `VariableStatement`;
+- `buildModuleBindingsMap` throws on a pattern;
+- legacy never hands the leaf to the Program ABI. `registerBindingNames` calls
+  `registerModuleGlobal` without the declaration, so there is no
+  `observeModuleValue`, and `resolveModuleBindingGlobal` would find no
+  observation.
+
+**Why the head is refused.** On top of the same missing identity, three twin
+checks treat a nested `var` as hoisting the IR does not model:
+
+- `collectIrSafeModuleVarDeclarationLists` (selection);
+- `isDirectSourceVarStatement` + `moduleInitContainsNestedVar` (the builder's
+  claim-then-demote backstop).
+
+#### Implementation Plan
+
+One idea runs through every layer. A **module-init `var` list** is the `var`
+list of a top-level `var` statement, or the `var` head of a top-level
+`for (;;)` whose declarations are all patterns. In a script, each leaf of a
+pattern in such a list is a module binding: it owns its `__mod_<name>` slot,
+just as a top-level identifier declaration does.
+
+1. **One list predicate** (`src/ir/function-local-var.ts`).
+   - `moduleInitVarList(statement)` and `isModuleInitVarList(node)` are the
+     single answer to "which `var` list does `<module-init>` model".
+   - `collectIrSafeModuleVarDeclarationLists` maps it.
+   - from-ast's `moduleInitContainsNestedVar` skips exactly that list. That
+     folds `isDirectSourceVarStatement`, the duplicate.
+   - `moduleInitVarLeaves(statement)` lists the leaves the list declares.
+2. **One leaf walker** (`src/ir/binding-pattern-plan.ts`).
+   - `patternLeaves(pattern)` yields `BindingLeaf`s.
+   - The `isBindingLeaf` guard replaces `planFlatReads`' cast.
+   - `patternRootDeclaration(leaf)` is the walk out of the patterns. It
+     replaces the copy inside `literalLeafSource`.
+3. **Legacy hands the slot to the Program ABI** (`src/codegen/declarations.ts`).
+   - `registerBindingNames` passes the leaf to `registerModuleGlobal`, as the
+     top-level identifier path passes its declaration.
+   - Observation is a map entry, not an allocation, so legacy bytes do not
+     change.
+   - The two behaviours that key on the declaration's presence:
+     - `shadowsConversionHook`: a leaf named `toString`/`valueOf`, which no
+       test262 file declares at script level;
+     - `functionIsFromAnotherSource`: multi-source.
+4. **The resolver knows a leaf** (`src/ir/module-bindings.ts`).
+   - `IrModuleBindingDeclaration = ts.VariableDeclaration | ts.BindingElement`
+     is the identity's declaration type, the type Program ABI already uses.
+   - `isModuleBindingDeclaration` (was `isDirectTopLevelVariableDeclaration`)
+     admits the direct-statement identifier declaration exactly as before,
+     and, in a SCRIPT, a leaf of a module-init `var` list. ES modules and
+     lexical patterns are unchanged, so the playground cannot move.
+   - `bindingDeclarationList` reads a leaf's list through its pattern. It
+     replaces the `declaration.parent as ts.VariableDeclarationList` casts.
+   - The lexical-only arms read a `lexical` declaration, which is always an
+     identifier declaration because a leaf binds only in a `var` list.
+5. **Ordinals.** `moduleBindingOrdinals(sourceFile)` numbers every
+   top-level statement declaration first, exactly as before and as
+   `module-init-plan.ts` does. It then numbers the module-init `var` leaves in
+   source order. No existing binding id moves.
+6. **`buildModuleBindingsMap`** (`src/ir/integration.ts`) maps each name
+   `moduleInitBindings(statement)` lists: identifier declarations, then
+   module-init `var` leaves. A lexical top-level pattern stays unmapped, as
+   before. The diagnostic twin `surveyModuleBindingRefusals` walks the same
+   list, and its private pattern-label walker folds into
+   `collectPatternBindingNames`.
+7. **Selection** (`src/ir/select.ts`).
+   - `isPhase1DeclarationPattern` owns the `<module-init>` rule.
+     `vardecl-module-destructuring` now refuses only a pattern outside a
+     module-init `var` list.
+   - On the literal path, `moduleVarLeavesStorable` requires each leaf to
+     resolve (`vardecl-module-storage-unrepresentable`) and its literal source
+     to fit the slot (`vardecl-module-value-flow`). The fit is:
+     - `undefined`, or a `boxableIntoDynamic` family, in the dynamic carrier;
+     - the resolver's own `bindingValueMatches` in a typed or string slot.
+
+     An array-length source has no expression and stays refused.
+   - `literalPatternLeaf` excludes a module binding: a script `var` leaf's
+     family is its slot's, not its literal's.
+8. **The builder** (`src/ir/from-ast.ts`).
+   - `patternLoweringHost` takes its `bind` strategy as a parameter:
+     - `localLeafBinder` binds a local, as before;
+     - `moduleLeafBinder` writes a module-init `var` leaf's slot. A dynamic
+       slot is boxed first, through `boxConcreteToDynamic` over the leaf's
+       `literalLeafSource`.
+   - `storeModuleBinding` is the slot write: compatibility check,
+     `global.set`, TDZ flag, `moduleGlobal` scope entry. It is the tail of
+     `lowerVariableDeclaration`'s module arm, extracted so the identifier and
+     the leaf share it.
+
+#### Not in S5
+
+- **Identifier `for` heads** (`for (var i = 0;;)` at script level, about 1,434
+  test262 files). The list predicate admits them once its pattern-only clause
+  is dropped. They change about ten times as many binaries, so they get their
+  own census as S6.
+- **NamedEvaluation defaults, rest elements and computed keys.** These are
+  the literal plan's existing refusals.
+- **Array-length leaf sources.**
+
+#### Acceptance
+
+- **Gain.** The legacy-free gain is measured on the 611 files with a `var`
+  pattern, both lanes, against 9df6bcaef0. The upper bound is 59.
+- **No flips.** Pass/fail does not flip on any changed binary, in either lane.
+- **No claim-then-demote.** No new post-claim error.
+- **Legacy bytes identical.** No binary changes without a newly claimed unit.
+  The playground is identical.
+- **Tests.** A unit test runs, on both lanes:
+  - claimed statements and heads;
+  - leaf reads after the loop, from a function and before the declaration;
+  - the refused shapes.
+- **Code quality.** These must hold:
+  - one list predicate, one leaf walker and one ordinal enumerator;
+  - the module slot write is shared by the identifier and the leaf;
+  - no `VariableDeclarationList` cast survives on the binding path;
+  - no new budget grant;
+  - net `src/ir` growth is stated.
+
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
 The following 115 lines are preserved verbatim from the completed #6876 plan
