@@ -623,20 +623,9 @@ export function findBodyLocalLexicalNames(stmt: ts.IterationStatement): Set<stri
   return names;
 }
 
-/** Collect all identifier names from a binding pattern (ObjectBindingPattern or ArrayBindingPattern) */
+/** Every identifier a binding pattern binds, at any depth, in source order. */
 export function collectBindingNames(pattern: ts.BindingPattern): string[] {
-  const names: string[] = [];
-  for (const element of pattern.elements) {
-    if (ts.isOmittedExpression(element)) continue;
-    if (ts.isBindingElement(element)) {
-      if (ts.isIdentifier(element.name)) {
-        names.push(element.name.text);
-      } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
-        names.push(...collectBindingNames(element.name));
-      }
-    }
-  }
-  return names;
+  return [...collectPatternBindingNames(pattern)];
 }
 
 export function forOfDstrNeedsInboundsUndef(stmt: ts.ForOfStatement): boolean {

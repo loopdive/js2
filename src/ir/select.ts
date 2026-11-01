@@ -157,6 +157,8 @@ import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
+import { isPhase1BindingPattern } from "./binding-pattern-plan.js";
+import { collectBindingPatternNames } from "./analysis/ast-scope.js";
 import {
   conditionalJoinArmFamily,
   conditionalJoinFamily,
@@ -2155,13 +2157,13 @@ function whyNotIrClaimable(
       if (paramResolved === "dynamic") return "param-type-not-resolvable";
 
       const patternNames = new Set<string>();
-      collectPatternNames(p.name, patternNames);
+      collectBindingPatternNames(p.name, patternNames);
       if ([...patternNames].some((name) => directMutationNames.has(name))) {
         shapeNo("param-pattern-mutation", p.name);
         return "body-shape-rejected";
       }
 
-      collectPatternNames(p.name, scope);
+      collectBindingPatternNames(p.name, scope);
       for (const name of patternNames) clearProjectionBinding(name);
       continue;
     }
@@ -4758,19 +4760,7 @@ function isPhase1StatementListInScope(
     }
     if (ts.isForStatement(s)) {
       if (!isPhase1ForStatement(s, scope, localClasses)) return shapeNo("nontail-for", s);
-      // Add init's let-declared names into outer scope so subsequent
-      // statements can reference the loop counter (TypeScript would
-      // narrow scope to the for-statement, but our scope tracker is
-      // a flat set; the conservative addition is fine for shape check).
-      // (#2856) Record the leak so a SIBLING for-init may re-declare it.
-      if (s.initializer && ts.isVariableDeclarationList(s.initializer)) {
-        for (const d of s.initializer.declarations) {
-          if (ts.isIdentifier(d.name) && !scope.has(d.name.text)) {
-            scope.add(d.name.text);
-            forInitLeakedNames.add(d.name.text);
-          }
-        }
-      }
+      recordForInitLeaks(s, scope);
       continue;
     }
     // #2952 slice 1 — `do { body } while (cond)` as a non-tail statement.
@@ -5048,7 +5038,7 @@ function isPhase1ForOfInScope(
   const innerScope = new Set(scope);
   const headNames = new Set<string>();
   if (ts.isIdentifier(decl.name)) headNames.add(decl.name.text);
-  else collectPatternNames(decl.name, headNames);
+  else collectBindingPatternNames(decl.name, headNames);
   for (const name of headNames) {
     clearProjectionBinding(name);
     innerScope.add(name);
@@ -5456,8 +5446,12 @@ function isPhase1ForStatementInScope(
       const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
       if (!isLexical && !currentIrSafeVarDeclarationLists.has(stmt.initializer))
         return shapeNo("for-init-var-kind", stmt.initializer);
+      const isConst = !!(flags & ts.NodeFlags.Const);
       for (const d of stmt.initializer.declarations) {
-        if (!ts.isIdentifier(d.name)) return shapeNo("for-init-name", d.name);
+        if (!ts.isIdentifier(d.name)) {
+          if (!isPhase1DeclarationPattern(d, d.name, isConst, innerScope, localClasses)) return false;
+          continue;
+        }
         if (!d.initializer) return shapeNo("for-init-noinit", d);
         // (#2856) A name a SIBLING for-init leaked into the flat scope set is
         // NOT a genuine duplicate — from-ast scopes each for-init in its own
@@ -5501,6 +5495,21 @@ function isPhase1ForStatementInScope(
     );
   } finally {
     earlyReturnLoopDepth--;
+  }
+}
+
+/**
+ * Add a for-init's identifier names to the outer flat scope, so later
+ * statements may read the loop counter, and record the leak so a SIBLING
+ * for-init may re-declare it (#2856). Pattern leaves stay inside the loop.
+ */
+function recordForInitLeaks(stmt: ts.ForStatement, scope: Set<string>): void {
+  if (!stmt.initializer || !ts.isVariableDeclarationList(stmt.initializer)) return;
+  for (const d of stmt.initializer.declarations) {
+    if (ts.isIdentifier(d.name) && !scope.has(d.name.text)) {
+      scope.add(d.name.text);
+      forInitLeakedNames.add(d.name.text);
+    }
   }
 }
 
@@ -6020,15 +6029,7 @@ function isPhase1BodyStatement(
   }
   if (ts.isForStatement(stmt)) {
     if (!isPhase1ForStatement(stmt, scope, localClasses, labels, breaks)) return false;
-    // (#2856) Record the leak so a SIBLING for-init may re-declare it.
-    if (stmt.initializer && ts.isVariableDeclarationList(stmt.initializer)) {
-      for (const d of stmt.initializer.declarations) {
-        if (ts.isIdentifier(d.name) && !scope.has(d.name.text)) {
-          scope.add(d.name.text);
-          forInitLeakedNames.add(d.name.text);
-        }
-      }
-    }
+    recordForInitLeaks(stmt, scope);
     return true;
   }
   // #2952 slice 1 — nested `do { body } while (cond)` inside a body buffer.
@@ -6838,38 +6839,11 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
   if (stmt.modifiers && stmt.modifiers.length > 0) return shapeNo("vardecl-modifier", stmt);
   const isConst = !!(flags & ts.NodeFlags.Const);
   for (const d of stmt.declarationList.declarations) {
-    // Slice 8a (#1169g): destructuring binding patterns for `const`-bound
-    // declarations only. Object pattern: identifier-only properties with
-    // optional renaming, no defaults, no nesting, no rest. Array pattern:
-    // identifier-only positional bindings, no defaults, no nesting, no
-    // rest. Anything wider (rest, defaults, nested patterns) defers to
-    // slice 8.5+ — the legacy `destructuring.ts` path remains for those.
+    // A script-level pattern's leaves are `__mod_` slots the pattern lowering
+    // does not write (S5 of the #7106 destructuring lever).
     if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
       if (currentSubjectIsModuleInit) return shapeNo("vardecl-module-destructuring", d.name);
-      if (!isConst) return shapeNo("vardecl-dstr-let", d.name);
-      if (!d.initializer) return shapeNo("vardecl-dstr-noinit", d.name);
-      if (!isPhase1BindingPattern(d.name, scope)) return shapeNo("vardecl-dstr-pattern", d.name);
-      const patternNames = new Set<string>();
-      collectPatternNames(d.name, patternNames);
-      for (const name of patternNames) clearProjectionBinding(name);
-      const initializerScope = new Set(scope);
-      for (const name of patternNames) initializerScope.add(name);
-      if (expressionTouchesTrackedModuleValue(d.initializer)) {
-        return shapeNo("vardecl-dstr-module-value", d.initializer);
-      }
-      // Initializer must be Phase-1 expressible. The lowerer inspects
-      // its IrType to decide between object.get (object pattern) and
-      // vec.get (array pattern); if the resolved IrType isn't compatible
-      // with the pattern shape, lowering throws and the function falls
-      // back to legacy.
-      if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
-        return shapeNo("vardecl-dstr-init", d.initializer);
-      if (ts.isObjectBindingPattern(d.name)) {
-        recordDestructuredObjectMethodProjections(d.name, d.initializer, scope);
-      }
-      // Pre-add every leaf identifier to scope so subsequent statements
-      // see the new names.
-      collectPatternNames(d.name, scope);
+      if (!isPhase1DeclarationPattern(d, d.name, isConst, scope, localClasses)) return false;
       continue;
     }
     if (!ts.isIdentifier(d.name)) return shapeNo("vardecl-nonident-name", d.name);
@@ -7053,72 +7027,32 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
 }
 
 /**
- * Slice 8a (#1169g): shape-check a destructuring binding pattern. Only
- * identifier-leaf, no-default, no-rest, no-nested patterns are accepted
- * — the lowerer expands these into a sequence of single-name `object.get`
- * / `vec.get` reads at compile time. Wider shapes (rest, defaults,
- * nested) defer to slice 8.5; the function falls back to legacy.
- *
- * Object patterns:
- *   - { a, b }                   — shorthand
- *   - { a: x, b: y }             — renaming (computed key rejected)
- *
- * Array patterns:
- *   - [a, b, c]
- *   - [, b, , d]                 — omitted slots (sparse) accepted
+ * A destructuring declaration (`VariableStatement` or `for (;;)` head): its
+ * initializer and leaves are selectable, and every leaf enters `scope`. The
+ * typed readers bind leaves as SSA locals, so a `let` pattern is refused.
  */
-function isPhase1BindingPattern(p: ts.BindingPattern, scope: ReadonlySet<string>): boolean {
-  if (ts.isObjectBindingPattern(p)) {
-    if (p.elements.length === 0) return false; // empty pattern — nothing to bind
-    const localNames = new Set<string>();
-    for (const elem of p.elements) {
-      // Rest deferred — slice 8b adds object spread/rest collection.
-      if (elem.dotDotDotToken) return false;
-      // Default value `{ a = 1 }` deferred — needs runtime undefined check.
-      if (elem.initializer) return false;
-      // Property name must be Identifier or StringLiteral (no computed).
-      if (elem.propertyName) {
-        if (!ts.isIdentifier(elem.propertyName) && !ts.isStringLiteral(elem.propertyName)) return false;
-      }
-      // Binding target must be a plain identifier (no nested patterns).
-      if (!ts.isIdentifier(elem.name)) return false;
-      const name = elem.name.text;
-      if (scope.has(name) || localNames.has(name)) return false;
-      localNames.add(name);
-    }
-    return true;
-  }
-  if (ts.isArrayBindingPattern(p)) {
-    if (p.elements.length === 0) return false; // empty `[] = expr` — defer
-    const localNames = new Set<string>();
-    for (const elem of p.elements) {
-      // Omitted (sparse) slots are allowed — `[a, , c]` skips index 1.
-      if (ts.isOmittedExpression(elem)) continue;
-      // Rest deferred — slice 8b adds vec slice / iter drain.
-      if (elem.dotDotDotToken) return false;
-      // Default value deferred.
-      if (elem.initializer) return false;
-      // Binding target must be a plain identifier (no nested patterns).
-      if (!ts.isIdentifier(elem.name)) return false;
-      const name = elem.name.text;
-      if (scope.has(name) || localNames.has(name)) return false;
-      localNames.add(name);
-    }
-    return true;
-  }
-  return false;
-}
-
-/**
- * Slice 8a (#1169g): collect every identifier name introduced by a binding
- * pattern (the leaves) into the given scope. Mirrors the Phase-1 var-decl
- * scope-tracking machinery.
- */
-function collectPatternNames(p: ts.BindingPattern, scope: Set<string>): void {
-  for (const elem of p.elements) {
-    if (ts.isOmittedExpression(elem)) continue;
-    if (ts.isIdentifier(elem.name)) scope.add(elem.name.text);
-  }
+function isPhase1DeclarationPattern(
+  d: ts.VariableDeclaration,
+  pattern: ts.BindingPattern,
+  isConst: boolean,
+  scope: Set<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (!isConst) return shapeNo("vardecl-dstr-let", pattern);
+  if (!d.initializer) return shapeNo("vardecl-dstr-noinit", pattern);
+  if (!isPhase1BindingPattern(pattern, scope)) return shapeNo("vardecl-dstr-pattern", pattern);
+  const patternNames = new Set<string>();
+  collectBindingPatternNames(pattern, patternNames);
+  for (const name of patternNames) clearProjectionBinding(name);
+  const initializerScope = new Set(scope);
+  for (const name of patternNames) initializerScope.add(name);
+  if (expressionTouchesTrackedModuleValue(d.initializer)) return shapeNo("vardecl-dstr-module-value", d.initializer);
+  // The builder reads the initializer's IrType: object.get for an object
+  // pattern, vec.get for an array pattern.
+  if (!isPhase1Expr(d.initializer, initializerScope, localClasses)) return shapeNo("vardecl-dstr-init", d.initializer);
+  if (ts.isObjectBindingPattern(pattern)) recordDestructuredObjectMethodProjections(pattern, d.initializer, scope);
+  collectBindingPatternNames(pattern, scope);
+  return true;
 }
 
 /**
@@ -7194,7 +7128,6 @@ function closureLiteralDefaultParamStart(
   return plannedClosureDefaultStart(parameters, allowNumericDefaultSuffix, outerScope, {
     unwrapProjectionExpression,
     expressionIsProvenNumber,
-    collectPatternNames,
   });
 }
 
@@ -7253,8 +7186,6 @@ function isPhase1ClosureLiteral(
     annotationToResolvedKind,
     closureLiteralDefaultParamStart,
     isPhase1ClosureParameterTypeNode,
-    isPhase1BindingPattern,
-    collectPatternNames,
     enterProjectionBindingScope,
     recordCallableProjection,
     isExpressionBuildable: isPhase1Expr,

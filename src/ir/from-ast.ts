@@ -278,6 +278,7 @@ import {
 import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts } from "./lattice-param-facts.js";
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
+import { collectPatternBindingNames } from "./analysis/ast-scope.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   boundedMixedConditionalPrimitiveFamily,
@@ -4140,7 +4141,7 @@ function resolveMutableLocalRepresentation(
 
 /** Allocate shared storage at declaration, before conditional closure creation. */
 function bindOrdinaryDescriptorCapture(
-  declaration: ts.VariableDeclaration,
+  declaration: ts.VariableDeclaration | ts.BindingElement,
   name: string,
   value: IrValueId,
   inferred: IrType,
@@ -4235,52 +4236,36 @@ function isRedeclaredModuleVar(d: ts.VariableDeclaration, name: string, cx: Lowe
 }
 
 /**
- * Slice 8a (#1169g): decompose `const { a, b: x } = obj` into per-leaf
- * `object.get` reads. The source must lower to an IrType.object; class
- * instances and externref-typed sources fall through to a clean throw,
- * landing the function back on legacy.
+ * Slice 8a (#1169g): a destructuring declaration (`VariableStatement` or
+ * `for (;;)` head; the selector admits `const` only). The initializer lowers
+ * ONCE; each leaf then reads one `object.get` / `vec.get` off it.
  */
+function lowerDeclarationPattern(d: ts.VariableDeclaration, pattern: ts.BindingPattern, cx: LowerCtx): void {
+  if (!d.initializer) {
+    demoteToLegacy(
+      "module-init-legacy-coupling",
+      `ir/from-ast: binding pattern requires an initializer (${cx.funcName})`,
+    );
+  }
+  // (#3142 Slice 2) Top-level destructuring in the module-init unit: the
+  // leaves are module globals on the legacy path, but the pattern lowerer
+  // binds them as plain locals — demote instead of splitting the storage.
+  if (cx.moduleBindings && [...collectPatternBindingNames(pattern)].some((name) => cx.moduleBindings!.has(name))) {
+    demoteToLegacy(
+      "module-init-legacy-coupling",
+      `ir/from-ast: module-level destructuring declaration not in module-init Slice 2 scope (${cx.funcName})`,
+    );
+  }
+  // The externref hint is advisory: an object literal stays IrType.object and
+  // a vec stays `(ref $vec_*)`, which is what the pattern lowerer dispatches on.
+  const initValue = lowerExpr(d.initializer, cx, irVal({ kind: "externref" }));
+  lowerBindingPattern(pattern, initValue, cx);
+}
+
+/** Lower one variable declaration: a pattern, a module slot, a closure or a typed local. */
 function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, cx: LowerCtx): void {
-  // Slice 8a (#1169g): destructuring binding patterns (selector restricts
-  // to const, no rest, no defaults, no nesting). Lower the initializer
-  // ONCE into an SSA value, then walk the pattern emitting one
-  // `object.get` (object pattern) or `vec.get` (array pattern) per leaf
-  // and binding each leaf as a `local` ScopeBinding.
   if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
-    if (!d.initializer) {
-      demoteToLegacy(
-        "module-init-legacy-coupling",
-        `ir/from-ast: binding pattern requires an initializer (${cx.funcName})`,
-      );
-    }
-    // (#3142 Slice 2) Top-level destructuring in the module-init unit:
-    // the leaves are module globals on the legacy path, but the pattern
-    // lowerer binds them as plain locals — demote instead of splitting
-    // the storage.
-    if (cx.moduleBindings) {
-      const leafIsModuleBinding = (pattern: ts.BindingPattern): boolean => {
-        for (const element of pattern.elements) {
-          if (ts.isOmittedExpression(element)) continue;
-          if (ts.isIdentifier(element.name)) {
-            if (cx.moduleBindings!.has(element.name.text)) return true;
-          } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
-            if (leafIsModuleBinding(element.name)) return true;
-          }
-        }
-        return false;
-      };
-      if (leafIsModuleBinding(d.name)) {
-        demoteToLegacy(
-          "module-init-legacy-coupling",
-          `ir/from-ast: module-level destructuring declaration not in module-init Slice 2 scope (${cx.funcName})`,
-        );
-      }
-    }
-    // Hint: pass an externref so the initializer's actual IrType (object,
-    // class, vec ref, etc.) flows through unchanged. The pattern lowerer
-    // dispatches on the inferred IrType.
-    const initValue = lowerExpr(d.initializer, cx, irVal({ kind: "externref" }));
-    lowerBindingPattern(d.name, initValue, cx);
+    lowerDeclarationPattern(d, d.name, cx);
     return;
   }
   if (!ts.isIdentifier(d.name)) {
@@ -4494,7 +4479,31 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
     });
     return;
   }
-  if (bindOrdinaryDescriptorCapture(d, name, value, inferred, cx)) return;
+  bindLocalName(d, name, value, isConst, cx, { widenDynamic, promoteI32Slot, stringEncoding });
+}
+
+/** How a reassigned `let` name is stored, as its declaration decided it. */
+interface LocalNameStorage {
+  readonly widenDynamic?: boolean;
+  readonly promoteI32Slot?: boolean;
+  readonly stringEncoding?: Encoding;
+}
+
+/**
+ * Bind a declared local name: an identifier declaration or a destructuring
+ * leaf. A name an accessor closure captures gets a ref cell, a reassigned
+ * `let` a slot, and every other name an SSA local.
+ */
+function bindLocalName(
+  declaration: ts.VariableDeclaration | ts.BindingElement,
+  name: string,
+  value: IrValueId,
+  isConst: boolean,
+  cx: LowerCtx,
+  { widenDynamic = false, promoteI32Slot = false, stringEncoding }: LocalNameStorage = {},
+): void {
+  const inferred = cx.builder.typeOf(value);
+  if (bindOrdinaryDescriptorCapture(declaration, name, value, inferred, cx)) return;
   // Slice 6 part 2 (#1181): mutable `let` bindings whose name is
   // reassigned anywhere in the function body bind as a `slot`
   // ScopeBinding instead of `local`. The slot is a Wasm-local that
@@ -4638,7 +4647,7 @@ function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId,
       sourceType.kind === "class"
         ? numericFieldSourceValue(cx.builder, cx.builder.emitClassGet(source, propName, field.type))
         : cx.builder.emitObjectGet(source, propName, field.type);
-    cx.scope.set(localName, { kind: "local", value: v, type: cx.builder.typeOf(v) });
+    bindLocalName(elem, localName, v, true, cx);
   }
 }
 
@@ -4698,8 +4707,7 @@ function lowerArrayPattern(pattern: ts.ArrayBindingPattern, source: IrValueId, c
       );
     }
     const idx = cx.builder.emitConst({ kind: "i32", value: i }, irVal({ kind: "i32" }));
-    const v = cx.builder.emitVecGet(source, idx, elemIrType);
-    cx.scope.set(localName, { kind: "local", value: v, type: elemIrType });
+    bindLocalName(elem, localName, cx.builder.emitVecGet(source, idx, elemIrType), true, cx);
     i++;
   }
 }
@@ -16668,7 +16676,8 @@ function closureDefaultParamStart(
   let firstDefault = parameters.length;
   const availableParamNames = new Set<string>();
   const ownParamNames = new Set<string>();
-  for (const parameter of parameters) collectBindingNames(parameter.name, ownParamNames);
+  for (const parameter of parameters)
+    for (const name of collectPatternBindingNames(parameter.name)) ownParamNames.add(name);
   for (let index = 0; index < parameters.length; index++) {
     const parameter = parameters[index]!;
     if (!parameter.initializer) {
@@ -17435,7 +17444,7 @@ function analyseCaptures(
   const ownParams = new Set<string>();
   if (ts.isFunctionExpression(fn) && fn.name) ownParams.add(fn.name.text);
   for (const p of fn.parameters) {
-    collectBindingNames(p.name, ownParams);
+    for (const name of collectPatternBindingNames(p.name)) ownParams.add(name);
   }
 
   const visit = (node: ts.Node): void => {
@@ -17529,17 +17538,6 @@ function analyseCaptures(
     });
   }
   return captures;
-}
-
-/** Collect every identifier leaf owned by one parameter binding. */
-function collectBindingNames(name: ts.BindingName, out: Set<string>): void {
-  if (ts.isIdentifier(name)) {
-    out.add(name.text);
-    return;
-  }
-  for (const element of name.elements) {
-    if (!ts.isOmittedExpression(element)) collectBindingNames(element.name, out);
-  }
 }
 
 // ---------------------------------------------------------------------------
