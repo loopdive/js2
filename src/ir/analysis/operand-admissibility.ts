@@ -292,8 +292,13 @@ export function provenBinaryOperandsAdmissible(
   right: OperandFamily,
   numberToString: boolean,
 ): boolean {
-  const additive = additiveOperandsProvable(additiveProofOf(left), additiveProofOf(right), numberToString);
-  return (op !== ts.SyntaxKind.PlusToken || additive) && binaryOperandsAdmissible(op, left, right);
+  if (
+    op === ts.SyntaxKind.PlusToken &&
+    !additiveOperandsProvable(additiveProofOf(left), additiveProofOf(right), numberToString)
+  ) {
+    return false;
+  }
+  return binaryOperandsAdmissible(op, left, right);
 }
 
 /**
