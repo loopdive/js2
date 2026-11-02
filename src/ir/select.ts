@@ -169,17 +169,21 @@ import { declarationBindingWritten } from "./const-binding-writes.js";
 import { programPatchesDestructuringRealm } from "./realm-keys.js";
 import { collectBindingPatternNames } from "./analysis/ast-scope.js";
 import {
+  binaryOperandsAdmissible,
   conditionalJoinArmFamily,
   conditionalJoinFamily,
-  binaryOperandsAdmissible,
+  isCarrierAddition,
   isComparisonResultOperator,
   isEqualityOperator,
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   isTypedBinaryOperator,
+  isVoidZero,
+  wrapperComparisonIsIdentity,
   nativeI32OperandsAdmissible,
   type OperandFamily,
 } from "./analysis/operand-admissibility.js";
+import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
@@ -793,7 +797,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "standalone-function-prototype-call"
       | "standalone-native-regexp-test-carrier"
       | "standalone-wrapper-instanceof"
-      | "primitive-wrapper-loose-equality"
+      | "primitive-wrapper-to-primitive"
       | "legacy-numeric-array-global"
       | "number-to-string"
       | "native-json-codec"
@@ -8713,8 +8717,8 @@ function selectorSupportsStandaloneWrapperInstanceOf(node: ts.Identifier): boole
 }
 
 /**
- * #4208 S4 — recognize only the ambient primitive-wrapper constructions used
- * by the residual ES5 abstract-equality family. The constructor argument must
+ * #4208 S4 — recognize only the ambient primitive-wrapper constructions an
+ * operator converts with ToPrimitive (#7106). The constructor argument must
  * already have the exact primitive family consumed by the legacy wrapper ABI;
  * general constructor coercion remains legacy-owned.
  */
@@ -8826,46 +8830,109 @@ function selectorDynamicLaneIn(
   );
 }
 
-/** #4208 S4 — bounded wrapper coercion followed by the generic binary tail. */
+/**
+ * The generic binary tail (#7144, #7106). A fresh primitive wrapper operand is
+ * the dynamic carrier of its ToPrimitive (#4208 S4), and compares by identity
+ * under `===` or against another wrapper. S0 refuses before the claim a pair
+ * `lowerBinary` cannot type; equality has its own folds (`tryFoldNullCompare`,
+ * the `undefined` compare), so only a carrier operand puts it to the predicate.
+ */
 function selectorPrimitiveWrapperOrGenericBinary(
   expr: ts.BinaryExpression,
   binOp: ts.SyntaxKind,
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
-  if (binOp === ts.SyntaxKind.EqualsEqualsToken || binOp === ts.SyntaxKind.ExclamationEqualsToken) {
-    const leftWrapper = selectorPrimitiveWrapperConstruction(expr.left, scope, localClasses);
-    const rightWrapper = selectorPrimitiveWrapperConstruction(expr.right, scope, localClasses);
-    if ((leftWrapper === null) !== (rightWrapper === null)) {
-      const primitive = leftWrapper === null ? expr.left : expr.right;
-      const family = obviousSelectorValueFamily(primitive, scope);
-      if (family === "boolean" || family === "number") {
-        if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-loose-equality") !== true) {
-          return capabilityNo("operand-coercion-unsupported", "expr-wrapper-loose-equality-target", expr);
-        }
-        return isPhase1Expr(primitive, scope, localClasses);
-      }
-    }
-  }
+  const leftWrapper = selectorPrimitiveWrapperConstruction(expr.left, scope, localClasses) !== null;
+  const rightWrapper = selectorPrimitiveWrapperConstruction(expr.right, scope, localClasses) !== null;
   const isEquality = isEqualityOperator(binOp);
-  if (
-    isEquality &&
-    obviousSelectorValueFamily(expr.left, scope) === "reference" &&
-    obviousSelectorValueFamily(expr.right, scope) === "reference"
-  ) {
+  const left = leftWrapper ? "dynamic" : binaryOperandFamily(expr.left, scope, localClasses);
+  const right = rightWrapper ? "dynamic" : binaryOperandFamily(expr.right, scope, localClasses);
+  if (leftWrapper || rightWrapper) {
+    if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") !== true) {
+      return capabilityNo("operand-coercion-unsupported", "expr-wrapper-to-primitive-target", expr);
+    }
+    const other = leftWrapper ? right : left;
+    if (
+      wrapperComparisonIsIdentity(binOp, leftWrapper, rightWrapper) ||
+      (isEquality && other !== "boolean" && other !== "number")
+    ) {
+      return capabilityNo("operand-coercion-unsupported", "expr-wrapper-equality", expr);
+    }
+  } else if (isEquality && left === "reference" && right === "reference") {
     return capabilityNo("operand-coercion-unsupported", "expr-equality-reference-operands", expr);
   }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
-  // (#7106) A literal-pattern leaf has its source value's family, so an
-  // operator over one is judged here as `lowerBinary` would judge it.
-  if (!isEquality && isTypedBinaryOperator(binOp) && [expr.left, expr.right].some(isLiteralPatternLeaf)) {
-    const left = provenIrFamily(expr.left, scope);
-    const right = provenIrFamily(expr.right, scope);
-    if (left !== "unknown" && right !== "unknown" && !binaryOperandsAdmissible(binOp, left, right)) {
-      return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
-    }
+  const carrierOperand = left === "dynamic" || right === "dynamic";
+  if (binOp === ts.SyntaxKind.PlusToken && carrierOperand && !carrierAdditionConsumed(expr)) {
+    return capabilityNo("operand-coercion-unsupported", "expr-wrapper-carrier-position", expr);
   }
-  return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
+  // S0 refuses exactly what `lowerBinary`'s family check refuses, so not what
+  // the fused-i32 identity lowers before it (#7034 round 2).
+  const judged =
+    carrierOperand ||
+    (!isEquality &&
+      isTypedBinaryOperator(binOp) &&
+      left !== "unknown" &&
+      right !== "unknown" &&
+      !isSlotFreeI32IdentityLowered(expr));
+  if (judged && !binaryOperandsAdmissible(binOp, left, right)) {
+    return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
+  }
+  return (
+    (leftWrapper || isPhase1Expr(expr.left, scope, localClasses)) &&
+    (rightWrapper || isPhase1Expr(expr.right, scope, localClasses))
+  );
+}
+
+/**
+ * A non-wrapper binary operand's family, as `irOperandFamily` names it once
+ * lowered: a carrier `+` is `dynamic`, `null` `nullish`, the global `undefined`
+ * `undefined`; then {@link provenIrFamily}'s answer, or `reference` for an
+ * object, a closure or a local class value.
+ */
+function binaryOperandFamily(
+  operand: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): OperandFamily {
+  const candidate = unwrapPhase1Parens(operand);
+  if (isCarrierAddition(candidate, (side) => selectorCarrierValue(side, scope, localClasses))) return "dynamic";
+  if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
+  if (isUnshadowedUndefinedIdentifier(candidate, scope) || isVoidZero(candidate)) return "undefined";
+  const proven = provenIrFamily(operand, scope);
+  return proven === "unknown" && obviousSelectorValueFamily(operand, scope) === "reference" ? "reference" : proven;
+}
+
+/**
+ * A value from-ast lowers to the dynamic carrier: a fresh wrapper's
+ * ToPrimitive, or a `+` over one. The checker types the `+` as a string or a
+ * number, so only an operator that reads the carrier may take it.
+ */
+function selectorCarrierValue(
+  expression: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const e = unwrapPhase1Parens(expression);
+  return (
+    selectorPrimitiveWrapperConstruction(e, scope, localClasses) !== null ||
+    isCarrierAddition(e, (side) => selectorCarrierValue(side, scope, localClasses))
+  );
+}
+
+/**
+ * Whether the consumer of a carrier `+` reads the carrier: a typed operator (S0
+ * judges it), `typeof`, `!`, or a dynamic construct's argument. Anywhere else
+ * it would be typed as the checker's string or number (#7034 round 2).
+ */
+function carrierAdditionConsumed(expr: ts.BinaryExpression): boolean {
+  const node = outermostParenthesized(expr);
+  const parent = node.parent;
+  if (ts.isBinaryExpression(parent)) return isTypedBinaryOperator(parent.operatorToken.kind);
+  if (ts.isTypeOfExpression(parent)) return true;
+  if (ts.isNewExpression(parent)) return parent.expression !== node && dynamicConstructCallee(parent) !== null;
+  return ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken;
 }
 
 /** The leaf of a destructuring declaration that takes the literal plan, read through `expression`. */
@@ -8875,10 +8942,6 @@ function literalPatternLeaf(expression: ts.Expression): ts.BindingElement | unde
   return declaration && ts.isBindingElement(declaration) && literalLeafSource(declaration) !== undefined
     ? declaration
     : undefined;
-}
-
-function isLiteralPatternLeaf(expression: ts.Expression): boolean {
-  return literalPatternLeaf(expression) !== undefined;
 }
 
 function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpression): boolean {
@@ -13022,7 +13085,7 @@ export function buildLocalCallGraph(
               (currentModuleBindingResolver === null ||
                 currentModuleBindingResolver.isAmbientBinding(node.expression))) ||
             (selectorSeesAmbientWrapperConstructor(node.expression) &&
-              currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-loose-equality") === true))
+              currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") === true))
         ) {
           // Slice 4: local class — `<Class>_new` has a stable signature.
           // Slice 10 (#1169i): known extern class — `<Class>_new` is

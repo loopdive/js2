@@ -39,9 +39,12 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     // `<module-init>`; the legacy body carries the program instead. Pin that
     // truthfully — `legacyBodyEmitted: true` still fails if nothing is emitted
     // at all, and a return to IR emission will fail here and be re-examined.
+    // (2026-11-01, re-pinned in #7066) On main `<module-init>` now stops first on
+    // its host `console.log` surface (`host-surface-unavailable`), still at
+    // selection and still on the legacy body.
     expect(terminal(result).find((outcome) => outcome.displayName === "<module-init>")).toMatchObject({
       kind: "unsupported",
-      code: "call-graph-closure",
+      code: "host-surface-unavailable",
       stage: "select",
       legacyBodyEmitted: true,
       irBodyEmitted: false,
@@ -58,7 +61,7 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     expect(result.wat).toContain("__box_boolean");
   });
 
-  it("types array-literal widening as an unsupported representation", async () => {
+  it("claims a destructured array literal through the literal plan", async () => {
     const result = await compile(
       `export function test(): number {
         const [a, b, c] = [1, 2, 3];
@@ -74,14 +77,16 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     // row. Keep the exhaustive `toEqual` — the point of this pin is that `test`
     // is the *only* unit that demotes — and add the new row rather than relaxing
     // to a containment check that would hide an unexpected third outcome.
+    // (#7024) The literal plan lowers `const [a, b, c] = [1, 2, 3]` without an
+    // array, so `test` no longer demotes at build with
+    // `array-representation-unsupported`: it is claimed.
     expect(terminal(result)).toEqual([
       expect.objectContaining({
         displayName: "test",
-        kind: "unsupported",
-        code: "array-representation-unsupported",
-        stage: "build",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
+        kind: "emitted",
+        stage: "patch",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
       }),
       expect.objectContaining({
         displayName: "<module-init>",
@@ -103,10 +108,12 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    // #7034 S0: a typed operator whose operand families `lowerBinary` refuses is
+    // refused at select, before the claim, instead of demoting at build.
     expect(terminal(result).find((outcome) => outcome.displayName === "test")).toMatchObject({
       kind: "unsupported",
       code: "operand-coercion-unsupported",
-      stage: "build",
+      stage: "select",
       legacyBodyEmitted: true,
       irBodyEmitted: false,
     });

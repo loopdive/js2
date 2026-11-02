@@ -56,9 +56,14 @@ import {
   binaryOperandsAdmissible,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
+  isCarrierAddition,
+  isEqualityOperator,
   isNumberBinaryOperator,
   isNumberCompoundAssignOperator,
+  isNumericReaderOperator,
   isStrictEqualityOperator,
+  isToNumericOperator,
+  wrapperComparisonIsIdentity,
   isUndefinedCompareOperand,
   nullComparisonFolds,
   undefinedCompareOperandAdmissible,
@@ -176,7 +181,7 @@ import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { coercibleStandaloneDomArgumentBoundary } from "./dom-boundary.js";
-import { fmodRefFor, FMOD_FN } from "./fmod-selection.js";
+import { fmodRefFor } from "./fmod-selection.js";
 import { detectFixedLiteralLoopSafeIndexes, forInitsIndexNonNegative } from "./fixed-literal-loop-proof.js";
 import {
   requireMatchingModuleBindingOwner,
@@ -8300,7 +8305,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   const promiseDelay = tryLowerPromiseDelayConstruction(expr, cx.promiseDelays, () => makePromiseDelayLoweringHost(cx));
   if (promiseDelay !== undefined) return promiseDelay;
   const primitiveWrapper = lowerPrimitiveWrapperConstruction(expr, cx);
-  if (primitiveWrapper !== null) return primitiveWrapper.value;
+  if (primitiveWrapper !== null) return primitiveWrapper;
   // (#4461) `new Map()` on a lane whose `Map` carrier is the native `$Map`
   // struct. Intercepted before the extern-class registry, which has no `Map`
   // entry at all in host-free mode — the pre-#4461 behaviour was the
@@ -8491,16 +8496,11 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
 
 type PrimitiveWrapperConstructorName = "Boolean" | "Number" | "String";
 
-interface LoweredPrimitiveWrapper {
-  readonly kind: PrimitiveWrapperConstructorName;
-  readonly value: IrValueId;
-}
-
 /**
  * #4208 S4 — checker-identity-backed ambient primitive-wrapper constructor.
- * Selection admits this only as one operand of the bounded loose-equality
- * producer; keeping the recognizer here exact prevents a textual shadow from
- * being routed to the runtime wrapper family.
+ * Selection admits this only as an operand of a ToPrimitive operator (#7106);
+ * keeping the recognizer here exact prevents a textual shadow from being
+ * routed to the runtime wrapper family.
  */
 function primitiveWrapperConstructorName(
   expression: ts.Expression,
@@ -8519,11 +8519,12 @@ function primitiveWrapperConstructorName(
 
 /**
  * Materialize the real wrapper object through the existing host/native
- * constructor provider. The result stays branded `extern:Object`: loose
- * equality must still run the canonical `__to_primitive` protocol and may not
- * substitute the constructor argument as an AST shortcut.
+ * constructor provider. The result stays branded `extern:Object`: an operator
+ * must still run the canonical `__to_primitive` protocol
+ * ({@link freshWrapperToDynamic}) and may not substitute the constructor
+ * argument as an AST shortcut.
  */
-function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx): LoweredPrimitiveWrapper | null {
+function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPrimitiveWrapperConstruction(expr, cx));
   const kind = primitiveWrapperConstructorName(expr, cx);
@@ -8563,7 +8564,34 @@ function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx)
     // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: __new_${kind} produced no value in ${cx.funcName}`);
   }
-  return { kind, value };
+  return value;
+}
+
+/**
+ * A fresh wrapper operand of a ToPrimitive operator, as the dynamic carrier of
+ * ToPrimitive(wrapper, hint): the canonical `__to_primitive` observes the real
+ * [[PrimitiveValue]] and any user `valueOf` / `Symbol.toPrimitive`. The hint is
+ * `default` for `+` and the loose equalities, `number` for the numeric
+ * readers. The box is untagged, since a user method may answer any primitive.
+ */
+function freshWrapperToDynamic(op: ts.SyntaxKind, value: IrValueId, cx: LowerCtx): IrValueId {
+  if (cx.resolver?.dynamicCarrierIsExternref?.() !== true) {
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: primitive-wrapper ToPrimitive requires the externref dynamic carrier (${cx.funcName})`,
+    );
+  }
+  const externref = irVal({ kind: "externref" });
+  const hint =
+    op === ts.SyntaxKind.PlusToken || isEqualityOperator(op)
+      ? cx.builder.emitConst({ kind: "null", ty: externref }, externref)
+      : cx.builder.emitCoerceToExternref(cx.builder.emitStringConst("number"));
+  const primitive = cx.builder.emitCall(irRuntimeFuncRef("__to_primitive"), [value, hint], externref);
+  if (primitive === null) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+    throw new Error(`ir/from-ast: __to_primitive produced no value in ${cx.funcName}`);
+  }
+  return cx.builder.emitBox(primitive, irDynamic());
 }
 
 /**
@@ -14590,7 +14618,7 @@ function proveAdditiveOperand(node: ts.Expression, cx: LowerCtx): "number" | "st
  * T-directed specialization to guard (the kind-based dispatch stands).
  */
 function additiveOperandProof(node: ts.Expression, cx: LowerCtx): AdditiveProof | null {
-  if (expressionProducesDynamic(node, cx)) return "dynamic";
+  if (addsAsCarrier(node, cx)) return "dynamic";
   const proof = proveAdditiveOperand(node, cx);
   return proof === "no-checker" ? null : proof;
 }
@@ -15059,11 +15087,12 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   if (ts.isConditionalExpression(candidate)) {
     return expressionProducesDynamic(candidate.whenTrue, cx) && expressionProducesDynamic(candidate.whenFalse, cx);
   }
-  return (
-    ts.isBinaryExpression(candidate) &&
-    candidate.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-    (expressionProducesDynamic(candidate.left, cx) || expressionProducesDynamic(candidate.right, cx))
-  );
+  return isCarrierAddition(candidate, (operand) => addsAsCarrier(operand, cx));
+}
+
+/** A `+` operand that adds as the carrier: a dynamic value, or a fresh wrapper's ToPrimitive. */
+function addsAsCarrier(operand: ts.Expression, cx: LowerCtx): boolean {
+  return expressionProducesDynamic(operand, cx) || primitiveWrapperConstructorName(operand, cx) !== null;
 }
 
 /**
@@ -15290,12 +15319,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     isIrBitwiseOperatorToken(op) &&
     isI32PureExprIR(expr.left, cx.i32PureNames, cx.provenCharReads) &&
     isI32PureExprIR(expr.right, cx.i32PureNames, cx.provenCharReads);
-  const lhs = i32PureBitwiseOperands
-    ? emitI32PureExpr(expr.left, cx)
-    : lowerExpr(expr.left, cx, irVal({ kind: "f64" }));
-  const rhs = i32PureBitwiseOperands
-    ? emitI32PureExpr(expr.right, cx)
-    : lowerExpr(expr.right, cx, irVal({ kind: "f64" }));
+  const [lhs, rhs] = lowerBinaryOperands(expr, op, i32PureBitwiseOperands, cx);
   const lt = typeOfValue(lhs, cx);
   const rt = typeOfValue(rhs, cx);
 
@@ -15307,11 +15331,8 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   // path below (a `dyn === "s"` mixes dynamic + string). The payload-less
   // STRICT `dyn === null`/`dyn === undefined` cases were already handled by
   // `tryFoldNullCompare`/`tryLowerUndefinedCompare`'s dynamic arms (cheaper
-  // exact `tag.test`), so they never reach here. The generic dynamic-operand
-  // arm stays byte-inert until S5.P opens its selector; #4208's focused
-  // fresh-wrapper producer shares this dispatcher after canonical ToPrimitive.
-  const wrapperLooseEq = tryLowerPrimitiveWrapperLooseEquality(expr, op, lhs, rhs, lt, rt, cx);
-  if (wrapperLooseEq !== null) return wrapperLooseEq;
+  // exact `tag.test`), so they never reach here. A fresh wrapper operand
+  // arrives here as the carrier of its ToPrimitive (`lowerBinaryOperands`).
   // (#7144) Which operand families each operator lowers is
   // `binaryOperandsAdmissible` — the same predicate the selector consults
   // before it claims; the arms below are its producers.
@@ -15359,7 +15380,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     // measurement flagged (its follow-up 2). Reachable only once the S5.P
     // scan admits dynamic-arithmetic bodies; today the move-only gate
     // rejects them, so this arm is byte-inert.
-    const dynArith = tryLowerDynamicArithmetic(op, lhs, rhs, lt, rt, cx);
+    const dynArith = tryLowerDynamicArithmetic(expr, op, lhs, rhs, lt, rt, cx);
     if (dynArith !== null) return dynArith;
     // invariant (producer-promise): every admitted dynamic operand pair has a producer above — #7144.
     throw new Error(`ir/from-ast: admitted dynamic '${ts.tokenToString(op)}' has no lowering in ${cx.funcName}`);
@@ -15520,6 +15541,46 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   }
 
   return cx.builder.emitBinary(binop, lhs, rhs, IR_BOOL);
+}
+
+/**
+ * Lower an eager operator's operands, left then right. A `null` operand of a
+ * numeric reader is ToNumber(null) = +0. A fresh primitive wrapper becomes the
+ * carrier of its ToPrimitive only after BOTH operands are evaluated, where the
+ * operator's own ToPrimitive runs (#4208 S4, #7106). An operator that
+ * ToNumerics its operands completes the left one before the right one's
+ * ToPrimitive (§13.15.3), so each carrier is ToNumber'd in turn there.
+ */
+function lowerBinaryOperands(
+  expr: ts.BinaryExpression,
+  op: ts.SyntaxKind,
+  i32Pure: boolean,
+  cx: LowerCtx,
+): readonly [IrValueId, IrValueId] {
+  const lower = (operand: ts.Expression): IrValueId => {
+    if (i32Pure) return emitI32PureExpr(operand, cx);
+    if (isNumericReaderOperator(op) && peelParensExpr(operand).kind === ts.SyntaxKind.NullKeyword) {
+      return cx.builder.emitConst({ kind: "f64", value: 0 }, IR_F64);
+    }
+    return lowerExpr(operand, cx, irVal({ kind: "f64" }));
+  };
+  const lhs = lower(expr.left);
+  const rhs = lower(expr.right);
+  const leftWrapper = primitiveWrapperConstructorName(expr.left, cx) !== null;
+  const rightWrapper = primitiveWrapperConstructorName(expr.right, cx) !== null;
+  if (!leftWrapper && !rightWrapper) return [lhs, rhs];
+  if (wrapperComparisonIsIdentity(op, leftWrapper, rightWrapper)) {
+    // invariant (producer-promise): selection refuses an identity comparison of a fresh wrapper.
+    throw new IrInvariantError("selection-preparation-mismatch", "build", "ir/from-ast: fresh-wrapper identity");
+  }
+  const operand = (wrapper: boolean, value: IrValueId): IrValueId => {
+    const primitive = wrapper ? freshWrapperToDynamic(op, value, cx) : value;
+    return isToNumericOperator(op) && cx.builder.typeOf(primitive).kind === "dynamic"
+      ? cx.builder.emitDynToNumber(primitive)
+      : primitive;
+  };
+  const left = operand(leftWrapper, lhs);
+  return [left, operand(rightWrapper, rhs)];
 }
 
 /**
@@ -16101,8 +16162,7 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
 /**
  * #2949 S5.2 — lower equality through the canonical dynamic carrier, for an
  * operand pair `binaryOperandsAdmissible` admitted (at least one operand is
- * dynamic, the other boxes). Returns `null` for a non-equality operator. The
- * #4208 fresh-wrapper producer runs before it in `lowerBinary`.
+ * dynamic, the other boxes). Returns `null` for a non-equality operator.
  */
 function tryLowerDynamicEq(
   expr: ts.BinaryExpression,
@@ -16124,79 +16184,6 @@ function tryLowerDynamicEq(
   const dynR = rt.kind === "dynamic" ? rhs : boxConcreteToDynamic(rhs, rt, expr.right, cx);
   if (dynR === null) return null;
   return cx.builder.emitDynEq(dynL, dynR, { loose, negate });
-}
-
-/**
- * #4208 S4 — lower the selector-certified fresh-wrapper loose equality.
- * This is intentionally an AST-shape producer for a canonical IR/runtime
- * sequence, not an AST-computed answer: the wrapper is allocated, then
- * `__to_primitive` observes its real [[PrimitiveValue]], then `dyn.eq` owns
- * Boolean/Number/String coercion exactly as it does for other dynamic values.
- * Both source operands were evaluated in order before this helper runs. The
- * selector restricts this to the non-fast externref carrier, so the primitive
- * result crosses `box` without a representation guess; wrapper-vs-wrapper and
- * wrapper-vs-string retain their legacy paths.
- */
-function tryLowerPrimitiveWrapperLooseEquality(
-  expr: ts.BinaryExpression,
-  op: ts.SyntaxKind,
-  lhs: IrValueId,
-  rhs: IrValueId,
-  lt: IrType,
-  rt: IrType,
-  cx: LowerCtx,
-): IrValueId | null {
-  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => tryLowerPrimitiveWrapperLooseEquality(expr, op, lhs, rhs, lt, rt, cx));
-  if (op !== ts.SyntaxKind.EqualsEqualsToken && op !== ts.SyntaxKind.ExclamationEqualsToken) return null;
-  const leftKind = primitiveWrapperConstructorName(expr.left, cx);
-  const rightKind = primitiveWrapperConstructorName(expr.right, cx);
-  if ((leftKind === null) === (rightKind === null)) return null;
-  if (cx.resolver?.dynamicCarrierIsExternref?.() !== true) {
-    demoteToLegacy(
-      "operand-coercion-unsupported",
-      `ir/from-ast: primitive-wrapper loose equality requires the externref dynamic carrier (${cx.funcName})`,
-    );
-  }
-
-  const wrapperOnLeft = leftKind !== null;
-  const wrapperKind = (leftKind ?? rightKind)!;
-  const wrapper = wrapperOnLeft ? lhs : rhs;
-  const wrapperType = wrapperOnLeft ? lt : rt;
-  const primitiveOperand = wrapperOnLeft ? rhs : lhs;
-  const primitiveType = wrapperOnLeft ? rt : lt;
-  const primitiveExpression = wrapperOnLeft ? expr.right : expr.left;
-  if (wrapperType.kind !== "extern" || wrapperType.className !== "Object") {
-    // invariant (producer-promise): the lowering just invoked promised this shape — #4502.
-    throw new Error(`ir/from-ast: primitive wrapper did not lower to extern:Object in ${cx.funcName}`);
-  }
-
-  const externref = irVal({ kind: "externref" });
-  const hint = cx.builder.emitConst({ kind: "null", ty: externref }, externref);
-  const primitive = cx.builder.emitCall(irRuntimeFuncRef("__to_primitive"), [wrapper, hint], externref);
-  if (primitive === null) {
-    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-    throw new Error(`ir/from-ast: __to_primitive produced no value in ${cx.funcName}`);
-  }
-  const primitiveTag =
-    wrapperKind === "Boolean"
-      ? JS_TAG_IDS.Boolean
-      : wrapperKind === "Number"
-        ? JS_TAG_IDS.NumberF64
-        : JS_TAG_IDS.String;
-  const wrapperDynamic = cx.builder.emitBox(primitive, irDynamic(primitiveTag));
-  const otherDynamic = boxConcreteToDynamic(primitiveOperand, primitiveType, primitiveExpression, cx);
-  if (otherDynamic === null) {
-    demoteToLegacy(
-      "operand-coercion-unsupported",
-      `ir/from-ast: wrapper loose-equality primitive operand was not boxable in ${cx.funcName}`,
-    );
-  }
-  return cx.builder.emitDynEq(
-    wrapperOnLeft ? wrapperDynamic : otherDynamic,
-    wrapperOnLeft ? otherDynamic : wrapperDynamic,
-    { loose: true, negate: op === ts.SyntaxKind.ExclamationEqualsToken },
-  );
 }
 
 /**
@@ -16350,28 +16337,17 @@ function relOperandToF64(v: IrValueId, t: IrType, cx: LowerCtx): IrValueId | nul
 }
 
 /**
- * #2949 S5.5 — lower `dyn - x` / `dyn * x` / `dyn / x` / `dyn % x` (either or
- * both operands dynamic) as NUMERIC arithmetic: each dynamic operand is
- * ToNumber'd to `f64` via `dyn.to_number` (canonical `__any_to_f64` gc /
- * `__unbox_number` host — D4, the same primitive S5.3's relational arm uses),
- * then the existing f64 op runs (`f64.sub`/`mul`/`div`; `%` calls the shared
- * exact-`__fmod` helper — #2945/#2056, the SAME helper legacy `emitModulo`
- * emits, so every fmod edge — `x % 0` → NaN, `-0 % x` → -0, `x % Inf` → x —
- * agrees bit-for-bit). Returns `null` (clean demote) for any other operator, or
- * for a concrete operand this slice cannot feed the f64 op (see
- * {@link relOperandToF64}).
- *
- * These four operators are PURE ToNumber operators per §13.7 (multiplicative)
- * and §13.8.2 (subtraction): ApplyStringOrNumericBinaryOperation with a
- * numeric-only opText never takes a string branch, so — unlike relational
- * (string×string lexicographic deferred) and unlike `+` (concat dispatch,
- * excluded) — the ToNumber lowering is spec-complete for EVERY runtime operand
- * partition (string operands ToNumber per §7.1.4: host `Number(v)`; the gc
- * boxed-string→f64-slot gap matches legacy `__any_sub`-family behavior and is
- * the documented S5.3 deferred imperfection). BigInt operands are out of scope
- * (the IR claims no BigInt-typed shapes).
+ * #2949 S5.5 — a numeric operator other than `+` (`- * / %`, the bitwise
+ * operators) with a dynamic operand: ToNumber each dynamic operand
+ * (`dyn.to_number`, see {@link relOperandToF64}), then the number arithmetic
+ * of {@link emitNumberBinary}. Exact for every runtime partition: these are
+ * pure ToNumber operators (§13.7, §13.8.2, §13.9, §13.12), unlike `+`
+ * (ToPrimitive and concatenation) and the relationals (string×string).
+ * Returns `null` for any other operator, or for a concrete operand that is not
+ * an f64. BigInt operands are out of scope (the IR claims no BigInt shapes).
  */
 function tryLowerDynamicArithmetic(
+  expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
   lhs: IrValueId,
   rhs: IrValueId,
@@ -16379,37 +16355,12 @@ function tryLowerDynamicArithmetic(
   rt: IrType,
   cx: LowerCtx,
 ): IrValueId | null {
-  let binop: IrBinop | null;
-  switch (op) {
-    case ts.SyntaxKind.MinusToken:
-      binop = "f64.sub";
-      break;
-    case ts.SyntaxKind.AsteriskToken:
-      binop = "f64.mul";
-      break;
-    case ts.SyntaxKind.SlashToken:
-      binop = "f64.div";
-      break;
-    case ts.SyntaxKind.PercentToken:
-      binop = null; // routed through the __fmod helper call below
-      break;
-    default:
-      return null;
-  }
+  if (!isToNumericOperator(op)) return null;
   const lf = relOperandToF64(lhs, lt, cx);
   if (lf === null) return null;
   const rf = relOperandToF64(rhs, rt, cx);
   if (rf === null) return null;
-  if (binop === null) {
-    const fmodResult = cx.builder.emitCall(irIntrinsicFuncRef(FMOD_FN), [lf, rf], irVal({ kind: "f64" }));
-    if (fmodResult === null) {
-      // Unreachable: a non-null resultType always yields a value id.
-      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-      throw new Error(`ir/from-ast: internal — dynamic __fmod call produced no value in ${cx.funcName}`);
-    }
-    return fmodResult;
-  }
-  return cx.builder.emitBinary(binop, lf, rf, irVal({ kind: "f64" }));
+  return emitNumberBinary(op, lf, rf, expr.left, expr.right, cx);
 }
 
 // ---------------------------------------------------------------------------
