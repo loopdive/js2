@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { IrFunctionBuilder } from "./builder.js";
+import { irTypeIsBoolean } from "./boolean-brand.js";
 import { irVal, type IrType, type IrValueId } from "./nodes.js";
 
 const F64 = irVal({ kind: "f64" });
@@ -14,6 +15,11 @@ export function isNumericIrSlot(type: IrType): boolean {
   );
 }
 
+/** A value numeric coercion takes: a numeric slot's, or a boolean, whose ToNumber is its 0 or 1. */
+export function isNumericIrSource(type: IrType): boolean {
+  return isNumericIrSlot(type) || irTypeIsBoolean(type);
+}
+
 /**
  * Use the existing canonical bitwise IR for native integer domain conversions.
  * Without `nativeDomains` (the gc lane) int32/uint32 domains are not recovered:
@@ -26,7 +32,7 @@ export function coerceIrNumeric(
   nativeDomains: boolean,
 ): IrValueId | null {
   const from = builder.typeOf(value);
-  if (!isNumericIrSlot(from) || !isNumericIrSlot(target) || from.kind !== "val" || target.kind !== "val") return null;
+  if (!isNumericIrSource(from) || !isNumericIrSlot(target) || from.kind !== "val" || target.kind !== "val") return null;
   if (nativeDomains && target.val.kind === "i32" && (target.signed === false || target.val.int32)) {
     return builder.emitBinary(target.signed === false ? "js.shr_u" : "js.bitor", value, i32Zero(builder), target);
   }

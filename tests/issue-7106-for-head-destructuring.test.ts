@@ -14,32 +14,12 @@ import { planLiteralPattern } from "../src/ir/literal-pattern-plan.js";
 import { programPatchesDestructuringRealm } from "../src/ir/realm-keys.js";
 import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
-import { assembleHarnessBody, moduleInit } from "./helpers/harness-module-init.js";
+import {
+  compileHarnessOn as compileHarness,
+  moduleInit,
+  runHarnessOn as runHarness,
+} from "./helpers/harness-module-init.js";
 import { lane, TARGETS, type Target } from "./helpers/ambient-intrinsic-probe.js";
-
-/** Compile `body` behind assert.js + sta.js; a claim is never withdrawn after the fact. */
-async function compileHarness(target: Target, body: string) {
-  const result = await compile(assembleHarnessBody(body), {
-    fileName: "test.js",
-    allowJs: true,
-    skipSemanticDiagnostics: true,
-    trackIrOutcomes: true,
-    deferTopLevelInit: true,
-    ...(target ? { target } : {}),
-  });
-  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  expect(result.irPostClaimErrors ?? []).toEqual([]);
-  return result;
-}
-
-/** Run `<module-init>` (an assert failure throws) and report whether the IR claimed it. */
-async function runHarness(target: Target, body: string): Promise<boolean> {
-  const result = await compileHarness(target, body);
-  const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
-  (instance.exports.__module_init as () => void)();
-  return moduleInit(result)?.irBodyEmitted === true;
-}
 
 const loop = (head: string, checks: string) =>
   `var n = 0;\nfor (${head}; n < 1; ) {\n${checks}\n  n += 1;\n}\nassert.sameValue(n, 1);`;

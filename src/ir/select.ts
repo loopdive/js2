@@ -11116,7 +11116,7 @@ function isPhase1StaticPredicateCall(
 /**
  * The IR representation family the selector proves `expression` lowers to —
  * `irOperandFamily`'s, not the checker's type: a module binding is its slot
- * (an f64, or an i32 read without the boolean brand), a native-i32 slot read
+ * (an f64, or a boolean read with the #4503 brand), a native-i32 slot read
  * (#7136) an i32, and an unannotated local unknown (its caller traces the
  * initializer when the local is never rewritten).
  */
@@ -11131,7 +11131,7 @@ function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): 
   if (ts.isIdentifier(expression) && unannotatedLocal(expression) !== undefined) return "unknown";
   if (moduleBinding(expression) !== undefined) {
     const slot = obviousModuleValueFamily(expression);
-    return slot === "f64" ? "number" : slot === "boolean" ? "int32" : "unknown";
+    return slot === "f64" ? "number" : slot === "boolean" ? "boolean" : "unknown";
   }
   if (currentSelectionOptions?.isNativeI32SlotRead?.(expression) === true) return "int32";
   if (expressionIsProvenNumber(expression)) return "number";

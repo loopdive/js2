@@ -1,13 +1,15 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // (#7106) Compile a test262 body behind the original harness (assert.js +
-// sta.js) on standalone, the way the conformance runner does, and inspect or
-// run its `<module-init>` unit. Shared by the #7106 module-init tests.
+// sta.js), the way the conformance runner does, and inspect or run its
+// `<module-init>` unit. Shared by the #7106 module-init tests.
 import { expect } from "vitest";
 
 import { compile } from "../../src/index.js";
+import { buildImports } from "../../src/runtime.js";
 import { assembleOriginalHarness } from "../test262-original-harness.js";
 import { parseMeta } from "../test262-runner.js";
+import type { Target } from "./ambient-intrinsic-probe.js";
 
 export type HarnessCompileResult = Awaited<ReturnType<typeof compile>>;
 
@@ -17,15 +19,33 @@ export function assembleHarnessBody(body: string): string {
   return assembleOriginalHarness(source, parseMeta(source) as never).primary.source;
 }
 
+const HARNESS_OPTIONS = {
+  fileName: "test.js",
+  allowJs: true,
+  skipSemanticDiagnostics: true,
+  trackIrOutcomes: true,
+  deferTopLevelInit: true,
+} as const;
+
 export async function compileHarnessBody(body: string): Promise<HarnessCompileResult> {
-  return compile(assembleHarnessBody(body), {
-    fileName: "test.js",
-    allowJs: true,
-    target: "standalone",
-    skipSemanticDiagnostics: true,
-    trackIrOutcomes: true,
-    deferTopLevelInit: true,
-  });
+  return compile(assembleHarnessBody(body), { ...HARNESS_OPTIONS, target: "standalone" });
+}
+
+/** `body` behind the harness on `target` (`undefined` is the gc lane); a claim is never withdrawn after the fact. */
+export async function compileHarnessOn(target: Target, body: string): Promise<HarnessCompileResult> {
+  const result = await compile(assembleHarnessBody(body), { ...HARNESS_OPTIONS, ...(target ? { target } : {}) });
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(result.irPostClaimErrors ?? []).toEqual([]);
+  return result;
+}
+
+/** Run `<module-init>` on `target` (an assert failure throws) and report whether the IR claimed it. */
+export async function runHarnessOn(target: Target, body: string): Promise<boolean> {
+  const result = await compileHarnessOn(target, body);
+  const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+  (instance.exports.__module_init as () => void)();
+  return moduleInit(result)?.irBodyEmitted === true;
 }
 
 export function moduleInit(result: HarnessCompileResult) {
