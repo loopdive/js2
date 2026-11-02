@@ -21,7 +21,7 @@ export type IrBackendTargetCapability =
   | "standalone-function-prototype-call"
   | "standalone-native-regexp-test-carrier"
   | "standalone-wrapper-instanceof"
-  | "primitive-wrapper-loose-equality"
+  | "primitive-wrapper-to-primitive"
   | "legacy-numeric-array-global"
   | "number-to-string"
   | "native-json-codec"
@@ -110,8 +110,8 @@ export function supportsIrBackendTargetCapability(
         !profile.allowHostImports &&
         profile.fast === true
       );
-    case "primitive-wrapper-loose-equality":
-      // #4208 S4 — the focused producer crosses the wrapper object's
+    case "primitive-wrapper-to-primitive":
+      // #4208 S4 / #7106 — a fresh wrapper operand crosses the wrapper object's
       // externref through the canonical `__to_primitive` runtime boundary,
       // then boxes that primitive into the dynamic carrier. That boundary is
       // representation-exact only for the non-fast externref carrier today.
