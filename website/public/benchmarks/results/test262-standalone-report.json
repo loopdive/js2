@@ -12,9 +12,9 @@
   "verifiedExecutionCases": 0,
   "verifiedFrontendCases": 0,
   "unverifiedExecutionCases": 48621,
-  "timestamp": "2026-11-02T08:02:08.253Z",
-  "baseline_generated_at": "2026-11-02T08:02:08.253Z",
-  "baseline_sha": "17200e6c898c0d7274be7414638c9f329f94308d",
+  "timestamp": "2026-11-02T18:34:52.039Z",
+  "baseline_generated_at": "2026-11-02T18:34:52.040Z",
+  "baseline_sha": "4e2b7737cb3bdc5c39daa228c5f89e5b8d9bfd20",
   "oracle_version": 16,
   "mode": {
     "target": "standalone",
@@ -1864,9 +1864,9 @@
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/round/roundingincrement-days-large.js",
           "test/built-ins/Temporal/PlainMonthDay/from/argument-string-calendar-case-insensitive.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/since/roundingmode-expand.js",
           "test/built-ins/Temporal/Duration/prototype/round/valid-increments.js",
-          "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js"
+          "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
+          "test/built-ins/Temporal/PlainDate/prototype/toLocaleString/return-string.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: round to 1e8-# days with plain relativeTo: days result: Expected SameValue(«#», «#») to be true",
