@@ -4794,6 +4794,231 @@ inside or across a `finally` does not share the bug: the selector refuses it
   standalone. Playground: 13/13 identical on both lanes (no example has a
   `finally`).
 
+## `<module-init>` lever: one string-method surface (plan, 2026-11-02)
+
+Plan only; nothing here is implemented, and the pick waits for the lead's
+confirmation. Measured on the in-flight stack: origin/main `80ee75ea4c` plus
+the heads of PRs #7033 (`01d96e5820`), #7034 (`676a82e08e`), #7026
+(`ff67ba0fdd`, merged since), the S5 destructuring slice (`7ccee08b69`), the
+bool-slot fix (`45c0231bc4`) and PR #7038 (`5e1543ba03`). The prototypes were
+selection-only edits on a scratch copy of that stack, never committed.
+Standalone, the conformance runner's harness assembly
+(`assembleOriginalHarness`), `JS2WASM_IR_SHAPE_DIAG=1
+JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, one worker.
+
+### Ranking: which refusal makes the most files legacy-free
+
+The sample is 637 seeded test262 files (`sha256("lever-7106:" + path)`,
+first hex digit below 3): 540 compile, 10 are legacy-free and 530 keep at
+least one legacy unit. A file's *roots* are its refusals minus cascades
+(`call-graph-closure`, and an unresolved name or class that is itself a legacy
+unit). One sample file stands for about 84 corpus files.
+
+"Alone" counts the files whose only root is the reason. That count is
+inflated: a refusal hides whatever the selector would refuse next in the same
+declaration or expression. For the four reasons with the largest "alone"
+count, a selection-only prototype admitted the reason and the census was rerun
+on the files concerned. "Unmasked" is what that rerun leaves legacy-free,
+counting a builder demote of the lever's own construct as the lever's work.
+
+| reason | lives in | files carrying it | alone | unmasked: legacy-free | corpus estimate |
+| --- | --- | --- | --- | --- | --- |
+| string methods (`expr-string-method-surface`) | a new `src/ir/string-method-surface.ts` (below) | 5 | 4 | **3** | ~65, measured on its own population (below) |
+| script `var` storage (`*-module-storage-unrepresentable`) | `module-bindings.ts`, codegen `scriptVarHome` | 268 | 12 | 1, and 1 more with array methods | ~85–170, scaled from 1–2 files |
+| array methods (`expr-array-method-not-lowerable`) | the IR array-method arms | 31 | 4 | 1, and 1 more with storage | ~85–170, scaled from 1–2 files |
+| ambient `Object` statics (`expr-ident-not-in-scope «Object»`) | — | 92 | 6 | 0 of 92 | 0 |
+
+No single reason frees more than about 0.3 % of the corpus. Scaling one to
+three sample files by 84 is noise (a 95 % interval on 3 events is 0.6 to 8.8),
+so the storage and array estimates overlap the string one. The string lever
+ranks first because its estimate is the only one measured on its own
+population, and because it is one mechanism; storage is six and array methods
+at least three.
+
+What each unmasked rerun found behind the reason:
+
+- **Storage.** The 12 "alone" files need six different initializer families:
+  object literals (4), other arrays (4), builtin `new` (3), call results (2),
+  number and string arrays. Behind them: `new Date(NaN)`, `new Set([1, 2])`
+  and `new Proxy` with no host-free producer, object literals with methods or
+  duplicate keys, `{}`, BigInt literals, and Temporal. Only
+  `Array/prototype/indexOf/15.4.4.14-3-14.js` is clean once the slot exists.
+  The slices are follow-ups (a)–(h) of "Script `var` reference homes" above;
+  each frees at most three sample files.
+- **Array methods.** `[1, 2, 3].lastIndexOf(3, 1)` needs only a builder arm.
+  The rest hide a function declaration used as a value (`[11].forEach(callbackfn)`)
+  or Temporal arrows.
+- **`Object` statics.** With every runtime-backed static admitted
+  (`getOwnPropertyDescriptor`, `create`, `getPrototypeOf`, `seal`, …,
+  `Object.prototype.<m>.call`), none of the 92 files becomes legacy-free. Behind
+  them: `{}` and object literals with methods as values (#7128's open carrier),
+  `Int8Array` and the other typed-array constructors as values (20 files, from
+  testTypedArray.js), `globalThis`, async generator functions,
+  `new URIError()` with no host-free producer, and `Object` itself as a value
+  (`Object.prototype`, `getOwnPropertyDescriptor(Object, "seal")`).
+
+Three blockers recur behind all four and are not refusal reasons of their own
+in a masked census: a function declaration as a value, an object literal as a
+dynamic value (#7128), and an ambient constructor as a value. Each is a
+candidate for a census of its own before it is planned.
+
+### Population
+
+A seeded one-in-eight sample of `built-ins/String/prototype`
+(`sha256("str-7106:" + path)`, first hex digit below 2): 134 files, 132
+compile, 13 already legacy-free. 15 carry the surface refusal, 9 as their only
+root. The refused calls: `toLocaleLowerCase` 21, `padEnd` 8, `replaceAll` 7,
+`padStart` 3, `lastIndexOf` 2, `repeat` 2, `search` 2, `endsWith` 1,
+`indexOf` 1 (two arguments), `toLocaleUpperCase` 1.
+
+With the surface admitting every arity at select (the same prototype), all 9
+sole carriers are clean at select. Their one remaining refusal is the
+builder's `method call .<m>(...) on string not in slice 4`, which is the
+lowering this lever adds. By method: `lastIndexOf` 2, two-argument `indexOf` 1,
+`padStart` 1, `padEnd` 1, `toLocaleLowerCase` 1, `repeat` 1, `replaceAll` 1
+and `search` 1. `search` needs RegExp and stays out. The other 6 carriers keep
+other blockers: standalone `Object.defineProperty` (3), a BigInt or Symbol
+script `var` (2), a RegExp literal, and a wrapper equality.
+
+So the lever frees up to 8 of the 134 sampled files, about 64 of the 1073 in
+the directory. The three files it frees in the 637-file sample are
+String/prototype files too, so few are expected elsewhere. The prototype admits
+any argument the phase-1 check admits; the role proofs below decide how many of
+the 8 stay. For example `padStart/max-length-not-greater-than-string.js` calls
+`'abc'.padStart(undefined, 'def')` and `padStart(null, 'def')`.
+
+### Existing IR support: three tables for one surface
+
+- **Selector.** `IR_STRING_METHOD_SURFACE` (`select.ts:9079`) lists 10
+  methods as `[min, max, positional]`. Its comment says it is mirrored from
+  from-ast's table and narrowed by hand to the calls some backend's plan
+  lowers. `stringMethodHasSupportedArity` (`:9093`) and
+  `unprovenStringMethodPosition` (`:9102`) read it; the receiver arm is at
+  `:11987`.
+- **Builder.** `STRING_METHOD_TABLE` (`from-ast.ts:10266`) lists 12 methods
+  with host argument kinds; it has `startsWith` / `endsWith`, which the
+  selector leaves out. `lowerStringMethodCall` (`:10332`) carries a second
+  numeric proof for `charAt` / `charCodeAt` (`proveAdditiveOperand`, `:10394`)
+  and a post-claim ToString demote for a non-string search argument
+  (`:10465`).
+- **Lane plans.** `stringMethodPlan` exists twice: `integration.ts:7095`
+  (WasmGC: helper names, index representation, the omitted-argument pad) and
+  `backend/linear-integration.ts:2012` (only `charCodeAt` and `slice`).
+- **What the split costs.**
+  - Selection is lane-blind: the selector admits ten methods, while the linear
+    resolver's plan lowers two. (Measured on the stack: `--target linear`
+    fails `s.toUpperCase()`, `s.charAt(1)` and `s.substring(1, 2)` with
+    "Unsupported method call" from the linear backend.)
+  - A method joins the surface only when three hand edits agree.
+  - Follow-ups 3 (the search-argument proof) and 4 (two numeric proofs for one
+    position) of the #6972 review are both symptoms of the split.
+- **Legacy.** `compileNativeStringMethodCall` (`src/codegen/string-ops.ts:2714`)
+  lowers about 30 methods through `__str_*` helpers, among them `padStart` /
+  `padEnd` (`:3435` / `:3474`), `lastIndexOf` (`:3229`), `includes` /
+  `startsWith` / `endsWith` with a position (`:3253` / `:3286` / `:3313`),
+  `repeat` (`:3379`), `trimStart` / `trimEnd` (`:3342`) and
+  `toLocale{Lower,Upper}Case` (`:3512`, the same helpers as
+  `to{Lower,Upper}Case` without ECMA-402).
+
+### Target structure
+
+**Module.** `src/ir/string-method-surface.ts` (new; pure data and pure
+functions, no builder, no checker). One row per method:
+
+- the role of each argument: `search` and `fill` (ToString), `position`
+  (ToIntegerOrInfinity), `length` (ToLength);
+- the minimum argument count;
+- the result family (string, number, boolean);
+- the native helper and the value each omitted argument takes (position 0;
+  `endsWith`'s end and `lastIndexOf`'s position the length; `padStart` /
+  `padEnd`'s fill a single space).
+
+One function, `stringMethodPlan(lane, method, argCount)`, returns the plan or
+`null`. The selector, the WasmGC resolver and the linear resolver all call it,
+so selection and build cannot disagree. The lane is the existing
+`IrBackendTargetProfile` (`backend/legality.ts`), passed to selection as one
+option next to `supportsBackendCapability`, not one capability name per
+method.
+
+**Argument proofs.** One predicate per role, in the selector:
+
+- `search` / `fill`: a proven string. Generalise `expressionIsProvenString` with
+  the classifier, as #6972 follow-up 3 asks; this retires the post-claim
+  ToString demote. A proven string is never a RegExp, so legacy's IsRegExp
+  step is moot.
+- `position` / `length`: `expressionIsProvenNumber`, which the selector already
+  uses for positions, or a literal whose ToNumber is static (`undefined`,
+  `null`, `NaN`, `Infinity`, a boolean), folded at build the way legacy's
+  `compileStringIntegerArg` folds it. `proveAdditiveOperand`'s second proof in
+  the builder goes (#6972 follow-up 4).
+
+The builder lowers exactly the plan. A missing proof there is an
+`IrInvariantError`, not `demoteToLegacy`.
+
+**Moves.** `STRING_METHOD_TABLE` and `StringMethodSig` leave `from-ast.ts`;
+`IR_STRING_METHOD_SURFACE`, `stringMethodHasSupportedArity` and
+`unprovenStringMethodPosition` leave `select.ts`; both `stringMethodPlan`
+bodies become calls to the module. Integration keeps only the proven-ASCII
+case-helper choice, which picks a helper name and never admits or refuses.
+
+**Duplicates removed.**
+
+- Three method tables become one.
+- Two lane plans become one function.
+- Two numeric proofs for a position become one.
+- The ToString demote becomes a select refusal.
+
+**Code-quality acceptance criterion.**
+
+- `select.ts`, `from-ast.ts` and `integration.ts` shrink, with no
+  `loc-budget-allow:` or `func-budget-allow:` grant.
+- The new module stays under 300 lines, and no function in it exceeds 60.
+- No string-method name is spelled in `select.ts`, `from-ast.ts` or
+  `integration.ts` outside a call into the module.
+- Adding a method is one row; the review checks that S2 adds rows and no code.
+- The fresh-context adversarial review looks for a second table, a per-method
+  branch that differs from its sibling only by helper name, or a proof done
+  twice.
+
+**Correctness acceptance criterion.**
+
+- 0 pass→fail on all 1073 `built-ins/String/prototype` files and on the
+  637-file sample, standalone and gc.
+- No post-claim demote of a string method on WasmGC or linear: one unit test
+  walks every row on both backends.
+- A unit test per role: each omitted-argument default; `padEnd(n, undefined)`
+  pads with a space; `lastIndexOf(x, NaN)` searches from the end;
+  `"a1b".includes(1)` stays legacy; `toLocaleLowerCase()` answers as
+  `toLowerCase()`.
+- Byte-identical gc and standalone binaries for every program in which no unit
+  changes owner (census sha on the String/prototype files, the 637-file sample
+  and `website/playground/examples`).
+
+### Slices
+
+| slice | scope | expected gain |
+| --- | --- | --- |
+| S1 | Structure only: the module, one plan function, and the selector, builder and both lanes reading it. The WasmGC surface is unchanged; the linear lane admits only what its plan lowers. | 0 files; byte-identical on gc and standalone |
+| S2 | Rows: `padStart`, `padEnd`, `toLocaleLowerCase`, `toLocaleUpperCase`, `lastIndexOf`, the position argument of `indexOf` / `includes` / `startsWith` / `endsWith`, `trimStart`, `trimEnd`. | up to 6 of the 134 sampled String/prototype files, and the 3 of the 637-file sample |
+| S3 | `repeat` (RangeError on a negative or infinite count) and `replaceAll` with string arguments. | up to 2 more of the 134 |
+
+Recommendation: S1 and S2 as one PR. S1 alone moves nothing, and S2 is a list
+of rows once S1 exists.
+
+### Risks
+
+- **Helper receivers.** Legacy flattens the receiver (`emitFlatten`) before
+  `__str_padStart`, `__str_padEnd` and the other helpers. Each new row must use
+  the receiver convention the existing rows (`slice`, `toUpperCase`) use, and
+  the per-row unit test must cover a rope receiver (a concatenation).
+- **The host branch of the WasmGC plan.** `string_<method>` imports are
+  reachable only with `nativeStrings` off, which #6979 made a compile error on
+  every WasmGC target. Verify that, then delete the branch in S1 rather than
+  port it.
+- **Conflicts.** `select.ts` and `from-ast.ts` are the busiest IR files. PR
+  #7033 edits `select.ts`'s S0 binary arm, not this one. Land S1 as one
+  short-lived PR.
+
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
 The following 115 lines are preserved verbatim from the completed #6876 plan
