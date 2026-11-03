@@ -12,9 +12,9 @@
   "verifiedExecutionCases": 0,
   "verifiedFrontendCases": 0,
   "unverifiedExecutionCases": 48621,
-  "timestamp": "2026-11-03T18:22:09.303Z",
-  "baseline_generated_at": "2026-11-03T18:22:09.303Z",
-  "baseline_sha": "fd94852b294ea22bbc0406437c4764e0a9746bf5",
+  "timestamp": "2026-11-03T22:03:42.221Z",
+  "baseline_generated_at": "2026-11-03T22:03:42.221Z",
+  "baseline_sha": "fb1c7392c6016efe951986cef93a3d41336340c9",
   "oracle_version": 16,
   "mode": {
     "target": "standalone",
@@ -1906,16 +1906,16 @@
         },
         "sample_files": [
           "test/built-ins/AsyncDisposableStack/prototype/use/adds-async-disposable-value.js",
-          "test/built-ins/AsyncDisposableStack/prototype/Symbol.asyncDispose.js",
           "test/built-ins/AsyncDisposableStack/prototype/disposeAsync/explicit-await-for-undefined.js",
+          "test/built-ins/AsyncDisposableStack/prototype/Symbol.asyncDispose.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/adds-sync-disposable-value.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/Symbol.dispose-getter.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "assertion_fail:Test262Error: Symbol(Symbol.asyncDispose) should be an own property",
-          "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«null», «[object Object]») to be true",
+          "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: Expected stack2 to be an instance of AsyncDisposableStack"
         ]
       },
@@ -2374,14 +2374,14 @@
           "test/language/statements/class/elements/new-no-sc-line-method-rs-static-generator-method-privatename-identifier.js",
           "test/built-ins/Iterator/prototype/forEach/argument-validation-failure-closes-underlying.js",
           "test/built-ins/Iterator/prototype/forEach/next-method-returns-throwing-value.js",
-          "test/built-ins/Iterator/prototype/join/does-not-close-on-iterator-protocol-violation.js"
+          "test/built-ins/Iterator/prototype/take/next-method-returns-throwing-value.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot read properties of undefined (reading a class field)",
           "type_error:TypeError: Invalid iterator protocol",
           "assertion_fail:Test262Error: Expected SameValue(«false», «true») to be true",
           "assertion_fail:Test262Error: Expected a Test262Error but got a TypeError",
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
+          "assertion_fail:Test262Error: Expected a ReturnCalledError but got a Error"
         ]
       },
       {
@@ -2591,8 +2591,8 @@
           "ES2017": 2
         },
         "sample_files": [
-          "test/built-ins/TypedArray/prototype/forEach/BigInt/return-abrupt-from-this-out-of-bounds.js",
           "test/built-ins/TypedArray/prototype/findIndex/BigInt/return-abrupt-from-this-out-of-bounds.js",
+          "test/built-ins/TypedArray/prototype/forEach/BigInt/return-abrupt-from-this-out-of-bounds.js",
           "test/built-ins/TypedArray/prototype/findLastIndex/BigInt/get-length-ignores-length-prop.js",
           "test/built-ins/TypedArray/prototype/includes/detached-buffer-during-fromIndex-returns-true-for-undefined.js",
           "test/built-ins/TypedArray/prototype/lastIndexOf/resizable-buffer-special-float-values.js"
@@ -2682,8 +2682,8 @@
           "ES2020": 17,
           "ES2018": 12,
           "ES2024": 15,
-          "ES2015": 14,
           "ES2023": 5,
+          "ES2015": 14,
           "ES2022": 19,
           "ES2019": 14,
           "ES2021": 13,
