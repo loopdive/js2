@@ -281,6 +281,7 @@ import {
   type IrClassShapeEntry,
   type IrClassShapeLookup,
   type IrClassShapeSidecar,
+  irDynamicCarrierMatchesSlot,
 } from "./ir-class-shapes.js";
 import {
   buildIrExactFunctionClaimIndex,
@@ -2250,6 +2251,8 @@ function tsTypeToClassPositionIr(ctx: CodegenContext, t: ts.Type, classShapes: I
   if (t.flags & ts.TypeFlags.NumberLike) return irVal({ kind: "f64" });
   if (t.flags & ts.TypeFlags.BooleanLike) return irVal({ kind: "i32" });
   if (t.flags & ts.TypeFlags.StringLike) return { kind: "string" };
+  // (#7223) untyped positions: same `Any | Unknown` carrier as legacy `resolveWasmType`.
+  if (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return irDynamic();
   const entry = resolveIrClassShapeFromType(ctx.checker, t, classShapes);
   if (entry) return { kind: "class", shape: entry.shape };
   if (t.flags & ts.TypeFlags.Object) {
@@ -2322,6 +2325,7 @@ function irFieldTypeMatchesLegacyValType(
     if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) return isAnyStringSlot(ctx, vt);
     return vt.kind === "externref";
   }
+  if (ir.kind === "dynamic") return irDynamicCarrierMatchesSlot(ctx, vt); // (#7223)
   if (ir.kind === "class") {
     const structTypeIdx = ctx.structMap.get(ir.shape.className);
     return structTypeIdx !== undefined && (vt.kind === "ref" || vt.kind === "ref_null") && vt.typeIdx === structTypeIdx;
