@@ -179,7 +179,7 @@ instruction. They are planner work, left on legacy:
 - constructors with untyped parameters (no ctor evidence: a constructor body
   that stores its parameter is the same field-store shape).
 
-Typed programs are byte-identical. sha256 of the binary, base copy vs head,
+The measured typed corpus is byte-identical. sha256 of the binary, base copy vs head,
 gc + standalone + wasi: playground examples, `examples/`, `benchmarks/` and
 every `export`-bearing template in `tests/equivalence/*.test.ts`, 1,738
 sources and 5,214 records. The only rows that differ are the three lanes of
@@ -199,6 +199,70 @@ Test: `tests/equivalence/issue-7223-ir-class-shape-any.test.ts`. It has 18
 cases (6 shapes × standalone/wasi/gc), each asserting the node result and the
 IR route of the listed members. On base 15 of them fail. The setter case
 already routed IR there through the exact-accessor path.
+
+Not every typed program is byte-identical. A typed class with one `any`
+member or field now gets a shape. Its `any` methods, and top-level functions
+that use the class, can then move to the IR, and the bytes change. The PR
+review measured such programs and found their results correct. The byte A/B
+above holds for the measured corpus.
+
+### Round 2: `+` on dynamic values (review of `d0266a7742`)
+
+The review found that members newly routed to the IR that do `x + y` on
+untyped values went through `__ir_dyn_add`, and it was wrong:
+
+- it ignored a user `valueOf` (`c.add({valueOf(){return 4}}, 1)` gave
+  `"[object Object]1"`);
+- it did not throw a TypeError for a Symbol operand.
+
+Plain IR functions (`function f(x, y) { return x + y; }`) already had the
+same bug on base.
+
+The fix is in `ensureDynamicAdd` (`src/codegen/dyn-ops.ts`). The
+externref-carrier `__ir_dyn_add` is now a helper whose body is built by
+`emitAnyAddFromExternTemps`, the same §13.15.3 dispatch binary `+` uses
+(#7214). That dispatch does ToPrimitive(default): user `valueOf` before
+`toString`, and `Symbol.toPrimitive`. A Symbol operand throws TypeError, and
+then it concatenates or adds. Its old body, honest from-extern →
+`__any_add` → to-extern, is gone; this is no third implementation.
+
+- **`__any_add` itself is unchanged.** It works on the `$AnyValue`
+  representation, not on externref; the externref dispatch above cannot
+  replace it.
+- **Fast lane:** `__ir_dyn_add` still aliases `__any_add` there. No default
+  target sets `fast`, and the review found the fast lane does not claim these
+  members.
+- **Other `__any_add` callers are untouched:** `binary-ops.ts` (fast `any`
+  arithmetic) and `implicit-global-binding.ts`.
+- **Callers affected:** both are in `src/ir/from-ast.ts`. One is binary `+`
+  with a dynamic operand. The other is `+=` on a dynamic slot (#7106
+  Stage 4, the assert.js `message +=`).
+
+The test now has a `+` matrix: the review's four cases, plus strings,
+null/undefined, `-0`, Date and `Symbol.toPrimitive`. It runs on class
+members (`C_add`, `C_a1`, static `C_sa`) and on a plain function `f`, all
+IR-routed, on all 3 lanes, and is checked against node. Lane results:
+
+- **standalone and gc:** all checks pass.
+- **wasi:** the two `Symbol.toPrimitive` checks are skipped. The legacy body
+  already gets them wrong on wasi on base, so the gap predates this PR.
+
+Round-2 measurements, base = merge-base `a8e470a395`:
+
+- **Ledger:** unchanged from round 1. IR-routed goes 57 → 62, 0 invariants,
+  and `compileOk` stays at 1081.
+- **test262 `+` sample, standalone:** 418 files. They are all of
+  `language/expressions/addition` and `built-ins/Symbol/toPrimitive`, every
+  3rd file of `template-literal`, every 6th of `compound-assignment`, every
+  12th of `built-ins/Date`, every 15th of `built-ins/String`, and every 60th
+  of the class directories. Base and head both score 376 pass / 37 fail /
+  5 compile errors, with identical non-pass lists.
+- **Byte corpus:** 1,742 sources / 5,226 records on gc, standalone and wasi.
+  The only sources whose bytes differ, beyond this issue's own test, are two
+  untyped/`any` programs that already used IR dynamic `+` on base:
+  `issue-7001-ir-string-result-native-strings` #0 (`addOne(x) { return x + 1; }`)
+  and `typeof-narrowing` #3 (`x + " world"`, with `x: any`). Their bytes
+  change because the helper body is new. Both test files pass (27 tests).
 
 ### Growth grants (2026-11-04)
 
