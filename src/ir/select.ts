@@ -68,6 +68,11 @@ import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrid
 import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
 import { privateMemberMangledName, type IrClassId, type IrUnitId } from "./identity.js";
 import {
+  classNameIsAmbiguous,
+  privateNameReadsNonField,
+  staticPrivateThisCallClassName,
+} from "./private-member-syntax.js";
+import {
   isAsyncIrReady,
   isUnpreparedAsyncCallee,
   preparedAsyncPromiseAllArguments,
@@ -2125,7 +2130,10 @@ function whyNotIrClaimable(
       isVoidReturn = returnResolved === "void";
       isDynamicReturn = returnResolved === "dynamic";
     } else {
-      const returnResolved = preAbiEvidence?.returnType ?? resolveReturnType(fn, entry?.returnType);
+      const returnResolved =
+        preAbiEvidence?.returnType ??
+        resolveReturnType(fn, entry?.returnType) ??
+        (jsHostExternsEnabled(currentSelectionOptions) ? null : (preAbiEvidence?.fallbackReturnType ?? null));
       if (returnResolved === null) {
         shapeNo(`return-type-unresolved(lattice=${entry?.returnType?.kind ?? "absent"})`, fn);
         return "return-type-not-resolvable";
@@ -2328,6 +2336,7 @@ function whyNotIrClaimable(
 export interface IrStructuralSelectorAccessorAbiEvidence {
   readonly params: readonly ("dynamic" | undefined)[]; // undefined → ordinary resolution (#7223)
   readonly returnType: "string" | "void" | "dynamic" | undefined;
+  readonly fallbackReturnType?: "f64" | "string"; // (#7227) only when resolution fails, host-free lanes
 }
 
 export function assessIrStructuralSelectorSubject(
@@ -11806,18 +11815,23 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         const methodName = privateMemberMangledName(expr.expression.name);
         const receiver = expr.expression.expression;
         // `C.#s()` — the receiver is the class VALUE. Mirrors the static arm
-        // below (a bare unshadowed local class identifier); W1-A leaves static
-        // private methods without a descriptor, so the projection is missing
-        // and the call stays direct-owned. `this` / an instance resolves
-        // through the ordinary instance route.
+        // below (a bare unshadowed local class identifier); since #7227 a
+        // static private method carries a descriptor, so the call projects.
+        // `this.#m()` in a static method of the claimed class is the same
+        // static call (see `staticPrivateThisCallClassName`); any other `this`
+        // / instance resolves through the ordinary instance route.
+        const staticThisClass = staticPrivateThisCallClassName(expr, currentClaimClassName);
         const staticReceiver =
-          ts.isIdentifier(receiver) &&
-          localClassValueIsUnshadowed(receiver.text, scope) &&
-          localClasses.has(receiver.text);
-        const className = staticReceiver
-          ? (receiver as ts.Identifier).text
-          : localClassNameForExpression(receiver, scope);
-        if (className === null) return shapeNo("expr-private-method-receiver", expr);
+          staticThisClass !== undefined ||
+          (ts.isIdentifier(receiver) &&
+            localClassValueIsUnshadowed(receiver.text, scope) &&
+            localClasses.has(receiver.text));
+        const className =
+          staticThisClass ??
+          (staticReceiver ? (receiver as ts.Identifier).text : localClassNameForExpression(receiver, scope));
+        if (className === null || (staticReceiver && classNameIsAmbiguous(expr, className))) {
+          return shapeNo("expr-private-method-receiver", expr);
+        }
         if (localClassHasKnownProjectionGap(className)) {
           return capabilityNo("class-projection-unsupported", "expr-private-method-shape", expr);
         }
@@ -12417,6 +12431,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           return capabilityNo("class-method-virtual", "expr-class-getter-virtual", expr);
         }
       }
+    } else if (privateNameReadsNonField(expr.name)) {
+      return capabilityNo("class-member-unsupported", "expr-private-nonfield-read", expr);
     }
     return isPhase1Expr(expr.expression, scope, localClasses);
   }
