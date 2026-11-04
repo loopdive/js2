@@ -55,3 +55,20 @@ export function findConstructorImplementation(
       ts.isConstructorDeclaration(member) && member.body !== undefined && !isStaticCtorMethod(member),
   );
 }
+
+/**
+ * (#7215) The constructor's TypeScript parameter properties
+ * (`constructor(public x: T)`, also `private`/`protected`/`readonly`/`override`),
+ * in parameter order. Each declares an own field and implies `this.x = x`
+ * right after the field initializers (TS ES2022 emit). Binding patterns are
+ * a TS error here and are skipped.
+ */
+export function constructorParameterProperties(
+  ctor: ts.ConstructorDeclaration | undefined,
+): (ts.ParameterDeclaration & { name: ts.Identifier })[] {
+  if (!ctor) return [];
+  return ctor.parameters.filter(
+    (p): p is ts.ParameterDeclaration & { name: ts.Identifier } =>
+      ts.isParameterPropertyDeclaration(p, ctor) && ts.isIdentifier(p.name),
+  );
+}

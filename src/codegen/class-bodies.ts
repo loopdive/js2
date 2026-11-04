@@ -7,6 +7,7 @@
 import { ts } from "../ts-api.js";
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import {
+  constructorParameterProperties,
   findConstructorImplementation,
   hasDeclareModifier,
   hasStaticModifier,
@@ -1226,6 +1227,43 @@ export function collectClassDeclaration(
   }
   const voidClearedInstanceFields = collectVoidClearedInstanceFields(ctx, decl);
 
+  // (#7215) One field from a declaration — a class property, or a constructor
+  // parameter property (`constructor(public x: T)`), which TS emits as a field
+  // declared before every class property.
+  const pushDeclaredField = (fieldName: string, member: ts.PropertyDeclaration | ts.ParameterDeclaration): void => {
+    // Skip if this field is already defined in parent (or already collected)
+    if (parentFields.some((f) => f.name === fieldName) || ownFields.some((f) => f.name === fieldName)) return;
+    const fieldTsType = ctx.checker.getTypeAtLocation(member);
+    // (#3673) `pos: i32;` pins the STRUCT FIELD's Wasm type. Whole-chain:
+    // narrowing locals without the fields they flow into measurably
+    // pessimises (see the issue's round-34 table), so the field, the
+    // params and the locals must move together.
+    const nativeFieldType = nativeTypeOfDeclaration(ctx.checker, member);
+    let fieldType = nativeFieldType ?? resolveWasmType(ctx, fieldTsType);
+    if (
+      nativeFieldType === null &&
+      voidClearedInstanceFields.has(fieldName) &&
+      (fieldType.kind === "ref" || fieldType.kind === "ref_null")
+    ) {
+      fieldType = { kind: "externref" };
+    }
+    if (hasDynamicHostParent && (fieldType.kind === "ref" || fieldType.kind === "ref_null")) {
+      fieldType = { kind: "externref" };
+    }
+    ownFields.push({
+      name: fieldName,
+      type: fieldType,
+      mutable: true,
+      ...(member.questionToken && !member.initializer && fieldType.kind === "f64"
+        ? { undefinedDefault: true as const }
+        : {}),
+    });
+  };
+  // Builtin subclasses (`extends Error`) keep their own-field writes on the externref backing — not yet covered.
+  if (!ctx.classExternrefBackedSet.has(className)) {
+    for (const param of constructorParameterProperties(ctor)) pushDeclaredField(param.name.text, param);
+  }
+
   if (ctor?.body) {
     for (const stmt of ctor.body.statements) {
       // Skip super() calls — they don't define new fields
@@ -1288,35 +1326,7 @@ export function collectClassDeclaration(
       const fieldName = resolveClassMemberName(ctx, member.name);
       if (fieldName === undefined) continue; // dynamic computed name — skip
       if (hasStaticModifier(member)) continue; // handled below
-      // Skip if this field is already defined in parent
-      if (parentFields.some((f) => f.name === fieldName)) continue;
-      if (!ownFields.some((f) => f.name === fieldName)) {
-        const fieldTsType = ctx.checker.getTypeAtLocation(member);
-        // (#3673) `pos: i32;` pins the STRUCT FIELD's Wasm type. Whole-chain:
-        // narrowing locals without the fields they flow into measurably
-        // pessimises (see the issue's round-34 table), so the field, the
-        // params and the locals must move together.
-        const nativeFieldType = nativeTypeOfDeclaration(ctx.checker, member);
-        let fieldType = nativeFieldType ?? resolveWasmType(ctx, fieldTsType);
-        if (
-          nativeFieldType === null &&
-          voidClearedInstanceFields.has(fieldName) &&
-          (fieldType.kind === "ref" || fieldType.kind === "ref_null")
-        ) {
-          fieldType = { kind: "externref" };
-        }
-        if (hasDynamicHostParent && (fieldType.kind === "ref" || fieldType.kind === "ref_null")) {
-          fieldType = { kind: "externref" };
-        }
-        ownFields.push({
-          name: fieldName,
-          type: fieldType,
-          mutable: true,
-          ...(member.questionToken && !member.initializer && fieldType.kind === "f64"
-            ? { undefinedDefault: true as const }
-            : {}),
-        });
-      }
+      pushDeclaredField(fieldName, member);
     }
   }
 
@@ -2928,18 +2938,21 @@ function compileClassBodiesInner(
         emitExternrefFields(ctx, fctx, decl, selfLocal);
         return;
       }
+      const storeOwnField = (fieldName: string, value: ts.Expression): void => {
+        const fieldIdx = fields.findIndex((f) => f.name === fieldName);
+        if (fieldIdx === -1) return;
+        fctx.body.push(...classFieldInitReceiver(ctx, className, selfLocal, structTypeIdx)); // (#6754) carrier
+        compileExpression(ctx, fctx, value, fields[fieldIdx]!.type);
+        fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+      };
       for (const member of decl.members) {
         if (ts.isPropertyDeclaration(member) && member.name && member.initializer && !hasStaticModifier(member)) {
           const fieldName = resolveClassMemberName(ctx, member.name);
-          if (fieldName === undefined) continue; // dynamic computed name — skip
-          const fieldIdx = fields.findIndex((f) => f.name === fieldName);
-          if (fieldIdx !== -1) {
-            fctx.body.push(...classFieldInitReceiver(ctx, className, selfLocal, structTypeIdx)); // (#6754) carrier
-            compileExpression(ctx, fctx, member.initializer, fields[fieldIdx]!.type);
-            fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
-          }
+          if (fieldName !== undefined) storeOwnField(fieldName, member.initializer); // undefined: dynamic computed name
         }
       }
+      // (#7215) Parameter properties: `this.x = x` after the field initializers, in parameter order (TS ES2022 emit).
+      for (const param of constructorParameterProperties(ctor)) storeOwnField(param.name.text, param.name);
     };
 
     // Base classes and implicit derived constructors run own fields at the
