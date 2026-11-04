@@ -5,7 +5,7 @@
  *
  * Extracted from expressions.ts (#688 step 6).
  */
-import { ownKeysSubclassRoute, valTypeIsSubclassedClass } from "./class-arm-tag-guard.js"; // (#7216)
+import { ownKeysSubclassRoute, subclassedInstanceReceiver } from "./class-arm-tag-guard.js"; // (#7216)
 import { classConstructorIsOwnKey } from "./class-ctor-own-key.js"; // (#6651 C1) §15.7 own `constructor`
 import { classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 F5)
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
@@ -4485,7 +4485,7 @@ export function compileObjectKeysOrValues(
   // Resolve struct name from the argument type (an open fnctor carrier enumerates at runtime)
   const staticStructName = argIsHostObjectVar ? undefined : resolveClosedReflectiveStructName(ctx, argType);
   // (#7216) a subclassed static class may hold a longer subclass struct
-  const subclassRoute = ownKeysSubclassRoute(ctx, method, staticStructName, arg);
+  const subclassRoute = ownKeysSubclassRoute(ctx, method, staticStructName, argType, arg);
   const structName = subclassRoute ? undefined : staticStructName;
   if (!structName) {
     // Only a FRESH syntactic `{}` proves an empty own-key set. A variable or
@@ -5003,7 +5003,7 @@ export function compilePropertyIntrospection(
   // (#5350 r2) …and an undeclared key a `super` write may have added.
   const superGrownKey = superWriteMayAddKey(ctx, recvExpr, receiverType, expr.arguments[0]);
   // (#7216) …or a class receiver whose runtime struct may be a longer subclass.
-  const runtimeRecv = superGrownKey || valTypeIsSubclassedClass(ctx, receiverWasm);
+  const runtimeRecv = superGrownKey || subclassedInstanceReceiver(ctx, receiverWasm, receiverType, recvExpr);
   if (receiverWasm.kind === "externref" || runtimeKeyedOwnKeys || evolvingNullishRecv || runtimeRecv) {
     const isHOP = propAccess.name.text === "hasOwnProperty";
     const importName = isHOP ? "__hasOwnProperty" : "__propertyIsEnumerable";

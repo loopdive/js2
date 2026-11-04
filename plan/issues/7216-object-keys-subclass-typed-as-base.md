@@ -83,11 +83,24 @@ the runtime path the `any` receiver already uses:
 | Consumer | Change |
 | --- | --- |
 | `Object.keys` / `values` / `entries` | route to the runtime `__object_<method>`, with the §7.1.18 ToObject nullish guard. Two exceptions keep the fold: a receiver re-flagged by `Object.defineProperty` (only the compile-time filter honours those flags), and wasi `values`/`entries` (see frontmatter). |
-| for…in | treat as a dynamic receiver (`__object_keys_forin`), except a `new X()` receiver, directly or through a `const` (`forInSubclassedReceiver`). That instance is built from the static class at that site. |
+| for…in | treat as a dynamic receiver (`__object_keys_forin`) |
 | `hasOwnProperty` / `propertyIsEnumerable` | runtime `__hasOwnProperty` / `__propertyIsEnumerable` |
 | `k in o` | a folded `false` is re-asked through `__extern_has`. A positive fold is unchanged. |
 
-A class that no class extends keeps its fold, so its bytes do not move.
+Every other receiver keeps its fold, so its bytes do not move:
+- a class that no class extends;
+- the constructor itself (`typeof C`, review round 2). It lowers to the same
+  struct ref, but its own keys are the statics. Routing it made
+  `A.hasOwnProperty("s")` false. The test262 harness rewrites
+  `Object.prototype.hasOwnProperty.call(C, k)` to exactly that call.
+- a receiver that is provably a `new` of the static class. That is a `new X()`
+  expression, or a `const` (or a `let`/`var` that nothing writes again)
+  initialised from one, where `X` is the static class or a constructor-typed
+  value. A `new` of a subclass (`const y: A = new B()`) takes the runtime path.
+  Without this, `const a = new A(); Object.keys(a)` paid about +67 KB and
+  15–20× the run time for an answer the fold already had right. It is now
+  byte-identical to base (42,005 / 36,951 / 53,496 B on gc / standalone /
+  wasi).
 
 **Evidence.**
 - `tests/equivalence/issue-7216-object-keys-subclass.test.ts` covers 16 rows on
@@ -100,7 +113,13 @@ A class that no class extends keeps its fold, so its bytes do not move.
 - A/B against base: 131 no-subclass programs on 3 lanes are byte-identical.
   The corpus is every case in `tests/equivalence/issue-6*`/`issue-7*` with no
   `extends`, plus 8 own-key probes and the playground examples.
-- 29 subclass probes show no row that passes on base and fails on head.
+- 108 subclass probes show no row that passes on base and fails on head.
+  They are my 36 probes plus the 72 review probes, including the
+  constructor-receiver set. The constructor and exact-`new` probes are
+  sha-identical to base on all 3 lanes.
+- A runtime path that genuinely needs it still costs its runtime. A mixed
+  `xs[i & 1]` receiver on gc goes from 42.8 KB and 5 ms to 110 KB and 135 ms
+  per 200k `Object.keys`. Base gave the wrong answer there.
 
 **Left open (separate causes):**
 - wasi `Object.values`/`entries` on a class instance answer `[]` even through
@@ -117,3 +136,7 @@ A class that no class extends keeps its fold, so its bytes do not move.
   `k`).
 - `new K()` with `K: typeof P` bound to a subclass `Q` constructs a `P`
   (`instanceof Q` is false).
+- Constructor receivers, same as base: `B.hasOwnProperty("s")` for an
+  inherited static answers `true`, and for…in over a class lists `prototype`.
+- `x!.hasOwnProperty(k)` on a null `x` returns `false` instead of throwing.
+  `__hasOwnProperty` has no RequireObjectCoercible guard.

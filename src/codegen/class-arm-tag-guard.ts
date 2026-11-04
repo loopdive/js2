@@ -33,6 +33,7 @@ import type { FieldDef, Instr, TypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { ts } from "../ts-api.js";
 import { integrityVarKey } from "./widened-var-key.js";
+import { isLexicalBindingWrite } from "../shared/binding-writes.js";
 
 /**
  * (#7199) Could the structs `a` and `b` be ONE canonical WasmGC type?
@@ -291,8 +292,10 @@ export function enumerationArmTagGuard(typeIdx: number, classTags: number[] | un
  *
  * The runtime enumerators already answer by the receiver's own `__tag`
  * (#7158), which is why `JSON.stringify` / spread were right. These predicates
- * send a subclassed static class to them. A class nothing extends keeps its
- * compile-time fold, so its bytes do not move.
+ * send such a receiver to them. Every other receiver keeps its compile-time
+ * fold, so its bytes do not move: a class nothing extends, the constructor
+ * itself (`typeof C` lowers to the same struct ref but its own keys are the
+ * statics), and a receiver that is provably a `new` of the static class.
  */
 
 /** Does any emitted class extend `structName`? */
@@ -301,10 +304,76 @@ function classHasSubclass(ctx: CodegenContext, structName: string): boolean {
   return false;
 }
 
-/** `classHasSubclass` for a receiver's lowered wasm type (a class struct ref). */
-export function valTypeIsSubclassedClass(ctx: CodegenContext, t: ValType): boolean {
-  const name = t.kind === "ref" || t.kind === "ref_null" ? ctx.typeIdxToStructName.get(t.typeIdx) : undefined;
-  return name !== undefined && classHasSubclass(ctx, name);
+/** The class node a `new` target names, or `undefined` for a constructor-typed value. */
+function newTargetClass(ctx: CodegenContext, target: ts.Expression): ts.ClassLikeDeclaration | undefined {
+  const decl = ts.isIdentifier(target) ? ctx.oracle.valueDeclarationOf(target) : undefined;
+  if (decl && (ts.isClassDeclaration(decl) || ts.isClassExpression(decl))) return decl;
+  let init = decl && ts.isVariableDeclaration(decl) ? decl.initializer : undefined;
+  while (init && ts.isParenthesizedExpression(init)) init = init.expression;
+  return init && ts.isClassExpression(init) ? init : undefined;
+}
+
+/** Is any binding named `name` written in `file`? Name-based, so it over-reports. */
+function nameIsWritten(file: ts.SourceFile, name: string): boolean {
+  let hit = false;
+  const visit = (node: ts.Node): void => {
+    if (hit) return;
+    if (ts.isIdentifier(node) && node.text === name && isLexicalBindingWrite(node)) hit = true;
+    else ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return hit;
+}
+
+/**
+ * Is `expr` provably an instance built by `new X()` at a site the compiler
+ * sees — directly, or through a `const` (or a `let`/`var` never written
+ * again) — where `X` is the static class? A constructor-typed `X` also
+ * counts: the compiler builds the static class there (a separate defect), so
+ * the fold keeps base's answer. A `new` of a SUBCLASS (`const y: A = new B()`)
+ * does not count.
+ */
+function isExactStaticNew(ctx: CodegenContext, expr: ts.Expression, staticType: ts.Type): boolean {
+  let r: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(r)) r = r.expression;
+  if (ts.isIdentifier(r)) {
+    const decl = ctx.oracle.variableDeclarationOf(r);
+    const isConst = decl !== undefined && (decl.parent.flags & ts.NodeFlags.Const) !== 0;
+    const init = decl?.initializer;
+    if (!init || (!isConst && nameIsWritten(r.getSourceFile(), r.text))) return false;
+    r = init;
+    while (ts.isParenthesizedExpression(r)) r = r.expression;
+  }
+  if (!ts.isNewExpression(r)) return false;
+  const cls = newTargetClass(ctx, r.expression);
+  return cls === undefined || (staticType.getSymbol()?.declarations?.includes(cls) ?? false);
+}
+
+/**
+ * Must the own-key consumer over `expr` (static type `tsType`, lowered to the
+ * closed struct `structName`) enumerate at runtime instead of folding?
+ */
+function subclassedInstance(
+  ctx: CodegenContext,
+  structName: string | undefined,
+  tsType: ts.Type,
+  expr: ts.Expression,
+): boolean {
+  if (structName === undefined || !classHasSubclass(ctx, structName)) return false;
+  const t = tsType.getNonNullableType();
+  return t.getConstructSignatures().length === 0 && !isExactStaticNew(ctx, expr, t);
+}
+
+/** `subclassedInstance` for a receiver's lowered wasm type (for…in, `hasOwnProperty`, `in`). */
+export function subclassedInstanceReceiver(
+  ctx: CodegenContext,
+  recvWasm: ValType,
+  tsType: ts.Type,
+  expr: ts.Expression,
+): boolean {
+  const name =
+    recvWasm.kind === "ref" || recvWasm.kind === "ref_null" ? ctx.typeIdxToStructName.get(recvWasm.typeIdx) : undefined;
+  return subclassedInstance(ctx, name, tsType, expr);
 }
 
 /** Has an `Object.defineProperty` re-flagged a property of the identifier `arg`? */
@@ -319,38 +388,22 @@ function hasDefinedPropertyFlags(ctx: CodegenContext, arg: ts.Expression): boole
  * Should `Object.<method>(arg)` over the closed struct `structName` enumerate
  * at runtime instead of expanding the static field list?
  *
- * Two receivers keep the fold. One re-flagged by `Object.defineProperty`: only
- * the compile-time enumerable filter honours those flags (the runtime lists a
- * hidden field). And wasi `values`/`entries`: their natives have no
- * closed-struct arm there (`nonObjectEnumerableOwnInstrs` is standalone-only)
- * and would answer `[]`.
+ * Besides the `subclassedInstance` exclusions, two receivers keep the fold.
+ * One re-flagged by `Object.defineProperty`: only the compile-time enumerable
+ * filter honours those flags (the runtime lists a hidden field). And wasi
+ * `values`/`entries`: their natives have no closed-struct arm there
+ * (`nonObjectEnumerableOwnInstrs` is standalone-only) and would answer `[]`.
  */
 export function ownKeysSubclassRoute(
   ctx: CodegenContext,
   method: string,
   structName: string | undefined,
+  argType: ts.Type,
   arg: ts.Expression,
 ): boolean {
   return (
-    structName !== undefined &&
     (method === "keys" || !ctx.wasi || ctx.standalone) &&
-    classHasSubclass(ctx, structName) &&
+    subclassedInstance(ctx, structName, argType, arg) &&
     !hasDefinedPropertyFlags(ctx, arg)
   );
-}
-
-/**
- * Should for…in over `expression` (lowered to `recvWasm`) enumerate at runtime?
- *
- * A `new X()` receiver, directly or through a `const`, keeps the static
- * unroll. That instance is built at that site from the static class, which is
- * also true for a constructor-typed `X` (a separate defect), so the unroll
- * keeps the answer it gave before.
- */
-export function forInSubclassedReceiver(ctx: CodegenContext, recvWasm: ValType, expression: ts.Expression): boolean {
-  if (!valTypeIsSubclassedClass(ctx, recvWasm)) return false;
-  let receiver: ts.Expression = expression;
-  while (ts.isParenthesizedExpression(receiver)) receiver = receiver.expression;
-  if (ts.isIdentifier(receiver)) receiver = ctx.oracle.constInitializerOf(receiver) ?? receiver;
-  return !ts.isNewExpression(receiver);
 }

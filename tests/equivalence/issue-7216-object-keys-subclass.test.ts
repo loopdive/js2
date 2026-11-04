@@ -9,6 +9,8 @@
 // its compile-time fold (byte-identical). Each row is diffed against native JS
 // on gc, standalone and wasi. On wasi `Object.values`/`entries` keep the fold
 // (their natives have no closed-struct arm there), so those rows skip wasi.
+// The constructor (`typeof C`) and a provable `new` of the static class keep
+// the fold too.
 import { describe, expect, it } from "vitest";
 import { compile } from "../../src/index.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
@@ -81,6 +83,26 @@ const CASES: Record<string, [string, boolean?]> = {
   ],
   "leaf-typed receiver keeps its fold": [
     `class A { a = 1 }\nclass B extends A { b = 2 }\nconst b: B = new B();\nfunction run(): string { return Object.keys(b).join() + String(b.hasOwnProperty("a")) + String("b" in b); }`,
+  ],
+  // Review round 2: the constructor itself (`typeof C`) lowers to the same
+  // struct ref but its own keys are the statics, so it keeps the fold.
+  "constructor receiver keeps its static own keys": [
+    `class A { a = 1; static s = 1; static sm() {} }\nclass B extends A {}\nfunction run(): string { return String(A.hasOwnProperty("s")) + String(A.hasOwnProperty("sm")) + String(A.hasOwnProperty("a")) + String(A.hasOwnProperty("name")) + String(A.hasOwnProperty("length")) + String(A.hasOwnProperty("prototype")) + String(A.propertyIsEnumerable("s")) + String("s" in A) + String("t" in A); }`,
+  ],
+  "typeof-class parameter": [
+    `class A { static s = 1; a = 1 }\nclass B extends A {}\nfunction f(c: typeof A): string { return String(c.hasOwnProperty("s")) + String(c.propertyIsEnumerable("s")); }\nfunction run(): string { return f(A); }`,
+  ],
+  "const annotated with the base, built from the subclass": [
+    `class A { a = 1 }\nclass B extends A { b = 2 }\nfunction run(): string { const k: string[] = []; const y: A = new B(); for (const p in y) k.push(p); return k.join() + "/" + Object.keys(y).join() + String(y.hasOwnProperty("b")) + String("b" in y); }`,
+  ],
+  "exact new of the static class, const and let": [
+    `class A { a = 1; b = 2 }\nclass B extends A { c = 3 }\nfunction run(): string { let a = new A(); const b: A = new A(); const k: string[] = []; for (const p in b) k.push(p); return Object.keys(a).join() + "/" + Object.keys(b).join() + "/" + k.join() + String(a.hasOwnProperty("c")) + String("c" in b); }`,
+  ],
+  "let reassigned to a subclass": [
+    `class A { a = 1 }\nclass B extends A { b = 2 }\nfunction run(): string { let a: A = new A(); a = new B(); const k: string[] = []; for (const p in a) k.push(p); return Object.keys(a).join() + "/" + k.join() + String(a.hasOwnProperty("b")) + String("b" in a); }`,
+  ],
+  "new of a class-expression subclass": [
+    `const A = class { a = 1 };\nconst B = class extends A { b = 2 };\nfunction run(): string { const x: InstanceType<typeof A> = new B(); const y = new A(); return Object.keys(x).join() + "/" + Object.keys(y).join(); }`,
   ],
 };
 
