@@ -17,10 +17,9 @@ goal: correctness
 related: [7199]
 # 2026-11-04 (#7215): parameter properties reuse the existing property-field
 # builder (extracted into a closure, not duplicated) and the existing
-# field-initializer store loop in the class constructor. Round 2 (review of
-# PR #7045) adds the all-or-none admission check for optional/native
-# parameter properties, in the same loops: +40 LOC in class-bodies.ts,
-# +31 (collectClassDeclaration) / +5 (compileClassBodiesInner).
+# field-initializer store loop in the class constructor; the eligibility rule
+# (rounds 2-3 of the PR #7045 review) is a top-level helper. Measured: +27 LOC
+# in class-bodies.ts, +6 (collectClassDeclaration) / +3 (compileClassBodiesInner).
 loc-budget-allow:
   - src/codegen/class-bodies.ts
 func-budget-allow:
@@ -82,8 +81,10 @@ nothing is stored.
   `next` into a struct read off a typed null, which traps, while base falls
   back and does not trap. "Cannot get a field yet" means one of:
   - **An argument that may be `undefined`:** `public s?: string`,
-    `public s: string | undefined`, `public p?: P`, `public x?: number`,
-    `public c?: boolean`, all without a default. No field slot holds
+    `public s: string | undefined`, `public p?: P`, `public x?: number` and
+    `public c?: boolean` without a default. With a default, the default's own
+    type decides, so `= void 0`, `= undefined` and `= d()` with
+    `d(): string | undefined` count; `= "d"` does not. No field slot holds
     `undefined` yet. A typed slot reads `null`/`0`/`false`. An externref slot
     reads correctly but serialises as `"s":null` and, for `x?: number`,
     boxes the omitted argument as `0`. Both were measured in round 2.
@@ -91,6 +92,19 @@ nothing is stored.
     methods' type check, a compile error where base compiled. An `f64` field
     still fails `run` ("'+' operands not provably both-number"). Explicit
     `n: i32` fields fail to compile on base as well.
+  Because the rule is all or none, two shapes that the first revision of this
+  PR fixed are back to base output:
+  - **Mixed classes**, such as `constructor(public x: number, public s?: string)`:
+    `x` reads `NaN` and JSON prints `{}`.
+  - **`public n: i32` classes without methods**, which print `1{}` again instead
+    of `5{"n":4}`.
+- **`any` / `unknown` / generic `T` holding `undefined`.** These types are not
+  "undefinable", so they get a field. Reads and `Object.keys` are correct, but
+  JSON writes the `undefined` field as `null`: `new A(undefined)` prints
+  `{"v":null}` where node prints `{}`. Base printed `{}` for every argument,
+  including `new A(3)`, and the explicit-field form (`v: any; this.v = v`)
+  prints `{"v":null}` on base. This is the existing "JSON writes an undefined
+  field as null" gap. It is pinned in the test file.
 - **Externref-backed builtin subclasses** (`class E extends Error { constructor(public
   code: number) … }`, also `extends Object`, `Map`, `Array`, …). Their
   own-field writes go through the `$Error_struct`/`$Object` props backing,
@@ -111,5 +125,6 @@ each of them too, so they are not part of this fix:
   class's own field.
 
 Tests: `tests/equivalence/issue-7215-ctor-parameter-properties.test.ts`
-(32 rows × gc/standalone/wasi, diffed against node; includes the undeclared
-optional shapes and the native `i32` compile rows).
+(38 rows × gc/standalone/wasi: diffed against node, including the
+undeclared optional and undefined-default shapes, the native `i32` compile
+rows, and one row pinned to the `any` residual).

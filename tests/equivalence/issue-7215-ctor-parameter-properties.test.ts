@@ -102,6 +102,8 @@ function run(): string { const p = new P(1, "a"); return JSON.stringify({ ...p }
 function run(): string { const p: any = new P(1, "a"); return p.x + p["y"] + typeof p.x; }`,
   "constructor reading arguments": `class P { n: number; constructor(public x: number) { this.n = arguments.length; } }
 function run(): string { const p = new P(4); return p.x + "," + p.n; }`,
+  "default that is defined": `class A { constructor(public s: string | undefined = "d") {} }
+function run(): string { const a = new A(); const b = new A("e"); return a.s! + a.s! + JSON.stringify(b); }`,
   "field declared and parameter property": `class A { x: number; constructor(public y: number) { this.x = y + 1; } }
 function run(): string { const a = new A(1); return JSON.stringify(a) + Object.keys(a).join(); }`,
 };
@@ -126,6 +128,15 @@ function run(): string { const a = new A(undefined); return String(a.s) + (a.s =
   "omitted optional object": `class P { p = 1 }
 class A { constructor(public p?: P) {} }
 function run(): string { const a = new A(); return String(a.p) + (a.p === undefined) + JSON.stringify(a); }`,
+  "default void 0": `class A { constructor(public s: string | undefined = void 0) {} }
+function run(): string { const a = new A(); return String(a.s) + (a.s === undefined) + JSON.stringify(a); }`,
+  "default undefined": `class A { constructor(public s: string | undefined = undefined) {} }
+function run(): string { const a = new A(); return String(a.s) + (a.s === undefined) + JSON.stringify(a); }`,
+  "default call returning undefined": `function d(): string | undefined { return undefined; }
+class A { constructor(public s: string | undefined = d()) {} }
+function run(): string { const a = new A(); return String(a.s) + (a.s === undefined); }`,
+  "number default undefined": `class A { constructor(public n: number | undefined = undefined) {} }
+function run(): string { return JSON.stringify(new A()); }`,
 };
 const NATIVE_COMPILES = [
   `type i32 = number;\nclass A { constructor(public n: i32) {} get(): number { return this.n; } }\nexport function run(): number { return new A(4).get(); }`,
@@ -146,4 +157,23 @@ describe("#7215 parameter properties that cannot get a field yet keep the earlie
       }
     });
   }
+});
+
+// Known residual, pinned to today's output rather than node's: an `any` /
+// `unknown` / generic `T` parameter property holding `undefined` gets a field
+// (its type is not "undefinable"), and JSON writes an `undefined` field as
+// `null`, exactly as the explicit-field form (`v: any; this.v = v`) does on
+// base. Node prints `{}true{"v":3}v`. Reads and `Object.keys` are correct.
+describe("#7215 known residual: undefined in an any-typed parameter property", () => {
+  it("serialises as null (pinned)", async () => {
+    const src = `class A { constructor(public v: any) {} }
+function run(): string { const a = new A(undefined); const b = new A(3); return JSON.stringify(a) + (a.v === undefined) + JSON.stringify(b) + Object.keys(a).join(); }
+${READ}`;
+    for (const { lane, options } of LANES) {
+      const result = await compile(src, { fileName: "probe.ts", ...options });
+      expect(result.success, lane).toBe(true);
+      const instance = await instantiateWithRuntime(result);
+      expect(decode(instance.exports.test as (i: number) => unknown), lane).toBe('{"v":null}true{"v":3}v');
+    }
+  });
 });
