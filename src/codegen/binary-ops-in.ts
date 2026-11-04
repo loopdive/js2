@@ -29,6 +29,7 @@ import {
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
+import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js"; // (#7202)
 import { resolveWasmType } from "./index.js";
 // (#3920) Own-presence is a per-instance bit, never a shape property — the `in`
 // answer must come from the same presence machinery the value read uses.
@@ -131,6 +132,10 @@ const EQ_HEAP_TYPE = -19; // abstract `eq` heap type
  * singleton of the declaring class or one of its subclasses; the i32 stays on
  * the stack. A global not yet materialised holds null, which is not
  * eq-castable, so its arm answers false.
+ *
+ * (#7202) With subclasses that chain is one arm per descendant at every site,
+ * so a class with descendants instead calls one shared helper that dispatches
+ * on the receiver's `__tag` (see {@link ensureOwnPrivateBrandHelper}).
  */
 function emitOwnPrivateBrandPredicate(
   ctx: CodegenContext,
@@ -139,18 +144,38 @@ function emitOwnPrivateBrandPredicate(
   cls: string,
   structTypeIdx: number,
 ): void {
-  emitPrivateBrandPredicate(ctx, fctx, receiver, cls, structTypeIdx);
-  const globals: number[] = [];
-  for (const name of collectClassAndDescendants(ctx, cls)) {
-    for (const map of [ctx.classObjectGlobals, ctx.protoGlobals]) {
-      const idx = map.get(name);
-      if (idx !== undefined) globals.push(idx);
-    }
+  const classes = collectClassAndDescendants(ctx, cls);
+  const helper = classes.length > 1 ? ensureOwnPrivateBrandHelper(ctx, cls, classes, structTypeIdx) : undefined;
+  if (helper !== undefined) {
+    fctx.body.push({ op: "local.get", index: receiver }, { op: "call", funcIdx: helper });
+    return;
   }
+  emitPrivateBrandPredicate(ctx, fctx, receiver, cls, structTypeIdx);
+  const globals = classes.flatMap((name) => singletonGlobals(ctx, name));
   if (globals.length === 0) return;
-  const isSingleton: Instr[] = [];
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [...singletonTest(receiver, globals), { op: "i32.eqz" }],
+    else: [{ op: "i32.const", value: 0 }],
+  });
+}
+
+/** The class-object then prototype singleton globals registered for `name`. */
+function singletonGlobals(ctx: CodegenContext, name: string): number[] {
+  const globals: number[] = [];
+  for (const map of [ctx.classObjectGlobals, ctx.protoGlobals]) {
+    const idx = map.get(name);
+    if (idx !== undefined) globals.push(idx);
+  }
+  return globals;
+}
+
+/** i32: the anyref in `receiver` is `ref.eq` to one of `globals` (null arms answer 0). */
+function singletonTest(receiver: number, globals: number[]): Instr[] {
+  const test: Instr[] = [];
   globals.forEach((globalIdx, i) => {
-    isSingleton.push(
+    test.push(
       { op: "global.get", index: globalIdx },
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
@@ -168,15 +193,73 @@ function emitOwnPrivateBrandPredicate(
         else: [{ op: "i32.const", value: 0 }],
       },
     );
-    if (i > 0) isSingleton.push({ op: "i32.or" });
+    if (i > 0) test.push({ op: "i32.or" });
   });
-  isSingleton.push({ op: "i32.eqz" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "i32" } },
-    then: isSingleton,
-    else: [{ op: "i32.const", value: 0 }],
-  });
+  return test;
+}
+
+/** Arms past this stay inline: a `br_table` ladder nests one block per arm (#6698). */
+const OWN_BRAND_MAX_ARMS = 256;
+
+/**
+ * (#7202) `__private_in_own_brand_<C>_<struct>_<n>(anyref) -> i32`: the #7160 own-brand
+ * answer for `C` and its `n - 1` descendants, built once and shared by every
+ * site. A receiver of `C`'s struct type is switched on its `__tag` with a
+ * `br_table`; the arm of class `K` answers "not one of `K`'s two singletons"
+ * (every singleton of `K` is built with `K`'s tag, so no other class's globals
+ * can match), and any tag outside the set answers 0 — the brand predicate's
+ * tag list. Constant work per check, constant bytes per site. Declines
+ * (undefined, the caller emits the inline chain) when the struct has no
+ * `__tag` or the ladder would be too deep. Descendant sets only grow, so `n`
+ * names the set the helper was built for.
+ */
+function ensureOwnPrivateBrandHelper(
+  ctx: CodegenContext,
+  cls: string,
+  classes: string[],
+  structTypeIdx: number,
+): number | undefined {
+  const tagFieldIdx = ctx.structFields.get(cls)?.findIndex((f) => f.name === "__tag") ?? -1;
+  const arms: [tag: number, globals: number[]][] = [];
+  for (const name of classes) {
+    const tag = ctx.classTagMap.get(name);
+    if (tag !== undefined) arms.push([tag, singletonGlobals(ctx, name)]);
+  }
+  if (tagFieldIdx < 0 || arms.length === 0 || arms.length > OWN_BRAND_MAX_ARMS) return undefined;
+  const name = `__private_in_own_brand_${cls}_${structTypeIdx}_${classes.length}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+
+  const helper = helperFunctionContext(name, [{ name: "v", type: { kind: "anyref" } }], { kind: "i32" });
+  const minTag = Math.min(...arms.map(([tag]) => tag));
+  const span = Math.max(...arms.map(([tag]) => tag)) - minTag + 1;
+  const targets = new Array<number>(span).fill(arms.length);
+  arms.forEach(([tag], ordinal) => (targets[tag - minTag] = ordinal));
+  let ladder: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "ref.cast", typeIdx: structTypeIdx },
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: tagFieldIdx },
+    { op: "i32.const", value: minTag },
+    { op: "i32.sub" },
+    { op: "br_table", targets, defaultDepth: arms.length },
+  ];
+  for (const [, globals] of arms) {
+    const answer: Instr[] =
+      globals.length === 0 ? [{ op: "i32.const", value: 1 }] : [...singletonTest(0, globals), { op: "i32.eqz" }];
+    ladder = [{ op: "block", blockType: { kind: "empty" }, body: ladder }, ...answer, { op: "return" }];
+  }
+  helper.body.push(
+    { op: "local.get", index: 0 },
+    { op: "ref.test", typeIdx: structTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "block", blockType: { kind: "empty" }, body: ladder }],
+      else: [],
+    },
+    { op: "i32.const", value: 0 },
+  );
+  return publishHelperFunction(ctx, helper);
 }
 
 /**
