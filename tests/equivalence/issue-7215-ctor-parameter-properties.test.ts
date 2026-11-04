@@ -113,3 +113,37 @@ describe("#7215 constructor parameter properties are stored", () => {
     });
   }
 });
+
+// A class whose parameter properties cannot all get a field yet (an argument
+// that may be `undefined`, or a native `i32` annotation) declares none of them,
+// exactly as before #7215: a typed field would read `null`/`0` for an omitted
+// argument, and a native field fails the IR methods' type check.
+const UNDECLARED: Record<string, string> = {
+  "omitted optional string": `class A { constructor(public s?: string) {} }
+function run(): string { const a = new A(); return String(a.s) + (a.s === undefined) + JSON.stringify(a); }`,
+  "undefined passed to a union": `class A { constructor(public s: string | undefined) {} }
+function run(): string { const a = new A(undefined); return String(a.s) + (a.s === undefined) + JSON.stringify(a); }`,
+  "omitted optional object": `class P { p = 1 }
+class A { constructor(public p?: P) {} }
+function run(): string { const a = new A(); return String(a.p) + (a.p === undefined) + JSON.stringify(a); }`,
+};
+const NATIVE_COMPILES = [
+  `type i32 = number;\nclass A { constructor(public n: i32) {} get(): number { return this.n; } }\nexport function run(): number { return new A(4).get(); }`,
+  `type i32 = number;\nclass A { constructor(public n: i32) {} inc(): i32 { return this.n + 1; } }\nexport function run(): number { return new A(4).inc(); }`,
+];
+
+describe("#7215 parameter properties that cannot get a field yet keep the earlier lowering", () => {
+  for (const [name, body] of Object.entries(UNDECLARED)) {
+    it(name, async () => {
+      await expectSameOnLanes(body);
+    });
+  }
+  for (const [i, src] of NATIVE_COMPILES.entries()) {
+    it(`native i32 parameter property still compiles (${i})`, async () => {
+      for (const { lane, options } of LANES) {
+        const result = await compile(src, { fileName: "probe.ts", ...options });
+        expect(result.success, `${lane}: ${result.errors.map((e) => e.message).join("\n")}`).toBe(true);
+      }
+    });
+  }
+});

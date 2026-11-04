@@ -1011,6 +1011,9 @@ export function mintScopedClassIdentity(ctx: CodegenContext, decl: ts.ClassDecla
   return syntheticName;
 }
 
+/** (#7215) Parameter properties that `collectClassDeclaration` gave a field; only these are stored. */
+const storedParameterProperties = new WeakSet<ts.ParameterDeclaration>();
+
 /** Collect all function declarations and interfaces */
 /** Collect a class declaration or class expression: register struct type, constructor, and methods */
 export function collectClassDeclaration(
@@ -1230,15 +1233,31 @@ export function collectClassDeclaration(
   // (#7215) One field from a declaration — a class property, or a constructor
   // parameter property (`constructor(public x: T)`), which TS emits as a field
   // declared before every class property.
-  const pushDeclaredField = (fieldName: string, member: ts.PropertyDeclaration | ts.ParameterDeclaration): void => {
-    // Skip if this field is already defined in parent (or already collected)
-    if (parentFields.some((f) => f.name === fieldName) || ownFields.some((f) => f.name === fieldName)) return;
-    const fieldTsType = ctx.checker.getTypeAtLocation(member);
+  // `probe` only answers whether a parameter property can be declared, without declaring it.
+  const pushDeclaredField = (
+    fieldName: string,
+    member: ts.PropertyDeclaration | ts.ParameterDeclaration,
+    probe = false,
+  ): boolean => {
     // (#3673) `pos: i32;` pins the STRUCT FIELD's Wasm type. Whole-chain:
     // narrowing locals without the fields they flow into measurably
     // pessimises (see the issue's round-34 table), so the field, the
     // params and the locals must move together.
     const nativeFieldType = nativeTypeOfDeclaration(ctx.checker, member);
+    // (#7215) A parameter property cannot be declared yet when its field could not hold the value: a native
+    // annotation (`public n: i32`) or an argument that may be `undefined` (no undefined-capable slot yet).
+    if (ts.isParameter(member)) {
+      if (
+        nativeFieldType !== null ||
+        (!member.initializer && (member.questionToken || ctx.oracle.nullabilityOf(member).undefinable))
+      )
+        return false;
+      if (probe) return true;
+      storedParameterProperties.add(member);
+    }
+    // Skip if this field is already defined in parent (or already collected)
+    if (parentFields.some((f) => f.name === fieldName) || ownFields.some((f) => f.name === fieldName)) return true;
+    const fieldTsType = ctx.checker.getTypeAtLocation(member);
     let fieldType = nativeFieldType ?? resolveWasmType(ctx, fieldTsType);
     if (
       nativeFieldType === null &&
@@ -1258,10 +1277,16 @@ export function collectClassDeclaration(
         ? { undefinedDefault: true as const }
         : {}),
     });
+    return true;
   };
-  // Builtin subclasses (`extends Error`) keep their own-field writes on the externref backing — not yet covered.
-  if (!ctx.classExternrefBackedSet.has(className)) {
-    for (const param of constructorParameterProperties(ctor)) pushDeclaredField(param.name.text, param);
+  // All or none per class: a partly declared class reads an undeclared one off a typed null (a trap) where the
+  // undeclared class falls back. Builtin subclasses (`extends Error`) keep their externref backing — not covered.
+  const parameterProperties = constructorParameterProperties(ctor);
+  if (
+    !ctx.classExternrefBackedSet.has(className) &&
+    parameterProperties.every((p) => pushDeclaredField(p.name.text, p, true))
+  ) {
+    for (const param of parameterProperties) pushDeclaredField(param.name.text, param);
   }
 
   if (ctor?.body) {
@@ -2952,7 +2977,9 @@ function compileClassBodiesInner(
         }
       }
       // (#7215) Parameter properties: `this.x = x` after the field initializers, in parameter order (TS ES2022 emit).
-      for (const param of constructorParameterProperties(ctor)) storeOwnField(param.name.text, param.name);
+      for (const param of constructorParameterProperties(ctor)) {
+        if (storedParameterProperties.has(param)) storeOwnField(param.name.text, param.name);
+      }
     };
 
     // Base classes and implicit derived constructors run own fields at the
