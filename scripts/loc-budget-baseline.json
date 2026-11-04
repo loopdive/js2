@@ -1,7 +1,7 @@
 {
   "generated": "2026-11-04",
   "threshold": 1500,
-  "totalCeiling": 1054104,
+  "totalCeiling": 1054247,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4426,
@@ -14,7 +14,7 @@
     "src/codegen/async-scheduler.ts": 4688,
     "src/codegen/binary-ops.ts": 3405,
     "src/codegen/builtin-value-read.ts": 1869,
-    "src/codegen/class-bodies.ts": 4362,
+    "src/codegen/class-bodies.ts": 4389,
     "src/codegen/closed-method-dispatch.ts": 2192,
     "src/codegen/closure-exports.ts": 2149,
     "src/codegen/closures.ts": 4953,
