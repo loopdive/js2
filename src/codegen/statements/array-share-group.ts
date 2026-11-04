@@ -656,15 +656,43 @@ function elementUse(access: ts.PropertyAccessExpression | ts.ElementAccessExpres
     isPatternElement(parent)
   )
     return { kind: "escape" };
-  const written =
-    (ts.isBinaryExpression(parent) &&
-      parent.left === top &&
-      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
-    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
-      (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken));
-  if (written && (top !== access || !ts.isIdentifier(skipValueWrappers(access.expression)))) return { kind: "escape" };
+  const assigned =
+    ts.isBinaryExpression(parent) &&
+    parent.left === top &&
+    parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
+  const stepped =
+    (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+    (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken);
+  if (!assigned && !stepped) return { kind: "element" };
+  // Only `=`, `+=`, `-=` and `++` / `--` on the bare binding are stores the length / element paths handle.
+  const op = assigned ? parent.operatorToken.kind : undefined;
+  const handled =
+    stepped ||
+    op === ts.SyntaxKind.EqualsToken ||
+    op === ts.SyntaxKind.PlusEqualsToken ||
+    op === ts.SyntaxKind.MinusEqualsToken;
+  if (!handled || top !== access || !ts.isIdentifier(skipValueWrappers(access.expression))) return { kind: "escape" };
+  if (insidePatternDefault(parent)) return { kind: "escape" }; // `[a = (xs.length += 7)] = []`
   return { kind: "element" };
+}
+
+/** (#7164) `node` is evaluated as (part of) a default inside a destructuring pattern. */
+function insidePatternDefault(node: ts.Node): boolean {
+  for (let child = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
+    if (ts.isStatement(parent) || ts.isFunctionLike(parent)) return false;
+    if (
+      ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      parent.right === child &&
+      parent.parent &&
+      (ts.isArrayLiteralExpression(parent.parent) ||
+        (ts.isPropertyAssignment(parent.parent) && parent.parent.initializer === parent)) &&
+      isPatternElement(parent)
+    )
+      return true;
+  }
+  return false;
 }
 
 /** (#7164) `node` sits in an array / object destructuring pattern (`[xs[0]] = …`, `({ a: xs.length } = …)`, `for ([xs[0]] of …)`). */
