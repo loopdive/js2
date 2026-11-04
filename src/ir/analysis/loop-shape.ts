@@ -623,22 +623,6 @@ export function findBodyLocalLexicalNames(stmt: ts.IterationStatement): Set<stri
   return names;
 }
 
-/** Collect all identifier names from a binding pattern (ObjectBindingPattern or ArrayBindingPattern) */
-export function collectBindingNames(pattern: ts.BindingPattern): string[] {
-  const names: string[] = [];
-  for (const element of pattern.elements) {
-    if (ts.isOmittedExpression(element)) continue;
-    if (ts.isBindingElement(element)) {
-      if (ts.isIdentifier(element.name)) {
-        names.push(element.name.text);
-      } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
-        names.push(...collectBindingNames(element.name));
-      }
-    }
-  }
-  return names;
-}
-
 export function forOfDstrNeedsInboundsUndef(stmt: ts.ForOfStatement): boolean {
   if (!ts.isArrayLiteralExpression(stmt.expression)) return false;
   // Extract the for-of binding pattern (declaration or assignment form).

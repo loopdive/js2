@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { literalFieldName } from "./fnctor-field-writes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
+import { realmStringKeys } from "./realm-keys.js";
 
 export function unwrapTypeErasedExpression(expr: ts.Expression): ts.Expression | undefined {
   return ts.isAsExpression(expr) ||
@@ -109,11 +109,7 @@ export function isFunctionObjectReceiverUse(node: ts.Identifier, opts: { readonl
  * also owns as non-writable built-ins) and %Object.prototype%'s (`valueOf`,
  * `hasOwnProperty`, …).
  */
-const FUNCTION_REALM_MEMBER_NAMES: ReadonlySet<string> = new Set(
-  NATIVE_REALM_CATALOG.intrinsics
-    .filter(({ id }) => id === "%Function.prototype%" || id === "%Object.prototype%")
-    .flatMap(({ properties }) => properties.flatMap(({ key }) => (key.kind === "string" ? [key.value] : []))),
-);
+const FUNCTION_REALM_MEMBER_NAMES = realmStringKeys("%Function.prototype%", "%Object.prototype%");
 
 /**
  * (#7106) Does `access` name an own expando of the function object: a literal

@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-10-31
+updated: 2026-11-01
 priority: high
 horizon: l
 feasibility: hard
@@ -61,6 +61,7 @@ import-cycles-allow:
 func-budget-allow:
   # 2026-10-22 (module-init lever A): one resolver entry for the namespace-constant fold
   # 2026-10-22 (propertyHelper arm 3): the dynamicDeleteSymbol method
+  # 2026-11-01 (chunk-budget S2, +2): `moduleInitChunkName`, the chunk-name reservation the IR chunk lowering asks for
   - src/ir/integration.ts::makeFromAstResolver
   # 2026-10-22 (lever B): one intrinsic→provider branch
   - src/ir/integration.ts::resolveAndObserveCallableProvider
@@ -68,6 +69,7 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerPropertyAccess
   - src/ir/select.ts::scanExprInner
   - src/ir/from-ast.ts::lowerFunctionAstToIr
+  # 2026-11-01 (finally abrupt exit, #7030 review): the guarded finally copy returns early when unguarded, then pushes, emits and pops its own CtrlFrame (+4)
   - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/lower-generic.ts::emitInstrTree
   - src/ir/integration.ts::makeDynamicLowering
@@ -89,6 +91,7 @@ func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/codegen/fnctor-escape-gate.ts::analyzeFnctorEscapeGate
   - src/codegen/expressions/new-super.ts::compileNewExpression
+  # 2026-11-01 (chunk-budget S2, +4): legacy holds its module-init chunks while the IR owns the initializer, and releases them after the overlay settles
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
@@ -105,6 +108,7 @@ loc-budget-allow:
   # 2026-10-31 (boolean statics, round 4): the static-predicate arm, its host, the shared ambient-receiver helper and the name-parameterised unshadowed-global test (+25); the lowering lives in src/ir/static-predicates/
   - src/ir/from-ast.ts
   - src/ir/integration.ts
+  # 2026-11-01 (finally abrupt exit, #7030 review): the guarded finally copy returns early when unguarded, then pushes, emits and pops its own CtrlFrame (+4)
   - src/ir/lower-generic.ts
   - src/ir/runtime/verify.ts
   # 2026-10-31 (boolean statics, round 5): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+89); the rule lives in src/ir/static-predicates/
@@ -118,6 +122,10 @@ loc-budget-allow:
   - src/codegen/dyn-read.ts
   - src/codegen/fnctor-escape-gate.ts
   - src/codegen/expressions/new-super.ts
+  # 2026-11-01 (chunk-budget S2 review round 1): `recordLiftedUnitProvenance`
+  # moves here from from-ast.ts, beside `allocateLiftedFunctionArtifact`, so the
+  # chunk lowering reuses it instead of a copy (+14; from-ast.ts nets −10)
+  - src/ir/identity.ts
 ---
 
 ## Problem
@@ -2452,6 +2460,521 @@ need struct agreement:
 - the IR sorts fields by name;
 - untyped JS constructors are `class-projection-unsupported`.
 
+## `<module-init>` lever: class expressions and constructor resolution (plan, 2026-10-31)
+
+**Verdict.** The two codes are not one lever, and neither is the lever the
+sample suggested.
+
+- **Class expressions** gain nothing by themselves. They stay refused (see
+  "What stays refused").
+- **Constructors.** The one exact, cheap slice is a fresh primitive wrapper used
+  as an operator operand: the #4208 S4 producer, generalised from `==` to the
+  ToPrimitive operators. It ships with the `null` operand of the numeric
+  operators, which the same tests use.
+
+Measured with a prototype on the full candidate set: **`ir_only_pass` +16**.
+Every one of the 16 passes on standalone and gc, on main and with the
+prototype. The sample suggested 33 × 60 ≈ 2000.
+
+### Problem (measured)
+
+Setup:
+
+- Main `9e82d60c42`, standalone, the conformance runner's harness assembly.
+- Every `<module-init>` refusal recorded
+  (`JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`).
+- Full candidate set: every file with a top-level `var|let|const X = class`
+  (4100), with a `new Number|String|Boolean|Object(` (1308), or with a `null`
+  operand of a numeric operator (68; 26 outside the 1308).
+- Probes (not committed): a per-file legacy-unit census, `runTest262File` for
+  pass status, and a patched copy of `src/` for the prototype.
+
+**Why the 1/60 sample overstated it: three masks the census does not see.**
+
+1. **First-wins.** The walk stops at the first refused statement.
+   - Unmasked, 12 of the 17 class-expression sample files have more
+     `<module-init>` refusals.
+   - So do 11 of the 16 constructor sample files.
+2. **Gate 2 runs only when every statement passes Gate 1.** `isNaN(…)` is an
+   `external-call`, which no shape census reports.
+3. **Build.** The selector admits two operand shapes that from-ast then refuses
+   after the claim (`'…' + n` and `x <op> null`, details below).
+   - None of the 5 constructor-only sample files gains. The 3 wrapper ones stop
+     at a `'…' + n` message, at `isNaN`, and at a `"1" > null`. The other two
+     are `new Object(NaN)` and `new Proxy(…)`.
+
+**Class expressions.** A static scan, plus the census over the first 2695 of
+the 4100 files (path order, through
+`language/expressions/class/elements/after-same-line-static-*`; 65 do not
+compile):
+
+| | files |
+| --- | --- |
+| top-level class-expression bindings (static scan) | 3943, of which 218 are the bounded #3522 family (`isBoundedPreparedNestedOrdinaryClass`) |
+| census: carry `vardecl-class-expression-unprepared` | 2404 |
+| census: it is the only refusal and there is no other legacy unit | 192 |
+| … of those, bounded #3522 class | **0** |
+| … with a destructuring parameter / generator or async-generator method / static accessor | 164 / 104 / 17 |
+
+- **The members of an unbounded class expression are support units of
+  `<module-init>`.** In `ir/identity.ts` `processClass`, a class that is not a
+  top-level declaration and not promoted (`promoteNestedMember`) does not mint
+  terminal units for its members, so they never appear in `irOutcomes`.
+  Admitting the binding while legacy compiles those bodies would report an IR
+  `<module-init>` whose members are legacy: an `ir_only_pass` the metric cannot
+  see through.
+- **The neighbouring declaration form shows the next walls.**
+  `class C { m() {…} }` already claims `C_m` on main. Its `<module-init>` then
+  stops at:
+  - `var obj = new C()` (`vardecl-module-storage-unrepresentable`, follow-up
+    (h) above);
+  - `C.method(…)` arity;
+  - module-global writes from methods (#7126 item 1);
+  - `arguments` in methods.
+- In the sample, `language/statements/class` is 0 of 66 legacy-free.
+- `new C()` on a class-expression binding is the largest
+  `expr-new-ctor-unknown` identity (498 files). It moves with the class work,
+  not here.
+
+**Constructors.** `expr-new-ctor-unknown`, files carrying it (census rows):
+
+| identity | files | disposition |
+| --- | --- | --- |
+| `C` (class-expression binding) | 498 | the class chain (follow-ups) |
+| `String` / `Number` / `Boolean` | 287 / 177 / 96 | this lever, operand positions only |
+| `Object` | 86 | refused: `new Object(x)` is ToObject, a wrapper value |
+| `Proxy`, `Array`, function constructors, other | 7, 2, 3, 1 | refused |
+
+Where the wrappers sit (static scan of the 1308 files):
+
+- Mostly they are a `var` initializer or a member receiver. That is Lever C
+  above: a wrapper object as a value.
+- In 236 files a wrapper is a binary-operator operand.
+- In 213 of those, every site is a module-level operand with a literal
+  argument: the ES5 `S11.*` operator tests. All 213 pass on main standalone.
+
+**Prototype measurement.** The prototype is an uncommitted copy of `src/`:
+
+- the selector arm and the from-ast step below;
+- the dynamic bitwise arm;
+- the `null` fold.
+
+Its census covered the 1334 files (1308 + 26), with every refusal recorded.
+
+| | legacy-free (standalone) |
+| --- | --- |
+| main | 8 (the S4 `S11.9.{1,2}_A7.{2–5}` files) |
+| + wrapper operand arm | 16 |
+| + `null` numeric operand | **24** (+16) |
+
+The 16 gains:
+
+- `language/expressions/{less-than,less-than-or-equal,greater-than,greater-than-or-equal}/S11.8.{1–4}_A3.1_{T1.2,T1.3,T2.3,T2.4}.js`.
+- On gc the claimed `<module-init>` imports nothing legacy does not (23 → 23
+  imports). Standalone has 0 imports.
+
+All 194 files the prototype changes differ in `<module-init>` only:
+
+| outcome under the prototype | files | owner |
+| --- | --- | --- |
+| legacy-free | 16 | this lever |
+| `'…' + n` mixed concatenation in a throw message (`'+' operands not provably …`, a build demote) | 48 | a selector/build desync on main, unmasked here (#7066 step 1) |
+| chunked `<module-init>` (`late-preparation-unsupported`, body budget) | 41 | the longest `S11.*` tests, 2–3 per operator; out of scope |
+| `isNaN` (`external-call`) | 25 | out of scope |
+| a mismatched operand pair (`"1" < 1`, `"1" & 1`, `true / 1`, `new String("1") < "1"`) | 64 | the generic tail admits these on main (claim-then-demote), and the prototype's arm did not consult the predicate; S0 and S1 refuse them at select |
+
+**A/B on the 194 changed files** (the conformance runner, main against the
+prototype):
+
+- standalone: 194 pass → pass;
+- gc: 194 pass → pass.
+
+The A/B ran with the operator-dependent hint below. The census used the
+default hint; the hint does not change selection.
+
+**Two correctness findings from the prototype** (probes compared with node, on
+standalone and gc):
+
+- **The ToPrimitive hint must follow the operator.** S4 passes the `default`
+  hint (`null`), which is right for `==` and `+`. The relational and numeric
+  operators need `"number"`. With
+  `Number.prototype[Symbol.toPrimitive] = h => h === "number" ? 1 : 2`:
+  - `new Number(5) < 1.5` answered `false` with the default hint (node:
+    `true`). The `"number"` hint fixes it.
+  - Legacy answers correctly.
+- **An overridden `valueOf` is observed.** With
+  `Number.prototype.valueOf = () => 10` and
+  `String.prototype.valueOf = () => 1`, the claimed functions answer node: the
+  externref carrier re-reads the primitive.
+
+### Implementation Plan
+
+**S0 — refuse at select what `lowerBinary` refuses.** This is the precondition
+that keeps the lever honest.
+
+- **Where.** The generic tail of `selectorPrimitiveWrapperOrGenericBinary`
+  (`ir/select.ts` ~8847).
+- **Rule.** For a non-equality typed operator (`+`, `- * / %`, the bitwise
+  operators, the relationals), refuse at select, as
+  `operand-coercion-unsupported`, a pair whose operands both have proven
+  families when `lowerBinary` would refuse it:
+  - `binaryOperandsAdmissible` refuses the pair;
+  - or, for `+`, the two proven primitive families differ (from-ast's
+    `additiveOperandsProvable` gate).
+- **Equality is excluded.** Its pre-arms (`tryFoldNullCompare`,
+  `tryLowerUndefinedCompare`, the typeof folds) lower pairs the predicate
+  alone would refuse.
+- **Families.**
+  - Literals, `null`, `undefined`, and the fresh wrapper below.
+  - #6995's `provenIrFamily`. Stack on #6995 and reuse it; do not add a third
+    family prover.
+  - An `unknown` family keeps today's admission.
+- **Measure.** No file may move from a select refusal to a post-claim demote.
+  With S0 in place, the 112 rows above (48 + 64) stay refused at select under
+  their real reason. On main they are masked by the wrapper refusal, or they
+  demote after the claim.
+
+**S1 — one fresh-wrapper operand arm.**
+
+| piece | where | change | removes |
+| --- | --- | --- | --- |
+| admissibility | `ir/analysis/operand-admissibility.ts` `binaryOperandsAdmissible` (:195) | the bitwise operators join the dynamic ToNumber readers (`other` is dynamic or number). `nullish` reads as `number` for the pure numeric readers, as `undefined` already does; never for `+` or equality (`tryFoldNullCompare` owns those) | the "bitwise operators have no dynamic arm" gap |
+| selector | `selectorPrimitiveWrapperOrGenericBinary` | one arm. A `selectorPrimitiveWrapperConstruction` operand has family `dynamic`, the other operand its proven family, and the verdict is `binaryOperandsAdmissible`. S4's `==`/`!=` rule (the other side a proven number or boolean) stays as a family restriction of the same arm. `===`/`!==` and wrapper-vs-wrapper equality stay refused. A refusal is `capabilityNo(…)` at select | the separate `==`-only S4 block (:8853–8866) |
+| capability | `ir/backend/legality.ts` (:113), `select.ts` (:781, :8860, :12945) | rename `primitive-wrapper-loose-equality` → `primitive-wrapper-to-primitive`. Same lanes: non-fast; host gc, standalone, wasi | — |
+| from-ast | `lowerBinary` (:15235) | once both operands are lowered (left, then right, the S4 order), each fresh-wrapper operand of a non-strict typed operator becomes `dyn` through `freshWrapperToDynamic`. The hint is `default` for `==`/`!=`/`+` and `"number"` otherwise (`emitStringConst` + `emitCoerceToExternref`). The existing dynamic dispatch then runs | `tryLowerPrimitiveWrapperLooseEquality` (:16226): its tail is `tryLowerDynamicEq` verbatim |
+| conversion | `freshWrapperToDynamic(operand, value, type, hint, cx)` beside `lowerPrimitiveWrapperConstruction` (:8592) | the S4 sequence (`__to_primitive` + `box`), extracted once. Box with the untagged `irDynamic()` if the box lowering allows it. S4 tags the box with the wrapper kind, which a user `valueOf` can contradict | — |
+| dynamic numeric arm | `tryLowerDynamicArithmetic` (:16460) | ToNumber each dynamic operand (`relOperandToF64`), then `emitNumberBinary` (:15620) for every number operator except `+` | its private `- * / %` switch and `__fmod` call |
+| `null` operand | `lowerBinary` operand lowering | a `null` operand of a pure numeric reader is `f64.const 0` (ToNumber(null) = +0), behind the same predicate the selector uses | the claim-then-demote on main: 10 of the 26 null-operand files demote at build with `nullish-value-unsupported` |
+
+**What stays refused, and why.**
+
+- **`var|let|const C = class {…}` at module scope**
+  (`vardecl-class-expression-unprepared`, `select.ts` :6913). Unchanged:
+  - the members of an unbounded class are invisible support units;
+  - no measured file is bounded;
+  - every measured file stops at a later wall.
+- **A wrapper bound to a variable or used as a receiver.** That is Lever C,
+  which needs a typed wrapper-object carrier.
+- **A wrapper under `===`/`!==`, or a wrapper compared with a wrapper.** That
+  is identity, not ToPrimitive (14 files). An exact fold exists, but it is a
+  separate arm.
+- **`new Number(true)` and other argument-family mismatches.** The S4 ABI rule.
+- **`new Object(x)`, `new Proxy(…)`, `FinalizationRegistry`, `WeakRef`,
+  `DisposableStack`.** No host-free arm.
+- **A `null` operand of `+`, of a string relational, or of a bitwise operator
+  with a string.**
+
+**Acceptance.**
+
+- **Correctness.** A new test, `tests/issue-7106-wrapper-operator-operands.test.ts`:
+  - Cases: `Boolean`/`Number`/`String` × every typed operator except
+    `===`/`!==` × {number literal, `undefined`, `null`, wrapper}, both operand
+    orders, in a function and in `<module-init>`.
+  - The IR body is emitted on standalone, and the answer is the same from IR,
+    legacy and node on standalone and gc.
+  - It includes the `Symbol.toPrimitive` hint probe and the overridden
+    `valueOf` probe.
+  - Refused rows (`===`, wrapper-vs-wrapper `==`, `new Number(true) < 1`,
+    `null + 1`, `"a" < null`, `'x' + 1` under S0) refuse at stage `select`,
+    with no post-claim error.
+- **Scoped test262 A/B, standalone and gc.** On the 194 changed files: 0
+  pass→fail (the prototype's result is above). Before release, re-run on the
+  full 1334-file candidate set.
+- **`ir_only_pass`.** +16 on the full corpus: exactly the 16 files named above.
+- **Byte identity.**
+  - The eight S4 binaries are identical on standalone and gc. Measured
+    identical with the prototype, which kept S4; the fold must keep them so.
+  - Compile the 1334 files and `website/playground/examples` on gc before and
+    after. Every program with no IR-claimed unit on either side is
+    byte-identical.
+  - A claimed gc program imports nothing that legacy's binary of the same
+    program does not.
+- **Code quality.**
+  - `src/ir/` LOC net ≤ 0: two wrapper arms fold into one, and one operator
+    switch folds into `emitNumberBinary`.
+  - `lowerBinary` (375 lines, over the 300 ceiling) does not grow. The
+    conversion replaces the S4 call site, and the `null` fold enters through
+    the operand-lowering call it replaces.
+  - No new capability, runtime symbol, IR kind or family prover.
+  - No new `func-budget-allow` or `loc-budget-allow` grant.
+  - One wrapper predicate per side (`selectorPrimitiveWrapperConstruction`,
+    `primitiveWrapperConstructorName`) and one conversion helper.
+  - The adversarial review is asked to find a second copy of either.
+
+**Risks.**
+
+- **`%` through `emitNumberBinary`.** It takes `emitNumberRemainder` with a
+  fast-path plan read from the source operands. For a dynamic `%` that is
+  already claimed, the instruction sequence may change. The existing `%` tests
+  (#2945) pin correctness, and the byte change must be disclosed.
+- **Coordination.**
+  - #6995 adds `additiveResultFamily` and `logicalResultFamily` to
+    `operand-admissibility.ts`, and `provenIrFamily` to `select.ts`. Land
+    after it.
+  - #6878 edits `boxConcreteToDynamic` and `expressionProducesDynamic`, which
+    this arm calls. Rebase on whichever lands first.
+  - #6989 edits the neighbouring `tryLowerExactMixedPrimitiveWrapperCall`.
+  - #6866 and #6990 touch none of these functions.
+- **The arithmetic, bitwise and `+` operators gain 0 test262 files today.**
+  Their tests stop at the mixed `'…' + n` message, `isNaN` and the chunked
+  `<module-init>`. They are in the arm because the predicate covers them at no
+  extra code, and the unit test pins them.
+
+**Size.** Opus lane, horizon S. Touches `select.ts`, `from-ast.ts`,
+`operand-admissibility.ts`, `legality.ts`, and one test.
+
+### Review round 1 of S0 + S1 (#7034, 2026-11-01)
+
+The verdict was approve with nits. S0 + S1 is on `claude/7106-wrapper-operand-arm`: b7ccca3403, 33d02c3e0c, and the fixes in 2d59ac4896. Each finding is fixed.
+
+1. **ToNumeric order regressed against main. Fixed.**
+   - §13.15.3 has an operator that ToNumerics its operands complete the left
+     one before it runs ToPrimitive on the right one.
+   - `lowerBinaryOperands` now ToNumbers each carrier in turn. With a
+     `valueOf` that returns a Symbol, `new Number(1) - new Number(2)` calls it
+     once, as node and main do (`toNumericOrder` probe).
+   - `+`, the relationals and `==` take both ToPrimitives first. A wrapper
+     beside a carrier that is not a wrapper would run the carrier's
+     ToPrimitive second. (Round 2 correction: no such carrier reaches the
+     wrapper arm. `expr-binary-operand-families` refuses it, so the
+     `expr-wrapper-carrier-order` arm this round added was dead and is
+     deleted.)
+2. **Two spellings of wrapper identity. Fixed.**
+   `wrapperComparisonIsIdentity` (`operand-admissibility.ts`) is the one
+   predicate. Selection refuses an identity comparison, and the builder
+   asserts it. The builder's unreachable `===` skip is gone.
+3. **A duplicated check. Fixed.** `addsAsCarrier` is the one "adds
+   dynamically" check, and `isToNumericOperator` is the one ToNumeric
+   operator set, which `tryLowerDynamicArithmetic` also reads.
+4. **Two family judges. Fixed.**
+   - The wrapper `==` rule judges the other operand with
+     `binaryOperandFamily`, S0's own judge, so `new Number(4) == 2 * 2`
+     claims.
+   - `binaryOperandFamily` reads `void 0` as `undefined` (`isVoidZero`), so
+     `void 0 + 2` is refused at selection.
+
+S0's API is unchanged: `binaryOperandFamily`, `binaryOperandsAdmissible` and
+`expr-binary-operand-families`.
+
+**Re-measured** against `358a17971e` on the 1,334 candidate files, both lanes,
+one worker:
+
+- **Byte-identical to the measured head.** Every binary matches the one
+  33d02c3e0c produced, on both lanes. None of the three shapes the round fixes
+  reaches a claimed candidate. The pass/fail A/B on 33d02c3e0c therefore stands
+  for these binaries: 0 flips.
+- **Against the base, unchanged:**
+  - legacy-free 8 → 25;
+  - 23 binaries changed: 17 gain a claimed `<module-init>`, and 6 are S0
+    refusals of main's claim-then-demote (`*_A3_T1.4`);
+  - no new post-claim error and no status change.
+- **Playground identical.**
+- **Gates green, run bare:** lint, loc, func (also against main), coercion,
+  oracle, dead exports, import cycles, compiler boundaries, IR fallbacks and
+  `test:changed-root`.
+
+**Size.** Net `src/ir` growth since the merge base is +33 lines (+218/−185).
+Before this round it was −20. The ToNumeric-order fix, the two predicates and
+their doc comments cost 53 lines.
+
+### Review round 2 of S0 + S1 (#7034, 2026-11-01)
+
+The verdict was request changes, with four findings. All four are fixed in
+403c29c7e9 and 72059439b0.
+
+1. **S0 refused what main claims.** The shapes were `(k < 1) | 0` and
+   `(k < 1) ^ 0`, per lane: the `void` test of the #7144 suite.
+   - **Cause.** `lowerBinary` takes the fused-i32 identity first: `x | 0` or
+     `x ^ 0` over an `x` it can lower as an exact i32
+     (`tryLowerFusedI32Binary`, #3741). No operand family is judged there.
+   - **Why not `isI32PureExprIR`.** That path is not this one: a comparison is
+     not i32-pure.
+   - **Fixed.** `isSlotFreeI32Identity` (`analysis/i32-slots.ts`) is the one
+     spelling of the identity a selector can see; no promoted slot is visible
+     there. The planned-closure walk's private copy now calls it.
+     `isSlotFreeI32IdentityLowered` adds the bitwise and `+`/`-` nodes the
+     identity lowers natively, so `((k < 1) + (k < 2)) | 0` keeps its claim
+     too. S0 judges neither. A comparison inside the identity still goes
+     through `lowerBinary`, and S0 still judges it.
+2. **The #3529 pin.** `"result: " + (2 > 1)` is now refused at select, where
+   main claimed it and demoted at build. The pin moves to stage `select` and
+   cites S0. The "boolean identity" pin already fails on main; it is left
+   alone for another branch.
+3. **`expr-wrapper-carrier-order` could never fire.** It needed a non-wrapper
+   operand of family `dynamic`, and none has one. The arm and its code are
+   deleted. Round 1's note was wrong: such a carrier is refused by
+   `expr-binary-operand-families`. The ToNumber of a carrier operand stays,
+   because it is reached.
+4. **A wrapper `+` was claimed and then withdrawn.** Repro:
+   `var r = new String("ab") + new Number(1); … r.length`. The builder lowers
+   the `+` to the dynamic carrier (`addsAsCarrier`), but every consumer of the
+   local typed it as the checker does (string). **Fixed:**
+   - `binaryOperandFamily` gives a fresh wrapper, and a `+` over one
+     (`selectorCarrierValue`), the `dynamic` family.
+   - `carrierAdditionConsumed` admits that `+` only as an operand of a typed
+     or equality operator, `typeof` or `!`, where S0 judges the carrier. It
+     also admits it as an argument of a dynamic construct, whose arguments are
+     carriers: `new Test262Error("#2: " + (new String("1") + "1"))`, which
+     `S11.6.1_A3.2_T1.1` needs.
+   - Everywhere else it is refused at select (`expr-wrapper-carrier-position`):
+     a local, a write, a compound write, an argument, a return, a method
+     receiver. Measured before the fix, the local, the write, the compound
+     write, a typed argument and a string `<` were all claimed and then
+     demoted.
+
+**Matrix.** 20 operators × 10 × 10 operands, as `(x op y) === <node's answer>`,
+per lane. The operands are the three wrappers, `1.5`, `"3"`, `true`, `null`,
+`undefined`, a carrier `+` and `(k < 1)`.
+
+| per lane | main (`358a17971e`) | head |
+| --- | --- | --- |
+| claimed | 205 | 941 |
+| claimed, then demoted at build | 516 | 60 |
+| main claims lost | — | 0 |
+| value regressions | — | 0 |
+
+The 60 head demotes are main's own: equality between two plain primitives
+(`1.5 == "3"`, `null == null`). S0 leaves equality alone. No demote has a
+wrapper or carrier operand.
+
+The boolean-operand census (2,205 pairs) and the review's 646-pair S0 probe
+both lose 0 of main's claims, with 0 value regressions. Fourteen promoted-slot
+and identity programs keep every claim main has.
+
+**Tests.** The #7144, wrapper and three #3529 files pass 218/219; the one
+failure is the stale pin above. `issue-3529-{dataflow-outcomes,
+equivalence-error-imports,integration-preflight}` have 13 failures. Those
+fail identically on the base tree `358a17971e`, so they come from the base,
+not from #7034.
+
+**Re-measured** against `358a17971e` on the 1,334 candidate files, both lanes:
+
+- **Byte-identical to the round-1 head.** On both lanes, every binary matches
+  2d59ac4896's (`n1`). So round 1's pass/fail A/B still holds: 0 flips.
+- **Against the base, unchanged:**
+  - legacy-free 8 → 25;
+  - 23 binaries changed: 17 newly claimed `<module-init>`s and the 6
+    `*_A3_T1.4` S0 refusals;
+  - no new post-claim error and no status change.
+- **Gates green, run bare**, except `test:changed-root`: it stops at the stale
+  #3529 pin, which already fails on main. The other changed test files pass
+  when run directly.
+- **Playground identical.**
+- **Size.** Net `src/ir` growth since the merge base is +108 lines
+  (+298/−190); it was +33 after round 1. The growth is the identity
+  predicates, the carrier family and the position rule; the dead
+  carrier-order arm is gone.
+
+### Review round 3 of S0 + S1 (#7034, 2026-11-01)
+
+The verdict was approve with nits: every round-2 finding verified fixed, 0
+lost claims, 0 post-claim errors, 149 tests passing. Three nits are
+duplication, which the IR quality rule does not allow; the fourth is size.
+
+1. **Two family judges in one function.** The equality-reference refusal asked
+   `obviousSelectorValueFamily`; the rest of
+   `selectorPrimitiveWrapperOrGenericBinary` asked `binaryOperandFamily`.
+   - `binaryOperandFamily` now names an object, an array, a closure or a local
+     class value `reference` where `provenIrFamily` has no answer, and the
+     refusal reads the two operand families.
+   - S0 therefore also judges `reference` under a typed non-equality
+     operator. `binaryOperandsAdmissible` refuses every pair with one, as it
+     refuses from-ast's `ref`, `vec` and `reference`. So `({ a: 1 }) - 1` and
+     `[1] * 2` are now refused at select, where main claimed them and demoted
+     at build.
+   - The wrapper test runs once per operand: a fresh wrapper is `dynamic`
+     directly, and `binaryOperandFamily` judges only the other operands.
+2. **Two copies of the carrier `+` rule.** `isCarrierAddition`
+   (`analysis/operand-admissibility.ts`) is now the one rule: a `+` with an
+   operand that adds as the carrier. from-ast's `expressionProducesDynamic` and
+   the selector's `selectorCarrierValue` both call it. Each judges the operand
+   with its own facts; only from-ast knows a dynamic value.
+3. **Two identity predicates.** The planned-closure walk now calls
+   `isSlotFreeI32IdentityLowered`, as the function selector does, so
+   `((k < 1) + (k < 2)) | 0` is claimed in a closure too (main refuses it in
+   both). `isSlotFreeI32Identity` is no longer exported. The #7144 `void` test
+   gains that row. Round 2's item 1 said the walk calls `isSlotFreeI32Identity`;
+   that is superseded here.
+4. **Size.** See below.
+
+Also, the orphaned `i32LiteralValue` doc line in `i32-slots.ts` (already
+orphaned on main) sits on its function again.
+
+**Matrices**, both lanes, against main `358a17971e`:
+
+| matrix | expressions | main claims lost | value regressions | demoted at build, per lane |
+| --- | --- | --- | --- | --- |
+| wrapper (round 2's, unchanged) | 2,000 | 0 | 0 | 60, all main's own primitive equalities; identical to round 2 |
+| reference (new) | 2,640 | 0 | 0 | main 823, head 403 |
+
+The reference matrix crosses six reference operands (an object, an array, an
+arrow, a local class instance, a function, an object local) with themselves and
+eight others, under the 20 operators. The 420 shapes per lane that main
+claimed and then demoted are now refused at select. Every head demote is
+main's too: it has the unannotated local `o`, whose family the selector does
+not trace.
+
+**Census.** All 1,334 candidate files compile byte-identical to round 2, on
+both lanes. So round 1's pass/fail A/B still holds: 0 flips, and legacy-free
+8 → 25 against main.
+
+**Tests.** The wrapper and #3529 producer-parity files pass 137/137, and the
+#7144 file 12/12.
+
+**Gates**, run bare: loc, func (also against main `2a23598849`), coercion,
+oracle, dead exports, typecheck, lint, import cycles, compiler boundaries, IR
+fallbacks and `test:changed-root` are green. `check-loc-budget` against main
+`2a23598849` flags only `codegen/property-access.ts` and
+`codegen/statements/loops.ts`. #7034 does not touch either file: main shrank
+them after this branch's base, and a merge takes main's copies.
+
+**Size.** Net `src/ir` growth since the merge base is +109 lines (+308/−199),
++1 on round 2. The shared predicate adds 12 lines and removes 3 in from-ast;
+the single family judge and shorter doc comments remove 9 in the selector.
+
+| file | net | what it holds |
+| --- | --- | --- |
+| `from-ast.ts` | −49 | the `==`-only wrapper producer folded into one ToPrimitive for every operator; dynamic arithmetic now uses `emitNumberBinary` |
+| `analysis/operand-admissibility.ts` | +49 | predicates both halves call: `isVoidZero`, `isNumericReaderOperator`, the `null` arm, `isToNumericOperator`, `wrapperComparisonIsIdentity`, `isCarrierAddition` |
+| `analysis/i32-slots.ts` | +34 | the fused-i32 identity as a selector sees it |
+| `select.ts` | +78 | S0: the operand family, the identity exception, the carrier-position rule |
+| the others | −3 | |
+
+Why the plan's ≤ 0 is not met:
+- The plan expected S0 to be one `binaryOperandsAdmissible` call over two
+  families. The reviews found three from-ast facts the selector had no
+  spelling for: the ToNumeric order (round 1), the fused-i32 identity, and the
+  carrier `+` that only an operator may read (round 2). Leaving any one out
+  either loses a claim main has or claims a body that then demotes; each was
+  measured.
+- S0 cannot leave this PR. Without it, S1 claims wrapper pairs the builder
+  cannot type.
+- Moving it to another module would not change the net.
+
+The cut that remains is a follow-up, not part of this lever: `select.ts` has
+two family provers, `obviousSelectorValueFamily` and `provenIrFamily`, and
+`binaryOperandFamily` reads both. Folding the first into the
+`OperandFamily` vocabulary would remove that second reading and the
+duplicate literal arms. It touches the static predicates, so it needs its own
+measurement.
+
+### Follow-ups (not this lever)
+
+1. **The class-expression chain, in order:**
+   - (h): a script var holding a class instance;
+   - #7126-1: module-global writes from methods;
+   - method destructuring parameters and generators (#7126-3, #3522; 164 and
+     104 of the 192);
+   - only then module-level `var C = class` preparation, through the #3522
+     bounded family, which already promotes members to visible terminals.
+
+   Never admit a class whose members are support units of `<module-init>`.
+2. **Mixed `string + number` concatenation.** 48 files here. It is the ES5
+   throw-message pattern, and #7066 owns the selector half.
+3. **`isNaN`** (25 here) and the **chunked `<module-init>`** (41 here).
+4. **The fresh-wrapper identity fold** for `===`/`!==` and wrapper-vs-wrapper
+   `==` (14 here).
+
 ## Ambient boolean statics, lowered by operand family (built 2026-10-31)
 
 Planned as the `<module-init>` static-call lever. "Problem" and "Measurements"
@@ -3350,6 +3873,1161 @@ and `gh` has had no valid token in these sessions (`gh auth status`: "The
 token in GH_TOKEN is invalid", rechecked 2026-10-31 after the third review).
 Reserving without the scan (`--no-pr-scan --allow-unscanned`) risks a
 duplicate id, so I did not.
+
+## `<module-init>` chunk-budget lever (plan, 2026-11-01)
+
+**Verdict.** Lower a chunk-sized `<module-init>` through the IR one chunk at
+a time. Legacy and the IR then share one chunk planner, and every Wasm body
+stays inside the budget legacy enforces.
+
+- **Measured gain.** About **+260 `ir_only_pass`** (95% CI 130–510).
+- **Do not drop the budget for the IR.** A prototype that lowers one
+  unbounded body shows superlinear compile time in both V8 and the IR
+  pipeline.
+- **Correction to the 2026-10-31 lever ranking** (sent to the coordinator).
+  That ranking overstated this lever:
+  - carried by 303 of 691 sample files, not 414;
+  - the only blocker in 5 sample files, not 8;
+  - 20,040 chunked corpus files, not 27,100.
+
+  The census skipped the standalone dead-binding elision described below.
+  With the corrected numbers, the script-var storage lever ranks first and
+  this lever fourth in the greedy order.
+
+### Why the budget exists
+
+| | |
+| --- | --- |
+| origin | commit `21dbaf5aa0` (#4376, the Deno-core/Wasmtime spike): "avoiding monolithic Wasm bodies that exceed practical Cranelift compilation limits" |
+| bound | `src/codegen/module-init-chunks.ts`: at most 16 complete top-level entries (`MODULE_INIT_CHUNK_MAX_ENTRIES`) or 1024 AST nodes (`MODULE_INIT_CHUNK_MAX_AST_NODES`) per helper |
+| what it protects | compile time and memory of ONE function body in an optimizing backend (Cranelift's register allocation is superlinear). It is not a V8 limit: V8 allows 7,654,321 bytes and 50,000 locals per function, and nothing measured below comes close |
+| legacy shape (`compileModuleInitBody`, `src/codegen/declarations.ts` ~6216) | each chunk is a private `[] -> []` helper with its own `FunctionContext` (`moduleInitChunk: true`, still named `__module_init` at compile time) |
+| how state crosses chunks | in chunk mode, top-level bindings are durable module globals (`currentSourceModuleGlobalIndex`); no local crosses a helper boundary |
+| the dispatcher | `__module_init` holds the GDI prologue plus a dispatch tree with fan-out 16 (`appendModuleInitChunkDispatch`, ~6142) |
+| what stays whole | async graph init, module-scope `using`, and a single entry over the AST budget |
+| inliner | legacy's source inliner refuses to inline into a chunk past the leaf bound |
+| IR today | the IR lowers one body (`lowerFunctionAstToIr`'s module-init loop, `src/ir/from-ast.ts` ~1980) |
+| where the IR is refused | `withdrawChunkedModuleInitFromIrSelection` (`src/codegen/index.ts:2607`, called at :3513) withdraws every chunk-sized `<module-init>` after selection; `rejectBeforeReservation` (`src/codegen/multi-prepared-module-init.ts:145`) repeats the same gate for the env-gated M2 route |
+
+### Measured
+
+Setup: main `ecf6d64de5` plus a local-only switch that skips the withdrawal.
+With the switch on, the IR lowers the whole `<module-init>` as one body: this
+is the "no budget" option, used as the prototype.
+
+**Population.**
+- Standalone first elides the dead runner prelude (`var print`, `var $262`;
+  `src/deadcode-elide.ts`). That leaves 10 harness statements, so a test body
+  of 6 or fewer statements fits in one chunk.
+- 20,040 of 48,242 live corpus files (41.5%) need chunks. 13,838 of them need
+  only 2; 26 need more than 16.
+
+**Files where the budget is the only blocker** (every other refusal measured
+as before):
+
+| sample | chunked files | budget-only |
+| --- | ---: | ---: |
+| 1/60 census sample | 303 | 5 |
+| 300 seeded random chunked candidates (237 really chunked) | 237 | 2 |
+| 120 random chunked candidates | 78 | 1 |
+| **total** | 618 | **8** (1.3%, Wilson 95% 0.66–2.5% → ≈260, CI 130–510, of 20,040) |
+
+**The 8 files.**
+- `S11.8.1_A4.12_T2`, `S11.8.4_A4.1`, `S7.8.3_A{2.1_T3,3.3_T4,5.1_T2}`,
+  `String/prototype/toLowerCase/special_casing`, `Math/clz32/int32bit`,
+  `Math/log1p/specific-results`.
+- With the prototype, all 8 have an IR `<module-init>` and are legacy-free on
+  standalone and gc.
+- They pass 8/8 on standalone and gc, on main and with the prototype: 0 flips.
+- Binaries shrink from 370–406 KB to 349–388 KB. Compile time is unchanged
+  (1.2–3.3 s, within noise).
+
+**Why the gain is small.** Most chunked files are refused earlier:
+- In the random 300, 2 of 237 chunked files change outcome; the rest fail
+  selection before the budget is ever checked.
+- None of the 30 heaviest chunked tests becomes IR-claimable through this
+  lever alone. The `S11.7.*_A4` shift tests (522 statements) stop at the mixed
+  `'…' + n`; the Temporal and staging tests stop at other refusals.
+
+**Engine and pipeline limits.** Synthetic script of N simple statements, standalone:
+
+| N | compile time, legacy chunked / IR one body | largest function, legacy / IR | eager TurboFan compile, legacy / IR |
+| --- | --- | --- | --- |
+| 1000 | 3.8 s / 3.1 s | 1,896 B / 25,021 B | 24 / 38 ms |
+| 5000 | 5.2 s / 27.7 s | 1,896 B / 125,040 B | 42 / 115 ms |
+| 20000 | 17.8 s / **707 s** | 1,896 B / 500,040 B | 61 / 433 ms |
+
+- The answers agree, and no V8 limit is hit (at most 438 locals).
+- The cost of one unbounded body is superlinear compile time. This shows both
+  in TurboFan (7× at N=20000) and in the IR pipeline itself (40×).
+- Cranelift could not be measured: installing Wasmtime was not permitted in
+  this session.
+
+### Options
+
+| option | verdict |
+| --- | --- |
+| (b) a larger budget, or none, for the IR route | rejected: the stress table above, and it removes the Cranelift protection on exactly the lanes the IR serves (standalone and WASI run on Wasmtime) |
+| (c1) raise the shared budget | rejected: it changes legacy gc bytes for every chunked program |
+| (c2) the IR patches legacy's chunk-helper slots | rejected: it ties the IR to legacy emission order and the overlay route, and the IR-first/prepared route has no legacy helpers to patch |
+| **(a) IR lowering per chunk on the shared planner** | **chosen**: the bound holds by construction; nothing new crosses a chunk, because the IR already binds every top-level declaration to a module global (`cx.moduleBindings`; anything else is refused at selection as `vardecl-module-storage-unrepresentable`) |
+
+### Implementation Plan
+
+**S1 — one planner (pure move; byte-identical).**
+- Move the pure planner into `src/shared/module-init-chunk-plan.ts`: the two
+  budget constants, `sourceNodeWeight`, `planModuleInitChunks`,
+  `moduleInitChunksRequired`.
+- Add `planModuleInitChunkDispatch(count)`: the fan-out-16 tree that
+  `appendModuleInitChunkDispatch` builds inline today. Legacy then emits from
+  that tree instead of building it itself.
+- `src/codegen/module-init-chunks.ts` keeps only the codegen pieces: helper
+  name reservation and the `FunctionContext` predicates.
+- The shared module imports only `ts-api`, so the IR uses it without a new
+  ir→codegen edge.
+
+**S2 — IR lowering per chunk (the gain).**
+- **New module `src/ir/module-init-chunk-lowering.ts`.**
+  - Given the population and the shared plan, it lowers each chunk's
+    statements into a derived artifact: role `module-init-chunk`, ordinal i,
+    `[] -> []`, module-init semantics, and the same `moduleBindings`.
+  - It allocates them through the existing lifted-artifact path
+    (`allocateLoweredLiftedFunctionArtifact`), the way async and Promise-delay
+    lowering already add derived units.
+  - The main `<module-init>` body is the GDI prologue plus the planned
+    dispatch of direct calls.
+- **from-ast.** `lowerFunctionAstToIr`'s module-init branch (its
+  `for (const s of stmts) lowerStmt(s, cx)` loop) calls this module when
+  `moduleInitChunksRequired` holds. The function does not grow: it is at 334
+  lines, over the 300 ceiling.
+- **Delete `withdrawChunkedModuleInitFromIrSelection` and its call** in
+  `src/codegen/index.ts`.
+- **What stays whole** is decided by the same planner and the same
+  conditions legacy uses: async graph init, module-scope `using`, a single
+  over-budget entry. The selector already refuses the first two for the IR.
+- **Inliner.** The module-scope inline pass (`ir/passes/inline-small.ts`)
+  treats a chunk artifact like legacy's chunk context: no inlining that grows
+  a chunk past the planner's bound.
+
+**S3 — the M2 route.**
+- Remove the chunk fallback in `rejectBeforeReservation` once M2 reserves
+  ABI slots for chunk artifacts the way it does for lifted closures.
+- M2 sits behind `JS2WASM_MULTI_PREPARED_MODULE_INIT_CUTOVER`, so S3 changes
+  no test262 row.
+
+### Acceptance
+
+- **Correctness.**
+  - The 8 files above: IR `<module-init>`, legacy-free, pass on standalone
+    and gc.
+  - The sources in `tests/issue-4376-module-init-chunking.test.ts` re-run
+    with the IR claiming the initializer: TDZ and const assignment across
+    chunks, destructuring, closure shadowing, the inline caller boundary.
+    Each must give the same answer from IR, legacy and node.
+  - New cases: a throw in chunk k (later chunks do not run). A closure
+    created in chunk 1 and called from chunk 3 cannot be tested: selection
+    refuses a module-scope closure binding (`module-init-legacy-coupling`), so
+    no claimed initializer holds one.
+- **Scoped A/B, standalone and gc.** The 618 sampled chunked files plus the
+  30 heaviest: 0 pass→fail.
+- **Bound.** (Restated in review round 1 with the measured numbers.)
+  - No IR body is unbounded: every chunk holds at most 16 complete entries or
+    1024 AST nodes, the same plan as legacy's helpers.
+  - `<module-init>` holds only the prologue and the dispatch: 1.2–1.5 KB.
+  - Per chunk, the IR is 0.45–1.02× legacy's helper for the same entries on
+    30 of 31 shapes; ToInt32-heavy shapes reach 2×. For example,
+    16 × `assert.sameValue(Math.clz32(k), …)` gives 3,769 B against 1,926 B.
+    The cause is not chunking: the IR inlines ToInt32 as about 45
+    instructions per use and 75 locals per chunk. Follow-up: an out-of-line
+    ToInt32 helper (not built here).
+  - On the stress source, the largest function stays in legacy's 2 KB class
+    at every N. IR compile time at N=20000 is at most 2× legacy.
+- **Gain.** `ir_only_pass` +≈260 (CI 130–510). The floor is the 8 named files.
+- **gc byte identity.**
+  - S1 is a pure move: compile the 618 files and
+    `website/playground/examples` on gc before and after; every program with
+    no IR-claimed unit must be byte-identical.
+  - A claimed program imports nothing that legacy's binary of the same
+    program does not.
+- **Code quality.**
+  - No new `func-budget-allow` or `loc-budget-allow` grant, except
+    `src/ir/identity.ts` (+14): `recordLiftedUnitProvenance` moves there and
+    both lifts share it (from-ast.ts nets −10). `generateModule` (+4) and
+    `makeFromAstResolver` (+2) grow under standing #7106 grants, each with a
+    dated S2 note.
+  - `lowerFunctionAstToIr`, `lowerBinary`, `compileIrPathFunctions` and
+    `planIrOverlay` do not grow, and `src/codegen/index.ts` shrinks.
+  - One planner and one dispatch shape, shared by legacy and the IR.
+  - The duplicate chunk gates go: the overlay withdrawal in S2, and the M2
+    fallback in S3.
+  - No new host import, runtime symbol or IR instruction kind. The only
+    addition is one derived-unit role.
+- **Cranelift.** A #4376 lane compiles the stress binaries in Wasmtime. Per
+  function, IR-chunked compile time must be at most legacy-chunked + 20%.
+
+### Risks and coordination
+
+- **Dead legacy helpers.** In the overlay route, legacy compiles its chunks
+  before the IR replaces the initializer. Resolved in S2 review: on the
+  IR-first route legacy holds the chunks until the overlay settles
+  (`holdModuleInitChunksForIr` / `releaseModuleInitChunks`,
+  `src/codegen/module-init-chunks.ts`), and emits them only if the IR
+  demotes. The late route (`disableIrFirst`) decides the claim after legacy
+  compiles, so dead helpers remain there.
+  - Legacy still pays for compiling the discarded chunks; that goes away when
+    the initializer moves to the prepared route (#3523 R4).
+- **Masked co-blockers.** Chunked tests are long, so they carry more
+  co-blockers (mixed `'…' + n`, script-var storage). This lever's value grows
+  as those land: in the greedy order, storage, then class expressions, then
+  destructuring, then this lever.
+- **#6995.** Merged (2026-11-01 00:11), so no conflict.
+- **The class plan (S0+S1).** Shares only `src/ir/from-ast.ts`, in different
+  functions (`lowerBinary`, `tryLowerDynamicArithmetic` versus the module-init
+  branch of `lowerFunctionAstToIr`).
+- **#7190 and #7128.** Their pushed branches are in main. Their landed
+  slices touched `src/codegen/index.ts`, `src/ir/from-ast.ts` and
+  `src/ir/select.ts`. Expect textual conflicts in `src/codegen/index.ts` (the
+  `planIrOverlay` call site of the withdrawal) and `src/ir/from-ast.ts`; this
+  plan does not touch `select.ts`.
+- **#7128's open-object script vars** are module globals, so they cross
+  chunk boundaries like every other script var.
+
+**Slice order.** S1 → S2 → S3. Horizon M for an Opus lane. S2 carries the
+gain and the stress acceptance.
+
+### S2 review: claim-then-demote classes (2026-11-01)
+
+These are chunk-sized initializers that the selector accepts and the lowering
+then demotes, now that the withdrawal is gone. Measured on the 628-file
+chunked sample (3 files) and the 30 heaviest chunked tests (13 files).
+
+All three classes are pre-existing. An unchunked twin (the one statement
+behind the 10-statement harness, so a single chunk) demotes the same way on
+main `2082c87777`, with the same code and detail.
+
+| code | statement shape | files | unchunked twin on main |
+| --- | --- | --- | --- |
+| `operand-coercion-unsupported` | mixed string/number `+`: `throw new Test262Error('#1: …' + (-1 << 0))` | `S11.7.{1,2,3}_A4_T*`, `S11.7.2_A5.1_T1` (14) | `if (-1 << 0 !== -1) { throw new Test262Error('#1: -1 << 0 === -1. Actual: ' + (-1 << 0)); }` |
+| `nullish-value-unsupported` | bare `null` as a dynamic `??` operand: `x = null ?? undefined ?? 42` | `coalesce/chainable` (1) | `var x; x = null ?? undefined ?? 42; assert.sameValue(x, 42, "…");` |
+| `array-representation-unsupported` | empty array literal with no vec hint: `[];` | `staging/sm/regress/regress-561031` (1) | `try { if (2 == 0) { } else { []; } } catch (e) {}` |
+
+The selector gaps stay open: each class is a whole-IR gap, not a chunking
+one. The mixed `+` is #7066 (its step 1, the shared both-number/both-string
+predicate in the selector, is the next PR).
+
+When a claimed initializer demotes, legacy emits the chunks it held for the
+IR outcome, so the initializer stays bounded.
+
+### S2 review round 1 (2026-11-01)
+
+| finding | resolution |
+| --- | --- |
+| blocker: break/continue out of a `finally` entered by a throw (`S12.14_A9_T2/T3`, `S12.14_A10_T2/T3`) | pre-existing IR bug, fixed separately on `claude/ir-finally-abrupt-exit`, merged here once it lands; the S12.14 rows join the A/B |
+| `compileIrPathFunctions` grew 7 lines | net 0: chunk names are reserved when the chunk is lifted, through the from-ast resolver (`moduleInitChunkName`, built in `makeFromAstResolver`); `reserveModuleInitChunkHelperName` moved to the shared planner, so the IR needs no codegen import |
+| IR chunks larger than legacy's | acceptance restated above: 0.45–1.02× per chunk on 30 of 31 shapes, ToInt32-heavy shapes reach 2× (inlined ToInt32); out-of-line ToInt32 helper filed as a follow-up |
+| dead legacy chunk stubs | removed through one seam: on the IR-first route legacy holds its chunks until the overlay settles (`holdModuleInitChunksForIr` / `releaseModuleInitChunks`) and emits them only on a demote. IR void bodies also drop their trailing `return` (since round 2 its own step, `withoutVoidReturn`). Stress bytes at N=1000/5000/20000 are at most main's |
+| claim-then-demote | classified above; all pre-existing. The `+` class is #7066 step 1, a separate PR |
+| `liftChunkFunction` duplicated `recordLiftedUnitProvenance` | moved to `src/ir/identity.ts`, used by both |
+| source-map demote could not fire | deleted with the `sourceMap` host field (the prepared route refuses source maps first) |
+| IR chunk names not reserved | reserved in the module's name space, so they stay inside Binaryen's `no-full-inline@__module_init_chunk_*`. After a demote, legacy's chunks take a numeric suffix, still under the prefix |
+| missing plan tests | the #4376 sources the IR claims (prepared route, both inliner boundaries) run against node; a prepared whole-IR route test (n=400 → 26 chunks, gc and standalone); a demote test (legacy's held chunks are emitted and called) |
+
+**New pre-existing bug found by the node re-run.** The IR claims
+`locked++` / `++locked` on a module `const` and answers without throwing;
+node throws a TypeError. The unchunked twin
+(`const locked: number = 1; …; locked++;`) gives the same wrong answer on
+main `2082c87777`. Chunked initializers were withdrawn on main, so this PR
+widens its reach. The compound and plain assignments are refused at
+selection; the update arm needs the same refusal. It needs its own fix before
+this PR merges.
+
+### S2 after the #7030 merge (2026-11-01)
+
+`origin/main` `22a6442977`, which carries the #7030 `finally` fix, is merged
+in (`dc767af398`). The scoped A/B was re-run against that main, both lanes, on
+the 628-file chunked sample, the 30 heaviest and the four `S12.14_A9_T2/T3`,
+`S12.14_A10_T2/T3` rows.
+
+**A regression from review round 1, found and fixed.**
+- The A/B found one compile flip, `staging/sm/class/className.js`: it compiled
+  on main and failed on #7026 ("prepared class … member … has no exact
+  installed callable").
+- The cause was round 1's trailing-`return` drop in `applyIrTailCalls`. It
+  emptied the body of `static m() {}`, and `prepared-class-body-cutover.ts`
+  reads an empty body as an uninstalled callable.
+- The fix: a body that is only `return` keeps it.
+- The earlier S2 A/B predates round 1, which is why it missed this.
+- Test: `tests/issue-7106-module-init-chunks.test.ts`, "compiles a class whose
+  static method is empty".
+
+**Measured after the fix.**
+- 0 compile flips.
+- 17 files newly legacy-free, including all four S12.14 rows.
+- 34 binaries differ per lane. On those 34 the conformance runner finds 0
+  flips on both lanes (31/31 passes before and after), and all four S12.14
+  rows pass.
+- 13 `+` post-claim demotes remain on #7026 alone: the 12 `S11.7.*_A4` and
+  `S11.5.2_A4_T10`, the pre-existing class in the table above. #7033 (#7066)
+  lowers them.
+- Gates, run bare: loc, func, coercion, oracle, dead exports, import cycles,
+  boundaries inventory, typecheck, lint, IR fallbacks, changed-root tests and
+  equivalence all pass.
+
+### S2 review round 2 (2026-11-01)
+
+Verdict: approve with nits. Main `27f7d02251` (#7032 const writes, #7024
+for-head destructuring) is merged in; only this plan conflicted.
+
+| finding | resolution |
+| --- | --- |
+| a const `++` in a chunked initializer answers 2, node 11 | Through `compile`, legacy now lowers the initializer (#7032 refuses the const write at selection) and both lanes answer 11 (`k++`, `++k`, `k--`; TS and JS). Through the prepared whole-program entry (`test262-prepared-entry`) both lanes still answer 2, and so does main `27f7d02251`, chunked or not (one `__module_init` there). That route is not this PR's; filed below |
+| 3 of 248 files claim, then demote | known costs, below; S12.5 fixed |
+| `generateModule` (+4), `makeFromAstResolver` (+2) under standing grants | dated S2 notes added to the frontmatter; the acceptance line names the `identity.ts` (+14) grant |
+| the trailing-`return` drop sat in the tail-call pass | its own step, `withoutVoidReturn` (integration.ts), applied after tail calls; `ir-tail-call.ts` is main's again and `compileIrPathFunctions` does not grow |
+| "IR chunks run 1.6–2×" | reworded: 0.45–1.02× per chunk on 30 of 31 shapes; ToInt32-heavy shapes reach 2× |
+
+**Known costs: files that still claim, then demote.**
+- `S11.7.2_A5.2_T1`, `S11.7.3_A5.2_T1`: the `'…' + n` concatenation, which
+  #7033 (#7066) lowers.
+- `S12.5_A1.1_T2`, fixed here: `if (null)` was claimed, then demoted,
+  because a bare `null` lowers only into a reference, never the i32 a
+  condition reads. `isPhase1ConditionExpr` now refuses it (one line). The
+  unchunked twin demoted on main too.
+
+**Byte identity, corrected.** Programs with no IR-claimed unit are
+byte-identical to main. A program with an IR-claimed void function is not:
+each such body loses its trailing `return` (1 byte). On the playground, 2 of
+13 gc and 5 of 13 standalone binaries shrink by 1–6 B.
+
+**Follow-ups, not fixed here.**
+- **Prepared entry, const update.** `const k = 1; try { k++ } catch { … }`
+  answers as if the write succeeded on the prepared whole-program entry, on
+  both lanes, on main as well. #7032's selection refusal does not reach that
+  route.
+- **Dead legacy chunks on the `disableIrFirst` route** (runtime eval): an
+  N=300 initializer still carries 21 dead legacy chunk helpers, since the
+  hold-and-release seam runs only on the IR-first route.
+
+## `<module-init>` lever: destructuring binding patterns (plan, 2026-11-01)
+
+Plan only; nothing here is implemented. Measured on `a7f413918c` (origin/main,
+2026-11-01), standalone unless a row says gc. Every census compiles the
+conformance runner's harness assembly (`assembleOriginalHarness`) with
+`JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, so each refused
+`<module-init>` statement reports its refusal, not only the first one.
+Pass/fail is `runTest262File` (sloppy run plus strict rerun). The scripts live
+in the planning worktree's `.tmp/dstr/` (`census.mts`, `shapes.mts`,
+`ceiling.mts`, `run.mts`, `compare.mjs`). The prototype is
+`.tmp/proto/proto.diff` plus `.tmp/proto/proto-literal-pattern.ts`, gated by
+`PROTO_DSTR`, `PROTO_DSTR_LET`, `PROTO_LIT` and `PROTO_THROW`.
+
+### Population
+
+- 288 test262 files have a binding pattern in a `for (;;)` head: 285 in
+  `language/statements/for/dstr/`, 2 in `staging/sm/lexical-environment/`,
+  1 in `language/statements/for/`. 18 are negative, so 270 compile.
+- `for-init-name` (`select.ts:5458`) is refused in 150 of them: in
+  `<module-init>` in 146, in a function unit in 4.
+- It is the **only** refusal of any unit in **94**: the 47 generated
+  `for/dstr` cases, each once as `let` and once as `const`. All 94 pass on
+  main on both lanes, through legacy.
+- The request's 70 / 214 came from a first-wins census on `ecf6d64de5`.
+  With every refusal unmasked on `a7f413918c` the figures are 94 / 150.
+- The 95 `var` heads never reach `for-init-name`. A script-level
+  `for (var …)` is refused first as `for-init-var-kind` (72 files), because
+  `collectIrSafeModuleVarDeclarationLists` (`function-local-var.ts:171`)
+  admits only `VariableStatement` lists. A `var` leaf is a hoisted script
+  var with a `__mod_` slot, so it belongs with S5 below.
+
+### Shapes
+
+The 47 cases (each counts twice, `let` and `const`):
+
+| group | cases | example | what it needs |
+| --- | --- | --- | --- |
+| A in-range reads | 5: `ary-name-iter-val`, `ary-ptrn-elem-id-iter-val`, `obj-ptrn-id-trailing-comma`, `obj-ptrn-prop-id`, `obj-ptrn-prop-id-trailing-comma` | `[x, y, z] = [1, 2, 3]` | one read per leaf |
+| B `undefined` leaf | 6: `ary-ptrn-elem-id-iter-complete`, `-iter-done`, `-init-exhausted`, `-init-hole`, `-init-undef`, `obj-ptrn-prop-id-init` | `[x = 23] = [,]` | past-the-end, hole and `undefined` read as `undefined`; the default runs only then |
+| C nested | 12: `ary-ptrn-elem-ary-elem-init`, `-elem-iter`, `-ary-empty-iter`, `ary-ptrn-elem-obj-id(-init)`, `ary-ptrn-elem-obj-prop-id(-init)`, `obj-ptrn-prop-ary(-init, -trailing-comma)`, `obj-ptrn-prop-obj(-init)` | `[{ x, y, z } = { x: 44, y: 55, z: 66 }] = []` | recursion; a nested pattern's default is its source |
+| D rest | 5: `ary-ptrn-rest-ary-elem`, `-id-direct`, `-id-exhausted`, `-obj-id`, `-obj-prop-id` | `[...{ length }] = [1, 2, 3]` | the remaining elements as a list; `length` and index keys on it |
+| E TypeError | 8: `ary-ptrn-elem-ary-val-null`, `ary-ptrn-elem-obj-val-null`, `-obj-val-undef`, `obj-init-null`, `obj-init-undefined`, `obj-ptrn-prop-ary-value-null`, `obj-ptrn-prop-obj-value-null`, `-obj-value-undef` | `{} = null` | throw TypeError when `null`/`undefined` is destructured |
+| F function-name defaults | 8: ary/obj × arrow, cover, fn, gen | `[fn = function () {}] = []` | an anonymous function as a value, named by its leaf |
+| G unresolvable default | 3: `*-id-init-unresolvable`, `obj-ptrn-prop-id-init-unresolvable` | `[x = unresolvableReference] = []` | ReferenceError for an undeclared global |
+
+Feature counts (files):
+
+| feature | 94 sole | 146 module-init carriers | 288 for-head files |
+| --- | --- | --- | --- |
+| array pattern / object pattern | 54 / 40 | 93 / 53 | 188 / 100 |
+| any default | 58 | 78 | 141 |
+| nested pattern | 42 | 58 | 99 |
+| elision in the pattern / hole in the source literal | 2 / 2 | 14 / 2 | 30 / 3 |
+| array rest / object rest | 10 / 0 | 24 / 4 | 66 / 9 |
+| anonymous function default (name inference) | 12 | 16 | 24 |
+| source: array literal / object literal / `null`,`undefined` | 54 / 36 / 4 | 74 / 46 / 4 | 132 / 81 / 6 |
+| source: identifier / call (iterable, generator) | 0 / 0 | 18 / 4 | 63 / 6 |
+| head inside a function (`assert.throws(…, function () { for … })`) | 22 | 24 | 84 |
+
+- **Iterator protocol.** None of the 94 destructures a non-literal source.
+  Generators appear in 4 of them only as `function* () {}` defaults (group
+  F). Custom iterables, generator sources and `return()` closing
+  (`ary-init-iter-close`, `-iter-no-close`, `ary-ptrn-elision`,
+  `-iter-step-err`, …) are in the 52 non-sole carriers, which also carry
+  `Symbol`, `objectlit-empty` or generator-unit refusals.
+- **TDZ.** No file in the 288 reads a pattern's own leaf from a default or
+  from the source. The 24 ReferenceError files among the 94 test
+  unresolvable references instead: group G, and
+  `assert.throws(ReferenceError, () => x)` where `x` is a property key that
+  is not bound.
+
+### Existing IR support
+
+The IR already lowers destructuring for locals, so this lever extends that
+lowering. It must not add a second one.
+
+- **Selector.** `isPhase1BindingPattern` (`select.ts:7068`) admits flat
+  identifier leaves, elisions and renames. It refuses defaults, rest,
+  nesting and computed keys. Four consumers call it:
+  - `VariableStatement` (`isPhase1VarDecl`, `:6830`): `const` only
+    (`vardecl-dstr-let`), and every pattern at module init
+    (`vardecl-module-destructuring`, `:6846`);
+  - parameters (`:2141`): typed only. An untyped pattern parameter is
+    `param-type-not-resolvable`, and a reassigned leaf is
+    `param-pattern-mutation`;
+  - for-of heads (`:5037`): array patterns only;
+  - closure parameters (`select-closure-literal.ts:66`).
+- **Builder.** `lowerBindingPattern` (`from-ast.ts:4199`) dispatches to:
+  - `lowerObjectPattern` (`:4565`): `object.get` / `class.get` on a closed
+    shape; a key outside the shape demotes after the claim;
+  - `lowerArrayPattern` (`:4649`): an **unchecked** `vec.get`, which traps
+    when the source is shorter than the pattern.
+  Leaves bind as SSA locals.
+- **A second array walker** exists for for-of heads:
+  `declareForOfPatternLeafSlots` / `bindForOfArrayPatternLeaves`
+  (`:12702` / `:12741`). It binds slots and reads through the bounds-checked
+  `emitSafeVecGet`, with the element's zero as the out-of-range value
+  (legacy parity).
+- **The for-head already lowers.** `lowerForStatement` (`:12316`) hands the
+  init to `lowerVarDecl` → `lowerVariableDeclaration` (`:4238`), which
+  reaches `lowerBindingPattern`. Only the selector arm refuses.
+- **Leaf names are collected four ways:**
+  - `collectPatternNames` (`select.ts:7115`, flat only);
+  - `collectBindingNames` (`analysis/loop-shape.ts:627`);
+  - `collectBindingPatternNames` (`analysis/ast-scope.ts:52`);
+  - the inline `leafIsModuleBinding` in `lowerVariableDeclaration`.
+- **No dynamic reader.** `dyn.member_get` and `iter.new/next/done/value/return`
+  exist, with native `__dyn_member_get` / `__iterator*` on standalone, but no
+  pattern reads through them.
+- **Defect on main.** In a `.js` file,
+  `function f() { const [x, y, z] = [1, 2, 3]; … }` is claimed at select and
+  demoted at build on both lanes ("array literal flows into a
+  widening/heterogeneous sink"): the checker types the literal as a tuple of
+  `any`. Under S1 below, the for-head `[x] = []` and `[_, x] = []` fail the
+  same way ("empty array literal needs a vec-typed hint").
+
+### Measured with an uncommitted prototype
+
+Each slice includes the ones above it. "Demoted after claim" counts
+`<module-init>`s that selection admitted and the build then demoted.
+
+| slice | change | legacy-free, 94 sole (standalone / gc) | legacy-free, 288 | demoted after claim | lost |
+| --- | --- | --- | --- | --- | --- |
+| base | — | 0 / 0 | 0 | 0 | — |
+| S1 | the for-init arm calls the `VariableStatement` pattern check; `let` admitted | 2 / 2 | 2 | **8** (`[x, y, z] = [1, 2, 3]`, `[x] = []`, `[_, x] = []`) | 0 |
+| S1+S2 | plus a literal-source reader | 32 / 32 | 32 | 0 | 0 |
+| S1–S3 | plus TypeError for a `null`/`undefined` (sub)source | **48 / 48** | **48** | 0 | 0 |
+
+S2 frees 16 cases: 3 of group A, 5 of B, 5 of C and 3 of D. The rest of
+A–D are blocked by the arms in the residual table below. S3 adds all 8 cases
+of group E. All 48 S1–S3 files pass on both lanes (`runTest262File`, 48/48
+standalone, 48/48 gc), so there are 0 pass→fail flips.
+
+The remaining 46 of the 94 are blocked outside this lever:
+
+| blocker | files | what unblocks it |
+| --- | --- | --- |
+| a read of an undeclared global must throw ReferenceError (`expr-ident-not-in-scope` on `unresolvableReference` ×6, or on the unbound key `x` ×6, `w` ×8, `u` ×4) | 24 | an unresolvable-reference arm |
+| an anonymous function or generator as a value (`closure-return-type` ×12, `closure-generator` ×4) | 16 | function objects as values, then named evaluation |
+| rest bound to an identifier (`[...x]`, `[, , ...x]`); the tests then call `Array.isArray` | 4 | a fresh vec from the remaining values, and `Array` as a value |
+| `ary-ptrn-elem-ary-empty-iter`: the never-evaluated IIFE default still reaches the call-graph scan (`external-call`) | 2 | the scan skips defaults the plan does not run |
+
+**Byte identity (S1–S3 prototype vs `a7f413918c`, sha256 of each binary).**
+The population is 516 files: the 288 for-head files plus 228 other files
+with a lexical pattern over a literal source (`let/dstr`, `const/dstr`,
+`for-of/dstr`, `for-await-of`, …). 409 compile on both sides, 47 fail to
+compile on both, and 60 are skipped (negative, raw or module).
+
+| lane | binaries changed | of which a newly claimed `<module-init>` | other changes |
+| --- | --- | --- | --- |
+| standalone | 48 / 409 | 48 | 0 |
+| gc | 48 / 409 | 48 | 0 |
+
+No file outside the 288 changed. The 1/60 corpus sample and the playground
+examples were not measured.
+
+### Target structure
+
+**Modules.**
+
+- `src/ir/binding-pattern-plan.ts` (new, pure AST, no builder). It holds
+  `planBindingPattern(pattern, source, facts)`, which returns either a refusal
+  code or a plan:
+  - the source expressions to evaluate, in source order;
+  - one read per leaf, in pattern order;
+  - each default, and whether it runs;
+  - nested sub-plans;
+  - a TypeError step.
+  The selector checks every expression in the plan with `isPhase1Expr` and
+  every leaf name against the scope. The builder lowers exactly the same plan.
+  Select and build cannot disagree, because both consume one function's
+  output; that fixes the claim-then-demote defect above. The module replaces
+  `isPhase1BindingPattern` and `collectPatternNames`.
+- `src/ir/binding-pattern-lowering.ts` (new, AST→IR, beside
+  `array-element-lowering.ts`, no import of `from-ast.ts`). It receives the
+  builder and two callbacks: lower an expression, bind a leaf. It is one
+  walker over the plan, with one reader per source kind:
+  - `literal` (S2): a fresh array or object literal. Reads are compile-time,
+    and no aggregate is built.
+  - `vec`: a typed array value. Reads go through `emitSafeVecGet`, never the
+    unchecked `vec.get`.
+  - `object` / `class`: a closed shape. A key outside the shape is refused
+    at select.
+  - `dynamic` (S4): `dyn.member_get` per key after RequireObjectCoercible;
+    `iter.new` / `iter.next` / `iter.done` / `iter.value` per element, and
+    `iter.return` when the pattern ends before `done` (IteratorClose).
+  `lowerBindingPattern`, `lowerObjectPattern`, `lowerArrayPattern`,
+  `declareForOfPatternLeafSlots` and `bindForOfArrayPatternLeaves` move here
+  and become this walker.
+- **Leaf binding.** Extract the identifier tail of `lowerVariableDeclaration`
+  into one `bindDeclaredName(name, value, isConst, cx)`:
+  - a module binding writes its `__mod_` global;
+  - a reassigned `let` gets a slot through
+    `resolveMutableLocalRepresentation`;
+  - anything else is an SSA local.
+  Identifier declarations, pattern leaves and parameter leaves call it. The
+  for-of head passes its pre-declared slots as the sink. That retires
+  `vardecl-dstr-let` and `param-pattern-mutation`.
+- **Selector.**
+  - The pattern branch of `isPhase1VarDecl` becomes
+    `isPhase1DeclarationPattern(d, isConst, scope)`, called by the
+    `VariableStatement` arm and the for-init arm (`:5458`).
+  - The two copies of the for-init "leak" loop (`:4763`, `:6021`) become one
+    `recordForInitLeaks`, which also leaks pattern leaves.
+  - `nullConsumerFamily` (`select-planned-closure-operands.ts:159`) asks the
+    plan whether a `null` inside a pattern source is evaluated. A `null`
+    that is only destructured is never a value; without this, every group-E
+    `null` case is refused as `closure-null-value`.
+  - The call-graph scan skips defaults the plan does not run.
+- **Realm keys.** The literal reader may answer `undefined` for a key the
+  literal lacks only if `%Object.prototype%` (for an object literal) or
+  `%Array.prototype%` + `%Object.prototype%` (for an array literal) do not
+  own it. One exported `realmStringKeys(...ids)` over `NATIVE_REALM_CATALOG`
+  replaces `OBJECT_PROTOTYPE_KEYS` (`empty-object-literal.ts:113`) and
+  `FUNCTION_REALM_MEMBER_NAMES` (`select-expression-structure.ts:114`).
+- **TypeError.** The TypeError step reuses `emitThrowTypeErrorIf`
+  (`throw-type-error.ts:8`) through the native `__new_TypeError`; it adds no
+  import.
+
+**Duplicates removed.**
+
+- One leaf-name collector, `collectBindingPatternNames`, instead of four.
+- One array walker instead of two.
+- One leaf binder instead of three mutation policies (`const` only, the
+  `param-pattern-mutation` refusal, for-of slots).
+- One realm-key helper instead of two copies.
+- One for-init leak loop instead of two.
+
+**Code-quality acceptance criterion.**
+
+- `src/ir/select.ts` and `src/ir/from-ast.ts` do not grow; the moved pattern
+  code makes both net negative.
+- Each new module stays under 400 lines, and no function exceeds 80 lines.
+- No `func-budget-allow:` or `loc-budget-allow:` grant.
+- No pattern-shape predicate outside `binding-pattern-plan.ts`.
+- The pattern lowering contains no `demoteToLegacy`; a selector/builder
+  disagreement there is an `IrInvariantError`.
+- No host import on standalone. The runner rejects one there, and the
+  prototype's 48 newly claimed files pass on standalone.
+- gc and standalone binaries are byte-identical for every program in which
+  no unit changes owner. Measure with the census sha on the 516 files above,
+  the 1/60 corpus sample and `website/playground/examples`.
+- The fresh-context adversarial review asks specifically for a second walker,
+  a second shape predicate, or an arm that differs from its sibling only by
+  source kind.
+
+**Correctness acceptance criterion.**
+
+- 0 pass→fail on the 288 for-head files and the 228 other literal-pattern
+  files, on both lanes. Every newly claimed file passes on both lanes.
+- A unit test per rule:
+  - every literal element is evaluated before any default, in source order;
+  - a default runs on `undefined` (missing, elision, hole, literal
+    `undefined`) and not on `null`, `0` or `""`;
+  - `{ toString } = {}` and `[...{ map }] = [1]` stay legacy (realm keys);
+  - a reassigned `let` leaf reads its slot after the write;
+  - a nested pattern takes its default literal as its source;
+  - `[...{ length, 0: a, 9: b }] = [1, 2]` binds `2`, `1`, `undefined`;
+  - `{} = null` throws TypeError inside `assert.throws`;
+  - `function f() { const [x, y, z] = [1, 2, 3]; … }` in a `.js` file is
+    claimed and not demoted.
+
+### Slices
+
+| slice | scope | measured gain (94 sole, both lanes) |
+| --- | --- | --- |
+| S1 | Structure only: the two new modules, the shared predicate, binder and name collector, for-head routing, `let` leaves. Today's flat shapes keep today's readers, but a shape the builder cannot type (an `any`-typed or empty array literal) is refused at select. | +2, and the 8 claim-then-demote files go back to a select refusal |
+| S2 | The literal reader: defaults, elisions, holes, nesting, rest into a nested pattern, `length` and index keys on an array literal. | +30 (32 total) |
+| S3 | The TypeError step, and the `nullConsumerFamily` question to the plan. | +16 (48 total) |
+| S4 | The dynamic reader for untyped sources (identifiers, calls, generators), with IteratorClose. Unblocks untyped pattern parameters (`param-type-not-resolvable`) and for-of object heads (`forof-head-object-pattern`). Coordinate with #3522 R3 (closure-parameter destructuring reuses `lowerBindingPattern`) and #7126 item 3 (class shape for destructured method parameters). | not measured; the 22 non-sole carriers with identifier or call sources also need `Symbol` / generator units |
+| S5 | Script-level patterns: `var` for-heads and `vardecl-module-destructuring`. `buildModuleBindingsMap` maps each leaf (it throws today, `integration.ts:6307`), and `bindDeclaredName`'s module-binding arm writes the slot. | not measured |
+
+Recommendation: ship S1 and S2 as one PR, because S1 alone frees 2 files.
+Then S3. Together they make 48 of the 94 files legacy-free, with no new
+runtime helper and no host import on standalone. The other 46 wait on the three non-destructuring
+arms in the residual table.
+
+### Risks
+
+- **Realm integrity.** The literal reader assumes the array iterator and
+  `Object.prototype` are unpatched. The IR's vec for-of path and
+  `lowerArrayPattern` already assume this. Programs that patch
+  `Array.prototype[Symbol.iterator]`, `%ArrayIteratorPrototype%.next` or
+  `Object.prototype` must stay legacy through one program-level fact
+  (`*-array-prototype` for/dstr files exist). In this measurement they
+  already carry other refusals, so the guard is untested by the 288.
+- **Out-of-range parity.** The for-of reader binds the element's zero past
+  the end, for legacy parity (`emitSafeVecGet`'s `oobOverride`). JavaScript
+  binds `undefined`. When the two walkers merge, keep the override only on
+  the for-of `vec` reader. Fixing it is a separate behaviour change with its
+  own A/B.
+- **Per-iteration `let`.** A closure that captures a for-head `let` leaf sees
+  a fresh binding per iteration. Keep whatever rule identifier for-heads use
+  today (no such capture occurs in the 94).
+- **Conflicts.** `select.ts` and `from-ast.ts` are the busiest IR files.
+  Move the pattern code in one short-lived PR, and rebase nothing onto it.
+- **Overlap.** #3522's closure-parameter destructuring and #7126 item 3 call
+  `lowerBindingPattern` / `isPhase1BindingPattern`; their call sites move.
+  Announce the move on both issues before S1 lands.
+
+### Implementation (S1–S3, 2026-11-01)
+
+Built on `claude/7106-for-head-destructuring`, one commit per slice, measured
+against `21b452861d`:
+
+- S1 `30beb731d1`
+- S2 `a89e71f76a`
+- S3 `e590431daf`
+
+Each census uses `.tmp/dstr/census.mts` on both trees: the 858 files are the
+288 for-head files, 228 other literal-pattern files and a seeded random
+sample of 345 test262 files.
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| legacy-free, the 94 sole-blocker files (base → head) | 0 → **48** | 0 → **48** |
+| legacy-free, the 288 for-head files | 0 → 48 | 0 → 48 |
+| legacy-free, 228 literal-pattern files / 345-file sample | 0 → 0 / 7 → 10 (3 sample files are for/dstr) | same |
+| binaries changed, of 712 compiled | 48, each with a newly claimed `<module-init>` | 48, the same files |
+| pass→fail on the 48 changed files (`runTest262File`) | 0 (48/48 pass before and after) | 0 (48/48) |
+| post-claim errors | none new: the same 49 files carry the same pre-existing errors on both trees | same |
+| host imports added | 0 | 0 |
+| playground examples (13) | byte-identical | byte-identical |
+
+Unchanged binaries keep their verdicts, so there are no flips outside the 48.
+
+`src/ir` line delta: +601 / −277.
+- `select.ts`: −44.
+- `from-ast.ts`: −22.
+- New modules: `binding-pattern-plan.ts` 347 lines, `binding-pattern-lowering.ts` 46, `realm-keys.ts` 19.
+- No budget grant was added.
+- Gates, each run bare, all exit 0: loc, func, coercion-sites, oracle-ratchet, dead-exports, typecheck, lint,
+  ir-fallbacks, test:changed-root, import-cycles, compiler-boundaries (`--mode inventory`, as CI runs it).
+
+**Deviations from the plan.**
+
+- **Two walkers still exist.** `src/ir/binding-pattern-lowering.ts` holds
+  only the literal reader. The typed readers (`lowerObjectPattern` /
+  `lowerArrayPattern`) and the for-of walker stay in `from-ast.ts`. Merging
+  them changes behaviour (the for-of reader binds zero past the end, the
+  VariableStatement reader traps), so they are follow-ups (a) and (b).
+- **One leaf binder.** Literal leaves and typed leaves both bind through
+  `bindLocalName`. Parameter leaves keep the `param-pattern-mutation`
+  refusal (S4).
+- **`let` is admitted for literal sources only.** A typed (non-literal)
+  source keeps `vardecl-dstr-let`, because its leaves are not proven to have
+  a slot representation.
+- **Pattern leaves do not leak out of a for-head.** `recordForInitLeaks` (the
+  folded leak loop) leaks identifier names only. A pattern leaf stays inside
+  its loop, which is stricter and needs no sibling-redeclaration exemption.
+- **A `null` leaf is refused.** A bare `null` value has no carrier in that
+  position (`[x = 1] = [null]` demoted after the claim in the first build),
+  so the plan only ever skips or destructures a `null`.
+- **Already-claimed literal sources lower differently.** A function-local
+  `const { a } = { a: 1 }` that the object reader already claimed now goes
+  through the literal plan, with no allocation. None of the 858 files or the
+  playground examples has one.
+
+**Follow-ups.**
+
+- **(a)** Fold `declareForOfPatternLeafSlots` / `bindForOfArrayPatternLeaves`
+  into `binding-pattern-lowering.ts` as the `vec` reader. Keep the for-of
+  zero-past-the-end override, which needs its own A/B.
+- **(b)** Move the typed readers out of `from-ast.ts`. Replace their
+  unchecked `vec.get` with `emitSafeVecGet`. Admit `let` for typed sources.
+- **(c)** The call-graph scan still sees a default that the plan never runs
+  (`ary-ptrn-elem-ary-empty-iter`, 2 files: `external-call`).
+- **(d)** Legacy answers these wrongly (measured while writing the tests):
+  - `var u; const [x = 5] = [u]` (default on an undefined variable);
+  - `const { toString: t } = {}` (`t !== Object.prototype.toString`);
+  - `const [a = 1, b = a] = []`.
+
+  The IR refuses all three, so they stay legacy bugs.
+- **(e)** Pre-existing on main, unrelated: `tests/issue-1372-ir-destructuring-params.test.ts`
+  AC#1 and 22 cases of `tests/issue-2001-s1-hole-literal.test.ts` fail on
+  `21b452861d` too.
+
+
+### Review round 1 (2026-11-01)
+
+The #7024 review asked for changes: one blocker, four majors, two groups of
+nits. Each is fixed or rebutted below, measured on a base tree of `6c732c42ea`
+(the `origin/main` this branch merged). The reviewer's probes (`c1`–`c3`,
+`t1`) were re-run on that base and on the new head. Every repro they flagged
+either runs correctly now or behaves exactly as on main, where it fails the
+same way without any destructuring.
+
+**1. Blocker: a write to a `const` leaf failed the compile. Fixed.**
+
+- The selector now refuses a declaration with any written leaf, through
+  `declarationBindingWritten` (`const-binding-writes.ts`). A write is an
+  assignment, update, destructuring or for-in/of target, or a later `var`
+  re-declaration, nested functions included. The scope is the leaf's block,
+  `switch` case block or `for` statement (`let`/`const`), or its function
+  (`var`).
+- This applies to both readers. Main also failed the compile on
+  `const { a } = { a: 1 }; a += 1` and `const { a } = o; a = 2`; both now
+  throw the TypeError through legacy.
+- `isWriteToConstDeclaration` stays identifier-only. No claimed pattern leaf
+  can reach it now: written declaration leaves are refused, and for-of head
+  leaves are slots. Follow-up (h) covers the for-of case.
+
+**2. New claim-then-demote shapes. Fixed; three rebutted with measurements.**
+
+Fixed:
+
+| shape | fix |
+| --- | --- |
+| reassigned `let` leaf (all four repros) | refused by the written-leaf rule from finding 1 |
+| `const [a] = [[1, 2, 3]]`, `const { a } = { a: { b: null } }` | in a `for (;;)` head, refused: the plan no longer binds a literal whole. In a function body (corrected in round 2): the typed reader still claims, then demotes, unchanged from main; follow-up (g) |
+| `const { 3: a } = [1]` | an index past the end of an array literal is refused: it reads `Array.prototype` |
+| `for (const { x } = { __proto__: … };;)`, `for (const [a, b] = 'xy';;)` | a `for (;;)` head takes the literal plan only (`for-init-dstr-source`); main refused every head pattern |
+
+Rebutted:
+
+- **The `f()` call inside an `assert.throws` closure.** This gap is older
+  than destructuring. On main,
+  `assert.throws(TypeError, function () { f(); return; })` produces the same
+  `direct call to "f" has no exact AST-site plan` post-claim error. Follow-up
+  (f).
+- **`const [a, b] = [1, 'x']; return a + b`. Withdrawn in round 2.** The
+  identifier twin fails the same way on main, but main refused this
+  declaration, so this PR created the new claims. Round 2 refuses them at
+  selection.
+- **A function-body `VariableStatement` the plan refuses still goes to the
+  typed reader.** That reader produces the same post-claim errors as on main,
+  for example `const [a] = [[1, 2, 3]]`, `const { a } = { a: { b: null } }`
+  and `const { a } = null as any` (`tsNestedWhole`, `jsNullInWhole_js` and
+  `tsTypeErrNull` in `t1`, unchanged from main). Follow-up (b) owns the typed
+  reader.
+
+**3. No realm guard. Fixed.**
+
+- `programPatchesDestructuringRealm` (`realm-keys.ts`) refuses both readers
+  in a program that patches `Array.prototype` or `Object.prototype`: a member
+  assignment, a `delete`, or `Object.defineProperty`/`defineProperties`.
+- It reads `sourcePatchesPrototype`, the #1719 scan moved to
+  `src/shared/intrinsic-prototype-writes.ts`. That scan now answers for both
+  intrinsics.
+- The #1719 brand (`sourceOverridesArrayIterator`) delegates to the same
+  scan, so the two cannot disagree. Its exact-statement seam
+  `directArrayProtoIteratorAssignment` was subsumed by the general assignment
+  match, so it is removed along with its two unit tests.
+- Results: `fC3` and `fC4` now run correctly through legacy. The first build
+  claimed them and answered wrongly; main claimed them through the typed
+  reader, then demoted.
+- Limit: the scan misses a patch made through an alias or
+  `%ArrayIteratorPrototype%` (`fC5`). Legacy gets that case wrong too: it
+  threw on main.
+
+**4. A third walker. Fixed.**
+
+- `lowerPatternPlan` (`binding-pattern-lowering.ts`) now lowers every
+  declaration and parameter pattern. The source is a strategy of the host:
+  - a typed source answers `read`, with `fieldReader` / `elementReader` in
+    `from-ast.ts`;
+  - a literal plan reads nothing (`readsNoSource`).
+- The typed plans are `planPropertyReads` / `planElementReads`, and
+  `isPhase1BindingPattern` is defined by them. `lowerObjectPattern` /
+  `lowerArrayPattern` are gone.
+- The for-of head keeps its own binder, for a structural reason. Its leaves
+  are slots declared once outside the body, and each iteration writes them
+  through a bounds-checked read with legacy's zero override. A single-pass
+  walker does not model that.
+- Its leaf enumeration does come from `planElementReads` now.
+
+**5. A duplicated `undefined`-shadow guard. Fixed.**
+
+- Superseded in round 2 (finding 4): one program-wide fact replaces the
+  per-caller predicate, because a flat scope misses a later block's
+  `let undefined`.
+
+**6. Nits. Fixed; one claim rebutted.**
+
+- `skipParentheses` → `stripParens` (`src/shared/binding-writes.ts`).
+- `isUndefinedLiteral` → `isUndefinedCompareOperand`.
+- `isAnonymousFunctionDefinition` moved verbatim to
+  `src/shared/named-evaluation.ts`. Codegen imports it from there too; an
+  `ir/analysis` home would have added two codegen→ir edges to the
+  import-cycle ratchet.
+- `propertyKey` and the three private `phase1PropertyName` copies
+  (`select.ts`, `from-ast.ts`, `propagate.ts`) are now one exported
+  `phase1PropertyName` in `property-key-fold.ts`.
+  - **Rebutted:** the review said that copy lacks numeric canonicalisation.
+    It does not: TypeScript's scanner already stores the canonical form in
+    `NumericLiteral.text`. `property-key-fold.ts` records 16 spellings, and
+    re-checked here: `1.0`→`1`, `0x2`→`2`, `1e21`→`1e+21`, `0b11`→`3`,
+    `.5`→`0.5`. `String(Number(text))` was a no-op.
+- `BindingLeaf` replaces the inline type at both `select.ts` sites.
+
+**7. Nits. Fixed.**
+
+- The impossible leaf-shape demotes are gone. A typed plan holds identifier
+  leaves only, and a pattern the selector should not have admitted is one
+  `IrInvariantError` (`admittedReads`).
+- `!d.initializer` in `lowerDeclarationPattern` is an `IrInvariantError` now.
+- A leaf already in scope demotes as `redeclaration of …`, the same way an
+  identifier declaration does. Literal and typed leaves share that binder.
+- The two `leafValue` functions are now `planLeafValue` (planner) and
+  `lowerLeafValue` (walker).
+- Leaf-name collectors: `loop-shape.ts`'s array copy `collectBindingNames`
+  is deleted, and its two codegen callers use the generator
+  `collectPatternBindingNames`. `collectBindingPatternNames` stays: it is the
+  set-adding form, and over 20 legacy codegen sites use it.
+- `binding-pattern-plan.ts` is split by concern:
+  - plan types and typed reads: `binding-pattern-plan.ts`, 94 lines;
+  - the literal planner: `literal-pattern-plan.ts`, 254 lines;
+  - the closure-null predicate: moved into its only consumer
+    (`select-planned-closure-operands.ts`) and folded with
+    `nullIsComparedOperand` as `nullIsValue`.
+
+**Re-measured** (base `6c732c42ea`, same 858-file census and scripts as the
+S1–S3 table):
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| legacy-free, the 94 sole-blocker files (base → head) | 0 → **46** | 0 → **46** |
+| legacy-free, the 288 for-head files | 0 → 46 | 0 → 46 |
+| legacy-free, 231 literal-pattern files / 345-file sample | 0 → 0 / 7 → 10 (3 sample files are for/dstr) | same |
+| binaries changed, of 712 compiled | 46, each with a newly claimed `<module-init>` | the same 46 |
+| pass→fail on the 46 changed files (`runTest262File`) | 0 (46/46 pass before and after) | 0 (46/46) |
+| post-claim errors | none new: 0 files on the 94; the same pre-existing errors elsewhere | same |
+| host imports added, status (CE/skip) changes | 0, 0 | 0, 0 |
+| playground examples (13) | byte-identical | byte-identical |
+
+- **48 → 46.** The two `{const,let}-ary-ptrn-rest-obj-prop-id.js` files read
+  `3: y` past the end of the rest array `[7, 8, 9]`. TypeScript types that
+  read as an element (`number`), but the plan binds `undefined`, so the
+  index-past-the-end refusal from finding 2 now covers them. Both stay legacy
+  and pass, with binaries identical to main.
+- **Line counts.** This round's `src/ir` change is +586 / −569, and `src`
+  overall +720 / −707. The PR against main is now `src/ir` +815 / −478.
+  - `binding-pattern-plan.ts`: 347 → 94 lines;
+    `literal-pattern-plan.ts`: 254 new.
+  - `from-ast.ts`: −76.
+  - The codegen scan and seam lose 115 lines, net of the delegate.
+- **Grants.** None added.
+- **Gates.** Each run bare, all exit 0: loc and func (against the merge base
+  and against `origin/main` `4fe61ff7f2`), coercion-sites, oracle-ratchet,
+  dead-exports, typecheck, lint, ir-fallbacks, test:changed-root (88 + 4),
+  import-cycles, and compiler-boundaries (`--mode inventory --base
+  6c732c42ea`).
+- **Pre-existing test failures.** Two cases of
+  `tests/issue-3522-ir-closure-destructuring-ownership.test.ts` (gc
+  `__unwrap_for_wasm`) and `issue-1372` AC#1 fail on the base tree too.
+
+**New follow-ups.**
+
+- **(f)** A direct call to a top-level function from a planned
+  `<module-init>` closure claims and then demotes. This is on main, without
+  destructuring.
+- **(g)** The typed reader over an array literal demotes after the claim,
+  because the pattern's contextual element type is `any`. This is on main,
+  and belongs to (b).
+- **(h)** A write to a `const` for-of head pattern leaf
+  (`for (const [a] of rows) a = 2`) silently succeeds in the IR. This is on
+  main, and belongs to (a).
+
+### Review round 2 (2026-11-01)
+
+The verdict was approve with nits. The reviewer's probes (`cases*.json`, base
+`6c732c42ea`) were re-run on the new head; each finding below is fixed.
+
+1. **A new claim-then-demote for a mixed `+` over leaves. Fixed.**
+   - A literal-pattern leaf now has its source value's family.
+     `provenIrFamily` reads it through `literalLeafSource`
+     (`literal-pattern-plan.ts`): a leaf bound `undefined` is the carrier
+     (`dynamic`), and a `length` leaf is a number.
+   - The generic binary tail judges an operator over such a leaf with the
+     shared `binaryOperandsAdmissible`, as `lowerBinary` would at build.
+   - `const [a, b] = [1, 'x']; return a + b` (`.js` and `.ts`), the function
+     for-head and the harness for-head are now refused at selection
+     (`expr-binary-operand-families`), and run correctly through legacy.
+   - The round-1 rebuttal is withdrawn: main refused these declarations, so
+     this PR created the claims.
+   - The wrapper lever's S0 (#7034) generalises the same judge to every
+     typed operator. The leaf family then reaches it through
+     `provenIrFamily` with no further change.
+2. **The plan table overstated a fix. Corrected.** In a function body,
+   `const [a] = [[1, 2, 3]]` and `const { a } = { a: { b: null } }` still
+   claim and then demote through the typed reader, unchanged from main
+   (follow-up (g)). The table now says so.
+3. **The realm guard missed patches. Fixed; the guard is now conservative.**
+   - `sourceMayPatchPrototype` counts any mention of `Array.prototype` or
+     `Object.prototype` that is not the object of a plain member read. A
+     `globalThis.` receiver counts too. That covers:
+     - stored-into members, including compound, logical and destructuring
+       targets, through the new shared `isStoreTarget` in `binding-writes.ts`;
+     - deleted members;
+     - a call with the prototype as `this` (`__defineGetter__`);
+     - every escape: `Reflect.*`, `Object.assign` / `defineProperty` /
+       `setPrototypeOf`, aliases, operands.
+   - The #1719 brand keeps its exact narrower set (`sourceWritesPrototype`),
+     computed in the same walk, so legacy output is unchanged.
+   - Every reviewer probe is now refused, and legacy answers each the way
+     main did.
+   - `%ArrayIteratorPrototype%` reached through `Object.getPrototypeOf` stays
+     unseen. That is documented; legacy also gets it wrong.
+4. **The TDZ `undefined` case. Fixed.**
+   - A program that binds the name `undefined` anywhere is not trusted: no
+     `undefined` identifier is proven global there (`programBindsUndefined`).
+   - This replaces round 1's per-caller `isShadowed` predicate, so the
+     selector, builder and closure-null check now ask one fact.
+5. **A duplicate unwrap helper. Fixed.** `skipOuterExpressions` is exported
+   from `binding-writes.ts` and reused.
+6. **A misleading flag and a dead parameter. Fixed.**
+   - `lowerBindingPattern` takes the declaration's real `isConst`;
+     parameter leaves pass `false`.
+   - `isPhase1DeclarationPattern` and `lowerDeclarationPattern` take a
+     `PatternDeclaration` (`binding-pattern-plan.ts`) instead of a separate
+     `pattern` argument.
+
+**Re-measured** against the round-1 base census (`6c732c42ea`):
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| legacy-free, the 94 / the 288 for-head files | 0 → **46** / 0 → 46 | same |
+| binaries changed, of 712 compiled (all 858 files) | 46, the round-1 set, each with a newly claimed `<module-init>`; 0 of the other 570 files | same |
+| pass→fail on the 46 | 0 (46/46 before and after) | 0 |
+| new post-claim errors, imports, status changes | 0, 0, 0 | 0, 0, 0 |
+| playground examples | byte-identical | byte-identical |
+
+All of the following gates were run bare and exit 0:
+
+- loc and func, against the merge base and against `origin/main` `4fe61ff7f2`;
+- coercion-sites, oracle-ratchet, dead-exports;
+- typecheck and lint;
+- ir-fallbacks;
+- test:changed-root (94 + 4);
+- import-cycles and compiler-boundaries (`--mode inventory`).
+
+## Writes to a `const`: refused at select (fixed 2026-11-01)
+
+**Symptom.** A write to a `const` binding is a TypeScript error that still
+emits code and must throw TypeError at run time; only legacy raises it.
+- A module `const` update (`const locked = 1; locked++;`) was claimed and
+  lowered as a plain module-global write: the initializer ran on.
+- Every function-local `const` write (`k++`, `k = 5`, `k += 2`, `a = k = 5`,
+  `x = (k = 5)`, a `for` update) was claimed and then demoted by from-ast's
+  `isWriteToConstDeclaration` check: right answer, but a claim-then-demote.
+- Module `const` assignment was already refused, through the module-binding
+  resolver. The chunk lever (#7026) widens the reach of the update case.
+
+**Root cause.** Each write arm (three update arms, the body, top-level,
+chained, tail and value assignment arms, the `for` update clause) checked
+scope and module storage but not constness.
+
+**Fix.** One subject gate instead of one check per arm:
+`firstConstBindingWrite` (`src/ir/const-binding-writes.ts`, built from the
+shared `isLexicalBindingWrite` and the #7014 `isWriteToConstDeclaration`) finds
+any write to a const, and the selector refuses the whole subject
+(`constBindingWriteRefused`, called from `whyNotIrClaimable` and per statement
+in `assessModuleInit`). The three update arms, which repeated the same four
+checks, share `identifierUpdateRefusal`. `select.ts` net -1 line, no grant.
+
+**Measured** (head vs main `4fe61ff7f2`, file-copy A/B of `select.ts`):
+- Probes: 112 sources, 224 runs on standalone and gc (update and assignment
+  writes to a const, let or var; statement, chain, value, loop and
+  `for`-update positions; in a function and at top level) all match node.
+  Post-claim errors drop from 48 to 0; the let/var binaries are unchanged.
+- `tests/ir-const-update-refusal.test.ts`: 62/62 on head, 30 fail on main.
+- test262: of 1,412 candidate rows (all of `assignment/` and
+  `compound-assignment/`, the `++`/`--` directories, and every row a text scan
+  flags), 14 contain a const write by the real predicate. On those 14: 0 flips
+  on both lanes, 13/14 binaries identical, and
+  `const/syntax/const-invalid-assignment-next-expression-for.js` moves from a
+  post-claim demote to a select refusal (still pass). The other 1,398 rows
+  cannot change.
+- Playground: 13/13 identical on both lanes.
+
+### Review round 1 (2026-11-01)
+
+Stacked on #7024 (`claude/7106-for-head-destructuring`, merged in) for its one
+pattern-leaf collector; this PR lands after #7024.
+
+- **Destructured const leaves (major).** The resolver matched identifier
+  declarators only, so `for (const [a, b] of rows) { a = 5 }` was claimed and
+  wrote silently (7, node throws). `isWriteToConstDeclaration` now matches
+  pattern leaves through `collectPatternBindingNames` in declarations and
+  loop heads.
+- **Over-refusal (minor).** The resolver now honours catch parameters,
+  `getFunctionOwnLocals` (parameters, destructured parameters, hoisted
+  `var`s), block `class` declarations and a named function or class
+  expression's own name. `const x = 1; … catch (x) { x = "z" }` is claimed
+  again, as on main.
+- **Dead demotes (nit).** The four #7014 builder demotes in `from-ast.ts` are
+  removed: the three before the #4502 invariant, and the for-of loop-variable
+  demote with its name-based detector `bodyWritesIdentifier`. The selector
+  refuses every one of those subjects first, with the same resolver.
+- **Diagnostic node (nit).** `identifierUpdateRefusal` returns its arm and
+  node together.
+
+Re-measured against the #7024 tip `42c09a6cb8` (file-copy A/B of the three
+changed files):
+- Probes: 238 runs, all match node. Post-claim errors 54 → 2 (both are
+  `catch (x) { x = "z" }`, a pre-existing catch-slot demote, identical on
+  base). The for-of pattern probes were wrong on base (3 and 7) and now throw.
+- `tests/ir-const-update-refusal.test.ts` 81/81, including an 11-case
+  resolver table.
+- test262: by the real predicate, 23 of 53,575 rows write a const (the 14
+  above plus `for-of/dstr/*-put-const`, `for-await-of/*-put-const` and two
+  `await-using` rows). Both lanes: 0 flips, 22/23 binaries identical, 0 hangs.
+- Playground: 13/13 identical on both lanes.
+
+**Follow-ups (not in this PR):**
+- Legacy throws no TypeError for `const a = 0; a ||= 5` / `a &&= 5`.
+- Legacy throws no TypeError when a for-in/for-of head writes an outer const.
+- `(x) => { x = x + 1 }` fails the whole compile on main.
+
+### Review round 2 (2026-11-01)
+
+The verdict was approve with nits: no regression, and no route bypasses the
+selector. Both findings are fixed.
+
+- **A `const` from an earlier `case` (minor).** The resolver searched only the
+  clause that holds the write. `switch (k) { case 0: const a = 1; case 1:
+  a = 2; }` was claimed, hit the #4502 invariant, and failed the compile on
+  both lanes; node throws a TypeError. A `case` clause now resolves against its
+  whole `switch` body. The rule is one helper, `blockScopeOf`, which #7024's
+  `bindingScopeOf` now uses too.
+- **Immutable own names (nit, latent).** A named function expression's own
+  name, and a class's name inside its body, are immutable bindings. A write
+  throws in strict and class code and is ignored in sloppy code. The resolver
+  now counts them as `const`. A parameter or `var` of the same name still
+  shadows them.
+
+Re-measured with a file-copy A/B of `const-binding-writes.ts` against
+`5a8480ffe9`, both lanes:
+
+- **Probes:** the 238 runs above and the reviewer's 39 cases (R2–R4). One
+  answer changes: `switchSiblingCase` failed to compile on the base and now
+  answers 100, as node does. The base did not claim the own-name cases either,
+  so their binaries are unchanged.
+- **Tests:** `tests/ir-const-update-refusal.test.ts` 91/91. It adds the switch
+  repro and an own-name write on both lanes, and 7 resolver rows. On the base,
+  the switch tests and 4 resolver rows fail. The own-name end-to-end test
+  passes on the base too, because the IR does not claim that closure yet; the
+  resolver rows pin the rule.
+- **test262:** the predicate now matches 50 of 53,575 rows, 27 more than
+  before. They are function, generator and async expressions that reassign
+  their own name, and class name-binding tests; no row writes a const from
+  another `case`. All 50 binaries are identical to the base, with 0 status
+  flips.
+
+### Follow-up: one declaration table per scope (2026-11-01)
+
+The resolver rescanned every statement of each enclosing block for every
+write, so a write found its name in O(statements). A block of N writes to a
+binding it does not declare cost O(N²). Each block-level scope (a whole
+`switch` body for a `case`) now builds its name → `const` table once, and a
+write looks the name up.
+
+- **Gate alone** (`firstConstBindingWrite` over a script with N top-level
+  writes and a function with N writes to the outer `var`): 970 ms → 29 ms at
+  N = 3,000. With the writes to a local declared first in the block, the scan
+  already stopped at once, and the gate stays at about 25 ms.
+- **Whole compile against main**, standalone, best of 3: the delta is within
+  noise (+0.7 % to +3.2 %) on a function of 1,500 writes, a script of 3,000 +
+  3,000 writes and the outer-write script.
+
+**Review (#7038, approve with nits).**
+- **The sibling gate had the same rescan.** `declarationBindingWritten`
+  (#7024) walked its whole scope once per destructuring declaration.
+  N declarations in one block cost O(N²): 1.2 s, 4.3 s and 17.2 s at 750,
+  1,500 and 3,000. It now reads the same per-scope record, whose second table
+  holds the scope's write targets and each `var` declarator's own. The times
+  are 9 ms, 15 ms and 35 ms, and the module has one lookup mechanism.
+- **Every ancestor block builds its table, even when an inner one declares
+  the name.** The reviewer measured the sibling-block shape at N = 3,000 going
+  from 44 ms to 50 ms, and 2,000-deep nesting from 0.8 ms to 3.1 ms. A lazy
+  per-name walk would bring back a per-write scan. Each table is built once
+  per scope, so the cost is bounded, and it stays.
+- **Re-check after the fix.** The 238 probes and the 23 const-write rows on
+  both lanes give the same results and binaries as before; the 185 tests in
+  the const-update and for-head files pass. Whole compile against #7032's
+  head, best of 3: −0.9 %, −0.1 % and −5.6 % on the three shapes above.
+
+## IR `finally` abrupt exit: the guard `if` was not a frame (fixed 2026-11-01)
+
+**Symptom.** Under the IR, `do { try { throw "x"; } finally { break; } }
+while (c < 2)` looped forever, in a function and at top level; legacy and node
+answer 11. The chunk-budget lever (#7026) exposes it: four ES5 rows that main
+sends to legacy only because they are chunk-sized fail once the IR claims them
+(`language/statements/try/S12.14_A9_T3` hangs; `S12.14_A9_T2`,
+`S12.14_A10_T2`, `S12.14_A10_T3` fail).
+
+**Root cause.** The `try` arm of `lowerIrFunctionBody`
+(`src/ir/lower-generic.ts`) emits each exception-path copy of the finally
+inside the `finallyRan` guard `if` (#6651 U4). That `if` is one Wasm label, but
+no `CtrlFrame` was pushed for it, so `resolveBrLabel` derived every `br` in
+that copy one frame short: a `break` re-entered the loop body, and a `continue`
+or labeled exit left the wrong frame. The normal-exit copy has no guard and was
+right.
+
+**Fix.** Push a plain frame while the guarded copy is emitted, the pattern
+every other structured arm uses (+4 lines in `lowerIrFunctionBody`, under the
+issue's `lower-generic.ts` grant). A `return`
+inside or across a `finally` does not share the bug: the selector refuses it
+(`earlyReturnBarrierDepth`), and legacy answers like node.
+
+**Measured** (head vs main `ac8dbbf406`, the base taken as a file-copy A/B of
+`lower-generic.ts`):
+
+- `tests/ir-finally-abrupt-exit.test.ts`, 11 IR-claimed shapes (throw, break,
+  continue and a catch rethrow overridden by the finally's break or continue;
+  nested finally; labeled continue and break across two finallys; a switch
+  break), each in a function and at top level, plus 3 `return` shapes left on
+  legacy: 28/28 on head; 14/28 on base, none hanging (every loop has a guard).
+- `runTest262File`, the 61 rows of `language/statements/{try,for,while,
+  do-while,switch}` that contain `finally`, standalone and gc: 0 flips, binary
+  sha identical 61/61 on each lane (main sends every break-in-finally row to
+  legacy). 54/61 pass on both; the other 7 need the QuickJS eval provider,
+  which is not built locally, and are refused at select on both trees.
+- Unchunked twins of the four rows (one file per `// CHECK#`, 26 files, so
+  the IR claims each `<module-init>`): 26/26 pass on head on both lanes; 22/26
+  on base (one failing check per row, the `S12.14_A9_T3` one hangs).
+- The 710 rows without `finally` cannot change (the edit only moves br depths
+  inside a guarded finally copy); a 60-row sample is sha-identical on gc and
+  standalone. Playground: 13/13 identical on both lanes (no example has a
+  `finally`).
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 

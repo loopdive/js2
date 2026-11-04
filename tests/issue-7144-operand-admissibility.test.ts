@@ -253,6 +253,8 @@ describe("#7144 — writes, increments, `??` and `null` compares: selector ⇔ f
       'if (m !== void 0) throw m; throw "y";',
       'if (void 0 === void 0) throw m; throw "y";',
       "var u = (k < 1) | 0; throw m;",
+      // (#7034 round 3) Lowered natively inside the identity, so the closure walk skips the `+` as the selector does.
+      "var u = ((k < 1) + (k < 2)) | 0; throw m;",
     ]) {
       await expectAgreement(body, true);
     }

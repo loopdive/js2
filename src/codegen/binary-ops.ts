@@ -10,7 +10,7 @@ import {
   emitAnyAdd,
   numericAnyOperand,
 } from "./native-addition.js";
-export { emitAnyAdd, emitAnyAddFromExternTemps } from "./native-addition.js";
+export { emitAnyAdd, emitAnyAddFromExternTemps, emitNativeStringSlotPlus } from "./native-addition.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
 import { isInertUndefinedLiteral } from "./void-undefined-operand.js"; // (#6604)
 import { ts } from "../ts-api.js";

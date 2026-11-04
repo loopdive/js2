@@ -135,6 +135,7 @@ import {
   irInstanceOfFunctionHelperName,
   irSelfGuardedConstructorValue,
 } from "../codegen/ir-dynamic-construct.js";
+import { reserveModuleInitChunkHelperName } from "../shared/module-init-chunk-plan.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import { builtinNamespaceConstantValue } from "../codegen/builtin-value-read.js"; // (#7106 module-init lever A)
 import { ensureIrNumberFromValueHelper } from "../codegen/helpers/ir-number-from-value.js"; // (#7106 module-init lever B)
@@ -5699,7 +5700,7 @@ export function compileIrPathFunctions(
           wasiGuard.planted = { doneGet, eqz, guard: guardIf };
         }
       } else {
-        finalBody = applyIrTailCalls(ctx, wasmFunc.body, wasmFunc.typeIdx);
+        finalBody = withoutVoidReturn(ctx, applyIrTailCalls(ctx, wasmFunc.body, wasmFunc.typeIdx), wasmFunc.typeIdx);
       }
       pendingPatches.push({ entry, funcIdx, existing, wasmFunc, finalBody });
     } catch (e) {
@@ -6063,6 +6064,18 @@ function bodyContainsReturnClassOp(body: readonly Instr[]): boolean {
     }
   }
   return false;
+}
+
+/**
+ * (#7106) A void IR body ends with the lowering's `return` terminator, which
+ * the function's `end` repeats: drop it (each module-init chunk pays it
+ * otherwise). A body that is only `return` keeps it: the prepared-class
+ * cutover reads an empty body as an uninstalled callable (`static m() {}`).
+ */
+function withoutVoidReturn(ctx: CodegenContext, body: Instr[], typeIdx: number): Instr[] {
+  const type = ctx.mod.types[typeIdx];
+  const isVoid = type?.kind === "func" && type.results.length === 0;
+  return isVoid && body.length > 1 && body.at(-1)?.op === "return" ? body.slice(0, -1) : body;
 }
 
 /** Resolve a checker-owned module declaration to its exact structural/legacy slot pair. */
@@ -6952,6 +6965,8 @@ function makeFromAstResolver(
   const functionPrototypeCall = integrationFunctionPrototypeCallPolicy(ctx);
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
+    // (#7106) A reserved chunk name also keeps the late user-function inliner off it.
+    moduleInitChunkName: (preferred) => reserveModuleInitChunkHelperName(ctx, preferred),
     hostIndirectEvalTarget() {
       if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings) return null;
       const functionIndex = ctx.funcMap.get("__extern_eval");

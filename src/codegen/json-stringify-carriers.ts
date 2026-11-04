@@ -37,6 +37,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
+import { noJsHost } from "./js-errors.js";
 import { ensureLateImport } from "./shared.js";
 
 const EQ_HEAP_TYPE = -19; // abstract `eq` heap type
@@ -48,7 +49,8 @@ const TYPEOF_FUNCTION = "__typeof_function";
 /**
  * `i32` on the stack: is the (non-null) value in `anyLocal` a closed user
  * struct the object MOP can enumerate? `undefined` when the classifier is not
- * registered (non-standalone) — callers then emit no closed-struct arm.
+ * registered (a JS-host lane: `noJsHost(ctx)` is false) — callers then emit no
+ * closed-struct arm.
  */
 export function jsonClosedStructTestInstrs(ctx: CodegenContext, anyLocal: number): Instr[] | undefined {
   const classifierIdx = ctx.funcMap.get(CLOSED_STRUCT_CLASSIFIER);
@@ -150,7 +152,7 @@ export function jsonToJsonMethodLookupInstrs(ctx: CodegenContext, anyLocal: numb
  * Must run before the codec is first emitted (the codec bakes the funcIdx).
  */
 export function reserveJsonToJson(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (!ctx.standalone || ctx.funcMap.has(TO_JSON_MEMBER_GET)) return;
+  if (!noJsHost(ctx) || ctx.funcMap.has(TO_JSON_MEMBER_GET)) return; // (#7201) wasi walks class instances too
   if (classMethodCandidatesForProp(ctx, "toJSON").length === 0) return;
   reserveMemberGetDispatch(ctx, "toJSON", fctx);
 }

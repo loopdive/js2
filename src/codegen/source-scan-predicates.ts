@@ -9,7 +9,7 @@
 // walk-until-found shape and have no dependency on `CodegenContext`.
 
 import { ts, forEachChild } from "../ts-api.js";
-import { directArrayProtoIteratorAssignment } from "./array-proto-iterator-override-ast.js";
+import { sourceWritesPrototype } from "../shared/intrinsic-prototype-writes.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
@@ -743,13 +743,11 @@ export function sourceContainsWithStatement(sourceFile: ts.SourceFile): boolean 
 
 /**
  * (#1719 S1) Whole-program pre-scan for the `ITER_OVERRIDDEN` brand of the
- * array object-value representation track. Returns true iff the source may
- * monkeypatch `Array.prototype`'s iterator surface, i.e. it contains:
- *   (i)  an assignment `Array.prototype[Symbol.iterator] = …` or
- *        `Array.prototype.values = …` (any element/property access whose
- *        object is `Array.prototype`), OR
- *   (ii) `Object.defineProperty(Array.prototype, …)` /
- *        `Object.defineProperties(Array.prototype, …)`.
+ * array object-value representation track: true iff the source may
+ * monkeypatch `Array.prototype` — a member `=` assignment or `delete`, or
+ * `Object.defineProperty`/`defineProperties` on it (`sourceWritesPrototype`,
+ * the narrow question of the walk the IR's destructuring readers also use,
+ * #7106).
  *
  * When this returns false (the overwhelming common case), the array
  * destructuring / spread / for-of fast paths are provably unaffected by any
@@ -758,93 +756,12 @@ export function sourceContainsWithStatement(sourceFile: ts.SourceFile): boolean 
  * reflection + host `GetIterator` so the override's `@@iterator` is observed
  * (§7.4.2 GetIterator, §8.5.2 IteratorBindingInitialization).
  *
- * Reused verbatim from the dev-a `issue-1719-impl` scaffolding (the front-end
- * half the architecture spec endorses keeping). Conservative by design: it
- * over-approximates (a false positive only costs the S2 slow path, never
- * correctness) and never under-approximates a literal `Array.prototype` LHS.
+ * Conservative by design: it over-approximates (a false positive only costs
+ * the S2 slow path, never correctness) and never under-approximates a literal
+ * `Array.prototype` LHS.
  */
 export function sourceOverridesArrayIterator(sourceFile: ts.SourceFile): boolean {
-  let found = false;
-  // Strip `as`/`!`/type-assertion/paren wrappers so `(Array.prototype as any)[…]`
-  // and `(Array.prototype)[…]` match the same as the bare form.
-  function unwrap(e: ts.Expression): ts.Expression {
-    let cur = e;
-    while (
-      ts.isParenthesizedExpression(cur) ||
-      ts.isAsExpression(cur) ||
-      ts.isNonNullExpression(cur) ||
-      ts.isTypeAssertionExpression(cur)
-    ) {
-      cur = ts.isParenthesizedExpression(cur)
-        ? cur.expression
-        : ts.isAsExpression(cur)
-          ? cur.expression
-          : ts.isNonNullExpression(cur)
-            ? cur.expression
-            : (cur as ts.TypeAssertion).expression;
-    }
-    return cur;
-  }
-  // `e` is the object being assigned INTO: match `Array.prototype[...]`
-  // (element access) or `Array.prototype.values` (property access).
-  function isArrayProtoLHS(e: ts.Expression): boolean {
-    if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
-      const obj = unwrap(e.expression);
-      return (
-        ts.isPropertyAccessExpression(obj) &&
-        obj.name.text === "prototype" &&
-        ts.isIdentifier(obj.expression) &&
-        obj.expression.text === "Array"
-      );
-    }
-    return false;
-  }
-  function walk(node: ts.Node): void {
-    if (found) return;
-    // Exact direct assignment statements share the same AST-only predicate as
-    // the CPR write arm and checkpoint-2's bounded generator admission seam.
-    if (directArrayProtoIteratorAssignment(node) !== undefined) {
-      found = true;
-      return;
-    }
-    // (i) assignment: Array.prototype[Symbol.iterator] = … / Array.prototype.values = …
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      isArrayProtoLHS(node.left)
-    ) {
-      found = true;
-      return;
-    }
-    // (iii) (#5154) `delete Array.prototype[Symbol.iterator]` — removing the
-    // method is as much an override of the iterator surface as replacing it,
-    // and §7.4.2 then requires a TypeError at every array-iteration site.
-    if (ts.isDeleteExpression(node) && isArrayProtoLHS(unwrap(node.expression))) {
-      found = true;
-      return;
-    }
-    // (ii) Object.defineProperty(Array.prototype, …) / Object.defineProperties(Array.prototype, …)
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-      const callee = node.expression;
-      const arg0 = node.arguments[0];
-      if (
-        ts.isIdentifier(callee.expression) &&
-        callee.expression.text === "Object" &&
-        (callee.name.text === "defineProperty" || callee.name.text === "defineProperties") &&
-        arg0 !== undefined &&
-        ts.isPropertyAccessExpression(arg0) &&
-        arg0.name.text === "prototype" &&
-        ts.isIdentifier(arg0.expression) &&
-        arg0.expression.text === "Array"
-      ) {
-        found = true;
-        return;
-      }
-    }
-    forEachChild(node, walk);
-  }
-  walk(sourceFile);
-  return found;
+  return sourceWritesPrototype(sourceFile, "Array");
 }
 
 /**
