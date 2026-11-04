@@ -5,7 +5,6 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
 import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js"; // (#4491 T4) its bracket twin
-import { emitVecLengthHoleFill } from "../vec-length-hole-fill.js"; // (#6482 r4) shared length-store hole fill
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { isReparentObservablePrimitiveWrite } from "../object-model/native-proto-reparent.js"; // (#6651 V11)
 import { integrityVarKey } from "../widened-var-key.js";
@@ -19,7 +18,7 @@ import {
   emitEarlyStrictArrayWrite,
 } from "./destructuring-unresolved.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
-import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
+import { emitArrayLengthStore, emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3; (#7164) shared store
 import { emitArraySetLengthCoercionEffects, emitArraySetLengthNumber } from "../array/array-set-length-coercion.js"; // (#6771 S10a)
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
 import { emitF64GapFillInstrs } from "../vec-f64-hole-gap.js"; // (#4491 T8)
@@ -166,7 +165,6 @@ import { emitNativeGlobalThisObject } from "../array-object-proto.js"; // (#4630
 import { resolveEffectiveStructName } from "../property-access.js";
 import { classObjectRestrictedProperty } from "../class-static-metadata.js"; // (#5195 r3-7)
 import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
-import { buildOverlayArrayLengthSet } from "../array-filter-length-set.js";
 import { isForeignEvalNode } from "./eval-source.js";
 import {
   elementAccessTypedArrayName,
@@ -4900,40 +4898,10 @@ function compilePropertyAssignment(
         emitArraySetLengthValidation(ctx, fctx);
       }
       fctx.body.push({ op: "local.set", index: newLenTmp });
-      // Set vec.length = newLen
-      const lengthStore: Instr[] = [
-        { op: "local.get", index: vecTmp },
-        { op: "local.get", index: newLenTmp },
-        { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
-      ];
-      // (#6482 r4) This store touches ONLY field 0, so a shrink leaves the
-      // dropped elements sitting in the backing array and a later grow exposes
-      // them again (`[0,1]; length = 1; length = 10` → index 1 read back as
-      // `1`). Mark the orphaned region before the length moves. Shared emitter —
-      // the receiver here is `$__vec_base`, whose only field is `length`, so
-      // reaching the data array needs the per-vec-type ladder that
-      // `vec-length-hole-fill.ts` owns for all three length-store sites.
-      // Overlay validation owns deletion when present. Filling before it can
-      // erase elements even when a non-writable length rejects the shrink.
-      let selectedStore = buildOverlayArrayLengthSet(ctx, fctx, vecTmp, newLenTmp, target);
-      if (selectedStore === null) {
-        const savedBody = fctx.body;
-        fctx.body = [];
-        try {
-          emitVecLengthHoleFill(ctx, fctx, vecTmp, newLenTmp, "shrink-only", true);
-          selectedStore = [...fctx.body, ...lengthStore];
-        } finally {
-          fctx.body = savedBody;
-        }
-      }
-      if (receiverProvenVec) {
-        for (const instr of selectedStore) fctx.body.push(instr);
-      } else {
-        // The guarded cast above parks `null` when the receiver was not a vec;
-        fctx.body.push({ op: "local.get", index: vecTmp });
-        fctx.body.push({ op: "ref.is_null" });
-        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: [], else: selectedStore });
-      }
+      // (#7164) The store, its fill and the overlay route are shared with the
+      // `++` / `--` / `+=` / `-=` forms; a literal `0` cannot grow.
+      const literalClear = ts.isNumericLiteral(value) && Number(value.text) === 0;
+      emitArrayLengthStore(ctx, fctx, vecTmp, newLenTmp, target, receiverProvenVec, literalClear, structObjResult);
       // Assignment result — UNSIGNED widening (#4491, see array-length-define.ts).
       fctx.body.push({ op: "local.get", index: newLenTmp });
       if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });

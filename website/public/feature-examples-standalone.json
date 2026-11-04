@@ -839,7 +839,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2534,
+      "passCount": 2541,
       "totalCount": 3161,
       "editionSpread": [
         {
@@ -879,7 +879,7 @@
         },
         {
           "edition": "ES2023",
-          "pass": 99,
+          "pass": 102,
           "total": 131
         },
         {
@@ -889,7 +889,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 1851,
+          "pass": 1855,
           "total": 2250
         }
       ]
@@ -1312,7 +1312,7 @@
     {
       "name": "Array.findLast / findLastIndex",
       "testCategories": ["built-ins/Array/prototype/findLast", "built-ins/Array/prototype/findLastIndex"],
-      "passCount": 91,
+      "passCount": 94,
       "totalCount": 109
     },
     {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4477,
+      "passCount": 4474,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4477,
+          "pass": 4474,
           "total": 4603
         }
       ]
