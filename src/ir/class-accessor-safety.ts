@@ -532,7 +532,32 @@ export function dynamicDescriptorAbiEvidence(
   if (descriptor.params.length !== member.parameters.length) return undefined;
   const params = descriptor.params.map((type) => (type.kind === "dynamic" ? ("dynamic" as const) : undefined));
   const dynamicReturn = descriptor.returnType?.kind === "dynamic";
-  if (!dynamicReturn && !params.includes("dynamic")) return undefined;
+  const fallbackReturnType = ts.isSetAccessorDeclaration(member)
+    ? undefined
+    : jsConcreteReturnEvidence(member, descriptor);
+  if (!dynamicReturn && !params.includes("dynamic") && fallbackReturnType === undefined) return undefined;
   const returnType = ts.isSetAccessorDeclaration(member) ? "void" : dynamicReturn ? "dynamic" : undefined;
-  return { params, returnType };
+  return fallbackReturnType === undefined ? { params, returnType } : { params, returnType, fallbackReturnType };
+}
+
+/**
+ * (#7227) A JS class member's concrete return (`return this.#m()`, `return
+ * this.x`) has no annotation and no lattice entry, so the selector refused it
+ * as `return-type-unresolved(lattice=absent)`. Its descriptor return is the
+ * checker inference legacy registers the slot from — the same evidence every
+ * IR caller of the member already relies on — so it is supplied as a FALLBACK,
+ * consulted only when ordinary resolution fails. JS sources only: an
+ * unannotated TS member keeps its current verdict (typed corpus unchanged).
+ */
+function jsConcreteReturnEvidence(
+  member: ts.MethodDeclaration | ts.GetAccessorDeclaration,
+  descriptor: IrClassMethodDescriptor,
+): "f64" | "string" | undefined {
+  if ((member.flags & ts.NodeFlags.JavaScriptFile) === 0) return undefined;
+  const returnType = descriptor.returnType;
+  if (returnType?.kind === "string") return "string";
+  // A boolean descriptor (`i32`) is NOT admitted: the IR body's slot type
+  // diverges from the legacy boolean slot (class-method typeIdx parity
+  // mismatch, measured 2026-11-04), so it stays on the legacy body.
+  return returnType?.kind === "val" && returnType.val.kind === "f64" ? "f64" : undefined;
 }

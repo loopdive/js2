@@ -309,6 +309,7 @@ import {
   admittedEmptyLiteralIsOpenCarrier,
 } from "./select.js";
 import { openCarrierDefinePlan } from "./empty-object-literal.js";
+import { staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
 import {
   makeIrDeclaredPrimitiveExpressionClassifier,
@@ -9704,13 +9705,17 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   // call-site class's `${className}_${method}` key, which legacy's
   // inherited-member propagation registers. Legacy statics take NO `self`
   // param, so `class.static_call` emits args only.
-  if (
-    ts.isIdentifier(expr.expression.expression) &&
+  // (#7227) `this.#m()` in a static method (no `this` binding) takes this arm.
+  const staticThisClass = cx.scope.get("this") ? undefined : staticPrivateThisCallClassName(expr);
+  const staticClass =
+    staticThisClass ??
+    (ts.isIdentifier(expr.expression.expression) &&
     !receiverIsDirectModuleBinding &&
-    cx.scope.get(expr.expression.expression.text) === undefined &&
-    cx.classShapes?.has(expr.expression.expression.text)
-  ) {
-    const className = expr.expression.expression.text;
+    cx.scope.get(expr.expression.expression.text) === undefined
+      ? expr.expression.expression.text
+      : undefined);
+  if (staticClass !== undefined && cx.classShapes?.has(staticClass)) {
+    const className = staticClass;
     const shape = cx.classShapes.get(className)!;
     const method = findClassMember(shape, methodName, "static");
     if (!method) {

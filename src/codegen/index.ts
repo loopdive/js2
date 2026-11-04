@@ -2100,7 +2100,7 @@ function buildIrClassShapes(
         });
       } else if (
         ts.isMethodDeclaration(member) &&
-        ts.isIdentifier(member.name) &&
+        (ts.isIdentifier(member.name) || ts.isPrivateIdentifier(member.name)) && // (#7227) `__priv_m`
         hasStaticModifier(member) &&
         !hasAbstractModifier(member) &&
         !member.asteriskToken
