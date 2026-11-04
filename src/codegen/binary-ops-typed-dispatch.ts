@@ -11,9 +11,13 @@
  */
 import { addStringConstantGlobal } from "./registry/imports.js"; // (#6774 S19)
 import { ts } from "../ts-api.js";
+import type { TypeFact } from "../checker/oracle.js";
+import { emitUndefined } from "./expressions/late-imports.js";
+import { isInertUndefinedLiteral } from "./void-undefined-operand.js";
+import { foldVoidOperandEquality } from "./equality-void-operand.js";
 import { isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { ensureAnyFromExternHelper, undefinedSingletonActive } from "./any-helpers.js";
+import { ensureAnyFromExternHelper, ensureExternStrictEqHelper, undefinedSingletonActive } from "./any-helpers.js";
 import { reportError } from "./context/errors.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -21,9 +25,9 @@ import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./nati
 import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157) caller-side flatten elision
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { addUnionImports } from "./index.js";
+import { addUnionImports, compileExpression } from "./index.js";
 import type { InnerResult } from "./shared.js";
-import { coerceType, ensureAnyHelpers } from "./shared.js";
+import { coerceType, ensureAnyHelpers, flushLateImportShifts } from "./shared.js";
 import {
   compileBooleanBinaryOp,
   compileI32BinaryOp,
@@ -32,6 +36,303 @@ import {
 } from "./binary-ops.js";
 import { equalityOperandHasStaleStaticType } from "./strict-eq-stale-type.js";
 import { identityEqualityFlags } from "./helpers/loose-eq-object-identity.js"; // (#6997)
+
+/**
+ * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
+ * boundary.  This mirrors `isHeterogeneousPrimitiveUnion` without exposing a
+ * `ts.Type`: nullable heterogeneous bindings are the only unions whose
+ * non-null parts must retain distinct primitive tags.
+ */
+export function isOracleHeterogeneousPrimitiveUnion(fact: TypeFact): boolean {
+  if (fact.kind !== "union" || fact.parts.length < 2) return false;
+  const primitiveKinds = new Set<TypeFact["kind"]>();
+  for (const part of fact.parts) {
+    if (part.kind !== "number" && part.kind !== "string" && part.kind !== "boolean") return false;
+    primitiveKinds.add(part.kind);
+  }
+  return primitiveKinds.size >= 2;
+}
+
+export function sourceDeclarationOfIdentifier(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+): ts.Declaration | undefined {
+  if (!ts.isIdentifier(expression)) return undefined;
+  return ctx.oracle.valueDeclarationOf(expression);
+}
+
+export function isRealmUndefinedIdentifier(ctx: CodegenContext, expression: ts.Expression): boolean {
+  if (!ts.isIdentifier(expression) || expression.text !== "undefined") return false;
+  const declaration = sourceDeclarationOfIdentifier(ctx, expression);
+  return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+}
+
+/** #3585: consume only the already-emitted Map result; decline leaves its stack untouched. */
+export function tryEmitNativeMapGetLiteralNullishEquality(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  nonNullExpr: ts.Expression,
+  nonNullTsType: ts.Type,
+  valType: ValType | null,
+  rightIsNullish: boolean,
+  strict: boolean,
+  negate: boolean,
+): ValType | undefined {
+  // #3585: the native Map.get producer returns raw anyref. This observer
+  // has emitted ONLY that nonliteral operand; materialize the inert literal
+  // and order both values before calling the existing native equality provider.
+  const nullishLiteral = rightIsNullish ? expr.right : expr.left;
+  const mapGetLiteralIsNull = nullishLiteral.kind === ts.SyntaxKind.NullKeyword;
+  const mapGetLiteralIsUndefined =
+    isRealmUndefinedIdentifier(ctx, nullishLiteral) ||
+    (ts.isVoidExpression(nullishLiteral) && isInertUndefinedLiteral(nullishLiteral));
+  if (
+    valType?.kind === "anyref" &&
+    (ctx.standalone === true || ctx.wasi === true) &&
+    ctx.nativeStrings &&
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    undefinedSingletonActive(ctx) &&
+    (mapGetLiteralIsNull || mapGetLiteralIsUndefined) &&
+    isDirectOracleClassifiedMapGet(ctx, nonNullExpr) &&
+    prepareNativeMapGetEquality(ctx, fctx, strict)
+  ) {
+    const mapValue = allocTempLocal(fctx, valType);
+    fctx.body.push({ op: "local.set", index: mapValue });
+    if (rightIsNullish) fctx.body.push({ op: "local.get", index: mapValue });
+    if (mapGetLiteralIsNull) fctx.body.push({ op: "ref.null.extern" });
+    else emitUndefined(ctx, fctx);
+    if (!rightIsNullish) fctx.body.push({ op: "local.get", index: mapValue });
+    const literalType: ValType = { kind: "externref" };
+    const result = emitPreparedNativeMapGetEqualityFromStack(
+      ctx,
+      fctx,
+      rightIsNullish ? valType : literalType,
+      rightIsNullish ? literalType : valType,
+      rightIsNullish ? nonNullTsType : undefined,
+      rightIsNullish ? undefined : nonNullTsType,
+      strict,
+      negate,
+    );
+    releaseTempLocal(fctx, mapValue);
+    return result;
+  }
+  return undefined;
+}
+
+/** #3585: reserve the existing providers before operand compilation or static string dispatch. */
+export function tryCompileEarlyNativeMapGetEquality(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  leftTsType: ts.Type,
+  rightTsType: ts.Type,
+): InnerResult | undefined {
+  const op = expr.operatorToken.kind;
+  const isEqOp = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsEqualsToken;
+  const isNeqOp = op === ts.SyntaxKind.ExclamationEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  const isStrictEqOp = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
+  const isStrictNeqOp = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  // #3585: claim a positively classified native Map.get equality before
+  // static string/AnyValue dispatch can consume it or impose a string hint.
+  // The producer owns the value carrier; a user-defined class Map declines
+  // through the oracle, rather than being admitted by its spelling.
+  if (
+    (isEqOp || isNeqOp) &&
+    (ctx.standalone === true || ctx.wasi === true) &&
+    ctx.nativeStrings &&
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    (isDirectOracleClassifiedMapGet(ctx, expr.left) || isDirectOracleClassifiedMapGet(ctx, expr.right)) &&
+    prepareNativeMapGetEquality(ctx, fctx, isStrictEqOp || isStrictNeqOp)
+  ) {
+    // Reserve providers first, then evaluate each original operand exactly
+    // once in source order. Do not coerce a Map result to a string based on
+    // the other operand's static type. Coercion/rebinding stays in the
+    // existing native from-stack boundary below.
+    let leftType = compileExpression(ctx, fctx, expr.left);
+    let rightType = compileExpression(ctx, fctx, expr.right);
+    if (!leftType || !rightType) {
+      const folded = foldVoidOperandEquality(ctx, fctx, op, leftType, rightType, leftTsType, rightTsType);
+      if (folded === null || "kind" in folded) return folded;
+      ({ left: leftType, right: rightType } = folded);
+    }
+    return emitPreparedNativeMapGetEqualityFromStack(
+      ctx,
+      fctx,
+      leftType,
+      rightType,
+      leftTsType,
+      rightTsType,
+      isStrictEqOp || isStrictNeqOp,
+      isNeqOp,
+    );
+  }
+
+  return undefined;
+}
+
+/**
+ * Strip type-only wrappers before identifying the direct oracle-classified Map.get result
+ * whose physical `anyref` carrier needs the #3585 equality boundary.
+ */
+function unwrapDirectMapGetOperand(expression: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isSatisfiesExpression(expression) ||
+    ts.isNonNullExpression(expression)
+  ) {
+    expression = (
+      expression as
+        | ts.ParenthesizedExpression
+        | ts.AsExpression
+        | ts.TypeAssertion
+        | ts.SatisfiesExpression
+        | ts.NonNullExpression
+    ).expression;
+  }
+  return expression;
+}
+
+/**
+ * The oracle-classified Map call path is the only producer this leaf repairs. Matching
+ * the receiver through the oracle boundary (rather than
+ * its spelling alone) keeps a user-defined `class Map` and unrelated `.get()`
+ * methods on their existing lowering paths, while retaining ordinary aliases
+ * whose receiver type is classified as `Map`.
+ */
+export function isDirectOracleClassifiedMapGet(ctx: CodegenContext, operand: ts.Expression): boolean {
+  const expression = unwrapDirectMapGetOperand(operand);
+  if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression)) return false;
+  const access = expression.expression;
+  if (access.name.text !== "get") return false;
+  // The oracle returns undefined for incomplete/unknown provenance, which is
+  // intentionally a decline rather than a claim for an arbitrary `.get()`.
+  return ctx.oracle.builtinReceiverOf(access.expression) === "Map";
+}
+
+/**
+ * Prepare only the existing native equality providers. No operand is consumed
+ * on decline, and no retired host-reference fallback is introduced.
+ */
+export function prepareNativeMapGetEquality(ctx: CodegenContext, fctx: FunctionContext, strict: boolean): boolean {
+  addUnionImports(ctx);
+  ensureAnyHelpers(ctx);
+  const provisionalIdx = strict ? ensureExternStrictEqHelper(ctx) : ensureAnyFromExternHelper(ctx);
+  if (provisionalIdx === undefined) return false;
+  flushLateImportShifts(ctx, fctx);
+  return strict
+    ? ctx.funcMap.has("__extern_strict_eq")
+    : ctx.funcMap.has("__any_from_extern") && ctx.funcMap.has("__any_eq");
+}
+
+/**
+ * Consume an already-emitted operand pair (right on top) after preparation.
+ * Keep scalar brands and raw Map carriers; the existing native provider owns
+ * guarded AnyValue recovery and equality. This never recompiles either operand.
+ */
+export function emitPreparedNativeMapGetEqualityFromStack(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  leftType: ValType,
+  rightType: ValType,
+  leftTsType: ts.Type | undefined,
+  rightTsType: ts.Type | undefined,
+  strict: boolean,
+  negate: boolean,
+): ValType {
+  const brandScalar = (type: ValType, tsType: ts.Type | undefined): ValType => {
+    if (type.kind !== "i32" || type.boolean === true || type.symbol === true) return type;
+    // The materialized nullish literal is externref and needs no checker type.
+    if (!tsType) throw new Error("Native Map equality scalar type metadata missing");
+    if (isBooleanType(tsType)) return { kind: "i32", boolean: true };
+    if ((tsType.flags & ts.TypeFlags.ESSymbolLike) !== 0) return { kind: "i32", symbol: true };
+    return type;
+  };
+  const right = brandScalar(rightType, rightTsType);
+  const left = brandScalar(leftType, leftTsType);
+  const rTmp = allocTempLocal(fctx, { kind: "externref" });
+  if (right.kind !== "externref") coerceType(ctx, fctx, right, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: rTmp });
+  const lTmp = allocTempLocal(fctx, { kind: "externref" });
+  if (left.kind !== "externref") coerceType(ctx, fctx, left, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: lTmp });
+  // Coercion can register late imports. Resolve the canonical provider only
+  // after settling those shifts, rather than keeping its provisional index.
+  flushLateImportShifts(ctx, fctx);
+  if (strict) {
+    const funcIdx = ctx.funcMap.get("__extern_strict_eq");
+    if (funcIdx === undefined) throw new Error("Prepared native Map.get strict equality provider missing");
+    fctx.body.push({ op: "local.get", index: lTmp }, { op: "local.get", index: rTmp }, { op: "call", funcIdx });
+  } else {
+    const fromExternIdx = ctx.funcMap.get("__any_from_extern");
+    const anyEqIdx = ctx.funcMap.get("__any_eq");
+    if (fromExternIdx === undefined || anyEqIdx === undefined) {
+      throw new Error("Prepared native Map.get loose equality providers missing");
+    }
+    // The existing native extern-loose provider uses this same conversion
+    // sequence. Emit it here so the original guest-direct __any_eq contract
+    // does not depend on a wrapper being inlined by a later optimizer.
+    fctx.body.push(
+      { op: "local.get", index: lTmp },
+      { op: "call", funcIdx: fromExternIdx },
+      { op: "local.get", index: rTmp },
+      { op: "call", funcIdx: fromExternIdx },
+      { op: "call", funcIdx: anyEqIdx },
+    );
+  }
+  if (negate) fctx.body.push({ op: "i32.eqz" });
+  releaseTempLocal(fctx, lTmp);
+  releaseTempLocal(fctx, rTmp);
+  return { kind: "i32" };
+}
+
+/**
+ * #3585 — dispatch only a direct oracle-classified Map.get raw-anyref result
+ * through the existing native equality providers. Other anyref producers
+ * stay on their established paths until they carry their own representation
+ * proof.
+ */
+function tryCompileDirectOracleMapGetEquality(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  op: ts.SyntaxKind,
+  leftType: ValType,
+  rightType: ValType,
+  leftTsType: ts.Type,
+  rightTsType: ts.Type,
+  isLooseEq: boolean,
+  isLooseNeq: boolean,
+  isNeqOp: boolean,
+): InnerResult | undefined {
+  const strictMapGetEquality =
+    op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  const oracleMapGetAnyref =
+    (leftType.kind === "anyref" && isDirectOracleClassifiedMapGet(ctx, expr.left)) ||
+    (rightType.kind === "anyref" && isDirectOracleClassifiedMapGet(ctx, expr.right));
+  if (
+    !oracleMapGetAnyref ||
+    (ctx.standalone !== true && ctx.wasi !== true) ||
+    !ctx.nativeStrings ||
+    ctx.targetProfile.semanticProviders !== "native-first" ||
+    (!strictMapGetEquality && !isLooseEq && !isLooseNeq)
+  ) {
+    return undefined;
+  }
+  if (!prepareNativeMapGetEquality(ctx, fctx, strictMapGetEquality)) return undefined;
+  return emitPreparedNativeMapGetEqualityFromStack(
+    ctx,
+    fctx,
+    leftType,
+    rightType,
+    leftTsType,
+    rightTsType,
+    strictMapGetEquality,
+    isNeqOp,
+  );
+}
 
 /**
  * Type-directed dispatch for a binary expression whose operands have already
@@ -58,6 +359,21 @@ export function compileTypedBinaryDispatch(
   arithI32WithToInt32Wrap: boolean,
   bitwiseI32: boolean,
 ): InnerResult {
+  const directMapGetEquality = tryCompileDirectOracleMapGetEquality(
+    ctx,
+    fctx,
+    expr,
+    op,
+    leftType,
+    rightType,
+    leftTsType,
+    rightTsType,
+    isLooseEq,
+    isLooseNeq,
+    isNeqOp,
+  );
+  if (directMapGetEquality) return directMapGetEquality;
+
   // ── Struct ref valueOf coercion (#138/#139) ──
   // When operands are struct refs (objects with valueOf), coerce them to f64
   // before performing numeric/comparison/equality operations.
