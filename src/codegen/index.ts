@@ -235,7 +235,7 @@ import {
 import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-sweep.js"; // (#6768)
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
-import { irJsInstanceMethodMaySkip } from "./ir-class-member-projection.js"; // (#7233)
+import { irJsInstanceMethodMaySkip } from "./classes/ir-class-member-projection.js"; // (#7233)
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import {
   planIrImportedCalls,

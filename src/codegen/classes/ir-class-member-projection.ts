@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { IrClassShape } from "../ir/nodes.js";
-import { ts } from "../ts-api.js";
+import type { IrClassShape } from "../../ir/nodes.js";
+import { ts } from "../../ts-api.js";
 
 /**
  * (#7233) May `buildIrClassShapes` skip an unprojectable instance method of a

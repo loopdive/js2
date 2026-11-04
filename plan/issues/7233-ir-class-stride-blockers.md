@@ -18,7 +18,7 @@ assignee: "ttraenkler/c-lead"
 # selector's three assignment/read arms, from-ast's property read/write entry
 # points and the integration resolver (which holds the storage resolver: it
 # needs only codegen imports integration.ts already has, #3113 layering); the
-# JS best-effort rule lives in the new src/codegen/ir-class-member-projection.ts.
+# JS best-effort rule lives in the new src/codegen/classes/ir-class-member-projection.ts.
 # Restates #7227's grants for the same files, so they do not strand once
 # #7054 lands.
 loc-budget-allow:
@@ -151,7 +151,7 @@ What changed:
    legacy does (node throws a TypeError there; base and head agree).
 2. **Best-effort instance-method projection, JS only**
    (`irJsInstanceMethodMaySkip`, the new
-   `src/codegen/ir-class-member-projection.ts`). In `buildIrClassShapes` a `.js` class
+   `src/codegen/classes/ir-class-member-projection.ts`). In `buildIrClassShapes` a `.js` class
    with one unprojectable instance method (async, default / destructured
    parameter, unprojectable return) keeps its shape; the method keeps its
    legacy body and gets no descriptor, so every call through the IR refuses
@@ -216,5 +216,13 @@ What changed:
   (SCC 729, as base).
 - Nit "label the return-arm `continue`" is not applied: biome's
   `noUselessLabel` rejects it; a comment says why.
-- Reviewer's 140 probes, base (merge-base `bc2fb7f8ca`) vs head, gc /
-  standalone / wasi: 0 value differences, 0 WORSE rows.
+- Reviewer's 140 probes, base (merge-base `bc2fb7f8ca`) vs head
+  `03636be916`, gc / standalone / wasi: 0 value differences, 0 WORSE rows.
+  This holds for `03636be916` and later only: at `3f917b0248` the same
+  probes had 6 WORSE rows (the nullable string field, each on 3 lanes).
+- Bounded by design: a string field whose initialiser is only
+  constant-folded to a string (`static #s = "a" + "b"`, or a `const`
+  identifier) stays legacy; only a string literal or a no-substitution
+  template literal is admitted.
+- Flat-dir budget: the helper file lives in `src/codegen/classes/`, not at
+  the top of `src/codegen/` (the `quality` job's flat-dir gate).
