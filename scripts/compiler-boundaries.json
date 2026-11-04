@@ -7227,7 +7227,7 @@
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "Static-private-field global planning and the JS best-effort class-shape rule for the IR (#7233); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
+      "nextBoundary": "The JS best-effort class-shape rule of buildIrClassShapes (#7233); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
     },
     {
       "path": "src/codegen/ir-dynamic-delete.ts",

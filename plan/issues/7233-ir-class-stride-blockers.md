@@ -16,8 +16,9 @@ related: [7227, 7223, 2949, 6583]
 assignee: "ttraenkler/c-lead"
 # 2026-11-04 (#7233): the static-private-field admission is wiring in the
 # selector's three assignment/read arms, from-ast's property read/write entry
-# points and the integration resolver; the storage resolver and the JS
-# best-effort rule live in the new src/codegen/ir-class-member-projection.ts.
+# points and the integration resolver (which holds the storage resolver: it
+# needs only codegen imports integration.ts already has, #3113 layering); the
+# JS best-effort rule lives in the new src/codegen/ir-class-member-projection.ts.
 # Restates #7227's grants for the same files, so they do not strand once
 # #7054 lands.
 loc-budget-allow:
@@ -25,10 +26,6 @@ loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/select.ts
   - src/ir/from-ast.ts
-import-cycles-allow:
-  - largestSccSize: 730 # 2026-11-04 (#7233): src/codegen/ir-class-member-projection.ts, the static-field storage resolver ir/integration.ts calls, joins the codegen/ir SCC
-  - codegen->ir: 304 # 2026-11-04 (#7233): that helper imports ir/abi-bindings, ir/identity and ir/nodes values
-  - ir->codegen: 85 # 2026-11-04 (#7233): ir/integration.ts imports that helper
 func-budget-allow:
   - src/codegen/index.ts::buildIrClassShapes
   - src/ir/select.ts::isPhase1StatementListInScope
@@ -131,7 +128,7 @@ What changed:
 
 1. **Static private fields** (`staticPrivateFieldOwner` in
    `src/ir/private-member-syntax.ts`, `resolveIrClassStaticFieldStorage` in
-   the new `src/codegen/ir-class-member-projection.ts`). Legacy keeps
+   `src/ir/integration.ts`). Legacy keeps
    `static #x` of class `C` in one mutable module global
    `__static_C___priv_x` (`ctx.staticProps`, key `C___priv_x`) and lowers
    `this.#x` / `C.#x` in a static method to `global.get` / `global.set`
@@ -149,7 +146,8 @@ What changed:
    `Reflect.apply` / detached receivers read the one global exactly as
    legacy does (node throws a TypeError there; base and head agree).
 2. **Best-effort instance-method projection, JS only**
-   (`irJsInstanceMethodMaySkip`). In `buildIrClassShapes` a `.js` class
+   (`irJsInstanceMethodMaySkip`, the new
+   `src/codegen/ir-class-member-projection.ts`). In `buildIrClassShapes` a `.js` class
    with one unprojectable instance method (async, default / destructured
    parameter, unprojectable return) keeps its shape; the method keeps its
    legacy body and gets no descriptor, so every call through the IR refuses
