@@ -1,10 +1,11 @@
 ---
 id: 7216
 title: "`Object.keys` on a subclass instance typed as its base class lists only the base's keys"
-status: ready
+status: done
+completed: 2026-11-04
 sprint: Backlog
 created: 2026-10-31
-updated: 2026-10-31
+updated: 2026-11-04
 priority: medium
 horizon: s
 feasibility: medium
@@ -13,7 +14,30 @@ task_type: bugfix
 area: codegen
 language_feature: classes
 goal: correctness
-related: [7199]
+related: [7199, 7156, 7158, 7201]
+# 2026-11-04: `ownKeysSubclassRoute` (src/codegen/class-arm-tag-guard.ts)
+# keeps one deliberate wasi condition. On wasi, `Object.values`/`entries`
+# on a subclassed static class keep the compile-time fold. The wasi
+# `__object_values`/`__object_entries` natives have no closed-struct arm
+# (`nonObjectEnumerableOwnInstrs` is standalone-only) and would answer [],
+# which is worse than base. Widening that native gate to wasi changes the bytes
+# of every wasi program that builds the object runtime (66 of 131 no-subclass
+# corpus programs), so it is left to a follow-up. This adds +1 ctx.standalone
+# and +1 ctx.wasi in that one condition.
+standalone-arms-allow:
+  - src/codegen/class-arm-tag-guard.ts
+# 2026-11-04: each consumer gains one route call into class-arm-tag-guard.ts,
+# where the decision logic lives. The growth that remains is the call, its
+# comment, and the line breaks prettier forces when a fourth `||` term is
+# added (+3/+3/+2/+2 lines).
+loc-budget-allow:
+  - src/codegen/object-ops.ts
+  - src/codegen/statements/loops.ts
+func-budget-allow:
+  - src/codegen/object-ops.ts::compileObjectKeysOrValues
+  - src/codegen/object-ops.ts::compilePropertyIntrospection
+  - src/codegen/statements/loops.ts::compileForInStatementInner
+  - src/codegen/binary-ops-in.ts::compileInOperator
 ---
 
 # #7216 — Object.keys sees the static type, not the instance
@@ -38,3 +62,58 @@ static type instead of the runtime struct.
    class has subclasses.
 2. Check `Object.entries`, `Object.values`, `for…in` and spread the same way.
 3. Tests on 3 lanes against node.
+
+## Resolution (2026-11-04)
+
+**Cause.** Every own-key consumer folded from the receiver's STATIC struct.
+`compileObjectKeysOrValues` (`object-ops.ts`) expanded the static class's field
+list at compile time. The no-host for…in path (`loops.ts`) sent a class struct
+to the static unroll (`emitForInStaticUnroll`). `hasOwnProperty`
+(`object-ops.ts`) and `in` (`binary-ops-in.ts`) folded against the static field
+list. A receiver typed `Animal` that holds a `Dog` is a longer subtype struct at
+runtime, so the subclass-only fields were missing. `JSON.stringify`, spread,
+`Object.getOwnPropertyNames` and `Object.assign` already enumerated at runtime
+through the `__tag`-guarded closed-struct arms (#7158), which is why they were
+right.
+
+**Fix.** New predicates in `src/codegen/class-arm-tag-guard.ts` ask whether
+any emitted class extends the static struct. When one does, the consumer uses
+the runtime path the `any` receiver already uses:
+
+| Consumer | Change |
+| --- | --- |
+| `Object.keys` / `values` / `entries` | route to the runtime `__object_<method>`, with the §7.1.18 ToObject nullish guard. Two exceptions keep the fold: a receiver re-flagged by `Object.defineProperty` (only the compile-time filter honours those flags), and wasi `values`/`entries` (see frontmatter). |
+| for…in | treat as a dynamic receiver (`__object_keys_forin`), except a `new X()` receiver, directly or through a `const` (`forInSubclassedReceiver`). That instance is built from the static class at that site. |
+| `hasOwnProperty` / `propertyIsEnumerable` | runtime `__hasOwnProperty` / `__propertyIsEnumerable` |
+| `k in o` | a folded `false` is re-asked through `__extern_has`. A positive fold is unchanged. |
+
+A class that no class extends keeps its fold, so its bytes do not move.
+
+**Evidence.**
+- `tests/equivalence/issue-7216-object-keys-subclass.test.ts` covers 16 rows on
+  gc, standalone and wasi against node. The `values`/`entries` rows skip wasi.
+  The rows include 3-level chains, an abstract base, a twin-layout sibling,
+  parameter properties, class expressions, `this` in a base method, private
+  fields and accessors, inline `.length`/index, a null receiver, and a
+  leaf-typed receiver.
+- The neighbouring tests for #7156, #7158, #7199, #7200, #7201 and #7215 pass.
+- A/B against base: 131 no-subclass programs on 3 lanes are byte-identical.
+  The corpus is every case in `tests/equivalence/issue-6*`/`issue-7*` with no
+  `extends`, plus 8 own-key probes and the playground examples.
+- 29 subclass probes show no row that passes on base and fails on head.
+
+**Left open (separate causes):**
+- wasi `Object.values`/`entries` on a class instance answer `[]` even through
+  `any`. The natives lack the #7201 closed-struct arm. On a subclassed static
+  class they keep the base (static) answer.
+- `const o = Object.assign({}, inst)` typed `{} & C` reads back through the
+  closed struct: `JSON.stringify(o)` is `null`, even with no subclass.
+  `JSON.stringify(Object.entries(inst))` is `[null]` on base for a plain class.
+  Head fixes the subclassed case.
+- `"n" in x`, where `n` is a method only the subclass declares, is `false`
+  through `any` as well. `__extern_has` does not walk a subclass prototype.
+- `Object.defineProperty(o, k, { enumerable: false })` on a class instance is
+  ignored by the runtime enumerators (`Object.keys(o)` through `any` lists
+  `k`).
+- `new K()` with `K: typeof P` bound to a subclass `Q` constructs a `P`
+  (`instanceof Q` is false).

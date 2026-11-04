@@ -5,6 +5,7 @@
  *
  * Extracted from expressions.ts (#688 step 6).
  */
+import { ownKeysSubclassRoute, valTypeIsSubclassedClass } from "./class-arm-tag-guard.js"; // (#7216)
 import { classConstructorIsOwnKey } from "./class-ctor-own-key.js"; // (#6651 C1) §15.7 own `constructor`
 import { classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 F5)
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
@@ -4482,7 +4483,10 @@ export function compileObjectKeysOrValues(
     (ts.isIdentifier(arg) && ctx.externrefAccessorVars.has(arg.text)) ||
     typeIsRuntimeKeyedObjectLiteral(ctx, argType, _hasRuntimeComputedKey);
   // Resolve struct name from the argument type (an open fnctor carrier enumerates at runtime)
-  const structName = argIsHostObjectVar ? undefined : resolveClosedReflectiveStructName(ctx, argType);
+  const staticStructName = argIsHostObjectVar ? undefined : resolveClosedReflectiveStructName(ctx, argType);
+  // (#7216) a subclassed static class may hold a longer subclass struct
+  const subclassRoute = ownKeysSubclassRoute(ctx, method, staticStructName, arg);
+  const structName = subclassRoute ? undefined : staticStructName;
   if (!structName) {
     // Only a FRESH syntactic `{}` proves an empty own-key set. A variable or
     // parameter whose checker type has zero declared properties is not such a
@@ -4528,7 +4532,7 @@ export function compileObjectKeysOrValues(
     if (argResult.kind !== "externref") {
       coerceType(ctx, fctx, argResult, { kind: "externref" });
     }
-    if (evolvingNullishArg) emitToObjectNullishGuard(ctx, fctx); // (#6651 U3)
+    if (evolvingNullishArg || subclassRoute) emitToObjectNullishGuard(ctx, fctx); // (#6651 U3, #7216)
     const importName = `__object_${method}`;
     const funcIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
@@ -4998,7 +5002,9 @@ export function compilePropertyIntrospection(
   // since we can't statically know their properties
   // (#5350 r2) …and an undeclared key a `super` write may have added.
   const superGrownKey = superWriteMayAddKey(ctx, recvExpr, receiverType, expr.arguments[0]);
-  if (receiverWasm.kind === "externref" || runtimeKeyedOwnKeys || evolvingNullishRecv || superGrownKey) {
+  // (#7216) …or a class receiver whose runtime struct may be a longer subclass.
+  const runtimeRecv = superGrownKey || valTypeIsSubclassedClass(ctx, receiverWasm);
+  if (receiverWasm.kind === "externref" || runtimeKeyedOwnKeys || evolvingNullishRecv || runtimeRecv) {
     const isHOP = propAccess.name.text === "hasOwnProperty";
     const importName = isHOP ? "__hasOwnProperty" : "__propertyIsEnumerable";
     const hopIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);

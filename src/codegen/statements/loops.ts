@@ -106,6 +106,7 @@ import { forOfArrayOverlayGetIdx, forOfArrayOverlayReadInstrs } from "../forof-a
 import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
 import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 import { isOpenForInReceiver } from "../for-in-open-object.js";
+import { forInSubclassedReceiver } from "../class-arm-tag-guard.js"; // (#7216)
 import { isDirectProxyBinding } from "../proxy-value-provenance.js"; // (#6651 U3) for-in/for-of over a Proxy
 
 /** Strip the transparent parentheses used by CoverParenthesizedExpression in a
@@ -4322,7 +4323,10 @@ function compileForInStatementInner(ctx: CodegenContext, fctx: FunctionContext, 
     // static-unroll path below, which is exact for a non-mutated closed shape.
     const recvWasmType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
     const isDynamicReceiver =
-      proxyReceiver || isOpenForInReceiver(ctx, stmt.expression) || forInReceiverIsDynamic(ctx, recvWasmType);
+      proxyReceiver ||
+      isOpenForInReceiver(ctx, stmt.expression) ||
+      forInReceiverIsDynamic(ctx, recvWasmType) ||
+      forInSubclassedReceiver(ctx, recvWasmType, stmt.expression); // (#7216)
     if (isDynamicReceiver) {
       ensureObjectRuntime(ctx);
       // #2964 — for-in must enumerate inherited enumerable keys too, so route

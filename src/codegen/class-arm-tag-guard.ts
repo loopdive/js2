@@ -31,6 +31,8 @@
 
 import type { FieldDef, Instr, TypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { ts } from "../ts-api.js";
+import { integrityVarKey } from "./widened-var-key.js";
 
 /**
  * (#7199) Could the structs `a` and `b` be ONE canonical WasmGC type?
@@ -270,4 +272,85 @@ export function enumerationArmTagGuard(typeIdx: number, classTags: number[] | un
   return [
     { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: cond, else: [{ op: "i32.const", value: 0 }] },
   ];
+}
+
+/**
+ * (#7216) Own-key consumers on a receiver whose STATIC class has subclasses.
+ *
+ * `Object.keys`/`values`/`entries`, for…in, `hasOwnProperty` and `in` used to
+ * fold from the static class's field list. A receiver typed `Animal` may at
+ * runtime hold a `Dog` — a longer subtype struct — so the fold dropped every
+ * subclass-only field:
+ *
+ * ```ts
+ * class Animal { name = "a" }
+ * class Dog extends Animal { breed = "b" }
+ * const xs: Animal[] = [new Dog()];
+ * Object.keys(xs[0]);   // node: ["name","breed"] — base: ["name"]
+ * ```
+ *
+ * The runtime enumerators already answer by the receiver's own `__tag`
+ * (#7158), which is why `JSON.stringify` / spread were right. These predicates
+ * send a subclassed static class to them. A class nothing extends keeps its
+ * compile-time fold, so its bytes do not move.
+ */
+
+/** Does any emitted class extend `structName`? */
+function classHasSubclass(ctx: CodegenContext, structName: string): boolean {
+  for (const parent of ctx.classParentMap.values()) if (parent === structName) return true;
+  return false;
+}
+
+/** `classHasSubclass` for a receiver's lowered wasm type (a class struct ref). */
+export function valTypeIsSubclassedClass(ctx: CodegenContext, t: ValType): boolean {
+  const name = t.kind === "ref" || t.kind === "ref_null" ? ctx.typeIdxToStructName.get(t.typeIdx) : undefined;
+  return name !== undefined && classHasSubclass(ctx, name);
+}
+
+/** Has an `Object.defineProperty` re-flagged a property of the identifier `arg`? */
+function hasDefinedPropertyFlags(ctx: CodegenContext, arg: ts.Expression): boolean {
+  if (!ts.isIdentifier(arg)) return false;
+  const prefix = `${integrityVarKey(ctx, arg)}:`;
+  for (const key of ctx.definedPropertyFlags.keys()) if (key.startsWith(prefix)) return true;
+  return false;
+}
+
+/**
+ * Should `Object.<method>(arg)` over the closed struct `structName` enumerate
+ * at runtime instead of expanding the static field list?
+ *
+ * Two receivers keep the fold. One re-flagged by `Object.defineProperty`: only
+ * the compile-time enumerable filter honours those flags (the runtime lists a
+ * hidden field). And wasi `values`/`entries`: their natives have no
+ * closed-struct arm there (`nonObjectEnumerableOwnInstrs` is standalone-only)
+ * and would answer `[]`.
+ */
+export function ownKeysSubclassRoute(
+  ctx: CodegenContext,
+  method: string,
+  structName: string | undefined,
+  arg: ts.Expression,
+): boolean {
+  return (
+    structName !== undefined &&
+    (method === "keys" || !ctx.wasi || ctx.standalone) &&
+    classHasSubclass(ctx, structName) &&
+    !hasDefinedPropertyFlags(ctx, arg)
+  );
+}
+
+/**
+ * Should for…in over `expression` (lowered to `recvWasm`) enumerate at runtime?
+ *
+ * A `new X()` receiver, directly or through a `const`, keeps the static
+ * unroll. That instance is built at that site from the static class, which is
+ * also true for a constructor-typed `X` (a separate defect), so the unroll
+ * keeps the answer it gave before.
+ */
+export function forInSubclassedReceiver(ctx: CodegenContext, recvWasm: ValType, expression: ts.Expression): boolean {
+  if (!valTypeIsSubclassedClass(ctx, recvWasm)) return false;
+  let receiver: ts.Expression = expression;
+  while (ts.isParenthesizedExpression(receiver)) receiver = receiver.expression;
+  if (ts.isIdentifier(receiver)) receiver = ctx.oracle.constInitializerOf(receiver) ?? receiver;
+  return !ts.isNewExpression(receiver);
 }
