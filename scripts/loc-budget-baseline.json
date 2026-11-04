@@ -1,7 +1,7 @@
 {
   "generated": "2026-11-04",
   "threshold": 1500,
-  "totalCeiling": 1054289,
+  "totalCeiling": 1054318,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4426,
@@ -12,7 +12,7 @@
     "src/codegen/async-cps.ts": 4286,
     "src/codegen/async-frame.ts": 3445,
     "src/codegen/async-scheduler.ts": 4688,
-    "src/codegen/binary-ops.ts": 3405,
+    "src/codegen/binary-ops.ts": 3411,
     "src/codegen/builtin-value-read.ts": 1869,
     "src/codegen/class-bodies.ts": 4389,
     "src/codegen/closed-method-dispatch.ts": 2192,
@@ -102,7 +102,7 @@
     "src/ir/identity.ts": 1517,
     "src/ir/integration.ts": 10883,
     "src/ir/lower-generic.ts": 4533,
-    "src/ir/module-bindings.ts": 2771,
+    "src/ir/module-bindings.ts": 2777,
     "src/ir/prepared-component-dependencies.ts": 1789,
     "src/ir/program-consumer.ts": 1524,
     "src/ir/program-physical-plan.ts": 1518,
