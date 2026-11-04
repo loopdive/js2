@@ -22,6 +22,8 @@ loc-budget-allow:
 func-budget-allow:
   - src/codegen/binary-ops-typed-dispatch.ts::compileTypedBinaryDispatch
   - src/codegen/binary-ops.ts::compileBinaryExpression
+coercion-sites-allow:
+  - src/codegen/binary-ops-typed-dispatch.ts
 ---
 
 # Standalone: Map.get result compared in direct call-result position answers false
@@ -1324,3 +1326,23 @@ five-path repair. The original 15 Map assertions and existing native-Map
 and constructor-shadowing controls remain intact. Fresh current-tree
 qualification and normal delivery hooks follow; earlier results above
 retain their exact historical epochs.
+
+
+## 2026-11-04 canonical native equality call-site disposition
+
+The normal pre-push coercion ratchet reports two new quoted `__any_eq`
+references in `binary-ops-typed-dispatch.ts`: the prepared-provider presence
+check and the canonical function-index lookup. This bounded repair does not
+implement another equality matrix. It uses `coerceType` for physical boxing,
+the existing `__any_from_extern` conversion for each operand, and the existing
+native `__any_eq` semantic provider. The original guest-direct WAT assertions
+require that canonical call in the guest; an extra wrapper would not satisfy
+that preserved contract. Provider reservation precedes operand evaluation,
+and late-import settlement precedes both canonical index lookups.
+
+The issue-local coercion-site declaration records this reviewed native-provider
+migration in the existing dispatch subsystem. It grants no main baseline
+change, new coercion algorithm, test waiver, target policy change, or generic
+raw-anyref admission. The actual normal push RED is retained. All 51 focused
+controls passed on the unchanged production tree; this disposition changes
+only this plan and must pass the genuine normal commit and push gates.
