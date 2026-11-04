@@ -295,7 +295,8 @@ export function enumerationArmTagGuard(typeIdx: number, classTags: number[] | un
  * send such a receiver to them. Every other receiver keeps its compile-time
  * fold, so its bytes do not move: a class nothing extends, the constructor
  * itself (`typeof C` lowers to the same struct ref but its own keys are the
- * statics), and a receiver that is provably a `new` of the static class.
+ * statics), `C.prototype`, and a receiver that is provably a `new` of the
+ * static class.
  */
 
 /** Does any emitted class extend `structName`? */
@@ -313,16 +314,22 @@ function newTargetClass(ctx: CodegenContext, target: ts.Expression): ts.ClassLik
   return init && ts.isClassExpression(init) ? init : undefined;
 }
 
+/** Names written anywhere in a file, computed once per (immutable) parsed file. */
+const writtenNamesByFile = new WeakMap<ts.SourceFile, Set<string>>();
+
 /** Is any binding named `name` written in `file`? Name-based, so it over-reports. */
 function nameIsWritten(file: ts.SourceFile, name: string): boolean {
-  let hit = false;
-  const visit = (node: ts.Node): void => {
-    if (hit) return;
-    if (ts.isIdentifier(node) && node.text === name && isLexicalBindingWrite(node)) hit = true;
-    else ts.forEachChild(node, visit);
-  };
-  visit(file);
-  return hit;
+  let names = writtenNamesByFile.get(file);
+  if (names === undefined) {
+    const written = new Set<string>();
+    const visit = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && isLexicalBindingWrite(node)) written.add(node.text);
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    writtenNamesByFile.set(file, (names = written));
+  }
+  return names.has(name);
 }
 
 /**
@@ -350,6 +357,16 @@ function isExactStaticNew(ctx: CodegenContext, expr: ts.Expression, staticType: 
 }
 
 /**
+ * `C.prototype` is typed as an instance of `C` but holds the methods, not the
+ * fields; the fold already answers it (and wasi's runtime arm inverts it).
+ */
+function isPrototypeObject(expr: ts.Expression): boolean {
+  let r: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(r) || ts.isNonNullExpression(r)) r = r.expression;
+  return ts.isPropertyAccessExpression(r) && r.name.text === "prototype";
+}
+
+/**
  * Must the own-key consumer over `expr` (static type `tsType`, lowered to the
  * closed struct `structName`) enumerate at runtime instead of folding?
  */
@@ -361,7 +378,7 @@ function subclassedInstance(
 ): boolean {
   if (structName === undefined || !classHasSubclass(ctx, structName)) return false;
   const t = tsType.getNonNullableType();
-  return t.getConstructSignatures().length === 0 && !isExactStaticNew(ctx, expr, t);
+  return t.getConstructSignatures().length === 0 && !isPrototypeObject(expr) && !isExactStaticNew(ctx, expr, t);
 }
 
 /** `subclassedInstance` for a receiver's lowered wasm type (for…in, `hasOwnProperty`, `in`). */

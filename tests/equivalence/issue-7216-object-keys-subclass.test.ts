@@ -9,8 +9,8 @@
 // its compile-time fold (byte-identical). Each row is diffed against native JS
 // on gc, standalone and wasi. On wasi `Object.values`/`entries` keep the fold
 // (their natives have no closed-struct arm there), so those rows skip wasi.
-// The constructor (`typeof C`) and a provable `new` of the static class keep
-// the fold too.
+// The constructor (`typeof C`), `C.prototype` and a provable `new` of the
+// static class keep the fold too.
 import { describe, expect, it } from "vitest";
 import { compile } from "../../src/index.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
@@ -103,6 +103,11 @@ const CASES: Record<string, [string, boolean?]> = {
   ],
   "new of a class-expression subclass": [
     `const A = class { a = 1 };\nconst B = class extends A { b = 2 };\nfunction run(): string { const x: InstanceType<typeof A> = new B(); const y = new A(); return Object.keys(x).join() + "/" + Object.keys(y).join(); }`,
+  ],
+  // Review round 3: `C.prototype` is typed as an instance of `C`, but its own
+  // keys are the methods; it keeps the fold (wasi's runtime arm inverted it).
+  "prototype receiver keeps its fold": [
+    `class A { a = 1; m() {} }\nclass B extends A { b = 2; n() {} }\nfunction run(): string { return String((A.prototype).hasOwnProperty("a")) + String((A.prototype).hasOwnProperty("constructor")) + String((A.prototype).hasOwnProperty("m")) + String(A.prototype.hasOwnProperty("m")) + String((B.prototype).hasOwnProperty("n")) + String(A.prototype.propertyIsEnumerable("m")) + String("m" in A.prototype); }`,
   ],
 };
 

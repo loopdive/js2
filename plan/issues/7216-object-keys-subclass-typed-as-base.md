@@ -93,6 +93,11 @@ Every other receiver keeps its fold, so its bytes do not move:
   struct ref, but its own keys are the statics. Routing it made
   `A.hasOwnProperty("s")` false. The test262 harness rewrites
   `Object.prototype.hasOwnProperty.call(C, k)` to exactly that call.
+- a `C.prototype` receiver (review round 3). It is typed as an instance of
+  `C`, but its own keys are the methods. The fold already answers it, and on
+  wasi the runtime `__hasOwnProperty` inverts it (`(A.prototype)
+  .hasOwnProperty("m")` would read `false`). The test262 harness rewrites
+  `Object.prototype.hasOwnProperty.call(C.prototype, k)` to that call.
 - a receiver that is provably a `new` of the static class. That is a `new X()`
   expression, or a `const` (or a `let`/`var` that nothing writes again)
   initialised from one, where `X` is the static class or a constructor-typed
@@ -113,8 +118,8 @@ Every other receiver keeps its fold, so its bytes do not move:
 - A/B against base: 131 no-subclass programs on 3 lanes are byte-identical.
   The corpus is every case in `tests/equivalence/issue-6*`/`issue-7*` with no
   `extends`, plus 8 own-key probes and the playground examples.
-- 108 subclass probes show no row that passes on base and fails on head.
-  They are my 36 probes plus the 72 review probes, including the
+- 133 subclass probes show no row that passes on base and fails on head.
+  They are my 37 probes plus the 96 review probes (c1–c7), including the
   constructor-receiver set. The constructor and exact-`new` probes are
   sha-identical to base on all 3 lanes.
 - A runtime path that genuinely needs it still costs its runtime. A mixed
