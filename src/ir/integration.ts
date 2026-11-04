@@ -7012,7 +7012,9 @@ function staticFieldIrType(ctx: CodegenContext, declaration: ts.ClassElement, st
   if (fact === "any" || fact === "unknown") {
     return sameValType(storage, resolveIrDynamicCarrierType(ctx)) ? irDynamic() : undefined;
   }
-  if (fact === "string") {
+  // A string global starts as null and the IR's `string` is non-null: admit it
+  // only when it can never be read null (#7233 review).
+  if (fact === "string" && staticStringFieldIsInitialisedBeforeUse(declaration)) {
     const carrier = ctx.nativeStrings
       ? ctx.anyStrTypeIdx < 0
         ? undefined
@@ -7021,6 +7023,30 @@ function staticFieldIrType(ctx: CodegenContext, declaration: ts.ClassElement, st
     return carrier && sameValType(storage, carrier) ? { kind: "string" } : undefined;
   }
   return undefined;
+}
+
+/**
+ * (#7233) A `string` static private field whose legacy global can never be
+ * observed null: its initialiser is a string literal, and no static
+ * initialiser or `static {}` block precedes it in the class body (the only
+ * code that can call the owner's static methods before the field is set).
+ * An uninitialised field (`static #s: string;`) keeps the legacy body.
+ */
+function staticStringFieldIsInitialisedBeforeUse(declaration: ts.ClassElement): boolean {
+  if (!ts.isPropertyDeclaration(declaration) || !declaration.initializer) return false;
+  if (!ts.isStringLiteral(declaration.initializer) && !ts.isNoSubstitutionTemplateLiteral(declaration.initializer))
+    return false;
+  for (const member of declaration.parent.members) {
+    if (member === declaration) return true;
+    if (ts.isClassStaticBlockDeclaration(member)) return false;
+    if (
+      ts.isPropertyDeclaration(member) &&
+      member.initializer &&
+      ts.getModifiers(member)?.some((m) => m.kind === ts.SyntaxKind.StaticKeyword)
+    )
+      return false;
+  }
+  return false;
 }
 
 function sameValType(a: ValType, b: ValType): boolean {

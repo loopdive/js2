@@ -10,6 +10,11 @@ import { ts } from "../ts-api.js";
  * bytes. Never when an ancestor shape carries a member of the same name: the
  * IR's inherited-member walk would otherwise reach the ancestor descriptor for
  * a name the skipped override shadows.
+ *
+ * An ancestor method that was itself skipped has no descriptor, so this walk
+ * does not see it. That is safe: a call through that name finds no descriptor
+ * on either class (the selector stops at the own unprojected member), so both
+ * sides stay on their legacy bodies.
  */
 export function irJsInstanceMethodMaySkip(
   sourceFile: ts.SourceFile,

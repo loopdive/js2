@@ -2009,7 +2009,7 @@ function buildIrClassShapes(
         if (!isVoidType(retTs)) {
           const ir = tsTypeToClassPositionIr(ctx, retTs, lookup);
           if (!ir) {
-            if (maySkip) continue;
+            if (maySkip) continue; // unlabelled: biome noUselessLabel (same loop as instanceMethods)
             methodsOk = false;
             break;
           }

@@ -140,6 +140,10 @@ What changed:
    global is planned as a support binding (`PROGRAM_ABI_GLOBAL_ROLE.
    classStaticField`). Typed for `f64`, `i32`, the lane's dynamic carrier
    (untyped field) and the lane's string carrier; anything else demotes.
+   A `string` field is admitted only with a string-literal initialiser and
+   no static initialiser or `static {}` block before it: its global starts
+   null and the IR's `string` is non-null (review of #7059 — an
+   uninitialised or early-read field trapped on `+` / `===` / truthiness).
    Stays legacy: compound assignment and `++` (no admission), a field whose
    initialiser reads `this`, `accessor` fields, arrows/nested functions in
    the static method, same-named classes. Subclass / `.call({})` /
@@ -196,3 +200,21 @@ What changed:
 | default / destructured parameters | 18 | separate issue |
 | unannotated JS instance return (foreign-receiver trap guard) | 7 | TS/JS getter trap follow-up |
 | misc. (`assert`/`Object` value use, spreads, eval carrier, …) | 20 | various |
+
+## Round 2 (review of #7059, 2026-11-04)
+
+- **Blocker fixed (option 2).** Option 1 (a nullable or dynamic read) is
+  not lane-uniform: the standalone string global is `ref null $AnyString`,
+  which is not the dynamic carrier, and the IR has no nullable `string`.
+  `staticStringFieldIsInitialisedBeforeUse` (integration.ts) now gates the
+  string arm. The reviewer's 6 repro rows are in the test (3 lanes, legacy
+  route, base value).
+- **ir-layering**: the storage resolver moved from
+  `src/codegen/ir-class-member-projection.ts` into `src/ir/integration.ts`
+  (it uses only codegen imports integration.ts already had); the codegen
+  file keeps `irJsInstanceMethodMaySkip`. The import-cycle grant is gone
+  (SCC 729, as base).
+- Nit "label the return-arm `continue`" is not applied: biome's
+  `noUselessLabel` rejects it; a comment says why.
+- Reviewer's 140 probes, base (merge-base `bc2fb7f8ca`) vs head, gc /
+  standalone / wasi: 0 value differences, 0 WORSE rows.

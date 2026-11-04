@@ -202,6 +202,65 @@ describe("#7233 static private fields and shape-less JS classes reach the IR", (
   }
 });
 
+// Review of #7059: a `string` static private field whose global can still be
+// null when read (no initialiser, `!`, or read by an earlier static
+// initialiser) must keep the legacy body: the IR's `string` is non-null and
+// trapped on `+`, `===` and truthiness. Values are base's, on every lane.
+const NULLABLE_STRING_FIELDS: Record<
+  string,
+  { readonly source: string; readonly unit: string; readonly value: number }
+> = {
+  "uninitialised, === undefined": {
+    source: `class C { static #s: string; static g(): number { return this.#s === undefined ? 1 : 2; } }
+export function test(): number { return C.g(); }`,
+    unit: "C_g",
+    value: 1,
+  },
+  "read by an earlier static initialiser": {
+    source: `class C { static a: number = C.peek(); static #s: string = "x"; static peek(): number { return this.#s === undefined ? 1 : 2; } }
+export function test(): number { return C.a * 10 + C.peek(); }`,
+    unit: "C_peek",
+    value: 12,
+  },
+  "uninitialised, concatenation": {
+    source: `function h(s: string): number { let r = 0; for (let i = 0; i < s.length; i++) r = (r * 31 + s.charCodeAt(i)) | 0; return r; }
+class C { static #s: string; static g(): string { return "a" + this.#s; } }
+export function test(): number { return h(C.g()); }`,
+    unit: "C_g",
+    value: 1374895631,
+  },
+  "uninitialised, truthiness then write": {
+    source: `class C { static #s: string; static g(): number { return this.#s ? 1 : 2; } static w(): number { this.#s = "k"; return this.#s ? 3 : 4; } }
+export function test(): number { return C.g() * 10 + C.w(); }`,
+    unit: "C_g",
+    value: 23,
+  },
+  "definite-assignment `!`, === undefined": {
+    source: `class C { static #s!: string; static g(): number { return this.#s === undefined ? 1 : 2; } }
+export function test(): number { return C.g(); }`,
+    unit: "C_g",
+    value: 1,
+  },
+  'uninitialised, === ""': {
+    source: `class C { static #s: string; static g(): number { return this.#s === "" ? 1 : 2; } }
+export function test(): number { return C.g(); }`,
+    unit: "C_g",
+    value: 2,
+  },
+};
+
+describe("#7233 a string static private field that can be read null stays legacy", () => {
+  for (const [label, { source, unit, value }] of Object.entries(NULLABLE_STRING_FIELDS)) {
+    for (const lane of LANES) {
+      it(`${label} — ${lane.name}`, async () => {
+        const { result, exports } = await compileAndRun(source, lane.options, "issue-7233.ts");
+        expect(exports.test!()).toBe(value);
+        expect(route(result, unit), `${unit} stays on the legacy body`).toBe("unsupported");
+      }, 120_000);
+    }
+  }
+});
+
 // The best-effort projection is JS-only: a TS class with one unprojectable
 // method keeps no shape at all, which keeps the typed corpus byte-identical.
 describe("#7233 TS sources keep the all-or-nothing class projection", () => {
