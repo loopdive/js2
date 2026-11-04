@@ -43,6 +43,7 @@ import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js"; // (#44
 // (#4062 array bag / #4491 T9 Date+RegExp bag) a statically-known key may live in
 // a carrier bag the receiver's field list cannot see — route the folded `false`.
 import { carrierBagKeyNeedsRuntime } from "./builtin-instance-key-presence.js";
+import { subclassedInstanceReceiver } from "./class-arm-tag-guard.js"; // (#7216)
 // (#4491 T4) %Object.prototype%'s own names are `in` every ordinary object.
 import {
   hasExplicitNullObjectPrototype,
@@ -874,6 +875,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // only a folded `false` is routed, so no affirmative answer moves.
     const vecNamedKeyRoute = !has && carrierBagKeyNeedsRuntime(ctx, rightWasm, staticKey, 0);
     const fnctorProtoRoute = !has && ctx.standalone && isFnctorInstanceWasm(ctx, rightWasm);
+    const subclassedReceiverRoute = !has && subclassedInstanceReceiver(ctx, rightWasm, rightType, expr.right); // (#7216)
     // (#4515 wave-5) The SECOND half of the #4484 D guard above. That one
     // stopped a reassigned binding's stale static type from producing a wrong
     // THROW; the same staleness also produces a wrong ANSWER here, because
@@ -911,6 +913,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         reassignedReceiverRoute ||
         escapedReceiverRoute ||
         fnctorProtoRoute ||
+        subclassedReceiverRoute ||
         proxyReceiverRoute ||
         terminalAwareObjectPrototypeRoute)
     ) {

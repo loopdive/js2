@@ -31,6 +31,9 @@
 
 import type { FieldDef, Instr, TypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { ts } from "../ts-api.js";
+import { integrityVarKey } from "./widened-var-key.js";
+import { isLexicalBindingWrite } from "../shared/binding-writes.js";
 
 /**
  * (#7199) Could the structs `a` and `b` be ONE canonical WasmGC type?
@@ -270,4 +273,175 @@ export function enumerationArmTagGuard(typeIdx: number, classTags: number[] | un
   return [
     { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: cond, else: [{ op: "i32.const", value: 0 }] },
   ];
+}
+
+/**
+ * (#7216) Own-key consumers on a receiver whose STATIC class has subclasses.
+ *
+ * `Object.keys`/`values`/`entries`, for…in, `hasOwnProperty` and `in` used to
+ * fold from the static class's field list. A receiver typed `Animal` may at
+ * runtime hold a `Dog` — a longer subtype struct — so the fold dropped every
+ * subclass-only field:
+ *
+ * ```ts
+ * class Animal { name = "a" }
+ * class Dog extends Animal { breed = "b" }
+ * const xs: Animal[] = [new Dog()];
+ * Object.keys(xs[0]);   // node: ["name","breed"] — base: ["name"]
+ * ```
+ *
+ * The runtime enumerators already answer by the receiver's own `__tag`
+ * (#7158), which is why `JSON.stringify` / spread were right. These predicates
+ * send such a receiver to them. Every other receiver keeps its compile-time
+ * fold, so its bytes do not move: a class nothing extends, the constructor
+ * itself (`typeof C` lowers to the same struct ref but its own keys are the
+ * statics), `C.prototype`, and a receiver that is provably a `new` of the
+ * static class.
+ */
+
+/** Does any emitted class extend `structName`? */
+function classHasSubclass(ctx: CodegenContext, structName: string): boolean {
+  for (const parent of ctx.classParentMap.values()) if (parent === structName) return true;
+  return false;
+}
+
+/** The class node a `new` target names, or `undefined` for a constructor-typed value. */
+function newTargetClass(ctx: CodegenContext, target: ts.Expression): ts.ClassLikeDeclaration | undefined {
+  const decl = ts.isIdentifier(target) ? ctx.oracle.valueDeclarationOf(target) : undefined;
+  if (decl && (ts.isClassDeclaration(decl) || ts.isClassExpression(decl))) return decl;
+  let init = decl && ts.isVariableDeclaration(decl) ? decl.initializer : undefined;
+  while (init && ts.isParenthesizedExpression(init)) init = init.expression;
+  return init && ts.isClassExpression(init) ? init : undefined;
+}
+
+/** Names written anywhere in a file, computed once per (immutable) parsed file. */
+const writtenNamesByFile = new WeakMap<ts.SourceFile, Set<string>>();
+
+/** Is any binding named `name` written in `file`? Name-based, so it over-reports. */
+function nameIsWritten(file: ts.SourceFile, name: string): boolean {
+  let names = writtenNamesByFile.get(file);
+  if (names === undefined) {
+    const written = new Set<string>();
+    const visit = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && isLexicalBindingWrite(node)) written.add(node.text);
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    writtenNamesByFile.set(file, (names = written));
+  }
+  return names.has(name);
+}
+
+/**
+ * Is `expr` provably an instance built by `new X()` at a site the compiler
+ * sees — directly, or through a `const` (or a `let`/`var` never written
+ * again) — where `X` is the static class? A constructor-typed `X` also
+ * counts: the compiler builds the static class there (a separate defect), so
+ * the fold keeps base's answer. A `new` of a SUBCLASS (`const y: A = new B()`)
+ * does not count.
+ */
+function isExactStaticNew(ctx: CodegenContext, expr: ts.Expression, staticType: ts.Type): boolean {
+  let r: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(r)) r = r.expression;
+  if (ts.isIdentifier(r)) {
+    const decl = ctx.oracle.variableDeclarationOf(r);
+    const isConst = decl !== undefined && (decl.parent.flags & ts.NodeFlags.Const) !== 0;
+    const init = decl?.initializer;
+    if (!init || (!isConst && nameIsWritten(r.getSourceFile(), r.text))) return false;
+    r = init;
+    while (ts.isParenthesizedExpression(r)) r = r.expression;
+  }
+  if (!ts.isNewExpression(r)) return false;
+  const cls = newTargetClass(ctx, r.expression);
+  return cls === undefined || (staticType.getSymbol()?.declarations?.includes(cls) ?? false);
+}
+
+/**
+ * `C.prototype` is typed as an instance of `C` but holds the methods, not the
+ * fields; the fold already answers it (and wasi's runtime arm inverts it).
+ */
+function isPrototypeObject(expr: ts.Expression): boolean {
+  let r: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(r) || ts.isNonNullExpression(r)) r = r.expression;
+  return ts.isPropertyAccessExpression(r) && r.name.text === "prototype";
+}
+
+/**
+ * Must the own-key consumer over `expr` (static type `tsType`, lowered to the
+ * closed struct `structName`) enumerate at runtime instead of folding?
+ */
+function subclassedInstance(
+  ctx: CodegenContext,
+  structName: string | undefined,
+  tsType: ts.Type,
+  expr: ts.Expression,
+): boolean {
+  if (structName === undefined || !classHasSubclass(ctx, structName)) return false;
+  const t = tsType.getNonNullableType();
+  return t.getConstructSignatures().length === 0 && !isPrototypeObject(expr) && !isExactStaticNew(ctx, expr, t);
+}
+
+/** `subclassedInstance` for a receiver's lowered wasm type (for…in, `hasOwnProperty`, `in`). */
+export function subclassedInstanceReceiver(
+  ctx: CodegenContext,
+  recvWasm: ValType,
+  tsType: ts.Type,
+  expr: ts.Expression,
+): boolean {
+  const name =
+    recvWasm.kind === "ref" || recvWasm.kind === "ref_null" ? ctx.typeIdxToStructName.get(recvWasm.typeIdx) : undefined;
+  return subclassedInstance(ctx, name, tsType, expr);
+}
+
+/**
+ * `subclassedInstanceReceiver` for `hasOwnProperty`/`propertyIsEnumerable`. A
+ * literal key naming a field of the static class is own on every instance of
+ * it or a subclass, so the fold already answers it, and it stays right for a
+ * value that failed the struct cast (null at runtime, which base still
+ * answered from the field list).
+ */
+export function introspectionSubclassRoute(
+  ctx: CodegenContext,
+  recvWasm: ValType,
+  tsType: ts.Type,
+  expr: ts.Expression,
+  key: ts.Expression | undefined,
+): boolean {
+  if (key !== undefined && ts.isStringLiteral(key) && (recvWasm.kind === "ref" || recvWasm.kind === "ref_null")) {
+    const fields = ctx.structFields.get(ctx.typeIdxToStructName.get(recvWasm.typeIdx) ?? "");
+    if (fields?.some((f) => f.name === key.text && !f.name.startsWith("__"))) return false;
+  }
+  return subclassedInstanceReceiver(ctx, recvWasm, tsType, expr);
+}
+
+/** Has an `Object.defineProperty` re-flagged a property of the identifier `arg`? */
+function hasDefinedPropertyFlags(ctx: CodegenContext, arg: ts.Expression): boolean {
+  if (!ts.isIdentifier(arg)) return false;
+  const prefix = `${integrityVarKey(ctx, arg)}:`;
+  for (const key of ctx.definedPropertyFlags.keys()) if (key.startsWith(prefix)) return true;
+  return false;
+}
+
+/**
+ * Should `Object.<method>(arg)` over the closed struct `structName` enumerate
+ * at runtime instead of expanding the static field list?
+ *
+ * Besides the `subclassedInstance` exclusions, two receivers keep the fold.
+ * One re-flagged by `Object.defineProperty`: only the compile-time enumerable
+ * filter honours those flags (the runtime lists a hidden field). And wasi
+ * `values`/`entries`: their natives have no closed-struct arm there
+ * (`nonObjectEnumerableOwnInstrs` is standalone-only) and would answer `[]`.
+ */
+export function ownKeysSubclassRoute(
+  ctx: CodegenContext,
+  method: string,
+  structName: string | undefined,
+  argType: ts.Type,
+  arg: ts.Expression,
+): boolean {
+  return (
+    (method === "keys" || !ctx.wasi || ctx.standalone) &&
+    subclassedInstance(ctx, structName, argType, arg) &&
+    !hasDefinedPropertyFlags(ctx, arg)
+  );
 }
