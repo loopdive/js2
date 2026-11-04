@@ -107,6 +107,20 @@ Every other receiver keeps its fold, so its bytes do not move:
   byte-identical to base (42,005 / 36,951 / 53,496 B on gc / standalone /
   wasi).
 
+A class-typed binding whose value failed the struct cast holds null at runtime
+(review round 4). Examples are `const p = JSON.parse(s) as A`, an `any`
+returned into `A`, and `Object.getPrototypeOf(a) as A`. The routed consumers
+must not throw or trap there, where base answered:
+- `Object.keys` on a non-nullable receiver tests for null. A null value gets
+  base's static key list; base never read the receiver. A live value gets
+  the runtime helper's result (`compileSubclassedObjectKeys`).
+- `hasOwnProperty`/`propertyIsEnumerable` with a literal key that names a
+  field of the static class keep the fold. That field is own on every
+  instance, and the fold is base's answer for the null value too.
+- `in` already re-asks only a folded `false`. for…in, `Object.values` and
+  `Object.entries` behave as base on a null value: for…in runs no
+  iterations, and `values`/`entries` throw, as base's fold also does.
+
 **Evidence.**
 - `tests/equivalence/issue-7216-object-keys-subclass.test.ts` covers 16 rows on
   gc, standalone and wasi against node. The `values`/`entries` rows skip wasi.
@@ -118,8 +132,9 @@ Every other receiver keeps its fold, so its bytes do not move:
 - A/B against base: 131 no-subclass programs on 3 lanes are byte-identical.
   The corpus is every case in `tests/equivalence/issue-6*`/`issue-7*` with no
   `extends`, plus 8 own-key probes and the playground examples.
-- 133 subclass probes show no row that passes on base and fails on head.
-  They are my 37 probes plus the 96 review probes (c1–c7), including the
+- 157 subclass probes show no row that passes on base and fails on head, and
+  no new trap or throw. They are my 41 probes plus the 116 review probes
+  (c1–c10), including the
   constructor-receiver set. The constructor and exact-`new` probes are
   sha-identical to base on all 3 lanes.
 - A runtime path that genuinely needs it still costs its runtime. A mixed

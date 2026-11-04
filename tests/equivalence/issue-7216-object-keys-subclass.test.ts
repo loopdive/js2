@@ -78,9 +78,6 @@ const CASES: Record<string, [string, boolean?]> = {
   "inline length and index": [
     `class A { a = 1 }\nclass B extends A { b = 2; c = 3 }\nconst xs: A[] = [new B()];\nfunction run(): string { return String(Object.keys(xs[0]).length) + Object.keys(xs[0])[2]; }`,
   ],
-  "null receiver throws": [
-    `class A { a = 1 }\nclass B extends A { b = 2 }\nfunction f(x: A | null): string { try { return Object.keys(x as A).join(); } catch (e) { return "threw"; } }\nfunction run(): string { return f(new B()) + "|" + f(null); }`,
-  ],
   "leaf-typed receiver keeps its fold": [
     `class A { a = 1 }\nclass B extends A { b = 2 }\nconst b: B = new B();\nfunction run(): string { return Object.keys(b).join() + String(b.hasOwnProperty("a")) + String("b" in b); }`,
   ],
@@ -110,6 +107,50 @@ const CASES: Record<string, [string, boolean?]> = {
     `class A { a = 1; m() {} }\nclass B extends A { b = 2; n() {} }\nfunction run(): string { return String((A.prototype).hasOwnProperty("a")) + String((A.prototype).hasOwnProperty("constructor")) + String((A.prototype).hasOwnProperty("m")) + String(A.prototype.hasOwnProperty("m")) + String((B.prototype).hasOwnProperty("n")) + String(A.prototype.propertyIsEnumerable("m")) + String("m" in A.prototype); }`,
   ],
 };
+
+// Review round 4: a class-typed binding whose value failed the struct cast
+// holds null at runtime. The consumers must not throw or trap there; they keep
+// base's compile-time answer (pinned — node, which sees the real object,
+// differs). `(o as any) as A` traps at the cast itself on gc/standalone, on
+// base too, so that row runs on wasi only.
+const AB = `class A { a = 1; m() {} }\nclass B extends A { b = 2; n() {} }`;
+const NON_INSTANCE: Record<string, [string, string, readonly string[]]> = {
+  "JSON.parse(...) as A": [
+    `${AB}\nfunction run(): string { const p = JSON.parse('{"a":5,"b":6}') as A; return Object.keys(p).join() + String(p.hasOwnProperty("a")) + String(p.hasOwnProperty("b")) + String("b" in p); }`,
+    "atruefalsefalse",
+    ["gc", "standalone", "wasi"],
+  ],
+  "an any returned into A": [
+    `${AB}\nfunction mk(): any { return { a: 1, q: 2 }; }\nfunction run(): string { const q: A = mk(); const ks: string[] = Object.keys(q); return Object.keys(q).join() + ks.length; }`,
+    "a1",
+    ["gc", "standalone", "wasi"],
+  ],
+  "Object.getPrototypeOf(new A()) as A": [
+    `${AB}\nfunction run(): string { const r = Object.getPrototypeOf(new A()) as A; return String(Object.keys(r).length); }`,
+    "1",
+    ["gc", "standalone", "wasi"],
+  ],
+  "({z:1} as any) as A": [
+    `${AB}\nfunction run(): string { const o: any = { z: 1 }; const p = o as A; const k: string[] = []; for (const q in p) k.push(q); return Object.keys(p).join() + "." + k.join(); }`,
+    "a.",
+    ["wasi"],
+  ],
+};
+
+describe("#7216 a class-typed value that is not an instance keeps base's answer", () => {
+  for (const [name, [body, pinned, lanes]] of Object.entries(NON_INSTANCE)) {
+    it(name, async () => {
+      const src = `${body}\n${READ}`;
+      for (const { lane, options } of LANES) {
+        if (!lanes.includes(lane)) continue;
+        const result = await compile(src, { fileName: "probe.ts", ...options });
+        expect(result.success, `${lane}: ${result.errors.map((e) => e.message).join("\n")}`).toBe(true);
+        const instance = await instantiateWithRuntime(result);
+        expect(decode(instance.exports.test as (i: number) => unknown), lane).toBe(pinned);
+      }
+    });
+  }
+});
 
 describe("#7216 own-key consumers see the runtime subclass, not the static class", () => {
   for (const [name, [body, skipWasi]] of Object.entries(CASES)) {

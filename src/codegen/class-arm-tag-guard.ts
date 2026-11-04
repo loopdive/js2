@@ -393,6 +393,27 @@ export function subclassedInstanceReceiver(
   return subclassedInstance(ctx, name, tsType, expr);
 }
 
+/**
+ * `subclassedInstanceReceiver` for `hasOwnProperty`/`propertyIsEnumerable`. A
+ * literal key naming a field of the static class is own on every instance of
+ * it or a subclass, so the fold already answers it, and it stays right for a
+ * value that failed the struct cast (null at runtime, which base still
+ * answered from the field list).
+ */
+export function introspectionSubclassRoute(
+  ctx: CodegenContext,
+  recvWasm: ValType,
+  tsType: ts.Type,
+  expr: ts.Expression,
+  key: ts.Expression | undefined,
+): boolean {
+  if (key !== undefined && ts.isStringLiteral(key) && (recvWasm.kind === "ref" || recvWasm.kind === "ref_null")) {
+    const fields = ctx.structFields.get(ctx.typeIdxToStructName.get(recvWasm.typeIdx) ?? "");
+    if (fields?.some((f) => f.name === key.text && !f.name.startsWith("__"))) return false;
+  }
+  return subclassedInstanceReceiver(ctx, recvWasm, tsType, expr);
+}
+
 /** Has an `Object.defineProperty` re-flagged a property of the identifier `arg`? */
 function hasDefinedPropertyFlags(ctx: CodegenContext, arg: ts.Expression): boolean {
   if (!ts.isIdentifier(arg)) return false;
