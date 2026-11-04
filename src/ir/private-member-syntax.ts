@@ -47,7 +47,7 @@ export function staticPrivateThisCallClassName(
       member.name.text === name &&
       (ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false),
   );
-  if (!ownsStaticMethod) return undefined;
+  if (!ownsStaticMethod || classNameIsAmbiguous(owner, owner.name.text)) return undefined;
   return expectedClassName === undefined || expectedClassName === owner.name.text ? owner.name.text : undefined;
 }
 
@@ -69,4 +69,22 @@ export function privateNameReadsNonField(name: ts.PrivateIdentifier): boolean {
     if (declaration) return !ts.isPropertyDeclaration(declaration);
   }
   return false;
+}
+
+/**
+ * (#7227) Is `name` declared by more than one class in `node`'s source file?
+ * The static-call arm keys class shapes by NAME, so two same-named classes in
+ * sibling scopes (`function f() { class C … }`, `function g() { class C … }`)
+ * would resolve a private static call to whichever shape owns the name. The
+ * private-static admissions refuse such a name rather than guess.
+ */
+export function classNameIsAmbiguous(node: ts.Node, name: string): boolean {
+  let count = 0;
+  const visit = (current: ts.Node): void => {
+    if (count > 1) return;
+    if ((ts.isClassDeclaration(current) || ts.isClassExpression(current)) && current.name?.text === name) count++;
+    ts.forEachChild(current, visit);
+  };
+  visit(node.getSourceFile());
+  return count > 1;
 }

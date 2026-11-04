@@ -67,7 +67,11 @@ import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
 import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
 import { privateMemberMangledName, type IrClassId, type IrUnitId } from "./identity.js";
-import { privateNameReadsNonField, staticPrivateThisCallClassName } from "./private-member-syntax.js";
+import {
+  classNameIsAmbiguous,
+  privateNameReadsNonField,
+  staticPrivateThisCallClassName,
+} from "./private-member-syntax.js";
 import {
   isAsyncIrReady,
   isUnpreparedAsyncCallee,
@@ -11825,7 +11829,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         const className =
           staticThisClass ??
           (staticReceiver ? (receiver as ts.Identifier).text : localClassNameForExpression(receiver, scope));
-        if (className === null) return shapeNo("expr-private-method-receiver", expr);
+        if (className === null || (staticReceiver && classNameIsAmbiguous(expr, className))) {
+          return shapeNo("expr-private-method-receiver", expr);
+        }
         if (localClassHasKnownProjectionGap(className)) {
           return capabilityNo("class-projection-unsupported", "expr-private-method-shape", expr);
         }

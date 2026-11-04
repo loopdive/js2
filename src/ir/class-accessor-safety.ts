@@ -548,12 +548,21 @@ export function dynamicDescriptorAbiEvidence(
  * IR caller of the member already relies on — so it is supplied as a FALLBACK,
  * consulted only when ordinary resolution fails. JS sources only: an
  * unannotated TS member keeps its current verdict (typed corpus unchanged).
+ *
+ * STATIC METHODS only. An IR instance body (method or getter) dereferences its
+ * receiver unchecked, while the `__obj_meth_tramp_*_cached` trampoline hands a
+ * foreign receiver (`get.call({})`, `Reflect.apply(m, {}, [])`) through as
+ * `ref.null` and the legacy body raises the catchable TypeError itself — so
+ * newly claiming instance members would turn that TypeError into a Wasm trap
+ * (review of #7054). A static method has no struct receiver to dereference.
  */
 function jsConcreteReturnEvidence(
   member: ts.MethodDeclaration | ts.GetAccessorDeclaration,
   descriptor: IrClassMethodDescriptor,
 ): "f64" | "string" | undefined {
   if ((member.flags & ts.NodeFlags.JavaScriptFile) === 0) return undefined;
+  const isStatic = ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false;
+  if (!ts.isMethodDeclaration(member) || !isStatic) return undefined;
   const returnType = descriptor.returnType;
   if (returnType?.kind === "string") return "string";
   // A boolean descriptor (`i32`) is NOT admitted: the IR body's slot type

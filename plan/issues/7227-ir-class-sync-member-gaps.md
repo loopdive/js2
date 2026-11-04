@@ -165,3 +165,26 @@ What changed:
 | shape-less classes | ~20 | the instance-method loop in `buildIrClassShapes` drops the WHOLE class when one instance method is unprojectable — measured causes: an `async` method (Promise return), destructured/default params, or `extends` of a builtin (`Iterator`). Making that loop best-effort would change which TS classes get shapes (typed-corpus bytes), so it is left for its own change |
 | boolean-returning unannotated JS members | — | IR/legacy slot typeIdx parity mismatch |
 | async / generator members, default/rest/destructured params | — | out of scope (other lanes / separate issue) |
+
+## Round 2 (review of #7054, 2026-11-04)
+
+- **Blocker fixed — option (b).** The concrete-return fallback now applies to
+  JS **static methods only**. An IR instance body (getter AND method — the
+  method variants `d.value.call({})`, `Reflect.apply(m, {}, [])` trap the same
+  way) dereferences the `ref.null` that `__obj_meth_tramp_*_cached` passes for a
+  foreign receiver, where the legacy body raises a catchable TypeError. Option
+  (a) (a receiver check in the IR instance entry or the trampoline) was not
+  taken: the trampoline's foreign-receiver `ref.null` passthrough is deliberate
+  (#2025 — throwing there regressed PR #1571), and an IR-entry check would
+  change every IR instance body in the typed corpus. The pre-existing trap for
+  TS-annotated IR getters/methods on a foreign receiver (`get v(): number`,
+  reproduced on base) stays open for a follow-up.
+- **Same-named classes**: a private static call (`this.#m()` / `C.#m()`) whose
+  class name is declared more than once in the file is refused
+  (`classNameIsAmbiguous`), since the static-call arm keys shapes by name.
+- Tests: the 6 foreign-receiver getter variants (public/private field,
+  number/string, `{}`/`{x: 9}`) on 3 lanes assert a caught TypeError and the
+  legacy route; the instance getter/method case now pins the legacy route; the
+  shadowed-class-name case pins `C_access` legacy.
+- The reviewer's 94 probes (merge-base `3b6f1729ef` vs head, gc/standalone/
+  wasi): 0 value differences from base.
