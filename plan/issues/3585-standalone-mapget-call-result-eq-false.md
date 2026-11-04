@@ -24,6 +24,8 @@ func-budget-allow:
   - src/codegen/binary-ops.ts::compileBinaryExpression
 coercion-sites-allow:
   - src/codegen/binary-ops-typed-dispatch.ts
+standalone-arms-allow:
+  - src/codegen/binary-ops-typed-dispatch.ts
 ---
 
 # Standalone: Map.get result compared in direct call-result position answers false
@@ -1346,3 +1348,23 @@ change, new coercion algorithm, test waiver, target policy change, or generic
 raw-anyref admission. The actual normal push RED is retained. All 51 focused
 controls passed on the unchanged production tree; this disposition changes
 only this plan and must pass the genuine normal commit and push gates.
+
+
+## 2026-11-04 existing native Map boundary arm disposition
+
+The actual quality job reports `ctx.standalone +3` and `ctx.wasi +3` in
+`binary-ops-typed-dispatch.ts`. The three checks preserve the same native Map
+provider boundary at the literal-nullish observer, before competing typed
+dispatch, and at the already-emitted raw-anyref bridge. They add no host
+fallback or second semantic implementation. The strict/loose algorithms remain
+the existing native providers; both original operands still evaluate once.
+
+The context's `standalone` field is the canonical native-regime projection,
+not an environment alias. WASI has a separate projection. Native strings and
+`native-first` policy alone do not imply that exact boundary for every GC
+configuration, so removing or disguising these checks just to change token
+counts would broaden the reviewed scope without evidence. This issue-local
+reviewed one-off records the exact three checks under the maintained Track-A
+ratchet policy. It changes no source mode behavior, baseline, test or floor.
+The genuine CI failure remains preserved; the published production tree and
+all 51 focused passing controls remain unchanged by this documentation.
