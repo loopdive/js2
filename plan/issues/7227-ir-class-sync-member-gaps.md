@@ -188,3 +188,14 @@ What changed:
   shadowed-class-name case pins `C_access` legacy.
 - The reviewer's 94 probes (merge-base `3b6f1729ef` vs head, gc/standalone/
   wasi): 0 value differences from base.
+- Round-2 measurements (base = `origin/main` `110bb3d819`, head = round-2
+  merge):
+  - ledger stride 40 standalone: class-member IR 20 → 20;
+    `select:class-member-unsupported` 239 → 216; invariants 0; compileOk 1081
+    → 1081; body routes identical;
+  - 1524-file class sample (standalone): IR units 485 → 628 (+143 in 33
+    files; round 1's +284 included the instance getters/methods now kept
+    legacy), 0 lost, 0 compile-success changes;
+  - test262 runner A/B (same 536 files, standalone): 427 / 104 / 5 on both,
+    identical non-pass lists;
+  - typed-corpus bytes: 6780 compiles × (gc, standalone, wasi), 0 diffs.
