@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import type { IrClassMethodDescriptor } from "./nodes.js";
+import type { IrStructuralSelectorAccessorAbiEvidence } from "./select.js";
 
 function hasDecorators(node: ts.Node): boolean {
   return ts.canHaveDecorators(node) && (ts.getDecorators(node)?.length ?? 0) > 0;
@@ -507,4 +509,30 @@ export function exactPreparedAccessorSyntaxKey(name: ts.PropertyName): string | 
     ts.isIdentifier(expression.left)
     ? exactPreparedAccessorExpressionKey(expression.right)
     : exactPreparedAccessorExpressionKey(expression);
+}
+
+/**
+ * (#7223) A class member whose projected descriptor carries `dynamic` (the
+ * checker typed the position `any`/`unknown` — every untyped JS member) has no
+ * propagation-lattice entry, so the selector's own resolution would refuse
+ * the position. The descriptor is the legacy-ABI evidence: both the legacy
+ * class body and the IR `dynamic` lowering take `resolveWasmType`'s
+ * `Any | Unknown` carrier. Only the dynamic positions are supplied; every
+ * other position keeps its ordinary resolution, and a member without a
+ * dynamic position gets no evidence at all (typed classes are untouched).
+ */
+export function dynamicDescriptorAbiEvidence(
+  member: ts.ClassElement,
+  descriptor: IrClassMethodDescriptor | undefined,
+): IrStructuralSelectorAccessorAbiEvidence | undefined {
+  if (!descriptor) return undefined;
+  if (!ts.isMethodDeclaration(member) && !ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) {
+    return undefined;
+  }
+  if (descriptor.params.length !== member.parameters.length) return undefined;
+  const params = descriptor.params.map((type) => (type.kind === "dynamic" ? ("dynamic" as const) : undefined));
+  const dynamicReturn = descriptor.returnType?.kind === "dynamic";
+  if (!dynamicReturn && !params.includes("dynamic")) return undefined;
+  const returnType = ts.isSetAccessorDeclaration(member) ? "void" : dynamicReturn ? "dynamic" : undefined;
+  return { params, returnType };
 }

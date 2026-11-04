@@ -2326,8 +2326,8 @@ function whyNotIrClaimable(
 
 /** @internal Exact-subject entry used by the structural selector orchestration. */
 export interface IrStructuralSelectorAccessorAbiEvidence {
-  readonly params: readonly "dynamic"[];
-  readonly returnType: "string" | "void";
+  readonly params: readonly ("dynamic" | undefined)[]; // undefined → ordinary resolution (#7223)
+  readonly returnType: "string" | "void" | "dynamic" | undefined;
 }
 
 export function assessIrStructuralSelectorSubject(
