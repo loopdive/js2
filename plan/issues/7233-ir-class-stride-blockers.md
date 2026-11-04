@@ -1,7 +1,7 @@
 ---
 id: 7233
 title: "IR class members: static private fields and shape-less JS classes block every stride class unit"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-11-04
 updated: 2026-11-04
@@ -14,6 +14,31 @@ area: ir
 goal: ir-full-coverage
 related: [7227, 7223, 2949, 6583]
 assignee: "ttraenkler/c-lead"
+# 2026-11-04 (#7233): the static-private-field admission is wiring in the
+# selector's three assignment/read arms, from-ast's property read/write entry
+# points and the integration resolver; the storage resolver and the JS
+# best-effort rule live in the new src/codegen/ir-class-member-projection.ts.
+# Restates #7227's grants for the same files, so they do not strand once
+# #7054 lands.
+loc-budget-allow:
+  - src/codegen/index.ts
+  - src/ir/integration.ts
+  - src/ir/select.ts
+  - src/ir/from-ast.ts
+import-cycles-allow:
+  - largestSccSize: 730 # 2026-11-04 (#7233): src/codegen/ir-class-member-projection.ts, the static-field storage resolver ir/integration.ts calls, joins the codegen/ir SCC
+  - codegen->ir: 304 # 2026-11-04 (#7233): that helper imports ir/abi-bindings, ir/identity and ir/nodes values
+  - ir->codegen: 85 # 2026-11-04 (#7233): ir/integration.ts imports that helper
+func-budget-allow:
+  - src/codegen/index.ts::buildIrClassShapes
+  - src/ir/select.ts::isPhase1StatementListInScope
+  - src/ir/select.ts::isPhase1BodyStatement
+  - src/ir/select.ts::isPhase1Expr
+  - src/ir/select.ts::whyNotIrClaimable
+  - src/ir/from-ast.ts::lowerPropertyAccess
+  - src/ir/from-ast.ts::lowerPropertyAssignment
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/ir/integration.ts::makeFromAstResolver
 ---
 
 # #7233: the class-member gaps that keep the stride ledger flat
@@ -95,3 +120,81 @@ Stack the work on #7227 (branch `issue-7227-ir-class-sync-member-gaps`, PR
 - Test: `tests/equivalence/issue-7233-ir-class-stride-blockers.test.ts`,
   covering per bucket the IR route (`trackIrOutcomes`), the stays-legacy
   routes and the node or base result on all 3 lanes.
+
+## Implementation (2026-11-04, Opus)
+
+Test: `tests/equivalence/issue-7233-ir-class-stride-blockers.test.ts` — per
+bucket, the IR route (`trackIrOutcomes`) and the result on standalone, WASI
+and gc, plus the stays-legacy cases.
+
+What changed:
+
+1. **Static private fields** (`staticPrivateFieldOwner` in
+   `src/ir/private-member-syntax.ts`, `resolveIrClassStaticFieldStorage` in
+   the new `src/codegen/ir-class-member-projection.ts`). Legacy keeps
+   `static #x` of class `C` in one mutable module global
+   `__static_C___priv_x` (`ctx.staticProps`, key `C___priv_x`) and lowers
+   `this.#x` / `C.#x` in a static method to `global.get` / `global.set`
+   with no brand check. A private name is never reflected onto the class
+   object, so the global is the only store. The IR now reads and writes the
+   same global from a static method of the owner: the selector's read arm and
+   both statement-write arms admit it, from-ast emits the existing
+   `global.get` / `global.set` (the module-binding instructions), and the
+   global is planned as a support binding (`PROGRAM_ABI_GLOBAL_ROLE.
+   classStaticField`). Typed for `f64`, `i32`, the lane's dynamic carrier
+   (untyped field) and the lane's string carrier; anything else demotes.
+   Stays legacy: compound assignment and `++` (no admission), a field whose
+   initialiser reads `this`, `accessor` fields, arrows/nested functions in
+   the static method, same-named classes. Subclass / `.call({})` /
+   `Reflect.apply` / detached receivers read the one global exactly as
+   legacy does (node throws a TypeError there; base and head agree).
+2. **Best-effort instance-method projection, JS only**
+   (`irJsInstanceMethodMaySkip`). In `buildIrClassShapes` a `.js` class
+   with one unprojectable instance method (async, default / destructured
+   parameter, unprojectable return) keeps its shape; the method keeps its
+   legacy body and gets no descriptor, so every call through the IR refuses
+   at selection (the selector already stops at an own unprojected member).
+   Never when an ancestor shape has a member of the same name. TS keeps
+   all-or-nothing.
+
+### Measurements (base = #7227 head `9ec6e925db`)
+
+- **Ledger, stride 40, standalone**: class-member IR 20 → 21;
+  `select:class-member-unsupported` 216 → 218,
+  `class-projection-unsupported` 17 → 7, `return-type-not-resolvable`
+  20 → 25, `param-type-not-resolvable` 43 → 45 (units of newly shaped JS
+  classes move to later, more specific refusals); invariants 0; compileOk
+  1081 → 1081.
+- **1524-file class sample** (the #7227 sample, standalone, all units): IR
+  units 628 → 804 (+176 class-member units in 41 files), 0 lost, 0
+  compile-success changes.
+- **test262 A/B, standalone**: 543 files (#7227's 536 plus the route-changed
+  files): 429 pass / 109 fail / 5 compile_error on both, identical non-pass
+  lists.
+- **Typed corpus bytes** (playground, benchmarks, equivalence snippets;
+  2268 units × gc / standalone / wasi = 6804 compiles): 0 diffs.
+
+### Acceptance criteria not met
+
+- **`class-member-unsupported` falls**: it rises 216 → 218. Units of JS
+  classes that now get a shape move from `class-projection-unsupported`
+  (−10) to their own member refusal.
+- **The stride does not move as the plan estimated (~32 units)**: +1. The
+  static-private-field stride units are all of the form
+  `static #x(value) { this.#xVal = value; return this.#xVal; }` — 12 units
+  (plus 4 class-expression twins) refused by `move-only[concrete]:this`
+  inside `dynamicUsesAreMoveOnly`, which this issue may not touch
+  (#2949 / #7106, coordinate on #6583). The ~20 "shape-less" units are
+  mostly the async / generator / destructured members themselves.
+
+### Remaining first refusals on the stride (class-member units, head)
+
+| First refusal | Units | Owner |
+|---|---|---|
+| async / generator member | 127 | async IR lanes |
+| accessor (private / computed / static, getter usage) | 40 | accessor lane |
+| `move-only` scan (dynamic param into a static private field / private call) | 33 | #6583 / #2949 |
+| descriptor miss, other | 32 | unattributed |
+| default / destructured parameters | 18 | separate issue |
+| unannotated JS instance return (foreign-receiver trap guard) | 7 | TS/JS getter trap follow-up |
+| misc. (`assert`/`Object` value use, spreads, eval carrier, …) | 20 | various |

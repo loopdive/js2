@@ -136,6 +136,7 @@ import {
   irSelfGuardedConstructorValue,
 } from "../codegen/ir-dynamic-construct.js";
 import { reserveModuleInitChunkHelperName } from "../shared/module-init-chunk-plan.js";
+import { resolveIrClassStaticFieldStorage } from "../codegen/ir-class-member-projection.js"; // (#7233)
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import { builtinNamespaceConstantValue } from "../codegen/builtin-value-read.js"; // (#7106 module-init lever A)
 import { ensureIrNumberFromValueHelper } from "../codegen/helpers/ir-number-from-value.js"; // (#7106 module-init lever B)
@@ -7034,6 +7035,7 @@ function makeFromAstResolver(
         funcName: STANDALONE_REGEXP_CARRIER_TEST_HELPER,
       };
     },
+    classStaticFieldStorage: (owner, field) => resolveIrClassStaticFieldStorage(ctx, owner, field), // (#7233)
     staticNumericArrayRead(expression: ts.Expression, expected: IrType) {
       if (
         !supportsBackendCapability("legacy-numeric-array-global") ||

@@ -70,6 +70,7 @@ import { privateMemberMangledName, type IrClassId, type IrUnitId } from "./ident
 import {
   classNameIsAmbiguous,
   privateNameReadsNonField,
+  staticPrivateFieldOwner,
   staticPrivateThisCallClassName,
 } from "./private-member-syntax.js";
 import {
@@ -4633,9 +4634,13 @@ function isPhase1StatementListInScope(
         if (!moduleExternPropertyWriteIsProven(s.expression.left, s.expression.right)) {
           return shapeNo("nontail-module-extern-assign-value", s.expression.right);
         }
-        if (!preflightClassPropertyWrite(s.expression.left, scope)) return false;
-        if (!isPhase1Expr(s.expression.left.expression, scope, localClasses))
-          return shapeNo("nontail-assign-recv", s.expression.left.expression);
+        if (staticPrivateFieldOwner(s.expression.left) !== undefined) {
+          if (!staticPrivateFieldReceiverIsAdmitted(s.expression.left, scope, localClasses)) return false; // (#7233)
+        } else {
+          if (!preflightClassPropertyWrite(s.expression.left, scope)) return false;
+          if (!isPhase1Expr(s.expression.left.expression, scope, localClasses))
+            return shapeNo("nontail-assign-recv", s.expression.left.expression);
+        }
         // RHS: any Phase-1 expression.
         if (!isPhase1Expr(s.expression.right, scope, localClasses))
           return shapeNo("nontail-assign-rhs", s.expression.right);
@@ -5979,6 +5984,12 @@ function isPhase1BodyStatement(
           }
           if (!moduleExternPropertyWriteIsProven(stmt.expression.left, stmt.expression.right)) {
             return shapeNo("body-module-extern-assign-value", stmt.expression.right);
+          }
+          if (staticPrivateFieldOwner(stmt.expression.left) !== undefined) {
+            return (
+              staticPrivateFieldReceiverIsAdmitted(stmt.expression.left, scope, localClasses) &&
+              isPhase1Expr(stmt.expression.right, scope, localClasses)
+            ); // (#7233)
           }
           if (!preflightClassPropertyWrite(stmt.expression.left, scope)) return false;
           if (!isPhase1Expr(stmt.expression.left.expression, scope, localClasses)) return false;
@@ -9746,6 +9757,23 @@ function classAccessorMayProject(
   );
 }
 
+/**
+ * (#7233) The receiver of a static-private-field access (`staticPrivateFieldOwner`):
+ * `this` in the owner's static method, or the unshadowed owner class name.
+ */
+function staticPrivateFieldReceiverIsAdmitted(
+  expr: ts.PropertyAccessExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const receiver = expr.expression;
+  if (!ts.isIdentifier(receiver)) return true;
+  return (
+    (localClassValueIsUnshadowed(receiver.text, scope) && localClasses.has(receiver.text)) ||
+    shapeNo("expr-static-private-field-receiver", expr)
+  );
+}
+
 /** Mirror the builder's declaration-order class-shape dependency. */
 export function localClassHasKnownProjectionGap(className: string): boolean {
   const exactShapes = currentSelectionOptions?.projectedClassShapes;
@@ -12431,6 +12459,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           return capabilityNo("class-method-virtual", "expr-class-getter-virtual", expr);
         }
       }
+    } else if (staticPrivateFieldOwner(expr) !== undefined) {
+      return staticPrivateFieldReceiverIsAdmitted(expr, scope, localClasses); // (#7233)
     } else if (privateNameReadsNonField(expr.name)) {
       return capabilityNo("class-member-unsupported", "expr-private-nonfield-read", expr);
     }
