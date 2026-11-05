@@ -222,7 +222,7 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
   // implementation on WasmGC: standalone, the JavaScript environment with or
   // without ambient host imports (S7-b moved strict gc onto it), and WASI
   // (S7-c). What WASI lacks is an environment, not semantics — its fd/proc
-  // capabilities key on `ctx.wasi`, the runtime-eval provider on
+  // capabilities key on the WASI environment, the runtime-eval provider on
   // `runtimeEvalProviderLinkable`. The linear backend keeps its own lowering.
   const nativeRegime = backend === "wasmgc";
 

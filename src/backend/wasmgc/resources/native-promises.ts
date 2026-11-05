@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { createNativePromiseShape } from "../../../runtime/wasmgc/promise/promise-layout.js";
 
 import type { Instr, ValType } from "../../../wasm/model/instructions.js";
 import type { TypeDef } from "../../../wasm/model/module-records.js";
@@ -131,17 +132,7 @@ export function declareNativePromiseResources(
   fn("queue:grow", "__microtask_grow", { params: [I32], results: [] });
   fn("queue:enqueue", "__microtask_enqueue", { params: [{ kind: "funcref" }, EXTERN, EXTERN], results: [] });
   fn("queue:drain", "__drain_microtasks", { params: [], results: [] });
-  type("carrier", {
-    kind: "struct",
-    name: "$Promise",
-    fields: [
-      { name: "state", type: I32, mutable: true },
-      { name: "value", type: EXTERN, mutable: true },
-      { name: "callbacks", type: EXTERN, mutable: true },
-      { name: "$bag", type: EXTERN, mutable: true },
-      { name: "$handled", type: I32, mutable: true },
-    ],
-  });
+  type("carrier", createNativePromiseShape());
   type("callback", {
     kind: "struct",
     name: "$PromiseCallback",

@@ -47,6 +47,7 @@ import {
   nestedOrdinaryClassBodyHasAccessor,
   nestedOrdinaryClassBodyHasNestedExecutable,
   nestedOrdinaryClassLexicalBindingName,
+  dynamicDescriptorAbiEvidence,
 } from "./class-accessor-safety.js";
 import {
   assessIrImplicitConstructorSubject,
@@ -1355,7 +1356,17 @@ export function planIrCompilationByIdentity(
           if (trackFallbacks) reasons.set(unit.unitId, "class-projection-unsupported");
           continue;
         }
-        const claimableUnderParent = isStaticMethod ? !referencesSuper(member) : parentIsLocal;
+        // (#7241) A flat `extends <lib interface>` shape (legacy root struct)
+        // admits its own `super`-free instance methods; the constructor and
+        // accessors stay legacy.
+        const libInterfaceRootMethod =
+          !nestedClass &&
+          ts.isMethodDeclaration(member) &&
+          (exactClassShape ?? options.projectedClassShapes?.get(className))?.libInterfaceRoot === true &&
+          !referencesSuper(member);
+        const claimableUnderParent = isStaticMethod
+          ? !referencesSuper(member)
+          : parentIsLocal || libInterfaceRootMethod;
         if (hasParent && !claimableUnderParent) {
           if (trackFallbacks) reasons.set(unit.unitId, "class-method");
           continue;
@@ -1385,7 +1396,7 @@ export function planIrCompilationByIdentity(
           helperTypes,
           localClasses,
           true,
-          exactAccessorEvidence,
+          exactAccessorEvidence ?? dynamicDescriptorAbiEvidence(member, exactMemberDescriptor), // (#7223)
         );
         if (assessment.reason === null) {
           if (boundedAccessorClass || boundedNestedOrdinaryClass) pendingBoundedClassClaims.set(unit.unitId, unit);

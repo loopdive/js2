@@ -2,9 +2,9 @@
 id: 6979
 title: "S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators"
 status: in-progress
-assignee: ttraenkler/opus-s7c-collapse-arms
+assignee: ttraenkler/opus-s7-stack-remerge
 created: 2026-10-14
-updated: 2026-10-25
+updated: 2026-11-05
 priority: high
 horizon: xl
 feasibility: hard
@@ -810,15 +810,59 @@ be filed against #5385, the allocator was unreachable from this sandbox):
 - A function-constructor instance returned across the export boundary marshals
   to `{}` through `wrapExports` on the regime (`ast.type` reads `undefined`).
 
-Pre-existing reds left alone (red on main tip `7527a91ce5` with main's own copy
-of each file, same failing rows): 12 touched files, 25 rows, all host-lane unit
-tests on bare codegen contexts or byte/ABI pins (`issue-2949-s5-0/1/2/3/5`,
-`issue-2949-slice3`, `issue-3521-fast-mixed-signature-admission`,
-`issue-3521-prepared-free-function-routing`, `issue-3526-callable-boundary-callback`,
-`issue-3526-string-boundary-concat-many`, `issue-1183`, `native-strings-standalone`).
+Touched root test files made green (2026-10-25, fix-on-touch for the `quality`
+changed-root gate; all 57 touched files pass, 715 tests). The 27 failing rows in
+12 files were red on main `7cc5d52322` too:
+- **Re-pinned to the regime:** `issue-1183` (Set built in-module), `native-strings-standalone`
+  (default profile uses native strings), `issue-2949-s5-2` (externref carrier calls
+  `__extern_strict_eq`/`__extern_loose_eq`), `issue-2949-s5-3` (externref ToNumber is the
+  legacy `emitToNumber` ladder), `issue-3526-callable` (no host `__make_callback` maker),
+  `issue-3526-string` (default gc batch policy `off`), `issue-3521-prepared` (late owner
+  no longer imports `__extern_is_undefined`; standalone wrapper delta 119 → 0, also 0 on main).
+- **Deleted with a `#6979` comment (tested only the host-assisted lane):** the six
+  `issue-2949` "host runtime" execution describes; the `issue-3526-string` census
+  gc-host byte pins, async five-part host arm and host-lane string-param row.
+- **Inverted sentinels (`it.fails`), regime gaps, to be filed against #5385:** an arrow
+  callback crossing to JavaScript is constructible (`issue-3526-callable`); an exported
+  `(value: any = "A")` does not take its default when JavaScript omits the argument
+  (`issue-3521-prepared`).
+- **Inverted sentinels, red on main and unrelated to S7-a, need an owner:** three
+  `issue-3521-prepared` IR route-audit rows (source-local receipt lookup 576 > 24,
+  implicit-any ABI overlay, function-value caller read) and the `issue-3521-fast`
+  `anyTrue` (boolean[] ABI binding) and fast-vs-native vector byte-convergence rows.
 Not touched here: `issue-5226`, `issue-5247`, `issue-5363` (also red on main).
 
 - **IR-only readiness re-bank (2026-10-24, stakeholder decision):** `scripts/ir-only-baseline.json` single-host lane re-measured under the regime (38/0 → 26/12) because its basis profile `host-assisted` no longer exists; the 12 legacy units are #7103, which ratchets the lane back. Decided by the stakeholder on 2026-10-24 after the lead presented re-bank vs land-#7103-first.
+  **Waiver confirmed by the stakeholder on 2026-10-25** ("accept the waiver,
+  release #6899"), after the round-2 review of #6899 tabulated the 12 units
+  and reproduced the loss on main with only the profile line removed.
+
+- **Differential-test harness + baseline re-bank (2026-10-26, stakeholder decision**
+  "Testaufbau reparieren und die Baseline neu festschreiben"**):** S7-a removes the
+  `host-assisted` pin in `scripts/diff-test.ts`, so the 120-program Node-host corpus now
+  runs on the default native-first gc profile. The harness now drains the module's own
+  native Promise job queue (`__drain_microtasks`, looped on `__microtasks_pending`,
+  interleaved with host timer ticks, bounded at 10 000 rounds — exhaustion is a
+  `runtime_error`, never a pass). Without it `07-promise-basic`, `08-promise-chain`,
+  `09-async-await` printed nothing; with it they match. The other six native-first gaps
+  from the first #6899 merge-queue failure were fixed on main by #7145–#7150.
+  `benchmarks/results/diff-test-baseline.json` re-banked to the native-first lane with
+  `diff-test-gate.ts --update`: 116/120 → 117/120 (`generators/06-closure-state` mismatch
+  → match; `generators/04-sent-values` runtime_error → compile_error). Remaining
+  non-matches, all already failing in the old host-lane baseline:
+  - `builtins/14-spread-args.js` — runtime_error (`WebAssembly.Exception`) on
+    `sum(...[10,20,30])` with a rest-param `reduce`; open tracker #2797.
+  - `generators/04-sent-values.js` — compile_error, `join` not on
+    `number | any[] | "ready"` (sent value typed as the yield union); #3710 (blocked).
+  - `object/06-delete.js` — `o.a` after `delete o.a` prints `NaN`, not `undefined`.
+    Its trackers (#2787, #2796, #2130) are all `done`; no open tracker exists, so it
+    needs an id (not allocated here).
+  The optimize-lane gate (`scripts/diff-test-optimize-gate.ts`, same job) passes on
+  Node 24, which CI runs: all 120 rows behave identically with and without
+  `optimize: true`. On Node 22 only, `builtins/10-error-classes`, `control/07-try-catch`
+  and `builtins/09-async-await` trap `unreachable` in the optimized binary — a V8 12.4
+  bug (Node 23.11/24/25 run the same modules correctly), tracked as #7168 and fixed
+  separately in PR #6929.
 
 ### S7-b landing (2026-10-20)
 
@@ -978,6 +1022,82 @@ identically on the S7-a head. I also ran main's 54 test files changed in the
 range: 22 rows fail on S7-b (`issue-1102`, `2960`, `3519`, `5164`,
 `7106-prophelper`, `7106-s3a`), and every one also fails on the S7-a head.
 
+**S7-b re-merge (2026-11-05, `opus-s7b-remerge2`).** S7-a landed on main as PR
+#6899 (`c0532dafc0`). The S7-b head `8a081af2c3` was merged with
+`upstream/main` `a3a9564345` (~1,250 commits) as `6a072e0a68`. Main changed
+none of `src/host-import-policy.ts`, `src/runtime.ts` and
+`src/target-profile.ts` past the old S7-a head. Five conflicts:
+- `src/codegen/array-method-value.ts` (S7-b deleted, main modified): main's
+  #4765 added the native `arrayLibMethodSpecLength`, which
+  `property-access-dispatch.ts` imports. The file is kept with only that
+  function. The host `__array_proto_method` value intercept stays deleted. Its
+  `compiler-boundaries.json` entry is restored.
+- `src/codegen/class-bodies.ts`: main's #7215 `storeOwnField` and the
+  parameter-property initializers are kept. The externref-backed host
+  DefineField call (`emitExternrefFields`) stays deleted.
+- `src/codegen/dyn-ops.ts`, `statements/nested-declarations.ts`: import unions.
+  `stringConstantExternrefInstrs` and `noJsHost` are dropped because only
+  deleted host arms used them.
+- This file: main's S7-a waiver and diff-test paragraphs go at the end of the
+  S7-a section. The S7-b sections are kept.
+
+Fixes beyond the conflict markers:
+- **`eager-generator-buffer` regime gap closed.** Main's #7010 made a
+  generator shape the native lowering declines a compile error
+  (`generator-no-host-free-lowering`) on the native regime. The gap's probe no
+  longer compiles, so `check:host-import-policy` refused it. The family is
+  removed from `REGIME_GAP_FAMILIES` (now empty), the classifier and the name
+  ceiling. The probe is pinned as a refusal. `__gen_*` and
+  `__create_*generator` now classify `unknown`. `issue-4401` is re-pinned. A
+  sweep of 11 generator shapes (gc and standalone) emits no `__gen_*` import.
+- **`for (x[k] in o)` / `for ([x.y] of a)` targets.** `emitForInMemberTargetWrite`
+  (loops.ts) and the two for-of destructuring `ensureExternSet` helpers added a
+  raw `env::__extern_set` import, which skipped the late-import chokepoint. On
+  S7-b that import is retired, so main's new #7164 `forInElem` rows were a
+  compile error on gc, standalone and wasi. On main they were a leaked
+  `legacy-semantic` import, even on standalone. They now go through
+  `ensureLateImport`, which resolves to the native object runtime's defined
+  `__extern_set`. `issue-7164` passes: 1,131/1,131.
+
+Gates on the merged tree (follow-up commit included): tsc (ts7) 0, Biome 0,
+Prettier clean. Host-import policy: 33 probes, 452 imports, 0 regime-gap, 0
+unknown. IR fallbacks OK. `check:ir-only --policy=hybrid` READY, with
+single-host 26/12 and standalone 38/0. The compiler-boundaries inventory is
+valid. The ratchet chain and import cycles are OK with
+`LOC_GATE_BASE=a3a9564345` (net −12,666 LOC). No new grants. Equivalence gate:
+`20 failing, 4568 passing, 22 known-failures`, "No new equivalence
+regressions". Two baseline failures now pass (`delete-sentinel`,
+`reflect-api`), the same as main.
+
+Byte-neutrality against `upstream/main` `a3a9564345`: every `compile` call the
+equivalence suite makes was recorded and replayed in both trees. That gives
+6,859 distinct programs (gc 3,400, standalone 1,903, wasi 1,556), and 6,523 are
+identical. The 331 that differ were recompiled in a fresh process per tree:
+- 316 differ only in renumbered indices. binaryen WAT is identical once each
+  number is mapped one-to-one, which is type-section order.
+- 2 have identical WAT.
+- 3 are the `forInElem` rows: main's `env::__extern_set` import becomes the
+  native helper.
+- 10 are wasi #7164 `Array.of(...g)` / `Array.from` rows. Main converts a
+  `ref.null.extern` placeholder from the retired host path into a vec. S7-b
+  passes `ref.null` directly. Both give the same value, and the rows are
+  `wrong` in the sweep base.
+
+Five more wasi #7164 programs fail on both trees with different diagnostics.
+Main gives a clean strict-mode refusal of `env::__js_array_new`. S7-b records
+the `Array.of` "no native lowering (#6979)" error, a speculative caller rolls
+it back, and the module then fails validation. Making the refusal sticky or
+thrown also fails programs that compile on main, so it is left as is and
+needs its own fix.
+
+Fix-on-touch: the touched test files plus the 15 `--pinned` files give 517
+passing and 9 failing. All 9 fail identically on `upstream/main` (run from an
+`upstream/main` source tree): `issue-3518-host-async-imports` ×2,
+`issue-4577-standalone-calendar-retirement` ×3, `issue-6474-linked-script-goal`
+×3, and `issue-4397` "DataView … caller-owned views" (`getUint8 is not a
+function`). `issue-3518-program-codec-replay` timed out once under load and
+passes alone (27/27).
+
 ### S7-c landing (2026-10-25)
 
 Carried forward by `opus-s7c-collapse-arms` (claim `6979:s7c`). The S7-c
@@ -1090,3 +1210,79 @@ explicit off" ×1, `4371` ×1, `4617` ×2, `4618-host-class-ctor-bridge` ×3,
 a host lane that S7-b already removed (`standalone: false` contexts, the
 host-assisted gc lane, host string constants). They belong to the S7-d test
 re-pin, not to this slice. No test was re-pinned or skipped here.
+
+**S7-c re-merge (2026-11-05, `opus-s7-stack-remerge`).** The S7-c head
+`be0532b78c` was merged with the re-merged S7-b head `8e3affde7a` (PR 6705,
+which carries `upstream/main` `a3a9564345`). 15 conflicts:
+- `scripts/check-standalone-arms.mjs`, `scripts/standalone-arms-baseline.json`:
+  main landed its own ratchet (#7143 A1: change-scoped, net per token, four
+  tokens, CI-wired). Main's script and baseline are kept. S7-c's script, its
+  test `tests/issue-6979-standalone-arms-ratchet.test.ts`, its duplicate
+  `ci.yml` step and its duplicate `package.json` key are dropped. S7-c's
+  post-merge banking step in `test262-sharded.yml` stays (main's script has
+  the same `--update-on-decrease`). The baseline was lowered by that flag,
+  not by hand.
+- Main's new regime readers were folded as S7-c folded its own (`ctx.standalone`
+  and `noJsHost(ctx)` are constant-true on WasmGC): `array-methods.ts` (three
+  #7164 `addUnionImports` + native helper sites, the #4765 `hostIncludes`),
+  `binary-ops-in.ts` (#7150 keeps the externref copy for the native
+  private-`in` guard; the `__extern_is_object` host branch goes; #7216 route
+  kept), `object-assign-primitive-operands.ts` (#7155 kept),
+  `proxy-own-keys-surfaces.ts`, `object-runtime*.ts`, `index.ts` (#7127 and
+  #7106 options kept), `ir/integration.ts` (main's #7106 wrapper families kept,
+  their regime conjuncts and host-lane throws folded).
+- `closures.ts`, `declarations/import-collector.ts`, `registry/imports.ts`:
+  main's #7010 deleted the host eager-buffer fallback. `addGeneratorImports`
+  keeps its signature with an empty body (every caller was already a no-op).
+  The #6781 abrupt-resumption report (`reportEagerGeneratorAbruptResumptions`)
+  folded to an empty body and is deleted with its call site and its private
+  tracer; `generator-eager-refusal.ts` keeps main's native
+  `refuseEagerGeneratorBuffer`.
+- `array-length-define.ts`: import union (main's #7164 code needs
+  `compileExpression`).
+- Outside the markers: the 8 hits main added since 10-24
+  (`array/array-sort-value.ts`, `binary-ops-typed-dispatch.ts`,
+  `class-arm-tag-guard.ts`, `object-model/object-assign-array-source.ts`,
+  `ir/prepared-dynamic-support.ts`, `native-addition.ts`, one comment in
+  `binary-ops.ts`) were folded. `assertNativeRegime` now reads
+  `targetProfile.nativeRegime` and a `target-profile.ts` comment was
+  reworded, so the whole-tree `--all` audit passes as well.
+
+Hits (S7-c's own count, occurrences of `ctx.standalone`): 711 at S7-c, 719
+after the merge, 707 now. Main's ratchet (lines per token):
+`ctx.standalone` 707, `!ctx.standalone` 283, `noJsHost(` 247, `ctx.wasi` 441.
+
+Byte identity, corpus as above (2,566 programs this time), merged tree
+against the S7-b head: gc 0 and standalone 0 differences. WASI (the flip):
+1,668 binaries change, 40 programs that failed now compile, 0 compiled
+programs now fail; 0 programs gain a non-WASI import, 48 lose one
+(`env.__make_getter_callback` 40, `env.__dynamic_import` 8), the same as at
+the S7-c landing.
+
+**WASI re-pins (#6979).** Main's #7164, #7216 and #7241 tests, written after
+S7-c branched, pin WASI to its pre-regime answers. On the merged
+tree 61 WASI rows broke the equivalence gate. 42 were known-gap `it.fails`
+rows that now match node. The other 19 now give standalone's answer, including
+its pinned gaps (#7170 present-undefined, the `restSuper` leak, the two
+length-update rows that trap on gc and standalone on origin/main too, the
+Iterator-subclass module-init throw). The tests now look up WASI's pins as
+standalone's (`pinLane` in `issue-7164-externref-vec-length-growth`,
+`ITERATOR_LEGACY_THROW` and the ListFormat expectation in `issue-7241`). The
+`({z:1} as any) as A` row in `issue-7216` ran on WASI only and now traps there
+as on gc and standalone, so it is deleted. With those pins every row in the
+three files passes (1,174), so WASI and standalone agree on all of them.
+
+Gates on the merged tree: tsc (ts7) 0, Biome 0, Prettier clean.
+`check:standalone-arms` OK (default and `--all`). Host-import policy: 33
+probes, 452 imports, 0 regime-gap, 0 unknown; accelerators regexp 4 / date 1 /
+intl 4. `check:ir-fallbacks` OK. `check:ir-only --policy=hybrid` READY. The
+compiler-boundaries inventory is valid. The ratchet chain and import cycles
+are OK with `LOC_GATE_BASE` = `upstream/main` `0b57f4a5c3` (net −19,723 LOC).
+No new grants. Equivalence gate: 20 failing, 4,567 passing, "No new equivalence
+regressions" (`delete-sentinel` and `reflect-api` newly pass, as on S7-b).
+Tests: the 15 `--pinned` files plus the 11 issue files main's folded code
+belongs to (`6781`, `6979-strict-gc`, `7010`, `7106-prophelper-*`, `7143-*`,
+`7150`, `7155`): 421 passing, 15 failing. All 15 fail identically on the S7-b
+head (`issue-6781` ×13: a JS-host-lane receipt for a report that is already a
+no-op there; `7106-prophelper-gopd-alias` ×1 and `7150` "host-assisted" ×1:
+host-assisted gc lane).

@@ -51,6 +51,7 @@ import { ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
 import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
 import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
+import { aliasedModuleGlobalVecType } from "./declarations/module-global-vec-alias.js"; // (#7166)
 import { isExpressionRootedAssignmentTarget } from "./declarations/expression-rooted-assignment-target.js"; // (#6651) `f(o).p = v`
 import {
   ASYNC_CPS_ENABLED,
@@ -145,11 +146,7 @@ import { emitNativeParseNumber } from "./parse-number-native.js";
 import { emitNativeUriDecode, emitNativeUriEncode } from "./uri-encoding-native.js";
 import { emitNativeEscape, emitNativeUnescape } from "./escape-native.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
-import {
-  isNativeGeneratorCandidate,
-  registerNativeGenerator,
-  sourceNeedsGeneratorHostImports,
-} from "./generators-native.js";
+import { isNativeGeneratorCandidate, registerNativeGenerator } from "./generators-native.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "./registry/error-types.js";
 import { addImport, addStringConstantGlobal, localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
 import {
@@ -194,12 +191,8 @@ import {
   planModuleClosurePreLift,
   PRELIFT_DISABLE_SEAM,
 } from "./declarations/module-init-closure-prelift.js";
-import {
-  MODULE_INIT_CHUNK_MAX_ENTRIES,
-  moduleInitChunksRequired,
-  planModuleInitChunks,
-  reserveModuleInitChunkHelperName,
-} from "./module-init-chunks.js";
+import { dispatchModuleInitChunks, emitModuleInitChunk } from "./module-init-chunks.js";
+import { moduleInitChunksRequired, planModuleInitChunks } from "../shared/module-init-chunk-plan.js";
 import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js"; // (#7106) GDI prologue
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
@@ -3312,7 +3305,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // otherwise local→global sync either loses identity or emits a
         // mismatched global.set.
         const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
-        registerModuleGlobal(ctx, element.name.text, wasmType);
+        registerModuleGlobal(ctx, element.name.text, wasmType, element);
         if (lexical && ctx.moduleGlobals.has(element.name.text)) registerModulePatternTdzGlobal(ctx, element);
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         registerBindingNames(element.name, lexical);
@@ -3664,6 +3657,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // its vec slot but widens the ELEMENT type — a boxed carrier would preserve
     // `x[0]`'s identity and lose `x.length`.
     return (
+      aliasedModuleGlobalVecType(ctx, decl, (d) => moduleGlobalWasmType(d, moduleVarDeclType(d))) ?? // (#7166) `const r = keys.sort()` shares `keys`' slot
       rebindWidenedArrayVecType(ctx, sourceFile, decl) ??
       heterogeneousWidenedModuleGlobalType(ctx, sourceFile, decl) ??
       // (#4491 wave-5 T4) `var x = true; … var x = function () {}` is ONE
@@ -5929,43 +5923,6 @@ export function compileDeclarations(
     };
   }
 
-  /**
-   * Keep the public initializer a compact dispatcher even for a graph with so
-   * many chunks that one direct call per chunk would itself become a large
-   * Cranelift body. Every intermediate node stays private and `[] -> []`.
-   */
-  function appendModuleInitChunkDispatch(
-    initFctx: FunctionContext,
-    initialHandles: readonly FuncHandle[],
-    helperTypeIdx: number,
-  ): void {
-    let handles = [...initialHandles];
-    let level = 0;
-    let ordinal = 0;
-    while (handles.length > MODULE_INIT_CHUNK_MAX_ENTRIES) {
-      const nextLevel: FuncHandle[] = [];
-      for (let start = 0; start < handles.length; start += MODULE_INIT_CHUNK_MAX_ENTRIES) {
-        const body: Instr[] = handles
-          .slice(start, start + MODULE_INIT_CHUNK_MAX_ENTRIES)
-          .map((funcIdx) => ({ op: "call", funcIdx }));
-        // Build the full body before minting the handle. This keeps the helper
-        // safe even if a future dispatch-body extension emits dependencies.
-        const funcIdx = mintDefinedFunc(ctx);
-        pushDefinedFunc(ctx, funcIdx, {
-          name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_dispatch_${level}_${ordinal++}`),
-          typeIdx: helperTypeIdx,
-          locals: [],
-          body,
-          exported: false,
-        });
-        nextLevel.push(funcIdx);
-      }
-      handles = nextLevel;
-      level++;
-    }
-    for (const funcIdx of handles) initFctx.body.push({ op: "call", funcIdx });
-  }
-
   function compileModuleInitBody(
     targetFctx?: FunctionContext,
     includeModuleStatements = true,
@@ -6032,18 +5989,11 @@ export function compileDeclarations(
           // entries above. Only then mint and push this helper's stable handle,
           // so no late helper registration can steal its function slot.
           chunkTypeIdx ??= addFuncType(ctx, [], [], "__module_init_chunk_type");
-          const funcIdx = mintDefinedFunc(ctx);
-          pushDefinedFunc(ctx, funcIdx, {
-            name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_${chunkOrdinal++}`),
-            typeIdx: chunkTypeIdx,
-            locals: chunkFctx.locals,
-            body: chunkFctx.body,
-            exported: false,
-          });
-          chunkHandles.push(funcIdx);
+          const funcIdx = emitModuleInitChunk(ctx, chunkOrdinal++, chunkTypeIdx, chunkFctx);
+          if (funcIdx !== undefined) chunkHandles.push(funcIdx);
         }
         ctx.currentFunc = initFctx;
-        if (chunkTypeIdx !== undefined) appendModuleInitChunkDispatch(initFctx, chunkHandles, chunkTypeIdx);
+        if (chunkTypeIdx !== undefined) dispatchModuleInitChunks(ctx, initFctx.body, chunkHandles, chunkTypeIdx);
       } finally {
         if (!outerBodyWasLive) ctx.liveBodies.delete(initFctx.body);
       }

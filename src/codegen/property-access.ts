@@ -8,7 +8,9 @@
  */
 
 import { ts } from "../ts-api.js";
+import { isAnonymousFunctionDefinition } from "../shared/named-evaluation.js";
 import { builtinSubclassReceiverType } from "./builtin-subclass-receiver.js"; // (#6651 C5) inherited builtin members
+import { memberReceiverStaticType, receiverStaticJsType } from "./declarations/heterogeneous-scalar-var-widening.js"; // (#4495)
 import { carrierNameForAccess } from "./carrier-name-fallback.js"; // (#5187)
 import { isAccessorReceiver } from "./accessor-object-literal.js";
 import {
@@ -614,20 +616,6 @@ export function resolveInheritedStaticProp(
     cls = ctx.classParentMap.get(cls);
   }
   return undefined;
-}
-
-/**
- * ES spec IsAnonymousFunctionDefinition: returns true when the expression is
- * an anonymous FunctionExpression / ArrowFunction / ClassExpression (with
- * optional parentheses around it). Used by NamedEvaluation to decide whether
- * a binding name is assigned to the function's .name. (#1049)
- */
-export function isAnonymousFunctionDefinition(expr: ts.Expression): boolean {
-  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
-  if (ts.isFunctionExpression(expr) && !expr.name) return true;
-  if (ts.isArrowFunction(expr)) return true;
-  if (ts.isClassExpression(expr) && !expr.name) return true;
-  return false;
 }
 
 /**
@@ -2846,10 +2834,13 @@ export function receiverIsNativeStringValType(
  * native-string mode only (host/gc mode's generic `__extern_get`
  * already returns the correct length from the real JS value).
  */
-export function receiverMayBeNativeStringAtRuntime(ctx: CodegenContext, recv: ts.Expression): boolean {
+export function receiverMayBeNativeStringAtRuntime(
+  ctx: CodegenContext,
+  recv: ts.Expression,
+  t: ts.Type = ctx.checker.getTypeAtLocation(recv),
+): boolean {
   if (!(ctx.wasi || ctx.standalone)) return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
-  const t = ctx.checker.getTypeAtLocation(recv);
   return (
     (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
     (t.isUnion() && t.types.some((part) => (part.flags & ts.TypeFlags.StringLike) !== 0))
@@ -3072,16 +3063,15 @@ export function tryEmitDeleteAwareDynamicGet(
   // at RUNTIME works. Reserve the deferred-fill `__get_member_<name>` dispatcher
   // (a HOST-FREE ref.test+struct.get over the complete finalize-time candidate
   // set, with `__extern_get` as its own terminal) and branch on the
-  // `__in_module_init` flag: during init read the slot via the dispatcher (no
-  // exports needed; nothing has been `delete`d yet, so the tombstone is moot), at
-  // runtime keep the tombstone-aware host `__extern_get`. Falls back to the bare
-  // host read when the dispatcher/flag can't be set up (byte-identical legacy).
-  // The `__in_module_init` gate is a gc/host concern only: the host start-section
-  // timing is what breaks `__extern_get`'s struct read at init. WASI/standalone
-  // have no host `__extern_get` (and this whole function is already gated
-  // `!ctx.standalone`); keep WASI on the legacy bare read so `__module_init`'s
-  // lazy-init guard wrap stays untouched.
-  const getMemberIdx = ctx.wasi ? undefined : reserveMemberGetDispatch(ctx, propName, fctx);
+  // `__in_module_init` flag: during nondeferred init read the slot without host
+  // exports; at runtime keep the tombstone-aware host read. Deferred init runs
+  // after the caller binds the genuine Instance, so its reads must use
+  // `__extern_get` even during init to observe earlier deletes (#6878).
+  // Falls back to the bare host read when the dispatcher can't be set up.
+  // This gate is a gc/host concern: start-section timing breaks the host struct
+  // read. Standalone is excluded above; keep WASI on the legacy bare read so
+  // `__module_init`'s lazy-init guard wrap stays untouched.
+  const getMemberIdx = ctx.wasi || ctx.deferTopLevelInit ? undefined : reserveMemberGetDispatch(ctx, propName, fctx);
   addStringConstantGlobal(ctx, propName);
   flushLateImportShifts(ctx, fctx);
 
@@ -4066,7 +4056,7 @@ export function compilePropertyAccess(
   if (linU8Len !== null) return linU8Len;
 
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
-  const objType = builtinSubclassReceiverType(ctx, ctx.checker.getTypeAtLocation(expr.expression), propName); // (#6651 C5)
+  const objType = builtinSubclassReceiverType(ctx, memberReceiverStaticType(ctx, fctx, expr.expression), propName); // (#6651 C5)
 
   // (#6651 F4) proxy receiver → generic `__extern_get`; proxy-receiver-generic-read.ts
   const __f4p = tryProxyReceiverPropertyRead(ctx, fctx, expr, propName);
@@ -5285,9 +5275,9 @@ export function compileElementAccess(
   // string is identity per §7.1.1 step 1, so the wrapper slot-read doubles as
   // a pass-through).
   if (ctx.standalone && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
-    const recvWrapTsType = ctx.checker.getTypeAtLocation(expr.expression);
+    const recvWrapTsType = memberReceiverStaticType(ctx, fctx, expr.expression); // (#4495)
     if (
-      (isStringWrapperType(recvWrapTsType) || ctx.oracle.staticJsTypeOf(expr.expression) === "string") &&
+      (isStringWrapperType(recvWrapTsType) || receiverStaticJsType(ctx, fctx, expr.expression) === "string") &&
       isNumericIndexExpression(ctx, expr.argumentExpression, fctx) &&
       !isObjectAssignPrimitiveResultBinding(ctx, expr.expression) // (#6770 S1) checker type is `T & U`, runtime is ToObject(T)
     ) {
@@ -5313,7 +5303,7 @@ export function compileElementAccess(
     // `moduleUsesDynTaView` deferral are documented in string-element-read.ts.
     if (
       isNumericIndexExpression(ctx, expr.argumentExpression, fctx) &&
-      receiverMayBeNativeStringAtRuntime(ctx, expr.expression)
+      receiverMayBeNativeStringAtRuntime(ctx, expr.expression, recvWrapTsType)
     ) {
       const guarded = emitGuardedNativeStringElementGet(ctx, fctx, expr.expression, expr.argumentExpression);
       if (guarded) {

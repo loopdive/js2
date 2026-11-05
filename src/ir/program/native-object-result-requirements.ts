@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { nativeValueBufferSelected } from "./native-value-definitions.js";
 import { closureSignatureEquals, type IrInstr, type IrInstrCall, type IrType, type IrValueId } from "../core/nodes.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
@@ -246,7 +247,12 @@ function calculate(source: NativeSourceClosureRequirements, access: NativeObject
       const population: { get: number | undefined; resultType: IrType | null }[] = [];
       for (const [occurrence, row] of access.demands.occurrences.entries()) {
         const buffer = access.demands.buffers[row.bufferIndex]!;
-        if (buffer.ownerUnitId !== owner.unitId || buffer.view !== view) continue;
+        if (
+          buffer.ownerUnitId !== owner.unitId ||
+          buffer.view !== view ||
+          !nativeValueBufferSelected(access.demands, buffer)
+        )
+          continue;
         const intent = projectedIntent(row.instruction, types);
         if (!intent) continue;
         const get = intent.value === undefined ? undefined : definitions.get(intent.value);

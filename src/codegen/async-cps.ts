@@ -3653,9 +3653,8 @@ function analyzeAsyncGen(
         // (identifiers, calls, strings, spread elements) keeps the legacy
         // path (correct-or-legacy). This single gate propagates to
         // `isBoundedAsyncGenBody` / `isAwaitFreeAsyncGenBody` /
-        // `isAsyncGenDriveCandidate` / `sourceNeedsGeneratorHostImports`, so
-        // the admitted bodies drop their `__gen_*` host-import leak in
-        // lockstep with the native emit.
+        // `isAsyncGenDriveCandidate`; a rejected body is a #7010 compile
+        // error on host-free builds (`refuseEagerGeneratorBuffer`).
         const src = e.expression;
         if (src !== undefined && ts.isArrayLiteralExpression(src)) {
           for (const el of src.elements) {

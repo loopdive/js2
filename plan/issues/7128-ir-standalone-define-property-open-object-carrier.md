@@ -1,10 +1,11 @@
 ---
 id: 7128
 title: "IR: standalone Object.defineProperty(o, k, d) via an open-object ($Object) carrier for escaping object literals"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-28
+assignee: ttraenkler/opus-7128-s1
 priority: high
 horizon: m
 feasibility: hard
@@ -13,6 +14,24 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 parent: 7106
+# 2026-10-28 (S1): the open-carrier logic lives in its own modules
+# (src/ir/empty-object-literal.ts, src/ir/open-object-carrier.ts,
+# src/codegen/declarations/ir-open-object-binding.ts). What remains in the god-files is the
+# hook each needs: from-ast's define arm extracted into its own function plus the
+# from-ast half of the U1 lowering (it needs lowerExpr / boxConcreteToDynamic),
+# the selection option at the production planning site, and two-line hooks in
+# the selector's subject reset, move-only gate and scan.
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/ir/select.ts::whyNotIrClaimable
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::scanExprInner
+  - src/codegen/index.ts::planIrOverlay
+import-cycles-allow:
+  - largestSccSize: 729 # 2026-10-28, restated 2026-10-30 against main at 728 (#7128 S1): src/codegen/declarations/ir-open-object-binding.ts asks legacy's var-slot typing (statements/variables.ts) and is read by codegen/index.ts, so it joins the SCC exactly as its sibling ir-dynamic-construct.ts does
+  - ir->runtime: 11 # 2026-10-28, restated 2026-10-30 against main at 10 (#7128 S1, review of PR #6957): src/ir/empty-object-literal.ts reads Object.prototype's own keys from runtime/contracts/native-realm-catalog.ts, the pure-data spec catalog ir/program/native-realm-requirements.ts already imports; the alternative is a second hand-written copy of that key list
 ---
 
 # #7128 — IR: standalone `Object.defineProperty` via an open-object carrier
@@ -305,3 +324,183 @@ front of it, so S1 is groundwork and must not be tuned for a pass count.
 - Conformance A/B on the 15.2.3.6-4-* data-descriptor rows
   (`test262/test/built-ins/Object/defineProperty/15.2.3.6-4-326.js` and its
   siblings): zero pass→fail rows on standalone.
+
+## S1 result (2026-10-28, ttraenkler/opus-7128-s1)
+
+**Landed: the function-local half of S1.** Module-init bindings still decline
+(see "Remaining"). Branch `claude/7128-s1-define-property-open-carrier`.
+
+### What the code does
+
+- **Selection** (`src/ir/select.ts` hooks, `src/ir/empty-object-literal.ts`).
+  - An empty literal on an un-annotated identifier binding is admitted when it
+    has no references (#4471, unchanged) or when it is an open carrier.
+  - Open carrier means four things hold:
+    - every same-text reference is U1 or U2;
+    - the literal sits directly in the current subject's own body;
+    - the selection option `isOpenObjectBinding` is present;
+    - that option says legacy keeps the binding an unwidened externref
+      `$Object`.
+  - The option is `src/codegen/declarations/ir-open-object-binding.ts`. It checks
+    `widenedTypeProperties` / `widenedVarStructMap` and legacy's own slot
+    typing (`resolveSpillLocalValType`).
+  - The binding then joins `dynNames`, as a catch binding does. So the
+    move-only scan governs every consumer of `o.k`, and the define call scans
+    as a concrete statement.
+  - On top of that scan, U2 admits only an allow-list of `o.k` consumers and
+    no key `Object.prototype` owns (item 5 below).
+  - The admitted literal is recorded once in a `WeakSet`, which the lowering
+    reads (`admittedEmptyLiteralIsOpenCarrier`); it is not re-derived.
+- **Lowering.**
+  - `src/ir/open-object-carrier.ts` holds the emission.
+  - from-ast's defineProperty arm is now its own function,
+    `lowerObjectDefinePropertyCall`.
+  - The literal becomes `__new_plain_object`, typed raw externref.
+  - The define builds a `$Object` descriptor: `__new_plain_object` plus one
+    `__extern_set` per field in source order, with values boxed by
+    `boxConcreteToDynamic`. It then calls `__obj_define_from_desc`.
+  - A null result throws a TypeError (`__new_TypeError`) with legacy's
+    message.
+  - `o.k` takes the existing #7106 S1c raw-externref arm, `__dyn_member_get`.
+
+### Corrections to the design (measured on main `b6250f09`)
+
+1. **Binding type.**
+   - The binding is raw `irVal(externref)`, not `extern{className:"Object"}`.
+   - An `extern` receiver routes `o.k` into the extern-class arm of
+     `lowerPropertyAccess`.
+   - The raw externref takes the S1c `__dyn_member_get` arm with no from-ast
+     change, so D5 needed no new read arm.
+2. **One define path.**
+   - Every descriptor goes to `__obj_define_from_desc`; the
+     `__defineProperty_value` fast path is not used.
+   - The S1 brief limits the helpers to `__new_plain_object`, `__extern_set`,
+     `__obj_define_from_desc` and `__dyn_member_get`, and one path is less
+     code. Legacy's static expansion reaches the same store.
+   - One more existing helper is used: `__new_TypeError` (the IR already uses
+     it in `native-in.ts`). The rejection is reachable within U1 alone:
+     redefining a non-configurable property throws, and the test covers it.
+3. **No `objectDefinePropertyNativeTarget` resolver method.**
+   - On a lane with no host define helper, from-ast lowers the certified U1
+     define through `irRuntimeFuncRef("__obj_define_from_desc")`, the same way
+     it reaches `__extern_set`.
+   - A lane gate in `integration.ts` would add a new `ir → codegen` import,
+     which the `check:ir-layering` ratchet refuses.
+   - The only gate is the selection option. It is set at the production
+     planning site in `codegen/index.ts`, and is absent from the compatibility
+     planning site in `integration.ts`.
+4. **The gc gate is the raw target.**
+   - The IR capability profile projects the native-regime gc lane to
+     `target: "standalone"` (`projectIrBackendTargetProfile`), so no backend
+     capability can tell gc from standalone.
+   - The option is present only when `ctx.targetProfile.target ===
+     "standalone" && !ctx.fast`.
+   - Review nit 6 (PR #6957) asked for a named capability instead. None
+     fits: every `IrBackendTargetCapability` is answered from that projected
+     profile, so a new one would switch the arm on for native-regime gc,
+     whose A/B has not run (gc output must stay byte-identical). The token
+     `ctx.standalone` is the native regime, which is true on gc as well. The
+     raw `CompileTargetProfile.target` is the only spelling that keeps gc
+     declining. When the gc lane gets its own A/B, the check becomes a
+     registry capability.
+5. **Narrower U1 and U2 than D1.**
+   - U1 must be an expression statement, because a used result would alias
+     the carrier.
+   - U2 admits a read `o.k` only where it is consumed DIRECTLY: one side of a
+     strict `===`/`!==` whose other side is a primitive literal, `null` or
+     the global `undefined` (review round 3, PR #6957). Round 4 found that the
+     `undefined` operand was matched by spelling alone:
+     `var undefined = { y: 1 }; … o.x === undefined` was claimed and then
+     demoted ("matching operand types for '==='"). Now any `undefined`
+     identifier in a `name` slot anywhere in the file refuses it. Rounds 1 and 2 used a wider
+     allow-list, and each round found a new failing shape in it:
+     - ToBoolean, `o.k.y` and `o.k?.y` (round 1);
+     - loose `== null` and `switch` through an alias (round 2);
+     - an alias `var y = o.k` passing the value on to `y.z` / `y?.z`, which
+       miscompiled, and `- * / %` with a string or boolean operand, which
+       demoted after the claim (round 3).
+     So every alias (`var y = o.k`, `y = o.k`, `return`, `throw`) and every
+     arithmetic, relational, loose-equality, ToBoolean, member, element and
+     non-null consumer now keeps the function on legacy, which is correct by
+     construction. A read used as a bare statement is refused by the scan
+     anyway.
+   - U2 also refuses a key that `Object.prototype` owns (taken from
+     `NATIVE_REALM_CATALOG`). `__dyn_member_get` on the open `$Object`
+     answers undefined for an inherited key, so `var t = o.valueOf; t ? 1 : 0`
+     gave 0 under the IR (legacy and node: 1), even though a `var` initializer
+     is an allowed consumer.
+   - `+` is not on the allow-list. The move-only scan admits
+     `<dynamic> + v`, and from-ast then demotes it ("operands not provably
+     both-number or both-string"). This gap predates S1: on main,
+     `function g(p) { return p.x + 1 === 4 ? 1 : 0; }` claims and then
+     demotes. **No tracking issue exists for this gap yet**; it is named here
+     until one is filed.
+   - Two siblings of that gap are now closed in the shared dynamic-value scan
+     (round-2 review, PR #6957), on both lanes and for dynamic parameters
+     too: a `null` operand is buildable only under strict equality (loose
+     `<dynamic> == null` demoted post-claim), and a dynamic `switch`
+     discriminant is refused (it demoted with "switch disc must lower to
+     i32/f64"). Both reached the carrier through `o.k == null` and through
+     the `var v = o.k` alias.
+   - **Still open, predates S1:** a catch binding compared loosely with null,
+     `try { throw null } catch (e) { return e == null ? 1 : 0 }`, claims and
+     demotes (`nullish-value-unsupported`) on base and head. The catch
+     binding takes a different scan route from the dynamic-value one fixed
+     above. No tracking issue exists yet.
+   - Descriptor values are number, string and boolean literals only;
+     `undefined` and `null` are deferred.
+6. **The admission is per subject.**
+   - The open-carrier names are reset at each subject's start.
+   - Both the literal arm and the define arm require the subject's own body:
+     `enclosingProjectionOwner(...) === currentSelectionSubject`.
+   - So a closure's or module-init's carrier is never admitted by text.
+
+### Measurements
+
+| Check | Result |
+| --- | --- |
+| `tests/issue-7128-define-property-open-carrier.test.ts` | 28/28 pass, exit 0. Covers claim plus IR = legacy = node on 12 shapes; 14 refused use kinds staying on legacy with no post-claim error; module-init declining; gc declining with gc IR-on binary = IR-off binary. |
+| Ad-hoc battery (`.tmp/battery.mts`, 50 shapes, `.ts` and `.js`) | IR value = legacy value on every shape; 0 post-claim errors. |
+| gc byte identity, base `b6250f09` vs head | 427/427 gc binaries identical. Inputs: 50 battery sources plus the 378 data-descriptor rows run through `wrapTest`, all compiled with `experimentalIR` on. One source, the `.js` annotated case, fails to compile on both sides. |
+| Standalone conformance A/B, 378 rows (`15.2.3.6-4-*`, no `get:`/`set:`) | base 371 pass / 7 fail, head 371 pass / 7 fail, **0 pass→fail, 0 status changes**. Expected: every row is a script body, so its define runs in module-init, which S1 does not claim. |
+| Equivalence files touching defineProperty or objects (12 files) | All pass, exit 0: define-property-typeerror, empty-object-widening, numeric-key-object, object-create, object-define-property{,-accessors,-extended,-return}, object-keys, object-mutability, object-literal-getters-setters, object-to-primitive. |
+| Gate chain (`LOC_GATE_BASE=origin/main`) | All exit 0. LOC and func growth are granted above. `largestSccSize` 724→725 is granted: the new codegen query joins the SCC as its sibling `ir-dynamic-construct.ts` does. `check:ir-fallbacks` shows no unintended or post-claim increase. |
+
+Review round (PR #6957, 2026-10-28, base `origin/main` merged in):
+
+| Check | Result |
+| --- | --- |
+| PR test file + 14 `tests/equivalence/*{define-property,object}*` files | 15 files, 131/131 pass. The PR file has 44 tests: 14 claimed shapes = node, 24 refused shapes (incl. every review repro) on legacy with no post-claim error, plus the non-null, returned-read, annotated, module-init and gc cases. |
+| gc byte identity vs `origin/main` | 37/37 identical (13 playground examples + 24 hand-written programs, incl. every review repro). Standalone: the 9 allow-listed programs differ, the other 28 are identical. |
+| Standalone A/B, the 378 rows | base 371/7, head 371/7, 0 pass→fail, 0 status changes. |
+| Gate chain, `LOC_GATE_BASE=origin/main` | 11/11 exit 0, with one new grant: `ir->runtime: 10` (the catalog import). |
+
+Commands:
+
+```bash
+npx vitest run tests/issue-7128-define-property-open-carrier.test.ts
+# A/B: base = git worktree of origin/main at .claude/worktrees/base-7128
+#   (node_modules and test262 symlinked in)
+(cd <root> && npx tsx /tmp/claude-0/ab/ab-rows.mts rows.txt)   # runTest262File(..., "standalone") per row
+(cd <root> && npx tsx /tmp/claude-0/ab/gc-bytes.mts)          # sha256 of each gc binary
+for f in <12 files>; do npx vitest run tests/equivalence/$f.test.ts; done
+```
+
+Review round 4 (PR #6957, 2026-10-30, head `00ba5fdf`): the shadowed
+`undefined` fix. Both new refusal controls (object- and number-shadowed
+`undefined`) fail on `00ba5fdf` and pass after the fix. The PR test file passes
+64/64, and the global-`undefined` claimed cases are unchanged.
+
+### Remaining for S1
+
+- **Module-init bindings.** On standalone, `var obj = {}` at top level rejects
+  as `vardecl-var-kind`, and `let`/`const` reject as
+  `vardecl-module-storage-unrepresentable`. The module-binding resolver has no
+  slot kind for an open-`$Object` global.
+- **What it needs.** That resolver kind, U2 reads of a module global inside
+  module-init, and the move-only treatment of module-init. This overlaps
+  #7132 (PR #6866, held), which binds a script `var` to legacy's externref
+  slot. It should land on top of that.
+- **D6(b).** Function-local bindings need no D6 work. The module-scope refusal
+  of bindings referenced by a non-claimed unit stays open with the
+  module-init step.

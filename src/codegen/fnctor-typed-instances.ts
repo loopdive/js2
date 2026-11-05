@@ -41,6 +41,7 @@ import ts from "typescript";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
 import { definedFuncAt } from "./func-space.js";
+import { isAnyStringSlot } from "./native-strings-shared.js";
 import { readEnv } from "../env.js";
 
 /**
@@ -130,19 +131,46 @@ export function legacyPositionCarriesFnctorInstance(
   if (!fnctorTypedInstancesEnabled()) return false;
   if (!ctx.standalone || name === undefined) return false;
   if (ctx.fnctorReservedTypeIdx.size === 0) return false;
-  const funcIdx = ctx.funcMap.get(name);
-  if (funcIdx === undefined) return false;
-  const legacyFunction = definedFuncAt(ctx, funcIdx);
-  if (legacyFunction === undefined) return false;
-  const signature = ctx.mod.types[legacyFunction.typeIdx];
-  if (signature?.kind !== "func") return false;
-  const slot = position === "return" ? signature.results[0] : signature.params[position];
+  const slot = legacySignatureSlot(ctx, name, position);
   if (slot === undefined) return false;
   if (slot.kind !== "ref" && slot.kind !== "ref_null") return false;
   for (const reserved of ctx.fnctorReservedTypeIdx.values()) {
     if (reserved === slot.typeIdx) return true;
   }
   return false;
+}
+
+/**
+ * The registered legacy slot of `name`'s parameter `position` (or its result):
+ * `ctx.funcMap` → `ctx.mod.types`, the artifact the parity guard compares
+ * against. `undefined` when it is not registered (IR-first ordering, bare
+ * selector).
+ */
+function legacySignatureSlot(ctx: CodegenContext, name: string, position: "return" | number): ValType | undefined {
+  const funcIdx = ctx.funcMap.get(name);
+  if (funcIdx === undefined) return undefined;
+  const legacyFunction = definedFuncAt(ctx, funcIdx);
+  if (legacyFunction === undefined) return undefined;
+  const signature = ctx.mod.types[legacyFunction.typeIdx];
+  if (signature?.kind !== "func") return undefined;
+  return position === "return" ? signature.results[0] : signature.params[position];
+}
+
+/** The registered legacy slot of a top-level declaration's parameter. */
+function legacyParamSlot(ctx: CodegenContext, parameter: ts.ParameterDeclaration): ValType | undefined {
+  const owner = parameter.parent;
+  if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return undefined;
+  const index = owner.parameters.indexOf(parameter);
+  return index < 0 ? undefined : legacySignatureSlot(ctx, owner.name.text, index);
+}
+
+/**
+ * (#7106 item 1) Is the registered legacy slot for parameter `index` of the
+ * top-level declaration `name` plain externref? `false` when it is not
+ * registered.
+ */
+export function legacyParamSlotIsExternref(ctx: CodegenContext, parameter: ts.ParameterDeclaration): boolean {
+  return legacyParamSlot(ctx, parameter)?.kind === "externref";
 }
 
 /**
@@ -156,26 +184,6 @@ export function legacyPositionCarriesFnctorInstance(
  * parity is enforced by the hard `abi-type-index-mismatch` invariant, not by
  * this soft pre-claim decline).
  */
-/**
- * (#7106 item 1) Is the registered legacy slot for parameter `index` of the
- * top-level declaration `name` plain externref? Reads `ctx.funcMap` →
- * `ctx.mod.types`, the artifact the parity guard compares against. `false`
- * when the slot is not registered (IR-first ordering, bare selector).
- */
-export function legacyParamSlotIsExternref(ctx: CodegenContext, parameter: ts.ParameterDeclaration): boolean {
-  const owner = parameter.parent;
-  if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return false;
-  const index = owner.parameters.indexOf(parameter);
-  if (index < 0) return false;
-  const funcIdx = ctx.funcMap.get(owner.name.text);
-  if (funcIdx === undefined) return false;
-  const legacyFunction = definedFuncAt(ctx, funcIdx);
-  if (legacyFunction === undefined) return false;
-  const signature = ctx.mod.types[legacyFunction.typeIdx];
-  if (signature?.kind !== "func") return false;
-  return signature.params[index]?.kind === "externref";
-}
-
 export function makeIrDynamicCarrierDivergenceProbe(ctx: CodegenContext): (position: ts.Node) => boolean {
   return (position: ts.Node): boolean => {
     if (ts.isParameter(position)) {
@@ -183,6 +191,14 @@ export function makeIrDynamicCarrierDivergenceProbe(ctx: CodegenContext): (posit
       if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return false;
       const index = owner.parameters.indexOf(position);
       if (index < 0) return false;
+      // (#7119) Off the fast lane the carrier is externref, which the IR
+      // reconciles only with legacy's nullable native-string slot; any other
+      // call-site-inferred reference slot (a vec for `ask([1, 2])`, the
+      // non-null string of `verifyNotEnumerable(o, "x")`) cannot match.
+      const slot = legacyParamSlot(ctx, position);
+      if (!ctx.fast && (slot?.kind === "ref" || slot?.kind === "ref_null")) {
+        if (!(slot.kind === "ref_null" && isAnyStringSlot(ctx, slot))) return true;
+      }
       return legacyPositionCarriesFnctorInstance(ctx, owner.name.text, index);
     }
     if (ts.isFunctionDeclaration(position) && position.name !== undefined) {

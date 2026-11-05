@@ -586,7 +586,7 @@ export function createCodegenContext(
  * profile breaks the invariant instead of silently reviving them.
  */
 function assertNativeRegime(ctx: CodegenContext, targetProfile: CompileTargetProfile): CodegenContext {
-  if (targetProfile.backend === "wasmgc" && !ctx.standalone) {
+  if (targetProfile.backend === "wasmgc" && !targetProfile.nativeRegime) {
     throw new Error(`#6979: WasmGC target '${targetProfile.target}' must lower with the native regime`);
   }
   return ctx;

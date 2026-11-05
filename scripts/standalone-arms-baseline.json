@@ -1,9 +1,100 @@
 {
-  "src": 4,
-  "src/codegen": 676,
-  "src/codegen/analysis": 3,
-  "src/codegen/classes": 16,
-  "src/codegen/context": 5,
-  "src/codegen/helpers": 5,
-  "src/runtime/contracts": 2
+  "total": {
+    "ctx.standalone": 707,
+    "!ctx.standalone": 283,
+    "noJsHost(": 247,
+    "ctx.wasi": 441
+  },
+  "byDir": {
+    ".": {
+      "ctx.standalone": 4,
+      "!ctx.standalone": 0,
+      "noJsHost(": 0,
+      "ctx.wasi": 1
+    },
+    "codegen": {
+      "ctx.standalone": 673,
+      "!ctx.standalone": 269,
+      "noJsHost(": 134,
+      "ctx.wasi": 393
+    },
+    "codegen/analysis": {
+      "ctx.standalone": 3,
+      "!ctx.standalone": 1,
+      "noJsHost(": 0,
+      "ctx.wasi": 3
+    },
+    "codegen/atomics": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 1,
+      "ctx.wasi": 0
+    },
+    "codegen/buffers": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 4,
+      "ctx.wasi": 0
+    },
+    "codegen/classes": {
+      "ctx.standalone": 16,
+      "!ctx.standalone": 12,
+      "noJsHost(": 0,
+      "ctx.wasi": 4
+    },
+    "codegen/closures": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 1,
+      "ctx.wasi": 0
+    },
+    "codegen/context": {
+      "ctx.standalone": 4,
+      "!ctx.standalone": 0,
+      "noJsHost(": 0,
+      "ctx.wasi": 0
+    },
+    "codegen/declarations": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 0,
+      "ctx.wasi": 2
+    },
+    "codegen/expressions": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 104,
+      "ctx.wasi": 27
+    },
+    "codegen/helpers": {
+      "ctx.standalone": 5,
+      "!ctx.standalone": 1,
+      "noJsHost(": 1,
+      "ctx.wasi": 2
+    },
+    "codegen/regex-runtime": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 1,
+      "ctx.wasi": 0
+    },
+    "codegen/statements": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 1,
+      "ctx.wasi": 0
+    },
+    "ir": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 0,
+      "ctx.wasi": 7
+    },
+    "runtime/contracts": {
+      "ctx.standalone": 2,
+      "!ctx.standalone": 0,
+      "noJsHost(": 0,
+      "ctx.wasi": 2
+    }
+  }
 }

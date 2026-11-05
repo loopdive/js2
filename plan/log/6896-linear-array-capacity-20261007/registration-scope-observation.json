@@ -1,0 +1,20 @@
+{
+  "baseline": "c0a314636dfcaa437df1468f922bf0d6b0c5bcae",
+  "candidate": "b749becb4b4e44c5722b742de0dfd83cf7f0a04e",
+  "harness": "real addRuntime plus addArrayRuntime module construction; deep structural comparison",
+  "functionsEach": 12,
+  "changed": ["__arr_new", "__arr_grow"],
+  "unchanged": [
+    "__malloc",
+    "__arena_reset",
+    "__arena_used",
+    "__arr_resolve",
+    "__arr_push",
+    "__arr_get",
+    "__arr_set",
+    "__arr_len",
+    "__arr_from_data",
+    "__arr_slice"
+  ],
+  "moduleStructureEqual": ["types", "globals", "imports", "exports", "memories"]
+}

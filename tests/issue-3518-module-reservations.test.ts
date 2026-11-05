@@ -558,7 +558,12 @@ describe("physical record relocation — fifteen complete declarations", () => {
   it("pins mandatory canonical declarations, order, members and documentation", () => {
     const text = source("src/wasm/model/module-records.ts");
     expect(declarations(text).map((node) => node.name.text)).toEqual(names);
-    expect(receipt(text)).toBe("490bf9a75ee595ac2dcadba160a8b71149e38f195e7fae6abaeb86043eb0858e");
+    // 2d0610751954975e0ec634ab83b181a28530454f adds FieldDef.optional and its documentation.
+    expect(receipt(text)).toBe("1e50d9cd1fcce90871a6a5ea7e80cc1d4bbb2bb34c24e82a13c7d986985dda00");
+    expect(text.match(/optional\?: true;/g)).toHaveLength(1);
+    expect(receipt(text.replace("optional?: true;", "optional?: boolean;"))).not.toBe(receipt(text));
+    expect(text.match(/declared optional/g)).toHaveLength(1);
+    expect(receipt(text.replace("declared optional", "declared required"))).not.toBe(receipt(text));
     const mutated = text.replace("presenceBit?: number;", "presenceBit?: string;");
     expect(receipt(mutated)).not.toBe(receipt(text));
     expect(receipt(text.replace("field's constructor initializer", "field's replacement initializer"))).not.toBe(

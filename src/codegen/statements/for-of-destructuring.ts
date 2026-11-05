@@ -2307,14 +2307,11 @@ function compileForOfAssignDestructuringExternref(
   let setIdx: number | undefined;
   const ensureExternSet = (): number | undefined => {
     if (setIdx !== undefined) return setIdx;
-    setIdx = ctx.funcMap.get("__extern_set");
-    if (setIdx === undefined) {
-      const importsBefore = ctx.numImportFuncs;
-      const setType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
-      addImport(ctx, "env", "__extern_set", { kind: "func", typeIdx: setType });
-      shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-      setIdx = ctx.funcMap.get("__extern_set");
-    }
+    // (#6979 S7-b) Through the late-import chokepoint: it routes `__extern_set`
+    // to the native object runtime; a raw `env::__extern_set` is a retired import.
+    const ext = { kind: "externref" } as const;
+    setIdx = ensureLateImport(ctx, "__extern_set", [ext, ext, ext], []);
+    flushLateImportShifts(ctx, fctx);
     return setIdx;
   };
 
@@ -2765,20 +2762,16 @@ export function compileForOfIteratorAssignDestructuring(
     let setIdxIter: number | undefined;
     const ensureExternSetIter = (): number | undefined => {
       if (setIdxIter !== undefined) return setIdxIter;
-      setIdxIter = ctx.funcMap.get("__extern_set");
-      if (setIdxIter === undefined) {
-        const importsBefore = ctx.numImportFuncs;
-        const setType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
-        addImport(ctx, "env", "__extern_set", {
-          kind: "func",
-          typeIdx: setType,
-        });
-        shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-        setIdxIter = ctx.funcMap.get("__extern_set");
+      if (!ctx.funcMap.has("__extern_set")) {
+        // (#6979 S7-b) Through the late-import chokepoint (native object runtime).
+        const ext = { kind: "externref" } as const;
+        ensureLateImport(ctx, "__extern_set", [ext, ext, ext], []);
+        flushLateImportShifts(ctx, fctx);
         // Refresh boxIdx/getIdx since they may have shifted.
         boxIdx = ctx.funcMap.get("__box_number");
         getIdx = ctx.funcMap.get("__extern_get");
       }
+      setIdxIter = ctx.funcMap.get("__extern_set");
       return setIdxIter;
     };
 

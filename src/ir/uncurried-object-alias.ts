@@ -152,12 +152,43 @@ export function uncurriedObjectAliasMethod(
  * The `Object` static `callee` is an immutable module-level stored alias of
  * (`var x = Object.getOwnPropertyDescriptor;`, no other write), or undefined.
  */
-export function storedObjectStaticAliasMethod(
+function storedObjectStaticAliasMethod(
   callee: ts.Expression,
   shadowed: (name: string) => boolean,
 ): StoredObjectStaticAliasMethod | undefined {
   const alias = objectAliasOf(callee, shadowed);
   return alias?.form === "stored-static" ? alias.method : undefined;
+}
+
+/**
+ * (#7106 propertyHelper) `alias(obj, name)` where `alias` is the immutable
+ * stored `Object.getOwnPropertyDescriptor`: exactly two plain arguments.
+ */
+export function isStoredObjectDescriptorAliasCall(
+  call: ts.CallExpression,
+  shadowed: (name: string) => boolean,
+): boolean {
+  return (
+    call.arguments.length === 2 &&
+    !call.questionDotToken &&
+    !call.arguments.some(ts.isSpreadElement) &&
+    storedObjectStaticAliasMethod(call.expression, shadowed) === "getOwnPropertyDescriptor"
+  );
+}
+
+/**
+ * (#7190) `alias(obj, name).<attribute>`: a named member read off the stored
+ * descriptor alias call — a dynamic carrier (`undefined` when absent), never a
+ * module storage slot.
+ */
+export function isStoredObjectDescriptorMemberRead(expr: ts.Expression, shadowed: (name: string) => boolean): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    !expr.questionDotToken &&
+    ts.isIdentifier(expr.name) &&
+    ts.isCallExpression(expr.expression) &&
+    isStoredObjectDescriptorAliasCall(expr.expression, shadowed)
+  );
 }
 
 function objectAliasOf(callee: ts.Expression, shadowed: (name: string) => boolean): ObjectAlias | undefined {
