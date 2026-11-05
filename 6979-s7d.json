@@ -1,11 +1,11 @@
 {
   "id": "6979",
   "slice": "s7d",
-  "assignee": "ttraenkler/opus-s7d-runtime-shrink",
-  "requested_by": "ttraenkler/opus-s7d-runtime-shrink",
+  "assignee": "ttraenkler/opus-s7-stack-remerge",
+  "requested_by": "ttraenkler/opus-s7-stack-remerge",
   "status": "in-progress",
-  "branch": "issue-6979-s7d-runtime-adapters",
-  "claimed_at": "2026-10-25T03:01:01Z",
-  "updated_at": "2026-10-25T03:01:01Z",
-  "write_id": "22995-bnlqfydc"
+  "branch": "issue-6979-s7d",
+  "claimed_at": "2026-11-05T15:37:02Z",
+  "updated_at": "2026-11-05T15:37:02Z",
+  "write_id": "78790-3usorfqg"
 }
