@@ -1,10 +1,11 @@
 ---
 id: 7240
 title: "IR claim ledger: opt-in `--wrapped` mode that compiles test262 files exactly as the standalone runner does"
-status: ready
+status: done
 sprint: current
 created: 2026-11-05
 updated: 2026-11-05
+completed: 2026-11-05
 priority: high
 horizon: s
 feasibility: easy
@@ -78,3 +79,29 @@ IR-coverage claim measured with it is on the wrong program.
   - in wrapped mode, there is no such refusal, and the harness/test unit split
     is present.
 - No change under `src/`.
+
+## Implementation notes (2026-11-05)
+
+- **Deviation from step 1, on purpose:** wrapped mode compiles
+  `assembleOriginalHarness(source, meta).primary.source`, not `wrapTest(...)`.
+  `runTest262File` and the sharded CI worker have compiled the literal harness
+  assembly since #3370; the runner marks `wrapTest` deprecated ("not a
+  conformance verdict oracle"). Using it would have measured a second program
+  the runner never compiles.
+- Options come from the new pure export `originalHarnessCompileOptions(meta,
+  target)` in `tests/test262-runner.ts`, which `runOriginalHarnessVariant` now
+  calls too (same object, moved, not copied).
+- Skips: non-negative files that `shouldSkip` rejects (counted under
+  `skipped`/`skippedReasons`). Negative tests compile through the same
+  assembly, as `runTest262File` does; `buildNegativeCompileSource` belongs to
+  the legacy synthetic runner only.
+- Not modelled: the strict-rerun variant, the Temporal provider prelude, and
+  the compileMulti self-import route for `module-code/namespace/`.
+- Origin: `<module-init>` is always `test`; other units are `test` iff
+  `line > bodyLineOffset`.
+- `JS2WASM_IR_SHAPE_DIAG=1` adds `unsupportedDetails` (first refusal per unit);
+  absent otherwise.
+- Test: `tests/issue-7240-ir-claim-ledger-wrapped.test.ts`.
+- Caveat: `<module-init>` covers the harness's top-level code too, so a
+  test-tagged module-init refusal can sit in a harness include (e.g.
+  `floatArrayConstructors = [...]`). The row carries no refusal position.
