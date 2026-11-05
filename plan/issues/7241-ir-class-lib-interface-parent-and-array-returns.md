@@ -1,7 +1,7 @@
 ---
 id: 7241
 title: "IR class shapes: classes that extend a lib interface (`extends Iterator`) and array-returning members get no shape"
-status: ready
+status: in-review
 sprint: current
 created: 2026-11-05
 updated: 2026-11-05
@@ -122,3 +122,88 @@ move-only scan, and default/destructured params.
   For each bucket it asserts the IR route (`trackIrOutcomes`), the
   stays-legacy routes (constructor, `get next`), and the node/base result on
   3 lanes.
+
+## Implementation notes (2026-11-05)
+
+- **Step 2.** `irClassExtendsLibInterfaceAsRoot`
+  (`src/codegen/classes/ir-lib-interface-root-heritage.ts`) reads back the
+  layout `collectClassDeclaration` already recorded. It does not re-derive
+  it. A class qualifies when all of these hold:
+  - its heritage is one identifier that legacy recorded in `classParentMap`;
+  - the name is not a local class;
+  - the class is in none of `classBuiltinParentMap`,
+    `classExternrefBackedSet` or `classLinkedDynamicParentExpr`;
+  - the parent is not host-constructible;
+  - its struct has no supertype;
+  - the identifier has no value binding at all (`isUnresolvableIdentifier`).
+
+  The last check matters because the compiler's `lib.d.ts` declares
+  `Iterator` as an interface only, so the value-side lookup finds nothing.
+  The shape is published flat, with `libInterfaceRoot: true`. The selector
+  (`select-identity.ts`) admits only `super`-free, non-nested methods. The
+  constructor, implicit constructor and accessors keep their refusals.
+- **Step 3.** Legacy's slot for an inferred `any[]` method result is
+  `resolveWasmType`, i.e. the pre-registered `$__vec_externref`. That is the
+  carrier an `any[]`-annotated function position already resolves to.
+  `tsTypeToClassReturnIr` (method and static result positions only) projects
+  exactly that slot and nothing else.
+- **Ledger attribution.** The ledger counts polyfill units as units.
+  - Raw mode: they are units of the test file.
+  - `--wrapped`: they are tagged `harness`, not `test`.
+
+### Measurements (base = merge-base `9f76099eb7`; sample at `bf74765142`)
+
+- **Targeted sample** (221 `extends Iterator` files + 81 `intl402/ListFormat`,
+  all units):
+  - IR units: 89 → 100 on standalone, wasi and gc alike (+11 class-member
+    units in 11 files).
+  - 0 IR units lost, 0 changes in compile success.
+  - `class-member-unsupported`: 508 → 363 on standalone. The units move to
+    each member's own later refusal: `return-type-not-resolvable`
+    (object-literal `next()` results), `constructor-resolution-unsupported`
+    and `error-constructor-unsupported` (`throw new Test262Error()`).
+- **Stride-40 ledger, standalone, raw:**
+  - class-member IR: 21 → 21.
+  - `class-member-unsupported`: 218 → 210.
+  - `return-type-not-resolvable`: 25 → 31.
+  - 0 invariants; `compileOk` 1081 → 1081.
+- **Stride-40 ledger, standalone, `--wrapped`:**
+  - Test-origin tallies are identical (class-member 307 units; 86 emitted
+    units overall).
+  - Harness origin: `class-member-unsupported` 14 → 0 and
+    `return-type-not-resolvable` 111 → 125. These are the ListFormat polyfill
+    members.
+  - 0 invariants; `compileOk` 1117 → 1117.
+- **Typed corpus bytes** (playground, benchmarks, equivalence snippets;
+  2301 units × gc / standalone / wasi = 6903 compiles): 0 diffs.
+- **Probes** (50 programs: iterator protocol use, helpers, `instanceof`,
+  `return()`/throw closing, a throwing `next`, subclass of a subclass, methods
+  as values / `.call` / foreign receivers, ListFormat arrays): 0 differences
+  in value or trap between base and head on gc / standalone / wasi. One probe
+  route moves: WASI `<module-init>` of a `get next` class demotes at
+  `late-preparation-unsupported`, with the same value. The targeted sample has
+  0 such losses on any lane.
+- **test262 A/B, standalone, targeted sample:** identical on both,
+  144 pass / 98 fail / 3 CE / 57 skip.
+  - With `TEST262_INCLUDE_PROPOSALS=1`, the 11 route-changed staging files
+    are identical on standalone and gc (1 pass / 10 fail).
+  - The runner nests each test inside `export function test()`, so these
+    classes are not top-level there. This change does not apply to them,
+    which is why the test-origin ledger does not move.
+
+### Not reached
+
+- **Stride IR units do not rise.** The stride's iterator and ListFormat
+  members move to their real blockers:
+  - object-literal `next()` returns;
+  - the harness `Test262Error` constructor;
+  - `new Array()` (`constructor-resolution-unsupported`) in the polyfill
+    bodies;
+  - the selector's own return resolution for unannotated JS instance members
+    (#7227's foreign-receiver rule).
+- **ListFormat gains a descriptor, not an IR route.** The test asserts the
+  reason moved instead.
+- **A top-level `extends Iterator` class traps at module init on base.**
+  On standalone and gc its module init throws on base (the heritage read), so
+  IR method bodies of such classes only run on WASI there. The test pins that
+  base outcome.
