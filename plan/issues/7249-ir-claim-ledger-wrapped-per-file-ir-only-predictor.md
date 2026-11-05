@@ -1,10 +1,11 @@
 ---
 id: 7249
 title: "IR claim ledger: per-file rows and a zero-legacy predictor for `ir_only_pass` in `--wrapped` mode"
-status: in-progress
+status: done
 sprint: current
 created: 2026-11-05
 updated: 2026-11-05
+completed: 2026-11-05
 priority: high
 horizon: s
 feasibility: easy
@@ -62,3 +63,14 @@ which legacy units remain, or how many files are already zero-legacy.
   in the runner lane and cannot be imported from here without moving it); no
   change under `src/`.
 - Measured: stride 40, standalone, `--jobs 2`; numbers in the PR body.
+
+## Results (2026-11-05, head f6267a8e, stride 40, standalone, `--jobs 2`, `JS2WASM_IR_SHAPE_DIAG=1`)
+
+- 1296 files compiled, 1118 OK, 44 skipped, 0 invariants.
+- `zeroLegacyFiles` **25**; histogram `{"0":25,"1":516,"2":150,"3":77,"4+":350}`.
+  25 × 40 ≈ 1000, in line with main's `ir_only_pass` 1088.
+- Of the 516 one-away files the single legacy unit is almost always the
+  test's `<module-init>` (164 `vardecl-module-storage-unrepresentable`, 65
+  `expr-ident-not-in-scope`).
+- Raw mode: stride-400 JSON on base and head identical after stripping
+  `generatedAt`/`commit`/`seconds`/`slowestFiles`.
