@@ -2864,6 +2864,11 @@
       "layer": "legacy-linear"
     },
     {
+      "path": "src/codegen-linear/runtime/array-allocation.ts",
+      "state": "unmigrated",
+      "layer": "legacy-linear"
+    },
+    {
       "path": "src/codegen-linear/runtime/arrays/forwarding-resolver.ts",
       "state": "unmigrated",
       "layer": "legacy-linear"
