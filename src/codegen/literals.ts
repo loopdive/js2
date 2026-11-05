@@ -1391,9 +1391,7 @@ function compileObjectLiteralWithAccessors(
         storeMember(i);
         continue;
       }
-      let methodName: string | undefined;
-      if (ts.isIdentifier(prop.name)) methodName = prop.name.text;
-      else if (ts.isStringLiteral(prop.name)) methodName = prop.name.text;
+      const methodName = resolveAccessorPropName(ctx, prop.name);
       if (methodName === undefined) continue;
       fctx.body.push({ op: "local.get", index: objLocal });
       for (const instr of staticHostPropertyKeyInstrs(ctx, methodName)) {

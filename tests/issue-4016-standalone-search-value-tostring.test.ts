@@ -700,3 +700,29 @@ describe("#4016 — native split protocol and evaluated method metadata", () => 
     });
   }
 });
+
+describe("#4016 — numeric method siblings of an evaluated computed method", () => {
+  it("preserves decimal and hexadecimal keys, method identity and the actual receiver", async () => {
+    const src = `
+const key = "slot";
+export function f(): number {
+  const o: any = {
+    value: 5,
+    [key]() { return this.value; },
+    2() { return this.value + 2; },
+    0x10() { return this.value + 16; },
+  };
+  const decimal = o[2];
+  const hex = o[16];
+  const desc = Object.getOwnPropertyDescriptor(o, "2");
+  return o[key]() === 5 && o[2]() === 7 && o[16]() === 21 &&
+    o["0x10"] === undefined && decimal === o["2"] && hex === o["16"] &&
+    decimal.name === "2" && hex.name === "16" &&
+    desc !== undefined && desc.value === decimal && desc.writable === true &&
+    desc.enumerable === true && desc.configurable === true ? 1 : 0;
+}`;
+    const oracle = evaluateAsJs(src).f!();
+    expect(oracle).toBe(1);
+    expect(await runStandalone(src)).toBe(oracle);
+  });
+});
