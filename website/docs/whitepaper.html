@@ -1219,14 +1219,14 @@
         <p>
           The project tracks ECMAScript compatibility through Test262, the standard conformance suite for
           JavaScript implementations <a href="https://tc39.es/ecma262/">[2]</a>
-          <a href="https://github.com/tc39/test262/">[3]</a>. Conformance is measured along two
-          independent paths (see §5), and both are reported publicly: the <strong>JS-host path</strong>
-          (default target, host imports allowed) is at <strong>{{TEST262_PCT}}% Test262 compliance</strong>
-          ({{TEST262_PASS}} of {{TEST262_TOTAL}} official conformance tests passing; report generated {{REPORT_DATE}}), and the <strong>standalone / host-free
-          path</strong> (pure WasmGC, no JS host) is at <strong>{{STANDALONE_PCT}}%</strong> ({{STANDALONE_PASS}} of {{TEST262_TOTAL}}),
-          measured host-free on the same official denominator. These are distinct metrics on different
-          targets and are never summed; the JS-host figure is the headline number, and the standalone
-          gap is where the current effort concentrates (§5.2, §12.2).
+          <a href="https://github.com/tc39/test262/">[3]</a>. Conformance is measured on the
+          <strong>standalone / host-free path</strong> (pure WasmGC, no JS host), at
+          <strong>{{STANDALONE_PCT}}% Test262 compliance</strong> ({{STANDALONE_PASS}} of {{TEST262_TOTAL}}
+          official conformance tests). Every environment compiles with the same native semantic core; a
+          JavaScript environment adds only a value adapter, explicit capabilities and named opt-in
+          accelerators. The earlier JS-host path was retired on 2026-10-12; its last measurement,
+          {{TEST262_PCT}}% ({{TEST262_PASS}} of {{TEST262_TOTAL}}; report generated {{REPORT_DATE}}), is kept
+          as a frozen historical snapshot.
         </p>
         <div class="callout">
           <p>
@@ -1364,9 +1364,8 @@
         <h2>11. Current tradeoffs</h2>
         <p>A useful whitepaper cannot ignore the hard parts.</p>
         <p>
-          <strong>Conformance is still incomplete.</strong> At {{TEST262_PCT}}% Test262 compliance on the JS-host
-          path &mdash; and {{STANDALONE_PCT}}% on the standalone, host-free path &mdash; the compiler is credible but
-          far from complete, and the standalone gap in particular is a primary focus (§5.2, §12.2).
+          <strong>Conformance is still incomplete.</strong> At {{STANDALONE_PCT}}% Test262 compliance on the
+          standalone, host-free path the compiler is credible but far from complete (§5.2, §12.2).
         </p>
         <p>
           <strong>Wasm GC support is required.</strong> The architecture depends on runtimes with Wasm GC
