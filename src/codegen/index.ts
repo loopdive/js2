@@ -237,6 +237,7 @@ import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-s
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
 import { irJsInstanceMethodMaySkip } from "./classes/ir-class-member-projection.js"; // (#7233)
+import { irClassExtendsLibInterfaceAsRoot } from "./classes/ir-lib-interface-root-heritage.js"; // (#7241)
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import {
   planIrImportedCalls,
@@ -1795,7 +1796,10 @@ function buildIrClassShapes(
     // (`src/ir/select.ts`) so a claimed subclass member always finds a shape here.
     let parentShape: import("../ir/nodes.js").IrClassShape | undefined;
     const parentClassId = resolveIrParentClassId(ctx.checker, stmt, identityContext);
-    if (parentClassId !== null) {
+    // (#7241) `extends <lib interface>` that legacy lays out as a root struct
+    // projects flat, like an `implements`-only class.
+    const libInterfaceRoot = parentClassId === undefined && irClassExtendsLibInterfaceAsRoot(ctx, stmt, className);
+    if (parentClassId !== null && !libInterfaceRoot) {
       const parentPosition = parentClassId === undefined ? undefined : collectionPosition.get(parentClassId);
       const currentPosition = collectionPosition.get(classId)!;
       // Dependency ordering may move a later type-position dependency before
@@ -2008,7 +2012,7 @@ function buildIrClassShapes(
       if (sig) {
         const retTs = ctx.checker.getReturnTypeOfSignature(sig);
         if (!isVoidType(retTs)) {
-          const ir = tsTypeToClassPositionIr(ctx, retTs, lookup);
+          const ir = tsTypeToClassReturnIr(ctx, retTs, lookup);
           if (!ir) {
             if (maySkip) continue; // unlabelled: biome noUselessLabel (same loop as instanceMethods)
             methodsOk = false;
@@ -2133,7 +2137,7 @@ function buildIrClassShapes(
         if (sig) {
           const retTs = ctx.checker.getReturnTypeOfSignature(sig);
           if (!isVoidType(retTs)) {
-            const ir = tsTypeToClassPositionIr(ctx, retTs, lookup);
+            const ir = tsTypeToClassReturnIr(ctx, retTs, lookup);
             if (!ir) continue;
             returnType = ir;
           }
@@ -2166,6 +2170,7 @@ function buildIrClassShapes(
       ...(constructorInitTarget ? { constructorInitTarget } : {}),
       // #3000-E: present only for a single-level subclass of a local user class.
       ...(parentShape ? { parent: parentShape } : {}),
+      ...(libInterfaceRoot ? { libInterfaceRoot: true as const } : {}),
     };
     const provisional = provisionalEntries.get(classId);
     if (provisional) {
@@ -2268,6 +2273,31 @@ function tsTypeToClassPositionIr(ctx: CodegenContext, t: ts.Type, classShapes: I
     if (ir) return ir;
   }
   return null;
+}
+
+/**
+ * (#7241) A method result position. Adds one arm to the class-position
+ * projection: a lib `any[]` (`const out = new Array(); …; return out;`), whose
+ * legacy result slot (`resolveWasmType`, class-bodies.ts) is the pre-registered
+ * `$__vec_externref`. Exactly that slot projects — the same carrier an
+ * `any[]`-annotated function position resolves to — and nothing else.
+ */
+function tsTypeToClassReturnIr(ctx: CodegenContext, t: ts.Type, classShapes: IrClassShapeLookup): IrType | null {
+  const ir = tsTypeToClassPositionIr(ctx, t, classShapes);
+  if (ir) return ir;
+  const vecExternref = ctx.vecTypeMap.get("externref");
+  const symbol = t.getSymbol();
+  if (
+    vecExternref === undefined ||
+    !(t.flags & ts.TypeFlags.Object) ||
+    symbol?.name !== "Array" ||
+    !symbol.declarations?.every((d) => d.getSourceFile().hasNoDefaultLib) ||
+    !((t.getNumberIndexType()?.flags ?? 0) & ts.TypeFlags.Any)
+  ) {
+    return null;
+  }
+  const legacy = resolveWasmType(ctx, t);
+  return legacy.kind === "ref_null" && legacy.typeIdx === vecExternref ? irVal(legacy) : null;
 }
 
 /**
