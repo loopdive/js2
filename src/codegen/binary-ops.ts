@@ -649,13 +649,16 @@ export function compileBinaryExpression(
   // (1, "1")` into `2` instead of `"11"`.
   // The same rule applies to properties widened after writes through an
   // object alias: their checker type still describes the original value.
+  // A generic getter likewise has a raw foreign receiver: its declaring
+  // class does not certify the runtime primitive consumed by addition.
   if (
     op === ts.SyntaxKind.PlusToken &&
-    [expr.left, expr.right].some(
-      (operand) =>
-        (ts.isIdentifier(operand) && fctx.rawArgumentsParamNames?.has(operand.text)) ||
-        expressionHasWidenedPropertyType(ctx, operand),
-    )
+    (fctx.genericClassGetter ||
+      [expr.left, expr.right].some(
+        (operand) =>
+          (ts.isIdentifier(operand) && fctx.rawArgumentsParamNames?.has(operand.text)) ||
+          expressionHasWidenedPropertyType(ctx, operand),
+      ))
   ) {
     return emitAnyAdd(ctx, fctx, expr);
   }

@@ -21,14 +21,14 @@ import { closedCarrierPrototypeStatus } from "./object-model/closed-carrier-prot
  * minted func-index sequence) is preserved exactly.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { hostFreeEnvironment, type CodegenContext } from "./context/types.js";
 import { proxyTrapAbsentTail } from "./object-model/proxy-trap-read.js"; // (#6770 S8)
 import { FUNCTION_FROM_PROTO, PROTO_FROM_FUNCTION } from "./proto-function-value.js"; // (#4637 A1)
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js"; // (#5270 step 2)
 import { buildLazyNativeProtoGetInstrs } from "./native-proto.js"; // (#5270 step 2)
 import { fillNativeCarrierGetPrototypeOfArms } from "./object-model/native-carrier-get-prototype.js"; // (#6651 U1)
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { buildIsPrototypeOfBody, type PrototypeChainSeed } from "../runtime/wasmgc/values/prototype-chain-bodies.js";
 import {
   protoLinkAnswerOr,
@@ -36,6 +36,7 @@ import {
   protoLinkSameValueArm,
   registerProtoLinkNatives,
 } from "./object-runtime-proxy-chain.js"; // (#6766)
+import { nativeInheritedSetRuntimeActive } from "./inherited-set-gate.js";
 import { structProtoLinkOk } from "./object-model/struct-proto-link.js"; // (#7009)
 
 /**
@@ -157,6 +158,26 @@ export interface ObjectPrototypeHelperState {
  * changes.
  */
 const FNCTOR_PROTO_START = "__fnctor_proto_start";
+
+const SET_PROTO_START = "__extern_set_proto_start";
+
+/**
+ * The Set engine is registered before GetPrototypeOf. Reserve its class-chain
+ * dependency now and bind it after the canonical native has been registered.
+ */
+export function reserveSetPrototypeStart(
+  ctx: CodegenContext,
+  registerNative: ObjectPrototypeHelperState["registerNative"],
+): number | undefined {
+  if (!hostFreeEnvironment(ctx) || !nativeInheritedSetRuntimeActive(ctx) || ctx.classSet.size === 0) return undefined;
+  return registerNative(
+    SET_PROTO_START,
+    [{ kind: "externref" }],
+    [{ kind: "externref" }],
+    [],
+    [{ op: "ref.null.extern" }],
+  );
+}
 
 /**
  * `__getPrototypeOf`'s non-`$Object` arm: answer F's prototype object when the
@@ -388,6 +409,62 @@ function peerFirstGetPrototypeScratch(
   return [index, peerIdx === undefined ? [] : [{ name: "peerProto", type: { kind: "externref" } }]];
 }
 
+/** Preserve recursive absent-get forwarding while retaining a present trap. */
+function reserveProxyGetTargetIfAbsent(ctx: CodegenContext, s: ObjectPrototypeHelperState): number | undefined {
+  const { proxyTypeIdx, proxyTrapsTypeIdx } = s;
+  if (proxyTypeIdx === undefined || proxyTrapsTypeIdx === undefined) return undefined;
+  const name = "__proxy_get_target_if_absent";
+  const getTargetIdx = s.registerNative(
+    name,
+    [{ kind: "externref" }],
+    [{ kind: "externref" }],
+    [{ name: "any", type: { kind: "anyref" } }],
+    [],
+  );
+  const target = (): Instr[] => [
+    { op: "local.get", index: 1 },
+    { op: "ref.cast", typeIdx: proxyTypeIdx },
+    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 1 },
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: getTargetIdx },
+  ];
+  const helper = ctx.mod.functions.find((f) => f.name === name)!;
+  helper.body = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: 1 },
+    { op: "ref.test", typeIdx: proxyTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "ref.cast", typeIdx: proxyTypeIdx },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 3 },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: target(),
+          else: [
+            { op: "local.get", index: 1 },
+            { op: "ref.cast", typeIdx: proxyTypeIdx },
+            ...proxyTrapAbsentTail(ctx, 0), // (#6770 S8) get
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: target(),
+              else: [{ op: "local.get", index: 0 }],
+            },
+          ],
+        },
+      ],
+      else: [{ op: "local.get", index: 0 }],
+    },
+  ];
+  return getTargetIdx;
+}
+
 /** Register the prototype-chain native helpers. Called once, in place, from `ensureObjectRuntime`. */
 export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectPrototypeHelperState): void {
   const {
@@ -413,63 +490,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
   // stay byte-identical by construction.
   const protoFromFunctionIdx = ctx.funcMap.get(PROTO_FROM_FUNCTION);
   const functionFromProtoIdx = ctx.funcMap.get(FUNCTION_FROM_PROTO);
-  // A Proxy with no `get` trap has the same [[Get]] target operation as its
-  // target. Recursively unwrap that narrow case before storing the prototype;
-  // the recursive helper preserves nested proxy forwarding and leaves a
-  // present (including non-callable) trap intact (#4721).
-  let proxyGetTargetIdx: number | undefined;
-  if (proxyTypeIdx !== undefined && proxyTrapsTypeIdx !== undefined) {
-    const name = "__proxy_get_target_if_absent";
-    const getTargetIdx = s.registerNative(
-      name,
-      [{ kind: "externref" }],
-      [{ kind: "externref" }],
-      [{ name: "any", type: { kind: "anyref" } }],
-      [],
-    );
-    proxyGetTargetIdx = getTargetIdx;
-    const target = (): Instr[] => [
-      { op: "local.get", index: 1 },
-      { op: "ref.cast", typeIdx: proxyTypeIdx! },
-      { op: "struct.get", typeIdx: proxyTypeIdx!, fieldIdx: 1 },
-      { op: "extern.convert_any" },
-      { op: "call", funcIdx: getTargetIdx },
-    ];
-    const helper = ctx.mod.functions.find((f) => f.name === name)!;
-    helper.body = [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.tee", index: 1 },
-      { op: "ref.test", typeIdx: proxyTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: proxyTypeIdx },
-          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 3 },
-          { op: "ref.is_null" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "externref" } },
-            then: target(),
-            else: [
-              { op: "local.get", index: 1 },
-              { op: "ref.cast", typeIdx: proxyTypeIdx },
-              ...proxyTrapAbsentTail(ctx, 0), // (#6770 S8) get
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "externref" } },
-                then: target(),
-                else: [{ op: "local.get", index: 0 }],
-              },
-            ],
-          },
-        ],
-        else: [{ op: "local.get", index: 0 }],
-      },
-    ];
-  }
+  const proxyGetTargetIdx = reserveProxyGetTargetIfAbsent(ctx, s);
   // (#6766) A `$Proxy` in [[Prototype]] position is stored as a LINK `$Object`
   // (trap or no trap) instead of being unwrapped to its target. (#7009) So is a
   // fnctor STRUCT instance (`d.prototype = new __()`, `object-model/struct-proto-link.ts`).
@@ -648,13 +669,20 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         ],
       },
     ];
-    registerNative(
+    const getPrototypeOf = registerNative(
       "__getPrototypeOf",
       [{ kind: "externref" }],
       [{ kind: "externref" }],
       [{ name: "any", type: { kind: "anyref" } }, ...fnctorProtoLocal(ctx), ...arrayProtoLocal(ctx), ...peerProtoLocal],
       body,
     );
+    const setStartIdx = ctx.funcMap.get(SET_PROTO_START);
+    if (setStartIdx !== undefined) {
+      definedFuncAt(ctx, setStartIdx)!.body = [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: getPrototypeOf },
+      ];
+    }
   }
 
   // __object_create(externref proto) -> externref (ES §20.1.2.2):

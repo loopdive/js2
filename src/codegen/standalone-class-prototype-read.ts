@@ -71,7 +71,7 @@
  */
 
 import type { Instr } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { noJsHost, type CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
 import { standaloneClassProtoObjectApplies } from "./class-proto-object.js";
 import { classProtoBuilderName, recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js";
@@ -128,7 +128,7 @@ function collectEntries(ctx: CodegenContext): PrototypeReadEntry[] {
  * object singleton.
  */
 export function fillClassPrototypeReadArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!noJsHost(ctx)) return;
   if (ctx.standaloneRuntimeKeyClassProtos.size === 0) return;
   const externGetFn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   if (!externGetFn) return;
@@ -251,7 +251,7 @@ export function recordStandaloneDynamicPrototypeRead(
   receiverWasm: ValType,
   propName: string,
 ): void {
-  if (!ctx.standalone) return;
+  if (!noJsHost(ctx)) return;
   if (propName !== "prototype") return;
   if (receiverWasm.kind !== "externref") return;
   recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);

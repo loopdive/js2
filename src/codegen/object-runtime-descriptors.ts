@@ -27,6 +27,7 @@
  * (and therefore the minted func-index sequence) is preserved exactly.
  */
 import { buildObjectDataDescriptorBody } from "./object-descriptor-data.js";
+import { FNINST_IS_DELETED } from "./function-instance-props.js";
 import { buildOrdinaryObjectAccessorDescriptorBody } from "../runtime/wasmgc/values/ordinary-object-descriptor-accessor.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -244,6 +245,11 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     peerIsExtensibleIdx,
   } = s;
 
+  const isDeletedIdx = ctx.funcMap.get(FNINST_IS_DELETED);
+  const deleteIdx = ctx.funcMap.get("__delete_property");
+  const deletedCarrierOwn =
+    isDeletedIdx === undefined || deleteIdx === undefined ? undefined : { isDeletedIdx, deleteIdx };
+
   // ── (#3251 S1) Array-descriptor overlay entry points ─────────────────────
   // Standalone only (host mode routes defineProperty/gOPD through the JS
   // sidecar imports and MUST stay byte-identical). The three helpers are
@@ -323,6 +329,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       return structuredClone(stringConstantExternrefInstrs(ctx, message));
     };
     const s4DescriptorResources = {
+      deletedCarrierOwn,
       objectTypeIdx,
       propEntryTypeIdx,
       objFindIdx,
@@ -583,6 +590,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         ],
       },
       ...buildOrdinaryObjectAccessorDescriptorBody({
+        deletedCarrierOwn,
         objectTypeIdx,
         propEntryTypeIdx,
         objFindIdx,
@@ -2196,7 +2204,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
             // Other primitives (boxed number/boolean/Symbol) → no own props.
             ...gopdUndefRet,
           ]
-        : [{ op: "ref.null.extern" } as Instr, { op: "return" } as Instr];
+        : undefRet();
 
     const body: Instr[] = [
       ...(closureProtoOfIdx !== undefined

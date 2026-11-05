@@ -3050,7 +3050,7 @@ function resolveExprToFuncNode(
  * value was pushed, `false` when the caller should push `ref.null.extern`.
  *
  * Dual-mode:
- *  - **standalone** (`ctx.standalone`): compile the function as a HOST-FREE
+ *  - **native standalone/WASI** (`noJsHost(ctx)`): compile the function as a HOST-FREE
  *    closure (`compileArrowAsClosure`) and convert the closure-struct ref →
  *    externref. This is what makes the stored `$PropEntry.$get/$set` slot hold a
  *    real callable closure that the native accessor arms in `__extern_get`/
@@ -3059,16 +3059,16 @@ function resolveExprToFuncNode(
  *    `__current_this`, #1636-S1). The lifted closure body sets
  *    `readsCurrentThis: true`, so `this` inside the getter/setter resolves to the
  *    installed receiver per §6.2.5.5 / §10.1.5.3.
- *  - **JS-host / GC** (default): unchanged — `compileArrowAsCallback` with
+ *  - **JS-host**: unchanged — `compileArrowAsCallback` with
  *    `needsThis: true` routes through the `__make_getter_callback` JS bridge.
- *    Gating strictly on `ctx.standalone` keeps the host/GC binary byte-identical.
+ *    The actual host branch keeps the existing JS callback bridge.
  */
 function emitAccessorFn(
   ctx: CodegenContext,
   fctx: FunctionContext,
   fn: ts.FunctionExpression | ts.ArrowFunction,
 ): boolean {
-  if (ctx.standalone) {
+  if (noJsHost(ctx)) {
     const closureType = compileArrowAsClosure(ctx, fctx, fn);
     if (!closureType) return false;
     // compileArrowAsClosure leaves a closure-struct ref; __defineProperty_accessor

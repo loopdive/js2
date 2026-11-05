@@ -30,6 +30,7 @@
  * plan/log/analysis-2026-06/03-coercion-engine-spec.md.
  */
 import type { Instr, ValType } from "../ir/types.js";
+import { i32NumberWidening } from "../wasm/physical/numeric-carriers.js";
 
 /** Box/unbox helper funcIdxs the numeric box-unbox rows need (null = unavailable). */
 export interface CoercionHelpers {
@@ -44,6 +45,7 @@ export interface CoercionHelpers {
    * `__to_bigint` would THROW on a number where the numeric row truncates.
    */
   boxBigIntIdx?: number | null;
+  toUint32Idx?: number | null;
 }
 
 export interface CoercionPlan {
@@ -94,12 +96,21 @@ export function coercionPlan(from: ValType, to: ValType, helpers: CoercionHelper
   // Both externref-ish (externref ↔ ref_extern spelling): no-op.
   if (isExternKind(from.kind) && isExternKind(to.kind)) return { instrs: [] };
 
+  if (to.kind === "i32" && to.uint32 && fromK !== "i32") {
+    if (helpers.toUint32Idx == null) return null;
+    const number = coercionPlan(from, { kind: "f64" }, helpers);
+    return number && !number.lossy
+      ? { instrs: [...number.instrs, { op: "call", funcIdx: helpers.toUint32Idx }] }
+      : null;
+  }
+
   // ── numeric ↔ numeric (lossless arithmetic conversions) ──
-  if (fromK === "i32" && toK === "f64") return { instrs: [{ op: "f64.convert_i32_s" }] };
+  if (fromK === "i32" && toK === "f64") return { instrs: [i32NumberWidening(from)] };
   if (fromK === "f64" && toK === "i32") return { instrs: [{ op: "i32.trunc_sat_f64_s" }] };
   if (fromK === "i64" && toK === "f64") return { instrs: [{ op: "f64.convert_i64_s" }] };
   if (fromK === "f64" && toK === "i64") return { instrs: [{ op: "i64.trunc_sat_f64_s" }] };
-  if (fromK === "i32" && toK === "i64") return { instrs: [{ op: "i64.extend_i32_s" }] };
+  if (fromK === "i32" && toK === "i64")
+    return { instrs: [{ op: from.kind === "i32" && from.uint32 ? "i64.extend_i32_u" : "i64.extend_i32_s" }] };
   if (fromK === "i64" && toK === "i32") return { instrs: [{ op: "i32.wrap_i64" }] };
 
   // ── bigint → externref (#5383): a branded i64 boxes as a BigInt, not a number ──
@@ -114,7 +125,7 @@ export function coercionPlan(from: ValType, to: ValType, helpers: CoercionHelper
   }
   if (fromK === "i32" && isExternKind(to.kind)) {
     if (boxNumberIdx === null) return null;
-    return { instrs: [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumberIdx }] };
+    return { instrs: [i32NumberWidening(from), { op: "call", funcIdx: boxNumberIdx }] };
   }
   if (fromK === "i64" && isExternKind(to.kind)) {
     if (boxNumberIdx === null) return null;

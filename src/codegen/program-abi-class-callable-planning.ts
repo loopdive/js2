@@ -11,9 +11,10 @@ import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ProgramAbiInvariantError, type ProgramAbiCallableSignature } from "../ir/program-abi.js";
 import type { FuncHandle, FuncTypeDef, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
+import { createDerivedIrUnitId } from "../shared/contracts/identity-values.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
 import type { CodegenContext } from "./context/types.js";
-import { definedFuncAt, isImportFuncIdx, pushDefinedFunc } from "./func-space.js";
+import { definedFuncAt, definedFuncHandleOf, isImportFuncIdx, pushDefinedFunc } from "./func-space.js";
 import {
   planProgramAbiSupportCallableAlias,
   planProgramAbiSupportCallable,
@@ -253,6 +254,16 @@ export class ProgramAbiClassCallableRegistry {
   private readonly supports = new Map<IrBindingId, ProgramAbiClassSupportCallableObservation[]>();
   private readonly inheritedAliases = new Map<IrClassId, Map<string, ProgramAbiInheritedClassCallableObservation>>();
   private planned = false;
+  private readonly genericGetters = new Map<
+    string,
+    {
+      readonly direct: WasmFunction;
+      readonly generic: WasmFunction;
+      readonly parentId: IrUnitId;
+      readonly derivedUnitId: IrUnitId;
+      readonly declaration: ts.GetAccessorDeclaration;
+    }
+  >();
 
   constructor(
     readonly session: ProgramAbiSession,
@@ -314,6 +325,91 @@ export class ProgramAbiClassCallableRegistry {
       this.units.set(unitId, observations);
     }
     return unitId;
+  }
+
+  /** A second SOURCE body ABI, never an AST-free adapter or an IR emission. */
+  observeGenericGetter(
+    declaration: ts.GetAccessorDeclaration,
+    methodName: string,
+    funcIdx: FuncHandle,
+    generic: WasmFunction,
+  ): void {
+    this.assertOpen(methodName);
+    const owner = enclosingClassDeclaration(declaration);
+    const parentId = this.identityContext.unitIdByDeclaration.get(declaration);
+    const unit = parentId === undefined ? undefined : this.identityContext.unitByUnitId.get(parentId);
+    const classId = owner === null ? undefined : this.identityContext.classIdByDeclaration.get(owner);
+    if (
+      !owner ||
+      !parentId ||
+      classId === undefined ||
+      unit?.kind !== "class-instance-getter" ||
+      unit.lexicalOwnerId !== classId ||
+      this.identityContext.declarationByUnitId.get(parentId) !== declaration ||
+      this.identityContext.declarationByClassId.get(classId) !== owner
+    ) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        `generic getter ${methodName} has no exact instance-getter owner`,
+      );
+    }
+    const direct = this.functionForUnit(parentId);
+    if (this.requireDefinedFunction(generic.name, funcIdx) !== generic) {
+      throw new ProgramAbiInvariantError(
+        "missing-required-locator",
+        `generic getter ${methodName} does not own its exact preallocated function`,
+      );
+    }
+    if (!direct)
+      throw new ProgramAbiInvariantError(
+        "missing-required-locator",
+        `generic getter ${methodName} has no exact nominal unit`,
+      );
+    const derivedUnitId = createDerivedIrUnitId({ parentId, role: "class-getter-generic", ordinal: 0 });
+    this.session.registerDerivedUnit({
+      id: derivedUnitId,
+      parentId,
+      terminalOwnerId: unit.terminalOwnerId,
+      sourceId: unit.sourceId,
+      role: "class-getter-generic",
+      ordinal: 0,
+    });
+    const binding = planProgramAbiUnitCallable(this.ctx, {
+      ref: irUnitFuncRef({ unitId: derivedUnitId, name: generic.name }),
+      signature: functionSignature(this.ctx, generic),
+      func: generic,
+    });
+    if (binding !== irUnitCallableBindingId(derivedUnitId))
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        `generic getter ${methodName} lost its source-derived ABI reservation`,
+      );
+    this.genericGetters.set(methodName, { direct, generic, parentId, derivedUnitId, declaration });
+  }
+
+  genericGetterForMethod(methodName: string, declaration?: ts.GetAccessorDeclaration): FuncHandle | undefined {
+    const entry = this.genericGetters.get(methodName);
+    if (entry && declaration !== undefined && entry.declaration !== declaration) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        `generic getter ${methodName} has a different source declaration`,
+      );
+    }
+    return entry === undefined ? undefined : definedFuncHandleOf(this.ctx, entry.generic);
+  }
+
+  /** Exact source/callable ownership for the receiver-capable closure publisher. */
+  genericGetterSourceForHandle(directHandle: FuncHandle) {
+    const direct = definedFuncAt(this.ctx, directHandle);
+    if (!direct) return undefined;
+    const entries = [...this.genericGetters.values()].filter(
+      (candidate) =>
+        candidate.direct === direct ||
+        this.units.get(candidate.parentId)?.some((observed) => definedFuncAt(this.ctx, observed.funcIdx) === direct),
+    );
+    if (entries.length > 1)
+      throw new ProgramAbiInvariantError("missing-source-unit", "generic getter allocator has multiple source owners");
+    return entries.length === 0 ? undefined : entries[0];
   }
 
   /** Observe the AST-free WasmGC `<Class>_new` support function before DCE. */

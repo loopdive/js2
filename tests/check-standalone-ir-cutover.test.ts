@@ -472,3 +472,54 @@ describe("standalone IR cutover JSONL collector", () => {
     expect(codes(forgedReport)).toContain("incomplete-success-disposition");
   });
 });
+
+function sourceDerivedGetterEnvelope() {
+  const envelope = cleanIrEnvelope();
+  envelope.audit.dispositions[0]!.unitKind = "class-instance-getter";
+  envelope.audit.derivedUnits[0]!.role = "class-getter-generic";
+  envelope.audit.derivedUnits[0]!.disposition = "derived-legacy-owner";
+  const physical = {
+    target: "standalone",
+    entryPoint: "compileClassBodies",
+    bodyName: "generic_getter",
+    file: "fixture.ts",
+    line: 2,
+    column: 1,
+    sourceId: SOURCE_ID,
+    unitId: DERIVED_ID,
+    derivedParentUnitId: TERMINAL_ID,
+    terminalOwnerId: TERMINAL_ID,
+    count: 1,
+  };
+  envelope.audit.legacyEntries.push(physical);
+  return envelope;
+}
+
+describe("SOURCE-derived getter body accounting", () => {
+  it("keeps the nominal terminal IR and the physical generic body visibly legacy", () => {
+    const envelope = sourceDerivedGetterEnvelope();
+    expect(evaluateIrCutoverAuditJsonl(jsonl(envelope)).ok).toBe(true);
+    expect(envelope.audit.dispositions[0]!.disposition).toBe("terminal-ir");
+    const strict = evaluateIrCutoverAuditJsonl(jsonl(envelope), STRICT_FLOORS);
+    expect(strict.ok).toBe(false);
+    expect(codes(strict)).toContain("legacy-entry");
+  });
+
+  it("rejects a SOURCE-derived root retagged to a foreign parent or unsupported role", () => {
+    const foreign = sourceDerivedGetterEnvelope();
+    Object.assign(foreign.audit.legacyEntries[1]!, { derivedParentUnitId: SUPPORT_ID });
+    expect(codes(evaluateIrCutoverAuditJsonl(jsonl(foreign)))).toContain("entry-derived-owner-mismatch");
+    const helper = sourceDerivedGetterEnvelope();
+    helper.audit.derivedUnits[0]!.role = "lifted-closure";
+    expect(codes(evaluateIrCutoverAuditJsonl(jsonl(helper)))).toContain("unknown-unit-id");
+  });
+
+  it("cannot claim an IR-derived body over a physical SOURCE root or invent a missing legacy root", () => {
+    const hidden = sourceDerivedGetterEnvelope();
+    hidden.audit.derivedUnits[0]!.disposition = "derived-ir-owner";
+    expect(codes(evaluateIrCutoverAuditJsonl(jsonl(hidden)))).toContain("derived-disposition-mismatch");
+    const absent = sourceDerivedGetterEnvelope();
+    absent.audit.legacyEntries.pop();
+    expect(codes(evaluateIrCutoverAuditJsonl(jsonl(absent)))).toContain("derived-disposition-mismatch");
+  });
+});

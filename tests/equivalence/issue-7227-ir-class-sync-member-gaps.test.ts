@@ -174,11 +174,11 @@ export function test(): number { return new P().label() === "p" ? 1 : 0; }`;
 });
 
 // Review of #7054: a getter called on a foreign receiver through its descriptor.
-// Legacy raises a catchable TypeError (-2) for every variant — for the public
-// field variants that already diverges from node, which reads the foreign
-// object's own property (pre-existing, unchanged here). The getter must stay
-// on the legacy body: an IR instance body dereferences the `ref.null` the
-// cached trampoline passes for a foreign receiver and traps uncatchably.
+// Historical a15e compatibility expected TypeError for all six variants.
+// The actual original43 baseline and source are retained in the Nov4 receipts.
+// Current public access must preserve the actual foreign receiver like Node;
+// private access still throws for a missing brand. The nominal getter route
+// remains unchanged: generic source-entry binding is not an IR ownership claim.
 const FOREIGN_GETTERS: Record<string, { readonly field: string; readonly body: string; readonly call: string }> = {
   "public number field, {} receiver": { field: "x = 2", body: "this.x", call: "{}" },
   "public number field, {x: 9} receiver": { field: "x = 2", body: "this.x", call: "{ x: 9 }" },
@@ -188,7 +188,7 @@ const FOREIGN_GETTERS: Record<string, { readonly field: string; readonly body: s
   "private string field, {x: 9} receiver": { field: '#s = "q"', body: "this.#s", call: "{ x: 9 }" },
 };
 
-describe("#7227 a getter on a foreign receiver throws a catchable TypeError", () => {
+describe("#7227 extracted getters preserve public receivers and private brands", () => {
   for (const [label, { field, body, call }] of Object.entries(FOREIGN_GETTERS)) {
     const source = `
 class P { ${field}; get v() { return ${body}; } }
@@ -199,9 +199,331 @@ export function test() {
     for (const lane of LANES) {
       it(`${label} — ${lane.name}`, async () => {
         const { result, exports } = await compileAndRun(source, lane.options);
-        expect(exports.test!()).toBe(-2);
-        expect(route(result, "P_get_v"), "P_get_v stays on the legacy body").toBe("unsupported");
+        const reference = evaluateAsJs(source);
+        expect(exports.test!()).toBe(reference.test!());
+        expect(route(result, "P_get_v"), "nominal P_get_v ownership stays unchanged").toBe("unsupported");
       }, 120_000);
     }
   }
 });
+
+// Full source bodies and real JS values: these are not ABI-shape mirrors.
+const GENERIC_GETTER_CASES: Record<string, { source: string; fileName?: string; irUnits?: readonly string[] }> = {
+  "foreign addition preserves string concatenation and once-only Get and valueOf": {
+    source: `
+let gets = 0;
+let conversions = 0;
+class P { x = 2; get value() { return this.x + 1; } }
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  const value = {valueOf() { conversions++; return "z"; }};
+  const receiver = {get x() { gets++; return value; }};
+  return g.call({x: 9}) === 10 && g.call({x: "a"}) === "a1" &&
+    g.call(receiver) === "z1" && gets === 1 && conversions === 1 ? 1 : 0;
+}`,
+  },
+  "ordinary named, arrow, parameter and alias calls retain call/apply behavior": {
+    source: `
+const token = {value: 10};
+function ordinary(a, b) { return (this === token ? 10 : 0) + arguments.length + a + b; }
+function invoke(fn) { return fn.call(token, 3, 4) + fn.apply(token, [3, 4]); }
+function mapped(fn) { return [7].map(fn, token)[0]; }
+function makeArrow() { return (a, b) => this.value + a + b; }
+export function test() {
+  const literal = function(a, b) { return this.value + arguments.length + a + b; };
+  const alias = literal;
+  let mutable = alias;
+  const arrow = makeArrow.call(token);
+  return ordinary.call(token, 3, 4) === 19 && ordinary.apply(token, [3, 4]) === 19 &&
+    invoke(ordinary) === 38 && mapped(ordinary) === 20 && literal.call(token, 3, 4) === 19 &&
+    alias.apply(token, [3, 4]) === 19 && mutable.call(token, 3, 4) === 19 &&
+    arrow.call({value: 100}, 3, 4) === 17 && arrow.apply({value: 100}, [3, 4]) === 17 ? 1 : 0;
+}`,
+  },
+  "source arguments and raw receivers survive free, call, apply, bind and HOF invocation": {
+    source: `
+const token = {};
+let callbackArray;
+class P {
+  get value() {
+    let mask = this === undefined ? 1 : this === token ? 2 : 0;
+    if (arguments.length === 2 && arguments[0] === 7 && arguments[1] === 8) mask += 4;
+    if (arguments.length === 3 && arguments[0] === 7 && arguments[1] === 0 && arguments[2] === callbackArray) mask += 8;
+    return mask;
+  }
+}
+export function test() {
+  const actual = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  if (typeof actual !== "function") throw new Error("class descriptor must contain its getter");
+  /** @type {(...args: any[]) => any} */
+  const g = actual;
+  const free = g(7, 8);
+  const called = g.call(token, 7, 8);
+  const applied = g.apply(token, [7, 8]);
+  const bound = g.bind(token, 7)(8);
+  callbackArray = [7];
+  const mapped = callbackArray.map(g, token)[0];
+  return typeof g === "function" && g.name === "get value" && g.length === 0 &&
+    free === 5 && called === 6 && applied === 6 && bound === 6 && mapped === 10 ? 1 : 0;
+}`,
+  },
+  "source callable metadata reads descriptors and mutations share one owner": {
+    source: `
+class P { get value() { return this; } }
+function readName(fn) { return fn.name; }
+export function test() {
+  const actual = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  if (typeof actual !== "function") throw new Error("class descriptor must contain its getter");
+  const g = actual;
+  const name = Object.getOwnPropertyDescriptor(g, "name");
+  const length = Object.getOwnPropertyDescriptor(g, "length");
+  if (!name || !length) throw new Error("source getter metadata descriptors must exist");
+  if (readName(g) !== "get value" || g.length !== 0 || name.value !== "get value" || length.value !== 0 ||
+      name.writable !== false || name.enumerable !== false || name.configurable !== true ||
+      length.writable !== false || length.enumerable !== false || length.configurable !== true ||
+      !Object.hasOwn(g, "name") || !Object.hasOwn(g, "length")) return 0;
+  Object.defineProperty(g, "name", {value: "renamed"});
+  const renamed = Object.getOwnPropertyDescriptor(g, "name");
+  if (!renamed || readName(g) !== "renamed" || renamed.value !== "renamed" ||
+      renamed.writable !== false || renamed.configurable !== true) return 0;
+  if (!Reflect.deleteProperty(g, "name") || Object.hasOwn(g, "name")) return 0;
+  Object.defineProperty(g, "name", {value: "after-delete"});
+  const fresh = Object.getOwnPropertyDescriptor(g, "name");
+  if (!fresh || readName(g) !== "after-delete" || fresh.value !== "after-delete" ||
+      fresh.writable !== false || fresh.enumerable !== false || fresh.configurable !== false) return 0;
+  if (Reflect.deleteProperty(g, "name") || readName(g) !== "after-delete") return 0;
+  if (!Reflect.deleteProperty(g, "length") || Object.hasOwn(g, "length")) return 0;
+  Object.defineProperty(g, "length", {get() { return 7; }, configurable: true});
+  const accessor = Object.getOwnPropertyDescriptor(g, "length");
+  if (!accessor || typeof accessor.get !== "function" || accessor.get.call(g) !== 7 ||
+      accessor.enumerable !== false || accessor.configurable !== true) return 0;
+  if (!Reflect.deleteProperty(g, "length") || Object.hasOwn(g, "length")) return 0;
+  Object.preventExtensions(g);
+  if (Reflect.defineProperty(g, "length", {value: 9}) || Object.hasOwn(g, "length") ||
+      Object.getOwnPropertyDescriptor(g, "length") !== undefined) return 0;
+  const token = {};
+  return g.call(token) === token ? 1 : 0;
+}
+`,
+  },
+  "strict receiver identity retains null, undefined, primitives and object identity": {
+    source: `
+class P { get value() { return this; } }
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  const token = {};
+  return (g.call(null) === null ? 1 : 0) + (g.call(undefined) === undefined ? 2 : 0) +
+    (g.call(7) === 7 ? 4 : 0) + (g.call("s") === "s" ? 8 : 0) +
+    (g.call(true) === true ? 16 : 0) + (g.call(token) === token ? 32 : 0) +
+    (g() === undefined ? 64 : 0);
+}`,
+  },
+  "duplicate own getter keeps the final declaration and its generic source owner": {
+    source: `
+class P {
+  x = 1;
+  get value() { return this.x + 100; }
+  get ["value"]() { return this.x; }
+}
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  const token = {};
+  return g.call({x: token}) === token && new P().value === 1 ? 1 : 0;
+}`,
+  },
+  "inherited getter keeps its declaring source body with the actual foreign receiver": {
+    source: `
+class Base { x = 4; get value() { return this.x; } }
+class Child extends Base {}
+export function test() {
+  const parent = Object.getPrototypeOf(Child.prototype);
+  const g = Object.getOwnPropertyDescriptor(parent, "value").get;
+  const token = {};
+  return g.call({x: token}) === token && g.call(new Child()) === 4 &&
+    !Object.hasOwn(Child.prototype, "value") ? 1 : 0;
+}`,
+  },
+  "numeric public read preserves undefined, foreign number and object identity": {
+    source: `
+class P { x = 2; get value() { return this.x; } }
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  const token = {};
+  return (g.call({}) === undefined ? 1 : 0) + (g.call({x: 9}) === 9 ? 2 : 0) + (g.call({x: token}) === token ? 4 : 0);
+}`,
+  },
+  "string public read preserves undefined, foreign string and object identity": {
+    source: `
+class P { name = "q"; get value() { return this.name; } }
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  const token = {};
+  return (g.call({}) === undefined ? 1 : 0) + (g.call({name: "z"}) === "z" ? 2 : 0) + (g.call({name: token}) === token ? 4 : 0);
+}`,
+  },
+  "receiver and result aliases retain dynamic values": {
+    source: `
+class P { x = 2; get value() { const self = this; const value = self.x; return value; } }
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  const token = {};
+  return (g.call({}) === undefined ? 1 : 0) + (g.call({x: 9}) === 9 ? 2 : 0) + (g.call({x: token}) === token ? 4 : 0);
+}`,
+  },
+  "public method call uses the foreign method and its actual receiver": {
+    source: `
+class P { read() { return 0; } get value() { return this.read(); } }
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  const token = {};
+  const receiver = { value: token, read() { return this.value; } };
+  return g.call(receiver) === token ? 1 : 0;
+}`,
+  },
+  "aliased public method call uses the foreign method and receiver": {
+    source: `
+class P { read() { return 0; } get value() { const self = this; return self.read(); } }
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  const token = {};
+  const receiver = { value: token, read() { return this.value; } };
+  return g.call(receiver) === token ? 1 : 0;
+}`,
+  },
+  "computed method Get precedes arguments and keeps once-only effects": {
+    source: `
+let trace = 0;
+function key() { trace = trace * 10 + 1; return "read"; }
+function argument() { trace = trace * 10 + 2; return 3; }
+class P { read(v) { return 0; } get value() { return this[key()](argument()); } }
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  const token = {};
+  const receiver = { value: token, get read() { trace = trace * 10 + 3; return function(v) { trace = trace * 10 + 4; return v === 3 && this.value === token ? token : null; }; } };
+  const value = g.call(receiver);
+  return value === token && trace === 1324 ? 1 : 0;
+}`,
+  },
+  "inherited public property is read and the accessor runs once": {
+    source: `
+let hits = 0;
+class P { x = 2; get value() { hits++; return this.x; } }
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  const receiver = Object.create({x: 7});
+  const value = g.call(receiver);
+  return value === 7 && hits === 1 ? 1 : 0;
+}`,
+  },
+  "abrupt foreign property getter keeps the thrown object identity": {
+    source: `
+const token = {};
+class P { x = 2; get value() { return this.x; } }
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  const receiver = { get x() { throw token; } };
+  try { g.call(receiver); return 0; } catch (error) { return error === token ? 1 : 0; }
+}`,
+  },
+  "strict getter rejects actual null and undefined receivers": {
+    source: `
+class P { x = 2; get value() { return this.x; } }
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  let mask = 0;
+  try { g.call(null); } catch (error) { if (error instanceof TypeError) mask += 1; }
+  try { g.call(undefined); } catch (error) { if (error instanceof TypeError) mask += 2; }
+  return mask;
+}`,
+  },
+  "private lexical brand rejects a foreign receiver and accepts the real instance": {
+    source: `
+class P { #x = 3; get value() { return this.#x; } }
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  let mask = g.call(new P()) === 3 ? 1 : 0;
+  try { g.call({}); } catch (error) { if (error instanceof TypeError) mask += 2; }
+  return mask;
+}`,
+  },
+  "receiver-insensitive JS getter retains its nominal IR entry": {
+    source: `
+class P {
+  /** @type {number} */
+  x = 1;
+  /** @returns {number} */
+  get value() { return 7; }
+}
+export function test() { const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get; return g.call({}) + new P().value; }`,
+    irUnits: ["P_get_value"],
+  },
+  "receiver-insensitive annotated getter retains its nominal IR entry": {
+    source: `
+class P { x: number = 1; get value(): number { return 7; } }
+export function test(): number { const g = Object.getOwnPropertyDescriptor(P.prototype, "value")!.get!; return g.call({}) + new P().value; }`,
+    fileName: "issue-7227.ts",
+    irUnits: ["P_get_value"],
+  },
+};
+
+describe("#7227 generic getter receiver and result fidelity", () => {
+  for (const [label, { source, fileName, irUnits = [] }] of Object.entries(GENERIC_GETTER_CASES)) {
+    for (const lane of LANES) {
+      it(`${label} — ${lane.name}`, async () => {
+        const reference = evaluateAsJs(source);
+        const { result, exports } = await compileAndRun(source, lane.options, fileName);
+        expect(exports.test!()).toBe(reference.test!());
+        for (const unit of irUnits)
+          expect(
+            route(result, unit),
+            `${unit} keeps its actual nominal IR body: ${JSON.stringify(result.irOutcomes?.find((outcome) => outcome.displayName === unit))}`,
+          ).toBe("emitted");
+      }, 120_000);
+    }
+  }
+});
+
+it("nominal IR getter plus generic source body stays visible to direct-body poison", async () => {
+  const source = `
+class P {
+  /** @type {number} */
+  x = 7;
+  /** @returns {number} */
+  get value() { return this.x; }
+}
+export function test() {
+  const g = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  return g.call({x: 9}) + new P().value;
+}`;
+  const { result, exports } = await compileAndRun(source, { target: "standalone" });
+  expect(exports.test!()).toBe(evaluateAsJs(source).test!());
+  const nominal = result.irOutcomes?.find((outcome) => outcome.displayName === "P_get_value");
+  expect(nominal, `actual nominal getter outcome: ${JSON.stringify(nominal)}`).toMatchObject({
+    kind: "emitted",
+    irBodyEmitted: true,
+  });
+  const genericRows = result.irBodyRouteAudit?.legacyEntries.filter(
+    (entry) => entry.entryPoint === "compileClassBodies" && entry.bodyName === "__class_getter_receiver_P_get_value",
+  );
+  expect(genericRows).toHaveLength(1);
+  const derived = result.irBodyRouteAudit?.derivedUnits.find((unit) => unit.role === "class-getter-generic");
+  expect(derived).toMatchObject({ parentId: nominal!.unitId, disposition: "derived-legacy-owner" });
+  expect(genericRows![0]).toMatchObject({
+    count: 1,
+    unitId: derived!.id,
+    derivedParentUnitId: nominal!.unitId,
+    terminalOwnerId: nominal!.unitId,
+  });
+  const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+  try {
+    process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "P_get_value";
+    const poisoned = await compile(source, { target: "standalone", fileName: "issue-7227.js", trackIrOutcomes: true });
+    expect(poisoned.success).toBe(false);
+    expect(poisoned.errors.map((error) => error.message).join("\n")).toContain(
+      "injected direct class-body poison: P_get_value",
+    );
+  } finally {
+    if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+    else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+  }
+}, 120_000);

@@ -1,14 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { ImportIntent } from "../index.js";
+import type { TimerCapabilityAdapterContext } from "./contracts/timer-capability.js";
+export type { TimerCapabilityAdapterContext } from "./contracts/timer-capability.js";
 
 type TimerCapabilityIntent = Extract<ImportIntent, { type: "timer_set" | "timer_clear" }>;
-
-/** Narrow services needed to bind timer capability imports. */
-export interface TimerCapabilityAdapterContext {
-  deps?: Record<string, any>;
-  wrapWasmClosure(value: unknown, arity: number, boundary?: "timer"): ((...args: any[]) => any) | null;
-}
 
 let warnedTimerCallbackUnresolvable = false;
 
@@ -49,13 +45,15 @@ export function resolveTimerCapabilityImport(
         warnTimerCallbackUnresolvable(intent.mode);
         return 0;
       }
-      return host(callable, Number(delay));
+      const hostDelay = context.marshalTimerValueToHost ? context.marshalTimerValueToHost(delay) : delay;
+      const handle = host(callable, Number(hostDelay));
+      return context.marshalTimerHandleFromHost ? context.marshalTimerHandleFromHost(handle) : handle;
     };
   }
 
   return (handle: unknown) => {
     try {
-      host(handle);
+      host(context.marshalTimerValueToHost ? context.marshalTimerValueToHost(handle) : handle);
     } catch {
       // Browsers ignore invalid timer handles; retain that behavior.
     }

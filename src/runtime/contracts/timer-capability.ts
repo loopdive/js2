@@ -45,3 +45,11 @@ export function planStandaloneTimerCallbackExports(
   }
   return result;
 }
+
+/** Narrow services needed to bind timer capability imports. */
+export interface TimerCapabilityAdapterContext {
+  deps?: Record<string, any>;
+  wrapWasmClosure(value: unknown, arity: number, boundary?: "timer"): ((...args: any[]) => any) | null;
+  marshalTimerValueToHost?(value: unknown): unknown;
+  marshalTimerHandleFromHost?(handle: unknown): unknown;
+}

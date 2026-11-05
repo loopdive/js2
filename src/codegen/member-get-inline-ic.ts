@@ -109,6 +109,7 @@
  *   - `JS2WASM_INLINE_PROP_IC_DEBUG=1` prints patch counts and a histogram of
  *     DECLINED property names keyed by reason.
  */
+import { i32NumberWidening } from "../wasm/physical/numeric-carriers.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { tunedFlagEnabled } from "../perf-flags.js";
 import type { CodegenContext } from "./context/types.js";
@@ -346,7 +347,7 @@ function planTypedF64(ctx: CodegenContext, propName: string, max: number): { pla
       resultType: { kind: "f64" },
       structTypeIdx: c0.structTypeIdx,
       fieldIdx: c0.fieldIdx,
-      armTail: c0.fieldType.kind === "i32" ? [{ op: "f64.convert_i32_s" }] : [],
+      armTail: c0.fieldType.kind === "i32" ? [i32NumberWidening(c0.fieldType)] : [],
     },
   };
 }

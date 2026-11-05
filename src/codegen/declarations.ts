@@ -136,7 +136,11 @@ import {
   ensureNativeDynamicBoundaryTag,
   prepareStandaloneNativePromiseUndefinedBoundary,
 } from "./native-dynamic-boundary-tag.js";
-import { prepareStandaloneNativePromiseNumberBoundary } from "./native-promise-number-boundary.js";
+import {
+  prepareStandaloneNativePromiseNumberBoundary,
+  prepareNativeNumberValueBoundary,
+  rejectNativeNumberBoundarySourceExport,
+} from "./native-promise-number-boundary.js";
 import { prepareAsyncCallableAbi } from "./async-ir-planning.js";
 import { widenAsyncDeclarationResults } from "./async-activation.js"; // (#5371 + #6780)
 import {
@@ -345,13 +349,11 @@ function ensureNativeDynamicBoundaryBridge(ctx: CodegenContext): void {
   ensureNativeStringBoundaryBridge(ctx);
   addUnionImports(ctx);
   ensureAnyHelpers(ctx);
+  prepareNativeNumberValueBoundary(ctx);
 
   for (const name of [
-    "__box_number",
     "__box_boolean",
     "__box_bigint",
-    "__typeof_number",
-    "__unbox_number",
     "__typeof_boolean",
     "__unbox_boolean",
     "__typeof_bigint",
@@ -440,13 +442,15 @@ function recordExportSignature(
         ? "dynamic"
         : isStringType(unwrappedRet)
           ? "string"
-          : (unwrappedRet.flags & ts.TypeFlags.ESSymbolLike) !== 0
-            ? "symbol"
-            : classifyTypedArrayType(unwrappedRet, ctx.checker) !== "other"
-              ? classifyTypedArrayType(unwrappedRet, ctx.checker)
-              : (unwrappedRet.flags & ts.TypeFlags.Object) !== 0
-                ? "aggregate"
-                : "other";
+          : (unwrappedRet.flags & ts.TypeFlags.BooleanLike) !== 0
+            ? "boolean"
+            : (unwrappedRet.flags & ts.TypeFlags.ESSymbolLike) !== 0
+              ? "symbol"
+              : classifyTypedArrayType(unwrappedRet, ctx.checker) !== "other"
+                ? classifyTypedArrayType(unwrappedRet, ctx.checker)
+                : (unwrappedRet.flags & ts.TypeFlags.Object) !== 0
+                  ? "aggregate"
+                  : "other";
   if (result !== "other") anyHit = true;
   if (result === "string") stringHit = true;
   if (result === "symbol") symbolHit = true;
@@ -466,6 +470,9 @@ function recordExportSignature(
     prepareStandaloneNativePromiseUndefinedBoundary(ctx);
     ensureNativePromiseBoundaryBridge(ctx);
   }
+  // A public dynamic result can carry a native Promise just as a typed Promise result can.
+  // Reserve the same subscription imports at this real value boundary, before body preparation.
+  if (result === "dynamic") ensureNativePromiseBoundaryBridge(ctx);
 }
 
 // An unannotated binding-pattern parameter — `function f([x, y])` or
@@ -3180,6 +3187,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
 
       if (targetName && ctx.funcMap.has(targetName)) {
+        rejectNativeNumberBoundarySourceExport(ctx, targetName);
         const funcIdx = ctx.funcMap.get(targetName)!;
 
         // Mark the function as exported (for dead-code elimination etc.)
@@ -3217,14 +3225,16 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // isn't part of this gap.
   if (isEntryFile) {
     for (const stmt of sourceFile.statements) {
-      if (!ts.isExportDeclaration(stmt)) continue;
+      if (!ts.isExportDeclaration(stmt) || stmt.isTypeOnly) continue;
       if (!stmt.exportClause || !ts.isNamedExports(stmt.exportClause)) continue;
       if (stmt.moduleSpecifier) continue; // re-export — handled elsewhere
       for (const spec of stmt.exportClause.elements) {
+        if (spec.isTypeOnly) continue;
         // `export { foo as bar }` → propertyName=foo, name=bar
         // `export { foo }`        → propertyName=undefined, name=foo
         const localName = spec.propertyName?.text ?? spec.name.text;
         const exportedName = spec.name.text;
+        rejectNativeNumberBoundarySourceExport(ctx, exportedName);
         if (!ctx.funcMap.has(localName)) continue;
         const funcIdx = ctx.funcMap.get(localName)!;
         const func = definedFuncAt(ctx, funcIdx);
@@ -3265,6 +3275,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // Pattern 1: `module.exports = <ident>` — default export of an existing function
       if (isModuleExports(expr.left) && ts.isIdentifier(expr.right)) {
         const targetName = expr.right.text;
+        rejectNativeNumberBoundarySourceExport(ctx, targetName);
         if (ctx.funcMap.has(targetName)) {
           hasModuleExportsDefault = true;
           const funcIdx = ctx.funcMap.get(targetName)!;
@@ -3285,6 +3296,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         hasModuleExportsDefault = true;
         const fnExpr = expr.right;
         const name = fnExpr.name?.text ?? "default";
+        rejectNativeNumberBoundarySourceExport(ctx, name);
         if (!ctx.funcMap.has(name)) {
           // Register the function expression
           const sig = ctx.checker.getSignatureFromDeclaration(fnExpr);
@@ -3335,6 +3347,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             valName = prop.initializer.text;
           }
           if (!key || !valName) continue;
+          rejectNativeNumberBoundarySourceExport(ctx, key);
           if (!ctx.funcMap.has(valName)) continue;
           const funcIdx = ctx.funcMap.get(valName)!;
           const func = definedFuncAt(ctx, funcIdx);
@@ -3349,6 +3362,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // Pattern 2: `module.exports.foo = <fn>` or `exports.foo = <fn>` — named export
       const exportName = getCjsNamedExportName(expr.left);
       if (!exportName) continue;
+      rejectNativeNumberBoundarySourceExport(ctx, exportName);
 
       if (ts.isFunctionExpression(expr.right)) {
         const fnExpr = expr.right;

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#6770 S4) The boolean FAILURE channel of [[DefineOwnProperty]] for the
- * standalone descriptor appliers.
+ * native standalone/WASI descriptor appliers.
  *
  * The native `__defineProperty_value` / `__defineProperty_accessor` (the
  * `Object.defineProperty` MOP) run ValidateAndApplyPropertyDescriptor
@@ -29,11 +29,11 @@
  *
  * Reusable: any caller of an applier that owes a boolean (`Reflect.set`'s
  * define step, the #6771 Array `CreateDataProperty` sites) wraps the same way.
- * Standalone only; the host lane's appliers are JS imports.
+ * Native standalone/WASI only; the host lane's appliers are JS imports.
  */
 import type { Instr } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { noJsHost, type CodegenContext, type FunctionContext } from "../context/types.js";
 import { ensureExnTag } from "../registry/physical-imports.js";
 import { bound } from "./ports.js"; // (#6770/#6797) core helpers, injected — keeps this leaf out of the import SCC
 
@@ -55,9 +55,9 @@ function rejectionGlobalIdx(ctx: CodegenContext): number | undefined {
   return pos < 0 ? undefined : ctx.numImportGlobals + pos;
 }
 
-/** The externref global a rejected define parks its TypeError in (standalone only). */
+/** The externref global a rejected define parks its TypeError in (native standalone/WASI). */
 export function ensureDefineRejectionGlobal(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!noJsHost(ctx)) return undefined;
   const existing = rejectionGlobalIdx(ctx);
   if (existing !== undefined) return existing;
   const idx = nextModuleGlobalIdx(ctx);
@@ -83,7 +83,7 @@ export function definePropertyBooleanFrom(
   applierStart: number,
   isTruthyIdx: number | undefined,
 ): boolean {
-  if (!ctx.standalone || isTruthyIdx === undefined || rejectionGlobalIdx(ctx) === undefined) return false;
+  if (!noJsHost(ctx) || isTruthyIdx === undefined || rejectionGlobalIdx(ctx) === undefined) return false;
   const call = fctx.body.splice(applierStart);
   call.push({ op: "call", funcIdx: isTruthyIdx });
   fctx.body.push(...catchDefineRejectionAsFalse(ctx, fctx, call));
@@ -93,7 +93,7 @@ export function definePropertyBooleanFrom(
 /**
  * Wrap `call` — instructions leaving the i32 `true` of a define that did not
  * throw — so a define REJECTION answers `0`. Returns `call` unchanged when the
- * channel is unavailable (non-standalone, or no strict-equality helper).
+ * channel is unavailable (host, or no strict-equality helper).
  */
 function catchDefineRejectionAsFalse(ctx: CodegenContext, fctx: FunctionContext, call: Instr[]): Instr[] {
   const globalIdx = rejectionGlobalIdx(ctx);

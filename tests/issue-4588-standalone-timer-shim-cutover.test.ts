@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { readFileSync } from "node:fs";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { buildImports, compile, compileMulti, type CompileResult, type IrObservedOutcome } from "../src/index.js";
 import { buildCompiledImports, wrapExports } from "../src/runtime.js";
@@ -13,6 +13,7 @@ import { preparedIrBodyRouting, type IrExactBodyClaim } from "../src/codegen/ir-
 import type { IrUnitId } from "../src/ir/identity.js";
 import type { IrIntegrationReport, IrIntegrationTerminalEvidence } from "../src/ir/integration.js";
 import type { IrUnsupportedCode } from "../src/ir/outcomes.js";
+import * as dynamicSupport from "../src/ir/prepared-dynamic-support.js";
 
 const ASYNC_SOURCE = readFileSync(new URL("../website/playground/examples/js/async.ts", import.meta.url), "utf8");
 const ASYNC_TIMER_UNIT_ID =
@@ -96,6 +97,50 @@ function expectLegacyOrSafeReject(result: CompileResult): void {
 }
 
 describe("#4588 exact compiler timer-shim physical-route cutover", () => {
+  it("partitions exact timer support while ordinary dynamic evidence still rejects duplicate ownership", async () => {
+    const observe = vi.spyOn(dynamicSupport, "prepareDynamicInstructionSupportForUnits");
+    try {
+      const timer = await compileAsync("standalone");
+      expect(timer.success, JSON.stringify(timer.errors)).toBe(true);
+      expect(timerOutcome(timer)).toMatchObject({ kind: "emitted", irBodyEmitted: true, legacyBodyEmitted: false });
+      expect(observe.mock.calls.length).toBeGreaterThan(0);
+      expect(
+        observe.mock.calls.every(([input]) =>
+          input.entries.every((entry) => entry.terminalOwnerUnitId !== ASYNC_TIMER_UNIT_ID),
+        ),
+      ).toBe(true);
+
+      observe.mockClear();
+      // Same genuine numeric-boxing module as the established #5297 control.
+      const ordinary = await compile(`let a: any = 1; export function test(): number { return (a as number) + 1; }`, {
+        target: "standalone",
+        fast: false,
+        trackIrOutcomes: true,
+      });
+      expect(ordinary.success, JSON.stringify(ordinary.errors)).toBe(true);
+      expect(ordinary.irOutcomes?.find((row) => row.unitKind === "module-init")).toMatchObject({
+        kind: "emitted",
+        irBodyEmitted: true,
+      });
+      const observed = observe.mock.results.find((result) => result.type === "return" && result.value.size > 0);
+      if (!observed || observed.type !== "return") throw new Error("ordinary dynamic producer supplied no evidence");
+      const evidence = observed.value;
+      expect(
+        [...evidence.values()].some((row) =>
+          [...row.instructionCallables.keys()].some((instr) => instr.kind === "box"),
+        ),
+      ).toBe(true);
+      const conflict = new Error("competing dynamic support owner");
+      expect(() =>
+        dynamicSupport.mergeDynamicInstructionSupport(evidence, new Map(evidence), () => {
+          throw conflict;
+        }),
+      ).toThrow(conflict);
+    } finally {
+      observe.mockRestore();
+    }
+  });
+
   it("defers only exact Unsupported free-function owners for post-direct retry", () => {
     const freeUnitId = "ir-unit:v1:test:free" as IrUnitId;
     const classUnitId = "ir-unit:v1:test:class" as IrUnitId;
@@ -323,8 +368,32 @@ describe("#4588 exact compiler timer-shim physical-route cutover", () => {
         process.env.JS2WASM_TEST_INJECT_IR_PREPARED_TIMER_SHIM_FAILURE = stage;
         const result = await compileAsync("standalone");
         expectLegacyOrSafeReject(result);
-        const nonTimer = (result.irOutcomes ?? []).filter((outcome) => outcome.unitId !== ASYNC_TIMER_UNIT_ID);
+        const otherOutcomes = (result.irOutcomes ?? []).filter((outcome) => outcome.unitId !== ASYNC_TIMER_UNIT_ID);
+        // The function-only source also owns an explicit no-work census row; it is not a body patch.
+        const noWorkCensus = otherOutcomes.filter((outcome) => outcome.kind === "non-executable");
+        expect(noWorkCensus).toEqual([
+          expect.objectContaining({
+            file: "async.ts",
+            displayName: "<module-init>",
+            unitKind: "module-init",
+            kind: "non-executable",
+            stage: "select",
+            legacyBodyEmitted: false,
+            irBodyEmitted: false,
+          }),
+        ]);
+        expect(noWorkCensus[0].unitId).toBeUndefined();
+        const nonTimer = otherOutcomes.filter((outcome) => outcome.kind !== "non-executable");
         expect(nonTimer).toHaveLength(5);
+        const sourceFunctionNames = ["delay", "fetchUser", "fetchAllSequential", "fetchAllParallel", "main"];
+        expect(nonTimer.map((outcome) => ({ name: outcome.displayName, unitId: outcome.unitId }))).toEqual(
+          sourceFunctionNames.map((name, ordinal) => ({
+            name,
+            unitId:
+              "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aasync.ts:root:top-level-function:" +
+              ordinal.toString(16).padStart(16, "0"),
+          })),
+        );
         expect(
           nonTimer.every(
             (outcome) => outcome.kind === "emitted" && outcome.irBodyEmitted && !outcome.legacyBodyEmitted,

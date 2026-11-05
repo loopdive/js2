@@ -55,6 +55,13 @@ import {
   type ClosureDispatchRestCarrier,
 } from "./closures/closure-dispatch-rest.js";
 import { buildMethodDispatchPrologue } from "./closures/method-dispatch-prologue.js";
+import {
+  assertSourceGetterReceiverSignatureSeparation,
+  buildSourceGetterReceiverDispatch,
+  prepareSourceGetterReceiverFamily,
+  sourceGetterReceiverUndefined,
+} from "./closures/source-getter-receiver.js";
+import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
 import { applyTailDispatch } from "./closures/apply-extras-tail.js"; // (#6959 review)
 import { isSyntheticStructName } from "./emit-helpers.js";
 export { buildTransferredCharAtApplyArm } from "./char-at-transfer.js";
@@ -751,6 +758,16 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   baseWrapperIdx = resolveClosureBaseWrapperTypeIdx(ctx, arity, baseWrapperIdx);
   if (baseWrapperIdx === undefined) return;
 
+  // Recognition must not manufacture the ordinary entry whose existence this
+  // exporter tests. Prepare the SOURCE family/error only for a real dispatch.
+  prepareSourceGetterReceiverFamily(ctx);
+  assertSourceGetterReceiverSignatureSeparation(ctx);
+  const sourceReceiverFailure = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "SOURCE getter callable owner is not available",
+  );
+
   // A callback may receive a compiled GC value through a host-side facade.
   // Keep the generic closure bridge on the open externref carrier until the
   // last responsible moment: recovering the original Wasm value before a
@@ -801,6 +818,27 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   body.push({ op: "local.get", index: 0 });
   body.push({ op: "any.convert_extern" });
   body.push({ op: "local.set", index: anyLocal });
+
+  const sourceArgumentState = buildClosureMethodArgumentState(
+    arity,
+    0,
+    {
+      argc: argcGlobalIdx,
+      extrasArgv: extrasArgvGlobalIdx,
+      extrasVecTypeIdx,
+      extrasArrTypeIdx,
+    },
+    1,
+  );
+  body.push(
+    ...buildSourceGetterReceiverDispatch(
+      ctx,
+      anyLocal,
+      sourceGetterReceiverUndefined(ctx),
+      sourceArgumentState,
+      sourceReceiverFailure,
+    ),
+  );
 
   const linkedArgsLocal = funcLocal + 1;
   let funcrefDispatch: Instr[] =
@@ -1329,6 +1367,16 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   baseWrapperIdx = resolveClosureBaseWrapperTypeIdx(ctx, arity, baseWrapperIdx);
   if (baseWrapperIdx === undefined) return;
 
+  // Recognition must not manufacture the ordinary entry whose existence this
+  // exporter tests. Prepare the SOURCE family/error only for a real dispatch.
+  prepareSourceGetterReceiverFamily(ctx);
+  assertSourceGetterReceiverSignatureSeparation(ctx);
+  const sourceReceiverFailure = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "SOURCE getter callable owner is not available",
+  );
+
   // Method calls can re-enter Wasm through a host-side facade just like free
   // callback calls do. Recover the facade's original GC value before narrowing
   // a concrete reference parameter. In particular, a NodeArray carries
@@ -1382,9 +1430,23 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   // contract — see `buildMethodDispatchPrologue`.
   // (#6959 review) `__apply_closure`'s n > 8 tail — consumed FIRST; see apply-extras-tail.ts.
   const applyTail = applyTailDispatch(ctx, arity, minHostArity, prevThisLocal + 4, extrasVecTypeIdx);
+  const sourceArgumentState = buildClosureMethodArgumentState(arity, 0, {
+    argc: argcGlobalIdx,
+    extrasArgv: extrasArgvGlobalIdx,
+    extrasVecTypeIdx,
+    extrasArrTypeIdx,
+  });
+  if (applyTail) sourceArgumentState.push(...applyTail.appendExtras(extrasArgvGlobalIdx));
+  const sourceReceiverDispatch = buildSourceGetterReceiverDispatch(
+    ctx,
+    anyLocal,
+    [{ op: "local.get", index: 0 }],
+    sourceArgumentState,
+    sourceReceiverFailure,
+  );
   const body: Instr[] = [
     ...(applyTail?.prologue() ?? []),
-    ...buildMethodDispatchPrologue(ctx, arity, anyLocal, prevThisLocal, currentThisGlobalIdx),
+    ...buildMethodDispatchPrologue(ctx, arity, anyLocal, prevThisLocal, currentThisGlobalIdx, sourceReceiverDispatch),
   ];
 
   const npArgs = {

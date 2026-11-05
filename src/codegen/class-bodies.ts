@@ -57,7 +57,8 @@ import {
 } from "./program-abi-class-callable-planning.js";
 import { setProgramAbiInheritedClassCallableAlias } from "./program-abi-class-callable-planning.js";
 import { absoluteFuncIndex } from "../emit/resolve-layout.js"; // (#1916 S3b) resolve handles for order-stable declaredFuncRefs sort
-import { definedFuncAt } from "./func-space.js";
+import { definedFuncAt, pushDefinedFunc } from "./func-space.js";
+import { bodyReferencesOwnThis } from "./helpers/body-references-own-this.js";
 import { getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
 import { emitNativeConstructRuntimeArgv } from "./expressions/new-super.js"; // (#5383 S67) runtime-length `super(...spread)` across the link
 import { emitSuperCallBindThis, ensureSuperInitializedFlagLocal } from "./classes/derived-ctor-this-guard.js"; // (#5350 r3 / #6772 S1b) runtime this-initialised flag
@@ -832,6 +833,122 @@ export function resolveInstallableClassMemberName(
     entries.sort((a, b) => a.ordinal - b.ordinal);
   }
   return syntheticName;
+}
+
+/** Untyped JS instance getter values need a generic receiver/result ABI. */
+function hasGenericGetterEntry(member: ts.GetAccessorDeclaration): boolean {
+  return (
+    (member.flags & ts.NodeFlags.JavaScriptFile) !== 0 &&
+    !hasStaticModifier(member) &&
+    member.type === undefined &&
+    !ts.isPrivateIdentifier(member.name) &&
+    member.body !== undefined &&
+    bodyReferencesOwnThis(member.body)
+  );
+}
+
+/** Legal same-kind getter redefinitions install the final source declaration. */
+function finalGetterDeclarations(
+  ctx: CodegenContext,
+  declaration: ts.ClassLikeDeclaration,
+  className: string,
+): Map<string, ts.GetAccessorDeclaration> {
+  const final = new Map<string, ts.GetAccessorDeclaration>();
+  for (const member of declaration.members) {
+    if (!ts.isGetAccessorDeclaration(member)) continue;
+    const name = resolveInstallableClassMemberName(ctx, className, declaration, member);
+    if (name !== undefined) {
+      final.set(classAccessorFuncKey(ctx, className, "get", name, hasStaticModifier(member)), member);
+    }
+  }
+  return final;
+}
+
+function reserveGenericGetter(ctx: CodegenContext, member: ts.GetAccessorDeclaration, name: string): void {
+  if (!hasGenericGetterEntry(member) || !ctx.programAbiClassCallables) return;
+  const genericName = `__class_getter_receiver_${name}`;
+  if (ctx.funcMap.has(genericName)) {
+    if (ctx.programAbiClassCallables.genericGetterForMethod(name, member) === ctx.funcMap.get(genericName)) return;
+    throw new Error(`generic getter label ${genericName} is already owned by another callable`);
+  }
+  const handle = mintDefinedFunc(ctx);
+  const func = {
+    name: genericName,
+    typeIdx: addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], `${genericName}_type`),
+    locals: [],
+    body: [],
+    exported: false,
+  };
+  pushDefinedFunc(ctx, handle, func);
+  ctx.funcMap.set(genericName, handle);
+  ctx.programAbiClassCallables.observeGenericGetter(member, name, handle, func);
+}
+
+/** Primary class-getter statement lowering, shared by both explicit source ABIs. */
+function compileGetterSourceStatements(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  member: ts.GetAccessorDeclaration,
+): void {
+  if (!member.body) return;
+  hoistVarDeclarations(ctx, fctx, member.body.statements);
+  hoistLetConstWithTdz(ctx, fctx, member.body.statements);
+  for (const statement of member.body.statements) compileStatement(ctx, fctx, statement);
+}
+
+function compileGenericGetter(
+  ctx: CodegenContext,
+  member: ts.GetAccessorDeclaration,
+  name: string,
+  className: string,
+  sourceName: string,
+): void {
+  const handle = ctx.programAbiClassCallables?.genericGetterForMethod(name, member);
+  if (handle === undefined) return;
+  const func = definedFuncAt(ctx, handle);
+  if (!func) throw new Error(`missing preallocated generic getter ${name}`);
+  const nominal = ctx.funcMap.get(name);
+  const source =
+    nominal === undefined ? undefined : ctx.programAbiClassCallables?.genericGetterSourceForHandle(nominal);
+  const derived = source === undefined ? undefined : ctx.programAbiSession?.registeredDerivedUnit(source.derivedUnitId);
+  if (!source || source.generic !== func || source.declaration !== member || !derived) {
+    throw new Error(`generic getter ${name} lost its exact SOURCE-derived body owner`);
+  }
+  ctx.irBodyRouteAuditSession?.registerDerivedSourceBody(member, derived);
+  const fctx: FunctionContext = {
+    name: func.name,
+    bodyRouteDerivedUnitId: derived.id,
+    params: [{ name: "this", type: { kind: "externref" } }],
+    locals: [],
+    localMap: new Map([["this", 0]]),
+    returnType: { kind: "externref" },
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+    enclosingClassName: className,
+    genericClassGetter: true,
+  };
+  fctx.activationEntryBody = fctx.body;
+  const previous = ctx.currentFunc;
+  ctx.currentFunc = fctx;
+  try {
+    assertDirectClassBodyAllowed(ctx, func.name, member, sourceName, derived.id);
+    if (needsImplicitArgumentsObject(member)) {
+      emitArgumentsObject(ctx, fctx, [], 1, true, member.parameters);
+    }
+    compileGetterSourceStatements(ctx, fctx, member);
+    // Falling off a getter returns the actual realm undefined, never numeric zero.
+    emitUndefined(ctx, fctx);
+    cacheStringLiterals(ctx, fctx);
+    deduplicateLocals(fctx);
+    func.locals = fctx.locals;
+    func.body = fctx.body;
+  } finally {
+    ctx.currentFunc = previous;
+  }
 }
 
 export function resolveClassMemberName(ctx: CodegenContext, name: ts.PropertyName): string | undefined {
@@ -1795,6 +1912,7 @@ export function collectClassDeclaration(
   }
 
   // Register getter/setter accessor functions
+  const finalGetters = finalGetterDeclarations(ctx, decl, className);
   for (const member of decl.members) {
     // ES2015 14.5.14 step 21: static accessors cannot be named 'prototype'
     if (
@@ -1820,6 +1938,10 @@ export function collectClassDeclaration(
       const getterName = `${className}_get_${propName}`;
       // (#6772 S12) a static half with an instance twin takes its own key.
       const getterKey = classAccessorFuncKey(ctx, className, "get", propName, hasStaticModifier(member));
+      const finalGetter = finalGetters.get(getterKey);
+      // The generic ABI belongs to the body that actually survives redefinition.
+      // Keep the existing allocation path byte-exact for non-generic winners.
+      if (finalGetter && hasGenericGetterEntry(finalGetter) && member !== finalGetter) continue;
       // Skip if a function with this name is already registered (e.g., when
       // both a static and instance getter share the same computed property name,
       // they produce the same function name — avoid creating duplicates that
@@ -1850,6 +1972,7 @@ export function collectClassDeclaration(
         body: [],
         exported: false,
       });
+      if (member === finalGetter) reserveGenericGetter(ctx, member, getterKey);
     }
 
     if (ts.isSetAccessorDeclaration(member) && member.name) {
@@ -2332,11 +2455,17 @@ export function skipExactPreparedClassBody(
   return true;
 }
 
-function assertDirectClassBodyAllowed(ctx: CodegenContext, name: string, declaration: ts.Node): void {
-  ctx.irBodyRouteAuditSession?.recordRoot("compileClassBodies", name, declaration);
+function assertDirectClassBodyAllowed(
+  ctx: CodegenContext,
+  name: string,
+  declaration: ts.Node,
+  sourceName = name,
+  derivedUnitId?: IrUnitId,
+): void {
+  ctx.irBodyRouteAuditSession?.recordRoot("compileClassBodies", name, declaration, derivedUnitId);
   const poisoned = readEnv("JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
-  if (!poisoned || !poisoned.split(",").includes(name)) return;
-  throw new Error(`injected direct class-body poison: ${name}`);
+  if (!poisoned || (!poisoned.split(",").includes(name) && !poisoned.split(",").includes(sourceName))) return;
+  throw new Error(`injected direct class-body poison: ${sourceName}`);
 }
 
 /** Compile the class bodies that were not already installed by Prepared IR. */
@@ -3649,16 +3778,18 @@ function compileClassBodiesInner(
   // Recompiling overwrites `func.body`/`func.locals` in the same slot, so the
   // earlier body simply never ships.
   const compiledAccessors = new Map<string, "static" | "instance">();
+  const finalGetters = finalGetterDeclarations(ctx, decl, className);
   const accessorKindOf = (member: ts.ClassElement): "static" | "instance" =>
     hasStaticModifier(member) ? "static" : "instance";
   for (const member of decl.members) {
     if (ts.isGetAccessorDeclaration(member) && member.name) {
-      if (skipExactPreparedClassBody(ctx, member, routing)) continue;
       const propName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (propName === undefined) continue; // dynamic computed name — skip
       const getterName = `${className}_get_${propName}`;
       const getterKind = accessorKindOf(member);
       const getterKey = classAccessorFuncKey(ctx, className, "get", propName, getterKind === "static"); // (#6772 S12)
+      const finalGetter = finalGetters.get(getterKey);
+      if (finalGetter && hasGenericGetterEntry(finalGetter) && member !== finalGetter) continue;
       const priorGetterKind = compiledAccessors.get(getterKey);
       if (priorGetterKind !== undefined && priorGetterKind !== getterKind) continue; // other kind owns the slot
       compiledAccessors.set(getterKey, getterKind);
@@ -3666,6 +3797,10 @@ function compileClassBodiesInner(
       if (getterLocalIdx === undefined) continue;
 
       const func = ctx.mod.functions[getterLocalIdx]!;
+      if (ctx.programAbiClassCallables?.genericGetterForMethod(getterKey) !== undefined) {
+        compileGenericGetter(ctx, member, getterKey, className, getterName);
+      }
+      if (skipExactPreparedClassBody(ctx, member, routing)) continue;
       if (routing?.skipBodies.has(getterName)) {
         if (!routing.preserveSkippedBodies?.has(getterName)) {
           func.body = [{ op: "unreachable" }];
@@ -3735,11 +3870,7 @@ function compileClassBodiesInner(
           if (builders.size > 0) fctx.pendingStringBuilders = builders;
           if (presize.size > 0) fctx.stringBuilderPresize = presize;
         }
-        hoistVarDeclarations(ctx, fctx, member.body.statements);
-        hoistLetConstWithTdz(ctx, fctx, member.body.statements);
-        for (const stmt of member.body.statements) {
-          compileStatement(ctx, fctx, stmt);
-        }
+        compileGetterSourceStatements(ctx, fctx, member);
       }
 
       // Ensure valid return for non-void getters

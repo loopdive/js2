@@ -72,6 +72,8 @@ export interface IrLegacyBodyEntry {
   readonly column: number;
   readonly sourceId?: IrSourceId;
   readonly unitId?: IrUnitId;
+  /** Physical SOURCE body owner is derived; its nominal declaration remains explicit. */
+  readonly derivedParentUnitId?: IrUnitId;
   readonly classId?: IrClassId;
   readonly unitKind?: IrUnitKind;
   readonly terminalOwnerId?: IrUnitId | null;
@@ -237,6 +239,7 @@ export class IrBodyRouteAuditSession {
   readonly #sourceById: ReadonlyMap<IrSourceId, IrBodyRouteSource>;
   readonly #seenFrames = new WeakSet<FunctionContext>();
   readonly #entries = new Map<string, IrLegacyBodyEntry>();
+  readonly #derivedSourceBodies = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
   readonly #directFunctionBodyReceiptsBySourceId = new Map<IrSourceId, MutableDirectFunctionBodyReceiptIndex>();
   #unattributedDirectFunctionBodyReceiptViolation?: IrDirectFunctionBodyReceiptViolation;
   #route?: IrCompileRouteManifestEntry;
@@ -275,11 +278,41 @@ export class IrBodyRouteAuditSession {
     if (this.#seenFrames.has(fctx)) return;
     this.#seenFrames.add(fctx);
     if (fctx.name === "__module_init") return;
-    this.#record(entryPoint, fctx.name, node);
+    this.#record(entryPoint, fctx.name, node, fctx.bodyRouteDerivedUnitId);
   }
 
-  recordRoot(entryPoint: IrLegacyBodyEntryPoint, bodyName: string, node: Node): void {
-    this.#record(entryPoint, bodyName, node);
+  recordRoot(entryPoint: IrLegacyBodyEntryPoint, bodyName: string, node: Node, derivedUnitId?: IrUnitId): void {
+    this.#record(entryPoint, bodyName, node, derivedUnitId);
+  }
+
+  /** Join the actual Program-ABI SOURCE record before entering its body. */
+  registerDerivedSourceBody(node: Node, record: ProgramAbiDerivedUnitRecord): void {
+    const parentId = nearestInventoryUnit(this.#identity, node);
+    const parent = parentId === undefined ? undefined : this.#identity.unitByUnitId.get(parentId);
+    const sourceId = this.#identity.sourceIdBySourceFile.get(node.getSourceFile());
+    if (
+      !parent ||
+      record.id === parent.id ||
+      record.parentId !== parent.id ||
+      record.sourceId !== sourceId ||
+      record.terminalOwnerId !== parent.terminalOwnerId ||
+      record.role !== "class-getter-generic" ||
+      this.#identity.unitByUnitId.has(record.id)
+    ) {
+      throw new Error("SOURCE-derived body does not match its exact declaration/Program-ABI owner");
+    }
+    const previous = this.#derivedSourceBodies.get(record.id);
+    if (
+      previous &&
+      (previous.parentId !== record.parentId ||
+        previous.sourceId !== record.sourceId ||
+        previous.terminalOwnerId !== record.terminalOwnerId ||
+        previous.role !== record.role ||
+        previous.ordinal !== record.ordinal)
+    ) {
+      throw new Error("SOURCE-derived body has conflicting Program-ABI ownership");
+    }
+    this.#derivedSourceBodies.set(record.id, Object.freeze({ ...record }));
   }
 
   /** Physical direct-body roots recorded for one entry point. */
@@ -348,7 +381,10 @@ export class IrBodyRouteAuditSession {
     const rootUnitIds = new Set<IrUnitId>();
     for (const entry of this.#entries.values()) {
       if (entry.unitId === undefined) continue;
-      if (this.#identity.unitByUnitId.get(entry.unitId)?.sourceId !== sourceId) continue;
+      const ownerSource =
+        this.#identity.unitByUnitId.get(entry.unitId)?.sourceId ??
+        this.#derivedSourceBodies.get(entry.unitId)?.sourceId;
+      if (ownerSource !== sourceId) continue;
       rootUnitIds.add(entry.unitId);
     }
     return rootUnitIds;
@@ -572,10 +608,22 @@ export class IrBodyRouteAuditSession {
     if (count > 1) indexed.duplicateUnitIds.add(entry.unitId);
   }
 
-  #record(entryPoint: IrLegacyBodyEntryPoint, bodyName: string, node: Node): void {
+  #record(entryPoint: IrLegacyBodyEntryPoint, bodyName: string, node: Node, derivedUnitId?: IrUnitId): void {
     const sourceFile = node.getSourceFile();
-    const sourceId = this.#identity.sourceIdBySourceFile.get(sourceFile);
+    const observedSourceId = this.#identity.sourceIdBySourceFile.get(sourceFile);
+    const derived = derivedUnitId === undefined ? undefined : this.#derivedSourceBodies.get(derivedUnitId);
+    const observedParent = nearestInventoryUnit(this.#identity, node);
+    if (
+      derivedUnitId !== undefined &&
+      (!derived ||
+        (observedSourceId !== undefined && derived.sourceId !== observedSourceId) ||
+        (observedParent !== undefined && derived.parentId !== observedParent))
+    ) {
+      throw new Error("direct SOURCE body entered without exact derived ownership");
+    }
+    const sourceId = observedSourceId ?? derived?.sourceId;
     const unitId =
+      derived?.id ??
       nearestInventoryUnit(this.#identity, node) ??
       (entryPoint === "compileModuleInitBody"
         ? this.#identity.moduleInitUnitIdBySourceFile.get(node.getSourceFile())
@@ -601,6 +649,9 @@ export class IrBodyRouteAuditSession {
       ...position,
       ...(sourceId === undefined ? {} : { sourceId }),
       ...(unitId === undefined ? {} : { unitId }),
+      ...(derived === undefined
+        ? {}
+        : { derivedParentUnitId: derived.parentId, terminalOwnerId: derived.terminalOwnerId }),
       ...(classId === undefined ? {} : { classId }),
       ...(unit === undefined
         ? {}
@@ -784,8 +835,13 @@ export class IrBodyRouteAuditSession {
             unitId: record.id,
           });
         }
-        const route =
-          owner === null ? "unresolved" : legacyEntryIds.has(owner) ? "legacy" : outcomeRoute(outcomesById.get(owner));
+        const route = legacyEntryIds.has(record.id)
+          ? "legacy"
+          : owner === null
+            ? "unresolved"
+            : legacyEntryIds.has(owner)
+              ? "legacy"
+              : outcomeRoute(outcomesById.get(owner));
         return Object.freeze({
           ...record,
           disposition:
@@ -798,6 +854,23 @@ export class IrBodyRouteAuditSession {
                   : "derived-unresolved-owner",
         });
       });
+    for (const physical of this.#derivedSourceBodies.values()) {
+      const planned = derivedById.get(physical.id);
+      if (
+        !planned ||
+        planned.parentId !== physical.parentId ||
+        planned.sourceId !== physical.sourceId ||
+        planned.terminalOwnerId !== physical.terminalOwnerId ||
+        planned.role !== physical.role ||
+        planned.ordinal !== physical.ordinal
+      ) {
+        violations.push({
+          code: "unknown-derived-owner",
+          unitId: physical.id,
+          detail: `physical SOURCE body ${physical.id} has no matching retained Program-ABI record`,
+        });
+      }
+    }
     const supportUnits = inventory.allUnits.filter((unit) => !unit.terminal);
     const entries = Object.freeze([...this.#entries.values()]);
     const knownClasses = new Set(inventory.classes.map((record) => record.id));

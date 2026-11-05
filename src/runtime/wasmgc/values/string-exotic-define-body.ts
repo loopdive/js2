@@ -15,18 +15,33 @@ export function buildDescriptorCurrentLookup(
     { op: "local.get", index: keyLocal },
   ];
   const ordinary: Instr[] = [...args, { op: "call", funcIdx: d.objFindIdx }];
-  return d.stringVirtualOwnIdx === undefined
-    ? ordinary
+  const current: Instr[] =
+    d.stringVirtualOwnIdx === undefined
+      ? ordinary
+      : [
+          ...args,
+          { op: "call", funcIdx: d.stringVirtualOwnIdx },
+          { op: "local.tee", index: entryLocal },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "ref_null", typeIdx: d.propEntryTypeIdx } },
+            then: ordinary,
+            else: [{ op: "local.get", index: entryLocal }],
+          },
+        ];
+  // Physical suppression survives validation, but is semantically current=absent.
+  return d.deletedCarrierOwn === undefined
+    ? current
     : [
-        ...args,
-        { op: "call", funcIdx: d.stringVirtualOwnIdx },
-        { op: "local.tee", index: entryLocal },
-        { op: "ref.is_null" },
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: keyLocal },
+        { op: "call", funcIdx: d.deletedCarrierOwn.isDeletedIdx },
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "ref_null", typeIdx: d.propEntryTypeIdx } },
-          then: ordinary,
-          else: [{ op: "local.get", index: entryLocal }],
+          then: [{ op: "ref.null", typeIdx: d.propEntryTypeIdx }],
+          else: current,
         },
       ];
 }

@@ -342,11 +342,13 @@ function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
     // side can build fixed-arity wrappers (see ImportDescriptor.paramCount).
     let paramCount: number | undefined;
     let refResult = false;
+    let opaqueTimerResult = false;
     if (imp.desc.kind === "func") {
       const t = mod.types[imp.desc.typeIdx];
       if (t && t.kind === "func") {
         paramCount = t.params.length;
         refResult = t.results.length === 1 && !NUMERIC_VAL_KINDS.has(t.results[0]!.kind);
+        opaqueTimerResult = t.results.length === 1 && t.results[0]!.kind === "externref";
       }
     }
     const descriptor: ImportDescriptor = {
@@ -356,12 +358,11 @@ function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
       intent: classifyImport(imp.name, mod),
       paramCount,
     };
-    // (#7095) Result shape of a user `declare function` (an unclassified
-    // builtin), read by the runtime's declared-function marshal.
+    // Actual reference-result ABI used by the declared-function or timer value adapter.
     if (
       refResult &&
-      descriptor.intent.type === "builtin" &&
-      classifyHostImport(descriptor).classification === "unknown"
+      ((descriptor.intent.type === "timer_set" && opaqueTimerResult) ||
+        (descriptor.intent.type === "builtin" && classifyHostImport(descriptor).classification === "unknown"))
     )
       descriptor.refResult = true;
     const key = JSON.stringify(descriptor);

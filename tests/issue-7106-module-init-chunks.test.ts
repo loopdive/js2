@@ -4,13 +4,16 @@
 // (`src/shared/module-init-chunk-plan.ts`) is lowered by the IR one planned
 // chunk per private function (`src/ir/module-init-chunk-lowering.ts`) instead
 // of being withdrawn to legacy.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { runInNewContext } from "node:vm";
+import * as backendLegality from "../src/ir/backend/legality.js";
 
 import { compile } from "../src/index.js";
 import { MODULE_INIT_CHUNK_MAX_ENTRIES } from "../src/shared/module-init-chunk-plan.js";
 import { compile as compilePrepared } from "../src/test262/test262-prepared-entry.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
+  assembleHarnessBody,
   compileHarnessBody,
   moduleInit,
   runModuleInit,
@@ -33,6 +36,35 @@ function expectIrChunks(result: HarnessCompileResult): readonly string[] {
   expect(moduleInit(result)?.irBodyEmitted).toBe(true);
   const chunks = watFunctionNames(result.wat).filter((name) => /^__module_init_chunk_\d+$/.test(name));
   expect(chunks.length).toBeGreaterThan(1);
+  return chunks;
+}
+
+/** Join the installed IR helpers to their source owner and final physical calls. */
+function expectInstalledIrChunkBodies(result: HarnessCompileResult): readonly string[] {
+  const chunks = expectIrChunks(result);
+  const outcome = moduleInit(result);
+  expect(outcome).toMatchObject({ kind: "emitted", stage: "patch", irBodyEmitted: true, irBodyEmissions: 1 });
+  const names = watFunctionNames(result.wat);
+  const dispatcher = watFunction(result.wat, "__module_init");
+  const calls = watCallTargets(result.wat, dispatcher).filter((name) => chunks.includes(name));
+  expect(calls).toEqual(chunks);
+  const calledSlots = [...dispatcher.matchAll(/\b(?:return_)?call (\d+)/g)].map((match) => Number(match[1]));
+  for (const name of chunks) {
+    const slot = names.indexOf(name);
+    expect(names.lastIndexOf(name)).toBe(slot);
+    expect(calledSlots).toContain(slot);
+    expect(result.irCompiledFuncs ?? []).toContain(name);
+    expect(watInstructionCount(watFunction(result.wat, name))).toBeGreaterThan(0);
+  }
+  const derived = result.irBodyRouteAudit?.derivedUnits.filter((row) => row.parentId === outcome?.unitId) ?? [];
+  expect(derived.length, JSON.stringify(result.irBodyRouteAudit)).toBeGreaterThanOrEqual(chunks.length);
+  for (const row of derived) {
+    expect(row.sourceId).toBe(outcome?.sourceId);
+    expect(row.terminalOwnerId).toBe(outcome?.unitId);
+    // An overlay can retain its physical AST-entry debt after installing IR.
+    // Keep that census honest without requiring this debt to persist forever.
+    expect(row.disposition).toBe(outcome?.legacyBodyEmitted ? "derived-legacy-owner" : "derived-ir-owner");
+  }
   return chunks;
 }
 
@@ -116,17 +148,98 @@ describe("#7106 chunked <module-init> lowered by the IR", () => {
     expect(exports.probe()).toBe(FILLER_SUM);
   });
 
+  it("emits IR chunks for the now-supported mixed string-number initializer", async () => {
+    const body = [
+      "var tick = 0;",
+      ...FILLER,
+      "if (-1 << 0 !== -1) { throw new Test262Error('#1: -1 << 0 === -1. Actual: ' + (-1 << 0)); }",
+    ].join("\n");
+    const result = await compileHarnessBody(body);
+    expectInstalledIrChunkBodies(result);
+    expect(() => runInNewContext(assembleHarnessBody(body))).not.toThrow();
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const mod = await WebAssembly.compile(result.binary);
+    expect(WebAssembly.Module.imports(mod)).toEqual([]);
+    await runModuleInit(result);
+  });
+
+  it("executes chunked concatenation and the real error branch exactly like Node", async () => {
+    const originalBody = [
+      "var tick = 0;",
+      ...FILLER,
+      "if (-1 << 0 !== -1) { throw new Test262Error('#1: -1 << 0 === -1. Actual: ' + (-1 << 0)); }",
+    ].join("\n");
+    const body = originalBody.replace("if (-1 << 0 !== -1)", "if (-1 << 0 === -1)");
+    let nodeThrown: string | undefined;
+    try {
+      runInNewContext(assembleHarnessBody(body));
+    } catch (error) {
+      nodeThrown = String(error);
+    }
+    expect(nodeThrown).toContain("#1: -1 << 0 === -1. Actual: -1");
+    // Only this active-error control needs native payload-rendering exports.
+    // Original/default and capability-withdrawal guests keep their exact options.
+    const result = await compile(assembleHarnessBody(body), {
+      fileName: "test.js",
+      allowJs: true,
+      target: "standalone",
+      skipSemanticDiagnostics: true,
+      trackIrOutcomes: true,
+      deferTopLevelInit: true,
+      hostBridge: "always",
+    });
+    expectInstalledIrChunkBodies(result);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const mod = await WebAssembly.compile(result.binary);
+    expect(WebAssembly.Module.imports(mod)).toEqual([]);
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    let caught: unknown;
+    try {
+      (instance.exports.__module_init as () => void)();
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(WebAssembly.Exception);
+    expect(caught).not.toBeInstanceOf(WebAssembly.RuntimeError);
+    const payload = (caught as WebAssembly.Exception).getArg(instance.exports.__exn_tag as WebAssembly.Tag, 0);
+    const prepare = instance.exports.__exn_render_prepare as (value: unknown) => number;
+    const character = instance.exports.__exn_render_char as (index: number) => number;
+    const length = prepare(payload);
+    expect(length).toBeGreaterThanOrEqual(0);
+    let rendered = "";
+    for (let index = 0; index < length; index++) rendered += String.fromCharCode(character(index));
+    expect(rendered).toBe(nodeThrown);
+  });
+
   it("emits legacy chunks, and no IR chunk, when selection refuses the initializer", async () => {
-    // This original mixed string/number `+` guest now refuses during selection,
-    // before IR chunk names are reserved. The legacy initializer must still
-    // retain its bounded helpers; a collision suffix is not an ownership proof.
-    const result = await compileHarnessBody(
-      [
-        "var tick = 0;",
-        ...FILLER,
-        "if (-1 << 0 !== -1) { throw new Test262Error('#1: -1 << 0 === -1. Actual: ' + (-1 << 0)); }",
-      ].join("\n"),
-    );
+    // The original guest is now supported. Withdraw only the real formatter
+    // capability to exercise the same preclaim ownership boundary honestly.
+    const originalQuery = backendLegality.irBackendCapabilityQuery;
+    let withdrawnQueries = 0;
+    const spy = vi.spyOn(backendLegality, "irBackendCapabilityQuery").mockImplementation((profile) => {
+      const query = originalQuery(profile);
+      return (capability) => {
+        if (capability === "number-to-string") {
+          withdrawnQueries++;
+          return false;
+        }
+        return query(capability);
+      };
+    });
+    let result!: HarnessCompileResult;
+    try {
+      result = await compileHarnessBody(
+        [
+          "var tick = 0;",
+          ...FILLER,
+          "if (-1 << 0 !== -1) { throw new Test262Error('#1: -1 << 0 === -1. Actual: ' + (-1 << 0)); }",
+        ].join("\n"),
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(backendLegality.irBackendCapabilityQuery).toBe(originalQuery);
+    expect(withdrawnQueries).toBeGreaterThan(0);
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(moduleInit(result)?.code).toBe("operand-coercion-unsupported");
     expect(moduleInit(result)).toMatchObject({

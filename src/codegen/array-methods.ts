@@ -120,6 +120,8 @@ import { filterSelectStage, overlayFilterAccess } from "./array-filter-spec-acce
 import { nullableElemParamOverrideFor } from "./array-hof-nullable-elem-param.js"; // (#6602)
 import {
   callbackInvokeInstrs,
+  prepareSourceGetterCallback,
+  sourceGetterCallbackInvoke,
   type DynCallbackFallback,
   reduceSpecArgs,
   setupDynCallbackFallback,
@@ -6402,6 +6404,8 @@ function compileArraySplice(
 
 /** Result of setting up a callback for an array method (closure or host bridge). */
 interface ArrayCallbackSetup {
+  /** Value-produced callbacks may carry the receiver-capable SOURCE family. */
+  sourceCandidate?: boolean;
   closureInfo?: ClosureInfo;
   closureTypeIdx?: number;
   closureTmp?: number;
@@ -6508,6 +6512,17 @@ function resolveDynamicCallbackClosure(
   const cbType = ctx.checker.getTypeAtLocation(cbArg);
   const sigs = cbType.getCallSignatures();
   if (loweredSig === undefined && sigs.length !== 1) return undefined;
+  // A rest formal is an argv-vector ABI slot, not the HOF's scalar element.
+  // Static call_ref emission would be invalid even when a runtime family
+  // guard selects another arm. The existing signature-agnostic Call bridge
+  // owns actual rest packing; recover its all-externref call shape instead.
+  if (
+    sigs[0]?.parameters.some((parameter) => {
+      const declaration = parameter.valueDeclaration ?? parameter.declarations?.[0];
+      return declaration !== undefined && ts.isParameter(declaration) && declaration.dotDotDotToken !== undefined;
+    })
+  )
+    return undefined;
   const paramValTypes: ValType[] = loweredSig
     ? loweredSig.params.map((param) => ({ ...param }))
     : sigs[0]!.parameters.map((p) =>
@@ -6634,6 +6649,9 @@ function setupArrayCallback(
       : compileExpression(ctx, fctx, cbArg));
   ctx.arrayHofNullableElemParamOverride = savedNullableElemOverride;
 
+  const sourceCandidate =
+    hoistedCallback === undefined && !ts.isArrowFunction(cbArg) && !ts.isFunctionExpression(cbArg);
+  const sourceTypeIdx = sourceCandidate ? prepareSourceGetterCallback(ctx, fctx) : undefined;
   let closureInfo: ClosureInfo | undefined;
   let closureTypeIdx: number | undefined;
   let closureTmp: number | undefined;
@@ -6646,14 +6664,14 @@ function setupArrayCallback(
       closureTmp = allocLocal(fctx, `__arr_${tag}_clcb_${fctx.locals.length}`, cbResult);
       fctx.body.push({ op: "local.set", index: closureTmp });
     }
-  } else if (ctx.standalone && cbResult && cbResult.kind === "externref") {
-    // (#3015) Standalone: a dynamic function-typed callback value (a function
+  } else if (noJsHost(ctx) && cbResult && cbResult.kind === "externref") {
+    // (#3015) Native no-JS-host lanes: an opaque function callback (a function
     // PARAMETER, e.g. `arr.some(cb)`) arrives as an opaque externref and would
     // otherwise route through the `__call_1_*`/`__call_2_*` host bridge — a
     // host import that is not instantiable host-free. Recover a native
     // `call_ref` via the callback signature's canonical funcref wrapper. Host
-    // mode is untouched (this branch is standalone-gated) and keeps the bridge
-    // as its fast path per the dual-mode principle.
+    // mode retains its existing bridge; WASI shares this native owner rather
+    // than acquiring a non-instantiable JS-host callback import.
     // (#6690) No single static signature (`any`, overloads): an all-externref
     // wrapper whose typed arm rarely matches — the `__apply_closure` fallback
     // then calls the value by its real signature instead of the host bridge.
@@ -6692,7 +6710,9 @@ function setupArrayCallback(
       reportError(ctx, callExpr, `Missing ${bridge} import for ${methodName}`);
       return null;
     }
-    if (referenceBridge && cbResult && cbResult.kind !== "externref") {
+    const sourceReceiverValue =
+      cbResult && (cbResult.kind === "ref" || cbResult.kind === "ref_null") && cbResult.typeIdx === sourceTypeIdx;
+    if ((referenceBridge || sourceReceiverValue) && cbResult && cbResult.kind !== "externref") {
       coerceType(ctx, fctx, cbResult, { kind: "externref" });
     }
     cbTmp = allocLocal(fctx, `__arr_${tag}_cb_${fctx.locals.length}`, { kind: "externref" });
@@ -6703,6 +6723,7 @@ function setupArrayCallback(
   const thisArgSlots = compileThisArg(ctx, fctx, callExpr, tag, thisArgIndex);
 
   return {
+    sourceCandidate,
     closureInfo,
     closureTypeIdx,
     closureTmp,
@@ -6992,7 +7013,7 @@ function buildClosureCallInstrs(
         : []),
     ];
   };
-  return [
+  const ordinary: Instr[] = [
     ...argsPlumbing,
     ...installThis,
     ...callbackInvokeInstrs(ctx, fctx, {
@@ -7012,6 +7033,20 @@ function buildClosureCallInstrs(
     }),
     ...restoreThis,
   ];
+  if (!setup.sourceCandidate) return ordinary;
+  return sourceGetterCallbackInvoke(ctx, fctx, {
+    callbackLocal: setup.dynFallback?.rawTmp ?? closureTmp,
+    callbackType: setup.dynFallback ? { kind: "externref" } : { kind: "ref_null", typeIdx: closureTypeIdx },
+    thisTmp: setup.thisArgTmp,
+    specArgs: [
+      { load: loadElem, type: elemType },
+      { load: () => [{ op: "local.get", index: loop.iTmp }], type: { kind: "i32" } },
+      { load: () => speciesOriginalArrayInstrs(loop), type: { kind: "externref" } },
+    ],
+    ordinary,
+    returnType: closureInfo.returnType,
+    resultAsBoolean,
+  });
 }
 
 /**
@@ -7139,6 +7174,7 @@ function emitElemBoxToExternref(ctx: CodegenContext, arrTypeIdx: number, getOp: 
  */
 function buildBridgeCallInstrs(
   ctx: CodegenContext,
+  fctx: FunctionContext,
   setup: ArrayCallbackSetup,
   elemType: ValType,
   arrTypeIdx: number,
@@ -7149,7 +7185,7 @@ function buildBridgeCallInstrs(
     setup.bridgeArgType?.kind === "externref"
       ? emitElemBoxToExternref(ctx, arrTypeIdx, loop.getOp)
       : bridgeElemConvertInstrs(ctx, elemType);
-  return [
+  const ordinary: Instr[] = [
     { op: "local.get", index: setup.cbTmp! },
     ...(elemSource.kind === "local"
       ? ([{ op: "local.get", index: elemSource.index }, ...conv] satisfies Instr[])
@@ -7161,6 +7197,31 @@ function buildBridgeCallInstrs(
         ] satisfies Instr[])),
     { op: "call", funcIdx: setup.callBridgeIdx! },
   ];
+  if (!setup.sourceCandidate) return ordinary;
+  const loadElem = (): Instr[] => [
+    ...(elemSource.kind === "local"
+      ? ([{ op: "local.get", index: elemSource.index }] satisfies Instr[])
+      : ([
+          { op: "local.get", index: loop.dataTmp },
+          { op: "local.get", index: loop.iTmp },
+          { op: loop.getOp, typeIdx: arrTypeIdx },
+        ] satisfies Instr[])),
+    ...(elemType.kind === "externref" && ctx.usesArrayHoles
+      ? holeToUndefinedInstrs(ctx, fctx)
+      : f64HoleToUndefFor(ctx, fctx, elemType)),
+  ];
+  return sourceGetterCallbackInvoke(ctx, fctx, {
+    callbackLocal: setup.cbTmp!,
+    callbackType: { kind: "externref" },
+    thisTmp: setup.thisArgTmp,
+    specArgs: [
+      { load: loadElem, type: elemType },
+      { load: () => [{ op: "local.get", index: loop.iTmp }], type: { kind: "i32" } },
+      { load: () => speciesOriginalArrayInstrs(loop), type: { kind: "externref" } },
+    ],
+    ordinary,
+    returnType: setup.bridgeResultType ?? { kind: "f64" },
+  });
 }
 
 /**
@@ -7511,7 +7572,7 @@ function buildCallAndCheck(
 ): Instr[] {
   const callInstrs = setup.closureInfo
     ? buildClosureCallInstrs(ctx, fctx, setup, elemType, vecTypeIdx, arrTypeIdx, loop, elemSource, check !== "none")
-    : buildBridgeCallInstrs(ctx, setup, elemType, arrTypeIdx, loop, elemSource);
+    : buildBridgeCallInstrs(ctx, fctx, setup, elemType, arrTypeIdx, loop, elemSource);
   const checkInstrs =
     check === "truthy" ? buildTruthyCheck(ctx, setup) : check === "falsy" ? buildFalsyCheck(ctx, setup) : [];
   return [...callInstrs, ...checkInstrs];
@@ -7770,7 +7831,7 @@ function compileArrayMap(
   } else {
     const bridgeResultType = setup.bridgeResultType ?? (ctx.fast ? ({ kind: "i32" } as ValType) : { kind: "f64" });
     callInstrs = [
-      ...buildBridgeCallInstrs(ctx, setup, elemType, arrTypeIdx, loop, { kind: "inline" }),
+      ...buildBridgeCallInstrs(ctx, fctx, setup, elemType, arrTypeIdx, loop, { kind: "inline" }),
       // Coerce the bridge's declared result carrier to the result element type
       // so the downstream `array.set` validates. Numeric bridges retain the
       // #1601 f64→externref boxing; the #4527 dynamic bridge is already exact.
@@ -8350,7 +8411,9 @@ function compileArrayForEach(
 
     emitArrayLoop(fctx, loopBody);
   } else {
-    const callInstrs = buildBridgeCallInstrs(ctx, setup, elemType, arrTypeIdx, loop, { kind: "inline" });
+    const callInstrs = buildBridgeCallInstrs(ctx, fctx, setup, elemType, arrTypeIdx, loop, {
+      kind: "inline",
+    });
 
     const loopBody: Instr[] = [
       ...loopExitCheck(loop),

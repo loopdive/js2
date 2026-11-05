@@ -44,6 +44,81 @@ import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { coercionInstrs, emitGuardedRefCast } from "./type-coercion.js";
 import { f64HoleToUndefFor } from "./vec-f64-hole-presence.js";
+import {
+  buildSourceGetterReceiverValueCall,
+  prepareSourceGetterReceiverFamily,
+  sourceGetterReceiverFamilyType,
+  sourceGetterReceiverUndefined,
+} from "./closures/source-getter-receiver.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { ensureArgcGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
+
+const SOURCE_RECEIVER_FAILURE = "SOURCE getter callable owner is not available";
+
+/** Reserve dependencies before loop instruction arrays are detached from fctx. */
+export function prepareSourceGetterCallback(ctx: CodegenContext, fctx: FunctionContext): number {
+  const family = prepareSourceGetterReceiverFamily(ctx);
+  addUnionImportsViaRegistry(ctx);
+  buildThrowJsErrorInstrs(ctx, "TypeError", SOURCE_RECEIVER_FAILURE, { flush: fctx });
+  ensureArgcGlobal(ctx);
+  ensureExtrasArgvGlobal(ctx);
+  return family.structTypeIdx;
+}
+
+/** SOURCE thisArg calls bypass normalized-global publication, even on throw. */
+export function sourceGetterCallbackInvoke(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  p: {
+    callbackLocal: number;
+    callbackType: ValType;
+    thisTmp?: number;
+    specArgs: readonly CallbackSpecArg[];
+    ordinary: Instr[];
+    returnType: ValType | null;
+    resultAsBoolean?: boolean;
+  },
+): Instr[] {
+  const any = allocLocal(fctx, `__source_getter_callback_${fctx.locals.length}`, { kind: "anyref" });
+  const args: Instr[] = [];
+  for (const argument of p.specArgs) {
+    args.push(...argument.load());
+    if (argument.type.kind !== "externref")
+      args.push(...coercionInstrs(ctx, argument.type, { kind: "externref" }, fctx));
+  }
+  const result =
+    p.returnType === null
+      ? [{ op: "drop" } as Instr]
+      : p.returnType.kind === "externref"
+        ? []
+        : bridgeResultInstrs(ctx, fctx, p.returnType, p.resultAsBoolean === true);
+  const failure = buildThrowJsErrorInstrs(ctx, "TypeError", SOURCE_RECEIVER_FAILURE, { flush: fctx });
+  const extras = ensureExtrasArgvGlobal(ctx);
+  const argsArray = getOrRegisterArrayType(ctx, "externref");
+  const state: Instr[] = [
+    { op: "i32.const", value: 0 },
+    { op: "global.set", index: ensureArgcGlobal(ctx) },
+    { op: "i32.const", value: p.specArgs.length },
+    ...args,
+    { op: "array.new_fixed", typeIdx: argsArray, length: p.specArgs.length },
+    { op: "struct.new", typeIdx: extras.vecTypeIdx },
+    { op: "global.set", index: extras.globalIdx },
+  ];
+  const receiver: Instr[] =
+    p.thisTmp === undefined ? sourceGetterReceiverUndefined(ctx) : [{ op: "local.get", index: p.thisTmp }];
+  return [
+    { op: "local.get", index: p.callbackLocal },
+    ...(p.callbackType.kind === "externref" ? [{ op: "any.convert_extern" } as Instr] : []),
+    { op: "local.tee", index: any },
+    { op: "ref.test", typeIdx: sourceGetterReceiverFamilyType(ctx) },
+    {
+      op: "if",
+      blockType: p.returnType === null ? { kind: "empty" } : { kind: "val", type: p.returnType },
+      then: [...buildSourceGetterReceiverValueCall(ctx, any, receiver, state, failure), ...result],
+      else: p.ordinary,
+    },
+  ];
+}
 
 /** Carrier state for the signature-agnostic fallback of one callback. */
 export interface DynCallbackFallback {

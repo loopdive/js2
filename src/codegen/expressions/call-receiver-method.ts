@@ -111,6 +111,7 @@ import {
   reserveBindDynHelper,
 } from "../object-runtime.js";
 import {
+  emitExternRecvNullGuard,
   emitNullCheckThrow,
   receiverIsCaughtErrorStringRead,
   receiverIsNativeStringValType,
@@ -851,6 +852,49 @@ function tryCompileDerivedHostSubstringCharCodeAt(
     });
   }
   return { kind: "f64" };
+}
+
+/** Generic getter locals carry JS values; never devirtualize them by checker class. */
+export function compileGenericClassGetterMethodCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (!fctx.genericClassGetter || expr.questionDotToken) return undefined;
+  const callee = expr.expression;
+  if ((!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee)) || callee.questionDotToken)
+    return undefined;
+  if (ts.isPropertyAccessExpression(callee) && ts.isPrivateIdentifier(callee.name)) return undefined;
+  let root: ts.Expression = callee.expression;
+  for (;;) {
+    if (
+      ts.isParenthesizedExpression(root) ||
+      ts.isAsExpression(root) ||
+      ts.isNonNullExpression(root) ||
+      ts.isPropertyAccessExpression(root) ||
+      ts.isElementAccessExpression(root)
+    )
+      root = root.expression;
+    else break;
+  }
+  if (root.kind !== ts.SyntaxKind.ThisKeyword && !(ts.isIdentifier(root) && fctx.localMap.has(root.text)))
+    return undefined;
+  ensureObjectRuntime(ctx);
+  ensureBoundaryCallableKind(ctx);
+  ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
+  reserveApplyClosure(ctx);
+  ensureObjVecBuilders(ctx);
+  const pushName = noJsHost(ctx) ? "__objvec_push" : "__js_array_push";
+  if (!noJsHost(ctx)) ensureLateImport(ctx, pushName, [{ kind: "externref" }, { kind: "externref" }], []);
+  flushLateImportShifts(ctx, fctx);
+  const receiver = compileExpression(ctx, fctx, callee.expression, { kind: "externref" });
+  if (!receiver) throw new Error("generic getter method receiver has no value");
+  if (receiver.kind !== "externref") coerceType(ctx, fctx, receiver, { kind: "externref" });
+  const local = allocLocal(fctx, "__generic_getter_call_receiver", { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: local });
+  const key = ts.isPropertyAccessExpression(callee) ? callee.name.text : callee.argumentExpression;
+  return emitCapturedCarrierMethodCall(ctx, fctx, expr, local, key, pushName);
 }
 
 export function compileReceiverMethodCall(
@@ -4792,12 +4836,41 @@ function emitCapturedCarrierMethodCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
   recvLocal: number,
-  methodName: string,
+  methodName: string | ts.Expression,
   arrPushName: string,
 ): ValType {
   const calleeLocal = allocLocal(fctx, `__emc_callee_${fctx.locals.length}`, { kind: "externref" });
-  fctx.body.push({ op: "local.get", index: recvLocal });
-  fctx.body.push(...staticHostPropertyKeyInstrs(ctx, methodName));
+  const guardGenericReceiver = (): void => {
+    const callee = expr.expression;
+    if (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee)) {
+      throw new Error("generic getter method call has no member receiver");
+    }
+    emitExternRecvNullGuard(
+      ctx,
+      fctx,
+      recvLocal,
+      { kind: "externref" },
+      callee.expression,
+      expr,
+      "generic-getter:method-call",
+    );
+    fctx.body.push({ op: "local.get", index: recvLocal });
+  };
+  if (typeof methodName === "string") {
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    if (fctx.genericClassGetter) guardGenericReceiver();
+    fctx.body.push(...staticHostPropertyKeyInstrs(ctx, methodName));
+  } else {
+    // Evaluate the computed key before RequireObjectCoercible, exactly once.
+    const key = compileExpression(ctx, fctx, methodName, { kind: "externref" });
+    if (!key) throw new Error("generic getter computed method key has no value");
+    if (key.kind !== "externref") coerceType(ctx, fctx, key, { kind: "externref" });
+    const keyLocal = allocLocal(fctx, "__generic_getter_method_key", { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: keyLocal }, { op: "local.get", index: recvLocal });
+    if (fctx.genericClassGetter) guardGenericReceiver();
+    else emitNullCheckThrow(ctx, fctx, { kind: "externref" }, methodName);
+    fctx.body.push({ op: "local.get", index: keyLocal });
+  }
   fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get")! });
   fctx.body.push({ op: "local.set", index: calleeLocal });
   fctx.body.push({ op: "call", funcIdx: ensureObjVecBuilders(ctx).newIdx });

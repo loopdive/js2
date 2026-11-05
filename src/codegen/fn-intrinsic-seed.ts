@@ -71,7 +71,7 @@
  * needs its own fix.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { noJsHost, type CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { FNINST_BAG_OWNS } from "./function-instance-props.js";
@@ -117,7 +117,7 @@ export function fnIntrinsicSeedInstrs(
   bagLocalIdx: number,
   keyLocalIdx: number,
 ): Instr[] {
-  if (!ctx.standalone) return [];
+  if (!noJsHost(ctx)) return [];
   if (ctx.funcMap.get(FNINST_BAG_OWNS) === undefined) return [];
   if (ctx.funcMap.get("__builtinfn_get_meta") === undefined) return [];
   let seedIdx = ctx.funcMap.get(FNINST_SEED);

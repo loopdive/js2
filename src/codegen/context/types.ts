@@ -1488,6 +1488,10 @@ export interface FunctionContext {
    * setter + the consuming read/write/compound emitters.
    */
   thisStructName?: string;
+  /** Generic untyped class getter: actual externref receiver and dynamic return. */
+  genericClassGetter?: true;
+  /** Exact SOURCE-derived body identity, distinct from its nominal terminal. */
+  bodyRouteDerivedUnitId?: IrUnitId;
   /**
    * (#3683 S2) Set ONLY on a typed-`this` TWIN body — the second compilation of
    * an admitted fnctor prototype method, whose prologue has already cast
@@ -2476,6 +2480,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   memberGetMethodArms?: Map<
     string,
     {
+      receiverClassName: string;
       receiverStructTypeIdx: number;
       methodFullName: string;
       closureStructTypeIdx: number;
@@ -4947,6 +4952,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
 }
 
 export type { SourcePos };
+
+/**
+ * #1473 — No-JS-host predicate. Both `--target wasi` and `--target standalone`
+ * run without a JS runtime, so neither can rely on host imports such as
+ * `__throw_type_error` / `__new_TypeError` resolving to JS constructors. In
+ * these modes the compiler emits Wasm-native Error constructors instead.
+ */
+export function noJsHost(ctx: CodegenContext): boolean {
+  return ctx.wasi || ctx.standalone;
+}
 
 /**
  * (#5385 S1, #6685) Is there NO JavaScript embedder? Answers the environment

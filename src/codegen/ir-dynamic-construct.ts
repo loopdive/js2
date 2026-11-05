@@ -50,7 +50,7 @@ import { emitFnctorProtoGet } from "./expressions/fnctor-prototype.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { isSelfGuardedConstructor, selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js";
-import { isStrictFunction } from "./helpers/is-strict-function.js";
+import { isStrictContext, isStrictFunction } from "./helpers/is-strict-function.js";
 import { emitGlobalObjectAsThis } from "./helpers/sloppy-this-global.js";
 import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 
@@ -303,6 +303,15 @@ export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionNa
   );
   flushLateImportShifts(ctx, null);
   return publishHelperFunction(ctx, helper);
+}
+
+/**
+ * Canonical source-code strictness for IR operations such as PutValue.
+ * This metadata does not admit ambient `this` or alter entry-this binding.
+ * Preserve the harness's genuine-module inference policy exactly.
+ */
+export function irSourceContextStrictness(ctx: CodegenContext, node: ts.Node): boolean {
+  return isStrictContext(node, ctx.inferModuleStrictArguments);
 }
 
 /**

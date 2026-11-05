@@ -29,6 +29,7 @@ export function canonicalProgramAbiValType(type: ValType): string {
         kind: type.kind,
         ...(type.boolean === true ? { boolean: true as const } : {}),
         ...(type.symbol === true ? { symbol: true as const } : {}),
+        ...(type.uint32 === true ? { uint32: true as const } : {}),
       });
     case "i64":
       return JSON.stringify({

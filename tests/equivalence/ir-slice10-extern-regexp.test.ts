@@ -11,7 +11,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { compileAndRunIRVariant as compileAndRun } from "../helpers/compile.js";
+import { compileAndRunIRVariantBoundaryPair as compileAndRun } from "../helpers/compile.js";
+import { evaluateAsJs } from "./helpers.js";
 
 describe("IR slice 10 — RegExp through IR (#1169i, step A)", () => {
   it("(a) RegExp literal + .test() returns boolean", async () => {
@@ -21,10 +22,19 @@ describe("IR slice 10 — RegExp through IR (#1169i, step A)", () => {
         return r.test("foobar");
       }
     `;
-    const irResult = await compileAndRun(source, "run", [], true);
-    const legacyResult = await compileAndRun(source, "run", [], false);
+    const irPair = await compileAndRun(source, "run", [], true);
+    const legacyPair = await compileAndRun(source, "run", [], false);
+    const irResult = irPair.rawResult;
+    const legacyResult = legacyPair.rawResult;
     expect(irResult).toBe(1); // boolean true → i32 1
     expect(legacyResult).toBe(1);
+    const reference = evaluateAsJs(source).run();
+    expect(typeof reference).toBe("boolean");
+    expect(reference).toBe(true);
+    expect(irPair.compiled.exportSignatures?.run?.result).toBe("boolean");
+    expect(legacyPair.compiled.exportSignatures?.run?.result).toBe("boolean");
+    expect(await irPair.runJsFacing()).toBe(reference);
+    expect(await legacyPair.runJsFacing()).toBe(reference);
   });
 
   it("(b) RegExp literal + .test() returns false on no match", async () => {
@@ -34,10 +44,19 @@ describe("IR slice 10 — RegExp through IR (#1169i, step A)", () => {
         return r.test("foobar");
       }
     `;
-    const irResult = await compileAndRun(source, "run", [], true);
-    const legacyResult = await compileAndRun(source, "run", [], false);
+    const irPair = await compileAndRun(source, "run", [], true);
+    const legacyPair = await compileAndRun(source, "run", [], false);
+    const irResult = irPair.rawResult;
+    const legacyResult = legacyPair.rawResult;
     expect(irResult).toBe(0);
     expect(legacyResult).toBe(0);
+    const reference = evaluateAsJs(source).run();
+    expect(typeof reference).toBe("boolean");
+    expect(reference).toBe(false);
+    expect(irPair.compiled.exportSignatures?.run?.result).toBe("boolean");
+    expect(legacyPair.compiled.exportSignatures?.run?.result).toBe("boolean");
+    expect(await irPair.runJsFacing()).toBe(reference);
+    expect(await legacyPair.runJsFacing()).toBe(reference);
   });
 
   it("(c) new RegExp(pattern) constructor", async () => {
@@ -47,10 +66,19 @@ describe("IR slice 10 — RegExp through IR (#1169i, step A)", () => {
         return r.test("say hello world");
       }
     `;
-    const irResult = await compileAndRun(source, "run", [], true);
-    const legacyResult = await compileAndRun(source, "run", [], false);
+    const irPair = await compileAndRun(source, "run", [], true);
+    const legacyPair = await compileAndRun(source, "run", [], false);
+    const irResult = irPair.rawResult;
+    const legacyResult = legacyPair.rawResult;
     expect(irResult).toBe(1);
     expect(legacyResult).toBe(1);
+    const reference = evaluateAsJs(source).run();
+    expect(typeof reference).toBe("boolean");
+    expect(reference).toBe(true);
+    expect(irPair.compiled.exportSignatures?.run?.result).toBe("boolean");
+    expect(legacyPair.compiled.exportSignatures?.run?.result).toBe("boolean");
+    expect(await irPair.runJsFacing()).toBe(reference);
+    expect(await legacyPair.runJsFacing()).toBe(reference);
   });
 
   it("(d) new RegExp(pattern, flags) constructor with two args", async () => {
@@ -60,10 +88,19 @@ describe("IR slice 10 — RegExp through IR (#1169i, step A)", () => {
         return r.test("hello world");
       }
     `;
-    const irResult = await compileAndRun(source, "run", [], true);
-    const legacyResult = await compileAndRun(source, "run", [], false);
+    const irPair = await compileAndRun(source, "run", [], true);
+    const legacyPair = await compileAndRun(source, "run", [], false);
+    const irResult = irPair.rawResult;
+    const legacyResult = legacyPair.rawResult;
     expect(irResult).toBe(1);
     expect(legacyResult).toBe(1);
+    const reference = evaluateAsJs(source).run();
+    expect(typeof reference).toBe("boolean");
+    expect(reference).toBe(true);
+    expect(irPair.compiled.exportSignatures?.run?.result).toBe("boolean");
+    expect(legacyPair.compiled.exportSignatures?.run?.result).toBe("boolean");
+    expect(await irPair.runJsFacing()).toBe(reference);
+    expect(await legacyPair.runJsFacing()).toBe(reference);
   });
 
   it("(e) RegExp literal flags are preserved (case-insensitive)", async () => {
@@ -73,9 +110,18 @@ describe("IR slice 10 — RegExp through IR (#1169i, step A)", () => {
         return r.test("ABC");
       }
     `;
-    const irResult = await compileAndRun(source, "run", [], true);
-    const legacyResult = await compileAndRun(source, "run", [], false);
+    const irPair = await compileAndRun(source, "run", [], true);
+    const legacyPair = await compileAndRun(source, "run", [], false);
+    const irResult = irPair.rawResult;
+    const legacyResult = legacyPair.rawResult;
     expect(irResult).toBe(1);
     expect(legacyResult).toBe(1);
+    const reference = evaluateAsJs(source).run();
+    expect(typeof reference).toBe("boolean");
+    expect(reference).toBe(true);
+    expect(irPair.compiled.exportSignatures?.run?.result).toBe("boolean");
+    expect(legacyPair.compiled.exportSignatures?.run?.result).toBe("boolean");
+    expect(await irPair.runJsFacing()).toBe(reference);
+    expect(await legacyPair.runJsFacing()).toBe(reference);
   });
 });

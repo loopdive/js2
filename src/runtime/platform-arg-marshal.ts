@@ -30,6 +30,9 @@
  * generic bridge keeps raw returns (#3123/#2835).
  */
 
+import { withModuleTagThrow } from "./boundary-value-adapter.js";
+import type { TimerCapabilityAdapterContext } from "./contracts/timer-capability.js";
+
 type ExportsSource = { getExports(): Record<string, Function> | undefined };
 type PrimitiveToHost = (value: any, exports: Record<string, Function>) => unknown;
 type CallableToHost = (value: any, exportsSource: ExportsSource) => unknown;
@@ -101,6 +104,46 @@ function isNativeRegime(exports: Record<string, Function> | undefined): exports 
 }
 
 type PrimitiveFromHost = (value: any, exports: Record<string, Function>) => unknown;
+
+/** Reuse the platform boundary's injected value operations for timer services. */
+export function timerValues(
+  toHostPrimitive: (value: unknown, exports: Record<string, Function> | undefined) => unknown,
+  miss: unknown,
+  toPrimitive: (value: unknown, hint: "number", exportsSource?: ExportsSource) => any,
+  fromHostPrimitive: PrimitiveFromHost,
+): (
+  refResult: boolean,
+  exportsSource?: ExportsSource,
+) => Pick<TimerCapabilityAdapterContext, "marshalTimerValueToHost" | "marshalTimerHandleFromHost"> {
+  return (refResult, exportsSource) => {
+    let marshalTimerHandleFromHost: ((value: unknown) => unknown) | undefined;
+    if (refResult) {
+      const toNumber = withModuleTagThrow(
+        (value: unknown) => {
+          const primitive = toHostPrimitive(value, exportsSource?.getExports());
+          const hostValue = primitive === miss ? value : primitive;
+          // Match the injected shim's unary +, including rejecting BigInt rather than Number(BigInt).
+          return +toPrimitive(hostValue, "number", exportsSource);
+        },
+        exportsSource,
+        fromHostPrimitive,
+      );
+      marshalTimerHandleFromHost = (value) => {
+        const exports = exportsSource?.getExports();
+        // Preserve the original pre-instance/off-policy path when no native value bridge is available.
+        if (!exports || typeof exports.__box_number !== "function") return value;
+        return fromHostPrimitive(toNumber(value), exports);
+      };
+    }
+    return {
+      marshalTimerValueToHost: (value) => {
+        const primitive = toHostPrimitive(value, exportsSource?.getExports());
+        return primitive === miss ? value : primitive;
+      },
+      marshalTimerHandleFromHost,
+    };
+  };
+}
 
 /** (#7095) User `declare function` bindings → the runtime's dynamic-slot adapter for their results. */
 const declaredHostFunctions = new WeakMap<Function, PrimitiveFromHost>();

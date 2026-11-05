@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   compileToWasm,
+  compileToWasmBoundaryPair,
   evaluateAsJs,
   assertEquivalent,
   buildImports,
@@ -54,9 +55,22 @@ describe("Shape inference: array-like objects", () => {
         return Array.prototype.includes.call(obj, 99);
       }
     `;
-    const exports = await compileToWasm(src);
+    const pair = await compileToWasmBoundaryPair(src);
+    const exports = pair.raw;
     expect(exports.testFound()).toBe(1);
     expect(exports.testMissing()).toBe(0);
+    const reference = evaluateAsJs(src);
+    const found = reference.testFound();
+    const missing = reference.testMissing();
+    expect(typeof found).toBe("boolean");
+    expect(typeof missing).toBe("boolean");
+    expect(found).toBe(true);
+    expect(missing).toBe(false);
+    expect(pair.compiled.exportSignatures?.testFound?.result).toBe("boolean");
+    expect(pair.compiled.exportSignatures?.testMissing?.result).toBe("boolean");
+    const jsExports = await pair.instantiateJsFacing();
+    expect(jsExports.testFound()).toBe(found);
+    expect(jsExports.testMissing()).toBe(missing);
   });
 
   it("Array.prototype.indexOf.call with multiple elements", async () => {

@@ -202,7 +202,8 @@ export function planProgramAbiUnitCallable(
     derived &&
     derived.role !== "lifted-closure" &&
     derived.role !== "ir-async-state" &&
-    derived.role !== "monomorphization-clone"
+    derived.role !== "monomorphization-clone" &&
+    derived.role !== "class-getter-generic"
   ) {
     return undefined;
   }

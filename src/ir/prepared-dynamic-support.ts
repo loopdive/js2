@@ -45,7 +45,6 @@ import {
 } from "./nodes.js";
 import type { PreparedDynamicInstructionSupportEvidence } from "./prepared-instruction-support.js";
 import type { Import, ValType } from "./types.js";
-import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { jsTagToStaticType } from "./js-tag.js";
 import { JS_TAG_IDS, jsTagOf } from "./runtime/js-tag-domain.js";
 
@@ -95,7 +94,7 @@ const I32: ValType = { kind: "i32" };
  */
 const HOST_CARRIER_HELPERS: Readonly<
   Record<
-    "dyn.truthy" | "dyn.typeof" | "dyn.to_string" | "dyn.eq",
+    "dyn.truthy" | "dyn.typeof" | "dyn.to_string" | "dyn.eq" | "dyn.global_object" | "dyn.instanceof",
     {
       readonly name: PreparedDynamicHelperName;
       readonly params: readonly ValType[];
@@ -107,6 +106,8 @@ const HOST_CARRIER_HELPERS: Readonly<
   "dyn.typeof": { name: "__typeof", params: [EXTERNREF], results: [EXTERNREF] },
   "dyn.to_string": { name: "__extern_toString", params: [EXTERNREF], results: [EXTERNREF] },
   "dyn.eq": { name: "__extern_strict_eq", params: [EXTERNREF, EXTERNREF], results: [I32] },
+  "dyn.global_object": { name: "__ir_global_object", params: [], results: [EXTERNREF] },
+  "dyn.instanceof": { name: "__ir_dyn_instanceof", params: [EXTERNREF, EXTERNREF], results: [I32] },
 };
 
 /** The callable each host-carrier `emitTagTest` partition arm calls. */
@@ -164,6 +165,12 @@ export function prepareDynamicInstructionSupportForUnits(input: {
   if (!ctx.programAbiTypes) return support;
   const carrierValType = resolveIrDynamicCarrierType(ctx);
   const native = ctx.targetProfile.semanticProviders === "native-first";
+  const nativeExternref =
+    native &&
+    !ctx.fast &&
+    ctx.targetProfile.environment !== "javascript" &&
+    (ctx.standalone || ctx.wasi) &&
+    carrierValType.kind === "externref";
   const plans = new Map<IrUnitId, Map<IrInstr, readonly IrFuncRef[]>>();
   const blocked = new Set<IrUnitId>();
   for (const entry of entries) {
@@ -181,6 +188,8 @@ export function prepareDynamicInstructionSupportForUnits(input: {
           )
             functionObjects = true;
         });
+    const unitExternref =
+      nativeExternref || (native && functionObjects && !ctx.fast && carrierValType.kind === "externref");
     const types = valueTypesOf(entry.fn);
     const planned = new Map<IrInstr, readonly IrFuncRef[]>();
     let nameable = true;
@@ -211,28 +220,38 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             bindExact(instr, "__ir_arguments_length", [I32], [{ kind: "f64" }]);
             return;
           }
-          // The certified function-object producer uses the existing native
-          // externref operations. Name their ACTUAL lowering providers, with
-          // exact physical signatures, before dependency discovery. Unsupported
-          // operations still invalidate the whole terminal sidecar below.
-          if (
-            native &&
-            functionObjects &&
-            ctx.standalone &&
-            !ctx.fast &&
-            carrierValType.kind === "externref" &&
-            instr.kind === "dyn.to_number"
-          ) {
-            const refs = prepareStandaloneDynamicToNumberSupport(ctx, callableImports);
-            if (refs === undefined) nameable = false;
-            else planned.set(instr, refs);
+          // Bind the selected carrier's exact providers before dependency
+          // discovery. Unsupported operations invalidate the whole terminal
+          // sidecar; a sibling operation's evidence cannot cover them.
+          if (unitExternref && instr.kind === "dyn.to_number") {
+            if (ctx.standalone) {
+              const refs = prepareStandaloneDynamicToNumberSupport(ctx, callableImports);
+              if (refs === undefined) nameable = false;
+              else planned.set(instr, refs);
+            } else {
+              const ref = exactPreparedDynamicHelperRef(
+                ctx,
+                callableImports,
+                "__unbox_number",
+                ctx.funcMap.get("__unbox_number"),
+                [{ kind: "externref" }],
+                [{ kind: "f64" }],
+              );
+              if (ref === undefined) nameable = false;
+              else planned.set(instr, [ref]);
+            }
+            return;
+          }
+          // The native realm wrappers are already reserved and observed by
+          // preregisterDynamicSupport. Bind those exact callable identities;
+          // a host/fast lane or missing/mismatched provider still declines.
+          if (nativeExternref && (instr.kind === "dyn.global_object" || instr.kind === "dyn.instanceof")) {
+            const { name, params, results } = HOST_CARRIER_HELPERS[instr.kind];
+            bindExact(instr, name, params, results);
             return;
           }
           if (
-            native &&
-            functionObjects &&
-            !ctx.fast &&
-            carrierValType.kind === "externref" &&
+            unitExternref &&
             (instr.kind === "dyn.truthy" ||
               instr.kind === "dyn.typeof" ||
               instr.kind === "dyn.to_string" ||
@@ -283,24 +302,36 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             planned.set(instr, []);
             return;
           }
-          if (native && functionObjects && (instr.kind === "dyn.member_get" || instr.kind === "dyn.member_set")) {
-            const name =
-              instr.kind === "dyn.member_get"
-                ? "__dyn_member_get"
-                : instr.sloppy === true
-                  ? "__dyn_member_set_sloppy"
-                  : "__dyn_member_set";
-            const handle = ctx.funcMap.get(name);
-            if (handle === undefined) {
-              nameable = false;
-              return;
-            }
-            const ref = irRuntimeFuncRef(name);
-            ctx.programAbiCallableProviders?.observe(ref, handle);
-            planned.set(instr, [ref]);
+          if (
+            native &&
+            (functionObjects || nativeExternref) &&
+            (instr.kind === "dyn.member_get" || instr.kind === "dyn.member_set")
+          ) {
+            const read = instr.kind === "dyn.member_get";
+            const name = read
+              ? "__dyn_member_get"
+              : instr.sloppy === true
+                ? "__dyn_member_set_sloppy"
+                : "__dyn_member_set";
+            const params = Array.from({ length: read ? 2 : 3 }, () => carrierValType);
+            const ref = exactPreparedDynamicHelperRef(
+              ctx,
+              callableImports,
+              name,
+              ctx.funcMap.get(name),
+              params,
+              read ? [carrierValType] : [],
+            );
+            if (ref === undefined) nameable = false;
+            else planned.set(instr, [ref]);
             return;
           }
-          if (native && functionObjects && instr.kind === "box" && instr.toType.kind === "dynamic") {
+          if (
+            native &&
+            (functionObjects || nativeExternref) &&
+            instr.kind === "box" &&
+            instr.toType.kind === "dynamic"
+          ) {
             const operand = types.get(instr.value);
             const from: ValType | null =
               operand?.kind === "callable"
@@ -361,10 +392,9 @@ export function prepareDynamicInstructionSupportForUnits(input: {
 }
 
 /**
- * Merge the timer-shim sidecar with the general one. Unit ids are disjoint by
- * construction (a timer-shim terminal is a `synthetic-support` unit that this
- * module's `box`-only arm never names), so an overlap means one of the two
- * producers changed its population — fail closed rather than prefer either.
+ * Merge sidecars whose producer populations are explicitly partitioned at
+ * sealing. A competing claim remains an invariant violation, regardless of
+ * whether the producers happen to resolve the same callable — fail closed.
  */
 export function mergeDynamicInstructionSupport(
   first: ReadonlyMap<IrUnitId, PreparedDynamicInstructionSupportEvidence> | undefined,

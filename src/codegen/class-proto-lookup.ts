@@ -42,7 +42,7 @@
  */
 
 import type { Instr } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { noJsHost, type CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { standaloneClassProtoObjectApplies } from "./class-proto-object.js";
@@ -219,7 +219,7 @@ function collectEntries(ctx: CodegenContext): ProtoLookupEntry[] {
  * class with a runtime-keyed member.
  */
 export function fillClassProtoLookupArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!noJsHost(ctx)) return;
   if (ctx.funcMap.has(LOOKUP_NAME)) return; // idempotence
   const entries = collectEntries(ctx);
   if (entries.length === 0) return;

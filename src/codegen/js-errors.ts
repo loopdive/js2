@@ -20,15 +20,8 @@ import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, deferrableStringConstantGlobalGet, ensureExnTag } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
-/**
- * #1473 — No-JS-host predicate. Both `--target wasi` and `--target standalone`
- * run without a JS runtime, so neither can rely on host imports such as
- * `__throw_type_error` / `__new_TypeError` resolving to JS constructors. In
- * these modes the compiler emits Wasm-native Error constructors instead.
- */
-export function noJsHost(ctx: CodegenContext): boolean {
-  return ctx.wasi || ctx.standalone;
-}
+// Compatibility export: the pure target predicate belongs to the context layer.
+export { noJsHost } from "./context/types.js";
 
 /** The real-instance JS error kinds that have an `__new_<Kind>` constructor. */
 export type JsErrorKind = "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError" | "EvalError" | "Error";

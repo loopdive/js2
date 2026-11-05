@@ -2,7 +2,7 @@
 
 import type { ImportIntent } from "../index.js";
 import { resolveClockCapabilityImport, type ClockCapabilityImport } from "./clock-capability-adapter.js";
-import { resolveTimerCapabilityImport } from "./timer-capability-adapter.js";
+import { resolveTimerCapabilityImport, type TimerCapabilityAdapterContext } from "./timer-capability-adapter.js";
 
 /** Per-instance state owned by the Web Storage capability adapter. */
 export interface PlatformCapabilityInstanceState {
@@ -14,13 +14,11 @@ export interface PlatformCapabilityInstanceState {
  * Platform resolution owns ambient/dependency lookup; callable conversion stays
  * with the JS/Wasm boundary because only that layer understands Wasm closures.
  */
-export interface PlatformCapabilityAdapterContext {
-  deps?: Record<string, any>;
+export interface PlatformCapabilityAdapterContext extends TimerCapabilityAdapterContext {
   explicitClockImport?: ClockCapabilityImport;
   globalSandbox?: Record<string, any>;
   instanceState?: PlatformCapabilityInstanceState;
   getNodeRequire(): ((id: string) => any) | undefined;
-  wrapWasmClosure(value: unknown, arity: number, boundary?: "timer"): ((...args: any[]) => any) | null;
   wrapUnknownCallable(value: unknown): unknown;
 }
 

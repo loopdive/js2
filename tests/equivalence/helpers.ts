@@ -378,7 +378,7 @@ export async function instantiateWithRuntime(result: CompileResult) {
 /**
  * Compile TS source to Wasm, instantiate it, and return exports.
  */
-export async function compileToWasm(source: string) {
+async function compileEquivalenceResult(source: string): Promise<CompileResult> {
   const result = await compile(source);
   if (!result.success) {
     throw new Error(
@@ -388,6 +388,10 @@ export async function compileToWasm(source: string) {
   if (!WebAssembly.validate(result.binary)) {
     throw new Error(`Invalid Wasm binary (WebAssembly.validate failed)\nWAT:\n${result.wat}`);
   }
+  return result;
+}
+
+async function instantiateEquivalenceResult(result: CompileResult): Promise<WebAssembly.Instance> {
   // Use the runtime's buildImports for full host import support (iterator protocol, etc.)
   // Merge with the manual buildImports for wasm:js-string polyfill and string_constants.
   const manualImports = buildImports(result);
@@ -406,7 +410,28 @@ export async function compileToWasm(source: string) {
   const { instance } = await WebAssembly.instantiate(result.binary, manualImports);
   // Set exports so runtime callbacks (iterator protocol, struct field getters) can access them
   setInstanceFn?.(instance);
+  return instance;
+}
+
+export async function compileToWasm(source: string) {
+  const result = await compileEquivalenceResult(source);
+  const instance = await instantiateEquivalenceResult(result);
   return jsFacingExports(result, instance);
+}
+
+/** Raw wire and JS-facing views of one compilation, with independent instance state. */
+export async function compileToWasmBoundaryPair(source: string) {
+  const compiled = await compileEquivalenceResult(source);
+  const rawInstance = await instantiateEquivalenceResult(compiled);
+  return {
+    compiled,
+    raw: rawInstance.exports as Record<string, Function>,
+    // Lazy: original raw calls/assertions run before the extra view is instantiated.
+    instantiateJsFacing: async () => {
+      const fresh = await instantiateEquivalenceResult(compiled);
+      return jsFacingExports(compiled, fresh);
+    },
+  };
 }
 
 /**

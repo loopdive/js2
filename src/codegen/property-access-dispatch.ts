@@ -3235,6 +3235,13 @@ export function tryLengthAndNameReads(
             if (decl && (ts.isBindingElement(decl) || ts.isVariableDeclaration(decl)) && decl.initializer) {
               initExpr = decl.initializer;
             }
+            // An alias forwards an existing function object; NamedEvaluation
+            // does not rename that object to this binding (or to ""). A JSDoc
+            // callable type can erase its declaration symbol, so read its own
+            // runtime metadata instead. Literal creation folds stay unchanged.
+            if (initExpr !== undefined && ts.isIdentifier(skipTransparentExpressions(initExpr))) {
+              return PA_FALLTHROUGH;
+            }
             if (
               (initExpr !== undefined &&
                 (!isAnonymousFunctionDefinition(initExpr) || classExpressionDefinesOwnName(initExpr))) ||

@@ -10,6 +10,11 @@ import { describe, expect, it, vi } from "vitest";
 import { SINGLE_HOST_ENTRIES } from "../scripts/check-ir-only.js";
 import { analyzeSource } from "../src/checker/index.js";
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
+import { getOrCreateFuncRefWrapperTypes } from "../src/codegen/closures/funcref-wrapper-types.js";
+import { prepareSourceGetterReceiverFamily } from "../src/codegen/closures/source-getter-receiver.js";
+import { publishClosureSourceInfo } from "../src/codegen/closures/closure-type-sources.js";
+import { ClosureStructRegistry } from "../src/ir/closure-struct-registry.js";
+import { irVal } from "../src/ir/nodes.js";
 import { stripHostBridgeExports } from "../src/codegen/host-bridge-exports.js";
 import { generateModule } from "../src/codegen/index.js";
 import {
@@ -295,6 +300,84 @@ async function instantiate(sourceOrResult: string | Awaited<ReturnType<typeof co
 }
 
 describe("#3520 C31 closure host bridge Program ABI ownership", () => {
+  it("reserves SOURCE recognition without publishing zero-arity demand and promotes actual cached values", () => {
+    const ast = analyzeSource("export function entry(): number { return 1; }");
+    const module = createEmptyModule();
+    const inventory = buildIrUnitInventory([ast.sourceFile], { entrySource: ast.sourceFile, checker: ast.checker });
+    const ctx = createCodegenContext(module, ast.checker, undefined, new ProgramAbiSession(inventory, module));
+    const family = prepareSourceGetterReceiverFamily(ctx);
+    expect(ctx.funcRefWrapperCache.size).toBe(1);
+    expect(ctx.closureInfoByTypeIdx.size).toBe(0);
+    const typeCount = module.types.length;
+    const host = getOrCreateFuncRefWrapperTypes(ctx, [], [{ kind: "externref" }], "host-one-shot");
+    expect(host?.structTypeIdx).toBe(family.bareInfoTypeIdx);
+    expect(ctx.closureInfoByTypeIdx.get(family.bareInfoTypeIdx)).toBe(host?.closureInfo);
+    expect(host?.closureInfo.hostOneShotOnly).toBe(true);
+    const ordinary = getOrCreateFuncRefWrapperTypes(ctx, [], [{ kind: "externref" }]);
+    expect(ordinary?.closureInfo).toBe(host?.closureInfo);
+    expect(ordinary?.closureInfo.hostOneShotOnly).toBe(false);
+    expect(module.types.length).toBe(typeCount);
+  });
+
+  it("preserves ordinary demand after real source accounting replaces the row before a host allocation", () => {
+    const ast = analyzeSource("const value = () => 17;");
+    const declaration = ast.sourceFile.statements[0];
+    if (!declaration || !ts.isVariableStatement(declaration)) throw new Error("missing real arrow declaration");
+    const arrow = declaration.declarationList.declarations[0]?.initializer;
+    if (!arrow || !ts.isArrowFunction(arrow)) throw new Error("missing real source arrow");
+    const module = createEmptyModule();
+    const inventory = buildIrUnitInventory([ast.sourceFile], { entrySource: ast.sourceFile, checker: ast.checker });
+    const ctx = createCodegenContext(module, ast.checker, undefined, new ProgramAbiSession(inventory, module));
+    const ordinary = getOrCreateFuncRefWrapperTypes(ctx, [], [{ kind: "f64" }]);
+    if (!ordinary) throw new Error("missing canonical ordinary wrapper");
+    publishClosureSourceInfo(ctx, arrow, {
+      structTypeIdx: ordinary.structTypeIdx,
+      funcTypeIdx: ordinary.liftedFuncTypeIdx,
+      paramTypes: [],
+      returnType: { kind: "f64" },
+      needsCallSiteArity: false,
+    });
+    const enriched = ctx.closureInfoByTypeIdx.get(ordinary.structTypeIdx);
+    expect(enriched).not.toBe(ordinary.closureInfo);
+    expect(enriched?.hostOneShotOnly).toBeUndefined();
+    expect(getOrCreateFuncRefWrapperTypes(ctx, [], [{ kind: "f64" }], "host-one-shot")?.closureInfo).toBe(
+      ordinary.closureInfo,
+    );
+    expect(ctx.closureInfoByTypeIdx.get(ordinary.structTypeIdx)).toBe(enriched);
+    expect(enriched?.needsCallSiteArity).toBe(false);
+    expect(enriched?.hostOneShotOnly).toBe(false);
+    expect(ordinary.closureInfo.hostOneShotOnly).toBe(false);
+  });
+
+  it("keeps exact IR base and captured metadata across support reservation and real allocation", () => {
+    const ast = analyzeSource("export function entry(): number { return 1; }");
+    const module = createEmptyModule();
+    const inventory = buildIrUnitInventory([ast.sourceFile], { entrySource: ast.sourceFile, checker: ast.checker });
+    const ctx = createCodegenContext(module, ast.checker, undefined, new ProgramAbiSession(inventory, module));
+    const registry = new ClosureStructRegistry(ctx, (type) => {
+      if (type.kind !== "val") throw new Error("this scalar registry control requires a real value type");
+      return type.val;
+    });
+    const signature = { params: [], returnType: irVal({ kind: "externref" }) };
+    const captures = [irVal({ kind: "f64" })];
+    const base = registry.resolveBase(signature);
+    const reserved = registry.resolveSubtype(signature, captures);
+    expect(base).not.toBeNull();
+    expect(reserved).not.toBeNull();
+    expect(ctx.closureInfoByTypeIdx.size).toBe(0);
+    const typeCount = module.types.length;
+    expect(registry.resolveSubtype(signature, captures, "host-one-shot")).toBe(reserved);
+    expect(ctx.closureInfoByTypeIdx.get(base!.structTypeIdx)?.hostOneShotOnly).toBe(true);
+    expect(ctx.closureInfoByTypeIdx.get(reserved!.structTypeIdx)).toMatchObject({
+      hasCaptures: true,
+      hostOneShotOnly: true,
+    });
+    expect(registry.resolveSubtype(signature, captures, "ordinary")).toBe(reserved);
+    expect(ctx.closureInfoByTypeIdx.get(base!.structTypeIdx)?.hostOneShotOnly).toBe(false);
+    expect(ctx.closureInfoByTypeIdx.get(reserved!.structTypeIdx)?.hostOneShotOnly).toBe(false);
+    expect(module.types.length).toBe(typeCount);
+  });
+
   it("classifies only exact constructor-closure logical and physical names", () => {
     expect(isCoreCtorClosureHostBridgePublicName("__is_ctor_closure")).toBe(true);
     expect(["$ch", "$ch$", "$ch$$", "$ch$$$$"].every(isCoreCtorClosureHostBridgePublicName)).toBe(true);

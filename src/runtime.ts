@@ -139,7 +139,12 @@ import {
   sameExportedFunction,
 } from "./runtime/exported-function-identity.js";
 import { resolvePlatformCapabilityImport, wrapConsoleForHost } from "./runtime/console-host-marshal.js"; // (#6685)
-import { closureBridges, declaredHostFunction, marshalPlatformArgs } from "./runtime/platform-arg-marshal.js"; // (#6708/#7095) regime carriers ↔ JS values
+import {
+  closureBridges,
+  declaredHostFunction,
+  marshalPlatformArgs,
+  timerValues,
+} from "./runtime/platform-arg-marshal.js"; // (#6708/#7095) regime carriers ↔ JS values
 import {
   CLOCK_CAPABILITY_AUTHORITY,
   createCompiledDomCapabilityRuntime,
@@ -3973,7 +3978,7 @@ function _callExoticToPrimitiveSlot(
   // A host-bridged JS function (proxy-wrapped closure or a real binding).
   if (typeof slot === "function") {
     const prim = slot.call(receiver, hint);
-    if (prim == null || typeof prim !== "object") return prim;
+    if (prim == null || (typeof prim !== "object" && typeof prim !== "function")) return prim;
     throw new TypeError("Cannot convert object to primitive value");
   }
   // §7.1.1 step 2d — the slot holds a non-callable (a number, a string, a
@@ -4003,7 +4008,7 @@ function _callExoticToPrimitiveSlot(
     if (typeof dispatch !== "function") continue;
     try {
       const prim = invoke(dispatch);
-      if (prim == null || typeof prim !== "object") return prim;
+      if (prim == null || (typeof prim !== "object" && typeof prim !== "function")) return prim;
       // §7.1.1 step 5 — exotic @@toPrimitive returned an object.
       throw new TypeError("Cannot convert object to primitive value");
     } catch (e: any) {
@@ -4233,7 +4238,7 @@ function _hostToPrimitive(
   hint: "number" | "string" | "default",
   callbackState?: { getExports: () => Record<string, Function> | undefined },
 ): any {
-  if (obj == null || typeof obj !== "object") return obj;
+  if (obj == null || (typeof obj !== "object" && typeof obj !== "function")) return obj;
 
   // Check Symbol.toPrimitive via real JS property access (goes through proxy if applicable)
   const raw = _hostProxyReverse.get(obj) ?? obj;
@@ -4254,7 +4259,7 @@ function _hostToPrimitive(
   if (exotic !== undefined && exotic !== null) {
     if (typeof exotic === "function") {
       const result = exotic.call(obj, hint);
-      if (result == null || typeof result !== "object") return result;
+      if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
       throw new TypeError("Cannot convert object to primitive value");
     }
     // WasmGC closure struct — dispatch via __call_fn_1 (#1090)
@@ -4264,13 +4269,13 @@ function _hostToPrimitive(
         const callFn1 = exports["__call_fn_1"];
         if (typeof callFn1 === "function") {
           const result = callFn1(exotic, hint);
-          if (result == null || typeof result !== "object") return result;
+          if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
           throw new TypeError("Cannot convert object to primitive value");
         }
         const callFn0 = exports["__call_fn_0"];
         if (typeof callFn0 === "function") {
           const result = callFn0(exotic);
-          if (result == null || typeof result !== "object") return result;
+          if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
           throw new TypeError("Cannot convert object to primitive value");
         }
       }
@@ -4283,7 +4288,7 @@ function _hostToPrimitive(
   if (scExotic !== undefined && scExotic !== null) {
     if (typeof scExotic === "function") {
       const result = scExotic.call(raw, hint);
-      if (result == null || typeof result !== "object") return result;
+      if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
       throw new TypeError("Cannot convert object to primitive value");
     }
     // WasmGC closure struct — dispatch via __call_fn_1 (#1090)
@@ -4293,13 +4298,13 @@ function _hostToPrimitive(
         const callFn1 = exports["__call_fn_1"];
         if (typeof callFn1 === "function") {
           const result = callFn1(scExotic, hint);
-          if (result == null || typeof result !== "object") return result;
+          if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
           throw new TypeError("Cannot convert object to primitive value");
         }
         const callFn0 = exports["__call_fn_0"];
         if (typeof callFn0 === "function") {
           const result = callFn0(scExotic);
-          if (result == null || typeof result !== "object") return result;
+          if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
           throw new TypeError("Cannot convert object to primitive value");
         }
       }
@@ -4323,7 +4328,7 @@ function _hostToPrimitive(
     if (typeof callTP === "function") {
       try {
         const result = callTP(raw, hint);
-        if (result == null || typeof result !== "object") return result;
+        if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
         // Exotic @@toPrimitive returned an object → §7.1.1 step 5 TypeError.
         throw new TypeError("Cannot convert object to primitive value");
       } catch (e: any) {
@@ -4381,7 +4386,7 @@ function _hostToPrimitive(
     const fn = rawOpaque ? undefined : obj[mName];
     if (typeof fn === "function") {
       const result = fn.call(obj);
-      if (result == null || typeof result !== "object") return result;
+      if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
       methodInvokedReturnedObject = true;
       continue;
     }
@@ -4399,7 +4404,7 @@ function _hostToPrimitive(
         if (typeof callFnM0 === "function") {
           try {
             const result = callFnM0(obj, fn);
-            if (result == null || typeof result !== "object") return result;
+            if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
             methodInvokedReturnedObject = true;
           } catch (e: any) {
             if (!(e instanceof WebAssembly.RuntimeError)) throw e;
@@ -4409,7 +4414,7 @@ function _hostToPrimitive(
         if (typeof callFn0 === "function") {
           try {
             const result = callFn0(fn);
-            if (result == null || typeof result !== "object") return result;
+            if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
             methodInvokedReturnedObject = true;
           } catch (e: any) {
             if (!(e instanceof WebAssembly.RuntimeError)) throw e;
@@ -4422,7 +4427,7 @@ function _hostToPrimitive(
     const scFn = _sidecarGet(raw, mName);
     if (typeof scFn === "function") {
       const result = scFn.call(raw);
-      if (result == null || typeof result !== "object") return result;
+      if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
       methodInvokedReturnedObject = true;
       continue;
     }
@@ -4434,7 +4439,7 @@ function _hostToPrimitive(
         if (typeof callFn0 === "function") {
           try {
             const result = callFn0(scFn);
-            if (result == null || typeof result !== "object") return result;
+            if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
             methodInvokedReturnedObject = true;
           } catch (e: any) {
             if (!(e instanceof WebAssembly.RuntimeError)) throw e;
@@ -4451,7 +4456,7 @@ function _hostToPrimitive(
         if (typeof callFn === "function") {
           try {
             const result = callFn(raw);
-            if (result == null || typeof result !== "object") return result;
+            if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
             methodInvokedReturnedObject = true;
           } catch (e: any) {
             if (!(e instanceof WebAssembly.RuntimeError)) throw e;
@@ -4484,12 +4489,12 @@ function _hostToPrimitive(
             // Field may be a JS function (real V8 binding) or a WasmGC closure struct.
             if (typeof field === "function") {
               const result = field.call(raw);
-              if (result == null || typeof result !== "object") return result;
+              if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
               methodInvokedReturnedObject = true;
             } else if (typeof field === "object" && _isWasmStruct(field)) {
               try {
                 const result = callFn0(field);
-                if (result == null || typeof result !== "object") return result;
+                if (result == null || (typeof result !== "object" && typeof result !== "function")) return result;
                 methodInvokedReturnedObject = true;
               } catch (e: any) {
                 if (!(e instanceof WebAssembly.RuntimeError)) throw e;
@@ -7789,6 +7794,8 @@ function _nativePrimitiveToHost(value: any, exports: Record<string, Function> | 
   }
   return _MISS;
 }
+
+const _timerValues = timerValues(_nativePrimitiveToHost, _MISS, _hostToPrimitive, _nativeDynamicFromHost);
 
 // (#5131) Strict GetIterator/IteratorNext and strict array materialization are
 // isolated from the permissive compatibility bridge. Inject the established
@@ -11522,19 +11529,15 @@ function resolveImport(
   dynamicCode: dynamicCodePolicy.ResolvedDynamicCodePolicy = dynamicCodePolicy.DEFAULT_DYNAMIC_CODE_POLICY,
   dynamicCodeEvaluator?: DynamicCodeEvaluator,
   getCaughtException?: () => unknown,
+  refResult = false,
 ): Function {
   const builtin = <T>(name: string, fallback: T): T =>
     coherentBuiltinRealms.has(globalSandbox!) ? ((globalSandbox![name] as T | undefined) ?? fallback) : fallback;
   if (isBoundaryValueImportIntent(intent)) {
+    const tagBoundary = (fn: Function) => withModuleTagThrow(fn, callbackState, _nativeDynamicFromHost);
     return createBoundaryValueAdapter(intent, {
-      object: (operation) =>
-        withModuleTagThrow(
-          _createBoundaryObjectImport(operation, callbackState),
-          callbackState,
-          _nativeDynamicFromHost,
-        ),
-      callback: (arity) =>
-        withModuleTagThrow(_createBoundaryCallbackImport(arity, callbackState), callbackState, _nativeDynamicFromHost),
+      object: (operation) => tagBoundary(_createBoundaryObjectImport(operation, callbackState)),
+      callback: (arity) => tagBoundary(_createBoundaryCallbackImport(arity, callbackState)),
       promise: (operation) => _createBoundaryPromiseImport(operation, callbackState),
     });
   }
@@ -11544,6 +11547,7 @@ function resolveImport(
     instanceState,
     getNodeRequire: _getNodeRequire,
     wrapWasmClosure: (value, arity, boundary) => _wrapPlatformCapabilityClosure(value, arity, boundary, callbackState),
+    ..._timerValues(intent.type === "timer_set" && refResult, callbackState),
     wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
   });
   if (capability)
@@ -19661,6 +19665,7 @@ export function buildImports(
         dynamicCode,
         options?.dynamicCodeEvaluator,
         hostImportCallState.getCaughtException,
+        imp.refResult,
       );
 
     if (intlAccel.isIntlAcceleratedImport(imp, options?.hostAccelerators)) {

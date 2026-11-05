@@ -14,6 +14,7 @@ import { emitPrivateBrandPredicate } from "./expressions/helpers.js";
 import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import {
   emitExternrefToStructGet,
+  emitExternRecvNullGuard,
   emitNullCheckThrow,
   emitNullGuardedStructGet,
   isProvablyNonNull,
@@ -56,6 +57,7 @@ function emitStructuralExternrefFieldGet(
   expr: ts.PropertyAccessExpression,
   propName: string,
   receiverAlreadyNullChecked = false,
+  dynamicResult = false,
 ): ValType | undefined {
   const accessFact = ctx.oracle.typeFactOf(expr);
   const accessWasm: ValType =
@@ -66,7 +68,9 @@ function emitStructuralExternrefFieldGet(
         : { kind: "externref" };
   const mayBeUndefined = ctx.oracle.nullabilityOf(expr).undefinable;
   const resultType: ValType =
-    !mayBeUndefined && (accessWasm.kind === "f64" || accessWasm.kind === "i32") ? accessWasm : { kind: "externref" };
+    !dynamicResult && !mayBeUndefined && (accessWasm.kind === "f64" || accessWasm.kind === "i32")
+      ? accessWasm
+      : { kind: "externref" };
   const getIdx = ensureLateImport(
     ctx,
     "__extern_get",
@@ -79,7 +83,23 @@ function emitStructuralExternrefFieldGet(
   }
   flushLateImportShifts(ctx, fctx);
   if (getIdx === undefined) return undefined;
-  if (!receiverAlreadyNullChecked) emitNullCheckThrow(ctx, fctx, { kind: "externref" }, expr);
+  if (!receiverAlreadyNullChecked) {
+    if (dynamicResult) {
+      const receiver = allocLocal(fctx, "__generic_getter_public_receiver", { kind: "externref" });
+      emitExternRecvNullGuard(
+        ctx,
+        fctx,
+        receiver,
+        { kind: "externref" },
+        expr.expression,
+        expr,
+        "generic-getter:public-read",
+      );
+      fctx.body.push({ op: "local.get", index: receiver });
+    } else {
+      emitNullCheckThrow(ctx, fctx, { kind: "externref" }, expr);
+    }
+  }
   registerLateReadStringConstant(ctx, propName);
   fctx.body.push(...staticHostPropertyKeyInstrs(ctx, propName));
   fctx.body.push({ op: "call", funcIdx: getIdx });
@@ -146,8 +166,16 @@ export function tryEmitExactStructFieldGet(
   if (typeName === "$Promise" && propName === "$handled") return undefined;
   const fieldIdx = fields.findIndex((field) => field.name === propName);
   if (fieldIdx === -1) return undefined;
-  const objResult = compileExpression(ctx, fctx, expr.expression);
+  const objResult = compileExpression(
+    ctx,
+    fctx,
+    expr.expression,
+    fctx.genericClassGetter ? { kind: "externref" } : undefined,
+  );
   const fieldType = fields[fieldIdx]!.type;
+  if (fctx.genericClassGetter && !ts.isPrivateIdentifier(expr.name) && objResult?.kind === "externref") {
+    return emitStructuralExternrefFieldGet(ctx, fctx, expr, propName, false, true);
+  }
   if (
     ctx.standalone &&
     objResult &&

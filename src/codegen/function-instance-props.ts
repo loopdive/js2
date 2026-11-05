@@ -102,7 +102,7 @@
  * slot it declines, which is "the property is absent" — never a wrong name.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { noJsHost, type CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
@@ -111,11 +111,14 @@ import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { fnMetaArms, type FnMetaArms } from "./function-instance-meta-arms.js";
 import { fillFnIntrinsicSeed } from "./fn-intrinsic-seed.js"; // (#4562) intrinsic length/name record
 import { CARRIER_BAG_HAS } from "./object-model/native-names.js"; // (#6770 S3)
+import { buildCarrierBagMarkerBody } from "../runtime/wasmgc/values/carrier-bag-read-bodies.js";
 
 /** `(externref fn, externref key) -> i32` — 1 iff fn's bag holds ANY entry for key. */
 export const FNINST_BAG_OWNS = "__fninst_bag_owns";
 /** `(externref fn, externref key) -> i32` — 1 iff the #4098 marker was written. */
 export const FNINST_TOMBSTONE = "__fninst_tombstone";
+/** Pure lookup: a private deletion marker on this actual closure, never a public self-reference. */
+export const FNINST_IS_DELETED = "__fninst_is_deleted";
 /**
  * (#4437) `(externref fn) -> externref` — fn's `$__fn_instance_meta` struct as
  * an externref, or null when fn carries no `$fnmeta` slot.
@@ -150,7 +153,7 @@ const FLAG_CONFIGURABLE = 0x04;
  * these would only shift `funcMap` indices.
  */
 export function reserveFunctionInstanceProps(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!noJsHost(ctx)) return;
   if (ctx.funcMap.get(FNINST_BAG_OWNS) !== undefined) return;
 
   const reserve = (name: string): void => {
@@ -169,6 +172,7 @@ export function reserveFunctionInstanceProps(ctx: CodegenContext): void {
 
   reserve(FNINST_BAG_OWNS);
   reserve(FNINST_TOMBSTONE);
+  reserve(FNINST_IS_DELETED);
 
   // (#4437) The per-declaration metadata resolver — one param, externref result.
   {
@@ -185,6 +189,178 @@ export function reserveFunctionInstanceProps(ctx: CodegenContext): void {
   }
 }
 
+interface FunctionMarkerBindings {
+  readonly rootIdx: number;
+  readonly objectTypeIdx: number;
+  readonly propEntryTypeIdx: number;
+  readonly lookupIdx: number;
+  readonly ensureIdx: number;
+  readonly objFindIdx: number;
+  readonly externSetIdx: number;
+  readonly deleteIdx: number;
+}
+
+/** Complete existing marker-inclusive LOOKUP body: params0/1, bag2, no allocation. */
+function buildFunctionBagOwnsBody(
+  d: Pick<FunctionMarkerBindings, "objectTypeIdx" | "lookupIdx" | "objFindIdx">,
+): Instr[] {
+  const { objectTypeIdx, lookupIdx, objFindIdx } = d;
+  return [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: lookupIdx },
+    { op: "local.tee", index: 2 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+    },
+    // The bag is a `__new_plain_object` product; screen before the cast so a
+    // future substrate change can never trap inside a helper that must not
+    // throw (#3468 S1 discipline).
+    { op: "local.get", index: 2 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: objectTypeIdx },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+    },
+    { op: "local.get", index: 2 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: objFindIdx },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+  ];
+}
+
+/** Params0/1, bag2, entry3, value4: fresh instruction factory; no emission-time side effects. */
+function buildFunctionMarkerQueryBody(
+  d: Pick<FunctionMarkerBindings, "rootIdx" | "objectTypeIdx" | "propEntryTypeIdx" | "lookupIdx" | "objFindIdx">,
+): Instr[] {
+  const { rootIdx, objectTypeIdx, propEntryTypeIdx, lookupIdx, objFindIdx } = d;
+  return [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: rootIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: lookupIdx },
+    { op: "local.tee", index: 2 },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+    { op: "local.get", index: 2 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: objectTypeIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+    { op: "local.get", index: 2 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: objFindIdx },
+    { op: "local.tee", index: 3 },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+    ...buildCarrierBagMarkerBody(propEntryTypeIdx, { entryLocal: 3, bagLocal: 2, tmpAnyLocal: 4 }),
+  ];
+}
+
+/** Params0/1, bag2, entry3, value4: fresh instruction factory; no emission-time side effects. */
+function buildFunctionMarkerDeleteBody(
+  d: Pick<
+    FunctionMarkerBindings,
+    "objectTypeIdx" | "propEntryTypeIdx" | "ensureIdx" | "objFindIdx" | "deleteIdx" | "externSetIdx"
+  >,
+): Instr[] {
+  const { objectTypeIdx, propEntryTypeIdx, ensureIdx, objFindIdx, deleteIdx, externSetIdx } = d;
+  return [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: ensureIdx },
+    { op: "local.tee", index: 2 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+    },
+    { op: "local.get", index: 2 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: objFindIdx },
+    { op: "local.tee", index: 3 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // Already absent: deletion succeeds even after preventExtensions/seal.
+        ...buildCarrierBagMarkerBody(propEntryTypeIdx, { entryLocal: 3, bagLocal: 2, tmpAnyLocal: 4 }),
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+        // Canonical OrdinaryDelete owns all descriptor/integrity rejection.
+        { op: "local.get", index: 2 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: deleteIdx },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+        // Keep this now-deleted slot as PRIVATE metadata suppression. This
+        // reverses only OrdinaryDelete's physical table bookkeeping, not its
+        // semantic decision; no Set, allocation or extensibility bypass.
+        { op: "local.get", index: 3 },
+        { op: "ref.as_non_null" },
+        { op: "local.get", index: 2 },
+        { op: "any.convert_extern" },
+        { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+        { op: "local.get", index: 3 },
+        { op: "ref.as_non_null" },
+        { op: "i32.const", value: 7 },
+        { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+        { op: "local.get", index: 3 },
+        { op: "ref.as_non_null" },
+        { op: "ref.null", typeIdx: -18 },
+        { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 4 },
+        { op: "local.get", index: 3 },
+        { op: "ref.as_non_null" },
+        { op: "ref.null", typeIdx: -18 },
+        { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
+        { op: "local.get", index: 2 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        { op: "local.get", index: 2 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 2 },
+        { op: "i32.const", value: 1 },
+        { op: "i32.add" },
+        { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 2 },
+        { op: "local.get", index: 2 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        { op: "local.get", index: 2 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 3 },
+        { op: "i32.const", value: 1 },
+        { op: "i32.sub" },
+        { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 3 },
+        { op: "i32.const", value: 1 },
+        { op: "return" },
+      ],
+    },
+    { op: "local.get", index: 2 }, // receiver = the bag
+    { op: "local.get", index: 1 }, // key
+    { op: "local.get", index: 2 }, // value = the bag  ← the marker
+    { op: "call", funcIdx: externSetIdx },
+    { op: "i32.const", value: 1 },
+  ];
+}
+
 /**
  * Fill the two natives and splice the generic closure arms into the three
  * #2896 helpers.
@@ -195,17 +371,19 @@ export function reserveFunctionInstanceProps(ctx: CodegenContext): void {
  * skipped fill degrades to exactly today's behaviour instead of trapping.
  */
 export function fillFunctionInstanceProps(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!noJsHost(ctx)) return;
   const bagOwnsIdx = ctx.funcMap.get(FNINST_BAG_OWNS);
   const tombstoneIdx = ctx.funcMap.get(FNINST_TOMBSTONE);
   if (bagOwnsIdx === undefined || tombstoneIdx === undefined) return;
 
   const rootIdx = getFuncRefWrapperRootTypeIdx(ctx);
   const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+  const propEntryTypeIdx = ctx.objectRuntimeTypes?.propEntryTypeIdx;
   const lookupIdx = ctx.funcMap.get(CLOSURE_BAG_LOOKUP);
   const ensureIdx = ctx.funcMap.get(CLOSURE_BAG_ENSURE);
   const objFindIdx = ctx.funcMap.get("__obj_find");
   const externSetIdx = ctx.funcMap.get("__extern_set");
+  const deleteIdx = ctx.funcMap.get("__delete_property");
   const boxNumIdx = ctx.funcMap.get("__box_number");
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
@@ -214,6 +392,8 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
   if (
     rootIdx === undefined ||
     objectTypeIdx === undefined ||
+    propEntryTypeIdx === undefined ||
+    deleteIdx === undefined ||
     lookupIdx === undefined ||
     ensureIdx === undefined ||
     objFindIdx === undefined ||
@@ -243,36 +423,19 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
   setFn(
     FNINST_BAG_OWNS,
     [{ name: "__bag", type: EXT }],
+    buildFunctionBagOwnsBody({ objectTypeIdx, lookupIdx, objFindIdx }),
+  );
+
+  // The query is function-identity scoped and LOOKUP-only. A user's ordinary
+  // self-reference can never satisfy the private carrier-bag identity test.
+  setFn(
+    FNINST_IS_DELETED,
     [
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: lookupIdx },
-      { op: "local.tee", index: 2 },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-      },
-      // The bag is a `__new_plain_object` product; screen before the cast so a
-      // future substrate change can never trap inside a helper that must not
-      // throw (#3468 S1 discipline).
-      { op: "local.get", index: 2 },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: objectTypeIdx },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-      },
-      { op: "local.get", index: 2 },
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: objectTypeIdx },
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: objFindIdx },
-      { op: "ref.is_null" },
-      { op: "i32.eqz" },
+      { name: "__bag", type: EXT },
+      { name: "__entry", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+      { name: "__value", type: { kind: "anyref" } },
     ],
+    buildFunctionMarkerQueryBody({ rootIdx, objectTypeIdx, propEntryTypeIdx, lookupIdx, objFindIdx }),
   );
 
   // ── __fninst_tombstone(fn, key) -> i32 ────────────────────────────────────
@@ -281,23 +444,12 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
   // bag ITSELF — #4098's unforgeable marker.
   setFn(
     FNINST_TOMBSTONE,
-    [{ name: "__bag", type: EXT }],
     [
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: ensureIdx },
-      { op: "local.tee", index: 2 },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-      },
-      { op: "local.get", index: 2 }, // receiver = the bag
-      { op: "local.get", index: 1 }, // key
-      { op: "local.get", index: 2 }, // value = the bag  ← the marker
-      { op: "call", funcIdx: externSetIdx },
-      { op: "i32.const", value: 1 },
+      { name: "__bag", type: EXT },
+      { name: "__entry", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+      { name: "__value", type: { kind: "anyref" } },
     ],
+    buildFunctionMarkerDeleteBody({ objectTypeIdx, propEntryTypeIdx, ensureIdx, objFindIdx, deleteIdx, externSetIdx }),
   );
 
   /**
@@ -359,7 +511,7 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
    * The shared `(receiver is a closure) && (key is `key`) && (bag free)`
    * guard, wrapping `then`. `anyLocal` receives `any.convert_extern(param0)`.
    */
-  const closureKeyArm = (anyLocal: number, key: string, then: Instr[]): Instr[] => [
+  const closureKeyArm = (anyLocal: number, key: string, then: Instr[], includeBag = false): Instr[] => [
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "local.set", index: anyLocal },
@@ -367,7 +519,11 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [...keyIs(key), ...bagFree(), { op: "i32.and" }, { op: "if", blockType: { kind: "empty" }, then }],
+      then: [
+        ...keyIs(key),
+        ...(includeBag ? [] : [...bagFree(), { op: "i32.and" } as Instr]),
+        { op: "if", blockType: { kind: "empty" }, then },
+      ],
     },
   ];
   const closureLengthArm = (anyLocal: number, then: Instr[]): Instr[] => closureKeyArm(anyLocal, "length", then);
@@ -466,7 +622,7 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
   ];
   const deleteFn = ctx.mod.functions.find((f) => f.name === "__builtinfn_delete");
   if (deleteFn) {
-    deleteFn.body.splice(0, 0, ...closureLengthArm(2, tombstoneArm()));
+    deleteFn.body.splice(0, 0, ...closureKeyArm(2, "length", tombstoneArm(), true));
     if (meta.available) {
       // Gated on the receiver actually HAVING metadata: a closure with no
       // `$fnmeta` slot has no `name` own property, and tombstoning a key that
@@ -475,10 +631,12 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
       deleteFn.body.splice(
         0,
         0,
-        ...closureKeyArm(2, "name", [
-          ...meta.present(6),
-          { op: "if", blockType: { kind: "empty" }, then: tombstoneArm() },
-        ]),
+        ...closureKeyArm(
+          2,
+          "name",
+          [...meta.present(6), { op: "if", blockType: { kind: "empty" }, then: tombstoneArm() }],
+          true,
+        ),
       );
     }
   }
