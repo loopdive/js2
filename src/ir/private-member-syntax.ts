@@ -72,21 +72,45 @@ export function privateNameReadsNonField(name: ts.PrivateIdentifier): boolean {
 }
 
 /**
- * (#7227) Is `name` declared by more than one class in `node`'s source file?
- * The static-call arm keys class shapes by NAME, so two same-named classes in
- * sibling scopes (`function f() { class C … }`, `function g() { class C … }`)
- * would resolve a private static call to whichever shape owns the name. The
- * private-static admissions refuse such a name rather than guess.
+ * (#7227, #7234) Is `name` bound more than once in `node`'s source file?
+ * The static-call arm keys class shapes by NAME, so any second binding of the
+ * name that can shadow the class — a sibling `class C`, `const C = class {}`,
+ * `let C`, `function C(){}`, a parameter, a catch binding, an import, or a
+ * destructured `{ C }` — would resolve a private static call to whichever
+ * shape owns the name. The private-static admissions refuse such a name rather
+ * than guess. Purely syntactic (no checker), so it may over-refuse; a refusal
+ * only sends the unit back to the legacy path.
  */
 export function classNameIsAmbiguous(node: ts.Node, name: string): boolean {
   let count = 0;
   const visit = (current: ts.Node): void => {
     if (count > 1) return;
-    if ((ts.isClassDeclaration(current) || ts.isClassExpression(current)) && current.name?.text === name) count++;
+    if (bindingIdentifierOf(current)?.text === name) count++;
     ts.forEachChild(current, visit);
   };
   visit(node.getSourceFile());
   return count > 1;
+}
+
+/** The identifier `node` binds in its scope, if it is a value declaration. */
+function bindingIdentifierOf(node: ts.Node): ts.Identifier | undefined {
+  if (
+    ts.isClassDeclaration(node) ||
+    ts.isClassExpression(node) ||
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isImportClause(node) ||
+    ts.isNamespaceImport(node) ||
+    ts.isImportSpecifier(node) ||
+    ts.isImportEqualsDeclaration(node)
+  )
+    return node.name;
+  // Variable (incl. a catch clause's), parameter and destructuring element:
+  // a binding PATTERN name is not itself a binding — its elements are, and
+  // the walk reaches each `BindingElement` on its own.
+  if (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node))
+    return ts.isIdentifier(node.name) ? node.name : undefined;
+  return undefined;
 }
 
 /**
