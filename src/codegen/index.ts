@@ -148,7 +148,7 @@ import {
 } from "../ir/host-extern.js"; // (#2856/#3214/#3657/#7091)
 import {
   projectIrBackendTargetProfile,
-  supportsIrBackendTargetCapability,
+  irBackendCapabilityQuery,
   type IrBackendTargetCapability,
 } from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
@@ -3017,8 +3017,7 @@ function planIrOverlay(
   const platformExternClass = irPlatformExternClassPredicate(ctx);
   const hostExternSurface = jsHostExterns || platformExternClass !== undefined;
   const standaloneDomCapability = planStandaloneDomCapability(ctx, ast.checker, ast.sourceFile);
-  const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
-    supportsIrBackendTargetCapability(irTargetProfile, capability);
+  const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   const calendarResolvers = planIrCalendarResolvers(
     ast.checker,
     hostExternSurface,
@@ -4717,10 +4716,7 @@ function preparedLexicalComponentPreflightFailure(
     return "the exact host callback maker ABI is unavailable in the final module context";
   }
   const supportsHostDateSnapshots =
-    supportsIrBackendTargetCapability(
-      projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }),
-      "host-date-snapshot",
-    ) || ctx.requiresStandaloneClockCapability === true;
+    irBackendCapabilityQuery(ctx)("host-date-snapshot") || ctx.requiresStandaloneClockCapability === true;
   if (
     !canPrepareHostDateSnapshotLoweringByIdentity(
       ctx,
@@ -4854,6 +4850,7 @@ function planIrFirstBodyRouting(
       ...plan.suspendingAsyncUnitIds,
     ]),
     generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
+    numberToString: irBackendCapabilityQuery(ctx)("number-to-string"),
     fast: ctx.fast,
   };
   const timerRouting = irTimerShim.inspectIrCompilerTimerShimRouting(plan);
