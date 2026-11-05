@@ -159,7 +159,7 @@
     {
       "name": "delete operator",
       "testCategories": ["language/expressions/delete"],
-      "passCount": 63,
+      "passCount": 64,
       "totalCount": 69,
       "editionSpread": [
         {
@@ -169,7 +169,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 60,
+          "pass": 61,
           "total": 66
         }
       ]
@@ -385,7 +385,7 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 597,
+      "passCount": 598,
       "totalCount": 604,
       "editionSpread": [
         {
@@ -395,7 +395,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 429,
+          "pass": 430,
           "total": 430
         },
         {
@@ -1420,7 +1420,7 @@
     {
       "name": "var hoisting",
       "testCategories": ["language/statements/variable", "language/statements/var"],
-      "passCount": 174,
+      "passCount": 175,
       "totalCount": 178,
       "editionSpread": [
         {
@@ -1430,7 +1430,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 96,
+          "pass": 97,
           "total": 97
         },
         {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4482,
+      "passCount": 4483,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4482,
+          "pass": 4483,
           "total": 4603
         }
       ]
