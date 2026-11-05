@@ -2949,6 +2949,57 @@ function nameReadHasModuleOrigin(ctx: CodegenContext, expression: ts.Expression,
   return false;
 }
 
+/** Fresh class name before any effectful static initialization, never a method receiver. */
+function pristineClassInitializerName(ctx: CodegenContext, fctx: FunctionContext, expression: ts.Expression): boolean {
+  const value = skipTransparentExpressions(expression);
+  if (value.kind !== ts.SyntaxKind.ThisKeyword || !fctx.isStaticContext || !fctx.enclosingClassName) return false;
+  // Admit only a direct property chain rooted in this initializer's `this`.
+  // Calls, assignments, branches and nested function bodies cannot borrow it.
+  let chain: ts.Node = value;
+  while (chain.parent && ts.isPropertyAccessExpression(chain.parent) && chain.parent.expression === chain) {
+    chain = chain.parent;
+  }
+  const field = chain.parent;
+  if (!field || !ts.isPropertyDeclaration(field) || field.initializer !== chain) return false;
+  if (!field.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)) return false;
+  const owner = field.parent;
+  if (!ts.isClassDeclaration(owner) || !owner.name || owner.heritageClauses?.length) return false;
+  if (ctx.classDeclarationMap.get(fctx.enclosingClassName) !== owner) return false;
+  if (ts.getDecorators(owner)?.length) return false;
+  let beforeField = true;
+  for (const member of owner.members) {
+    if (member === field) beforeField = false;
+    if (ts.canHaveDecorators(member) && ts.getDecorators(member)?.length) return false;
+    // All computed names are evaluated before fields; an unknown key can own
+    // `name`, and its evaluation can expose or mutate the fresh constructor.
+    if (member.name && ts.isComputedPropertyName(member.name)) return false;
+    const isStatic =
+      ts.canHaveModifiers(member) &&
+      ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
+    if (!isStatic && !ts.isClassStaticBlockDeclaration(member)) continue;
+    if (
+      member.name &&
+      (ts.isIdentifier(member.name) || ts.isStringLiteralLike(member.name)) &&
+      member.name.text === "name"
+    )
+      return false;
+    if (!beforeField) continue;
+    if (ts.isClassStaticBlockDeclaration(member)) return false;
+    if (!ts.isPropertyDeclaration(member) || !member.initializer) continue;
+    // A literal-only completed prefix cannot escape/rebind/mutate the class.
+    const init = skipTransparentExpressions(member.initializer);
+    if (
+      !ts.isStringLiteralLike(init) &&
+      !ts.isNumericLiteral(init) &&
+      init.kind !== ts.SyntaxKind.TrueKeyword &&
+      init.kind !== ts.SyntaxKind.FalseKeyword &&
+      init.kind !== ts.SyntaxKind.NullKeyword
+    )
+      return false;
+  }
+  return true;
+}
+
 /** A callable type/alias does not identify the current function object's own name. */
 function nameReadNeedsCurrentValue(ctx: CodegenContext, expression: ts.Expression): boolean {
   const value = skipTransparentExpressions(expression);
@@ -2963,6 +3014,39 @@ function nameReadNeedsCurrentValue(ctx: CodegenContext, expression: ts.Expressio
     !isAnonymousFunctionDefinition(declaration.initializer) ||
     classExpressionDefinesOwnName(declaration.initializer)
   );
+}
+
+/** Type uncertainty may withdraw an instance projection; it never brands a value. */
+function nameReceiverMayBeConstructor(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  objType: ts.Type,
+): boolean {
+  const fact = ctx.oracle.typeFactOf(expr.expression);
+  const possible =
+    (objType.getConstructSignatures?.().length ?? 0) > 0 ||
+    fact.kind === "function" ||
+    fact.kind === "class" ||
+    fact.kind === "object" ||
+    fact.kind === "builtin" ||
+    fact.kind === "union" ||
+    fact.kind === "any" ||
+    fact.kind === "unknown" ||
+    fact.kind === "unresolvable";
+  if (!possible) return false;
+  // Ask the SAME representation owner as the later physical-field projector.
+  // This lookup only preserves existing own-static dispatch, never folds or
+  // certifies the current receiver's runtime brand/name/identity.
+  const projectedClass = resolveStructNameForExpr(ctx, fctx, expr.expression, expr.name, resolveWasmType(ctx, objType));
+  if (
+    projectedClass !== undefined &&
+    (ctx.staticProps.has(`${projectedClass}_name`) ||
+      ctx.staticMethodSet.has(`${projectedClass}_name`) ||
+      ctx.staticAccessorSet.has(`${projectedClass}_name`))
+  )
+    return false;
+  return true;
 }
 
 export function tryLengthAndNameReads(
@@ -3138,7 +3222,19 @@ export function tryLengthAndNameReads(
 
   // A type spelling cannot overrule a fresh method's evaluated-key own name,
   // including a callable cast/alias that has erased its computed declaration.
-  if (propName === "name" && nameReadNeedsCurrentValue(ctx, expr.expression)) return PA_FALLTHROUGH;
+  if (
+    propName === "name" &&
+    nameReadNeedsCurrentValue(ctx, expr.expression) &&
+    !pristineClassInitializerName(ctx, fctx, expr.expression)
+  ) {
+    if (nameReceiverMayBeConstructor(ctx, fctx, expr, objType)) {
+      // A possible constructor cannot borrow an instance layout's name slot.
+      // Keep own-static owners on their existing routes; read the ORIGINAL
+      // actual receiver once through canonical Get, never through a type name.
+      return emitRuntimeDescriptorGet(ctx, fctx, expr.expression, propName, expr, true);
+    }
+    return PA_FALLTHROUGH;
+  }
 
   // Handle Function.name — return the function name as a string
   if (propName === "name" && !returnsAnonymousClassFieldInitializer(ctx, expr.expression)) {

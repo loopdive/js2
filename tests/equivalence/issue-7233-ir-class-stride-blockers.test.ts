@@ -273,3 +273,14 @@ export function test(): number { const e = new E(); return e.m() * 10 + e.dd(); 
     expect(route(result, "E_m")).toBe("unsupported");
   }, 120_000);
 });
+
+// #4016: the constructor value shares a physical carrier with instances, but
+// its live name/descriptor must remain separate from an instance field name.
+it("constructor name and descriptor remain distinct from an instance name field — wasi", async () => {
+  const source =
+    'class C {name=7; static n(){return this.name.length;}} function inspect(ctor,instance){const d=Object.getOwnPropertyDescriptor(ctor,"name"); return ctor.name==="C" && d && d.value==="C" && d.writable===false && d.enumerable===false && d.configurable===true && instance.name===7 ? 1:0;} export function test(){return C.n()===1 ? inspect(C,new C()):0;}';
+  const reference = evaluateAsJs(source);
+  expect(reference.test!(), "genuine Node oracle").toBe(1);
+  const { exports } = await compileAndRun(source, { target: "wasi" });
+  expect(exports.test!()).toBe(reference.test!());
+}, 120_000);

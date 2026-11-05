@@ -10502,7 +10502,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/string-split-coercion.ts",
+      "path": "src/codegen/helpers/string-split-coercion.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",

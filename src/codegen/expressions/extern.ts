@@ -19,9 +19,14 @@ import { tryCompileNativeWeakMethodCall } from "../weak-collections-runtime.js";
 import { tryCompileNativeWeakRefDeref } from "../weakref-runtime.js";
 import { noJsHost } from "../js-errors.js";
 import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
-import { addHostStringConstantGlobal } from "../registry/imports.js";
+import { addHostStringConstantGlobal, addStringConstantGlobal } from "../registry/imports.js";
+import { ensureObjectRuntime } from "../object-runtime.js";
+import { ensureExternStrictEqHelper } from "../any-helpers.js";
+import { definedFuncAt } from "../func-space.js";
+import { classObjectDisplayName } from "../class-static-metadata.js";
+import { dynamicClassKeyGlobalKey } from "../class-dynamic-keys.js";
 import { emitStandaloneClassProtoObject } from "../class-proto-object.js"; // (#3976) standalone proto as a real $Object
-import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
+import { classAccessorFuncKey, classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
 import { emitFuncRefAsClosure } from "../closures.js";
 import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -33,6 +38,7 @@ import {
   compileStringLiteral,
   ensureLateImport,
   flushLateImportShifts,
+  resolveComputedKeyExpression,
   valTypesMatch,
   VOID_RESULT,
 } from "../shared.js";
@@ -454,12 +460,155 @@ export function emitLazyProtoGet(ctx: CodegenContext, fctx: FunctionContext, cla
  * `undefined` bails immediately above remain the real guard — a class with no
  * struct layout still returns `false` here.
  */
+interface NativeClassOwnNamePlan {
+  readonly name: string;
+  /** Actual once-evaluated PropertyKeys owned by the existing class installer. */
+  readonly nameConflictKeyMaps: readonly string[];
+}
+
+/** Constant primitive keys only; never the general Symbol-spelling/assignment folder. */
+function immutableClassStaticKey(ctx: CodegenContext, expression: ts.Expression): string | undefined {
+  const seen = new Set<ts.Node>();
+  let value = expression;
+  while (seen.size < 16 && !seen.has(value)) {
+    seen.add(value);
+    if (
+      ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isNonNullExpression(value) ||
+      ts.isTypeAssertionExpression(value)
+    ) {
+      value = value.expression;
+      continue;
+    }
+    if (ts.isStringLiteralLike(value)) return value.text;
+    if (ts.isNumericLiteral(value)) return String(Number(value.text));
+    if (!ts.isIdentifier(value)) return undefined;
+    const initializer = ctx.oracle.constInitializerOf(value);
+    if (initializer === undefined) return undefined;
+    value = initializer;
+  }
+  return undefined;
+}
+
+/** Join a computed element to the existing installer's OWN record, not to a key-safety proof. */
+function recordedOwnStaticKey(ctx: CodegenContext, className: string, member: ts.ClassElement): string | undefined {
+  if (!member.name || !ts.isComputedPropertyName(member.name)) return undefined;
+  // The collection/install passes already made this decision. This query only
+  // reproduces their join key; it neither evaluates the guest key nor certifies
+  // its source effects, Symbol binding, or actual runtime property-key value.
+  const key = resolveComputedKeyExpression(ctx, member.name.expression);
+  if (key === undefined) return undefined;
+  const fullName = `${className}_${key}`;
+  if (ts.isMethodDeclaration(member) && member.body) {
+    return ctx.staticMethodSet.has(fullName) &&
+      ctx.classStaticMethodNames.get(className)?.includes(key) &&
+      ctx.funcMap.has(classMemberFuncKey(ctx, fullName, "static"))
+      ? key
+      : undefined;
+  }
+  if (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) {
+    const kind = ts.isGetAccessorDeclaration(member) ? "get" : "set";
+    return ctx.staticAccessorSet.has(fullName) && ctx.funcMap.has(classAccessorFuncKey(ctx, className, kind, key, true))
+      ? key
+      : undefined;
+  }
+  // Static-property cells are registered only by the own-declaration loop
+  // (assignment-grown cells explicitly exclude name); no inherited cell alias
+  // is copied into staticProps. Presence still does NOT mean initialized.
+  return ts.isPropertyDeclaration(member) && ctx.staticProps.has(fullName) ? key : undefined;
+}
+
+/** Native SetFunctionName belongs to this fresh class value, not a type-name read. */
+function prepareNativeClassOwnName(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  className: string,
+): NativeClassOwnNamePlan | undefined | null {
+  if (!noJsHost(ctx)) return undefined;
+  const declaration = ctx.classDeclarationMap.get(className);
+  if (!declaration) return undefined;
+  // This existing installer ledger contains OWN static method keys only. A
+  // positively recorded name owner also covers pure computed keys such as
+  // ["na" + "me"], without treating the general key folder as a non-name proof.
+  if (ctx.classStaticMethodNames.get(className)?.includes("name")) return undefined;
+  const nameConflictKeyMaps: string[] = [];
+  // Only this declaration's own static elements may replace its default name.
+  // Inherited registry aliases and an INSTANCE field named name do not own it.
+  for (const member of declaration.members) {
+    if (
+      !member.name ||
+      !ts.canHaveModifiers(member) ||
+      !ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)
+    )
+      continue;
+    if (ts.isMethodDeclaration(member) && !member.body) continue;
+    if (!ts.isComputedPropertyName(member.name)) {
+      if ((ts.isIdentifier(member.name) || ts.isStringLiteralLike(member.name)) && member.name.text === "name") {
+        // Preserve the established own static owner. A collected FIELD is not
+        // proof it has run: before-later-field reads retain their old slot path.
+        return undefined;
+      }
+      continue;
+    }
+    const key = immutableClassStaticKey(ctx, member.name.expression);
+    if (key === "name") return undefined;
+    if (key !== undefined) continue;
+    const runtimeMember = ctx.classDynamicMembers
+      .get(className)
+      ?.find((entry) => entry.member === member && entry.isStatic);
+    if (runtimeMember === undefined) {
+      // A known installed key need not be recognized by the small pure-key
+      // classifier. Join it to the existing own installer records instead of
+      // refusing a valid class or inferring no owner from a missing ledger.
+      const installedKey = recordedOwnStaticKey(ctx, className, member);
+      if (installedKey === "name") return undefined;
+      if (installedKey !== undefined) continue;
+      reportError(ctx, member, "Native class name cannot establish its computed static owner", "error", {
+        sticky: true,
+      });
+      return null;
+    }
+    const mapKey = dynamicClassKeyGlobalKey(className, runtimeMember.ordinal);
+    if (!ctx.classDynamicKeyGlobals.has(mapKey)) {
+      reportError(ctx, member, "Native class name lost its evaluated static key", "error", { sticky: true });
+      return null;
+    }
+    nameConflictKeyMaps.push(mapKey);
+  }
+  ensureObjectRuntime(ctx);
+  if (nameConflictKeyMaps.length) {
+    ensureExternStrictEqHelper(ctx);
+  }
+  const name = classObjectDisplayName(ctx, className);
+  addStringConstantGlobal(ctx, "name");
+  addStringConstantGlobal(ctx, name);
+  flushLateImportShifts(ctx, fctx);
+  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  const equalityIdx = ctx.funcMap.get("__extern_strict_eq");
+  const defineBody = defineIdx === undefined ? undefined : definedFuncAt(ctx, defineIdx);
+  const equalityBody = equalityIdx === undefined ? undefined : definedFuncAt(ctx, equalityIdx);
+  if (
+    defineBody?.name !== "__defineProperty_value" ||
+    defineBody.body.length === 0 ||
+    (nameConflictKeyMaps.length > 0 && (equalityBody?.name !== "__extern_strict_eq" || equalityBody.body.length === 0))
+  ) {
+    reportError(ctx, declaration, "Native class name lost its canonical metadata provider", "error", { sticky: true });
+    return null;
+  }
+  return { name, nameConflictKeyMaps };
+}
+
 export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContext, className: string): boolean {
   if (ctx.classObjectGlobals?.get(className) === undefined) return false;
 
   const structTypeIdx = ctx.structMap.get(className);
   const fields = ctx.structFields.get(className);
   if (structTypeIdx === undefined || !fields) return false;
+
+  // Prepare all native providers before capturing any function/global handle.
+  const nativeOwnName = prepareNativeClassOwnName(ctx, fctx, className);
+  if (nativeOwnName === null) return false;
 
   // Look up the pre-registered `__register_class_object` host import (added
   // in `generateModule` when any class declaration is present). CSV string
@@ -541,6 +690,37 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
   initBody.push({ op: "struct.new", typeIdx: structTypeIdx });
   initBody.push({ op: "extern.convert_any" });
   initBody.push({ op: "global.set", index: classObjIdx() });
+  if (nativeOwnName !== undefined) {
+    // Once, on this newly allocated value only. Public W/E/C = false/false/true;
+    // 0xBC supplies the canonical descriptor input presence bits and Value.
+    // Later deletes/redefinitions use the ordinary metadata owner, and later
+    // lazy loads never recreate a deleted property.
+    const defineName: Instr[] = [
+      { op: "global.get", index: classObjIdx() },
+      ...stringConstantExternrefInstrs(ctx, "name"),
+      ...stringConstantExternrefInstrs(ctx, nativeOwnName.name),
+      { op: "f64.const", value: 0xbc },
+      { op: "call", funcIdx: ctx.funcMap.get("__defineProperty_value")! },
+      { op: "drop" },
+    ];
+    if (nativeOwnName.nameConflictKeyMaps.length === 0) {
+      initBody.push(...defineName);
+    } else {
+      // ClassDefinitionEvaluation has already stored these ToPropertyKey'd
+      // globals before prototype/static installs or class-value materialization.
+      // Compare the real key, without evaluating its source expression again.
+      for (const [index, mapKey] of nativeOwnName.nameConflictKeyMaps.entries()) {
+        const keyGlobalIdx = ctx.classDynamicKeyGlobals.get(mapKey);
+        if (keyGlobalIdx === undefined) throw new Error("native class name lost its prepared key global");
+        initBody.push({ op: "global.get", index: keyGlobalIdx }, ...stringConstantExternrefInstrs(ctx, "name"), {
+          op: "call",
+          funcIdx: ctx.funcMap.get("__extern_strict_eq")!,
+        });
+        if (index > 0) initBody.push({ op: "i32.or" });
+      }
+      initBody.push({ op: "if", blockType: { kind: "empty" }, then: [], else: defineName });
+    }
+  }
 
   // Register static methods with the runtime's `_staticMethodNames`
   // allowlist so `Object.getOwnPropertyDescriptor(C, "m")` returns the

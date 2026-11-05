@@ -8,20 +8,20 @@
  * value-level operation here avoids reconstructing an AST expression after it
  * has already been staged (which would evaluate it twice).
  */
-import type { Instr } from "../ir/types.js";
-import { emitWasmInt32Coercion } from "../backend/wasmgc/lowering/wasm-int32-coercion.js";
-import { undefinedSingletonActive } from "./any-helpers.js";
+import type { Instr } from "../../ir/types.js";
+import { emitWasmInt32Coercion } from "../../backend/wasmgc/lowering/wasm-int32-coercion.js";
+import { undefinedSingletonActive } from "../any-helpers.js";
 import {
   prepareRuntimeToPrimitive,
   prepareRuntimeToNumber,
   runtimeToNumberInstrs,
   runtimeToPrimitiveInstrs,
-} from "./coercion-engine.js";
-import { allocLocal } from "./context/locals.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { ensureObjectRuntime } from "./object-runtime.js";
-import { flushLateImportShifts } from "./shared.js";
+} from "../coercion-engine.js";
+import { allocLocal } from "../context/locals.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { buildThrowJsErrorInstrs } from "../js-errors.js";
+import { ensureObjectRuntime } from "../object-runtime.js";
+import { flushLateImportShifts } from "../shared.js";
 
 /** `__str_split` represents the spec's `2**32 - 1` default as signed `-1`. */
 export const SPLIT_NO_LIMIT = -1;

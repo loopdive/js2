@@ -47,7 +47,7 @@ import { undefinedSingletonActive } from "./any-helpers.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
 import { ensureAnyToStringHelper, ensureNativeStringHelpers, flatStringType } from "./native-strings.js";
 import { emitStringProtoToStringFlat } from "./string-proto-tostring.js";
-import { emitStagedSplitLimitFromExternref, prepareStagedSplitLimitCoercion } from "./string-split-coercion.js";
+import { emitStagedSplitLimitFromExternref, prepareStagedSplitLimitCoercion } from "./helpers/string-split-coercion.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import {
   RE_FIELD_CLASS_TABLE,

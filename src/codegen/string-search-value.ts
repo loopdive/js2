@@ -69,7 +69,7 @@ import {
   emitStagedSplitLimitFromExternref,
   prepareStagedSplitLimitCoercion,
   type StagedSplitLimitProviders,
-} from "./string-split-coercion.js";
+} from "./helpers/string-split-coercion.js";
 import { emitArgAsNativeString } from "./string-ops.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
 import { tryCompileStandaloneStringSearchFunctionReplace } from "./regex-replace-fn.js";

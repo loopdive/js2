@@ -12,6 +12,27 @@ assignee: ttraenkler/M-regexp
 created: 2026-08-01
 updated: 2026-09-28
 oracle-ratchet-allow: []
+standalone-arms-allow:
+  # 2026-11-05 (#4016): measured +1 standalone; open-object @@iterator calls
+  # reuse the real callable-element owner, not GetIterator normalization.
+  - src/codegen/expressions/call-tail-dispatch.ts
+  # 2026-11-05 (#4016): measured +1 standalone/+1 WASI; the native String.split
+  # closure's fixed ABI must evaluate surplus arguments before coercion.
+  - src/codegen/expressions/calls.ts
+  # 2026-11-05 (#4016): measured +2 standalone; one shared native Symbol-to-
+  # Number TypeError boundary is prepared and recaptured after operand staging.
+  - src/codegen/helpers/string-split-coercion.ts
+  # 2026-11-05 (#4016): measured +1 standalone/+1 WASI; fresh computed methods
+  # use native key/name/descriptor providers, never shared declaration metadata.
+  - src/codegen/literals.ts
+  # 2026-11-05 (#4016): measured +1 standalone/+1 WASI; the live Symbol binding
+  # identity check selects a real raw key carrier before ToPropertyKey.
+  - src/codegen/property-access-dispatch.ts
+  # 2026-11-05 (#4016): measured noJsHost 1→2 (+1 net); the fresh class-value
+  # SetFunctionName owner seeds the canonical native data descriptor once.
+  # Exact own installer/key joins preserve name overrides; this is not a
+  # static-receiver ABI fallback or a read-time type-name replacement.
+  - src/codegen/expressions/extern.ts
 import-cycles-allow:
   - largestSccSize: 730 # 2026-11-05 (#4016): one shared staged split coercion owner joins the existing codegen SCC; direct and reflective split reuse the same provider preflight and exact ToUint32 emission
 loc-budget-allow:
@@ -2166,3 +2187,59 @@ whole-105 runtime qualification, normal commit/push hooks, latest-main compositi
 and protected required checks remain pending for this test successor. No baseline,
 function/LOC allowance, timeout, heap, provider or test-floor exception is granted
 by this note. All original guests and the author history remain reviewable.
+
+
+### 2026-11-05 CI repair: shared split-coercion subsystem location
+
+The published CI run 41978354355 rejected the new top-level
+`src/codegen/string-split-coercion.ts` under the flat-directory budget
+(838 to 839 files). Move this existing shared implementation into
+`src/codegen/helpers/string-split-coercion.ts`, preserving the implementation,
+exports, two consumers and boundary classification. Only relative import paths
+change. The earlier source location and qualification records remain historical.
+No flat-directory baseline or allowance is changed. The two equivalence failures
+from the same run remain separate repair obligations until their actual errors
+are captured and the batched receiving tree is qualified.
+
+
+### 2026-11-05 measured native-owner disposition after CI repair
+
+The actual change-scoped standalone-arm gate on the formatted receiving tree
+reported net growth of six `ctx.standalone` lines and three `ctx.wasi` lines
+across exactly the five paths above. These reviewed operation boundaries keep
+their existing physical native-provider contracts: ordinary Symbol method
+invocation, reflective split argument evaluation, shared limit conversion,
+fresh method metadata, and live Symbol-binding reads. No token spelling or
+wrapper alias is substituted, and no main-owned baseline is changed. The shared
+limit implementation now lives under the existing `helpers/` subsystem.
+
+The unchanged pre-repair two whole fixtures reproduced the two CI failures
+(53 pass, 2 fail): the Symbol.iterator method returned NaN instead of 42, and
+the WASI static initializer trapped when reading a missing class name as a
+string. Their complete errors and emitted artifacts remain retained. The
+reviewed repair preserves the ordinary method result and admits the old class
+name route only for an exact fresh, effect-free initializer with no own name
+override. The original 160 test inputs and six separate adverse observations
+remain unqualified until the remaining gates and genuine runtime run complete.
+
+## 2026-11-05 class-value name metadata owner disposition
+
+The current CI repair's live name reads exposed a missing native constructor
+name value, which changed the inherited-static-method observation from main's
+wrong value `4` (Node `6`) into a null trap. The bounded owner seeds only a
+fresh class singleton's canonical `name` data descriptor with input flags
+`0xBC`; public writable/enumerable/configurable remain false/false/true.
+Own declaration and installed-key records protect actual name owners, and
+runtime-keyed members use already-evaluated keys without repeated conversion.
+This does not correct the separate existing inherited static receiver ABI.
+
+The actual formatted-source quality attempt passed normal formatting, Biome
+lint, flat-directory, LOC, function, oracle and coercion gates, then failed the
+standalone-arm ratchet solely on `expressions/extern.ts`: `noJsHost` grew
+from 1 to 2, +1 net. The own-issue path disposition above records that measured
+native operation owner. No shared baseline, predicate spelling, test assertion
+or execution limit changes. Typing, cycles, inventory and all 174 prospective
+rows were not run in that stopped invocation; the earlier original 160 PASS
+and all adverse failures remain separate historical observations. The original
+160 and six adverse guests/assertions are unchanged; eight focused metadata
+observations are additional diagnostics, with no assumed passing outcome.
