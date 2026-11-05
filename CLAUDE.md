@@ -183,7 +183,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 ## Architecture Principles
 
 - **One native semantic core (#6708)** — every environment compiles with the same Wasm-native semantic core (`semanticProviders: "native-first"`, the default since S6). A JS environment adds only the value adapter (boundary wrappers), explicit platform capabilities, and named opt-in accelerators (`wasm:js-string`, host RegExp/Date/Intl — #6978). No new feature may depend on a host semantic import. The S6 `host-assisted` rollback is gone (#6979 S7-a): `semanticProviders: "host-assisted"`/`"auto"` and `nativeStrings: false` on the JS target are compile errors.
-- This follows the pattern of #679 (dual string backend) and #682 (dual RegExp backend).
+- There is **no JS-host mode** any more, only environments: standalone/WASI (pure Wasm) and a JavaScript environment (same core + value adapter + capabilities + accelerators). The separate JS-host test262 lane was retired on 2026-10-12; its frozen snapshot is published by `scripts/preserve-frozen-host-baseline.mjs` and drawn as a background series on the conformance trend graph (#6979 S7-e). The accelerators are what remains of the old dual backends (#679 strings, #682 RegExp).
 - **Two orthogonal axes in codegen** (see #1527):
   - **Backend lowering**: `src/codegen/` (WasmGC) vs `src/codegen-linear/` (linear memory). These are **alternatives, not one superseding the other** — the choice depends on target (browser/WasmGC vs WASI/linear) and tradeoffs. Both stay.
   - **Front-end**: direct AST→Wasm (legacy, accumulated hacks) vs IR (`src/ir/`, typed representation). IR **replaces the hacks**; it does **not** compete with the backend choice. IR adopts AST node kinds step by step, only for parts that do not yet need to decide between linear and WasmGC lowering. IR-path failures currently demote to a warning channel (#2855 phases this fallback out).
@@ -551,6 +551,7 @@ rejection breakdown.
 - `--optimize` / `-O` — run Binaryen wasm-opt on compiled binary
 - `--wit` — generate WIT interface file for Component Model
 - `--utf8-storage` — dual i8/i16 string storage; implies `nativeStrings` on the WasmGC backend
+- `--host-accelerator <name>` — in a JS environment, use the host engine's implementation for one semantic family (`regexp`, `date`, `intl`; repeatable) instead of the native one (#6978); a compile error with `--target standalone`/`wasi`
 
 `nativeStrings` (WasmGC i16 arrays instead of `wasm:js-string`) is a compile
 option, not a CLI flag: `--standalone` and `--target standalone`/`wasi` turn it

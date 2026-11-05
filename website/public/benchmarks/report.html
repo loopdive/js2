@@ -1659,21 +1659,19 @@
 
         const historyPanel = el("div", { className: "summary-visual-panel summary-history-panel" });
         historyPanel.appendChild(el("h3", { className: "diagram-title" }, "Test Pass Rate Over Time"));
-        // Shared with the landing page. Both lanes are plotted; `mode` picks
-        // which one is the thick white line, and `scope` follows the edition
-        // slider — the chart used to ignore both, showing the js-host overall
-        // curve even in the standalone view at an ES2015 selection.
+        // Shared with the landing page. Standalone is always the primary line;
+        // the JS-host lane (retired 2026-10-12, #6979 S7-e) is a frozen,
+        // subdued background series whatever lane this report is browsing.
+        // `scope` follows the edition slider.
         historyTrendChart =
           preservedState?.historyTrendChart ||
           el("t262-conformance-trend", {
             className: "summary-history-chart",
             height: "260",
-            mode: view.mode,
             scope: scoreState.editionScope,
             "runs-base": CONFORMANCE_RUNS_BASE,
           });
         if (preservedState?.historyTrendChart) {
-          historyTrendChart.setAttribute("mode", view.mode);
           historyTrendChart.setAttribute("scope", scoreState.editionScope);
         }
         historyPanel.appendChild(historyTrendChart);
@@ -2657,7 +2655,10 @@
               });
               return b;
             };
-            modeSwitch.appendChild(mkBtn("host", "Host mode", "JS runtime imports"));
+            // The JS-host lane was retired on 2026-10-12 (#6979 S7-e). Its
+            // frozen snapshot stays browsable here for per-file history; it is
+            // not a current measurement.
+            modeSwitch.appendChild(mkBtn("host", "JS host (retired)", "frozen 2026-10-12 snapshot"));
             modeSwitch.appendChild(mkBtn("standalone", "Standalone", "pure Wasm, no JS host"));
             app.appendChild(modeSwitch);
           }

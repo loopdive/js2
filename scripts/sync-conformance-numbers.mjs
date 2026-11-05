@@ -14,7 +14,11 @@
  *
  * Files lacking the anchor pair are left untouched and reported as an
  * error — this script refuses to guess where the block belongs, so it
- * cannot blow away unrelated text.
+ * cannot blow away unrelated text. One exception (#6979 S7-e): a file that
+ * carries the `conformance-standalone` pair and NO `conformance` pair is a
+ * standalone-only file (the README, since the JS-host lane's 2026-10-12
+ * retirement) and is skipped for this block; its scope block then describes
+ * one figure, not two.
  *
  * Three further blocks are OPT-IN per file (a file without the anchor pair is
  * skipped, never errored), so a document carries exactly the figures it needs
@@ -194,7 +198,7 @@ function renderStandaloneBlock(report) {
  * case — one sentence covers both. If they ever diverge the block says so
  * instead of asserting a sameness that no longer holds.
  */
-function renderScopeBlock(report, standalone) {
+function renderScopeBlock(report, standalone, { hostFigure = true } = {}) {
   const scopes = report.scopes;
   if (!scopes || !scopes.standard || !scopes.annex_b) {
     throw new Error("report has no summary.by_category.{standard,annex_b} — cannot render the scope block");
@@ -207,6 +211,12 @@ function renderScopeBlock(report, standalone) {
     scopes.proposal && typeof scopes.proposal.total === "number"
       ? ` The ${fmtNumber(scopes.proposal.total)} TC39 proposal-stage tests are excluded.`
       : "";
+  // A standalone-only file (#6979 S7-e: the README dropped the frozen JS-host
+  // figure) carries ONE figure, so "both figures" would be false there.
+  if (!hostFigure && standalone) {
+    const sameScope = standalone.total === report.total;
+    return `The figure above is scored against **${fmtNumber(standalone.total)}** official tests${sameScope ? parts : ""}.${proposals}`;
+  }
   const lead =
     !standalone || standalone.total === report.total
       ? `Both figures are scored against the same **${fmtNumber(report.total)}** official tests${parts}.`
@@ -312,7 +322,7 @@ function renderAreasBlock(report) {
         : `The area rows sum to ${fmtNumber(sumTotal)}, which is below the headline total of ${fmtNumber(report.total)}.`;
 
   const out = [
-    `Per-area pass rates, JS-host (\`gc\`) lane. ${caption}`,
+    `Per-area pass rates, retired JS-host (\`gc\`) lane — frozen 2026-10-12 snapshot. ${caption}`,
     "",
     renderTable(["Area", "Pass", "Total", "Rate"], areaRows, ["l", "r", "r", "r"]),
   ];
@@ -449,6 +459,14 @@ function processFile(relPath, report, { check }) {
     throw new Error(`Target file missing: ${relPath}`);
   }
   const orig = readFileSync(abs, "utf8");
+  // #6979 S7-e: a file may carry the standalone figure INSTEAD of the frozen
+  // JS-host one (the README's first conformance line is standalone-only since
+  // the JS-host lane's 2026-10-12 retirement). Such a file opts out of the
+  // host block by carrying the standalone anchors and no host anchors. A file
+  // with neither is still an error: it would publish no figure at all.
+  if (!orig.includes(START) && !orig.includes(END) && orig.includes(SA_START) && orig.includes(SA_END)) {
+    return { path: relPath, skipped: true, changed: false };
+  }
   const body = renderBlock(report);
   const next = replaceAnchorBlock(orig, body, relPath);
   if (next === orig) {
@@ -475,7 +493,7 @@ function processOptionalBlock(relPath, { start, end, render }, { check }) {
   if (!orig.includes(start) && !orig.includes(end)) {
     return { path: relPath, skipped: true, changed: false };
   }
-  const body = render();
+  const body = render(orig);
   const next = replaceAnchorBlock(orig, body, relPath, start, end);
   if (next === orig) {
     return { path: relPath, changed: false };
@@ -511,13 +529,19 @@ function main() {
     });
   }
   optionalBlocks.push(
-    { label: "scope", start: SC_START, end: SC_END, render: () => renderScopeBlock(report, standalone) },
+    {
+      label: "scope",
+      start: SC_START,
+      end: SC_END,
+      render: (text) => renderScopeBlock(report, standalone, { hostFigure: text.includes(START) }),
+    },
     { label: "areas", start: AR_START, end: AR_END, render: () => renderAreasBlock(report) },
   );
 
   for (const t of TARGETS) {
     try {
-      results.push(processFile(t, report, { check }));
+      const r = processFile(t, report, { check });
+      if (!r.skipped) results.push(r);
     } catch (err) {
       errors.push({ path: t, message: err.message });
     }

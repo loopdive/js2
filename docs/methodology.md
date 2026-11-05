@@ -107,23 +107,26 @@ and no bundled interpreter. There are three principal stages:
    not delegate semantic decisions to it: every op the compiler emits is
    chosen by js2wasm code, not by Binaryen's optimizer.
 
-### The dual-mode architecture
+### One native semantic core, several environments
 
-js2wasm targets two distinct deployment shapes from the same source code.
-**JS-host mode** assumes a JavaScript runtime is available (Node.js, the
-browser, Bun) and uses a small set of host imports (`__box_number`,
-`__str_concat`, etc.) to delegate the parts of the JavaScript semantics
-that are wasteful to reimplement in Wasm — primarily string ropes and
-Number boxing. **Standalone mode** (used by the `--target wasi` flag)
-emits the entire runtime in pure Wasm, producing a binary that runs
-without any JavaScript runtime: `wasmtime my-program.wasm` works.
+js2wasm compiles every program with one Wasm-native semantic core (#6708).
+**Standalone** (`--target standalone`, `--target wasi`) emits that core as
+pure Wasm, producing a binary that runs without any JavaScript runtime:
+`wasmtime my-program.wasm` works. A **JavaScript environment** (Node.js,
+the browser, Deno — the default `gc` target) runs the same core and adds
+only three things: the value adapter that converts values at the module
+boundary, explicit platform capabilities (console, timers, DOM, …), and
+named opt-in accelerators (`--host-accelerator regexp|date|…`, #6978) that
+swap one semantic family for the host engine's implementation.
 
-The dual-mode split is documented in ADR-0008 (dual string backend) and
-ADR-0010 (eval host import). The principle is: every feature that exists
-must work in both modes, and the JS-host fast path is an optimization,
-not a dependency. This keeps js2wasm honest: its claims of "no embedded
-JS engine" hold up because the standalone-mode binaries actually run
-without one.
+This replaced an earlier dual-mode design — a JS-host mode that delegated
+parts of the semantics (string ropes, Number boxing, RegExp) to host imports,
+alongside a standalone mode — documented in ADR-0008 (dual string backend)
+and ADR-0010 (eval host import). The host-assisted profile was removed in
+#6979, and the separate JS-host test262 lane was retired on 2026-10-12. The
+principle that survived is: no feature may depend on a host semantic
+import. That keeps js2wasm honest: its claims of "no embedded JS engine"
+hold up because the standalone binaries actually run without one.
 
 ### How the IR was incrementally introduced
 
