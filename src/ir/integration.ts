@@ -292,6 +292,7 @@ import {
   type IrClassId,
   type IrUnitInventory,
   type IrUnitId,
+  privateMemberMangledName,
 } from "./identity.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
 import {
@@ -6949,6 +6950,113 @@ function resolveStaticNumericArrayGlobal(
   return { globalRef, type: expected };
 }
 
+/**
+ * (#7233) The legacy storage of a static private field, as an IR global.
+ *
+ * Legacy registers every `static #x` of class `C` as one mutable module global,
+ * `__static_C___priv_x` (`class-bodies.ts`, keyed `C___priv_x` in
+ * `ctx.staticProps`), and lowers `this.#x` / `C.#x` inside `C`'s static methods
+ * to `global.get` / `global.set` of it. A private name is never reflected onto
+ * the class object, so that global is the field's only store: an IR static
+ * body may read and write it directly and stay observably identical.
+ *
+ * The global is planned as a support binding of its source, ordered by its
+ * legacy allocation index (role `classStaticField`), exactly once per global;
+ * every referrer receives the same reference. Only representations the IR has
+ * a type for are answered: `f64`, `i32`, the active lane's dynamic carrier for
+ * an untyped field, and the active string carrier for a `string` field.
+ * Anything else answers `undefined`, and the caller demotes to legacy.
+ */
+interface IrClassStaticFieldStorage {
+  readonly globalRef: IrGlobalRef;
+  readonly type: IrType;
+}
+
+function resolveIrClassStaticFieldStorage(
+  ctx: CodegenContext,
+  owner: ts.ClassDeclaration,
+  field: ts.PrivateIdentifier,
+): IrClassStaticFieldStorage | undefined {
+  const className = owner.name?.text;
+  if (className === undefined || !ctx.classSet.has(className)) return undefined;
+  const globalIdx = ctx.staticProps.get(`${className}_${privateMemberMangledName(field)}`);
+  if (globalIdx === undefined) return undefined;
+  const localIdx = localGlobalIdx(ctx, globalIdx);
+  const global = ctx.mod.globals[localIdx];
+  if (!global || !global.mutable || global.name !== `__static_${className}_${privateMemberMangledName(field)}`) {
+    return undefined;
+  }
+  const sourceId = ctx.irPlanningIdentityContext?.sourceIdBySourceFile.get(owner.getSourceFile());
+  if (sourceId === undefined) return undefined;
+  const declaration = owner.members.find(
+    (member) =>
+      ts.isPropertyDeclaration(member) && ts.isPrivateIdentifier(member.name) && member.name.text === field.text,
+  );
+  if (!declaration) return undefined;
+  const type = staticFieldIrType(ctx, declaration, global.type);
+  if (type === undefined) return undefined;
+  const globalRef = irSupportGlobalRef(sourceId, "class-static-field", global.name, localIdx);
+  planProgramAbiGlobal(ctx, {
+    ref: globalRef,
+    anchor: { kind: "source", sourceId },
+    roleOrdinal: PROGRAM_ABI_GLOBAL_ROLE.classStaticField,
+    derivedOrdinal: localIdx,
+    global,
+  });
+  return { globalRef, type };
+}
+
+function staticFieldIrType(ctx: CodegenContext, declaration: ts.ClassElement, storage: ValType): IrType | undefined {
+  if (storage.kind === "f64" || storage.kind === "i32") return irVal({ kind: storage.kind });
+  const fact = ctx.oracle.typeFactOf(declaration).kind;
+  if (fact === "any" || fact === "unknown") {
+    return sameValType(storage, resolveIrDynamicCarrierType(ctx)) ? irDynamic() : undefined;
+  }
+  // A string global starts as null and the IR's `string` is non-null: admit it
+  // only when it can never be read null (#7233 review).
+  if (fact === "string" && staticStringFieldIsInitialisedBeforeUse(declaration)) {
+    const carrier = ctx.nativeStrings
+      ? ctx.anyStrTypeIdx < 0
+        ? undefined
+        : ({ kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } as const)
+      : ({ kind: "externref" } as const);
+    return carrier && sameValType(storage, carrier) ? { kind: "string" } : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * (#7233) A `string` static private field whose legacy global can never be
+ * observed null: its initialiser is a string literal, and no static
+ * initialiser or `static {}` block precedes it in the class body (the only
+ * code that can call the owner's static methods before the field is set).
+ * An uninitialised field (`static #s: string;`) keeps the legacy body.
+ */
+function staticStringFieldIsInitialisedBeforeUse(declaration: ts.ClassElement): boolean {
+  if (!ts.isPropertyDeclaration(declaration) || !declaration.initializer) return false;
+  if (!ts.isStringLiteral(declaration.initializer) && !ts.isNoSubstitutionTemplateLiteral(declaration.initializer))
+    return false;
+  for (const member of declaration.parent.members) {
+    if (member === declaration) return true;
+    if (ts.isClassStaticBlockDeclaration(member)) return false;
+    if (
+      ts.isPropertyDeclaration(member) &&
+      member.initializer &&
+      ts.getModifiers(member)?.some((m) => m.kind === ts.SyntaxKind.StaticKeyword)
+    )
+      return false;
+  }
+  return false;
+}
+
+function sameValType(a: ValType, b: ValType): boolean {
+  if (a.kind !== b.kind) return false;
+  if ((a.kind === "ref" || a.kind === "ref_null") && (b.kind === "ref" || b.kind === "ref_null")) {
+    return a.typeIdx === b.typeIdx;
+  }
+  return true;
+}
+
 function makeFromAstResolver(
   ctx: CodegenContext,
   moduleBindingResolver?: IrModuleBindingResolver,
@@ -7034,6 +7142,7 @@ function makeFromAstResolver(
         funcName: STANDALONE_REGEXP_CARRIER_TEST_HELPER,
       };
     },
+    classStaticFieldStorage: (owner, field) => resolveIrClassStaticFieldStorage(ctx, owner, field), // (#7233)
     staticNumericArrayRead(expression: ts.Expression, expected: IrType) {
       if (
         !supportsBackendCapability("legacy-numeric-array-global") ||
