@@ -721,3 +721,24 @@ unknown dynamic-import targets remain reported. The stock IR fallback gate
 passed with no unintended, module-level or post-claim increase. Complete raw
 streams and source/index/tool POST checks are retained. Normal commit/push
 hooks, the289-row ambient successor and current protected checks remain pending.
+
+### Normal author-history checkpoint and landed-main join
+
+Private commit be2a6eee85 preserved both receiving36b and authored01d histories.
+All normal hooks passed with9 whole changed-root files and679 tests:
+overlay5, producer3, concat9, mixed65, ambient289, for-head94, script-var66,
+wrapper136 and operand-matrix12. The earlier8-file/613 forecast omitted the
+already-landed script-var fixture selected from the older common ancestor;
+the actual normal hook counts are679/679. No test was skipped or rerun to
+repair that bookkeeping forecast. Formatting, lint, LOC/function and oracle
+hooks passed; the full qualified source/index vector and installed tools
+remained unchanged and no process descendants survived.
+
+A normal noncommitting merge of actual landed main b71bb594 then completed
+without conflicts. Every one of the25 qualified paths retained its exact mode
+and blob; all16,960 other indexed paths match that actual main exactly. The
+only incoming differences are11 generated report JSON files and the7238 plan.
+Their generated values are inherited, not edited by this repair; the two not
+covered by the existing formatter ignores already pass normal Prettier checks.
+The final merge commit hooks, nonforce publication, current CI and protected
+floor checks remain pending. No November1 census/performance gain is remeasured.
