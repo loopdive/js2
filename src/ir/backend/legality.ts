@@ -78,6 +78,19 @@ export function projectIrBackendTargetProfile(
 }
 
 /**
+ * A compile's {@link supportsIrBackendTargetCapability}, over its projected
+ * target profile: the one question selection, lowering and the IR-first gate
+ * ask of a compile.
+ */
+export function irBackendCapabilityQuery(compile: {
+  readonly targetProfile: CompileTargetProfile;
+  readonly fast?: boolean;
+}): (capability: IrBackendTargetCapability) => boolean {
+  const profile = projectIrBackendTargetProfile(compile.targetProfile, { fast: compile.fast });
+  return (capability) => supportsIrBackendTargetCapability(profile, capability);
+}
+
+/**
  * Answer predictable target/provider questions before build/lower.
  *
  * This is deliberately separate from verifyIrBackendLegality: a false result

@@ -17,7 +17,7 @@ import { forEachChild, ts } from "../ts-api.js";
 import { stripParens } from "../shared/binding-writes.js";
 import { isAnonymousFunctionDefinition } from "../shared/named-evaluation.js";
 import { collectPatternBindingNames, collectReferencedIdentifiers } from "./analysis/ast-scope.js";
-import { isUndefinedCompareOperand } from "./analysis/operand-admissibility.js";
+import { isUndefinedCompareOperand, mayBeElementRead } from "./analysis/operand-admissibility.js";
 import {
   patternRootDeclaration,
   type BindingLeaf,
@@ -73,6 +73,33 @@ export function literalLeafSource(leaf: ts.BindingElement): LiteralLeafSource | 
   }
   const plan = planLiteralPattern(declaration.name, declaration.initializer);
   return plan ? sourceOfLeaf(plan, leaf) : undefined;
+}
+
+/**
+ * (#7066) `mayBeElementRead`'s leaf question, over the declarations
+ * `declarationOf` resolves: an array-pattern leaf reads an element unless
+ * this plan decomposes its declaration, and then it binds its source.
+ */
+export function patternLeafReadsElement(
+  declarationOf: (id: ts.Identifier) => ts.Declaration | undefined,
+): (id: ts.Identifier) => boolean {
+  const active = new Set<ts.BindingElement>();
+  const readsElement = (id: ts.Identifier): boolean => {
+    const leaf = declarationOf(id);
+    if (leaf === undefined || !ts.isBindingElement(leaf)) return false;
+    // A cycle supplies no absence proof. Refuse this scalar ToString instead
+    // of recursing forever, and leave unrelated later queries independent.
+    if (active.has(leaf)) return true;
+    active.add(leaf);
+    try {
+      const source = literalLeafSource(leaf);
+      if (source === undefined) return ts.isArrayBindingPattern(leaf.parent);
+      return typeof source !== "string" && mayBeElementRead(source, readsElement);
+    } finally {
+      active.delete(leaf);
+    }
+  };
+  return readsElement;
 }
 
 function sourceOfLeaf(plan: PatternPlan, leaf: ts.BindingElement): LiteralLeafSource | undefined {

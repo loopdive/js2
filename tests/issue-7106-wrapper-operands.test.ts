@@ -128,11 +128,11 @@ describe("#7106 fresh-wrapper operator operands", () => {
     });
   }
 
-  // S0: a pair `lowerBinary` cannot type is refused before the claim.
+  // S0: a pair `lowerBinary` cannot type is refused before the claim. (`"x" + 1`
+  // lowers since #7066: tests/issue-7066-mixed-concat-lowering.test.ts.)
   const S0_REFUSED: Record<string, string> = {
     stringNumber: `"1" < 1`,
     booleanDivide: "true / 1",
-    mixedConcat: `"x" + 1`,
     nullPlus: "null + 1",
     stringNull: `"a" < null`,
     stringBitwise: `"1" & 1`,
@@ -157,6 +157,26 @@ describe("#7106 fresh-wrapper operator operands", () => {
       for (const name of Object.keys(S0_REFUSED)) {
         expect(unit(result, name), name).toMatchObject({ irBodyEmitted: false, stage: "select" });
       }
+    });
+  }
+
+  // Preserve S0's exact former mixedConcat program as a stronger claim/value
+  // control now that #7066 admits the pair; no guest expression disappears.
+  for (const target of TARGETS) {
+    it(`S0 mixedConcat claims and answers correctly (${lane(target)})`, async () => {
+      const result = await compileSource(
+        target,
+        'export function mixedConcat() { return "x" + 1; }\n' +
+          'export function mixedConcatCheck() { return mixedConcat() === "x1" ? 1 : 0; }',
+      );
+      expect(unit(result, "mixedConcat")).toMatchObject({
+        kind: "emitted",
+        stage: "patch",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+      });
+      const exports = await exportsOf(target, result);
+      expect(exports.mixedConcatCheck!()).toBe(1);
     });
   }
 
