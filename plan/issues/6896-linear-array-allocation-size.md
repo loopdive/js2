@@ -428,3 +428,15 @@ imports without copying a layout rule, moving any owner, adding a grant, or
 changing a guard, bound, instruction builder, runtime caller or test. The
 original 21 tests and three whole controls remain unchanged; current results
 will be recorded separately after actual qualification.
+
+
+### 2026-11-05: retain archived JSONL evidence under tracked filenames
+
+Current-head CI rejected two historical evidence files because the repository
+ignores `*.jsonl`. The files are retained byte-for-byte as
+`baseline-provider-probes.jsonl.txt` and
+`original-probe-reporting-error.jsonl.txt` in the same evidence directory.
+The handoff now points to the retained provider observations. Their original
+paths remain in authored Git history. No compiler code, assertions, receipts,
+ignore rules, gate allow-lists or conformance floors change. The earlier failed
+CI result is retained; the exact tracked-file check must pass before delivery.

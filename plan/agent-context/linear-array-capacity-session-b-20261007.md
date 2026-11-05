@@ -27,7 +27,7 @@ which requires4294967312 bytes including the header. Capacity plus one
 reserves24 bytes. Signed-1 input records unsigned4294967295 while reserving8.
 Growing a valid four-slot array with one initialized element to minimum
 capacity0x20000000 similarly reserves16 bytes and writes that huge capacity.
-Corrected actual rows are retained in `baseline-provider-probes.jsonl`.
+Corrected actual rows are retained in `baseline-provider-probes.jsonl.txt`.
 
 The first diagnostic reporter incorrectly mixed Number and BigInt when
 formatting `requiredBytes`. Its five allocation rows therefore reported
