@@ -2,7 +2,7 @@
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { unwrapReturnCarrierExpression } from "./declarations/host-carrier-object-literal.js";
-import { objectLiteralSpreadTakesHostPath } from "./literals.js";
+import { objectLiteralNeedsRuntimeMethodKeys, objectLiteralSpreadTakesHostPath } from "./literals.js";
 
 /**
  * (#6614) The RETURN-SLOT twin of #5376.
@@ -84,6 +84,7 @@ function isAccessorLiteral(expr: ts.Expression): expr is ts.ObjectLiteralExpress
  * `$Object` and hand back an externref; both null-drop against a concrete
  * struct result ABI.
  *
+ * Runtime method keys join through an AST-only predicate safe before collection.
  * The remaining `objectLiteralForcesHostPath` arms are deliberately still not
  * consulted here. Several of them read `ctx` state a pre-pass running before
  * `collectDeclarations` has not populated (`_hasRuntimeComputedKey`,
@@ -93,7 +94,9 @@ function isAccessorLiteral(expr: ts.Expression): expr is ts.ObjectLiteralExpress
  */
 function isHostCarrierLiteral(ctx: CodegenContext, expr: ts.Expression): expr is ts.ObjectLiteralExpression {
   if (!ts.isObjectLiteralExpression(expr)) return false;
-  return isAccessorLiteral(expr) || objectLiteralSpreadTakesHostPath(ctx, expr);
+  return (
+    isAccessorLiteral(expr) || objectLiteralNeedsRuntimeMethodKeys(expr) || objectLiteralSpreadTakesHostPath(ctx, expr)
+  );
 }
 
 type FunctionLike =

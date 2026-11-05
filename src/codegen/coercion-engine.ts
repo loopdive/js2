@@ -86,7 +86,9 @@ export function coercionMode(ctx: CodegenContext): CoercionMode {
  * is their narrow entry point into the coercion engine instead of spelling the
  * helper lookup and hint ABI at each call site.
  */
-export function runtimeToPrimitiveInstrs(ctx: CodegenContext, hint: "string" | "number" | "default"): Instr[] | null {
+export type RuntimeToPrimitiveHint = "string" | "number" | "default";
+
+export function runtimeToPrimitiveInstrs(ctx: CodegenContext, hint: RuntimeToPrimitiveHint): Instr[] | null {
   const funcIdx = ctx.funcMap.get("__to_primitive");
   if (funcIdx === undefined) return null;
   if (hint === "default") {
@@ -94,6 +96,31 @@ export function runtimeToPrimitiveInstrs(ctx: CodegenContext, hint: "string" | "
   }
   addStringConstantGlobal(ctx, hint);
   return [...stringConstantExternrefInstrs(ctx, hint), { op: "call", funcIdx }];
+}
+
+/**
+ * Reserve the canonical runtime ToPrimitive provider and its native hint before
+ * an emitter stages arbitrary user expressions.  Emitters must later rebuild
+ * their instruction sequence with {@link runtimeToPrimitiveInstrs}, rather
+ * than retain the index seen here across late registration.
+ */
+export function prepareRuntimeToPrimitive(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  hint: RuntimeToPrimitiveHint,
+): boolean {
+  if (hint !== "default") addStringConstantGlobal(ctx, hint);
+  if (ctx.funcMap.get("__to_primitive") === undefined) {
+    const provider = ensureLateImport(
+      ctx,
+      "__to_primitive",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    if (provider === undefined) return false;
+  }
+  flushLateImportShifts(ctx, fctx);
+  return ctx.funcMap.get("__to_primitive") !== undefined;
 }
 
 /**
@@ -644,13 +671,25 @@ export function emitToNumber(ctx: CodegenContext, fctx: FunctionContext, valType
 
 /**
  * Reserve the canonical externref→number provider for detached/late-built
- * instruction sequences. Callers that cannot emit ToNumber immediately use
- * the returned stable index after this helper flushes late-import shifts.
+ * instruction sequences. The import request is only a provisioning signal:
+ * callers that emit later must resolve `ctx.funcMap` at their final emission
+ * boundary instead of retaining an index across a later registration.
  */
 export function ensureExternrefToNumberProvider(ctx: CodegenContext, fctx: FunctionContext): number | undefined {
-  const unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
+  const requestedIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
+  if (requestedIdx === undefined) return undefined;
   flushLateImportShifts(ctx, fctx);
-  return unboxIdx;
+  return ctx.funcMap.get("__unbox_number");
+}
+
+/**
+ * Preflight raw-runtime ToNumber without retaining the provisional import
+ * index across later operand registration.  Emitters rebuild their call with
+ * {@link runtimeToNumberInstrs} at the final emission boundary.
+ */
+export function prepareRuntimeToNumber(ctx: CodegenContext, fctx: FunctionContext): boolean {
+  void ensureExternrefToNumberProvider(ctx, fctx);
+  return ctx.funcMap.get("__unbox_number") !== undefined;
 }
 
 /** Look up the canonical ToPrimitive provider after its owning runtime is ready. */

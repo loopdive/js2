@@ -386,6 +386,48 @@ array/map/set/destructuring/spread files run clean except
 unmodified `src/` (pre-existing). The full 219-file equivalence directory OOMs
 in this container, so it was run as that subset.
 
+## Frozen-manifest handoff (2026-09-28; source-only triage)
+
+The frozen ES2015 manifest, not the older #6651 inventory classification,
+governs this row. It includes
+`test/built-ins/Iterator/prototype/chunks/next-method-returns-non-object.js`
+in the 11,778-path corpus (canonical manifest SHA
+`632db3bbecb0d6ea42b0915b13740912bf3fd8e32e2a15a8b28c1f63b6434360`, sorted
+semantic-set SHA
+`f2fdd4e4544a44608f0b53d89d343526cfa9c9044ca263e860da949dc1a2f59f`). Its
+appearance in `plan/agent-context/6651/G2-iterator-helpers-out-of-scope.txt`
+therefore cannot exclude it from the current goal.
+
+On census head `f924650c6c26237f62b08a362d7003d4d2b1e12d`, chunk index 1/128
+(`shard-2-of-128`) recorded this exact row as `fail/assertion_fail`: expected a
+TypeError, but none was thrown. Its receipt is complete: 91 registered = 91
+recorded = 91 canonical = 91 started = 91 settled, with zero exclusions and
+all callbacks settled (84 pass / 7 fail). This is one bounded measurement, not
+a claim about the remaining corpus.
+
+The existing #6492 linked-lane implementation is not coverage for this native
+standalone path: commit `8cfac61c60` changed only the runtime polyfill,
+`src/runtime.ts`, its host-side test, and #6492's plan. Its
+`_chunkingStep` validates that a `next()` result is an object before reading
+`done`/`value`; the standalone direct route instead reaches the native lazy
+helper through `call-receiver-method.ts` → `closed-method-dispatch.ts` →
+`iter-lazy-native.ts` and steps through compatibility `__iterator_next` via
+`__iter_hof_next`. Source inspection shows the compatibility USER step still
+documents non-object-result TypeError validation as a follow-up, whereas the
+separate strict iterator provider does validate before property reads. This is
+a source-supported hypothesis for the observed row, not an implementation or
+runtime attribution.
+
+If a new execution lease is granted, first recheck the original test and use
+small order controls: null and primitive `next()` results must throw before
+any `done`, `value`, or `return` read; a throwing `done` getter must precede a
+`value` getter; a throwing `value` getter must propagate only after false
+`done`; and the original throwing `return` getter must remain unread for the
+bad-result step. Do not globally tighten compatibility `__iterator_next`:
+its legacy degradation has other consumers. Any repair must be narrowly
+designed and separately measured at the helper/iterator boundary. No execution
+or implementation is authorized by this handoff.
+
 ## References
 
 - **#5141** — generators wave 1: owns the head `unreachable`-on-first-resume

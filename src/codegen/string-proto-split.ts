@@ -44,16 +44,10 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { undefinedSingletonActive } from "./any-helpers.js";
-import { ensureExternrefToNumberProvider, getToPrimitiveProvider } from "./coercion-engine.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
-import {
-  ensureAnyToStringHelper,
-  ensureNativeStringHelpers,
-  flatStringType,
-  stringConstantExternrefInstrs,
-} from "./native-strings.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
+import { ensureAnyToStringHelper, ensureNativeStringHelpers, flatStringType } from "./native-strings.js";
 import { emitStringProtoToStringFlat } from "./string-proto-tostring.js";
+import { emitStagedSplitLimitFromExternref, prepareStagedSplitLimitCoercion } from "./string-split-coercion.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import {
   RE_FIELD_CLASS_TABLE,
@@ -70,9 +64,6 @@ import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js"
 import { flushLateImportShifts } from "./shared.js";
 import { ensureVecConstructorCarrier } from "./vec-constructor-carrier.js";
 
-/** `__str_split`'s "no limit" sentinel — 0xFFFFFFFF read as a signed i32. */
-const NO_LIMIT = -1;
-
 /**
  * Push `1` when the closure param at `paramIdx` holds `undefined`.
  *
@@ -82,9 +73,10 @@ const NO_LIMIT = -1;
  * or `x.split(",", undefined)` (§22.1.3.23 step 4's "limit is undefined" arm)
  * silently becomes `ToUint32(undefined)` = 0 and truncates the result to `[]`.
  */
-function pushIsUndefined(ctx: CodegenContext, sink: Instr[], paramIdx: number): void {
+function pushIsUndefined(ctx: CodegenContext, sink: Instr[], paramIdx: number, exactUndefinedIdx?: number): void {
   sink.push({ op: "local.get", index: paramIdx }, { op: "ref.is_null" });
-  const isUndefIdx = undefinedSingletonActive(ctx) ? ctx.funcMap.get("__extern_is_undefined") : undefined;
+  const isUndefIdx =
+    exactUndefinedIdx ?? (undefinedSingletonActive(ctx) ? ctx.funcMap.get("__extern_is_undefined") : undefined);
   if (isUndefIdx !== undefined) {
     sink.push({ op: "local.get", index: paramIdx }, { op: "call", funcIdx: isUndefIdx }, { op: "i32.or" });
   }
@@ -202,48 +194,21 @@ function emitSplitProtocolDispatch(ctx: CodegenContext, fctx: FunctionContext, n
 }
 
 /**
- * §22.1.3.23 step 1 — `? RequireObjectCoercible(this)`: throw a *catchable*
- * TypeError (never a `ref.cast` trap) when `this` is null or undefined.
+ * §22.1.3.23 step 1 for either the reflective closure parameter or a direct
+ * path's already-staged receiver.  The direct emitter invokes this immediately
+ * after evaluating its member receiver, before evaluating call arguments, so a
+ * nullish property base retains ordinary member-access ordering.
  */
-function emitRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionContext): void {
+export function emitStringSplitRequireObjectCoercible(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiverLocal: number,
+  exactUndefinedIdx?: number,
+): void {
   const rocThrow: Instr[] = [];
   emitBrandCheckTypeError(ctx, rocThrow, "String.prototype.split called on null or undefined");
-  pushIsUndefined(ctx, fctx.body, 1);
+  pushIsUndefined(ctx, fctx.body, receiverLocal, exactUndefinedIdx);
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: rocThrow });
-}
-
-/**
- * §7.1.7 ToUint32 of the f64 in `scratch`, leaving the i32 result on the stack.
- *
- * Inlined rather than routed through the module-level `__toUint32` helper
- * (`codegen/index.ts`) because that helper is minted at a fixed point in
- * finalize, gated on `ctx.needsToUint32` — a reflective closure body is emitted
- * lazily during expression compilation, long before it exists.
- *
- * The arithmetic is the same sequence `__toUint32` uses: NaN and ±∞ map to 0,
- * everything else truncates toward zero (`i64.trunc_sat_f64_s`) and keeps the
- * low 32 bits (`i32.wrap_i64` = modulo 2^32). That makes `ToUint32(2**32 - 1)`
- * land on `0xFFFFFFFF`, which is `__str_split`'s own "no limit" encoding — so
- * the `Math.pow(2,32)-1` cases and an absent limit take the same unbounded
- * path, as the spec intends.
- */
-function toUint32Instrs(scratch: number): Instr[] {
-  return [
-    { op: "local.get", index: scratch },
-    { op: "local.get", index: scratch },
-    { op: "f64.ne" }, // x !== x  ⇔  NaN
-    { op: "local.get", index: scratch },
-    { op: "f64.abs" },
-    { op: "f64.const", value: Number.POSITIVE_INFINITY },
-    { op: "f64.eq" },
-    { op: "i32.or" },
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "i32" } },
-      then: [{ op: "i32.const", value: 0 }],
-      else: [{ op: "local.get", index: scratch }, { op: "i64.trunc_sat_f64_s" }, { op: "i32.wrap_i64" }],
-    },
-  ];
 }
 
 /**
@@ -290,27 +255,18 @@ export function emitStringSplitMemberBody(ctx: CodegenContext, fctx: FunctionCon
   // `undefined`. Minting is idempotent and must precede the funcIdx captures
   // below (it can register late imports of its own).
   ensureVecConstructorCarrier(ctx);
-  const unboxIdx = ensureExternrefToNumberProvider(ctx, fctx);
+  if (!prepareStagedSplitLimitCoercion(ctx, fctx)) return null;
   // (#6651 B6) Step 2's GetMethod(separator, @@split) + Call — registered here,
   // with the other late adders, so the indices captured below are post-shift.
   const protocolThrow = prepareSplitProtocolDispatch(ctx, fctx);
 
   // (2) Helper funcIdxs, after the shifts.
   const anyToStrIdx = ensureAnyToStringHelper(ctx);
-  const toPrimitiveIdx = getToPrimitiveProvider(ctx);
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const splitIdx = ctx.nativeStrHelpers.get("__str_split");
-  if (
-    unboxIdx === undefined ||
-    toPrimitiveIdx === undefined ||
-    flattenIdx === undefined ||
-    splitIdx === undefined ||
-    ctx.anyStrTypeIdx < 0
-  ) {
+  if (flattenIdx === undefined || splitIdx === undefined || ctx.anyStrTypeIdx < 0) {
     return null; // caller falls through to its refusal body
   }
-  addStringConstantGlobal(ctx, "number");
-
   // The result array type: the SAME `$vec_nstr` shape `__str_split` returns and
   // the direct path hands back, so both lanes produce one array representation.
   const elemType: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
@@ -319,7 +275,7 @@ export function emitStringSplitMemberBody(ctx: CodegenContext, fctx: FunctionCon
   const vecRef: ValType = { kind: "ref", typeIdx: vecTypeIdx };
 
   // Step 1.
-  emitRequireObjectCoercible(ctx, fctx);
+  emitStringSplitRequireObjectCoercible(ctx, fctx, 1);
   // Step 2 — before ToString(this): `this-value-tostring-error` requires an
   // object separator's `@@split` to run with the receiver still uncoerced.
   if (protocolThrow !== undefined) emitSplitProtocolDispatch(ctx, fctx, protocolThrow);
@@ -340,23 +296,8 @@ export function emitStringSplitMemberBody(ctx: CodegenContext, fctx: FunctionCon
   // order the sputnik battery asserts. Routing through `__to_primitive` with
   // the "number" hint (the mirror of what `emitStringProtoToStringFlat` does
   // with the "string" hint) restores it.
-  const numScratch = allocLocal(fctx, `__split_num_${fctx.locals.length}`, { kind: "f64" });
-  const limLocal = allocLocal(fctx, `__split_lim_${fctx.locals.length}`, { kind: "i32" });
-  pushIsUndefined(ctx, fctx.body, 3);
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "i32" } },
-    then: [{ op: "i32.const", value: NO_LIMIT }],
-    else: [
-      { op: "local.get", index: 3 },
-      ...stringConstantExternrefInstrs(ctx, "number"),
-      { op: "call", funcIdx: toPrimitiveIdx },
-      { op: "call", funcIdx: unboxIdx },
-      { op: "local.set", index: numScratch },
-      ...toUint32Instrs(numScratch),
-    ],
-  });
-  fctx.body.push({ op: "local.set", index: limLocal });
+  const limLocal = emitStagedSplitLimitFromExternref(ctx, fctx, 3);
+  if (limLocal === undefined) return null;
 
   // §22.1.3.23 step 2: a backend-created RegExp separator owns the
   // `@@split` operation. The closure argument is opaque, but the carrier test

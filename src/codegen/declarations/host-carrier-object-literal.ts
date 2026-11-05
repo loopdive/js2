@@ -62,3 +62,64 @@ export function unwrapReturnCarrierExpression(expression: ts.Expression): ts.Exp
   }
   return current;
 }
+
+/**
+ * Exact captured const allocation provenance for a callable's result carrier.
+ * An asserted/annotated return type or an unrelated same-name binding is not
+ * evidence. The allocation stays the same object even when its members change.
+ */
+export function isCapturedConstHostLiteral(ctx: CodegenContext, expression: ts.Expression, owner: ts.Node): boolean {
+  const current = unwrapReturnCarrierExpression(expression);
+  if (!ts.isIdentifier(current)) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(current);
+  const declarations = ctx.oracle.declarationsOf(current);
+  if (
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    declarations.length !== 1 ||
+    declarations[0] !== declaration ||
+    declaration.getSourceFile() !== owner.getSourceFile() ||
+    declaration.getSourceFile().isDeclarationFile ||
+    !ts.isIdentifier(declaration.name) ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+    (declaration.parent.flags & ts.NodeFlags.Using) !== 0 ||
+    declaration.initializer === undefined
+  ) {
+    return false;
+  }
+  const allocation = unwrapReturnCarrierExpression(declaration.initializer);
+  return ts.isObjectLiteralExpression(allocation) && objectLiteralTakesHostCarrier(ctx, allocation);
+}
+
+/** Scoped returned-value proof shared by real and Phase-0 nested signatures. */
+export function functionReturnsCapturedConstHostLiteral(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
+  if (!fn.body) return false;
+  const matches = (expression: ts.Expression): boolean => {
+    const current = unwrapReturnCarrierExpression(expression);
+    if (ts.isConditionalExpression(current)) return matches(current.whenTrue) || matches(current.whenFalse);
+    return isCapturedConstHostLiteral(ctx, current, fn);
+  };
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      node !== fn.body &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isGetAccessorDeclaration(node) ||
+        ts.isSetAccessorDeclaration(node) ||
+        ts.isConstructorDeclaration(node))
+    )
+      return;
+    if (ts.isReturnStatement(node) && node.expression && matches(node.expression)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(fn.body);
+  return found;
+}
