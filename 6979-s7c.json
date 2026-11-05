@@ -1,11 +1,11 @@
 {
   "id": "6979",
   "slice": "s7c",
-  "assignee": "ttraenkler/opus-s7c-collapse-arms",
-  "requested_by": "ttraenkler/opus-s7c-collapse-arms",
+  "assignee": "ttraenkler/opus-s7-stack-remerge",
+  "requested_by": "ttraenkler/opus-s7-stack-remerge",
   "status": "in-progress",
-  "branch": "issue-6979-s7c-collapse-standalone-arms",
-  "claimed_at": "2026-10-24T23:27:08Z",
-  "updated_at": "2026-10-24T23:27:08Z",
-  "write_id": "79847-sw6xwjgp"
+  "branch": "issue-6979-s7c",
+  "claimed_at": "2026-11-05T15:36:46Z",
+  "updated_at": "2026-11-05T15:36:46Z",
+  "write_id": "76224-ceq0bwun"
 }
