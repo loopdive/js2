@@ -7808,7 +7808,9 @@ function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
     if (touched) return;
     if (ts.isIdentifier(node)) {
       const binding = moduleBinding(node);
-      const scalarBinding = binding && !isIrModuleReferenceValueKind(binding.valueKind);
+      // (#7252) A class instance is neither: its uses are the class arms'.
+      const scalarBinding =
+        binding && !isIrModuleReferenceValueKind(binding.valueKind) && binding.valueKind.kind !== "class-instance";
       if (scalarBinding || moduleScalarAliasFamily(node) !== undefined) {
         touched = true;
         return;

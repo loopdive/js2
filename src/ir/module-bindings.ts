@@ -24,6 +24,7 @@ import type { IrClassShape } from "./nodes.js";
 import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
+import * as classInstance from "./module-binding-class-instance.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
   carrierLeafReads,
@@ -652,6 +653,7 @@ export type IrModuleBindingRefusalArm =
   | "heterogeneous-assignment-retype"
   | "no-value-kind"
   | "write-value-mismatch"
+  | "class-instance-use-site"
   | "destructuring-pattern"
   | "inspection-threw";
 
@@ -990,7 +992,7 @@ function directTopLevelDeclaration(
     home !== "dynamic" &&
     (declaredType.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) === 0 &&
     !updateRetypesModuleBinding(checker, declaration) &&
-    scriptVarReferenceKind(home, declaredType, checker) === undefined
+    scriptVarReferenceKind(home, declaration, declaredType, checker) === undefined
   ) {
     return undefined;
   }
@@ -1030,13 +1032,16 @@ function scriptVarHomeOf(
  * widens it to `externref`, the `dynamic` home), so it binds through the kind
  * whose storage `resolveModuleBindingGlobal` names for that carrier, and only
  * when the checker type agrees. A `dynamic` home needs no such agreement and
- * a `typed` one resolves through `scalarKind`.
+ * a `typed` one resolves through `scalarKind`. (#7252) A `class-instance` home
+ * binds only when every write constructs the one class the checker names.
  */
 function scriptVarReferenceKind(
   home: IrScriptVarHome | undefined,
+  declaration: IrModuleBindingDeclaration,
   declaredType: ts.Type,
   checker: ts.TypeChecker,
 ): IrModuleBindingValueKind | undefined {
+  if (home === "class-instance") return classInstance.classInstanceValueKind(checker, declaration);
   return home === "string" && isModuleStringStorageType(declaredType, checker) ? { kind: "string" } : undefined;
 }
 
@@ -1553,6 +1558,8 @@ function writeValueMatches(
   }
   // (#7106 S5) Only the carrier takes a carrier leaf's read: its checker type is no evidence.
   if (carrierLeafReads(valueExpr, resolve).length > 0) return false;
+  if (targetKind.kind === "class-instance")
+    return classInstance.classInstanceWriteMatches(checker, targetKind, valueExpr);
   if (targetKind.kind === "native-map") {
     // The native `$Map` carrier has exactly one producer in this slice.
     return isNativeMapConstruction(checker, valueExpr);
@@ -2231,7 +2238,7 @@ export function makeIrLegacyModuleBindingResolver(
     let valueKind =
       home === "dynamic" || (options.numberStorage === "f64" && updateRetypesModuleBinding(checker, declaration))
         ? ({ kind: "dynamic" } as const)
-        : (scalarKind(declaredType, options) ?? scriptVarReferenceKind(home, declaredType, checker));
+        : (scalarKind(declaredType, options) ?? scriptVarReferenceKind(home, declaration, declaredType, checker));
     if (!valueKind && lexical && options.allowHostExterns) {
       const className = externClassNameForType(declaredType, checker, options);
       if (className) {
@@ -2289,6 +2296,8 @@ export function makeIrLegacyModuleBindingResolver(
       valueKind = { kind: "dynamic" } as const;
     }
     if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
+    if (valueKind.kind === "class-instance" && !classInstance.classInstanceUseFollowsDeclaration(node, declaration))
+      return { kind: "unsupported", declaration, arm: "class-instance-use-site" };
     if (
       writeValue !== undefined &&
       !writeValueMatches(checker, declaration, valueKind, writeValue, options, classifyPrimitiveExpression, resolve)

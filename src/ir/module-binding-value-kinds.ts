@@ -37,7 +37,11 @@ export type IrModuleBindingValueKind =
   // legacy slot is resolved against the ACTIVE backend's carrier in
   // `resolveModuleBindingGlobal`, so a lane whose allocation disagrees fails
   // the storage-agreement check there rather than silently reinterpreting it.
-  | { readonly kind: "string" };
+  | { readonly kind: "string" }
+  // (#7252) A script `var` that only ever holds instances of ONE top-level
+  // class: legacy stores it in a `(ref null $Class)` slot (`scriptVarHome`'s
+  // `class-instance` home), and the IR reads it as that class's `class` value.
+  | { readonly kind: "class-instance"; readonly classDeclaration: ts.ClassDeclaration };
 
 export interface IrModuleCapabilityExternCertification {
   readonly capability: "dom";
@@ -99,11 +103,13 @@ export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind
  *   - `dynamic`: `externref` off fast mode, exactly `resolveIrDynamicCarrierType`;
  *   - `string`: `(ref null $AnyString)`, the native-string carrier;
  *   - `typed`: an `f64` or `i32` slot; only a `number` / `boolean` checker type
- *     binds (an `i32` slot also holds a `Symbol`, which stays refused).
- * Any other slot (a vector, a struct, `$Map`, `externref` in fast mode) is no
- * home: no value kind's storage is exactly that carrier.
+ *     binds (an `i32` slot also holds a `Symbol`, which stays refused);
+ *   - (#7252) `class-instance`: a `(ref null $Class)` slot of a user class
+ *     struct; only a binding every write of which constructs that class binds.
+ * Any other slot (a vector, an object struct, `$Map`, `externref` in fast
+ * mode) is no home: no value kind's storage is exactly that carrier.
  */
-export type IrScriptVarHome = "dynamic" | "string" | "typed";
+export type IrScriptVarHome = "dynamic" | "string" | "typed" | "class-instance";
 
 export function isCapabilityExternKind(
   valueKind: IrModuleBindingValueKind,

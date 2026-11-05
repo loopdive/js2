@@ -4244,7 +4244,9 @@ export function scriptVarHome(
     case "externref":
       return ctx.fast ? undefined : "dynamic";
     case "ref_null":
-      return type.typeIdx === ctx.anyStrTypeIdx ? "string" : undefined;
+      if (type.typeIdx === ctx.anyStrTypeIdx) return "string";
+      // (#7252) The struct legacy allocated for a user class.
+      return [...ctx.classSet].some((n) => ctx.structMap.get(n) === type.typeIdx) ? "class-instance" : undefined;
     case "f64":
     case "i32":
       return "typed";
