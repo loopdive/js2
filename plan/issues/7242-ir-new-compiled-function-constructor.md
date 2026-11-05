@@ -95,3 +95,77 @@ and the #6583 claim notice 6655440988:
 - Test: `tests/equivalence/issue-7242-ir-new-compiled-function-constructor.test.ts`.
   It asserts the IR route (`trackIrOutcomes`) and the node/base result on all 3
   lanes, including the `throw new F()` / `instanceof` case.
+
+## Findings (steps 1–2, 2026-11-05)
+
+**Measured** (wrapped ledger, stride 40, standalone, base `d468fa1a3c`,
+`JS2WASM_IR_SHAPE_DIAG=1`; per-file attribution with a scratch route dump):
+`build:unknown-class-construction` = 27 rows, **all `Test262Error`**:
+
+| owner | rows | origin | files |
+| --- | --- | --- | --- |
+| `assert` (harness) | 22 | harness | 22 |
+| `fakeObjectGetOwnPropertyDescriptor`, `doNotCall` (top-level test functions) | 2 | test | 2 |
+| `A_method`, `A_name`, `D_set_name` (class members) | 3 | test | 1 |
+
+No other constructor name appears. In this sample every case is the harness's
+self-guarded `function Test262Error(message) { if (!(this instanceof
+Test262Error)) return new Test262Error(message); … }`.
+
+**Why the selector claims it but the builder cannot build it.** The claim is
+the #7106 S3c arm: `dynamicConstructCallee` → `selfGuardedConstructorValueUse`
+(`src/ir/select.ts`) admits `new F(…)` of a self-guarded top-level constructor
+as `dyn.construct` on F's function-object value. The builder reads that value
+from `cx.topLevelFunctionValues`, minted by `planIrImportedCalls`
+(`src/codegen/ir-imported-call-planning.ts`). The two disagree in two places:
+
+1. **Missing evidence (24 rows: `assert`, the 2 test functions).** The planner
+   refused a VALUE use when F's signature had no flow evidence
+   (`if (missingEvidence && !isReceiver && !isStoredValue) return;`). That is
+   the case whenever `Test262Error` itself stays legacy (e.g.
+   `select:logical-value-unsupported` on `message || ""`), because then there is
+   no IR claim with a `typeEntry`. The selector never asked about evidence.
+2. **Class members (3 rows).** The planner mints plans only for top-level
+   function owners and module-init statements; class bodies are never visited.
+
+**Legacy's construct path (step 2).** On standalone (where the S3c arm is
+live: `irSelfGuardedConstructorValue` requires
+`selfGuardedConstructorsLeaveFnctor`, i.e. standalone without a shared-realm
+eval), legacy does **not** use the `__fnctor_F` struct for a self-guarded
+constructor: `compileNewExpression` checks
+`calleeIsStandaloneSelfGuardedConstructor` (`fnctor-ctor-decl.ts`) and builds
+from F's runtime function value through the native construct driver
+(`tryCompileNativeConstructFromValue`, `new-super.ts`). `this` is an ordinary
+`$Object` created by that driver from `F.prototype`; the result is the
+driver's externref/dynamic value; an object returned by F replaces `this`, a
+primitive is ignored (ordinary [[Construct]], done by the driver). IR's
+`dyn.construct` lowers to the same driver (`resolveDynamicLowering().emitConstruct`),
+with args boxed to the dynamic carrier. So IR already has the existing entry;
+no new ABI is needed for case 1.
+
+For a NON-self-guarded function constructor legacy builds the
+`$__fnctor_F` struct through `__fnctor_F_new` (`compileNewFunctionDeclaration`);
+IR has no general carrier for that struct (`fnctor.new` exists only for the
+dormant #3521 L1 route). The selector already refuses that shape at select
+(`expr-new-ctor-unknown`), so it is not a claim-then-demote, and it is out of
+scope here.
+
+**Design.**
+- Case 1: the planner gives a self-guarded VALUE use with missing evidence the
+  opaque all-dynamic signature, exactly as #7106 census arm 4 does for receiver
+  uses. Every plan here is `objectReceiver: true`: the accessor's externref is
+  boxed straight into the dynamic carrier and the signature is never read
+  (`dyn.construct` takes the carrier; `dyn.instanceof_fn` reads only the exact
+  unit target).
+- Case 2: minting plans for class members is not enough. Tried: the class
+  member then fails `resolve:late-preparation-unsupported`, because the
+  prepared class component has no Program ABI identity for the dynamic
+  carrier ops (`__ir_dyn_call_box`, `box`, `dyn.construct`). That is an ABI gap,
+  not a #7242 change, and the failure is per class component (it could demote
+  sibling members). So the S3c predicate the selector asks
+  (`irSelfGuardedConstructorValue`, `src/codegen/ir-dynamic-construct.ts`) now
+  answers no inside a class body: selector and builder agree, and the 3 rows move from
+  `build:unknown-class-construction` to `select:constructor-resolution-unsupported`.
+  The 35 `extends Iterator` class members from the #6583 notice are this case;
+  they stay legacy until the prepared class component can carry the dynamic
+  ops.
