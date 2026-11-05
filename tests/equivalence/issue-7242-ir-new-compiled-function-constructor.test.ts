@@ -9,7 +9,8 @@
 // signature has no flow evidence, and the planner used to refuse the value
 // plan, so the claimed body demoted at build (`unknown class "MyErr"`). The
 // plan now takes the opaque all-dynamic signature, as a receiver use does.
-// Inside a class body no plan exists, so the selector refuses instead.
+// Inside a class method the planner mints the plan too since #7243, and the
+// member compiles on the post-direct overlay.
 //
 // Each case asserts the IR route (`trackIrOutcomes`) on standalone and the
 // default gc target, and the result on all three lanes against the JS
@@ -157,7 +158,7 @@ function mk(m) { return new F(m); }
 function inner() { F(1); var a = mk("v"); return a.m + "|" + a.nt; }`,
     irUnits: [],
   },
-  "new F() inside a class member stays legacy, refused at select": {
+  "new F() inside a class member takes the IR body (#7243)": {
     source: `
 function MyErr(message) {
   if (!(this instanceof MyErr)) return new MyErr(message);
@@ -166,8 +167,7 @@ function MyErr(message) {
 MyErr.prototype.toString = function () { return "MyErr: " + this.message; };
 class C { m(x) { if (x) throw new MyErr("cm"); return 1; } }
 function inner() { MyErr(1); try { new C().m(1); return "no"; } catch (e) { return e.message + "|" + (e instanceof MyErr); } }`,
-    irUnits: [],
-    selectRefused: ["C_m"],
+    irUnits: ["C_m"],
   },
   "an exception thrown inside F propagates out of the IR construct": {
     source: `
