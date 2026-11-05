@@ -1,7 +1,8 @@
 ---
 id: 7244
 title: "IR class shapes: `class X extends F` where `F` is a compiled top-level function constructor (test262's harness `Iterator` shim) gets no shape"
-status: in-progress
+status: done
+completed: 2026-11-05
 sprint: current
 created: 2026-11-05
 updated: 2026-11-05
@@ -139,3 +140,50 @@ returning an object literal, #7235), `error-constructor-unsupported` 29
   a class extending a compiled function constructor, the stays-legacy routes
   (constructor, `get next`, `super`-using method), and the node/base result
   on 3 lanes.
+
+## Results (2026-11-05, head on `origin/main` after #7085)
+
+Implemented as planned: `irClassExtendsLibInterfaceAsRoot` became
+`irClassHeritageIsRootStruct` (module renamed to
+`src/codegen/classes/ir-root-struct-heritage.ts`, shape marker
+`libInterfaceRoot` → `rootStructHeritage`; still one call site in
+`buildIrClassShapes`). The new arm admits exactly what legacy recorded:
+`fnctorAncestorOfClass(className) === parentName`, plus the existing
+checks (spelled parent in `classParentMap`, not a local class, root struct,
+no builtin / externref / linked-dynamic representation). The fnctor layout is
+lane-agnostic (`fnctorAncestorOfClass` has no lane gate; only the host
+registration in the constructor and the host bridges are gc-only, and both
+read the class's legacy constructor / compiled method slots), so the predicate
+is not lane-gated. The selector restriction is unchanged: own `super`-free
+instance methods only.
+
+- **Targeted wrapped ledger** (221 files, standalone): test-origin
+  class-member IR 0 → 35, all units 1476 → 1511 IR, 0 units lost, 0
+  invariants, compileOk 164 → 164.
+- **Stride-40 wrapped ledger** (standalone): class-member emitted 24 → 25
+  (one `legacy` → `both`), 0 invariants, compileOk 1117 → 1117, harness
+  origin identical.
+- **Stride-40 raw ledger** (standalone): identical (raw has no shim; the
+  lib-interface case is #7241's).
+- **Typed corpus bytes** (playground + equivalence snippets, 542 units × gc /
+  standalone / wasi = 1626 compiles): 0 diffs.
+- **Probes** (30 programs × gc / standalone / wasi, base vs head): 0 value or
+  trap differences. Covered: `for…of` / spread / `Array.from`, `.map` /
+  `.take` / `.reduce` / `.toArray`, `instanceof`, `return()` / `throw()`,
+  throwing `next()`, subclass of the subclass, methods as values and
+  `.call({})`, shim before and after the class, a user `function F(){}` with
+  and without `.prototype` writes, `var`-bound parent (stays legacy), class
+  expression (stays legacy), constructors and `get next` (stay legacy),
+  `super` users (stay legacy). Side effect: free functions that construct
+  such a class (`new X()`) can now claim IR too; same values on every lane.
+  Not probed: an imported `Iterator` (no single-file shape for it).
+- **test262 A/B, standalone** (`scripts/run-test262-paths.mts`, the 221
+  targeted files + every 200th test262 file = 486 rows): identical,
+  284 pass / 128 fail / 10 CE / 64 skip.
+- Test: `tests/equivalence/issue-7244-ir-class-shape-compiled-function-parent.test.ts`
+  (fails on base on the gc / standalone IR-route cases).
+- Also (#7085 review nit 1): the #7243 test's `MyErr` fixture is now really
+  legacy (a trailing `for…in`; the guard must stay first for the
+  self-guarded-constructor recogniser) and the test asserts it.
+- **Equivalence gate**: no new regressions (20 failing, all in the known set;
+  4625 passing).
