@@ -89,7 +89,6 @@ import { classMemberFuncKey, elementCallTargetsStaticMethod } from "../class-mem
 import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import { tryEmitClassDynamicMemberCall } from "./class-dynamic-member-call.js"; // (#5195 F1/F3)
-import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
 import { tryEmitGenericComputedMethodCall } from "./dynamic-element-generic-call.js";
 import { tryEmitLinkedStaticComputedCall } from "../standalone-linked-static-inheritance.js"; // (#6644)
 import { isLinkedDynamicParentInstanceReceiver } from "../standalone-dynamic-parent-class.js"; // (#6654)
@@ -1616,9 +1615,6 @@ export function compileTailDispatch(
         if (dyn !== null) return dyn;
       }
 
-      const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
-      if (dynamicHostCall !== undefined) return dynamicHostCall;
-
       // (#6641) standalone/wasi twin of the arm just above.
       const genericComputedCall = tryEmitGenericComputedMethodCall(ctx, fctx, expr, elemAccess);
       if (genericComputedCall !== undefined) return genericComputedCall;
@@ -1701,9 +1697,6 @@ export function compileTailDispatch(
       const dyn = emitPlainObjectDynamicCallWithReceiver(ctx, fctx, expr, elemAccess);
       if (dyn !== null) return dyn;
     }
-
-    const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
-    if (dynamicHostCall !== undefined) return dynamicHostCall;
 
     // (#6641) standalone/wasi twin of the arm just above.
     const genericComputedCallUnresolved = tryEmitGenericComputedMethodCall(ctx, fctx, expr, elemAccess);

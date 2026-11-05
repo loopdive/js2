@@ -15,7 +15,7 @@ import { compileExpression, coerceType, flushLateImportShifts } from "./shared.j
 import { addUnionImports } from "./index.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./expressions/helpers.js";
+import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
 import { collectConcatOperands } from "./native-batched-concat.js";
 import { compileStringBinaryOp } from "./string-ops.js";
 import { readEnv } from "../env.js";
@@ -32,7 +32,7 @@ import { readEnv } from "../env.js";
 // so trusting them here is consistent with the representation those fields
 // ALREADY have, not a new claim. Standalone-only, like the verdicts.
 export function provenNumericOperand(ctx: CodegenContext, e: ts.Expression): boolean {
-  if (!ctx.standalone || readEnv("JS2WASM_NUMERIC_OPERANDS") === "0") return false;
+  if (readEnv("JS2WASM_NUMERIC_OPERANDS") === "0") return false;
   const bare = ts.isParenthesizedExpression(e) ? e.expression : e;
   // `this.f` where every write to `f` is numeric.
   if (
@@ -334,7 +334,7 @@ function emitAddOperand(
     // expressions must finish before either operand's ToPrimitive runs.
     return saveDeferredAddOperand(fctx, opType, deferred);
   }
-  if (noJsHost(ctx) && structHasOnlyUserToString(ctx, structName)) {
+  if (structHasOnlyUserToString(ctx, structName)) {
     const opType = compileExpression(ctx, fctx, inner);
     if (!opType) return null;
     return saveDeferredAddOperand(fctx, opType, deferred, undefined, true);
@@ -709,7 +709,6 @@ export function compileStringBinaryOpWithNativeAddition(
 ): ValType | null {
   if (
     op !== ts.SyntaxKind.PlusToken ||
-    !noJsHost(ctx) ||
     !ctx.nativeStrings ||
     ctx.anyStrTypeIdx < 0 ||
     collectConcatOperands(ctx, expr).every((operand) => isPrimitiveConcatProducer(operand, ctx, fctx))

@@ -76,7 +76,6 @@ import { withSpeculativeCompile } from "./context/speculative.js"; // (#1919) tr
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { tryEmitSpreadHostArgs } from "./host-method-args.js"; // (#6616) runtime-length spread
 import { ensureGetUndefined } from "./expressions/late-imports.js";
-import { noJsHost } from "./js-errors.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { hasSpreadArgument } from "./spread-arg-list.js";
@@ -125,7 +124,6 @@ export function tryEmitStandaloneDynamicSpreadCall(
   expr: ts.CallExpression,
 ): ValType | undefined {
   if (!hasSpreadArgument(expr.arguments)) return undefined;
-  if (!noJsHost(ctx)) return undefined;
   const receiver = receiverOf(expr.expression);
   if (receiver === null) return undefined;
 

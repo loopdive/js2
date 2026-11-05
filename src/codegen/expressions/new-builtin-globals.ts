@@ -56,16 +56,14 @@ import { emitStandaloneDateTimestamp } from "../standalone-clock-capability.js";
 import { mintDateCarrierDynamicMembers } from "../date-carrier-dynamic-member.js";
 import { emitObjectCoercion } from "./calls-guards.js";
 import {
-  emitDynamicNewFunctionHostEval,
   emitStandaloneDynamicFunctionRuntime,
   emitStandaloneDynamicFunctionStub,
   isGlobalFunctionIdentifier,
   tryStaticNewFunction,
 } from "./eval-inline.js";
-import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
-import { emitHostTypedArrayCarrierRegistration } from "./typed-array-host-carrier.js";
 import { isStringTypedArg, resolvesToAmbientGlobal } from "./new-super.js";
 import { tryEmitStandaloneDateCtorValueArg } from "../date-ctor-value-arg.js"; // (#5156) §21.4.2.2 step 4
 import { emitStandaloneBooleanConstructorValue } from "./standalone-primitive-tail.js";
@@ -562,7 +560,7 @@ function emitStringWrapperValue(ctx: CodegenContext, fctx: FunctionContext, valu
   // agree. Statically-primitive values keep the cheaper static lowering, and a
   // module without the object runtime (no `__extern_toString`) keeps today's
   // path — so this can only change the answer where it is currently structural.
-  if (noJsHost(ctx) && needsRuntimeToStringForWrapper(ctx, value)) {
+  if (needsRuntimeToStringForWrapper(ctx, value)) {
     const compiled = compileExpression(ctx, fctx, value, { kind: "externref" });
     if (compiled !== null) {
       if (compiled.kind !== "externref") coerceType(ctx, fctx, compiled, { kind: "externref" });
@@ -580,17 +578,6 @@ function emitStringWrapperValue(ctx: CodegenContext, fctx: FunctionContext, valu
   }
   const valueTsType = ctx.oracle.typeFactOf(value);
   const valueType = compileExpression(ctx, fctx, value);
-  // A host-mode externref may be a dynamic object whose conversion methods
-  // live in the host sidecar (including properties assigned after the literal
-  // was created). Preserve that object for `__new_String`, whose real JS
-  // constructor performs the complete ToString walk. Pre-stringifying it via
-  // `__extern_toString` during module start cannot invoke callback-backed
-  // methods yet and regresses the inherited/dynamically-assigned valueOf path.
-  //
-  // Statically-known WasmGC refs still take the in-Wasm ToString path below:
-  // those are precisely the module-start shapes whose closure methods the host
-  // cannot reach and which #3766 resolves directly.
-  if (!noJsHost(ctx) && valueType?.kind === "externref") return false;
   const stringType = emitToString(ctx, fctx, valueType, valueTsType, "string");
   if (stringType.kind !== "externref") coerceType(ctx, fctx, stringType, { kind: "externref" });
   return false;
@@ -1097,16 +1084,9 @@ export function tryCompileBuiltinGlobalNew(
     // the native constructor FIRST — before any argument is emitted — so a
     // decline leaves this arm byte-identical to what it was.
     let nativeSuppressedIdx: number | undefined;
-    if (noJsHost(ctx)) {
-      // The native ctor stores `error`/`suppressed` on the `$props` sidecar, so
-      // it needs the object runtime's property helpers; ensure them here, above
-      // the registry layer that owns the constructor itself. Ensuring a runtime
-      // can register late imports, which renumbers every funcIdx already baked
-      // into this body — flush before emitting anything else.
-      ensureObjectRuntime(ctx);
-      flushLateImportShifts(ctx, fctx);
-      nativeSuppressedIdx = ensureNativeSuppressedErrorCtor(ctx);
-    }
+    ensureObjectRuntime(ctx);
+    flushLateImportShifts(ctx, fctx);
+    nativeSuppressedIdx = ensureNativeSuppressedErrorCtor(ctx);
     for (let i = 0; i < 4; i++) {
       if (args.length > i) {
         const t = compileExpression(ctx, fctx, args[i]!, { kind: "externref" });
@@ -1324,13 +1304,9 @@ export function tryCompileBuiltinGlobalNew(
     //    value that throws catchably at CALL time (construction still succeeds,
     //    so a program that never invokes it keeps working).
     if (calleeIsGlobalFunction) {
-      const hostEval = emitDynamicNewFunctionHostEval(ctx, fctx, args);
-      if (hostEval !== undefined) return hostEval;
-      if (noJsHost(ctx)) {
-        const runtimeEval = emitStandaloneDynamicFunctionRuntime(ctx, fctx, args);
-        if (runtimeEval !== undefined) return runtimeEval;
-        return emitStandaloneDynamicFunctionStub(ctx, fctx, expr, args) as ValType;
-      }
+      const runtimeEval = emitStandaloneDynamicFunctionRuntime(ctx, fctx, args);
+      if (runtimeEval !== undefined) return runtimeEval;
+      return emitStandaloneDynamicFunctionStub(ctx, fctx, expr, args) as ValType;
     }
     // Legacy fallback (e.g. a local `Function` shadow, or JS-host with
     // nativeStrings where the shim path is unavailable): evaluate args for side
@@ -1652,7 +1628,6 @@ export function tryCompileBuiltinGlobalNew(
       const args = expr.arguments ?? [];
       const resultType: ValType = { kind: "ref_null", typeIdx: vecTypeIdx };
       const finishNativeTypedArray = (): ValType => {
-        emitHostTypedArrayCarrierRegistration(ctx, fctx, typedArrayName, resultType);
         return resultType;
       };
 
@@ -1701,8 +1676,7 @@ export function tryCompileBuiltinGlobalNew(
         // (`emitTypedArrayFromByteBuffer`) that CLONED the bytes into a fresh
         // backing array, which broke sibling/DataView observability.
         const taViewOk =
-          noJsHost(ctx) &&
-          (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer" || argSymName === "DataView");
+          argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer" || argSymName === "DataView";
         if (taViewOk && !ts.isNumericLiteral(args[0]!)) {
           const viewResult = emitTaViewConstruct(ctx, fctx, args[0]!, expr.expression.text, (e, h) =>
             compileExpression(ctx, fctx, e, h),
@@ -1718,13 +1692,13 @@ export function tryCompileBuiltinGlobalNew(
         // packed bytes when the runtime value is an ArrayBuffer carrier.
         const dynamicAnyArg =
           (argType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 && argSymName === undefined;
-        if (noJsHost(ctx) && typedArrayName === "Uint8Array" && dynamicAnyArg) {
+        if (typedArrayName === "Uint8Array" && dynamicAnyArg) {
           const dynamicBufferResult = emitDynamicUint8ArrayBufferAlias(ctx, fctx, args[0]!, (e, h) =>
             compileExpression(ctx, fctx, e, h),
           );
           if (dynamicBufferResult) return finishNativeTypedArray();
         }
-        if (noJsHost(ctx) && typedArrayName !== "Uint8Array" && dynamicAnyArg) {
+        if (typedArrayName !== "Uint8Array" && dynamicAnyArg) {
           const dynamicTypedArrayResult = emitDynamicTypedArrayConstructFromAny(
             ctx,
             fctx,
@@ -1948,7 +1922,7 @@ export function tryCompileBuiltinGlobalNew(
       // the shared-buffer arm after its byte-vector carrier test; the static
       // provenance gate below cannot identify `same.buffer` when `same` is
       // itself `any`.
-      if (noJsHost(ctx) && args.length >= 2 && !ts.isNumericLiteral(args[0]!)) {
+      if (args.length >= 2 && !ts.isNumericLiteral(args[0]!)) {
         const multiArgFact = ctx.oracle.typeFactOf(args[0]!);
         const multiArgSymName = nativeBufferBuiltinOf(ctx, args[0]!);
         const dynamicMultiArg =
@@ -1973,7 +1947,7 @@ export function tryCompileBuiltinGlobalNew(
       // Standalone/WASI only — host-mode buffers are host objects, not native
       // vecs (#1670). MUST match `inferTaViewType`'s multi-arg gate so the
       // local's type and the constructed value agree.
-      if (noJsHost(ctx) && args.length >= 2 && !ts.isNumericLiteral(args[0]!)) {
+      if (args.length >= 2 && !ts.isNumericLiteral(args[0]!)) {
         // (#1930) Query the type-oracle boundary, not the raw checker — this
         // also keeps the gate in lock-step with `inferTaViewType` (variables.ts),
         // which resolves the buffer arg through the same oracle.

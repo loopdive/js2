@@ -108,7 +108,7 @@ export function jsonToJsonMethodLookupInstrs(ctx: CodegenContext, anyLocal: numb
  * Must run before the codec is first emitted (the codec bakes the funcIdx).
  */
 export function reserveJsonToJson(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (!ctx.standalone || ctx.funcMap.has(TO_JSON_MEMBER_GET)) return;
+  if (ctx.funcMap.has(TO_JSON_MEMBER_GET)) return;
   if (classMethodCandidatesForProp(ctx, "toJSON").length === 0) return;
   reserveMemberGetDispatch(ctx, "toJSON", fctx);
 }

@@ -46,7 +46,6 @@ import {
   buildThrowJsErrorInstrs,
   emitPrivateBrandPredicate,
   emitThrowTypeError,
-  noJsHost,
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
 import { ensureExternIsUndefinedImport, ensureLateImport } from "./expressions/late-imports.js";
@@ -2618,7 +2617,7 @@ export function emitAnyRelational(
 
   // Compile both operands to externref temps (keep runtime strings boxed).
   // (#6982) A class instance with `[Symbol.toPrimitive]` stays raw until step 1.
-  const operands = compileRelationalOperands(ctx, fctx, expr, op, numericShortcut && noJsHost(ctx));
+  const operands = compileRelationalOperands(ctx, fctx, expr, op, numericShortcut);
   if (operands === null) return { kind: "i32" };
   const { l, r } = operands;
   const lTmp = l.tmp;

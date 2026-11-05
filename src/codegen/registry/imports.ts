@@ -375,29 +375,6 @@ export function nextModuleGlobalIdx(ctx: CodegenContext): number {
   return ctx.numImportGlobals + ctx.mod.globals.length;
 }
 
-/**
- * (#2800) Record a `global.get __in_module_init` instruction for FINALIZE-time
- * index resolution. Returns a fresh `global.get` Instr with a PLACEHOLDER index
- * and registers it on `ctx.inModuleInitFlagReads`; the caller bakes this exact
- * object into its body. `finalizeInModuleInitFlag` (codegen/index.ts) allocates
- * the i32 flag global AFTER every import global has settled and patches each
- * recorded instr's `.index` to the final slot — so no read can desync when a
- * later string-constant import shifts the module-global range (the live-baked
- * index hazard #2043 across closure bodies the per-add fixup can miss).
- *
- * The flag is 1 only while `__module_init` runs; the delete-aware `any`-receiver
- * read branches on it (init → host-free `__get_member_<name>` slot dispatcher;
- * runtime → tombstone-aware host `__extern_get`). gc/host runs `__module_init`
- * via the Wasm `start` section INSIDE `WebAssembly.instantiate`, before the host
- * wires struct getters (`__setExports`), so the host read returns undefined for
- * every struct field at init — this flag is what makes init reads correct.
- */
-export function recordInModuleInitFlagRead(ctx: CodegenContext): Instr {
-  const flagGet: Instr = { op: "global.get", index: 0 };
-  (ctx.inModuleInitFlagReads ??= []).push(flagGet);
-  return flagGet;
-}
-
 /** Convert an absolute Wasm global index to a local module-globals array index. */
 export function localGlobalIdx(ctx: CodegenContext, absIdx: number): number {
   return absIdx - ctx.numImportGlobals;
@@ -744,7 +721,6 @@ export function addStringImports(ctx: CodegenContext): void {
   // module remains JS-host-free. WASI mode keeps the historical no-op
   // behavior via the same nativeStrings forcing.
   ctx.hasStringImports = true;
-  return;
 }
 
 /** Register union type helper imports (typeof checks, boxing/unboxing) */
@@ -768,7 +744,6 @@ export function addUnionImports(ctx: CodegenContext): void {
   // (`ctx.funcMap.get("__unbox_number")` etc.) work unchanged.
   // Same dual-mode pattern as #679 (strings) and #682 (RegExp).
   addUnionImportsAsNativeFuncs(ctx);
-  return;
 }
 
 /**

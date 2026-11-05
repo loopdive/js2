@@ -49,7 +49,6 @@ import {
 } from "./builtin-static-globals.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { noJsHost } from "./js-errors.js";
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -162,7 +161,7 @@ export function tracedBuiltinCtorValueName(
  * import that cannot exist and construct null; the host lane keeps that path.
  */
 export function shadowsExternClassName(ctx: CodegenContext, id: ts.Identifier): boolean {
-  return noJsHost(ctx) && !resolvesToAmbientGlobal(ctx, id) && tracedBuiltinCtorValueName(ctx, id) !== undefined;
+  return !resolvesToAmbientGlobal(ctx, id) && tracedBuiltinCtorValueName(ctx, id) !== undefined;
 }
 
 function mintHelper(

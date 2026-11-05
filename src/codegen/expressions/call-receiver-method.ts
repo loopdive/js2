@@ -184,7 +184,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  noJsHost,
   resolveReceiverMethodClassName,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
@@ -862,7 +861,7 @@ export function compileReceiverMethodCall(
   // TextEncoder/TextDecoder under no-JS-host targets. These are standard
   // Web/Node APIs, but WASI/standalone cannot rely on env.TextEncoder_* host
   // imports. Lower the narrow UTF-8 surface natively.
-  if ((noJsHost(ctx) || ctx.strictNoHostImports) && ctx.nativeStrings) {
+  if (ctx.nativeStrings) {
     const recvSym =
       receiverType.getSymbol()?.name ??
       (ts.isNewExpression(propAccess.expression) && ts.isIdentifier(propAccess.expression.expression)
@@ -1001,7 +1000,6 @@ export function compileReceiverMethodCall(
   // (#7011) SharedArrayBuffer.prototype.slice / grow → the native provider.
   if (
     (propAccess.name.text === "slice" || propAccess.name.text === "grow") &&
-    noJsHost(ctx) &&
     receiverType.getSymbol()?.name === "SharedArrayBuffer"
   ) {
     const sab = emitSabMethodCall(ctx, fctx, propAccess.name.text, propAccess.expression, expr.arguments, (e) =>
@@ -1023,7 +1021,7 @@ export function compileReceiverMethodCall(
   // `$__resizable_ab` receiver actually resizes (checked at runtime inside the
   // emitter — a fixed buffer throws TypeError); reallocs the backing array,
   // swaps `data` + `length` in place so shared views observe the new length.
-  if (propAccess.name.text === "resize" && noJsHost(ctx)) {
+  if (propAccess.name.text === "resize") {
     const recvSym = receiverType.getSymbol()?.name;
     if (recvSym === "ArrayBuffer") {
       emitArrayBufferResize(ctx, fctx, propAccess.expression, expr.arguments, (e, hint) =>
@@ -1037,7 +1035,7 @@ export function compileReceiverMethodCall(
   // ArrayBufferCopyAndDetach helper. The operation itself is shared with the
   // reflective ArrayBuffer.prototype member closures; this surface only
   // compiles the receiver/argument expressions into that common ABI.
-  if (noJsHost(ctx) && (propAccess.name.text === "transfer" || propAccess.name.text === "transferToFixedLength")) {
+  if (propAccess.name.text === "transfer" || propAccess.name.text === "transferToFixedLength") {
     const recvSym = receiverType.getSymbol()?.name;
     if (recvSym === "ArrayBuffer") {
       const transferResult = emitArrayBufferTransfer(
@@ -3979,7 +3977,6 @@ export function compileReceiverMethodCall(
         // (#3177 slice 5) `%TypedArray%.of` / `%TypedArray%.from` STATIC methods
         // on a `$__ta_ctor` receiver VALUE — see `tryEmitTaStaticOfFrom`.
         if (
-          noJsHost(ctx) &&
           (ctx.taCtorTypeIdx >= 0 || ctx.builtinObjectGlobals.has("ctor:Int8Array")) &&
           (methodName === "of" || methodName === "from")
         ) {

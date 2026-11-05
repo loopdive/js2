@@ -21,7 +21,7 @@ import { reportError } from "./context/errors.js";
 import { allocLocal } from "./context/locals.js";
 import { addUnionImports, resolveWasmType } from "./index.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { emitThrowTypeError } from "./js-errors.js";
 import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { emitUndefined } from "./expressions/late-imports.js";
@@ -436,7 +436,7 @@ export function compileArrayLikePrototypeCall(
   // (#4556) A provably non-callable callback is a decidable TypeError — see
   // `emitArrayLikeNonCallableCallbackThrow` for the step order and why the
   // existing bails below produced no throw at all.
-  if (noJsHost(ctx) && provablyNonCallableCallback(callExpr.arguments[1])) {
+  if (provablyNonCallableCallback(callExpr.arguments[1])) {
     const thrown = emitArrayLikeNonCallableCallbackThrow(ctx, fctx, callExpr, methodName, receiverArg);
     if (thrown !== undefined) return thrown;
   }
@@ -504,9 +504,6 @@ export function compileArrayLikePrototypeCall(
   // Routed through the oracle (#1930): the signature fact's `returns` is
   // `{kind:"boolean"}` exactly when the declared return type is boolean.
   const cbTsReturnsBool = ctx.oracle.signatureOf(cbArg)?.returns.kind === "boolean";
-  if (cbTsReturnsBool && !noJsHost(ctx)) {
-    ensureLateImport(ctx, "__box_boolean", [{ kind: "i32" }], [{ kind: "externref" }]);
-  }
   const lengthLimit = methodName === "map" ? arrayLikeLengthLimitGuard(ctx, fctx, true) : []; // (#6651 H6) ArrayCreate
   flushLateImportShifts(ctx, fctx);
 

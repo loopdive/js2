@@ -39,7 +39,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./js-errors.js";
 import { ts } from "../ts-api.js"; // (#3177 slice 2) literal-`undefined` length detection
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./index.js";
 import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
@@ -228,9 +228,6 @@ export function inferNativeTaViewConstructType(
   const args = expression.arguments;
   if (!args || args.length < 1 || args.length > 3 || ts.isNumericLiteral(args[0]!)) return null;
   const argBrand = nativeBufferBuiltinOf(ctx, args[0]!);
-  if (!noJsHost(ctx)) {
-    return argBrand === "ArrayBuffer" || argBrand === "SharedArrayBuffer" ? { kind: "externref" } : null;
-  }
   // An erased one-argument source still has a runtime overload set (plain
   // vec/array-like/iterable/count).  The static constructor hook routes these
   // values through the runtime-kinded native dispatcher, whose boxed view
@@ -472,7 +469,7 @@ function probePackedByteSliceReceiver(
   fctx: FunctionContext,
   guarded: boolean,
 ): { isPackedLocal: number; i8VecIdx: number; i8ArrIdx: number } {
-  if (!guarded || !noJsHost(ctx)) return { isPackedLocal: -1, i8VecIdx: -1, i8ArrIdx: -1 };
+  if (!guarded) return { isPackedLocal: -1, i8VecIdx: -1, i8ArrIdx: -1 };
   const i8VecIdx = getOrRegisterVecType(ctx, "i8_byte", { kind: "i8" });
   const i8ArrIdx = getArrTypeIdxFromVec(ctx, i8VecIdx);
   if (i8ArrIdx < 0) return { isPackedLocal: -1, i8VecIdx: -1, i8ArrIdx: -1 };
@@ -1015,7 +1012,6 @@ export function ensureArrayBufferTransferHelper(
   ctx: CodegenContext,
   method: ArrayBufferTransferMethod,
 ): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const helperName = arrayBufferTransferHelperName(method);
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -1253,7 +1249,7 @@ export function emitArrayBufferTransfer(
   args: readonly import("../ts-api.js").ts.Expression[],
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
 ): ValType | null {
-  if (!noJsHost(ctx) || ensureArrayBufferTransferHelper(ctx, method) === undefined) return null;
+  if (ensureArrayBufferTransferHelper(ctx, method) === undefined) return null;
 
   const receiverType = compileExpr(receiver);
   if (!receiverType) return null;
@@ -2116,7 +2112,7 @@ export function emitDataViewAccessor(
   // first (the call's ArgumentListEvaluation happens before ToIndex), then
   // throw without applying later ToNumber/ToBoolean coercions. Host lowering
   // deliberately keeps the old path byte-for-byte unchanged.
-  const staticSymbolOffset = args.length >= 1 && noJsHost(ctx) && ctx.oracle.staticJsTypeOf(args[0]!) === "symbol";
+  const staticSymbolOffset = args.length >= 1 && ctx.oracle.staticJsTypeOf(args[0]!) === "symbol";
   if (staticSymbolOffset) {
     for (const arg of args) {
       const argType = compileExpr(arg);
@@ -2539,7 +2535,6 @@ export function tryCompileStandaloneDetachedWrite(
   value: import("../ts-api.js").ts.Expression,
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
 ): ValType | undefined {
-  if (!noJsHost(ctx)) return undefined;
   if (target.name.text !== "__detached__") return undefined;
 
   const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
@@ -3226,15 +3221,6 @@ function emitRecoverBufferVecGuarded(
   desc: { bytes: number; signed: boolean; float: boolean },
 ): void {
   const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
-  // The JS-host lane never registers `$__vec_i8_byte` (`TYPED_ARRAY_PACKED_STORAGE`
-  // is gated on `wasi || standalone`), so no packed-byte value can reach this
-  // cast there and the guard would only add a type and change bytes. Keep the
-  // bare cast — byte-identical to main on host.
-  if (!noJsHost(ctx)) {
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
-    fctx.body.push({ op: "local.set", index: bufLocal });
-    return;
-  }
   // Register the packed-byte carrier unconditionally on the host-free lanes: a
   // module can construct one in a function compiled AFTER this site, so "not
   // registered yet" is not proof that no packed-byte value can reach here.
@@ -3468,8 +3454,6 @@ export function emitDynamicUint8ArrayBufferAlias(
   argExpr: import("../ts-api.js").ts.Expression,
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
 ): ValType | null {
-  if (!noJsHost(ctx)) return null;
-
   const { vecTypeIdx: byteVecIdx } = i32ByteVec(ctx);
   const uintVecIdx = getOrRegisterVecType(ctx, "i8_byte", { kind: "i8" });
   const uintArrIdx = getArrTypeIdxFromVec(ctx, uintVecIdx);
@@ -3615,7 +3599,6 @@ export function emitDynamicTypedArrayConstructFromAny(
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
   additionalArgs: readonly import("../ts-api.js").ts.Expression[] = [],
 ): ValType | null {
-  if (!noJsHost(ctx)) return null;
   const kind = taCtorKindOf(viewName);
   if (kind < 0) return null;
 
@@ -6736,7 +6719,7 @@ export function ensureStandaloneTaSubclassParentCtor(
   argCount: number,
 ): number | undefined {
   const kind = taCtorKindOf(parentName);
-  if (kind < 0 || kind > 8 || !noJsHost(ctx)) return undefined;
+  if (kind < 0 || kind > 8) return undefined;
   const key = `__new_${parentName}@${argCount}`;
   const existing = ctx.funcMap.get(key);
   if (existing !== undefined) return existing;
@@ -6822,7 +6805,7 @@ export function emitArrayBufferSliceSpecies(
   vecTypeIdx: number,
   resetSink?: Instr[],
 ): number | null {
-  if (!noJsHost(ctx) || !ctx.arraySpeciesDirty) return null;
+  if (!ctx.arraySpeciesDirty) return null;
   // (#5349) Step 16 ("if new does not have an [[ArrayBufferData]] slot, throw a
   // TypeError") is decided below by `ref.test $__vec_i32_byte`. That is a
   // REPRESENTATION test, and it is decidable because the packed-byte TypedArray
@@ -7157,8 +7140,6 @@ export function emitTaDynSpeciesCreate(
   fctx: FunctionContext,
   options: TaDynSpeciesCreateOptions,
 ): number | null {
-  if (!noJsHost(ctx)) return null;
-
   const dynIdx = getOrRegisterTaDynViewType(ctx);
   ensureObjectRuntime(ctx);
   ensureSymbolCarrier(ctx);
@@ -7525,7 +7506,6 @@ export interface TaFromArrayLikeMapHook {
  * (append-only — no import add / funcIdx shift). Idempotent via funcMap.
  */
 export function ensureTaFromArrayLikeHelper(ctx: CodegenContext, mapHook?: TaFromArrayLikeMapHook): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const helperName = mapHook?.helperName ?? "__ta_from_arraylike";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -7773,7 +7753,6 @@ function taDynDetachedAfterCoercionThrow(
  * (no imports → the minted stable handle never shifts). Idempotent via funcMap.
  */
 export function ensureTaDynFillHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const helperName = "__ta_dyn_fill";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -8050,7 +8029,6 @@ export function ensureTaDynFillHelper(ctx: CodegenContext): number | undefined {
  * adds no standalone imports.  Idempotent through `funcMap`.
  */
 export function ensureTaDynSetHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const helperName = "__ta_dyn_set";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -8677,7 +8655,6 @@ export function makeTaDynHelperFctx(helperName: string, params: { name: string; 
  * decode/encode — the raw bytes move verbatim. noJsHost lane only; idempotent.
  */
 export function ensureTaDynCopyWithinHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const helperName = "__ta_dyn_copywithin";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -8878,7 +8855,6 @@ export function ensureTaDynCopyWithinHelper(ctx: CodegenContext): number | undef
  * `recv` (`ta.reverse() === ta`). noJsHost lane only; idempotent.
  */
 export function ensureTaDynReverseHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const helperName = "__ta_dyn_reverse";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;

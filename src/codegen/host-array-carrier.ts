@@ -30,37 +30,12 @@
 //     and the regexp match-result struct also subtype it (#3562/#4443), so
 //     `Array.isArray(new Uint8Array(2))` would answer `true`.
 
-import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { definedFuncAt } from "./func-space.js";
 import type { CodegenContext } from "./context/types.js";
 import type { Instr } from "../ir/types.js";
 import { collectStandaloneArrayCarrierTypeIdxs } from "./object-runtime.js";
-import { addFuncType } from "./registry/types.js";
 
 const HOST_ARRAY_CARRIER = "__host_array_carrier";
-
-/**
- * Get (minting on first use) the module-local `(externref) -> i32` predicate
- * that answers "is this value one of THIS module's compiled array carriers?".
- *
- * The body is a placeholder `i32.const 0` until
- * {@link fillHostArrayCarrierPredicate} runs at finalize; callers only ever
- * bake the funcIdx, which is stable.
- */
-export function ensureHostArrayCarrierPredicate(ctx: CodegenContext): number | undefined {
-  const existing = ctx.funcMap.get(HOST_ARRAY_CARRIER);
-  if (existing !== undefined) return existing;
-  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$__host_array_carrier_type");
-  const funcIdx = mintDefinedFunc(ctx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name: HOST_ARRAY_CARRIER,
-    typeIdx,
-    locals: [{ name: "any", type: { kind: "anyref" } }],
-    body: [{ op: "i32.const", value: 0 }],
-    exported: false,
-  });
-  ctx.funcMap.set(HOST_ARRAY_CARRIER, funcIdx);
-  return funcIdx;
-}
 
 /**
  * Fill the predicate once every module-local carrier type is registered. No-op

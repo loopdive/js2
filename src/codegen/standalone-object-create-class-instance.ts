@@ -105,7 +105,7 @@ function defaultFieldInstr(type: ValType): Instr {
 
 /** True when this module may need the dispatcher at all. */
 export function standaloneObjectCreateClassInstanceApplies(ctx: CodegenContext): boolean {
-  return ctx.standalone === true && ctx.classSet.size > 0;
+  return ctx.classSet.size > 0;
 }
 
 /**

@@ -116,7 +116,7 @@ import {
 import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
+import { buildThrowJsErrorInstrs } from "./js-errors.js"; // (#4221) absent-callee TypeError
 import { buildResolvedCalleeGuard } from "./resolved-callee-guard.js"; // (#4656) §7.3.14 callability
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
@@ -6538,7 +6538,6 @@ export function fillApplyClosure(ctx: CodegenContext): void {
       ? directDataField.type.typeIdx
       : undefined;
   const fastDirectArgs = directVecTypeIdx !== undefined && directVecArrTypeIdx !== undefined;
-  const getUndefinedIdx = undefined;
 
   if (!hasGenericArgsReader && !fastObjArgs && !fastDirectArgs) {
     bridgeFn.body = [{ op: "ref.null.extern" }];
@@ -6564,7 +6563,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
 
   // Locals: 0=fn 1=recv 2=args; 3=n, then widening/result/carrier locals.
   const ARG_OF = (k: number): Instr[] => {
-    const fallbackUndefined = hasGenericArgsReader ? [] : applyUndefinedInstrs(ctx, getUndefinedIdx);
+    const fallbackUndefined = hasGenericArgsReader ? [] : applyUndefinedInstrs(ctx, undefined);
     const object = fastObjArgs
       ? {
           carrier: {
@@ -6573,7 +6572,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
             dataLocal: objArgDataLocal,
             lengthLocal: objArgLenLocal,
           },
-          undefinedValue: applyUndefinedInstrs(ctx, getUndefinedIdx),
+          undefinedValue: applyUndefinedInstrs(ctx, undefined),
         }
       : undefined;
     const direct = fastDirectArgs
@@ -6584,7 +6583,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
             dataLocal: directArgDataLocal,
             lengthLocal: directArgLenLocal,
           },
-          undefinedValue: applyUndefinedInstrs(ctx, getUndefinedIdx),
+          undefinedValue: applyUndefinedInstrs(ctx, undefined),
         }
       : undefined;
     return buildClosureApplyArgument(k, {
@@ -6592,7 +6591,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
       fallbackUndefined,
       object,
       direct,
-      nullishUndefined: applyUndefinedInstrs(ctx, getUndefinedIdx),
+      nullishUndefined: applyUndefinedInstrs(ctx, undefined),
     });
   };
 

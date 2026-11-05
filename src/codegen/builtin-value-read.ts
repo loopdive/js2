@@ -27,7 +27,7 @@ import {
   skipTransparentExpressions,
   valTypesMatch,
 } from "./shared.js";
-import { emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
+import { emitThrowTypeError } from "./expressions/helpers.js";
 import { emitObjectCreateValueBody } from "./object-create-value-body.js";
 import { allocLocal } from "./context/locals.js";
 import { isViewRefTestInstrs } from "./dataview-native.js"; // (#5150) ArrayBuffer.isView value closure
@@ -456,7 +456,6 @@ export function emitArrayIsArrayExternrefPredicate(ctx: CodegenContext, fctx: Fu
   // the helper under standalone): nothing is an array.
   fctx.body.push({ op: "drop" });
   fctx.body.push({ op: "i32.const", value: 0 });
-  return;
 }
 
 function reportUnsupportedStandaloneBuiltinValueRead(ctx: CodegenContext, builtinName: string, propName: string): void {
@@ -1198,7 +1197,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // only the value read fell to the generic "not yet implemented in --target
     // standalone" throw. Same 1-arg boxed-predicate shape as `Number.is*`.
     case "ArrayBuffer.isView": {
-      if (!noJsHost(ctx)) return null;
       paramTypes = [{ kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
       break;

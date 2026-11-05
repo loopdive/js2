@@ -16,7 +16,6 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { noJsHost } from "./expressions/helpers.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
@@ -64,7 +63,7 @@ export const REGEX_UNSUPPORTED_DYNAMIC_PATTERN = "Unsupported dynamic regular ex
  * every defined-function index.
  */
 function regexUnsupportedPatternThrow(ctx: CodegenContext): Instr[] {
-  if (noJsHost(ctx)) emitWasiErrorConstructor(ctx, "TypeError", 1);
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
   addStringConstantGlobal(ctx, REGEX_UNSUPPORTED_DYNAMIC_PATTERN);
   const ctorIdx = ensureLateImport(ctx, "__new_TypeError", [{ kind: "externref" }], [{ kind: "externref" }]);
   const tagIdx = ensureExnTag(ctx);
@@ -87,7 +86,7 @@ function regexUnsupportedPatternThrow(ctx: CodegenContext): Instr[] {
  * (also a function push) — same ordering requirement.
  */
 function regexCapExhaustionThrow(ctx: CodegenContext): Instr[] {
-  if (noJsHost(ctx)) emitWasiErrorConstructor(ctx, "RangeError", 1);
+  emitWasiErrorConstructor(ctx, "RangeError", 1);
   addStringConstantGlobal(ctx, REGEX_CAP_MESSAGE);
   const ctorIdx = ensureLateImport(ctx, "__new_RangeError", [{ kind: "externref" }], [{ kind: "externref" }]);
   const tagIdx = ensureExnTag(ctx);
@@ -1715,7 +1714,7 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
   // IMPORT — adding one import to every gc/host module that uses a RegExp and
   // shifting its function indices. That breaks the gc/host byte-identity this
   // change is required to preserve, for a guard that can never fire there.
-  const poisonThrow = noJsHost(ctx) ? regexUnsupportedPatternThrow(ctx) : null;
+  const poisonThrow = regexUnsupportedPatternThrow(ctx);
   const runIdx = ensureRegexRun(ctx);
   const i32Arr = regexI32ArrayType(ctx);
   const strDataIdx = ctx.nativeStrDataTypeIdx;

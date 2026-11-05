@@ -36,14 +36,8 @@
 import { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { addStringConstantGlobal } from "../index.js";
 import { emitClassExpressionStaticsBeforeValue } from "../class-expression-static-init.js";
-import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { emitLazyClassObjectGet } from "./extern.js";
-import { compileStringLiteral } from "../string-ops.js";
-import { classMemberFuncKey } from "../class-member-keys.js"; // (#2637 B2.1) onhost-ctor funcMap key
-import { emitFuncRefAsClosure } from "../closures.js"; // (#2637 B2.1) materialize $Class_new__onhost as a no-capture closure
-import { noJsHost } from "../js-errors.js";
 import { markPromiseSubclassValueRead } from "../standalone-class-construct.js"; // (#6651 D4)
 
 /**
@@ -149,50 +143,6 @@ export function resolvePromiseSubclassIdentifier(ctx: CodegenContext, id: ts.Ide
 }
 
 /**
- * Emits an externref that is the cached `__promise_subclass_ctor` for the given
- * resolved class name (one synthesized `class extends Promise {}` per name).
- * `resolved` MUST be the name returned by {@link resolvePromiseSubclassName}
- * (i.e. already alias-resolved through `classExprNameMap`).
- *
- * Returns true on success (instruction(s) pushed), false if the import could
- * not be registered (caller should fall back to its default emission).
- */
-export function emitPromiseSubclassCtor(ctx: CodegenContext, fctx: FunctionContext, resolved: string): boolean {
-  // (#2637 B2.1) If this class declared a user constructor, register its
-  // run-on-host body (`$<Class>_new__onhost`) with the runtime FIRST, so that
-  // when V8's `NewPromiseCapability(C)` performs `new C(internalExecutor)` the
-  // synthesized JS ctor (in `__promise_subclass_ctor`) finds and runs the body
-  // on the capability promise. Emitting here — at the single chokepoint every
-  // combinator / value-read path funnels through — guarantees the registration
-  // executes before the `__promise_subclass_ctor` call below at runtime, with
-  // no module-init plumbing. Idempotent (once per class per compile; the
-  // runtime Map.set is idempotent too).
-  emitRegisterPromiseSubclassCtor(ctx, fctx, resolved);
-
-  const importName = "__promise_subclass_ctor";
-  let funcIdx =
-    ctx.funcMap.get(importName) ?? ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
-  flushLateImportShifts(ctx, fctx);
-  funcIdx = ctx.funcMap.get(importName) ?? funcIdx;
-  if (funcIdx === undefined) return false;
-  // Push the class name (the synthesized subclass is cached per name). Use the
-  // same host-string mechanism as extern method dispatch so it works in both
-  // string backends.
-  addStringConstantGlobal(ctx, resolved);
-  const nameIdx = ctx.stringGlobalMap.get(resolved);
-  // (#2515 S0) `>= 0`, not `!== undefined`: standalone/nativeStrings stores the
-  // `-1` sentinel, which would bake `global.get -1` and fail binary emit. Fall
-  // to the inline-materializing `compileStringLiteral` for the sentinel.
-  if (nameIdx !== undefined && nameIdx >= 0) {
-    fctx.body.push({ op: "global.get", index: nameIdx });
-  } else {
-    compileStringLiteral(ctx, fctx, resolved);
-  }
-  fctx.body.push({ op: "call", funcIdx });
-  return true;
-}
-
-/**
  * A Promise-subclass identifier read as a VALUE. With a JS host this is the
  * cached host constructor ({@link emitPromiseSubclassCtor}). Without one
  * (#6651 D4) nothing is emitted here — the caller falls through to the class's
@@ -200,67 +150,6 @@ export function emitPromiseSubclassCtor(ctx: CodegenContext, fctx: FunctionConte
  * construct dispatcher admits the class (NewPromiseCapability(C) constructs it).
  */
 export function emitPromiseSubclassValueRead(ctx: CodegenContext, fctx: FunctionContext, resolved: string): boolean {
-  if (!noJsHost(ctx)) return emitPromiseSubclassCtor(ctx, fctx, resolved);
   markPromiseSubclassValueRead(ctx);
   return false;
-}
-
-/**
- * (#2637 B2.1) Emit a `__register_promise_subclass_ctor(<name>, <closure>)`
- * call for `resolved`, where `<closure>` is a no-capture closure materializing
- * the pre-registered `$<resolved>_new__onhost` body (the run-on-host-`this`
- * constructor, B2.3). No-op when the class has no `__onhost` body — i.e. a
- * default-constructor subclass (no user ctor): the runtime's bare forwarder is
- * correct there and there is nothing to run (the #1977 identity-only row).
- *
- * Emitted at EVERY combinator / value-read site (not deduped per compile),
- * because whichever site executes first at runtime must perform the
- * registration before `__promise_subclass_ctor` synthesizes / uses `C`. The
- * runtime `Map.set` is idempotent, so repeated registrations are harmless; the
- * wrapper STRUCT type is shared per-signature via `getOrCreateFuncRefWrapperTypes`
- * so only a thin per-site trampoline duplicates.
- *
- * Late-import discipline: `ensureLateImport` for the registration import is
- * flushed BEFORE the closure's `ref.func`/`struct.new` are emitted, so the
- * trampoline funcidx baked by `emitFuncRefAsClosure` cannot be left stale by
- * the import shift (cf. project_standalone_hostimport_gate_index_shift).
- */
-function emitRegisterPromiseSubclassCtor(ctx: CodegenContext, fctx: FunctionContext, resolved: string): void {
-  const onHostKey = classMemberFuncKey(ctx, `${resolved}_new__onhost`);
-  const onHostFuncIdx = ctx.funcMap.get(onHostKey);
-  if (onHostFuncIdx === undefined) return; // default-ctor subclass — nothing to register
-
-  const registerName = "__register_promise_subclass_ctor";
-  ensureLateImport(ctx, registerName, [{ kind: "externref" }, { kind: "externref" }], []);
-  flushLateImportShifts(ctx, fctx);
-  const registerIdx = ctx.funcMap.get(registerName);
-  if (registerIdx === undefined) return;
-
-  // arg 0 — the class name (same host-string mechanism as the ctor call below).
-  addStringConstantGlobal(ctx, resolved);
-  const nameIdx = ctx.stringGlobalMap.get(resolved);
-  if (nameIdx !== undefined && nameIdx >= 0) {
-    fctx.body.push({ op: "global.get", index: nameIdx });
-  } else {
-    compileStringLiteral(ctx, fctx, resolved);
-  }
-
-  // arg 1 — a no-capture closure over `$<resolved>_new__onhost`. Re-resolve the
-  // funcidx AFTER the flush above (it may have shifted). `emitFuncRefAsClosure`
-  // pushes a `(ref $wrapperStruct)`; the import expects externref, so lift it
-  // with `extern.convert_any`.
-  const onHostIdxNow = ctx.funcMap.get(onHostKey) ?? onHostFuncIdx;
-  const closureType = emitFuncRefAsClosure(ctx, fctx, onHostKey, onHostIdxNow);
-  if (closureType === null) {
-    // Could not materialize (defensive) — drop the name we already pushed and
-    // bail so the stack stays balanced.
-    fctx.body.push({ op: "drop" });
-    return;
-  }
-  fctx.body.push({ op: "extern.convert_any" });
-
-  // Re-resolve the register import idx as well (emitFuncRefAsClosure adds a
-  // defined function but no import, so no shift — still, be defensive).
-  const registerIdxNow = ctx.funcMap.get(registerName) ?? registerIdx;
-  fctx.body.push({ op: "call", funcIdx: registerIdxNow });
 }

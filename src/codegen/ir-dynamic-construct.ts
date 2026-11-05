@@ -38,7 +38,6 @@ import {
 import { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from "./extern-arg-marshal.js";
 import { armConstructIsConstructorGuard } from "./construct-is-constructor-guard.js";
 import { buildInt8ArrayCarrierMatch, emitTaDynCtorConstructFromLocals } from "./dataview-native.js";
-import { noJsHost } from "./js-errors.js";
 import { isFunctionIntrinsicValueCallee } from "./closures/function-intrinsic-construct.js";
 import { tracesToProxyConstructorValue } from "./proxy-value-provenance.js";
 import { admitBoundValueConstruct } from "./construct-bound.js";
@@ -69,7 +68,6 @@ export function irDynamicConstructHelperName(arity: number): string {
  * takes before the ordinary driver; a site any of them claims stays legacy.
  */
 export function irDynamicConstructCalleeIsPlain(ctx: CodegenContext, callee: ts.Identifier): boolean {
-  if (!noJsHost(ctx)) return false;
   if (ctx.classSet.has(callee.text) || ctx.externClasses.has(callee.text)) return false;
   if (funcConstructorForCallee(ctx, callee)) return false; // a compiled fnctor owns the typed-struct path
   if (resolvesToNonConstructableValue(ctx, callee)) return false; // the throwing path
@@ -87,7 +85,7 @@ export function irDynamicConstructCalleeIsPlain(ctx: CodegenContext, callee: ts.
  * Returns the function index, or undefined off the host-free lanes.
  */
 export function ensureIrDynamicConstructHelper(ctx: CodegenContext, arity: number): number | undefined {
-  if (!noJsHost(ctx) || arity < 0 || arity > IR_DYNAMIC_CONSTRUCT_MAX_ARITY) return undefined;
+  if (arity < 0 || arity > IR_DYNAMIC_CONSTRUCT_MAX_ARITY) return undefined;
   const name = irDynamicConstructHelperName(arity);
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
@@ -273,7 +271,6 @@ function captureReceiverSequence(helper: FunctionContext, emit: () => void): Ins
  * Returns the function index, or undefined off the host-free lanes.
  */
 export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const name = strict ? IR_CURRENT_THIS_STRICT_HELPER : IR_CURRENT_THIS_SLOPPY_HELPER;
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
@@ -310,7 +307,6 @@ export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean):
  * chain walk is unavailable on this lane.
  */
 export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionName: string): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const name = irInstanceOfFunctionHelperName(functionName);
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;

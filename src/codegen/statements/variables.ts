@@ -93,7 +93,7 @@ import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
 import { chunkDeclarationIsFunctionLocal, isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import { tryCompileClassExpressionBindingValue } from "../expressions/promise-subclass.js";
-import { hostRegExpMatchResultNeedsExternref, stripInferenceWrapper } from "../regexp-host-match.js";
+import { stripInferenceWrapper } from "../regexp-host-match.js";
 import { taStaticFromOfReflectiveCallNeedsExternref } from "../ta-static-from-of-spec.js";
 import { objectAssignResultNeedsExternref } from "../object-model/object-assign-primitive-operands.js";
 import { integrityLiteralResultNeedsExternref } from "../object-model/object-literal-reflective-escape.js";
@@ -172,7 +172,6 @@ export function transferredArrayLikeResultNeedsExternref(
   ctx: CodegenContext,
   initializer: ts.Expression | undefined,
 ): boolean {
-  if (hostRegExpMatchResultNeedsExternref(ctx, initializer)) return true;
   if (taStaticFromOfReflectiveCallNeedsExternref(ctx, initializer)) return true; // (#6651 E5)
   if (objectAssignResultNeedsExternref(ctx, initializer)) return true; // (#6770 S1)
   if (integrityLiteralResultNeedsExternref(true, initializer)) return true; // (#6770 S2)

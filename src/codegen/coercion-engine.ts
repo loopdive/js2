@@ -39,7 +39,6 @@ import { ensureAnyFromExternHelper, ensureExternStrictEqHelper } from "./any-hel
 import { boxToAny, emitIsUndefF64 } from "./value-tags.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { noJsHost } from "./expressions/helpers.js";
 import { addUnionImports, nativeStringType } from "./index.js";
 import { ensureAnyToStringHelper, ensureStrTruthyHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -75,9 +74,7 @@ import { anyValuePayloadToNumberBody } from "./helpers/anyvalue-to-number.js"; /
 export type CoercionMode = "js-host" | "native-strings-host" | "standalone";
 
 export function coercionMode(ctx: CodegenContext): CoercionMode {
-  if (noJsHost(ctx)) return "standalone";
-  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) return "native-strings-host";
-  return "js-host";
+  return "standalone";
 }
 
 /**

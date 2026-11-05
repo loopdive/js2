@@ -75,7 +75,6 @@ import { tryEmitFnctorTypedFieldSet } from "../fnctor-typed-reads.js"; // (#4155
 import { tryEmitTypedThisFieldSet } from "../typed-this.js"; // (#3683 S2) typed-`this` field write
 import { guardThisReceiver } from "../classes/derived-ctor-this-guard.js"; // (#6772 S1b)
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/#2686 A3) pre-check set dispatcher
-import { boxNullRefAsUndefined } from "../null-ref-undefined-box.js"; // (#1058)
 import { tryEmitTypedF64MemberSet } from "../member-set-f64.js"; // (#4157 A) typed f64 write twin
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for compound
 import {
@@ -88,7 +87,6 @@ import {
   isNumericIndexExpression,
   isProvablyNonNull,
   isSafeBoundsEliminated,
-  tryEmitDeleteAwareDynamicSet,
   typeErrorThrowInstrs,
 } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
@@ -131,7 +129,6 @@ import {
   emitWebCompatCallAssignmentTarget,
   getFuncParamTypes,
   isConstIdentifierAssignmentTarget,
-  noJsHost,
   resolvePrivateThisFieldCarrier,
   updateLocalType,
   widenLocalToNullable,
@@ -4020,10 +4017,8 @@ function tryEmitPinnedStructMemberSet(
     getArrTypeIdxFromVec(ctx, (valResult as { typeIdx: number }).typeIdx) >= 0
   ) {
     fctx.body.push({ op: "extern.convert_any" });
-    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   } else if (valResult && valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
-    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   } else if (!valResult) {
     fctx.body.push({ op: "ref.null.extern" });
   }
@@ -4942,21 +4937,6 @@ function compilePropertyAssignment(
     }
   }
 
-  // (#2731) Symmetric tombstone-aware WRITE routing. In a `delete`-using module,
-  // any-receiver READS already route through the tombstone-aware host
-  // `__extern_get` (`tryEmitDeleteAwareDynamicGet`); the WRITE must match. Without
-  // this, `o.x = 9` after `delete o.x` takes the native `struct.set` fast-path
-  // below (`resolveStructNameForExpr` resolves the shape-inferred anon struct),
-  // bypassing `_safeSet`'s tombstone-clear — so the re-added key stays suppressed
-  // in `__extern_get` / `__for_in_*` / `__object_keys`. Runs BEFORE the
-  // struct-name resolution so the native struct.set is skipped for `any`
-  // receivers; concrete-typed receivers and reserved/callable props decline.
-  {
-    const dynPropName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
-    const dynSet = tryEmitDeleteAwareDynamicSet(ctx, fctx, target, value, objType, dynPropName);
-    if (dynSet !== undefined) return dynSet;
-  }
-
   let typeName = resolveStructNameForExpr(ctx, fctx, target.expression, target.name, resolveWasmType(ctx, objType));
   if (ts.isPrivateIdentifier(target.name)) {
     typeName = resolvePrivateThisFieldCarrier(ctx, fctx, target.name, target.expression) ?? typeName;
@@ -5307,7 +5287,6 @@ function compilePropertyAssignmentExternSet(
     coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
   } else if (valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
-    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   }
   let assignmentResultLocal: number | undefined;
   if (wrapRuntimeEvalCallable) {
@@ -5382,7 +5361,7 @@ function compileExternPropertySet(
   // (`re.constructor = f` — the §22.2.6.14 SpeciesConstructor idiom) must not
   // bind the `Object_set_<name>` host import; the caller's `__extern_set`
   // fallback is the native ordinary [[Set]].
-  if (noJsHost(ctx) && propOwner.importPrefix === "Object") return null;
+  if (propOwner.importPrefix === "Object") return null;
 
   // Check if the import exists BEFORE compiling object+value to avoid dangling stack values
   const importName = `${propOwner.importPrefix}_set_${propName}`;
@@ -5797,7 +5776,6 @@ function compileElementAssignment(
     // missing a view type registered by a later constructor. Host-free lane.
     if (
       arrType.kind === "externref" &&
-      noJsHost(ctx) &&
       (ctx.moduleUsesDynTaView || ctx.moduleUsesStaticTaView) &&
       isNumericIndexExpression(ctx, target.argumentExpression, fctx)
     ) {
@@ -6127,7 +6105,7 @@ function compileElementAssignment(
     // proves `i < arr.length`, the index is in [0, length) so capacity is
     // already sufficient and `vec.length` does not need to grow. Skip the
     // grow check + length-update entirely and emit a direct `array.set`.
-    if (isSafeBoundsEliminated(fctx, target) && (!isTypedArray || noJsHost(ctx))) {
+    if (isSafeBoundsEliminated(fctx, target)) {
       // Vec data field is `(ref $arr)` (non-nullable), so struct.get yields
       // a non-null ref directly — no ref.as_non_null needed.
       fctx.body.push({ op: "local.get", index: vecLocal });

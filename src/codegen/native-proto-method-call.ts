@@ -66,7 +66,6 @@ import type { CodegenContext } from "./context/types.js";
  * 2 = args `$ObjVec` (as externref).
  */
 export function unshiftExternMethodCallProtoArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const protoTypeIdx = ctx.nativeProtoTypeIdx;
   if (protoTypeIdx === undefined) return;
   const externGetIdx = ctx.funcMap.get("__extern_get");

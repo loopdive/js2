@@ -48,7 +48,6 @@ import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { inferNativeTaViewConstructType } from "./dataview-native.js";
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { noJsHost } from "./js-errors.js";
 import { addFuncType, isTaViewTypeIdx } from "./registry/types.js";
 
 /** The dynamic-object natives whose dyn-view arm the static view re-enters. */
@@ -116,7 +115,7 @@ function ensureTaViewAsDynHelper(ctx: CodegenContext, taViewIdx: number, dynIdx:
  * result on the externref carrier, which holds the view itself.
  */
 export function isStaticTaViewBinding(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!noJsHost(ctx) || !ts.isIdentifier(expr)) return false;
+  if (!ts.isIdentifier(expr)) return false;
   const decl = ctx.oracle.variableDeclarationOf(expr);
   if (decl?.initializer === undefined) return false;
   const carrier = inferNativeTaViewConstructType(ctx, decl.initializer);
@@ -124,7 +123,6 @@ export function isStaticTaViewBinding(ctx: CodegenContext, expr: ts.Expression):
 }
 
 export function fillTaStaticViewMopArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const dynIdx = ctx.taDynViewTypeIdx;
   if (dynIdx < 0) return;
   // WasmGC canonicalizes the per-name `$__ta_view_<Name>` structs (identical

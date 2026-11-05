@@ -38,7 +38,7 @@ import {
 import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { funcValueCallableSignature } from "./closures/func-value-callable-signature.js"; // (#6699) value ABI, not lifted
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
-import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./js-errors.js";
 import { emitTypedArraySetBoundsCheck } from "./typed-array-set-bounds.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { compileStringLiteral, elemGetOp, unpackedElemType, valTypesMatch } from "./shared.js";
@@ -114,7 +114,6 @@ import { buildVecFromExternref, coerceType, coercionInstrs, defaultValueInstrs }
 import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { countedPushIndexOfUnroll, emitArrayIndexOfScan } from "./array-indexof-scan.js";
-import { isHostTypedArrayCarrierExpression } from "./expressions/typed-array-host-carrier.js";
 // (#4446) The §23.1.3.1 host-free concat loop for dynamic operands.
 import { compileArrayConcatNativeSpec } from "./array-concat-spec.js";
 // (#4655) Shared concat carrier/dispatch predicate — see array-concat-carrier.ts.
@@ -475,30 +474,6 @@ export function emitReceiverNullGuard(
       then: buildThrowJsErrorInstrs(ctx, "TypeError", "Array method called on null or undefined", { flush: fctx }),
       else: [],
     });
-  }
-
-  // A branded host-lane TypedArray can be detached when its concrete mirror
-  // crosses a host transfer. The carrier still shares the ordinary vec shape,
-  // so consult its host marker before native lowering reads length or coerces
-  // method arguments. Loading the tee'd local avoids re-evaluating the receiver.
-  if (!noJsHost(ctx) && receiverExpr && isHostTypedArrayCarrierExpression(ctx, receiverExpr)) {
-    ensureLateImport(ctx, "__is_detached_buffer", [{ kind: "externref" }], [{ kind: "i32" }]);
-    const detachedThrow = buildThrowJsErrorInstrs(
-      ctx,
-      "TypeError",
-      "Cannot perform operation on a detached TypedArray",
-      { flush: fctx },
-    );
-    flushLateImportShifts(ctx, fctx);
-    const checkIdx = ctx.funcMap.get("__is_detached_buffer");
-    if (checkIdx !== undefined) {
-      fctx.body.push(
-        { op: "local.get", index: localIdx },
-        { op: "extern.convert_any" },
-        { op: "call", funcIdx: checkIdx },
-        { op: "if", blockType: { kind: "empty" }, then: detachedThrow, else: [] },
-      );
-    }
   }
 }
 
@@ -1432,7 +1407,6 @@ function shouldWrapDynViewSpeciesTwoArm(
 ): boolean {
   return (
     !skipDynViewWrap &&
-    noJsHost(ctx) &&
     ctx.moduleUsesDynTaView &&
     !dynViewTwoArmActive.has(callExpr) &&
     ts.isPropertyAccessExpression(propAccess) &&
@@ -2304,16 +2278,7 @@ export function compileArrayMethodCall(
       result = compileArrayReverse(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "push":
-      result = tryCompileArrayPushDynamicSpread(
-        ctx,
-        fctx,
-        methodAccess,
-        callExpr,
-        receiverIsExternref,
-        vecTypeIdx,
-        arrTypeIdx,
-        elemType,
-      );
+      result = undefined;
       if (result !== undefined) break;
       // (#4531) An externref-shaped receiver (a class FIELD holding what may
       // be a `__make_iterable` host mirror — prettier's `this.stack`) must not
@@ -3299,7 +3264,7 @@ function compileArrayAt(
   // covers the TypedArray receiver too, which shares this lowering.
   if (callExpr.arguments.length < 1) {
     fctx.body.push({ op: "i32.const", value: 0 });
-  } else if (noJsHost(ctx)) {
+  } else {
     const argType = compileExpression(ctx, fctx, callExpr.arguments[0]!);
     if (!argType) {
       // void → undefined → ToNumber NaN → ToIntegerOrInfinity 0.
@@ -3325,11 +3290,6 @@ function compileArrayAt(
         then: [{ op: "i32.const", value: 0 }],
         else: [{ op: "local.get", index: fTmp }, { op: "i32.trunc_sat_f64_s" }],
       });
-    }
-  } else {
-    const argType = compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "i32" });
-    if (argType && argType.kind === "f64") {
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     }
   }
   fctx.body.push({ op: "local.set", index: idxTmp });
@@ -4064,25 +4024,6 @@ function compileArrayPush(
   fctx.body.push({ op: "i32.add" });
   if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
   return ctx.fast ? { kind: "i32" } : { kind: "f64" };
-}
-
-/**
- * A single dynamic spread contributes its runtime element count, not one
- * nested array value. This is Hono's `routes.push(...ownRoute)` shape: the
- * fixed unrolled push sees one AST argument and would append the whole source
- * vec as one row, so a later `route[0]` would read another array.
- */
-function tryCompileArrayPushDynamicSpread(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  propAccess: ts.PropertyAccessExpression,
-  callExpr: ts.CallExpression,
-  receiverIsExternref: boolean,
-  vecTypeIdx: number,
-  arrTypeIdx: number,
-  elemType: ValType,
-): ValType | undefined {
-  return undefined;
 }
 
 /**
@@ -6109,56 +6050,6 @@ function resolveDynamicCallbackClosure(
 }
 
 /**
- * (#5319, generalising #4527 from `map` to the whole single-callback family)
- * Pick the host bridge for a callback that did NOT resolve to a wasm closure.
- *
- * The default fallback bridge is numeric (`__call_1_f64`), so the loop element
- * is pushed through `__unbox_number` — ToNumber. For a REFERENCE element
- * (string / object / native-string ref) that is lossy: every value arrives at
- * the callback as `NaN`. `["x","y"].filter(Boolean)` therefore evaluated
- * `Boolean(NaN)` twice and returned `[]`. `__call_dyn_1` takes
- * `(externref callee, externref arg) -> externref` and passes the element LIVE.
- *
- * A callback is "unresolved" far more often than the builtin case suggests:
- * only a syntactically inline arrow / function expression, or a hoisted
- * function DECLARATION, compiles to a closure. A bare ambient builtin
- * (`Boolean`, `String`), a `var`-bound function expression, an object member
- * (`o.keep`) and a cross-module import all land here.
- *
- * `consumesResultAsBoolean` — filter/find/findIndex/some/every feed the
- * callback result to ToBoolean. On the dynamic bridge that result is an opaque
- * externref, so ToBoolean needs `__is_truthy`. Register it HERE, before the
- * callback expression and the loop instruction arrays are built: those arrays
- * bake `call` funcIdx values and are attached to the body only later, so a
- * late import registered from inside `buildToBooleanInstrs` would shift the
- * defined-function index space out from under them.
- */
-function referenceElementBridgeName(
-  ctx: CodegenContext,
-  elemType: ValType,
-  consumesResultAsBoolean: boolean,
-): string | undefined {
-  // Host-free targets keep their own recovery path (`resolveDynamicCallbackClosure`,
-  // #3015): `__call_dyn_1` is a JS-host import and would make the module
-  // non-instantiable standalone.
-  if (noJsHost(ctx)) return undefined;
-  // The import is armed by the `collectFunctionalArrayImports` pre-scan. When it
-  // is absent this call site is not one the pre-scan recognised, and the output
-  // stays byte-identical to before.
-  if (!ctx.funcMap.has("__call_dyn_1")) return undefined;
-  if (
-    elemType.kind !== "externref" &&
-    elemType.kind !== "ref_extern" &&
-    elemType.kind !== "ref" &&
-    elemType.kind !== "ref_null"
-  ) {
-    return undefined;
-  }
-  if (consumesResultAsBoolean) addUnionImports(ctx);
-  return "__call_dyn_1";
-}
-
-/**
  * Compile the callback argument and set up either a closure (call_ref) path
  * or a host bridge fallback. Returns null if setup fails (error pushed).
  *
@@ -7027,8 +6918,7 @@ function compileArrayFilter(
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
-  const bridge = referenceElementBridgeName(ctx, elemType, true);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "filter", "flt", bridge, 1, elemType);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "filter", "flt", undefined, 1, elemType);
   if (!setup) return null;
 
   const resLen = allocLocal(fctx, `__arr_flt_rl_${fctx.locals.length}`, { kind: "i32" });
@@ -7180,8 +7070,7 @@ function compileArrayMap(
   // of the family shares it; map does not consume the result as a boolean.)
   const savedMapCallbackFirstParamOverride = ctx.arrayMapCallbackFirstParamOverride;
   ctx.arrayMapCallbackFirstParamOverride = elemType;
-  const bridge = referenceElementBridgeName(ctx, elemType, false);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "map", "map", bridge, 1);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "map", "map", undefined, 1);
   ctx.arrayMapCallbackFirstParamOverride = savedMapCallbackFirstParamOverride;
   if (!setup) return null;
 
@@ -7819,8 +7708,7 @@ function compileArrayForEach(
     return null; // void method
   }
 
-  const bridge = referenceElementBridgeName(ctx, elemType, false);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "forEach", "fe", bridge, 1, elemType);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "forEach", "fe", undefined, 1, elemType);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fe", receiverIsExternref);
@@ -7874,8 +7762,7 @@ function compileArrayFind(
     return elemType;
   }
 
-  const bridge = referenceElementBridgeName(ctx, elemType, true);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "find", "find", bridge, 1, elemType);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "find", "find", undefined, 1, elemType);
   if (!setup) return null;
 
   const elemTmpLocal = allocLocal(fctx, `__arr_find_el_${fctx.locals.length}`, elemType);
@@ -7985,8 +7872,7 @@ function compileArrayFindIndex(
     return { kind: "i32" };
   }
 
-  const bridge = referenceElementBridgeName(ctx, elemType, true);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "findIndex", "fi", bridge, 1, elemType);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "findIndex", "fi", undefined, 1, elemType);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fi", receiverIsExternref);
@@ -8289,8 +8175,7 @@ function compileArraySome(
     return { kind: "i32" };
   }
 
-  const bridge = referenceElementBridgeName(ctx, elemType, true);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "some", "some", bridge, 1, elemType);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "some", "some", undefined, 1, elemType);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "some", receiverIsExternref);
@@ -8356,8 +8241,7 @@ function compileArrayEvery(
     return { kind: "i32" };
   }
 
-  const bridge = referenceElementBridgeName(ctx, elemType, true);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "every", "evr", bridge, 1, elemType);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "every", "evr", undefined, 1, elemType);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "evr", receiverIsExternref);
@@ -9392,11 +9276,6 @@ function compileTypedArraySubarray(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType {
-  if (!noJsHost(ctx)) {
-    // Host mode: keep the copy (slice semantics) — no shared buffer here.
-    return compileArraySlice(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
-  }
-
   // Standalone: build a windowing $__subview sharing the parent's data array.
   // The receiver may be a plain vec (`__vec_<elem>`) or — for a nested subarray —
   // itself a `$__subview_<elem>`; recover the element kind from either name.

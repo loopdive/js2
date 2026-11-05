@@ -33,16 +33,8 @@ import {
   emitThrowRangeError,
   emitThrowReferenceError,
   emitThrowTypeError,
-  noJsHost,
 } from "../js-errors.js";
-export {
-  buildThrowJsErrorInstrs,
-  emitThrowJsError,
-  emitThrowRangeError,
-  emitThrowReferenceError,
-  emitThrowTypeError,
-  noJsHost,
-};
+export { buildThrowJsErrorInstrs, emitThrowJsError, emitThrowRangeError, emitThrowReferenceError, emitThrowTypeError };
 export type { JsErrorKind } from "../js-errors.js";
 
 /**

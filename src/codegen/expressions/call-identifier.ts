@@ -106,7 +106,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
@@ -1841,7 +1840,7 @@ function compileBoundIdentifierCall(
       // like every other, so `callSpread(f,a){return f(...a)}` handed `f` the
       // source ARRAY as formal zero. Same ObjVec argv, no host boundary — see
       // standalone-dynamic-spread-call.ts.
-      if (isKnownVariable && hasSpreadArg && noJsHost(ctx)) {
+      if (isKnownVariable && hasSpreadArg) {
         const nativeSpreadCall = tryEmitStandaloneDynamicSpreadCall(ctx, fctx, expr);
         if (nativeSpreadCall !== undefined) return nativeSpreadCall;
       }

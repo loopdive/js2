@@ -73,35 +73,10 @@ export function buildStandaloneIrFnctorShape(input: StandaloneIrFnctorShapeInput
 }
 
 function supportsBoundedPhysicalLane(input: ObserveIrFnctorProducerInput): boolean {
-  const { ctx } = input;
   // Standalone reserves `$bag`/presence/constructor fields and may use a
   // foreign-result ABI.  Those require a logical-to-physical field map and
   // are intentionally left on the legacy path in this checkpoint.
-  if (ctx.standalone || ctx.wasi || input.resultIsExternref) return false;
-  if (ctx.fnctorLayoutInfo?.has(input.structName) || ctx.fnctorColdTailTypeIdx?.has(input.functionName)) {
-    return false;
-  }
-  if (ctx.fnctorReservedTypeIdx.get(input.functionName) !== input.structTypeIdx) return false;
-  if (ctx.structMap.get(input.structName) !== input.structTypeIdx) return false;
-  if (input.captureLayout.captures.length !== 0) return false;
-  if (input.captureLayout.valueParamTypes.length !== 0 || input.captureLayout.tdzFlagParamTypes.length !== 0) {
-    return false;
-  }
-  if (input.userParamTypes.length !== 1 || input.fields.length !== 1) return false;
-  const field = input.fields[0]!;
-  if (
-    field.name !== "input" ||
-    field.mutable !== true ||
-    field.presenceTracked === true ||
-    field.dynamicObjectCarrier === true ||
-    field.jsBoolean === true
-  ) {
-    return false;
-  }
-  // The direct assignment proof normally gives the field and parameter the
-  // same physical carrier.  Refuse any mismatch rather than claim a semantic
-  // string shape without a target-specific carrier proof.
-  return canonicalProgramAbiValType(field.type) === canonicalProgramAbiValType(input.userParamTypes[0]!);
+  return false;
 }
 
 function makeBoundedShape(
@@ -195,7 +170,6 @@ export function buildStandaloneIrFnctorObservation(
 ): ProgramAbiFnctorObservation | undefined {
   const { ctx } = input;
   if (
-    !ctx.standalone ||
     ctx.wasi ||
     !ctx.nativeStrings ||
     ctx.fast ||
@@ -288,7 +262,7 @@ export function observeApprovedIrFnctor(input: ObserveIrFnctorProducerInput): bo
   const identityContext = ctx.irPlanningIdentityContext;
   if (!registry || !ctx.programAbiTypes || !identityContext) return false;
 
-  if (ctx.standalone && !ctx.wasi && ctx.nativeStrings && !ctx.fast) {
+  if (!ctx.wasi && ctx.nativeStrings && !ctx.fast) {
     const syntax = proveIrFnctorInputConstructorSyntax(ctx.checker, identityContext, input.declaration);
     const argument = input.site.arguments?.[0];
     const reservation = syntax

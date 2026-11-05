@@ -25,7 +25,7 @@ import { recordSidecarPropertyOwner } from "./sidecar-owner-scope.js";
 import { singleReturnExpressionOfCall, tracesToProxyConstructorValue } from "./proxy-value-provenance.js"; // (#6651 F3) realm-spelled `new X(t,h)`; (#6651 F4) helper-returned
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#3177 slice 4) defineProperty rejection sentinel → TypeError
+import { buildThrowJsErrorInstrs } from "./js-errors.js"; // (#3177 slice 4) defineProperty rejection sentinel → TypeError
 import { emitEvolvingNullishReceiverGuard, evolvingVarNullishNarrowed } from "./builtin-prototype-brand.js"; // (#5197 review F1)
 import { emitMappedArgReverseSync } from "./expressions/logical-ops.js";
 import { resolveStructName } from "./expressions/misc.js";
@@ -4011,7 +4011,7 @@ export function compileObjectKeysOrValues(
   // object (`Proxy/defineProperty/call-parameters` stores the trap's
   // descriptor that way). Same decline as the #5197 `hasOwnProperty` fold: the
   // runtime path below, with a ToObject guard for a value that IS nullish.
-  const evolvingNullishArg = (noJsHost(ctx) || ctx.strictNoHostImports) && evolvingVarNullishNarrowed(ctx, arg);
+  const evolvingNullishArg = evolvingVarNullishNarrowed(ctx, arg);
   if (!evolvingNullishArg && isNullishType(argType)) {
     const t = compileExpression(ctx, fctx, arg);
     if (t) fctx.body.push({ op: "drop" });
@@ -4548,7 +4548,7 @@ export function compilePropertyIntrospection(
   // take the runtime query, and raise RequireObjectCoercible's TypeError when
   // the value really is nullish. No-host lanes only — the host lowering never
   // reaches this fold for the borrowed spelling.
-  const evolvingNullishRecv = (noJsHost(ctx) || ctx.strictNoHostImports) && evolvingVarNullishNarrowed(ctx, recvExpr);
+  const evolvingNullishRecv = evolvingVarNullishNarrowed(ctx, recvExpr);
 
   // For externref/any receivers (e.g. Object.create result), delegate to runtime
   // since we can't statically know their properties

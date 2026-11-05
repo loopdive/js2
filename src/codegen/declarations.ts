@@ -94,10 +94,8 @@ import {
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { readsAmbientThisGlobal } from "./helpers/body-references-own-this.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
-import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
 import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
-import { noJsHost } from "./js-errors.js";
 import {
   addGeneratorImports,
   addIteratorImports,
@@ -239,7 +237,6 @@ import { inferImplicitAnyParamType, resolveGenericCallSiteTypes } from "./declar
 import {
   collectInterface,
   collectObjectType,
-  isTypeScriptZeroCostSyntaxTypesSource,
   publishDeclaredShapesForDedup,
   resolveStructFieldTypes,
 } from "./declarations/struct-type-registration.js";
@@ -581,106 +578,6 @@ export function prepareIdentityPreservingStructuralParams(
   assertedStructuralParamsByContext.set(ctx, candidates);
 }
 
-const writtenPropertyParamsByFunction = new WeakMap<ts.FunctionDeclaration, ReadonlySet<ts.ParameterDeclaration>>();
-
-const assertedWrittenPropertyParamsByFunction = new WeakMap<
-  ts.FunctionDeclaration,
-  ReadonlySet<ts.ParameterDeclaration>
->();
-
-/** True when the function writes through a property rooted at this parameter. */
-function parameterHasPropertyWrite(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  stmt: ts.FunctionDeclaration,
-): boolean {
-  const cached = writtenPropertyParamsByFunction.get(stmt);
-  if (cached) return cached.has(param);
-
-  const parameters = new Set(stmt.parameters);
-  const written = new Set<ts.ParameterDeclaration>();
-  const recordRoot = (expression: ts.Expression): void => {
-    const root = getAssignmentRootIdentifierNode(expression);
-    if (!root) return;
-    const declaration = ctx.oracle.valueDeclarationOf(root);
-    if (declaration && ts.isParameter(declaration) && parameters.has(declaration)) written.add(declaration);
-  };
-  const visit = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
-      recordRoot(node.left);
-    } else if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-    ) {
-      recordRoot(node.operand);
-    } else if (ts.isDeleteExpression(node)) {
-      recordRoot(node.expression);
-    }
-    forEachChild(node, visit);
-  };
-  if (stmt.body) forEachChild(stmt.body, visit);
-  writtenPropertyParamsByFunction.set(stmt, written);
-  return written.has(param);
-}
-
-/** True when an erased assertion occurs on a property-write path rooted at this parameter. */
-function parameterHasAssertedPropertyWrite(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  stmt: ts.FunctionDeclaration,
-): boolean {
-  const cached = assertedWrittenPropertyParamsByFunction.get(stmt);
-  if (cached) return cached.has(param);
-
-  const parameters = new Set(stmt.parameters);
-  const written = new Set<ts.ParameterDeclaration>();
-  const recordRoot = (expression: ts.Expression): void => {
-    let current = expression;
-    let sawProperty = false;
-    let sawAssertion = false;
-    while (true) {
-      if (
-        ts.isParenthesizedExpression(current) ||
-        ts.isNonNullExpression(current) ||
-        ts.isSatisfiesExpression(current)
-      ) {
-        current = current.expression;
-        continue;
-      }
-      if (ts.isAsExpression(current) || ts.isTypeAssertionExpression(current)) {
-        sawAssertion = true;
-        current = current.expression;
-        continue;
-      }
-      if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
-        sawProperty = true;
-        current = current.expression;
-        continue;
-      }
-      break;
-    }
-    if (!sawProperty || !sawAssertion || !ts.isIdentifier(current)) return;
-    const declaration = ctx.oracle.valueDeclarationOf(current);
-    if (declaration && ts.isParameter(declaration) && parameters.has(declaration)) written.add(declaration);
-  };
-  const visit = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
-      recordRoot(node.left);
-    } else if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-    ) {
-      recordRoot(node.operand);
-    } else if (ts.isDeleteExpression(node)) {
-      recordRoot(node.expression);
-    }
-    forEachChild(node, visit);
-  };
-  if (stmt.body) forEachChild(stmt.body, visit);
-  assertedWrittenPropertyParamsByFunction.set(stmt, written);
-  return written.has(param);
-}
-
 function directFunctionTypeParameter(
   param: ts.ParameterDeclaration,
   stmt: ts.FunctionDeclaration,
@@ -695,19 +592,6 @@ function directFunctionTypeParameter(
   }
   const typeParameterName = param.type.typeName.text;
   return stmt.typeParameters?.find((candidate) => candidate.name.text === typeParameterName);
-}
-
-/** Whether this is exactly a function-owned type parameter constrained to an object carrier. */
-function isDirectObjectTypeParameter(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  stmt: ts.FunctionDeclaration,
-  paramType: ts.Type,
-): boolean {
-  const typeParameter = directFunctionTypeParameter(param, stmt);
-  if (!typeParameter || !(paramType.flags & ts.TypeFlags.TypeParameter)) return false;
-  const constraint = ctx.checker.getBaseConstraintOfType(paramType);
-  return constraint !== undefined && (constraint.flags & ts.TypeFlags.Object) !== 0;
 }
 
 /** Parameter index when a generic function returns one direct type parameter unchanged by contract. */
@@ -731,48 +615,6 @@ function directIdentityReturnParamIndex(stmt: ts.FunctionDeclaration): number | 
   return index >= 0 ? index : undefined;
 }
 
-interface AssertedMutableStructuralParamCarrier {
-  open: true;
-  compoundStructDispatch?: true;
-}
-
-function typeScriptNodeCompoundDispatchConstraint(ctx: CodegenContext, paramType: ts.Type): boolean {
-  const constraint = ctx.checker.getBaseConstraintOfType(paramType);
-  const symbol = constraint?.getSymbol();
-  return (
-    symbol?.name === "Node" &&
-    symbol.declarations?.some(
-      (declaration) =>
-        ts.isInterfaceDeclaration(declaration) && isTypeScriptZeroCostSyntaxTypesSource(declaration.getSourceFile()),
-    ) === true
-  );
-}
-
-function assertedMutableStructuralParamCarrier(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  index: number,
-  stmt: ts.FunctionDeclaration,
-  wasmType: ValType,
-  paramType: ts.Type,
-): AssertedMutableStructuralParamCarrier | undefined {
-  if (!stmt.body || !ts.isIdentifier(param.name) || noJsHost(ctx)) return undefined;
-
-  const hasDoublyAssertedCall =
-    (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
-    parameterHasPropertyWrite(ctx, param, stmt) &&
-    assertedStructuralParamsByContext.get(ctx)?.get(stmt)?.has(index);
-  const hasGenericAssertedWrite =
-    isDirectObjectTypeParameter(ctx, param, stmt, paramType) && parameterHasAssertedPropertyWrite(ctx, param, stmt);
-  if (!hasDoublyAssertedCall && !hasGenericAssertedWrite) return undefined;
-  return {
-    open: true,
-    ...(hasGenericAssertedWrite && typeScriptNodeCompoundDispatchConstraint(ctx, paramType)
-      ? { compoundStructDispatch: true as const }
-      : {}),
-  };
-}
-
 function preserveIdentityForStructuralParam(
   ctx: CodegenContext,
   param: ts.ParameterDeclaration,
@@ -781,10 +623,7 @@ function preserveIdentityForStructuralParam(
   wasmType: ValType,
   paramType: ts.Type,
 ): ValType {
-  const carrier = assertedMutableStructuralParamCarrier(ctx, param, index, stmt, wasmType, paramType);
-  if (!carrier) return wasmType;
-  markIdentityPreservingStructuralParam(ctx, param, carrier);
-  return { kind: "externref" };
+  return wasmType;
 }
 
 // A call-site-inferred JavaScript parameter starts life as one nominal WasmGC
@@ -1596,19 +1435,7 @@ function resolveGenericDeclarationCallSiteTypes(
     ) {
       return { kind: "externref" } as const;
     }
-    if (
-      !param ||
-      !stmt.body ||
-      !ts.isIdentifier(param.name) ||
-      noJsHost(ctx) ||
-      !directFunctionTypeParameter(param, stmt) ||
-      !parameterHasAssertedPropertyWrite(ctx, param, stmt) ||
-      nativeTypeOfDeclaration(ctx.checker, param) !== null
-    ) {
-      return wasmType;
-    }
-    const paramType = ctx.checker.getTypeAtLocation(param);
-    return preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
+    return wasmType;
   });
   const identityReturnParamIndex = directIdentityReturnParamIndex(stmt);
   const identityCarrier = identityReturnParamIndex === undefined ? undefined : params[identityReturnParamIndex];
@@ -1704,7 +1531,7 @@ function registerBodylessFunctionDeclaration(
           lowerParamType(ctx, param, name, i, stmt, sourceFile),
       );
     }
-    if (noJsHost(ctx)) registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
+    registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
     const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
     results = nativeGenerator ? [{ kind: "ref", typeIdx: nativeGenerator.stateTypeIdx }] : [{ kind: "externref" }];
   } else if (resolved) {
@@ -2872,7 +2699,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
               lowerParamType(ctx, param, name, i, stmt, sourceFile),
           );
         }
-        if (noJsHost(ctx)) registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
+        registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
         const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
         results = nativeGenerator ? [{ kind: "ref", typeIdx: nativeGenerator.stateTypeIdx }] : [{ kind: "externref" }]; // JS-host fallback returns a Generator object
       } else if (resolved) {
