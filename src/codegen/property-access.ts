@@ -937,12 +937,10 @@ export function emitRuntimeDescriptorGet(
 
   const recvType = compileExpression(ctx, fctx, receiver);
   if (!recvType) return null;
-  if (recvType.kind === "ref_null") {
+  if (recvType.kind === "ref_null" || recvType.kind === "ref") {
     if (!isProvablyNonNull(receiver, ctx.checker)) {
-      emitNullCheckThrow(ctx, fctx, recvType, accessNode);
+      emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: recvType.typeIdx }, accessNode);
     }
-    fctx.body.push({ op: "extern.convert_any" });
-  } else if (recvType.kind === "ref") {
     fctx.body.push({ op: "extern.convert_any" });
   } else if (recvType.kind !== "externref") {
     coerceType(ctx, fctx, recvType, { kind: "externref" });
