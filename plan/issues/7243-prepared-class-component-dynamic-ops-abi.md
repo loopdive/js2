@@ -1,7 +1,7 @@
 ---
 id: 7243
 title: "IR prepared class components cannot carry the dynamic carrier ops (`box`, `__ir_dyn_call_box`, `dyn.construct`): members demote at `late-preparation-unsupported`"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-11-05
 updated: 2026-11-05
@@ -159,3 +159,60 @@ route); `planIrFirstBodyRouting` leaves those members out of the prepared
 `classIds`; `irSelfGuardedConstructorValue` drops the class-body refusal. Scratch
 check: with both, `A_m` emits on the overlay and returns the node result on gc
 and standalone. No Shepherd file changes.
+
+## Results (2026-11-05, base `12c505c9b7`, head `6452be2568`)
+
+Change: `src/codegen/ir-imported-call-planning.ts` (S3c value plans for
+selected class-method owners; `functionValueOwnerUnitIds`,
+`dropClassMemberFunctionValuePlans`), `src/codegen/index.ts` (those members
+stay out of the prepared `classIds`; the multi-source lane drops their plans),
+`src/codegen/ir-dynamic-construct.ts` (the class-body refusal now applies only
+outside a top-level class method body).
+
+**Wrapped ledger** (stride 40, standalone, `--jobs 2`):
+
+| | base | head |
+| --- | --- | --- |
+| files / compileOk / compileFail | 1296 / 1117 / 179 | 1296 / 1117 / 179 |
+| IR units (emitted) | 9657 | **9659 (+2)** |
+| class-member emitted | 22 | **24** |
+| `select:constructor-resolution-unsupported` | 60 | 58 |
+| `resolve:late-preparation-unsupported` | 409 | 409 |
+| invariants | 0 | 0 |
+
+**Raw ledger** (stride 40, standalone): identical apart from timing/commit.
+
+**Route dump** (the 1296 wrapped files): 1 file, 2 units change, both
+`select:constructor-resolution-unsupported → emitted`:
+`fn-name-static-precedence-order.js` `A_method`, `A_name`. No unit loses IR.
+The third #7242 row, `D_set_name`, is a setter: the planner visits methods only,
+so it keeps the select refusal.
+
+**Typed corpus bytes** (playground examples, `benchmarks/suites`, equivalence
+snippets; gc/standalone/wasi; 4605 compiles): byte-identical.
+
+**test262 A/B, standalone** (`scripts/run-test262-paths.mts`, 347 files: the
+route-changed file, the 111 `extends Iterator` files whose body throws
+`Test262Error`, and #7242's sample): base and head both 233 pass / 104 fail /
+10 compile_error, identical rows.
+
+**Probes** (gc, standalone, wasi; head = base on every lane): throw / return /
+`instanceof` / method on the result / `String(e)` / `e.constructor`, static and
+instance, beside a getter and an async sibling, a sibling that calls the
+member, a subclass method, a constructor sibling, `.call({})` on a foreign
+receiver (base and head both 2, node 1 — the #7235 shape, unchanged), arrow /
+field initializer / class expression (stay legacy), multi-source compile
+(unchanged routes). Siblings keep their routes.
+
+Test: `tests/equivalence/issue-7243-prepared-class-component-dynamic-ops.test.ts`
+(18 cases; 12 fail on base on the route assertion, values equal). The #7242
+test's class-member case now asserts the IR route.
+
+### Left open
+
+- The 200 `_next`/`_return`/`_throw` members of the 111 `extends Iterator`
+  files are refused earlier, at `select:class-member-unsupported` (the
+  unannotated JS-instance-return gap, #7227/#7235), on base and head alike.
+  They need that first.
+- Accessors (`D_set_name`), constructors and field initializers keep #7242's
+  refusal; accessors are the Shepherd's in-flight getter area.
