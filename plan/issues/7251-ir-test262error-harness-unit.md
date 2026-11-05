@@ -16,7 +16,8 @@ parent: 7106
 related: [7242, 7243, 2949, 7240]
 assignee: "ttraenkler/c-lead"
 loc-budget-allow:
-  - src/codegen/index.ts # 2026-11-05 (#7251): +2 lines, the `||`/`&&` entries in the existing IR_IMPLICIT_PARAM_PROJECTION_BINARY_OPS table (prettier puts one element per line); moving the table out of the driver is its own change
+  # 2026-11-05 (#7251): +2 lines, the `||`/`&&` entries in the existing IR_IMPLICIT_PARAM_PROJECTION_BINARY_OPS table (prettier puts one element per line)
+  - src/codegen/index.ts
 ---
 
 # #7251: the harness `Test262Error` unit

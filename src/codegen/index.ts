@@ -2754,6 +2754,8 @@ const IR_IMPLICIT_PARAM_PROJECTION_BINARY_OPS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.AsteriskToken,
   ts.SyntaxKind.SlashToken,
   ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.BarBarToken,
+  ts.SyntaxKind.AmpersandAmpersandToken,
 ]);
 
 function collectIrImplicitParamProjectionCandidates(

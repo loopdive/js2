@@ -901,9 +901,11 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
                 };
               } catch (error) {
                 // (#7106 Stage 4) Evidence that does not resolve (a JSDoc
-                // `{object}` parameter) is no signature either: a receiver-only
-                // or stored use never reads it, so it takes the opaque one.
-                if (error instanceof IrUnsupportedError && (isReceiver || isStoredValue)) return undefined;
+                // `{object}` parameter, a `union` lattice) is no signature
+                // either: a receiver-only, stored or self-guarded value use
+                // never reads it, so it takes the opaque one.
+                if (error instanceof IrUnsupportedError && (isReceiver || isStoredValue || isSelfGuardedValue))
+                  return undefined;
                 throw error;
               }
             };
