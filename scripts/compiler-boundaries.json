@@ -4811,12 +4811,12 @@
       "nextBoundary": "The JS best-effort class-shape rule of buildIrClassShapes (#7233); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
     },
     {
-      "path": "src/codegen/classes/ir-lib-interface-root-heritage.ts",
+      "path": "src/codegen/classes/ir-root-struct-heritage.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "The lib-interface root-heritage read-back of buildIrClassShapes (#7241); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
+      "nextBoundary": "The root-struct heritage read-back of buildIrClassShapes (#7241 lib interface, #7244 compiled function); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
     },
     {
       "path": "src/codegen/classes/missing-super-return.ts",
