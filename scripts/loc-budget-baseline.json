@@ -1,7 +1,7 @@
 {
   "generated": "2026-11-05",
   "threshold": 1500,
-  "totalCeiling": 1056286,
+  "totalCeiling": 1056380,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4426,
@@ -49,7 +49,7 @@
     "src/codegen/generators-native-consumer.ts": 2027,
     "src/codegen/generators-native.ts": 7196,
     "src/codegen/generic-struct-factory.ts": 1865,
-    "src/codegen/index.ts": 15492,
+    "src/codegen/index.ts": 15522,
     "src/codegen/ir-inline.ts": 1571,
     "src/codegen/ir-prepared-free-functions.ts": 2292,
     "src/codegen/iterator-native.ts": 6555,
@@ -111,7 +111,7 @@
     "src/ir/propagate.ts": 1702,
     "src/ir/runtime/manifest.ts": 2412,
     "src/ir/runtime/verify.ts": 3176,
-    "src/ir/select-identity.ts": 1643,
+    "src/ir/select-identity.ts": 1653,
     "src/ir/select.ts": 13676,
     "src/package-linker.ts": 2136,
     "src/runtime.ts": 20232,
