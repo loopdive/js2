@@ -2,7 +2,7 @@
 id: 6979
 title: "S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators"
 status: in-progress
-assignee: ttraenkler/opus-s7c-collapse-arms
+assignee: ttraenkler/opus-s7d-runtime-shrink
 created: 2026-10-14
 updated: 2026-10-25
 priority: high
@@ -1090,3 +1090,157 @@ explicit off" ×1, `4371` ×1, `4617` ×2, `4618-host-class-ctor-bridge` ×3,
 a host lane that S7-b already removed (`standalone: false` contexts, the
 host-assisted gc lane, host string constants). They belong to the S7-d test
 re-pin, not to this slice. No test was re-pinned or skipped here.
+
+### S7-d landing (2026-10-25)
+
+`opus-s7d-runtime-shrink` (claim `6979:s7d`), stacked on the S7-c head
+`be0532b78c` (PR 6896 → 6705 → 6701). S7 stays `in-progress`: S7-e and the
+rest of S7-c remain.
+
+**Measured before/after** (`check:host-import-policy` migration metrics; the
+ceilings in `plan/audit/host-import-policy-baseline.json` are unchanged — this
+lane may not edit the baseline):
+
+| Metric | S7-c head | This PR | Current ceiling |
+| --- | --- | --- | --- |
+| `runtimeTsLines` (`src/runtime.ts`) | 11,539 | 4,995 | 20,240 |
+| `resolveImportLines` | 1,940 | 206 | 7,868 |
+| `resolveImportCases` | 7 | 7 | 15 |
+| `ownedAdapterLines` | 898 | 898 | 989 |
+| `explicitCapabilityLines` | 1,194 | 1,194 | 1,194 |
+| probes / imports / regime-gap / unknown | 33 / 452 / 0 / 0 | 33 / 452 / 0 / 0 | ≥33 / ≤452 / 0 / 0 |
+
+The ceilings can ratchet to the measured numbers. `runtimeTsLines` counts
+`src/runtime.ts` only. The 11 new modules below hold 3,128 lines moved out of
+it unchanged except for dependency injection, so "runtime.ts + extracted
+modules" is 8,123 lines (−3,416 against the S7-c head, all deletion). The owned-adapter and
+explicit-capability lists were not extended: listing the new value-adapter
+modules there would push `ownedAdapterLines` over its 989 ceiling, and that
+re-scoping belongs to the ratchet change.
+
+**`resolveImport` lines per host-import-policy class on the S7-c head**
+(measured by arm, 1,940 lines including a ~40-line dispatch preamble):
+
+| Class | Arms | Lines | Emitted by any WasmGC profile? | S7-d |
+| --- | --- | --- | --- | --- |
+| retired (`unknown`) | `__extern_method_call_N`, `__call_dyn_N`, `__call_function*`, `__array_from_iter*`, `__call_dynamic_class_parent_N`, Promise combinator helpers, the ECMAScript `extern_class` arms (Map/Set/WeakMap/WeakSet ctor + methods, DataView/TypedArray ctor, Error family, Promise executor, SharedArrayBuffer) | ~546 | no — the publication gate rejects them | deleted |
+| instance-lifecycle | the 12 `__register_*` arms + `caught_exception` | 144 | `caught_exception` only; no `__register_*` import is emitted (every emitter is gated on `noJsHost`/`!ctx.standalone` or only reads `ctx.funcMap`) | `__register_*` deleted |
+| host-accelerator | `__extern_eval` (212), `__extern_direct_eval` (75), `__date_parse_host`, `__regexp_host_*`, RegExp `lastIndex` (34) | 323 | `__date_parse_host`, `__regexp_host_*`, RegExp `extern_class`: yes. `__extern_eval`/`__extern_direct_eval`: no (the only emitters sit behind `noJsHost` early returns; `needsHostIndirectEvalImport` returns `false`) | eval engines deleted, the rest moved |
+| regime-gap (`eager-generator-buffer`) | the 16 `__gen_*` / `__create_*generator` arms | 274 | yes | moved to `eager-generator-buffer.ts` |
+| platform-capability | `extern_class` get/set/method/ctor for declared classes, EventEmitter, `__get_process*`, `__crypto_*`, declared-function fallback | ~467 | yes | moved (`extern-class-capability.ts`, `crypto-capability.ts`) |
+| value-adapter | `__unwrap_for_wasm`, `__str_*`, callback makers, `box`/`unbox` | 147 | yes | kept (`__str_*` moved to `string-memory-adapter.ts`) |
+
+After S7-d `resolveImport` is a 206-line dispatcher. Every arm body lives in
+a capability, accelerator or adapter module.
+
+**Deleted** (the corpus import scan and `git grep` on the import names both
+show the import is never emitted):
+- Providers: `__extern_method_call_[0-4]`, `__extern_eval` (+ the legacy
+  test262 harness-shim eval), `__extern_direct_eval`, all 12 `__register_*`,
+  `__call_dynamic_class_parent_N`, `__array_from_iter{,_n}{,_strict}`,
+  `__call_function{,_N}`, `__register_promise_subclass_ctor` and the five unused
+  Promise helpers, `__call_dyn_N`, a duplicate `__register_fnctor_instance`, and
+  the retired ECMAScript `extern_class` arms.
+- The state those providers were the only writers of. Every reader was folded
+  to its constant (the map is always empty), and the code that only those
+  readers reached was deleted: the class-constructor mirror
+  (`_makeClassCtorMirrorForHost`, `_resolveClassConstructBridge`,
+  `_classCtorClosures` and five sibling maps), the prototype/static
+  method-name allowlists, `_argumentsObjects` (mapped-arguments facade arms),
+  `_userProxies`, `_userClassTags`, the compiled TypedArray mirrors, and
+  `_classChainRead`/`_hostConstructorForInstance`.
+- Code with no reachable caller, found by a call-graph sweep run to a
+  fixpoint: JSON serialize/internalize (~350 lines), `_instanceofResult`, the
+  `_DATE_FMT_*` table, `_iteratorRecordForHost`, `_setLikeRecordForHost`,
+  `_vecDefineOwnProperty`, `_toJsArrayDeep`, among others.
+- Whole modules (and their `compiler-boundaries.json` entries):
+  `fixed-extern-method-call.ts`, `host-call-abi.ts`,
+  `compiled-class-prototype.ts`, `fnctor-instanceof.ts`,
+  `object-create-class-instance.ts`, `class-static-parent.ts`, and six that
+  nothing imported even on the S7-c head (`array-proto-sparse.ts`,
+  `compiled-closure-length.ts`, `compiled-entry-pair.ts`,
+  `wasm-carrier-prototype.ts`, `string-predicate-adapter.ts`,
+  `dynamic-function-import.ts`). Exports with no importer were removed from
+  `strict-iterator-host.ts` (`resolveArrayIterationImport`),
+  `init-marshal-registry.ts`, `class-method-host-bridge.ts`,
+  `date-host-method.ts`, `typed-array-host-brand.ts`,
+  `vec-mirror-writeback.ts`, `wasm-struct-host-semantics.ts`,
+  `wasm-struct-sidecar.ts`, `test262-harness-host.ts` and
+  `promise-intrinsics.ts`. `dynamic-code-policy.ts` loses
+  `isDynamicCodeBuildFailure`, whose only reader was the deleted `__extern_eval`
+  host fallback. `buildImports` still validates `options.dynamicCode` (a
+  misspelt policy throws, `compat` warns) but no env provider reads it any more.
+
+**New modules** (each imports nothing from `src/runtime.ts`; `check-import-cycles` OK):
+
+| Module | Lines | Class |
+| --- | --- | --- |
+| `host-carrier-state.ts` | 408 | value adapter: carrier predicates, absence sentinel, sidecar/descriptor/integrity state, facade cache |
+| `struct-reflection.ts` | 419 | value adapter: field names (cross-module decoders), `[[HasOwnProperty]]`/`[[GetOwnProperty]]` |
+| `host-to-primitive.ts` | 456 | value adapter: OrdinaryToPrimitive for carriers |
+| `host-plain-copy.ts` | 223 | value adapter: detached copies, Date carrier marshal |
+| `string-memory-adapter.ts` | 55 | value adapter: `__str_*` |
+| `host-bridge-authority.ts` | 397 | instance lifecycle: closure/data-struct bridge manifests, branded exports |
+| `extern-class-capability.ts` | 558 | platform capability + RegExp/Date/Intl accelerators: `extern_class` |
+| `crypto-capability.ts` | 97 | platform capability: Web Crypto |
+| `node-require.ts` | 70 | platform capability: Node `require`, namespaced classes |
+| `dom-containment.ts` | 125 | platform capability: `domRoot` containment |
+| `eager-generator-buffer.ts` | 320 | regime gap #680 provider |
+
+`src/runtime.ts` keeps the composition root (`resolveImport`, `buildImports`,
+`wrapExports`, instantiation) and the mutually recursive facade core:
+`_wrapForHost`, `_safeGet`, `_safeSet` and the closure bridges, one ~3,700-line
+strongly connected cluster. Splitting that cluster needs dependency injection
+through every recursion edge, so it is left to a follow-up. It also holds the
+functions over the 300-line function budget (`_wrapForHost` among them), and
+moving one would read as a new over-budget function.
+
+**Kept on purpose** (they serve a keep-list class): `__unwrap_for_wasm`,
+`box`/`unbox`, both callback makers, `caught_exception`, the generator
+regime-gap arms, `__get_process*`, `__crypto_*`, `__str_*`,
+`__date_parse_host`, `__regexp_host_*`, every non-ECMAScript `extern_class`,
+the #7095/#7098 marshal (`platform-arg-marshal.ts`,
+`resolveDeclaredFunctionImport`), the #6986 Intl marshal,
+`compatibility-semantic-adapter.ts` (the `date` accelerator), and the
+String/Number/Boolean wrapper handling in the `extern_class` constructor (those
+classes are not in `ECMASCRIPT_EXTERN_CLASSES`, so the gate does not reject them).
+
+**Byte identity**: the S7-c harness (2,494 programs: equivalence sources,
+playground examples, a 1-in-40 test262 sample) on gc / standalone / wasi,
+hashing each binary together with its import list. Against the S7-c head:
+0 differences on all three lanes, after the deletions and again after the
+module split.
+
+**Tests.** 201 files — every test naming a deleted import/provider or using
+`dynamicCode`, plus the kept-adapter suites (#7095, #7098, #7091, #6978,
+#6986, `issue-3214-*`, `dom-capability-adapter`, #4401, #6979) and the
+`--pinned` set. Run on the S7-c head and on this tree: 2,210 → 2,209 passing,
+877 → 877 failing, 0 new failures, 0 fixed. The −1 is the deleted #5131 unit
+row that drove `resolveArrayIterationImport` directly. The 877 reds are
+pre-existing and identical on the S7-c head (host lanes S7-a/b removed:
+`issue-1073`, `1164*`, `1382`, `1395-phase1`, `1472`, `2028`, `6790` part 2/3, …).
+Re-pins: `issue-5131` (drops that unit row and its imports);
+`issue-5280-class-parent-null-heritage.test.ts` is deleted with
+`class-static-parent.ts` (it unit-tested the registry only).
+A further 73 files cover the moved and folded code: generators, DOM,
+`domRoot` containment, crypto, #3451 linked harness, #3603/#4383 vec mirrors,
+#6790, Promise realm, #3518 runtime contracts. Each was run alone on both
+trees: 692 passing / 183 failing on each, the same rows. Three of them
+(`generators`, `generator-yield-contexts`, `for-of-string-generator`) run the
+vitest worker out of memory on both trees, so they produce no report on either.
+
+**Gates** (`LOC_GATE_BASE` = `upstream/main` `5022327bb9`): tsc 0, Biome 0,
+Prettier clean; loc, func, coercion-sites, oracle, dead-exports, import-cycles
+and standalone-arms all OK, with no new grants; `check:host-import-policy` OK
+(33 / 452 / 0 / 0; accelerators regexp 4, date 1, intl 4);
+`check:ir-fallbacks` OK; `check:ir-only --policy=hybrid` READY (single-host
+26/12, standalone 38/0). Equivalence gate (`.tmp` copy with
+`--configLoader runner`): 20 failing, 2,044 passing, 22 known failures, "No new
+equivalence regressions". The same 2 baseline failures now pass as on S7-c
+(`delete-sentinel`, `reflect-api`).
+
+Left for later: the `getStartExports` start-section window in
+`instance-lifecycle-adapter.ts` has no producer since the `__register_init_*`
+imports went, so `marshalExports(...)` now equals `getExports()`. That needs a
+fold across the lifecycle adapter. `runtime-eval.ts` (outside this lane) still
+exports `createEvalShim` and the raw-assert classifier for tests.
