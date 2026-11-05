@@ -14,6 +14,15 @@ area: ir
 goal: ir-full-coverage
 related: [7233, 7227, 7223, 2917]
 assignee: "ttraenkler/c-lead"
+# 2026-11-05 (#7241): the selector admission arm for a flat lib-interface
+# shape lives beside the gate it relaxes; the any[] return arm beside the
+# class-position projection it extends (resolveWasmType is in index.ts).
+loc-budget-allow:
+  - src/ir/select-identity.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/ir/select-identity.ts::planIrCompilationByIdentity
+  - src/codegen/index.ts::buildIrClassShapes
 ---
 
 # #7241: two class buckets that are cheap in legacy ABI terms
