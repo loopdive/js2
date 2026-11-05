@@ -4,7 +4,7 @@ title: "S7: delete the host-semantic implementation — one native semantic core
 status: in-progress
 assignee: ttraenkler/opus-s7c-collapse-arms
 created: 2026-10-14
-updated: 2026-10-25
+updated: 2026-11-05
 priority: high
 horizon: xl
 feasibility: hard
@@ -1090,3 +1090,111 @@ explicit off" ×1, `4371` ×1, `4617` ×2, `4618-host-class-ctor-bridge` ×3,
 a host lane that S7-b already removed (`standalone: false` contexts, the
 host-assisted gc lane, host string constants). They belong to the S7-d test
 re-pin, not to this slice. No test was re-pinned or skipped here.
+
+### S7-c continuation (2026-10-25)
+
+Carried forward by `opus-s7c2-fold-rest` (claim `6979:s7c2`) on top of the
+S7-c head `be0532b78c`, as an explicitly stacked draft PR. This finishes the
+`ctx.standalone` fold and removes the field. S7 stays `in-progress` (S7-d,
+S7-e remain).
+
+**Method.** The S7-c codemod (`ctx.standalone` → `true`, boolean / `if` /
+unreachable-statement simplification) plus a cascade the first attempt lacked:
+every function the fold left with a constant body (`return true|false|null|
+undefined`, or an empty `void` body) has its call sites folded with the same
+codemod and is deleted; locals and imports the fold orphaned are pruned to a
+`tsc --noUnusedLocals` fixpoint against the base tree; functions the
+dead-export gate reports newly unreferenced are pruned (after checking that no
+test names them); and a module left with no importer is deleted together with
+its `scripts/compiler-boundaries.json` row. That cascade is what made the whole
+top-level directory foldable — the dead `class-instance-proto` /
+`class-object-of` / `class-value-construct` / `generator-eager-refusal` modules
+that stopped the first attempt are simply deleted now. A `X || false` /
+`X && true` rewrite is only applied where the value is used for truthiness
+(the first attempt's `funcref-as-closure.ts` hazard).
+
+**Hit counts** (`check:standalone-arms`, banked with `--update-on-decrease` in
+each commit):
+
+| Directory | Before | After |
+| --- | --- | --- |
+| `src/codegen` (top level) | 676 | 0 |
+| `src/codegen/classes` | 16 | 0 |
+| `src/codegen/helpers` | 5 | 0 |
+| `src/codegen/context` | 5 | 0 |
+| `src/codegen/analysis` | 3 | 0 |
+| `src` (top level, comments) | 4 | 0 |
+| `src/runtime/contracts` (comments) | 2 | 2 — S7-d's files |
+| **total** | **711** | **2** |
+
+**Commits** (each byte-identical against its predecessor):
+
+| Commit | Scope | Total after | Modules deleted |
+| --- | --- | --- | --- |
+| fold 1 | `classes/` + `helpers/` + `analysis/` | 687 | `analysis/host-callable-initializer.ts` |
+| fold 2 | top level, accessor..class-value | 577 | `class-instance-proto.ts`, `class-object-of.ts`, `class-value-construct.ts` |
+| fold 3 | top level, closed-method..generators-native-protocol | 419 | `dynamic-method-call-arity.ts`, `generator-eager-refusal.ts` |
+| fold 4 | top level, generators-native..program-abi (+ `noJsHost` cascade into `src/ir`) | 204 | `expressions/callable-property-host-value.ts`, `expressions/dynamic-element-host-call.ts`, `expressions/dynamic-function-ctor-value.ts`, `host-function-has-instance.ts`, `init-class-dispatch-helpers.ts`, `null-ref-undefined-box.ts` |
+| fold 5 | top level, promise..standalone-class | 110 | — |
+| fold 6 | rest of the top level + context comments | 7 | `fixed-host-method-call.ts`, `undefined-extern-import.ts` |
+| field | remove `CodegenContext.standalone` | 2 | — |
+| g8 | two constant helpers found on a re-scan | 2 | `host-native-instanceof.ts` |
+
+Fifteen modules deleted in all; `src/` is about 7,200 lines shorter net
+(`check:loc-budget` against `be0532b78c`: −7,233 LOC over 394 files).
+
+**Field removal.** Done. `CodegenContext.standalone` is gone; create-context
+no longer sets it and its invariant guard reads `targetProfile.nativeRegime`,
+the single regime truth. `hostFreeEnvironment(ctx)` and `jsValueBoundary(ctx)`
+remain the two environment predicates. Structural readers dropped the key
+(`IrProgramRuntimePolicyContext`, `dynamicReadCrossesStandaloneLink`,
+`formatIrPathFallbackDiagnostic`, `arrayBufferIsViewStaticDecision`). The
+physical/runtime emitters that still take a `{ wasi, standalone }` target —
+`buildTargetTaggedTry` and the promise/async runtime bodies under
+`src/runtime/` (S7-d's files, not touched here) — receive `regimeTarget(ctx)`,
+a constant-`standalone: true` adapter next to the environment predicates; it
+goes when S7-d drops the parameter. No arm was kept as a platform /
+accelerator / value-adapter arm: every accelerator predicate kept its
+`hasHostAccelerator(...)` / string-bridge test and lost only the constant
+regime conjunct.
+
+**Byte identity.** Corpus as in the S7-c landing (2,494 programs, gc /
+standalone / wasi, 7,482 hashes per scan). Every one of the eight commits
+against its predecessor: 0 differences on all three lanes; base `be0532b78c`
+against the final head: 0 differences, compile errors included.
+
+**Gates on the final tree.** tsc 0, Biome 0, Prettier clean.
+`check:standalone-arms` OK (711 → 2, banked per commit).
+`check:host-import-policy`: 33 probes, 452 imports, 0 regime-gap, 0 unknown;
+accelerators regexp 4 / date 1 / intl 4 (unchanged; baseline not edited).
+`check:ir-fallbacks` OK. `check:ir-only --policy=hybrid` READY, single-host
+26/12, standalone 38/0. Compiler-boundaries inventory valid. Coercion sites,
+oracle ratchet, dead exports (0 new unreferenced functions) and import cycles
+OK. LOC and function budgets OK against the stack predecessor `be0532b78c`
+with no new grants (the field-removal commit merges each `regimeTarget` import
+into the file's existing `context/types.js` import so no god-file grows).
+Against today's `upstream/main` (`a3a9564345`, ~1,250 commits ahead of the
+stack) the LOC gate reports five files this slice does not change in size
+(`compiler.ts`, `codegen-linear/runtime.ts`, `ir/module-bindings.ts`,
+`ir/program-consumer.ts`, `ir/program-physical-plan.ts`): stack drift, left
+for the stack re-merge. Equivalence gate: 20 failing, 2,044 passing, "No new
+equivalence regressions", `delete-sentinel` and `reflect-api` newly pass —
+identical to S7-c.
+
+**Tests.** Re-pinned to the regime (the host arms they asserted are gone):
+`tests/ir/fnctor-producer` (host-lane bounded observation case, "a host lane"
+row), `tests/ir/fnctor-argument-projection` ("host target" row),
+`tests/issue-5150` ("standalone false" row; fix-on-touch: its read-order pins
+predated the #6651 V3 TypedArray-subclass probe and were 28/30 red on the base,
+now green). The 15 `--pinned` files: 270/270. The 45 files that name a removed
+export: no new failures except the #3518 historical receipts, which were red
+on the base — `issue-3518-async-frame-body-source-preservation` (9 → ~20 red;
+it pins the exact `async-frame.ts` import text, including the removed
+`isHostAsyncLane`, and its core "all nine spans" case already failed) and
+`issue-3518-native-closure-resources` (file-level red before and after); the
+#3518 inventory successors and #4376 inventory tests fail identically
+(884 / 448) before and after. No receipt was regenerated and nothing skipped.
+
+**Left for S7-d.** The two comment mentions in `src/runtime/contracts`, the
+`target.standalone` parameters of the runtime emitters and with them
+`regimeTarget`.
