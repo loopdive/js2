@@ -15,10 +15,9 @@
 import { irFnctorLayoutTypeRef } from "../ir/abi-bindings.js";
 import { irFnctorConstructorFuncRef } from "../ir/callable-bindings.js";
 import { validateIrFnctorShape, type IrFnctorShape } from "../ir/fnctor-abi.js";
-import type { IrFnctorAdmission } from "../ir/propagate.js";
 import type { FieldDef, FuncHandle, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { makeIrFnctorAdmissionResolver, makeIrFnctorArgumentProjectionAuthority } from "./ir-fnctor-admission.js";
+import { makeIrFnctorArgumentProjectionAuthority } from "./ir-fnctor-admission.js";
 import type { FnctorCaptureLayout } from "./fnctor-constructor-identity.js";
 import type { ProgramAbiFnctorObservation } from "./program-abi-fnctor-planning.js";
 import { canonicalProgramAbiValType } from "./program-abi-signatures.js";
@@ -69,80 +68,6 @@ export function buildStandaloneIrFnctorShape(input: StandaloneIrFnctorShapeInput
     userParamTypes: [{ kind: "string" }],
     hiddenIdentity: true,
     constructorIdentity: { unitId: input.constructorUnitId, paramIndex: 1 },
-  };
-}
-
-function supportsBoundedPhysicalLane(input: ObserveIrFnctorProducerInput): boolean {
-  // Standalone reserves `$bag`/presence/constructor fields and may use a
-  // foreign-result ABI.  Those require a logical-to-physical field map and
-  // are intentionally left on the legacy path in this checkpoint.
-  return false;
-}
-
-function makeBoundedShape(
-  admission: IrFnctorAdmission,
-  functionName: string,
-  structName: string,
-  constructorName: string,
-  hiddenIdentity: boolean,
-): IrFnctorShape {
-  const constructorUnitId = admission.constructorUnitId;
-  return {
-    kind: "fnctor-shape",
-    sourceId: admission.sourceId,
-    constructorUnitId,
-    constructorName: functionName,
-    constructorTarget: irFnctorConstructorFuncRef(constructorUnitId, constructorName),
-    reservedLayout: irFnctorLayoutTypeRef(constructorUnitId, structName),
-    fields: [{ name: "input", type: { kind: "string" }, ordinal: 0 }],
-    captures: [],
-    userParamTypes: [{ kind: "string" }],
-    hiddenIdentity,
-    constructorIdentity: { unitId: constructorUnitId, paramIndex: 1 },
-  };
-}
-
-function makeBoundedObservation(
-  input: ObserveIrFnctorProducerInput,
-  admission: IrFnctorAdmission,
-): ProgramAbiFnctorObservation {
-  const hiddenIdentity = !input.ctx.wasi;
-  const constructorName = `${input.structName}_new`;
-  const constructorTarget = irFnctorConstructorFuncRef(admission.constructorUnitId, constructorName);
-  const reservedLayout = irFnctorLayoutTypeRef(admission.constructorUnitId, input.structName);
-  const shape = makeBoundedShape(admission, input.functionName, input.structName, constructorName, hiddenIdentity);
-  const constructorResultType = input.resultIsExternref
-    ? ({ kind: "externref" } as const)
-    : ({ kind: "ref", typeIdx: input.structTypeIdx } as const);
-  return {
-    shape,
-    sourceId: admission.sourceId,
-    constructorUnitId: admission.constructorUnitId,
-    reservedLayout,
-    constructorFunc: constructorTarget,
-    constructorFuncIdx: input.constructorFuncIdx,
-    constructorFunction: input.constructorFunction,
-    structTypeIdx: input.structTypeIdx,
-    fields: input.fields,
-    fieldMappings: [
-      {
-        name: "input",
-        physicalIndex: shape.fields[0]!.ordinal,
-        logicalType: shape.fields[0]!.type,
-        physicalType: input.fields[0]!.type,
-        refinement: "none",
-      },
-    ],
-    captureParamTypes: input.captureLayout.valueParamTypes,
-    tdzFlagParamTypes: input.captureLayout.tdzFlagParamTypes,
-    userParamTypes: input.userParamTypes,
-    hiddenIdentity,
-    constructorIdentityParamIndex: hiddenIdentity ? 1 : null,
-    resultIsExternref: input.resultIsExternref,
-    constructorResultType,
-    instanceCarrierType: constructorResultType,
-    supportsConstruction: !input.resultIsExternref,
-    supportsFieldGet: !input.resultIsExternref,
   };
 }
 
@@ -294,23 +219,5 @@ export function observeApprovedIrFnctor(input: ObserveIrFnctorProducerInput): bo
     return true;
   }
 
-  if (!supportsBoundedPhysicalLane(input)) return false;
-
-  const admission = makeIrFnctorAdmissionResolver(ctx, ctx.checker, identityContext)(input.site);
-  if (
-    !admission ||
-    admission.constructorDeclaration !== input.declaration ||
-    admission.constructorSite !== input.site
-  ) {
-    return false;
-  }
-  if (
-    identityContext.sourceIdBySourceFile.get(input.site.getSourceFile()) !== admission.sourceId ||
-    identityContext.unitIdByDeclaration.get(input.declaration) !== admission.constructorUnitId
-  ) {
-    return false;
-  }
-  const observation = makeBoundedObservation(input, admission);
-  registry.observe(observation);
-  return true;
+  return false;
 }

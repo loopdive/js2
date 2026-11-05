@@ -107,7 +107,6 @@ import { emitStandaloneIntrinsicEvalValue } from "./eval-inline.js";
 import { runtimeEvalProviderLinkable } from "./runtime-eval-provider.js";
 import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
-import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
@@ -2801,9 +2800,9 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     return emitConstantInstanceOf(ctx, fctx, expr, staticResult);
   }
 
-  const hostDate =
-    ctorName === "Date" ? emitHostOrNativeBuiltinInstanceOf(ctx, fctx, expr, ctorName, [ensureDateStruct(ctx)]) : null;
-  if (hostDate) return hostDate;
+  // (#6979) The folded host Date arm registered the native Date struct here;
+  // keep the registration so the type section is unchanged.
+  if (ctorName === "Date") ensureDateStruct(ctx);
 
   // (#1536c) Standalone / WASI: `instance instanceof MyError` where
   // `class MyError extends Error {}` is an externref-backed user subclass. The
