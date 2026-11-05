@@ -312,9 +312,17 @@ export function irFunctionThisStrictness(ctx: CodegenContext, fn: ts.FunctionDec
  * Is `ident` (a `new` callee or an `instanceof` right operand) a self-guarded
  * constructor the IR may use as a value — the declaration legacy keeps out of
  * the fnctor machinery, never reassigned, never a generator?
+ *
+ * (#7242) Never inside a class body: the function-object planner
+ * (`planIrImportedCalls`) mints the value plan for top-level function and
+ * module-init owners only, so a class-member claim had no plan and demoted at
+ * build (`unknown class "Test262Error"`). Minting it there is not enough: the
+ * prepared class component has no Program ABI identity for the dynamic
+ * carrier ops `dyn.construct` needs.
  */
 export function irSelfGuardedConstructorValue(ctx: CodegenContext, ident: ts.Identifier): boolean {
   if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return false;
+  if (ts.findAncestor(ident.parent, ts.isClassLike) !== undefined) return false;
   const decl = ctx.oracle.valueDeclarationOf(ident);
   if (decl === undefined || !isSelfGuardedConstructor(decl) || decl.asteriskToken !== undefined) return false;
   return !identifierIsWrittenTo(ident.getSourceFile(), ident.text);
