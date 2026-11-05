@@ -69,7 +69,6 @@ import {
   emitPreparedAsyncFrameStateMachine,
 } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
-import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
 import { classHasUnresolvedComputedMemberName, classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 Step 1 / R2-3)
 import { classHasComputedKeyAssignment } from "./class-member-keys.js"; // (#6772 S5)
 import { standaloneCommaHeritage } from "./classes/class-heritage-comma.js"; // (#6772 S6)
@@ -2346,10 +2345,6 @@ function topLevelClassInheritsRuntimeKeys(ctx: CodegenContext, statement: ts.Cla
 }
 
 function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, statement: ts.Statement): boolean {
-  if (shouldCollectTopLevelClassForRuntimeHeritage(ctx, statement)) {
-    ctx.moduleInitStatements.push(statement);
-    return true;
-  }
   // (#5195 Step 1) A class with a METHOD (or an accessor in a body this
   // collector's accessor-only shape test declines) whose computed key does not
   // fold has ClassDefinitionEvaluation work of its own: the key expression must

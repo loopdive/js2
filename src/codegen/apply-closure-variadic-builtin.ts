@@ -69,7 +69,7 @@ export function buildVariadicBuiltinApplyArm(
   argcLocal: number,
   argcGlobalIdx: number,
 ): Instr[] {
-  const variadic = ctx.standalone || ctx.wasi ? ctx.variadicBuiltinClosure : undefined;
+  const variadic = ctx.variadicBuiltinClosure;
   const externGetIdx = ctx.funcMap.get("__extern_get_idx");
   if (variadic === undefined || externGetIdx === undefined) return [];
   const { funcTypeIdx, structTypeIdx, vecTypeIdx, arrTypeIdx } = variadic;
@@ -168,7 +168,7 @@ export function buildVariadicBuiltinMethodCallArm(
   anyLocal: number,
   restore: Instr[],
 ): Instr[] {
-  const variadic = ctx.standalone || ctx.wasi ? ctx.variadicBuiltinClosure : undefined;
+  const variadic = ctx.variadicBuiltinClosure;
   if (variadic === undefined) return [];
   const { funcTypeIdx, structTypeIdx, vecTypeIdx, arrTypeIdx } = variadic;
   const selfTypeIdx = getClosureFuncSelfTypeIdx(ctx, funcTypeIdx) ?? structTypeIdx;

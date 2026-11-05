@@ -4133,14 +4133,6 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/class-instance-proto.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
       "path": "src/codegen/class-layout-registration.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -4150,14 +4142,6 @@
     },
     {
       "path": "src/codegen/class-member-keys.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
-      "path": "src/codegen/class-object-of.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -4230,14 +4214,6 @@
     },
     {
       "path": "src/codegen/class-to-primitive.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
-      "path": "src/codegen/class-value-construct.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",

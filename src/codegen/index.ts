@@ -695,10 +695,7 @@ import {
 } from "./vec-access-exports.js"; // (#3272) extracted verbatim
 import { emitInitMarshalHelperRegistration } from "./init-marshal-helpers.js"; // (#5193)
 import { emitInitClassDispatchRegistration } from "./init-class-dispatch-helpers.js"; // (#5202)
-import { emitClassInstanceProtoExport } from "./class-instance-proto.js"; // (#5347)
 import { hostBridgeMethodKeys } from "./runtime-key-class-methods.js"; // (#5358)
-import { emitClassValueConstructExports } from "./class-value-construct.js"; // (#5242)
-import { emitClassObjectOfExport } from "./class-object-of.js"; // (#5354)
 import {
   emitClosureCallExport,
   publishStandaloneTimerCallbackDispatch,
@@ -6236,15 +6233,12 @@ export function generateModule(
 
     // (#5347) …and the REVERSE map of the same family: which class minted this
     // struct, and what is its prototype carrier.
-    emitClassInstanceProtoExport(ctx);
 
     // (#5242) `new <class value>(…)` — the CONSTRUCT twin of the same family.
-    emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS);
 
     // (#5354) "which class is this struct an instance of" — the identity the
     // host needs to give a foreign instance the same `[[Prototype]]` object
     // that `C.prototype` answers across the linked-provider seam.
-    emitClassObjectOfExport(ctx);
 
     // (#2038 / #3100, reserve-then-fill #1719) Rebuild the native `__iterator`
     // body with the LATE ladder arms now that every carrier type is known: the
@@ -7724,21 +7718,6 @@ function hostClassBridgeFormalIsOptional(ctx: CodegenContext, fullName: string, 
   return (ctx.funcOptionalParams.get(fullName) ?? []).some((info) => info.index === index);
 }
 
-/** Instructions converting one incoming bridge externref into `param`. */
-function hostClassBridgeParamCoercion(ctx: CodegenContext, param: ValType): Instr[] | undefined {
-  if (param.kind === "externref" || param.kind === "ref_extern") return [];
-  if (param.kind !== "f64") return undefined;
-  const unboxIdx = ctx.funcMap.get("__unbox_number");
-  if (unboxIdx === undefined) return undefined;
-  const coercion = callArgCoercionInstrs(
-    { kind: "externref" },
-    param,
-    ctx.funcMap.get("__box_number") ?? null,
-    unboxIdx,
-  );
-  return coercion.length > 0 ? coercion : undefined;
-}
-
 /**
  * Return whether a host-visible class bridge will need to box a numeric
  * result. The bridge bodies below have an `(externref, ...externref) ->
@@ -8351,38 +8330,6 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   // above). Gated on the module actually containing a fnctor subclass so every
   // other module's emitted bytes are IDENTICAL.
 }
-
-/** Box a bridge's Wasm result into the `externref` the host ABI returns. */
-function appendClassBridgeResultBoxing(ctx: CodegenContext, body: Instr[], resultType: ValType | undefined): boolean {
-  if (resultType === undefined) {
-    const undefinedIdx = ctx.funcMap.get("__get_undefined");
-    body.push(undefinedIdx !== undefined ? { op: "call", funcIdx: undefinedIdx } : { op: "ref.null.extern" });
-    return true;
-  }
-  if (resultType.kind === "externref" || resultType.kind === "ref_extern") return true;
-  if (resultType.kind === "ref" || resultType.kind === "ref_null") {
-    body.push({ op: "extern.convert_any" });
-    return true;
-  }
-  const boxIdx = ctx.funcMap.get("__box_number");
-  if (boxIdx === undefined) return false;
-  if (resultType.kind === "f64") body.push({ op: "call", funcIdx: boxIdx });
-  else if (resultType.kind === "i32") body.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx });
-  else if (resultType.kind === "i64") body.push({ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxIdx });
-  else if (resultType.kind === "f32") body.push({ op: "f64.promote_f32" }, { op: "call", funcIdx: boxIdx });
-  else return false;
-  return true;
-}
-
-/**
- * (#5242) The two boundary primitives `emitClassValueConstructExports` needs,
- * passed in rather than imported so the emitter can live in its own file
- * without a cycle back into this module.
- */
-const CLASS_VALUE_CONSTRUCT_HELPERS = {
-  paramCoercion: hostClassBridgeParamCoercion,
-  boxResult: appendClassBridgeResultBoxing,
-};
 
 /**
  * (#1716) Emit `__call_@@toPrimitive(self, hint) -> externref` — a 2-arg
@@ -10774,15 +10721,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("emit-iterator-method-export", () => emitIteratorMethodExport(ctx));
 
     // (#5347) See the single-source path — same placement, same gate.
-    profilePhase("emit-class-instance-proto", () => emitClassInstanceProtoExport(ctx));
 
     // (#5242) See the single-source path — same placement, same gate.
-    profilePhase("emit-class-value-construct", () =>
-      emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS),
-    );
 
     // (#5354) See the single-source path — same placement, same gate.
-    profilePhase("emit-class-object-of", () => emitClassObjectOfExport(ctx));
 
     // Multi-source parity with generateModule: rebuild the reserved native
     // iterator ladders only after every graph carrier and receiver dispatcher

@@ -264,7 +264,7 @@ export function prepareBuiltinCtorValueInvoke(
   fctx: FunctionContext,
   callee: ts.Expression,
 ): InvokeCtorName | undefined {
-  if (ctx.standalone !== true || ctx.wasi === true) return undefined;
+  if (ctx.wasi === true) return undefined;
   const name = tracedBuiltinCtorValueName(ctx, callee);
   if (name === undefined) return undefined;
   return prepareNamedBuiltinCtorValueInvoke(ctx, fctx, name);
@@ -344,7 +344,6 @@ function armedNames(ctx: CodegenContext): { name: InvokeCtorName; globalIdx: num
  * Empty — byte-identical — unless a traced site minted a helper.
  */
 export function builtinCtorValueCallArmInstrs(ctx: CodegenContext, argOf: (k: number) => Instr[]): Instr[] {
-  if (ctx.standalone !== true) return [];
   const instrs: Instr[] = [];
   for (const { name, globalIdx } of armedNames(ctx)) {
     const call = helperCallInstrs(ctx, name, argOf, true);
@@ -445,7 +444,7 @@ export function tryCompileBuiltinCtorAliasInvoke(
   fctx: FunctionContext,
   expr: ts.CallExpression | ts.NewExpression,
 ): ValType | undefined {
-  if (ctx.standalone !== true || ctx.wasi === true || aliasInvokeInFlight.has(expr)) return undefined;
+  if (ctx.wasi === true || aliasInvokeInFlight.has(expr)) return undefined;
   if (ts.isCallExpression(expr) && expr.questionDotToken) return undefined;
   const callee = unwrap(expr.expression);
   if (!ts.isIdentifier(callee) || resolvesToAmbientGlobal(ctx, callee)) return undefined;

@@ -347,7 +347,6 @@ export function classObjectRestrictedProperty(
   // identity needs no proof.
   receiver?: ts.Expression,
 ): boolean {
-  if (ctx.standalone !== true) return false;
   if (propName !== "caller" && propName !== "arguments") return false;
   if (receiver !== undefined && !restrictedPropertyReceiverIsClass(ctx, receiver, className)) return false;
   if (!classChainIsProvablyAllClasses(ctx, className)) return false;

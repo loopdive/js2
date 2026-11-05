@@ -139,7 +139,7 @@ export {
 // avoid perturbing the init order of the coercion-engine/string-ops chain.
 import { planAsyncClosureActivation, emitAsyncClosureBody, reportDeclinedAsyncBody } from "./async-activation.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js"; // (#2865) async-gen fn-expr producer
-import { asyncClosurePromiseWrapEnabled, reserveAsyncClosurePromiseWrapper } from "./async-closure-promise.js"; // (#4648)
+import { reserveAsyncClosurePromiseWrapper } from "./async-closure-promise.js"; // (#4648)
 // (#3164) Native generator FUNCTION EXPRESSIONS (standalone/wasi): the lifted
 // closure body emits the state-struct factory instead of the eager-buffer host
 // path. `generators-native` does not import `closures`, so no cycle.
@@ -4686,7 +4686,7 @@ export function compileArrowAsCallback(
     (arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false) &&
     !(ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined) &&
     cbResultIsPromiseWrappable &&
-    asyncClosurePromiseWrapEnabled(ctx) &&
+    false &&
     planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) === null;
   const cbBodyName = cbAsyncPromiseWrap ? `${cbName}__async_body` : cbName;
   const cbFuncIdx = mintDefinedFunc(ctx);
