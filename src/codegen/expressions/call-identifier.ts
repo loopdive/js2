@@ -73,7 +73,6 @@ import { emitSymbolToString } from "../symbol-native.js";
 import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
 import { resolveBuiltinStaticBindingAlias } from "../builtin-static-globals.js";
 import { resolveVariadicBuiltinStaticPlainAlias } from "../builtin-static-plain-alias.js"; // (#4491 wave-5 T6)
-import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carrier.js";
 import { ensureStandaloneBuiltinStaticMethodClosure } from "../builtin-value-read.js";
 import { localBindingShadowsCapturingFunction } from "../function-declaration-observation.js";
 import { blockBindingShadowsNestedDeclaration } from "../function-declaration-observation.js"; // (#6994)
@@ -338,11 +337,6 @@ function bindingIsImmutablePropertyCallableAlias(ctx: CodegenContext, identifier
   // this also avoids pulling the ObjVec/apply runtime into ordinary standalone
   // property aliases.
   if (declaration.getSourceFile() === identifier.getSourceFile()) return false;
-  // Genuine host-function property aliases already have a dedicated fallback
-  // later in this dispatcher. A module with no compiled closures may not emit
-  // `__call_fn_method_N` at all, so claiming `Math.max` here would turn the
-  // finalize-filled driver into its defensive undefined result.
-  if (bindingMayReceiveHostCallable(ctx, declaration)) return false;
   if (!ts.isVariableDeclarationList(declaration.parent) || (declaration.parent.flags & ts.NodeFlags.Const) === 0) {
     return false;
   }
@@ -1701,10 +1695,6 @@ function compileBoundIdentifierCall(
     if (nodeBuiltinMemberCall !== undefined) return nodeBuiltinMemberCall;
     const propertyCallableAlias = tryCompileImmutablePropertyCallableAlias(ctx, fctx, expr);
     if (propertyCallableAlias !== null) return propertyCallableAlias;
-    const calleeBindingMayReceiveHostCallable =
-      calleeBindingDecl !== undefined &&
-      ts.isVariableDeclaration(calleeBindingDecl) &&
-      bindingMayReceiveHostCallable(ctx, calleeBindingDecl);
     const calleeIsGenericCallableFactoryResult = bindingIsGenericCallableFactoryResult(ctx, expr.expression);
     const calleeIsParameterBinding =
       calleeBindingDecl !== undefined && (ts.isParameter(calleeBindingDecl) || ts.isBindingElement(calleeBindingDecl));
@@ -1740,7 +1730,6 @@ function compileBoundIdentifierCall(
       defaultExpressionImport !== undefined ||
       calleeIsParameterBinding ||
       calleeComesFromElementRead ||
-      calleeBindingMayReceiveHostCallable ||
       (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
         ? undefined
         : (bindingClosureInfo ?? ctx.closureMap.get(funcName));
@@ -1781,10 +1770,7 @@ function compileBoundIdentifierCall(
     // local `const funcIdx` would hold the pre-shift value.
     // (#1301) Skip funcMap when locally shadowed; the local-callable fallback
     // below handles dispatch via call_ref through the param/local.
-    let funcIdx =
-      isLocallyShadowed || defaultExpressionImport !== undefined || calleeBindingMayReceiveHostCallable
-        ? undefined
-        : ctx.funcMap.get(funcName);
+    let funcIdx = isLocallyShadowed || defaultExpressionImport !== undefined ? undefined : ctx.funcMap.get(funcName);
     if (funcIdx === undefined) {
       // Before giving up, check if this identifier is a local/param with callable TS type
       // (e.g. function parameter `fn: (x: number) => number` stored as externref).

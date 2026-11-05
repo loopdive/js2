@@ -215,7 +215,6 @@ import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-
 import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
 import * as proxy from "./analysis/proxy-binding-escape.js";
-import { bindingMayReceiveHostCallable } from "./analysis/mixed-assignment-carrier.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
 export {
@@ -1163,21 +1162,8 @@ function functionReturnsHostObjectLiteralCarrier(ctx: CodegenContext, stmt: ts.F
   return result;
 }
 
-/**
- * An untyped wrapper around an extracted host builtin returns a host value, not
- * the nominal anonymous struct TypeScript infers from the builtin signature.
- * Keep that value on the externref carrier across the wrapper's Wasm ABI.
- */
-function functionReturnsExtractedHostCall(ctx: CodegenContext, stmt: ts.FunctionDeclaration): boolean {
-  return false;
-}
-
 function functionReturnsReferenceBoundaryCarrier(ctx: CodegenContext, stmt: ts.FunctionDeclaration): boolean {
-  return (
-    functionReturnsDynamicObjectCarrier(stmt) ||
-    functionReturnsHostObjectLiteralCarrier(ctx, stmt) ||
-    functionReturnsExtractedHostCall(ctx, stmt)
-  );
+  return functionReturnsDynamicObjectCarrier(stmt) || functionReturnsHostObjectLiteralCarrier(ctx, stmt);
 }
 
 const withScopedReturnByFunction = new WeakMap<ts.FunctionDeclaration, boolean>();
@@ -1293,21 +1279,6 @@ export function functionReturnsThroughWithScope(
 }
 
 /**
- * A JSDoc `Array` can still be used as an ordinary JavaScript object. Native
- * vecs preserve indexed elements, but cannot preserve named expando properties
- * across a function boundary. Keep parameters that enumerate or dynamically
- * read those properties on the open externref carrier in JS-host builds.
- */
-function jsArrayParamNeedsOpenObjectCarrier(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  stmt: ts.FunctionDeclaration,
-  wasmType: ValType,
-): boolean {
-  return false;
-}
-
-/**
  * JavaScript's optional-parameter spellings (`x?: T`, `@param {T=} x`, and
  * `@param {T} [x]`) all admit a call that supplies no value. A native scalar
  * slot cannot represent that value: the generic missing-argument pad for an
@@ -1375,9 +1346,6 @@ function lowerParamType(
   if (nativeParam === null) {
     wasmType = widenUndefinedDefaultParamSlot(param, wasmType);
     wasmType = preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
-  }
-  if (jsArrayParamNeedsOpenObjectCarrier(ctx, param, stmt, wasmType)) {
-    wasmType = { kind: "externref" };
   }
   // If the parameter has a default value and is a non-null ref type, widen to
   // ref_null so callers can pass ref.null as a sentinel for "use default".
@@ -3477,13 +3445,6 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     }
     if (proxyOrTransferredResultNeedsExternref(ctx, decl)) return { kind: "externref" };
     if (bindingHoldsStandaloneClassProto(ctx, decl)) return { kind: "externref" }; // (#7053)
-    // A host builtin static read (`Date.now`, `Object.hasOwn`, …) is a genuine
-    // JS function, not a Wasm closure struct.  Conditional/short-circuit
-    // initializers can select either that externref or a compiled closure, so
-    // retain the common externref carrier and let call dispatch discriminate at
-    // runtime.  This is the module-global twin of the local raw-externref path
-    // in statements/variables.ts and is deliberately host-only.
-    if (bindingMayReceiveHostCallable(ctx, decl)) return { kind: "externref" };
     // A source-file `var` is initialized to `undefined` before its initializer
     // runs. When that value is actually observed, a checker-inferred primitive
     // slot would expose the Wasm zero value instead (`false`, `0`, or an empty

@@ -1,9 +1,6 @@
 {
   "src": 4,
   "src/codegen": 676,
-  "src/codegen/analysis": 3,
-  "src/codegen/classes": 16,
   "src/codegen/context": 5,
-  "src/codegen/helpers": 5,
   "src/runtime/contracts": 2
 }

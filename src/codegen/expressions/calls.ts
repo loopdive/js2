@@ -578,7 +578,6 @@ import {
   planClosureReceiverInstall,
 } from "../closure-receiver-install.js";
 import { directEvalRunsAtScriptGlobal } from "../direct-eval-environment.js";
-import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carrier.js";
 
 // Registry extracted to its own leaf module (#1793; LOC ratchet #3102) —
 // re-exported here so existing importers keep resolving via calls.js.
