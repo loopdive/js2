@@ -46,3 +46,8 @@ export function inheritedSetAnyDirty(ctx: CodegenContext): boolean {
 export function inheritedSetAffectsKey(ctx: CodegenContext, key: string): boolean {
   return ctx.inheritedSetDescriptorDirty || ctx.inheritedSetDirtyKeys.has(key);
 }
+
+/** Native descriptor decisions have no late JS imports in either host-free target. */
+export function nativeInheritedSetRuntimeActive(ctx: CodegenContext): boolean {
+  return (ctx.standalone || ctx.wasi) && inheritedSetAnyDirty(ctx);
+}

@@ -2700,7 +2700,7 @@ export function compileBuiltinStaticCall(
       // Compile the proto argument
       if (arg0.kind === ts.SyntaxKind.NullKeyword) {
         fctx.body.push({ op: "ref.null.extern" });
-      } else if (ctx.standalone) {
+      } else if (ctx.standalone || (noJsHost(ctx) && ts.isObjectLiteralExpression(arg0))) {
         // #2580 M3 Stage A — build an INLINE-LITERAL proto as a native `$Object`
         // (compileProtoArg) so __object_create's `ref.test $Object` succeeds and
         // the $proto link is recorded; a closed-shape literal struct would fail
@@ -2708,7 +2708,8 @@ export function compileBuiltinStaticCall(
         // (identifiers, calls, Foo.prototype) keep the ordinary path inside
         // compileProtoArg.
         compileProtoArg(ctx, fctx, arg0);
-        classInstanceIdx = reserveStandaloneObjectCreateClassInstance(ctx);
+        // Keep the separate compiled-class prototype bridge standalone-only.
+        if (ctx.standalone) classInstanceIdx = reserveStandaloneObjectCreateClassInstance(ctx);
       } else {
         const argType = compileExpression(ctx, fctx, arg0);
         if (!argType) {

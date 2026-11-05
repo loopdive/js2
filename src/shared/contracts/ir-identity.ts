@@ -53,7 +53,8 @@ export type IrSyntheticUnitRole =
   | "runtime-support:number-format-radix"
   | "ir-async-state"
   | "lifted-closure"
-  | "monomorphization-clone";
+  | "monomorphization-clone"
+  | "class-getter-generic";
 export interface CreateDerivedIrUnitIdInput {
   readonly parentId: IrSourceId | IrLexicalOwnerId;
   readonly role: IrSyntheticUnitRole;

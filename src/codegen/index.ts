@@ -87,7 +87,7 @@ import {
 import { symbolShadowsBuiltinGlobal } from "../checker/builtin-shadow.js"; // (#5096) intrinsic-shadow claim gate
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
-import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
+import { ensureToUint32Helper } from "./helpers/uint32-coercion.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
@@ -244,7 +244,10 @@ import {
   planIrFunctionValueResolverState,
   prepareTopLevelFunctionValueTargetSupport,
 } from "./ir-imported-call-planning.js";
-import { parameterHasDynamicExternrefAbi } from "./declarations/ir-dynamic-parameter-abi.js";
+import {
+  nativeDynamicSelectionOptions,
+  parameterHasDynamicExternrefAbi,
+} from "./declarations/ir-dynamic-parameter-abi.js";
 import { hasFullyAnnotatedScalarAbi } from "./ir-legacy-caller-abi.js";
 import {
   canPrepareHostDateSnapshotLoweringByIdentity,
@@ -2100,7 +2103,7 @@ function buildIrClassShapes(
         });
       } else if (
         ts.isMethodDeclaration(member) &&
-        ts.isIdentifier(member.name) &&
+        (ts.isIdentifier(member.name) || ts.isPrivateIdentifier(member.name)) && // (#7227) `__priv_m`
         hasStaticModifier(member) &&
         !hasAbstractModifier(member) &&
         !member.asteriskToken
@@ -3234,7 +3237,7 @@ function planIrOverlay(
       // IS the non-fast dynamic carrier of the key string, so the head can be
       // read as a dynamic value instead.
       forInHeadValueIsDynamicCarrier: ctx.nativeStrings && !ctx.fast,
-      nativeDynamicInBuildable: !ctx.fast && (ctx.standalone || ctx.wasi) && hostFreeEnvironment(ctx),
+      ...nativeDynamicSelectionOptions(ctx),
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
       ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),
@@ -7689,7 +7692,8 @@ function addWasiStartExport(ctx: CodegenContext): void {
   if (targetIdx !== undefined) {
     // Create _start wrapper that calls the target function
     const startTypeIdx = addFuncType(ctx, [], [], "$wasi_start_type");
-    const startFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    // Preserve this exact adapter through dead-import layout remapping.
+    const startFuncIdx = mintDefinedFunc(ctx);
     const body: Instr[] = [{ op: "call", funcIdx: targetIdx }];
 
     // #2632 Phase 1 — drive the event-loop reactor after the entry function
@@ -7751,7 +7755,7 @@ function addWasiStartExport(ctx: CodegenContext): void {
       body: startBody,
       exported: true,
     };
-    ctx.mod.functions.push(wasiStartAdapter);
+    pushDefinedFunc(ctx, startFuncIdx, wasiStartAdapter);
     // Record the exact allocator objects selected for this adapter before
     // later import/layout passes can shift its numeric call handles. The
     // Program ABI finalizer authenticates the resulting `_start` export and
@@ -12259,25 +12263,7 @@ export const MATH_HOST_METHODS_2ARG = new Set(["pow", "atan2"]);
  * Implements ES §7.1.7: NaN/±Infinity → 0, otherwise trunc(x) modulo 2^32.
  */
 export function emitToUint32Helper(ctx: CodegenContext): void {
-  if (!ctx.needsToUint32) return;
-  if (ctx.funcMap.has("__toUint32")) return;
-  const typeIdx = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "i32" }]);
-  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-  ctx.funcMap.set("__toUint32", funcIdx);
-  const body: Instr[] = [{ op: "local.get", index: 0 }];
-  emitWasmInt32Coercion(body, { bits: 1, exponent: 2, significand: 3, magnitude: 4 });
-  ctx.mod.functions.push({
-    name: "__toUint32",
-    typeIdx,
-    locals: [
-      { name: "$to_uint32_bits", type: { kind: "i64" } },
-      { name: "$to_uint32_exponent", type: { kind: "i64" } },
-      { name: "$to_uint32_significand", type: { kind: "i64" } },
-      { name: "$to_uint32_magnitude", type: { kind: "i64" } },
-    ],
-    body,
-    exported: false,
-  });
+  if (ctx.needsToUint32) ensureToUint32Helper(ctx);
 }
 
 /** Known constructors handled natively (not needing __new_ imports) */
@@ -14081,7 +14067,9 @@ function hoistBindingPattern(ctx: CodegenContext, fctx: FunctionContext, pattern
       // so the inner destructured var aliased the module global.
       const elemType = ctx.checker.getTypeAtLocation(element);
       const resolvedWasmType = resolveWasmType(ctx, elemType);
-      const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
+      const wasmType: ValType = fctx.genericClassGetter
+        ? { kind: "externref" }
+        : resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
       const localIdx = allocLocal(fctx, name, wasmType);
       if (isUndefWidenedBindingElement(element, resolvedWasmType)) {
         (fctx.undefWidenedLocals ??= new Set()).add(name);
@@ -14138,7 +14126,9 @@ export function ensureLetConstBindingPatternTdzFlags(
       if (!fctx.localMap.has(name)) {
         const elemType = ctx.checker.getTypeAtLocation(element);
         const resolvedWasmType = resolveWasmType(ctx, elemType);
-        const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
+        const wasmType: ValType = fctx.genericClassGetter
+          ? { kind: "externref" }
+          : resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
         allocLocal(fctx, name, wasmType);
         if (isUndefWidenedBindingElement(element, resolvedWasmType)) {
           (fctx.undefWidenedLocals ??= new Set()).add(name);
@@ -14386,6 +14376,7 @@ function hoistVarDecl(
     if (wasmType.kind === "externref") {
       wasmType = resolveFnctorTypedBindingType(ctx, decl) ?? wasmType;
     }
+    if (fctx.genericClassGetter && !decl.type) wasmType = { kind: "externref" };
     if (initForcesExternref) ctx.externrefAccessorVars.add(name);
     const localIdx = allocLocal(fctx, name, wasmType);
     // (#684) A hoisted `var` is `undefined` from function entry; when narrowed
@@ -14410,7 +14401,7 @@ function hoistVarDecl(
       // concrete-ref slot cannot represent the singleton anyway, so emit the
       // flag-OFF `ref.null.extern` value — it casts cleanly to `ref.null N`.
       // Byte-inert flag-OFF (the guard is false unless the regime is active).
-      if (undefinedSingletonActive(ctx) && hoistedVarRetypesToConcreteRef(ctx, decl)) {
+      if (!fctx.genericClassGetter && undefinedSingletonActive(ctx) && hoistedVarRetypesToConcreteRef(ctx, decl)) {
         fctx.body.push({ op: "ref.null.extern" });
       } else {
         emitUndefined(ctx, fctx);
@@ -15207,6 +15198,7 @@ function walkStmtForLetConst(
         if (wasmType.kind === "externref") {
           wasmType = resolveFnctorTypedBindingType(ctx, decl) ?? wasmType;
         }
+        if (fctx.genericClassGetter && !decl.type) wasmType = { kind: "externref" };
         const valueSlot = allocLocal(fctx, name, wasmType);
         // (#2814) Record the pre-hoisted slot for THIS declaration so
         // compileVariableStatement can reuse it when saveBlockScopedShadows later

@@ -47,6 +47,8 @@ interface PreparedCompilerTimerShimDynamicShape {
 type PreparedTimerDynamicHelperName =
   | "__box_number"
   | "__ir_arguments_length"
+  | "__ir_global_object"
+  | "__ir_dyn_instanceof"
   | "__unbox_number"
   | "__to_primitive"
   | "__to_number"
@@ -57,7 +59,10 @@ type PreparedTimerDynamicHelperName =
   | "__typeof_object"
   | "__typeof_function"
   | "__extern_toString"
-  | "__extern_strict_eq";
+  | "__extern_strict_eq"
+  | "__dyn_member_get"
+  | "__dyn_member_set"
+  | "__dyn_member_set_sloppy";
 
 export interface CompilerTimerShimLateSealTransaction {
   readonly componentIds: ReadonlyMap<IrUnitId, string>;

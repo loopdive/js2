@@ -27,6 +27,7 @@ export function buildMethodDispatchPrologue(
   closureAnyLocal: number,
   prevThisLocal: number,
   currentThisGlobalIdx: number,
+  beforeReceiverInstall: readonly Instr[] = [],
 ): Instr[] {
   const body: Instr[] = [
     { op: "local.get", index: 1 },
@@ -36,6 +37,7 @@ export function buildMethodDispatchPrologue(
   const carrierGuard = buildRuntimeEvalCarrierMethodDispatch(ctx, arity, closureAnyLocal, 0);
   // `null` in every module that minted no carrier — those stay byte-identical.
   if (carrierGuard) body.push(...carrierGuard);
+  body.push(...beforeReceiverInstall);
   body.push(
     { op: "global.get", index: currentThisGlobalIdx },
     { op: "local.set", index: prevThisLocal },

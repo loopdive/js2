@@ -401,6 +401,11 @@ function validateLegacyEntries(
   line,
 ) {
   const entries = requiredArray(audit, "legacyEntries", errors, line, "audit");
+  const derivedById = new Map(
+    (Array.isArray(audit.derivedUnits) ? audit.derivedUnits : []).flatMap((unit) =>
+      isObject(unit) && typeof unit.id === "string" ? [[unit.id, unit]] : [],
+    ),
+  );
   const identities = [];
   const missingSourceEntries = [];
   for (const [index, entry] of entries.entries()) {
@@ -416,6 +421,7 @@ function validateLegacyEntries(
     const sourceId = optionalString(entry, "sourceId", errors, line, context);
     const unitId = optionalString(entry, "unitId", errors, line, context);
     const classId = optionalString(entry, "classId", errors, line, context);
+    const derivedParentUnitId = optionalString(entry, "derivedParentUnitId", errors, line, context);
     const entryUnitKind = optionalString(entry, "unitKind", errors, line, context);
     requiredInteger(entry, "line", errors, line, context, 1);
     requiredInteger(entry, "column", errors, line, context, 1);
@@ -464,8 +470,25 @@ function validateLegacyEntries(
     }
     const unit = unitId === undefined ? undefined : dispositionsById.get(unitId);
     const classRecord = classId === undefined ? undefined : classesById.get(classId);
-    if (unitId !== undefined && unit === undefined) {
+    const derived = unitId === undefined ? undefined : derivedById.get(unitId);
+    const sourceDerived = unit === undefined && derived?.role === "class-getter-generic";
+    if (unitId !== undefined && unit === undefined && !sourceDerived) {
       errors.push(error(line, "unknown-unit-id", `${context} references unknown unit ${JSON.stringify(unitId)}`));
+    }
+    if (sourceDerived) {
+      if (
+        derivedParentUnitId !== derived.parentId ||
+        sourceId !== derived.sourceId ||
+        entry.terminalOwnerId !== derived.terminalOwnerId ||
+        classId !== undefined ||
+        entryUnitKind !== undefined
+      ) {
+        errors.push(
+          error(line, "entry-derived-owner-mismatch", `${context} does not match its exact SOURCE-derived owner`),
+        );
+      }
+    } else if (derivedParentUnitId !== undefined) {
+      errors.push(error(line, "entry-derived-owner-mismatch", `${context} has no matching SOURCE-derived body`));
     }
     if (classId !== undefined && classRecord === undefined) {
       errors.push(error(line, "unknown-class-id", `${context} references unknown class ${JSON.stringify(classId)}`));
@@ -599,8 +622,20 @@ function validateDerivedUnits(audit, sourceIds, dispositionsById, errors, line) 
     } else if (owner !== undefined && owner.sourceId !== unit.sourceId) {
       errors.push(error(line, "derived-owner-source-mismatch", `audit.derivedUnits[${index}] owner source differs`));
     }
-    const expectedDisposition =
-      unit.terminalOwnerId === null
+    const physicalSourceBody =
+      unit.role === "class-getter-generic" &&
+      Array.isArray(audit.legacyEntries) &&
+      audit.legacyEntries.some(
+        (entry) =>
+          isObject(entry) &&
+          entry.unitId === unit.id &&
+          entry.derivedParentUnitId === unit.parentId &&
+          entry.sourceId === unit.sourceId &&
+          entry.terminalOwnerId === unit.terminalOwnerId,
+      );
+    const expectedDisposition = physicalSourceBody
+      ? "derived-legacy-owner"
+      : unit.terminalOwnerId === null
         ? "derived-unowned"
         : owner?.disposition === "terminal-ir"
           ? "derived-ir-owner"

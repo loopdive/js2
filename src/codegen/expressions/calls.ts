@@ -530,7 +530,7 @@ import { emitSaveParentOverride, emitSuperCallValue } from "../classes/ctor-retu
 import { compileIdentifierCall } from "./call-identifier.js";
 import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from "./call-builtin-static.js";
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
-import { compileReceiverMethodCall } from "./call-receiver-method.js";
+import { compileReceiverMethodCall, compileGenericClassGetterMethodCall } from "./call-receiver-method.js";
 import { compileTailDispatch } from "./call-tail-dispatch.js";
 import { tryEmitIsPrototypeOfCallArm } from "./is-prototype-of-call-arm.js";
 import { tryEmitRealmGlobalMemberCall } from "./realm-global-member-call.js"; // (#4491)
@@ -762,13 +762,13 @@ export function compileObjectAssignArg(ctx: CodegenContext, fctx: FunctionContex
  * `compileObjectLiteralAsExternref` so `ref.test $Object` succeeds and the link
  * is recorded. Any other proto expression (identifiers, calls, `null`,
  * `Foo.prototype`, accessor-bearing literals) keeps the ordinary
- * `compileExpression` path unchanged. Standalone-only — host/GC mode owns the
- * `__object_create` JS import and a separate (still-broken, tracked) proto-link
- * mechanism, untouched here.
+ * `compileExpression` path unchanged. Native no-JS-host lanes (standalone and
+ * WASI) share this `$Object` prototype writer. The JS-host lane retains its
+ * existing `__object_create` provider and prototype-link mechanism.
  */
 export function compileProtoArg(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
   if (
-    ctx.standalone &&
+    noJsHost(ctx) &&
     // (#6770 S4) an EMPTY `{}` too: compiled as anything but a `$Object` the
     // writers coerce it to null, the encoding of the `%Object.prototype%`
     // terminal, so `Reflect.setPrototypeOf(nonExtensible, {})` read as a
@@ -1215,6 +1215,24 @@ export function resolveClosureInfoFromLocal(
     return ctx.closureInfoByTypeIdx.get(localType.typeIdx);
   }
   return undefined;
+}
+
+/** A physical function type is not authority for a mutable/foreign value. */
+function certifiedLiteralClosureValue(ctx: CodegenContext, id: ts.Identifier, seen = new Set<ts.Node>()): boolean {
+  const declaration = ctx.oracle.valueDeclarationOf(id);
+  if (!declaration || seen.has(declaration) || !ts.isVariableDeclaration(declaration)) return false;
+  seen.add(declaration);
+  if (!ts.isVariableDeclarationList(declaration.parent) || (declaration.parent.flags & ts.NodeFlags.Const) === 0)
+    return false;
+  let value = declaration.initializer;
+  if (!value) return false;
+  while (ts.isParenthesizedExpression(value) || ts.isAsExpression(value) || ts.isNonNullExpression(value))
+    value = value.expression;
+  return (
+    ts.isFunctionExpression(value) ||
+    ts.isArrowFunction(value) ||
+    (ts.isIdentifier(value) && certifiedLiteralClosureValue(ctx, value, seen))
+  );
 }
 
 /**
@@ -7436,6 +7454,9 @@ function compileCallExpression(
     return compileOptionalCallExpression(ctx, fctx, expr);
   }
 
+  const genericGetterCall = compileGenericClassGetterMethodCall(ctx, fctx, expr);
+  if (genericGetterCall !== undefined) return genericGetterCall;
+
   // (#4484 B) §7.3.2 RequireObjectCoercible — `undefined.toString()` /
   // `null["toString"]()`. Runs BEFORE every builtin-method interception below:
   // those dispatch on the METHOD name and never ask whether the receiver can
@@ -8695,11 +8716,21 @@ function compileCallExpression(
           !ctx.wasi &&
           isDynamicApplyArgList(expr.arguments[1]!);
         const registryIsForeign =
-          moduleValueOwnsName || hostDynamicApply || mappedFunctionIsForeign(ctx, funcName, valueDeclaration);
+          moduleValueOwnsName ||
+          hostDynamicApply ||
+          mappedFunctionIsForeign(ctx, funcName, valueDeclaration) ||
+          (fctx.localMap.has(funcName) &&
+            (valueDeclaration === undefined || !ts.isFunctionDeclaration(valueDeclaration)) &&
+            !certifiedLiteralClosureValue(ctx, innerExpr));
         let closureInfo = registryIsForeign ? undefined : ctx.closureMap.get(funcName);
         const funcIdx = registryIsForeign ? undefined : ctx.funcMap.get(funcName);
 
-        if (!closureInfo && funcIdx === undefined && !hostDynamicApply) {
+        if (
+          !closureInfo &&
+          funcIdx === undefined &&
+          !hostDynamicApply &&
+          certifiedLiteralClosureValue(ctx, innerExpr)
+        ) {
           closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
         }
 

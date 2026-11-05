@@ -3714,7 +3714,7 @@ function tryKnownFnctorDynamicObjectCarrierGet(
  * `coerceType(…externref)` the callers apply: a non-nullable `(ref $T)` is
  * widened with `extern.convert_any`, which cannot introduce a null.
  */
-function emitExternRecvNullGuard(
+export function emitExternRecvNullGuard(
   ctx: CodegenContext,
   fctx: FunctionContext,
   recvTmp: number,
@@ -3728,7 +3728,12 @@ function emitExternRecvNullGuard(
     ctx,
     fctx,
     recvTmp,
-    { site, compiled: recvType, expr: recvExpr, syntacticNonNull: isProvablyNonNull(recvExpr, ctx.checker) },
+    {
+      site,
+      compiled: recvType,
+      expr: recvExpr,
+      syntacticNonNull: !fctx.genericClassGetter && isProvablyNonNull(recvExpr, ctx.checker),
+    },
     () => typeErrorThrowInstrs(ctx, throwNode, fctx),
     // (#4519) The same §7.3.2 widening as the `dispatch:extern-get-recv` guard —
     // both callers of `emitReceiverNullGuard` are member-access receiver checks,

@@ -55,6 +55,13 @@ import {
   type ClosureDispatchRestCarrier,
 } from "./closures/closure-dispatch-rest.js";
 import { buildMethodDispatchPrologue } from "./closures/method-dispatch-prologue.js";
+import {
+  assertSourceGetterReceiverSignatureSeparation,
+  buildSourceGetterReceiverDispatch,
+  prepareSourceGetterReceiverFamily,
+  sourceGetterReceiverUndefined,
+} from "./closures/source-getter-receiver.js";
+import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
 import { applyTailDispatch } from "./closures/apply-extras-tail.js"; // (#6959 review)
 import { isSyntheticStructName } from "./emit-helpers.js";
 export { buildTransferredCharAtApplyArm } from "./char-at-transfer.js";
@@ -665,6 +672,13 @@ function buildLinkedGlobalCallFallback(
  * Returns early when no closures of arity ≤ N exist (no export emitted).
  */
 function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
+  prepareSourceGetterReceiverFamily(ctx);
+  assertSourceGetterReceiverSignatureSeparation(ctx);
+  const sourceReceiverFailure = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "SOURCE getter callable owner is not available",
+  );
   const mod = ctx.mod;
   const exportName = `__call_fn_${arity}`;
 
@@ -801,6 +815,27 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   body.push({ op: "local.get", index: 0 });
   body.push({ op: "any.convert_extern" });
   body.push({ op: "local.set", index: anyLocal });
+
+  const sourceArgumentState = buildClosureMethodArgumentState(
+    arity,
+    0,
+    {
+      argc: argcGlobalIdx,
+      extrasArgv: extrasArgvGlobalIdx,
+      extrasVecTypeIdx,
+      extrasArrTypeIdx,
+    },
+    1,
+  );
+  body.push(
+    ...buildSourceGetterReceiverDispatch(
+      ctx,
+      anyLocal,
+      sourceGetterReceiverUndefined(ctx),
+      sourceArgumentState,
+      sourceReceiverFailure,
+    ),
+  );
 
   const linkedArgsLocal = funcLocal + 1;
   let funcrefDispatch: Instr[] =
@@ -1247,6 +1282,13 @@ export function topHighClosureMethodCallArity(ctx: CodegenContext, floor: number
  * Returns early when no closures of arity ≤ N exist (no export emitted).
  */
 export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number, minHostArity = 0): void {
+  prepareSourceGetterReceiverFamily(ctx);
+  assertSourceGetterReceiverSignatureSeparation(ctx);
+  const sourceReceiverFailure = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "SOURCE getter callable owner is not available",
+  );
   const mod = ctx.mod;
   const exportName = `__call_fn_method_${arity}`;
 
@@ -1382,9 +1424,23 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   // contract — see `buildMethodDispatchPrologue`.
   // (#6959 review) `__apply_closure`'s n > 8 tail — consumed FIRST; see apply-extras-tail.ts.
   const applyTail = applyTailDispatch(ctx, arity, minHostArity, prevThisLocal + 4, extrasVecTypeIdx);
+  const sourceArgumentState = buildClosureMethodArgumentState(arity, 0, {
+    argc: argcGlobalIdx,
+    extrasArgv: extrasArgvGlobalIdx,
+    extrasVecTypeIdx,
+    extrasArrTypeIdx,
+  });
+  if (applyTail) sourceArgumentState.push(...applyTail.appendExtras(extrasArgvGlobalIdx));
+  const sourceReceiverDispatch = buildSourceGetterReceiverDispatch(
+    ctx,
+    anyLocal,
+    [{ op: "local.get", index: 0 }],
+    sourceArgumentState,
+    sourceReceiverFailure,
+  );
   const body: Instr[] = [
     ...(applyTail?.prologue() ?? []),
-    ...buildMethodDispatchPrologue(ctx, arity, anyLocal, prevThisLocal, currentThisGlobalIdx),
+    ...buildMethodDispatchPrologue(ctx, arity, anyLocal, prevThisLocal, currentThisGlobalIdx, sourceReceiverDispatch),
   ];
 
   const npArgs = {

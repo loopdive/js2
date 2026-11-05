@@ -1332,6 +1332,7 @@ function compileIdentifierCore(
     })();
     if (
       declaredType.kind === "externref" &&
+      !fctx.genericClassGetter &&
       !fctx.captureExternrefNames?.has(name) &&
       !fctx.undefWidenedLocals?.has(name) &&
       !fctx.forInIdentifierVars?.has(name) &&

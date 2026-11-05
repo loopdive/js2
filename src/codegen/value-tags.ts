@@ -22,6 +22,7 @@
  *
  * Full design: plan/log/analysis-2026-06/02-value-representation-spec.md §2.1-2.2.
  */
+import { i32NumberWidening } from "../wasm/physical/numeric-carriers.js";
 import { isBigIntType, isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -163,7 +164,8 @@ export function boxToAny(ctx: CodegenContext, fctx: FunctionContext, from: ValTy
       if (from.kind === "i32") return emit("__any_box_bool");
       break;
     case "number":
-      if (from.kind === "i32") return emit("__any_box_i32");
+      if (from.kind === "i32")
+        return from.uint32 ? emit("__any_box_f64", [i32NumberWidening(from)]) : emit("__any_box_i32");
       if (from.kind === "f64") return emit("__any_box_f64");
       if (from.kind === "i64") return emit("__any_box_f64", [{ op: "f64.convert_i64_s" }]);
       break;
@@ -206,7 +208,8 @@ export function boxToAny(ctx: CodegenContext, fctx: FunctionContext, from: ValTy
   if (ctx.unionAnyRep && from.kind === "i32" && (from as { boolean?: true }).boolean === true) {
     return emit("__any_box_bool");
   }
-  if (from.kind === "i32") return emit("__any_box_i32");
+  if (from.kind === "i32")
+    return from.uint32 ? emit("__any_box_f64", [i32NumberWidening(from)]) : emit("__any_box_i32");
   if (from.kind === "f64") return emit("__any_box_f64");
   if (from.kind === "i64") return emit("__any_box_f64", [{ op: "f64.convert_i64_s" }]);
   if (from.kind === "externref") {

@@ -40,6 +40,7 @@
  * and emit FRESH instruction arrays per call (a shared `Instr` reachable from
  * two bodies is remapped twice by the late-import shift, #5140/#5316).
  */
+import { i32NumberWidening } from "../../wasm/physical/numeric-carriers.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
@@ -388,7 +389,7 @@ function fieldBox(
     return boxBoolean === undefined ? null : [{ op: "call", funcIdx: boxBoolean }];
   }
   if (boxNumber === undefined) return null;
-  if (type.kind === "i32") return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumber }];
+  if (type.kind === "i32") return [i32NumberWidening(type), { op: "call", funcIdx: boxNumber }];
   if (type.kind !== "f64") return null;
   // The identity-preserving undefined sentinel stays `undefined`.
   return [

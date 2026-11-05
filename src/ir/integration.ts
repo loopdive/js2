@@ -1,3 +1,4 @@
+import { projectAstSourceFacts } from "./ast-source-facts.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // Integration point between the legacy codegen pipeline and the IR path.
@@ -75,7 +76,7 @@ import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
   ensureIrDynamicRuntime,
   irDynamicRuntimeNeedForSymbol,
-  observeIrFunctionObjectCallProviders,
+  observeIrDynamicRuntimeProviders,
   type IrDynamicRuntimeNeed,
 } from "../codegen/dyn-ops.js";
 import { ensureLateImport, flushLateImportShifts } from "../codegen/shared.js"; // (#2949 S5.2) host __host_eq / __host_loose_eq registration; (#3143) flush the __extern_is_undefined batch pre-Phase-3
@@ -132,6 +133,7 @@ import {
   irDynamicConstructCalleeIsPlain,
   irDynamicConstructHelperName,
   irFunctionThisStrictness,
+  irSourceContextStrictness,
   irInstanceOfFunctionHelperName,
   irSelfGuardedConstructorValue,
 } from "../codegen/ir-dynamic-construct.js";
@@ -3278,6 +3280,8 @@ export function compileIrPathFunctions(
         const o = effectiveOverride(name);
         const ambientThisStrict = irFunctionThisStrictness(ctx, stmt); // (#7106 S3c)
         const lowered = lowerFunctionAstToIr(stmt, {
+          dynamicNumericReturn:
+            !ctx.fast && ctx.targetProfile.environment !== "javascript" ? "number-boundary" : undefined,
           exported: hasExportModifier(stmt),
           funcName: name,
           ownerUnitId,
@@ -3303,11 +3307,7 @@ export function compileIrPathFunctions(
           allocRegistry,
           // #2780 (hybrid Row 6): thread the TS checker so `lowerArrayLiteral`
           // can discharge the widening-escape proof via `getContextualType`.
-          checker: ctx.checker,
-          oracle: ctx.oracle,
-          // #3765: share direct-codegen's grounded numeric-local oracle with IR.
-          numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
-          hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
+          ...projectAstSourceFacts(ctx),
         });
         const result = prepareSuspendingAsyncLowering(
           lowered,
@@ -3498,6 +3498,8 @@ export function compileIrPathFunctions(
           directCallsFor(initializer.expression, ownerUnitId);
         }
         const loweringOptions: AstToIrOptions = {
+          dynamicNumericReturn:
+            !ctx.fast && ctx.targetProfile.environment !== "javascript" ? "number-boundary" : undefined,
           exported: false,
           funcName: semanticName,
           ownerUnitId,
@@ -3531,10 +3533,7 @@ export function compileIrPathFunctions(
           classShapes,
           resolver: fromAstResolver,
           allocRegistry,
-          checker: ctx.checker,
-          oracle: ctx.oracle,
-          numericLocalScalarForDecl: (decl: ts.VariableDeclaration) => ctx.usageInference.scalarForDecl(decl),
-          hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
+          ...projectAstSourceFacts(ctx),
         };
         let result: LoweredFunctionResult;
         if (ts.isClassDeclaration(member) || ts.isClassExpression(member)) {
@@ -3707,6 +3706,8 @@ export function compileIrPathFunctions(
           // is an AST-free allocation wrapper. Methods/accessors retain their
           // caller-supplied FIRST `selfParam`.
           const result = lowerFunctionAstToIr(member, {
+            dynamicNumericReturn:
+              !ctx.fast && ctx.targetProfile.environment !== "javascript" ? "number-boundary" : undefined,
             exported: false, // class members are not directly exported
             funcName: memberName,
             ownerUnitId,
@@ -3733,10 +3734,7 @@ export function compileIrPathFunctions(
             allocRegistry,
             // #2780 (hybrid Row 6): thread the TS checker for the
             // ArrayLiteral widening-escape proof in method bodies too.
-            checker: ctx.checker,
-            oracle: ctx.oracle,
-            numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
-            hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
+            ...projectAstSourceFacts(ctx),
           });
           if (result.main.unitId !== ownerUnitId) {
             throw new IrInvariantError(
@@ -3929,10 +3927,7 @@ export function compileIrPathFunctions(
         classShapes: moduleInitInput.classShapes ?? classShapes,
         resolver: fromAstResolver,
         allocRegistry,
-        checker: ctx.checker,
-        oracle: ctx.oracle,
-        numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
-        hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
+        ...projectAstSourceFacts(ctx),
       });
       if (result.main.unitId !== moduleInitUnitId) {
         throw new IrInvariantError(
@@ -6967,6 +6962,7 @@ function makeFromAstResolver(
     ...preparedIrAsyncFromAstResolver(ctx),
     // (#7106) A reserved chunk name also keeps the late user-function inliner off it.
     moduleInitChunkName: (preferred) => reserveModuleInitChunkHelperName(ctx, preferred),
+    sourceIsStrict: (node) => irSourceContextStrictness(ctx, node),
     hostIndirectEvalTarget() {
       if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings) return null;
       const functionIndex = ctx.funcMap.get("__extern_eval");
@@ -9616,8 +9612,7 @@ function preregisterDynamicSupport(
   if (dynamicRuntimeNeeds.size > 0) {
     addUnionImports(ctx);
     ensureIrDynamicRuntime(ctx, dynamicRuntimeNeeds);
-    if (dynamicRuntimeNeeds.has("member-call"))
-      observeIrFunctionObjectCallProviders((symbol) => observeNativeRuntimeProvider(ctx, symbol));
+    observeIrDynamicRuntimeProviders(dynamicRuntimeNeeds, (symbol) => observeNativeRuntimeProvider(ctx, symbol));
   }
   if (usesFunctionMemberStrictSet && !ctx.fast) {
     ensureObjectRuntime(ctx);

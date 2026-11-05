@@ -40,6 +40,7 @@
  * Applies to BOTH gc/host and standalone (the dual-struct-type compile-order
  * hazard is mode-independent — acorn dogfoods in gc/host mode).
  */
+import { i32NumberWidening } from "../wasm/physical/numeric-carriers.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { classMemberFuncKey, isInstanceAccessorKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#2963) method-arm candidates
 import { ensureMethodClosureSingleton } from "./closures.js"; // (#2963) canonical method-value singleton
@@ -67,6 +68,7 @@ import { presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packe
 import { coldFieldReadArm, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
 import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { buildShapeGuardedArm } from "./shape-guarded-arm.js"; // (#4645) single-`next` dispatch arm
+import { classArmClaimInstrs } from "./class-arm-tag-guard.js";
 import {
   findFnctorLayoutStructsForField,
   findFnctorResidStructsForField,
@@ -146,6 +148,8 @@ function typedF64DispatcherName(propName: string): string {
  * stable) are baked here.
  */
 export interface MemberGetMethodArm {
+  /** Exact receiver class identity for the canonical nominal dispatch guard. */
+  receiverClassName: string;
   /** The concrete class struct the receiver is `ref.test`ed against. */
   receiverStructTypeIdx: number;
   /** Owner-canonicalised `<Class>_<method>` — the singleton cache key. */
@@ -343,6 +347,7 @@ export function ensureMethodArmsForProp(ctx: CodegenContext, propName: string, f
     );
     if (!singleton) continue;
     arms.push({
+      receiverClassName: cand.className,
       receiverStructTypeIdx: cand.receiverStructTypeIdx,
       methodFullName: cand.methodFullName,
       closureStructTypeIdx: singleton.closureStructTypeIdx,
@@ -541,8 +546,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
       if (idx >= methodArms.length) return [];
       const arm = methodArms[idx]!;
       return [
-        { op: "local.get", index: 1 }, // __any
-        { op: "ref.test", typeIdx: arm.receiverStructTypeIdx },
+        ...classArmClaimInstrs(ctx, arm.receiverClassName, arm.receiverStructTypeIdx, 1),
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -995,7 +999,7 @@ export function fillTypedMemberGetF64Dispatch(ctx: CodegenContext): void {
         { op: "local.get", index: 1 }, // __any
         { op: "ref.cast", typeIdx: cand.structTypeIdx },
         { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.fieldIdx },
-        ...(cand.fieldType.kind === "i32" ? ([{ op: "f64.convert_i32_s" }] satisfies Instr[]) : []),
+        ...(cand.fieldType.kind === "i32" ? ([i32NumberWidening(cand.fieldType)] satisfies Instr[]) : []),
       ];
       const armBody: Instr[] = !numericSlot
         ? fallback

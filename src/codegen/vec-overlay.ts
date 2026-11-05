@@ -74,7 +74,7 @@
  * `ctx.standalone` (see buildObjectDescriptorHelpers) and the fill gates on
  * the reserve flag — host output is byte-identical.
  */
-import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { inheritedSetAnyDirty, nativeInheritedSetRuntimeActive } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -2546,7 +2546,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
       const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
       const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
       const descriptorDecisionAvailable =
-        ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
+        nativeInheritedSetRuntimeActive(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
       const holeAwarePresence =
         descriptorDecisionAvailable && ctx.usesArrayHoles && carriers.some((carrier) => carrier.kind === "externref");
       const base = 3 + fn.locals.length;

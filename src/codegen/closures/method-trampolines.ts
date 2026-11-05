@@ -14,13 +14,14 @@ import {
  */
 
 import { ts } from "../../ts-api.js";
-import type { Instr, LocalDef, ValType } from "../../ir/types.js";
+import type { Instr, LocalDef, ValType, WasmFunction } from "../../ir/types.js";
+import type { IrUnitId } from "../../ir/identity.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import { definedFuncAt, definedFuncHandleOf, mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { inLiveShiftRange } from "../../emit/resolve-layout.js";
 import { addStringConstantGlobal, localGlobalIdx } from "../registry/imports.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
-import { noJsHost } from "../expressions/helpers.js";
+import { buildThrowJsErrorInstrs, noJsHost } from "../expressions/helpers.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
 import { allocTempLocal } from "../context/locals.js";
 import { ensureExnTag } from "../index.js";
@@ -62,9 +63,15 @@ import {
   parkedAsyncDeclarationWrapsPromise,
 } from "../async-eager-promise.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
-import { ensureFnMetaSubtype, fnMetaSlot } from "../function-instance-meta.js";
+import { ensureFnMetaSubtype, fnMetaSlot, fnMetaSlotOfMeta } from "../function-instance-meta.js";
 // (#4440) the METHOD half of the same carrier — class/object-literal members
-import { fnMetaSlotForMemberDecl, fnMetaSlotForMemberName } from "../function-instance-meta-methods.js";
+import { fnMetaOfMember, fnMetaSlotForMemberDecl, fnMetaSlotForMemberName } from "../function-instance-meta-methods.js";
+import {
+  observeSourceGetterReceiverClosure,
+  prepareSourceGetterReceiverFamily,
+  sourceGetterReceiverCapability,
+  sourceGetterReceiverUndefined,
+} from "./source-getter-receiver.js";
 import { noteFunctionValueInhabitant } from "./closure-type-sources.js"; // (#6913)
 
 /**
@@ -909,6 +916,8 @@ export function ensureMethodClosureSingleton(
   methodFuncIdx: number,
   objStructTypeIdx: number,
 ): FuncClosureSingleton | null {
+  const sourceGetter = ctx.programAbiClassCallables?.genericGetterSourceForHandle(methodFuncIdx);
+  if (sourceGetter) return ensureSourceGetterReceiverSingleton(ctx, fctx, methodName, sourceGetter);
   // Resolve the user-visible signature so we know the wrapper struct's
   // funcref shape. Method signature is [(ref null objStruct), ...userParams]
   // → results; strip the leading `this` to derive the closure-callable
@@ -1023,6 +1032,116 @@ export function ensureMethodClosureSingleton(
     trampolineFuncIdx,
     closureStructTypeIdx: structTypeIdx,
     ...(allocStructTypeIdx !== undefined && metaSlot ? { allocStructTypeIdx, metaInit: metaSlot.init } : {}),
+  };
+}
+
+/** SOURCE body ownership is retained; only this forwarding wrapper is support. */
+function ensureSourceGetterReceiverSingleton(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  methodName: string,
+  source: {
+    readonly generic: WasmFunction;
+    readonly declaration: ts.GetAccessorDeclaration;
+    readonly derivedUnitId: IrUnitId;
+  },
+): FuncClosureSingleton {
+  const family = prepareSourceGetterReceiverFamily(ctx);
+  noteFunctionValueInhabitant(ctx, family.bareInfoTypeIdx, source.declaration);
+  const meta = fnMetaOfMember(source.declaration);
+  if (!meta || meta.length !== 0) throw new Error("SOURCE getter has no exact source name/zero arity metadata");
+  const slot = fnMetaSlotOfMeta(ctx, meta);
+  const failure = buildThrowJsErrorInstrs(ctx, "TypeError", "SOURCE getter receiver capability is not owned", {
+    flush: fctx,
+  });
+  const name = `__obj_meth_tramp_${methodName}_cached`;
+  const receiverName = `${name}__receiver`;
+  let wrapperHandle = ctx.funcMap.get(receiverName);
+  if (wrapperHandle === undefined) {
+    const target = definedFuncHandleOf(ctx, source.generic);
+    if (target === undefined) throw new Error("SOURCE getter lost its exact source body allocator");
+    wrapperHandle = mintDefinedFunc(ctx);
+    const body: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "ref.test", typeIdx: family.structTypeIdx },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: structuredClone(failure) },
+      { op: "local.get", index: 0 },
+      { op: "ref.cast", typeIdx: family.structTypeIdx },
+      { op: "struct.get", typeIdx: family.structTypeIdx, fieldIdx: 4 },
+      ...sourceGetterReceiverCapability(ctx),
+      { op: "ref.eq" },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: structuredClone(failure) },
+      { op: "local.get", index: 2 },
+      ...sourceGetterReceiverCapability(ctx),
+      { op: "ref.eq" },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: structuredClone(failure) },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: target },
+    ];
+    pushDefinedFunc(ctx, wrapperHandle, {
+      name: receiverName,
+      typeIdx: family.funcTypeIdx,
+      locals: [],
+      body,
+      exported: false,
+    });
+    ctx.funcMap.set(receiverName, wrapperHandle);
+    ctx.mod.declaredFuncRefs.push(wrapperHandle);
+  }
+  const wrapper = definedFuncAt(ctx, wrapperHandle);
+  if (!wrapper || wrapper.typeIdx !== family.funcTypeIdx)
+    throw new Error("SOURCE getter wrapper name has another allocator");
+  let bareHandle = ctx.funcMap.get(name);
+  if (bareHandle === undefined) {
+    const frame = miniTrampolineFctx(name, [], { kind: "externref" }, []);
+    frame.body.push(...sourceGetterReceiverUndefined(ctx));
+    const target = definedFuncHandleOf(ctx, source.generic);
+    if (target === undefined) throw new Error("SOURCE getter bare entry lost its exact source body");
+    frame.body.push({ op: "call", funcIdx: target });
+    bareHandle = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, bareHandle, {
+      name,
+      typeIdx: family.bareFuncTypeIdx,
+      locals: frame.locals,
+      body: frame.body,
+      exported: false,
+    });
+    ctx.funcMap.set(name, bareHandle);
+    ctx.mod.declaredFuncRefs.push(bareHandle);
+  }
+  const bareWrapper = definedFuncAt(ctx, bareHandle);
+  if (!bareWrapper || bareWrapper.typeIdx !== family.bareFuncTypeIdx)
+    throw new Error("SOURCE getter bare wrapper name has another allocator");
+  let cacheGlobalIdx = ctx.methodClosureGlobals.get(methodName);
+  if (cacheGlobalIdx === undefined) {
+    cacheGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+    ctx.mod.globals.push({
+      name: `__method_closure_${methodName}`,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.methodClosureGlobals.set(methodName, cacheGlobalIdx);
+  }
+  const cache = ctx.mod.globals[localGlobalIdx(ctx, cacheGlobalIdx)];
+  if (!cache) throw new Error("SOURCE getter has no exact singleton cache global");
+  observeSourceGetterReceiverClosure(ctx, {
+    sourceUnitId: source.derivedUnitId,
+    sourceBody: source.generic,
+    wrapper,
+    bareWrapper,
+    cache,
+  });
+  return {
+    constructible: false,
+    cacheGlobalIdx,
+    trampolineFuncIdx: bareHandle,
+    closureStructTypeIdx: family.structTypeIdx,
+    allocStructTypeIdx: family.structTypeIdx,
+    metaInit: [...slot.init, ...sourceGetterReceiverCapability(ctx), { op: "ref.func", funcIdx: wrapperHandle }],
   };
 }
 

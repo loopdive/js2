@@ -215,3 +215,12 @@ files pass 84/84; the six console-touching equivalence files pass 92/92. The two
 - **Disclosed: BigInt renders by target.** `out(10n)` through
   `__ir_console_format_value` prints `10` on standalone and `[object Object]`
   on WASI; node prints `10n`, legacy WASI printed `[object]`.
+
+## Whole #6878 receiving reconciliation, 2026-10-30 (source proposal only)
+
+The complete inherited contract and historical evidence above are retained.
+This private reconciliation keeps the current native-domain, signature and
+console refusal corrections; it does not reinstate the older API or dated
+allowance values. The original 70 registrations remain within the current
+72-registration fixture (one added refusal per native target). Those source
+counts are not fresh execution credit. Full current qualification is pending.

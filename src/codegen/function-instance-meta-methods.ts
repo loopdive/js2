@@ -112,7 +112,14 @@ function memberNameOf(decl: MetaBearingMember): string | undefined {
   // literal `Symbol("desc")` binding: §10.2.9 names the method `"[desc]"`
   // (`""` for a description-less symbol). Every other computed key still
   // declines — see the module header on why declining beats guessing.
-  else if (ts.isComputedPropertyName(key)) base = symbolComputedKeyFunctionName(key.expression);
+  else if (ts.isComputedPropertyName(key)) {
+    const expression = key.expression;
+    base = ts.isStringLiteralLike(expression)
+      ? expression.text
+      : ts.isNumericLiteral(expression)
+        ? String(Number(expression.text))
+        : symbolComputedKeyFunctionName(expression);
+  }
   if (base === undefined) return undefined;
   if (ts.isGetAccessorDeclaration(decl)) return `get ${base}`;
   if (ts.isSetAccessorDeclaration(decl)) return `set ${base}`;

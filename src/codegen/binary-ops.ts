@@ -53,6 +53,7 @@ import { ensureNativeStringHelpers } from "./native-strings.js";
 import { emitNewTargetClassId, getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
 import { compileLogicalAnd, compileLogicalOr, compileNullishCoalescing } from "./expressions/logical-ops.js";
 import { tryStaticToNumber } from "./expressions/misc.js";
+import { prepareSymbolToNumberGuard, symbolThrowArm } from "./tonumber-fast-paths.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { admitsObjectAddition, emitObjectAdd } from "./addition-to-primitive.js";
@@ -675,13 +676,16 @@ export function compileBinaryExpression(
   // (1, "1")` into `2` instead of `"11"`.
   // The same rule applies to properties widened after writes through an
   // object alias: their checker type still describes the original value.
+  // A generic getter likewise has a raw foreign receiver: its declaring
+  // class does not certify the runtime primitive consumed by addition.
   if (
     op === ts.SyntaxKind.PlusToken &&
-    [expr.left, expr.right].some(
-      (operand) =>
-        (ts.isIdentifier(operand) && fctx.rawArgumentsParamNames?.has(operand.text)) ||
-        expressionHasWidenedPropertyType(ctx, operand),
-    )
+    (fctx.genericClassGetter ||
+      [expr.left, expr.right].some(
+        (operand) =>
+          (ts.isIdentifier(operand) && fctx.rawArgumentsParamNames?.has(operand.text)) ||
+          expressionHasWidenedPropertyType(ctx, operand),
+      ))
   ) {
     return emitAnyAdd(ctx, fctx, expr);
   }
@@ -2615,7 +2619,10 @@ export function emitAnyRelational(
   numericShortcut = false, // (#6999) host-free any-arm: two Wasm numbers skip the cascade
 ): ValType {
   // Registered before the operands compile, so its setup cannot desync funcIdxs.
-  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureObjectRuntime(ctx);
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    ensureObjectRuntime(ctx);
+    prepareSymbolToNumberGuard(ctx, fctx);
+  }
 
   // Compile both operands to externref temps (keep runtime strings boxed).
   // (#6982) A class instance with `[Symbol.toPrimitive]` stays raw until step 1.
@@ -2694,9 +2701,11 @@ export function emitAnyRelational(
       const rf = allocTempLocal(fctx, { kind: "f64" });
       const numSign: Instr[] = [
         { op: "local.get", index: lTmp },
+        ...symbolThrowArm(ctx, lTmp),
         { op: "call", funcIdx: unboxNum },
         { op: "local.set", index: lf },
         { op: "local.get", index: rTmp },
+        ...symbolThrowArm(ctx, rTmp),
         { op: "call", funcIdx: unboxNum },
         { op: "local.set", index: rf },
         // (l < r) ? -1 : (l > r ? 1 : (l == r ? 0 : 2))

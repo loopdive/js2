@@ -1983,6 +1983,38 @@
   ],
   "files": [
     {
+      "path": "src/codegen/array/vec-element-boxing.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7138",
+      "nextBoundary": "Separate context-bound boxer lookup from physical element boxing instructions."
+    },
+    {
+      "path": "src/codegen/declarations/prepared-signatures.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7138",
+      "nextBoundary": "Prepared signature vocabulary and exact allocated physical slot proof; separate context-bound vector type registration."
+    },
+    {
+      "path": "src/codegen/helpers/uint32-coercion.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7138",
+      "nextBoundary": "Canonical integer conversion provider; move its physical resource allocation with Program ABI preparation."
+    },
+    {
+      "path": "src/ir/ast-source-facts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7138",
+      "nextBoundary": "Source AST/oracle forwarding still depends on frontend and mixed from-ast types; no clean-boundary claim."
+    },
+    {
       "path": "src/ir/function-object-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -2023,6 +2055,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/ir/select-dynamic-members.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7138",
+      "nextBoundary": "AST member-selection gates extracted from the structural selector; lower with the common frontend policy."
     },
     {
       "path": "src/runtime/wasmgc/values/string-create-body.ts",
@@ -14530,6 +14570,11 @@
       "layer": "wasm-model"
     },
     {
+      "path": "src/wasm/physical/numeric-carriers.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
       "path": "src/wasm/physical/type-layout.ts",
       "state": "clean",
       "layer": "wasm-physical"
@@ -16896,6 +16941,14 @@
       "destination": "frontend-ts",
       "owner": "3518-coordinator",
       "nextBoundary": "Pure TS-AST class-override scan feeding the IR selector and builder (#7000); retire with the IR virtual-dispatch intent or move behind the frontend-ts boundary."
+    },
+    {
+      "path": "src/ir/private-member-syntax.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure TS-AST private-member predicates shared by the IR selector and from-ast (#7227); move behind the frontend-ts boundary with the class-member selector."
     },
     {
       "path": "src/ir/closure-signature-flow.ts",

@@ -1488,6 +1488,10 @@ export interface FunctionContext {
    * setter + the consuming read/write/compound emitters.
    */
   thisStructName?: string;
+  /** Generic untyped class getter: actual externref receiver and dynamic return. */
+  genericClassGetter?: true;
+  /** Exact SOURCE-derived body identity, distinct from its nominal terminal. */
+  bodyRouteDerivedUnitId?: IrUnitId;
   /**
    * (#3683 S2) Set ONLY on a typed-`this` TWIN body — the second compilation of
    * an admitted fnctor prototype method, whose prologue has already cast
@@ -2476,6 +2480,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   memberGetMethodArms?: Map<
     string,
     {
+      receiverClassName: string;
       receiverStructTypeIdx: number;
       methodFullName: string;
       closureStructTypeIdx: number;

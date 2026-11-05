@@ -217,6 +217,7 @@ export function buildClosureMethodArgumentState(
   arity: number,
   closureArity: number,
   state: ClosureArgumentState,
+  argumentStart = 2,
 ): Instr[] {
   const setupInstrs: Instr[] = [
     { op: "global.get", index: state.argc },
@@ -244,7 +245,7 @@ export function buildClosureMethodArgumentState(
     const extrasCount = arity - closureArity;
     setupInstrs.push({ op: "i32.const", value: extrasCount });
     for (let i = closureArity; i < arity; i++) {
-      setupInstrs.push({ op: "local.get", index: i + 2 });
+      setupInstrs.push({ op: "local.get", index: i + argumentStart });
     }
     setupInstrs.push({ op: "array.new_fixed", typeIdx: state.extrasArrTypeIdx, length: extrasCount });
     setupInstrs.push({ op: "struct.new", typeIdx: state.extrasVecTypeIdx });

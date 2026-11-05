@@ -269,3 +269,12 @@ Residuals:
   does not yet cover the `constructor` member.
 - gc keeps main's wrong `u32` field value (`2147483647`); the JS-host lane is
   being sunset, so no gc fix is planned.
+
+## Whole #6878 receiving reconciliation, 2026-10-30 (source proposal only)
+
+The complete inherited contract and historical evidence above are retained.
+This private reconciliation keeps the current native-domain, signature and
+console refusal corrections; it does not reinstate the older API or dated
+allowance values. The original 70 registrations remain within the current
+72-registration fixture (one added refusal per native target). Those source
+counts are not fresh execution credit. Full current qualification is pending.
