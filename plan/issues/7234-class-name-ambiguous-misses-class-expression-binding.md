@@ -1,10 +1,11 @@
 ---
 id: 7234
 title: "classNameIsAmbiguous misses a class expression bound to the same name"
-status: in-progress
+status: done
+completed: 2026-11-05
 sprint: current
 created: 2026-11-04
-updated: 2026-11-04
+updated: 2026-11-05
 priority: medium
 horizon: s
 feasibility: medium
@@ -86,3 +87,25 @@ Merge `origin/main` once #7059 lands.
   base's value.
 - Class-sample IR units lost: 0, or each loss listed and justified.
 - Ledger stride 40 is unchanged or higher. 0 invariants.
+
+## Result (2026-11-05)
+
+`classNameIsAmbiguous` now counts every value binding of the name: class
+declaration/expression, function declaration/expression, variable (incl. catch),
+parameter, destructuring element, import clause/specifier/namespace/import-equals.
+Both callers (`staticPrivateThisCallClassName`, `staticPrivateFieldOwner`) and the
+select.ts private-call arm already go through it; nothing else changed.
+
+- **Repro:** compiles on all 3 lanes. `C.a` stays legacy, and `f()` traps
+  (`dereferencing a null pointer`), the same as the IR-free path
+  (`experimentalIR: false`) and pre-#7054 base. The trap is a pre-existing
+  legacy bug with two same-named class shapes. The `f`-never-called variant
+  still hits the `C_new` compile error, unchanged from base (unrelated to this
+  predicate).
+- **Class sample** (1524 files, ALLUNITS, standalone/gc/wasi): head JSON
+  byte-identical to base on every lane. IR units lost: 0.
+- **Ledger** stride 40 standalone: identical (ir 38, both 25, legacy 1620,
+  neither 37, invariant 0).
+- **Typed corpus** (2293 units × gc/standalone/wasi): byte-identical.
+- **Test:** `tests/equivalence/issue-7234-class-name-ambiguous.test.ts`, 23 tests.
+  All pass on head; 22 fail on base.
