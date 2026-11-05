@@ -1819,7 +1819,7 @@ export function compileSourceSync(
   // Step 1a: #3418 — host-free targets elide dead pure top-level bindings before
   // parsing so unreachable bodies do not register host imports. (#6898) The
   // native regime in a JS environment elides too: which bindings are dead is a
-  // question of the implementation (`nativeRegime` ≡ `ctx.standalone`), not of
+  // question of the implementation (`targetProfile.nativeRegime`), not of
   // the embedder. Without it the unused test262 `$262.evalScript` shim kept a
   // live direct `eval` and put every regime row into runtime-eval mode.
   // Context-owned declarations remain observable from later Scripts even when

@@ -312,7 +312,7 @@ import {
 import { isDomCapabilityImportName, isDomInteractionImportName } from "../dom-capability-contract.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
-import { hostFreeEnvironment } from "./context/types.js";
+import { hostFreeEnvironment, regimeTarget } from "./context/types.js";
 import { reinstallPreHoistedLetConstBinding } from "./statements/eager-capture-box.js";
 import type {
   ClosureInfo,
@@ -2480,10 +2480,7 @@ function isHostOnlyGeneratorImportName(name: string): boolean {
  * host/gc build where these imports DO register — is not matched and still
  * hard-errors.
  */
-function isTargetOmittedHostImportInvariant(
-  err: IrIntegrationError,
-  ctx?: Pick<CodegenContext, "standalone" | "wasi">,
-): boolean {
+function isTargetOmittedHostImportInvariant(err: IrIntegrationError, ctx?: Pick<CodegenContext, "wasi">): boolean {
   if (!ctx) return false;
   if (err.outcome.kind !== "invariant" || err.outcome.code !== "unknown-function-ref") return false;
   const name = /unknown function ref "([^"]+)"/.exec(err.message)?.[1];
@@ -2492,7 +2489,7 @@ function isTargetOmittedHostImportInvariant(
 
 export function formatIrPathFallbackDiagnostic(
   err: IrIntegrationError,
-  ctx?: Pick<CodegenContext, "standalone" | "wasi">,
+  ctx?: Pick<CodegenContext, "wasi">,
 ): {
   readonly message: string;
   readonly severity: "error" | "warning";
@@ -7602,7 +7599,7 @@ function addWasiStartExport(ctx: CodegenContext): void {
     const startBody: Instr[] =
       exnPrinterIdx !== undefined && ctx.wasiProcExitIdx >= 0
         ? [
-            buildTargetTaggedTry(ctx, { kind: "empty" }, body, [
+            buildTargetTaggedTry(regimeTarget(ctx), { kind: "empty" }, body, [
               {
                 tagIdx: ctx.exnTagIdx,
                 body: [

@@ -73,7 +73,6 @@ export function isAdmissibleDynamicReadNarrowing(kind: ValType["kind"]): boolean
  * the honest externref carrier on both sides of a link.
  */
 export function dynamicReadCrossesStandaloneLink(ctx: {
-  standalone: boolean;
   exportsConsumedByWasm?: boolean;
   linkedNamespaces: ReadonlySet<string>;
 }): boolean {

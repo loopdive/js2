@@ -42,6 +42,7 @@ import {
   RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B,
   RUNTIME_EVAL_INTERP_CALLBACK_KIND_INTRINSIC_FUNCTION,
 } from "./runtime-eval-boundary.js";
+import { regimeTarget } from "./context/types.js";
 
 export interface RuntimeEvalAotCallableCarrier {
   structTypeIdx: number;
@@ -107,7 +108,7 @@ function syncedTrampolineBody(
   ];
   const callEnvelope = (): Instr =>
     buildTargetTaggedTry(
-      ctx,
+      regimeTarget(ctx),
       { kind: "empty" },
       [
         ...callTarget,
@@ -134,7 +135,7 @@ function syncedTrampolineBody(
   // catch. The cleanup catch still pushes live globals before rethrowing.
   if (direction === "aot") {
     const rawResult = buildTargetTaggedTry(
-      ctx,
+      regimeTarget(ctx),
       { kind: "empty" },
       [...callTarget, { op: "local.set", index: envelopeLocal }],
       [
@@ -171,7 +172,7 @@ function syncedTrampolineBody(
   const activeBeforeLocal = 13;
   locals.push({ name: "activeBefore", type: { kind: "i32" } });
   const synchronizedEnvelope = buildTargetTaggedTry(
-    ctx,
+    regimeTarget(ctx),
     { kind: "empty" },
     [
       { op: "global.get", index: activeGlobalIdx },

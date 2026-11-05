@@ -86,8 +86,8 @@ export interface CompileTargetProfile {
   readonly strictEnvImportGate: boolean;
   readonly nativeStringsRequiredByPolicy: boolean;
   /**
-   * (#5385) Whether codegen lowers with the native semantic REGIME — the
-   * `ctx.standalone` provider arms. True for every WasmGC target —
+   * (#5385) Whether codegen lowers with the native semantic REGIME — the single
+   * regime truth since #6979 S7-c removed codegen's flag. True for every WasmGC target —
    * standalone, gc and wasi (#6979 S7-c). This answers "which ECMAScript
    * implementation runs?"; `environment` / `hostValueInterop` still answer
    * "who instantiates it and does it keep the JS value bridge?".

@@ -97,6 +97,7 @@ import { resolvePromiseSubclassName } from "./expressions/promise-subclass.js"; 
 import { promiseSubclassResolveFallbackInstrs } from "./promise-subclass-proto-link.js";
 import { shadowsGlobalValueName } from "./promise-class-receiver-settle.js";
 import { demandPromiseDynamicMember } from "./promise-dynamic-member-read.js"; // (#6651 D5)
+import { regimeTarget } from "./context/types.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -215,7 +216,7 @@ function buildFinishBody(ctx: CodegenContext, rt: ClassDriveRuntime, aggErrIdx: 
       ],
     },
     buildTargetTaggedTry(
-      ctx,
+      regimeTarget(ctx),
       { kind: "empty" },
       [
         ...S(),
@@ -593,7 +594,7 @@ function emitClassReceiverDrive(
   const resolveFallback = promiseRooted ? (promiseSubclassResolveFallbackInstrs(ctx, fctx, L.resolveFn) ?? []) : [];
   fctx.body.push(
     buildTargetTaggedTry(
-      ctx,
+      regimeTarget(ctx),
       { kind: "empty" },
       [
         { op: "local.get", index: L.ctor },
@@ -627,7 +628,7 @@ function emitClassReceiverDrive(
       blockType: { kind: "empty" },
       then: [
         buildTargetTaggedTry(
-          ctx,
+          regimeTarget(ctx),
           { kind: "empty" },
           [
             { op: "local.get", index: L.arg },
@@ -668,7 +669,7 @@ function emitClassReceiverDrive(
       { op: "i32.const", value: 1 },
       { op: "local.set", index: L.done },
       buildTargetTaggedTry(
-        ctx,
+        regimeTarget(ctx),
         { kind: "empty" },
         [
           { op: "local.get", index: L.iter },
@@ -683,7 +684,7 @@ function emitClassReceiverDrive(
       { op: "local.get", index: L.done },
       { op: "br_if", depth: 1 },
       buildTargetTaggedTry(
-        ctx,
+        regimeTarget(ctx),
         { kind: "empty" },
         buildElementStep(ctx, method, rt, ids.arrTypeIdx, L, isCallable, typeError),
         [
@@ -705,7 +706,7 @@ function emitClassReceiverDrive(
         blockType: { kind: "empty" },
         then: [
           buildTargetTaggedTry(
-            ctx,
+            regimeTarget(ctx),
             { kind: "empty" },
             [
               { op: "local.get", index: L.iter },

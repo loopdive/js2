@@ -51,7 +51,7 @@ import {
 } from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity · (#5375) host-facing result type
 import { BOOLEAN_I32, callbackBodyBoxesBoolean } from "./closures/host-boolean-callback.js";
 import { registerStandaloneDomCallbackDirectClosure } from "./standalone-dom-callback-authority.js";
-import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
+import { type ClosureInfo, type CodegenContext, type FunctionContext, regimeTarget } from "./context/types.js";
 import {
   addFuncType,
   destructureParamObject,
@@ -3372,7 +3372,7 @@ export function compileLiftedClosureBody(
         : [];
     liftedFctx.body.push(
       buildTargetTaggedTry(
-        ctx,
+        regimeTarget(ctx),
         { kind: "empty" },
         [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
         [{ tagIdx, body: catchBody }],

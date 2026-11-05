@@ -1113,12 +1113,7 @@ function prepareClosureTransaction(input: {
  */
 export type IrProgramRuntimePolicyContext = Pick<
   CodegenContext,
-  | "nativeStrings"
-  | "standalone"
-  | "wasi"
-  | "strictNoHostImports"
-  | "targetProfile"
-  | "requiresStandaloneDomInteractionCapability"
+  "nativeStrings" | "wasi" | "strictNoHostImports" | "targetProfile" | "requiresStandaloneDomInteractionCapability"
 >;
 
 function integrationNumberBoundaryPolicy(ctx: IrProgramRuntimePolicyContext): NumberBoundaryPolicy {

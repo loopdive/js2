@@ -4263,12 +4263,6 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   wasi: boolean;
   /** Whether Node-compatible ambient globals such as `global` are enabled. */
   nodeGlobals: boolean;
-  /** Whether targeting standalone (no JS host, no WASI runtime — #1470).
-   *  When true, the emitter MUST NOT add `wasm:js-string` namespace imports
-   *  or JS-host string helpers (`__concat_N`, `__extern_toString`,
-   *  `__unbox_string`, `__str_from_mem`, `__str_to_mem`,
-   *  `__str_extern_len`). Implies `nativeStrings === true`. */
-  standalone: boolean;
   /** Linked zero-argument getter for the canonical standalone realm-global object. */
   standaloneGlobalThisImport?: {
     module: string;
@@ -4963,4 +4957,10 @@ export function inModuleStdoutSink(ctx: CodegenContext): boolean {
  */
 export function jsValueBoundary(ctx: CodegenContext): boolean {
   return ctx.targetProfile.hostValueInterop === "required";
+}
+
+/** (#6979 S7-c) The `{ wasi, standalone }` target the physical/runtime emitters
+ *  still take; codegen is always the native regime. Goes with S7-d. */
+export function regimeTarget(ctx: CodegenContext): { readonly wasi: boolean; readonly standalone: true } {
+  return { wasi: ctx.wasi, standalone: true };
 }
