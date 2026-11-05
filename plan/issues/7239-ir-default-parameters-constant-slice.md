@@ -163,6 +163,36 @@ falls) cannot be met by it. Options for the lead:
 4. Keep this constant slice only if typed-corpus value justifies an IR
    argc-read instruction with no ledger gain.
 
+## Re-scope probe: optional `?` and rest (Opus, 2026-11-05) — no stride gain, not built
+
+Coordinator re-scoped this issue to option 1 (`?` on a dynamic slot), then
+option 2 (rest). Probe-first: a throwaway `select.ts` (identifier-parameter
+`?` and `...` refusals bypassed under an env flag, never committed) over the
+same stride-40 standalone ledger:
+
+| | IR | both | legacy | neither | compileOk | `param-shape-rejected` | `body-shape-rejected` | `param-type-not-resolvable` | invariants |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| base `bf60bb81a4` | 38 | 25 | 1620 | 37 | 1081 | 22 | 1106 | 45 | 0 |
+| probe (`?` + rest admitted) | 38 | 25 | 1620 | 37 | 1081 | 9 | 1118 | 46 | 0 |
+
+Every unblocked unit hits another selector refusal at once, so IR units do
+not move:
+- `__js2wasm_Iterator_zip` / `_zipKeyed` (8 units, `options?: any`) →
+  `body-shape-rejected`, detail `vardecl-typenode:AnyKeyword`
+  (`let paddingOption: any = undefined`). Behind that the bodies also use
+  `try/catch` inside loops, `Object.keys`, `for…of` over `any`, and method
+  calls on `any` carriers, so admitting `: any` locals alone is unlikely to be
+  enough.
+- `__js2wasm_Iterator_concat` (4 units, `...items: any[]`) →
+  `body-shape-rejected`, same `vardecl-typenode:AnyKeyword` first.
+- `rest-parameters-apply.js` `af(...a)` → `param-type-not-resolvable`
+  (`param-dynamic-carrier-diverges-from-legacy`).
+
+So neither slice is built. Legacy's caller fill for `?` and its rest-array
+construction were not investigated further, because the probe already shows
+no gain. The next lever for these 13 units is the prelude-body shape
+(`: any` local annotations first), not parameter admission.
+
 ## Acceptance criteria
 
 - **Ledger A/B** (stride 40, standalone) in the PR body: IR units rise;
