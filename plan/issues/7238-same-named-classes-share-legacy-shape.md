@@ -17,12 +17,14 @@ related: [4646, 7234, 7227]
 
 # #7238: same-named classes in one file collide in legacy codegen
 
-Found during the review of PR #7065 (#7234). Every row below reproduces on
-main, with the IR path on or off (`experimentalIR: false`), on gc,
-`--target standalone` and `--target wasi`. #4646 (struct-map keying by class
+Found during the review of PR #7065 (#7234). Measured on gc,
+`--target standalone` and `--target wasi`, on the legacy path
+(`experimentalIR: false`); once #7065 lands, the same result also appears with
+the IR on. Before #7065 the second and third rows were compile errors with the
+IR on (`C_new has no exact installed support pair`). #4646 (struct-map keying by class
 name) is `done`, but the cases below still fail.
 
-| Probe | node | main |
+| Probe | node | legacy path |
 |---|---|---|
 | two sibling `function f(){ class C … }` / `function g(){ class C … }`, each reading its own static | 12 | **11** (silently wrong) |
 | top-level `class C { static #m(){return 1} … }` + `function f(){ const C = class { static #m(){return 12} … }; return C.a(); }` | 12 | null-pointer **trap** |
