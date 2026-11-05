@@ -672,13 +672,6 @@ function buildLinkedGlobalCallFallback(
  * Returns early when no closures of arity ≤ N exist (no export emitted).
  */
 function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
-  prepareSourceGetterReceiverFamily(ctx);
-  assertSourceGetterReceiverSignatureSeparation(ctx);
-  const sourceReceiverFailure = buildThrowJsErrorInstrs(
-    ctx,
-    "TypeError",
-    "SOURCE getter callable owner is not available",
-  );
   const mod = ctx.mod;
   const exportName = `__call_fn_${arity}`;
 
@@ -764,6 +757,16 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   // signature wrapper for the initial ref.test + struct.get.
   baseWrapperIdx = resolveClosureBaseWrapperTypeIdx(ctx, arity, baseWrapperIdx);
   if (baseWrapperIdx === undefined) return;
+
+  // Recognition must not manufacture the ordinary entry whose existence this
+  // exporter tests. Prepare the SOURCE family/error only for a real dispatch.
+  prepareSourceGetterReceiverFamily(ctx);
+  assertSourceGetterReceiverSignatureSeparation(ctx);
+  const sourceReceiverFailure = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "SOURCE getter callable owner is not available",
+  );
 
   // A callback may receive a compiled GC value through a host-side facade.
   // Keep the generic closure bridge on the open externref carrier until the
@@ -1282,13 +1285,6 @@ export function topHighClosureMethodCallArity(ctx: CodegenContext, floor: number
  * Returns early when no closures of arity ≤ N exist (no export emitted).
  */
 export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number, minHostArity = 0): void {
-  prepareSourceGetterReceiverFamily(ctx);
-  assertSourceGetterReceiverSignatureSeparation(ctx);
-  const sourceReceiverFailure = buildThrowJsErrorInstrs(
-    ctx,
-    "TypeError",
-    "SOURCE getter callable owner is not available",
-  );
   const mod = ctx.mod;
   const exportName = `__call_fn_method_${arity}`;
 
@@ -1370,6 +1366,16 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
 
   baseWrapperIdx = resolveClosureBaseWrapperTypeIdx(ctx, arity, baseWrapperIdx);
   if (baseWrapperIdx === undefined) return;
+
+  // Recognition must not manufacture the ordinary entry whose existence this
+  // exporter tests. Prepare the SOURCE family/error only for a real dispatch.
+  prepareSourceGetterReceiverFamily(ctx);
+  assertSourceGetterReceiverSignatureSeparation(ctx);
+  const sourceReceiverFailure = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "SOURCE getter callable owner is not available",
+  );
 
   // Method calls can re-enter Wasm through a host-side facade just like free
   // callback calls do. Recover the facade's original GC value before narrowing

@@ -14,7 +14,6 @@ export { emitAnyAdd, emitAnyAddFromExternTemps, emitNativeStringSlotPlus } from 
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
 import { isInertUndefinedLiteral } from "./void-undefined-operand.js"; // (#6604)
 import { ts } from "../ts-api.js";
-import type { TypeFact } from "../checker/oracle.js";
 import {
   getNullablePrimitiveInfo,
   isBigIntType,
@@ -27,12 +26,7 @@ import {
 } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
-import {
-  ensureAnyFromExternHelper,
-  ensureExternStrictEqHelper,
-  isAnyValue,
-  undefinedSingletonActive,
-} from "./any-helpers.js";
+import { ensureAnyFromExternHelper, ensureExternStrictEqHelper, isAnyValue } from "./any-helpers.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -75,7 +69,14 @@ import { foldVoidOperandEquality } from "./equality-void-operand.js";
 import { emitHoistedCharCodeAtRead, matchHoistedCharRead } from "./string-ops.js";
 import { emitLooseEq, emitStrictEq, ensureExternrefToNumberProvider } from "./coercion-engine.js";
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
-import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
+import {
+  compileTypedBinaryDispatch,
+  isOracleHeterogeneousPrimitiveUnion,
+  sourceDeclarationOfIdentifier,
+  isRealmUndefinedIdentifier,
+  tryCompileEarlyNativeMapGetEquality,
+  tryEmitNativeMapGetLiteralNullishEquality,
+} from "./binary-ops-typed-dispatch.js";
 import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
 import {
   bothOperandsAreBigIntCarriers,
@@ -89,34 +90,6 @@ import { hasStaticBigIntOperand } from "./host-bigint-carrier.js";
 import { emitStandaloneAnyBigIntBinary } from "./bigint-any-operand.js"; // (#5383) host-free any op bigint
 import { emitUninitialisedFieldStrictNullish, readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
 import { readsUndefinedHoldingVariable } from "./undefined-holding-variable.js"; // (#1058)
-
-/**
- * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
- * boundary.  This mirrors `isHeterogeneousPrimitiveUnion` without exposing a
- * `ts.Type`: nullable heterogeneous bindings are the only unions whose
- * non-null parts must retain distinct primitive tags.
- */
-function isOracleHeterogeneousPrimitiveUnion(fact: TypeFact): boolean {
-  if (fact.kind !== "union" || fact.parts.length < 2) return false;
-  const primitiveKinds = new Set<TypeFact["kind"]>();
-  for (const part of fact.parts) {
-    if (part.kind !== "number" && part.kind !== "string" && part.kind !== "boolean") return false;
-    primitiveKinds.add(part.kind);
-  }
-  return primitiveKinds.size >= 2;
-}
-
-function sourceDeclarationOfIdentifier(ctx: CodegenContext, expression: ts.Expression): ts.Declaration | undefined {
-  if (!ts.isIdentifier(expression)) return undefined;
-  const symbol = ctx.checker.getSymbolAtLocation(expression);
-  return symbol?.valueDeclaration ?? symbol?.declarations?.[0];
-}
-
-function isRealmUndefinedIdentifier(ctx: CodegenContext, expression: ts.Expression): boolean {
-  if (!ts.isIdentifier(expression) || expression.text !== "undefined") return false;
-  const declaration = sourceDeclarationOfIdentifier(ctx, expression);
-  return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
-}
 
 /**
  * An optional boolean has an i32 ABI, so its local alone cannot distinguish an
@@ -946,6 +919,18 @@ export function compileBinaryExpression(
       // assigns, are excluded inside the predicate.
       const isUninitialisedFieldSlot = readsUninitialisedFieldSlot(ctx, nonNullExpr);
       const valType = compileNullishObservedExpression(ctx, fctx, nonNullExpr);
+      const nativeMapNullish = tryEmitNativeMapGetLiteralNullishEquality(
+        ctx,
+        fctx,
+        expr,
+        nonNullExpr,
+        nonNullTsType,
+        valType,
+        rightIsNullish,
+        isStrictEqOp || isStrictNeqOp,
+        isNeqOp,
+      );
+      if (nativeMapNullish !== undefined) return nativeMapNullish;
       if (valType === null) {
         // Void expression (e.g. void function call) compared to null/undefined:
         // void returns undefined, so undefined == undefined/null is true (loose)
@@ -1117,6 +1102,9 @@ export function compileBinaryExpression(
   // Regular binary ops: evaluate both sides
   const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
   const rightTsType = ctx.checker.getTypeAtLocation(expr.right);
+
+  const nativeMapEquality = tryCompileEarlyNativeMapGetEquality(ctx, fctx, expr, leftTsType, rightTsType);
+  if (nativeMapEquality !== undefined) return nativeMapEquality;
 
   // ── Constant folding: emit a single constant when both operands are compile-time known ──
   {

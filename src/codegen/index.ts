@@ -235,6 +235,7 @@ import {
 import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-sweep.js"; // (#6768)
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
+import { irJsInstanceMethodMaySkip } from "./classes/ir-class-member-projection.js"; // (#7233)
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import {
   planIrImportedCalls,
@@ -1964,7 +1965,7 @@ function buildIrClassShapes(
     // Methods — instance methods only, re-derived from the AST.
     const methods: IrClassMethodDescriptor[] = [];
     let methodsOk = true;
-    for (const member of stmt.members) {
+    instanceMethods: for (const member of stmt.members) {
       if (!ts.isMethodDeclaration(member) || !member.name) continue;
       if (hasStaticModifier(member)) continue; // slice 4 defers static methods
       if (hasAbstractModifier(member)) continue;
@@ -1983,15 +1984,20 @@ function buildIrClassShapes(
         : ts.isComputedPropertyName(member.name)
           ? computedMethodName!
           : member.name.text;
+      // (#7233) JS sources skip an unprojectable method (it keeps its legacy
+      // body and slot) instead of dropping the whole class; TS keeps all-or-nothing.
+      const maySkip = irJsInstanceMethodMaySkip(sourceFile, parentShape, methodName);
       const params: IrType[] = [];
       for (const p of member.parameters) {
         if (!ts.isIdentifier(p.name) || p.dotDotDotToken || p.questionToken || p.initializer) {
+          if (maySkip) continue instanceMethods;
           methodsOk = false;
           break;
         }
         const tsType = ctx.checker.getTypeAtLocation(p);
         const ir = tsTypeToClassPositionIr(ctx, tsType, lookup);
         if (!ir) {
+          if (maySkip) continue instanceMethods;
           methodsOk = false;
           break;
         }
@@ -2006,6 +2012,7 @@ function buildIrClassShapes(
         if (!isVoidType(retTs)) {
           const ir = tsTypeToClassPositionIr(ctx, retTs, lookup);
           if (!ir) {
+            if (maySkip) continue; // unlabelled: biome noUselessLabel (same loop as instanceMethods)
             methodsOk = false;
             break;
           }

@@ -309,7 +309,7 @@ import {
   admittedEmptyLiteralIsOpenCarrier,
 } from "./select.js";
 import { openCarrierDefinePlan } from "./empty-object-literal.js";
-import { staticPrivateThisCallClassName } from "./private-member-syntax.js";
+import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
 import {
   makeIrDeclaredPrimitiveExpressionClassifier,
@@ -897,6 +897,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
     expression: ts.Expression,
     expected: IrType,
   ): { readonly globalRef: IrGlobalRef; readonly type: IrType } | null;
+  /** (#7233) Legacy module-global storage of a static private field (`staticPrivateFieldOwner`). */
+  classStaticFieldStorage?(
+    owner: ts.ClassDeclaration,
+    field: ts.PrivateIdentifier,
+  ): { readonly globalRef: IrGlobalRef; readonly type: IrType } | undefined;
   /** True for any checker-owned top-level lexical, including unsupported reps. */
   isDirectModuleBinding?(node: ts.Identifier): boolean;
   /** True when the identifier resolves to an ambient declaration-file symbol. */
@@ -6244,6 +6249,8 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
       `ir/from-ast: computed property access not in slice 2 (${cx.funcName})`,
     );
   }
+  const staticField = staticPrivateFieldStorage(expr, cx);
+  if (staticField) return cx.builder.emitGlobalGet(staticField.globalRef, staticField.type);
   const propName = irPrivateFieldName(expr.name);
 
   // (#3522 W1-C) `super.<accessor>` READ — static-dispatch to the PARENT's
@@ -10617,6 +10624,22 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
   if (!ts.isPropertyAccessExpression(lhs) || (!ts.isIdentifier(lhs.name) && !ts.isPrivateIdentifier(lhs.name))) {
     demoteToLegacy("property-write-unsupported", `ir/from-ast: malformed property assignment LHS in ${cx.funcName}`);
   }
+  const staticField = staticPrivateFieldStorage(lhs, cx);
+  if (staticField) {
+    let value = lowerExpr(expr.right, cx, staticField.type);
+    const valueType = cx.builder.typeOf(value);
+    if (staticField.type.kind === "dynamic" && valueType.kind !== "dynamic")
+      value =
+        boxConcreteToDynamic(value, valueType, expr.right, cx) ??
+        demoteToLegacy(
+          "property-write-unsupported",
+          `ir/from-ast: unboxable static private field value (${cx.funcName})`,
+        );
+    if (!irTypeAssignable(cx.builder.typeOf(value), staticField.type))
+      demoteToLegacy("property-write-unsupported", `ir/from-ast: static private field value type (${cx.funcName})`);
+    cx.builder.emitGlobalSet(staticField.globalRef, value);
+    return;
+  }
   const fieldName = irPrivateFieldName(lhs.name);
 
   // (#3522 W1-C) `super.<accessor> = v` WRITE — static-dispatch to the PARENT's
@@ -11373,6 +11396,19 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
     const actualV = asVal(actualT);
     if (actualT.kind === "dynamic" && cx.dynamicNumericReturn === "number-boundary")
       return cx.builder.emitDynToNumber(value);
+    // Preserve the declared numeric return ABI without treating Boolean slots
+    // as native integer domains. Legacy applies this same ToNumber boundary.
+    if (irTypeIsBoolean(actualT)) {
+      const number = emitUnaryToNumber(value, actualT, cx);
+      if (number === null) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/from-ast: Boolean return lost its canonical ToNumber route in ${cx.funcName}`,
+        );
+      }
+      return number;
+    }
     if (actualV && actualV.kind === "externref") {
       // (#4461 / #3526 F1-S1) Both lanes own a `__unbox_number` with the same
       // `(externref) -> f64` signature; only the PROVIDER differs (host import
@@ -14824,6 +14860,27 @@ function findClassMember(
 }
 
 /**
+ * (#7233) `this.#x` / `C.#x` on a static private field inside one of the
+ * owner's static methods: the legacy `__static_C___priv_x` global, or demote
+ * when its representation has no IR type. Undefined for any other access.
+ */
+function staticPrivateFieldStorage(
+  expr: ts.PropertyAccessExpression,
+  cx: LowerCtx,
+): { readonly globalRef: IrGlobalRef; readonly type: IrType } | undefined {
+  const owner = staticPrivateFieldOwner(expr);
+  if (!owner || !ts.isPrivateIdentifier(expr.name) || cx.scope.get("this")) return undefined;
+  if (ts.isIdentifier(expr.expression) && cx.scope.get(expr.expression.text) !== undefined) return undefined;
+  return (
+    cx.resolver?.classStaticFieldStorage?.(owner, expr.name) ??
+    demoteToLegacy(
+      "property-access-unsupported",
+      `ir/from-ast: static private field ${owner.name!.text}.${expr.name.text} has no IR-typed storage (${cx.funcName})`,
+    )
+  );
+}
+
+/**
  * Evaluate the key before the receiver (§13.10.1), then call canonical
  * HasProperty with the already materialized SSA values in `(obj, key)` order.
  * Native receiver validation and ToPropertyKey belong to native-in.ts.
@@ -15799,6 +15856,11 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
   }
   joinScopeStringEncodingFacts(cx.scope, [rhsCx.scope, skippedScope]);
 
+  // A value join preserves the Boolean brand only when both actual operands
+  // carry it. Native integer operands retain the existing unbranded result.
+  const joinedType =
+    irTypeIsBoolean(cx.builder.typeOf(lhs)) && irTypeIsBoolean(cx.builder.typeOf(rhs)) ? irBool() : resultType;
+
   // `cond = lhs`. For `&&`, the rhs is the then-arm (lhs truthy) and lhs is the
   // else-arm value. For `||`, lhs is the then-arm value and rhs is the
   // else-arm. The empty arm yields the already-materialized `lhs` (the lowerer
@@ -15810,7 +15872,7 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
       thenValue: rhs,
       else: [],
       elseValue: lhs,
-      resultType,
+      resultType: joinedType,
     });
   }
   return cx.builder.emitIfElse({
@@ -15819,7 +15881,7 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
     thenValue: lhs,
     else: rhsBody,
     elseValue: rhs,
-    resultType,
+    resultType: joinedType,
   });
 }
 

@@ -26,6 +26,8 @@ export const PROGRAM_ABI_GLOBAL_ROLE = Object.freeze({
   moduleTdz: 1,
   functionValueCache: 2,
   argc: 3,
+  // 4 / 5 are program-abi-global-planning.ts's native-string literal / retained roles.
+  classStaticField: 6, // (#7233) a static private field's legacy `__static_C___priv_x` global
 } as const);
 
 export type ProgramAbiGlobalAnchor =
