@@ -242,7 +242,7 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
 /** Whether one exact declaration owns a legacy slot widened by the analysis. */
 export function heterogeneousAssignmentRetypesModuleBinding(
   source: HeterogeneousBindingQuerySource,
-  declaration: ts.VariableDeclaration,
+  declaration: ts.VariableDeclaration | ts.BindingElement,
 ): boolean {
   return (
     ts.isIdentifier(declaration.name) &&
