@@ -313,17 +313,33 @@ export function irFunctionThisStrictness(ctx: CodegenContext, fn: ts.FunctionDec
  * constructor the IR may use as a value — the declaration legacy keeps out of
  * the fnctor machinery, never reassigned, never a generator?
  *
- * (#7242) Never inside a class body: the function-object planner
- * (`planIrImportedCalls`) mints the value plan for top-level function and
- * module-init owners only, so a class-member claim had no plan and demoted at
- * build (`unknown class "Test262Error"`). Minting it there is not enough: the
- * prepared class component has no Program ABI identity for the dynamic
- * carrier ops `dyn.construct` needs.
+ * (#7243) Also inside a class method: the planner mints the value plan for a
+ * selected class-method owner too, and such a member stays on the unsealed
+ * post-direct overlay (`planIrFirstBodyRouting`), exactly as the R2
+ * `function-value-reference` withdrawal keeps a free function there. A member
+ * the planner does not visit (an accessor, a constructor, a field
+ * initializer) keeps #7242's refusal, so the selector never claims a use the
+ * builder has no plan for.
  */
 export function irSelfGuardedConstructorValue(ctx: CodegenContext, ident: ts.Identifier): boolean {
   if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return false;
-  if (ts.findAncestor(ident.parent, ts.isClassLike) !== undefined) return false;
+  const classLike = ts.findAncestor(ident.parent, ts.isClassLike);
+  if (classLike !== undefined && irSelfGuardedValueClassMethod(ident) === undefined) return false;
   const decl = ctx.oracle.valueDeclarationOf(ident);
   if (decl === undefined || !isSelfGuardedConstructor(decl) || decl.asteriskToken !== undefined) return false;
   return !identifierIsWrittenTo(ident.getSourceFile(), ident.text);
+}
+
+/**
+ * (#7243) The class method whose own body (not a nested function, class or
+ * accessor) holds `ident`, when that method is a direct member of a top-level
+ * class declaration. That is the only class-body owner whose S3c value use
+ * `planIrImportedCalls` plans.
+ */
+export function irSelfGuardedValueClassMethod(ident: ts.Identifier): ts.MethodDeclaration | undefined {
+  const owner = ts.findAncestor(ident.parent, (node) => ts.isFunctionLike(node) || ts.isClassLike(node));
+  if (owner === undefined || !ts.isMethodDeclaration(owner) || owner.body === undefined) return undefined;
+  if (ident.pos < owner.body.pos || ident.end > owner.body.end) return undefined; // a parameter or computed name
+  const cls = owner.parent;
+  return ts.isClassDeclaration(cls) && ts.isSourceFile(cls.parent) ? owner : undefined;
 }
