@@ -1,16 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { ImportIntent } from "../index.js";
+import type { TimerCapabilityAdapterContext } from "./contracts/timer-capability.js";
+export type { TimerCapabilityAdapterContext } from "./contracts/timer-capability.js";
 
 type TimerCapabilityIntent = Extract<ImportIntent, { type: "timer_set" | "timer_clear" }>;
-
-/** Narrow services needed to bind timer capability imports. */
-export interface TimerCapabilityAdapterContext {
-  deps?: Record<string, any>;
-  wrapWasmClosure(value: unknown, arity: number, boundary?: "timer"): ((...args: any[]) => any) | null;
-  marshalTimerValueToHost?(value: unknown): unknown;
-  marshalTimerHandleFromHost?(handle: unknown): unknown;
-}
 
 let warnedTimerCallbackUnresolvable = false;
 

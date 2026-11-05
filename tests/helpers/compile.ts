@@ -361,16 +361,15 @@ export async function compileAndRunTestNumber(src: string): Promise<number> {
  * `experimentalIR` true/false to compare the IR path against legacy. Byte-for-byte
  * identical to the local `compileAndRun` + `ENV_STUB` these files declared.
  */
-export async function compileAndRunIRVariant(
-  source: string,
-  fnName: string,
-  args: ReadonlyArray<string | number | boolean>,
-  experimentalIR: boolean,
-): Promise<unknown> {
+async function compileIRVariantResult(source: string, experimentalIR: boolean): Promise<CompileResult> {
   const r = await compile(source, { experimentalIR });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "<unknown>"}`);
   }
+  return r;
+}
+
+async function instantiateIRVariantResult(r: CompileResult): Promise<WebAssembly.Instance> {
   const imports = buildImports(
     r.imports,
     {
@@ -382,8 +381,42 @@ export async function compileAndRunIRVariant(
   );
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
   imports.setInstance?.(instance); // (#6708) binds the native-string bridge memory
+  return instance;
+}
+
+export async function compileAndRunIRVariant(
+  source: string,
+  fnName: string,
+  args: ReadonlyArray<string | number | boolean>,
+  experimentalIR: boolean,
+): Promise<unknown> {
+  const r = await compileIRVariantResult(source, experimentalIR);
+  const instance = await instantiateIRVariantResult(r);
   const fn = jsFacingExports(r, instance)[fnName] as (...a: unknown[]) => unknown;
   return fn(...args);
+}
+
+/** Preserve raw ABI claims and observe the JS boundary on a fresh instance of the same bytes. */
+export async function compileAndRunIRVariantBoundaryPair(
+  source: string,
+  fnName: string,
+  args: ReadonlyArray<string | number | boolean>,
+  experimentalIR: boolean,
+) {
+  const compiled = await compileIRVariantResult(source, experimentalIR);
+  const rawInstance = await instantiateIRVariantResult(compiled);
+  const fn = rawInstance.exports[fnName] as (...a: unknown[]) => unknown;
+  const rawResult = fn(...args);
+  return {
+    compiled,
+    rawResult,
+    // Preserve the original raw IR/legacy compile-and-call order before added observations.
+    runJsFacing: async () => {
+      const fresh = await instantiateIRVariantResult(compiled);
+      const publicFn = jsFacingExports(compiled, fresh)[fnName] as (...a: unknown[]) => unknown;
+      return publicFn(...args);
+    },
+  };
 }
 
 /**

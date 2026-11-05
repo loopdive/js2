@@ -139,7 +139,12 @@ import {
   sameExportedFunction,
 } from "./runtime/exported-function-identity.js";
 import { resolvePlatformCapabilityImport, wrapConsoleForHost } from "./runtime/console-host-marshal.js"; // (#6685)
-import { closureBridges, declaredHostFunction, marshalPlatformArgs } from "./runtime/platform-arg-marshal.js"; // (#6708/#7095) regime carriers ↔ JS values
+import {
+  closureBridges,
+  declaredHostFunction,
+  marshalPlatformArgs,
+  timerValues,
+} from "./runtime/platform-arg-marshal.js"; // (#6708/#7095) regime carriers ↔ JS values
 import {
   CLOCK_CAPABILITY_AUTHORITY,
   createCompiledDomCapabilityRuntime,
@@ -7790,6 +7795,8 @@ function _nativePrimitiveToHost(value: any, exports: Record<string, Function> | 
   return _MISS;
 }
 
+const _timerValues = timerValues(_nativePrimitiveToHost, _MISS, _hostToPrimitive, _nativeDynamicFromHost);
+
 // (#5131) Strict GetIterator/IteratorNext and strict array materialization are
 // isolated from the permissive compatibility bridge. Inject the established
 // runtime operations so the extraction changes neither host ABI nor dispatch.
@@ -11527,36 +11534,12 @@ function resolveImport(
   const builtin = <T>(name: string, fallback: T): T =>
     coherentBuiltinRealms.has(globalSandbox!) ? ((globalSandbox![name] as T | undefined) ?? fallback) : fallback;
   if (isBoundaryValueImportIntent(intent)) {
+    const tagBoundary = (fn: Function) => withModuleTagThrow(fn, callbackState, _nativeDynamicFromHost);
     return createBoundaryValueAdapter(intent, {
-      object: (operation) =>
-        withModuleTagThrow(
-          _createBoundaryObjectImport(operation, callbackState),
-          callbackState,
-          _nativeDynamicFromHost,
-        ),
-      callback: (arity) =>
-        withModuleTagThrow(_createBoundaryCallbackImport(arity, callbackState), callbackState, _nativeDynamicFromHost),
+      object: (operation) => tagBoundary(_createBoundaryObjectImport(operation, callbackState)),
+      callback: (arity) => tagBoundary(_createBoundaryCallbackImport(arity, callbackState)),
       promise: (operation) => _createBoundaryPromiseImport(operation, callbackState),
     });
-  }
-  let marshalTimerHandleFromHost: ((value: unknown) => unknown) | undefined;
-  if (intent.type === "timer_set" && refResult) {
-    const toNumber = withModuleTagThrow(
-      (value: unknown) => {
-        const primitive = _nativePrimitiveToHost(value, callbackState?.getExports());
-        const hostValue = primitive === _MISS ? value : primitive;
-        // Match the injected shim's unary +, including rejecting BigInt rather than Number(BigInt).
-        return +_hostToPrimitive(hostValue, "number", callbackState);
-      },
-      callbackState,
-      _nativeDynamicFromHost,
-    );
-    marshalTimerHandleFromHost = (value) => {
-      const exports = callbackState?.getExports();
-      // Preserve the original pre-instance/off-policy path when no native value bridge is available.
-      if (!exports || typeof exports.__box_number !== "function") return value;
-      return _nativeDynamicFromHost(toNumber(value), exports);
-    };
   }
   const capability = resolvePlatformCapabilityImport(intent, {
     deps,
@@ -11564,11 +11547,7 @@ function resolveImport(
     instanceState,
     getNodeRequire: _getNodeRequire,
     wrapWasmClosure: (value, arity, boundary) => _wrapPlatformCapabilityClosure(value, arity, boundary, callbackState),
-    marshalTimerValueToHost: (value) => {
-      const primitive = _nativePrimitiveToHost(value, callbackState?.getExports());
-      return primitive === _MISS ? value : primitive;
-    },
-    marshalTimerHandleFromHost,
+    ..._timerValues(intent.type === "timer_set" && refResult, callbackState),
     wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
   });
   if (capability)

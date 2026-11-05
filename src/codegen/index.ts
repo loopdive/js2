@@ -247,6 +247,8 @@ import {
   recordIrOverlayPreparationFailure,
   planIrFunctionValueResolverState,
   prepareTopLevelFunctionValueTargetSupport,
+  dropClassMemberFunctionValuePlans,
+  functionValueOwnerUnitIds,
 } from "./ir-imported-call-planning.js";
 import {
   nativeDynamicSelectionOptions,
@@ -3886,6 +3888,7 @@ function makeMultiIrSafeSelection(
   const moduleInitUnitId = plan.identityPlan.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
   if (moduleInitUnitId) blocked.add(moduleInitUnitId);
   const conservativeCrossFileCallers = ctx.standalone || ctx.wasi || ctx.strictNoHostImports;
+  dropClassMemberFunctionValuePlans(plan); // (#7243) this lane selects no class member
 
   for (const [call, callPlan] of plan.importedCalls) {
     requireMultiIrOwnerClaim(plan, callPlan.ownerUnitId, callPlan.ownerName);
@@ -4901,8 +4904,10 @@ function planIrFirstBodyRouting(
   // constructors. Only exact selected accessor UnitIds are an
   // independently sealed component that may prepare beside host/import/date/
   // promise work in the surrounding Test262 harness.
+  const overlayMemberUnitIds = functionValueOwnerUnitIds(plan);
   const classIds = new Set(
     [...selectedClassIds].filter((unitId) => {
+      if (overlayMemberUnitIds.has(unitId)) return false; // (#7243) stays on the overlay
       if (!hasLateFeaturePreparation) return true;
       const terminal = plan.identityPlan.identityContext.terminalByUnitId.get(unitId);
       return (
