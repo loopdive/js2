@@ -844,3 +844,79 @@ above (3518 ×2, 4577 ×3, 6474 ×3, quickjs engine absent locally), and they fa
 identically on the S7-a head. I also ran main's 54 test files changed in the
 range: 22 rows fail on S7-b (`issue-1102`, `2960`, `3519`, `5164`,
 `7106-prophelper`, `7106-s3a`), and every one also fails on the S7-a head.
+
+**S7-b re-merge (2026-11-05, `opus-s7b-remerge2`).** S7-a landed on main as PR
+#6899 (`c0532dafc0`). The S7-b head `8a081af2c3` was merged with
+`upstream/main` `a3a9564345` (~1,250 commits) as `6a072e0a68`. Main changed
+none of `src/host-import-policy.ts`, `src/runtime.ts` and
+`src/target-profile.ts` past the old S7-a head. Five conflicts:
+- `src/codegen/array-method-value.ts` (S7-b deleted, main modified): main's
+  #4765 added the native `arrayLibMethodSpecLength`, which
+  `property-access-dispatch.ts` imports. The file is kept with only that
+  function. The host `__array_proto_method` value intercept stays deleted. Its
+  `compiler-boundaries.json` entry is restored.
+- `src/codegen/class-bodies.ts`: main's #7215 `storeOwnField` and the
+  parameter-property initializers are kept. The externref-backed host
+  DefineField call (`emitExternrefFields`) stays deleted.
+- `src/codegen/dyn-ops.ts`, `statements/nested-declarations.ts`: import unions.
+  `stringConstantExternrefInstrs` and `noJsHost` are dropped because only
+  deleted host arms used them.
+- This file: main's S7-a waiver and diff-test paragraphs go at the end of the
+  S7-a section. The S7-b sections are kept.
+
+Fixes beyond the conflict markers:
+- **`eager-generator-buffer` regime gap closed.** Main's #7010 made a
+  generator shape the native lowering declines a compile error
+  (`generator-no-host-free-lowering`) on the native regime. The gap's probe no
+  longer compiles, so `check:host-import-policy` refused it. The family is
+  removed from `REGIME_GAP_FAMILIES` (now empty), the classifier and the name
+  ceiling. The probe is pinned as a refusal. `__gen_*` and
+  `__create_*generator` now classify `unknown`. `issue-4401` is re-pinned. A
+  sweep of 11 generator shapes (gc and standalone) emits no `__gen_*` import.
+- **`for (x[k] in o)` / `for ([x.y] of a)` targets.** `emitForInMemberTargetWrite`
+  (loops.ts) and the two for-of destructuring `ensureExternSet` helpers added a
+  raw `env::__extern_set` import, which skipped the late-import chokepoint. On
+  S7-b that import is retired, so main's new #7164 `forInElem` rows were a
+  compile error on gc, standalone and wasi. On main they were a leaked
+  `legacy-semantic` import, even on standalone. They now go through
+  `ensureLateImport`, which resolves to the native object runtime's defined
+  `__extern_set`. `issue-7164` passes: 1,131/1,131.
+
+Gates on the merged tree (follow-up commit included): tsc (ts7) 0, Biome 0,
+Prettier clean. Host-import policy: 33 probes, 452 imports, 0 regime-gap, 0
+unknown. IR fallbacks OK. `check:ir-only --policy=hybrid` READY, with
+single-host 26/12 and standalone 38/0. The compiler-boundaries inventory is
+valid. The ratchet chain and import cycles are OK with
+`LOC_GATE_BASE=a3a9564345` (net −12,666 LOC). No new grants. Equivalence gate:
+`20 failing, 4568 passing, 22 known-failures`, "No new equivalence
+regressions". Two baseline failures now pass (`delete-sentinel`,
+`reflect-api`), the same as main.
+
+Byte-neutrality against `upstream/main` `a3a9564345`: every `compile` call the
+equivalence suite makes was recorded and replayed in both trees. That gives
+6,859 distinct programs (gc 3,400, standalone 1,903, wasi 1,556), and 6,523 are
+identical. The 331 that differ were recompiled in a fresh process per tree:
+- 316 differ only in renumbered indices. binaryen WAT is identical once each
+  number is mapped one-to-one, which is type-section order.
+- 2 have identical WAT.
+- 3 are the `forInElem` rows: main's `env::__extern_set` import becomes the
+  native helper.
+- 10 are wasi #7164 `Array.of(...g)` / `Array.from` rows. Main converts a
+  `ref.null.extern` placeholder from the retired host path into a vec. S7-b
+  passes `ref.null` directly. Both give the same value, and the rows are
+  `wrong` in the sweep base.
+
+Five more wasi #7164 programs fail on both trees with different diagnostics.
+Main gives a clean strict-mode refusal of `env::__js_array_new`. S7-b records
+the `Array.of` "no native lowering (#6979)" error, a speculative caller rolls
+it back, and the module then fails validation. Making the refusal sticky or
+thrown also fails programs that compile on main, so it is left as is and
+needs its own fix.
+
+Fix-on-touch: the touched test files plus the 15 `--pinned` files give 517
+passing and 9 failing. All 9 fail identically on `upstream/main` (run from an
+`upstream/main` source tree): `issue-3518-host-async-imports` ×2,
+`issue-4577-standalone-calendar-retirement` ×3, `issue-6474-linked-script-goal`
+×3, and `issue-4397` "DataView … caller-owned views" (`getUint8 is not a
+function`). `issue-3518-program-codec-replay` timed out once under load and
+passes alone (27/27).
