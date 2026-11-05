@@ -13,7 +13,7 @@ That position differs from the two dominant alternatives in the space:
 1. compiling or embedding a JavaScript interpreter inside Wasm
 2. narrowing the language into a TypeScript-like subset or replacement dialect
 
-`js²` is aimed at a harder target: **full ECMAScript language compatibility over time, with TypeScript source compatibility on top**, reached through direct compilation rather than runtime emulation or language reduction. The intended endpoint is not a custom JavaScript sub- or superset; it is mainstream JavaScript semantics defined by ECMAScript and validated through public conformance work, with Test262 used as the current measurement baseline [[2]](https://tc39.es/ecma262/) [[3]](https://github.com/tc39/test262). That matters not only for language purity, but for ecosystem fit: broad compatibility with JavaScript is a cornerstone of compatibility with the wider JavaScript ecosystem, including real-world npm packages and existing application code. The project is still in active development, but it already exposes a public playground, public benchmark and compatibility reporting, and a public ECMAScript conformance milestone of **{{TEST262_PCT}}% Test262 compliance** on the JS-host path, with a separately tracked standalone (host-free) path at **{{STANDALONE_PCT}}%**.
+`js²` is aimed at a harder target: **full ECMAScript language compatibility over time, with TypeScript source compatibility on top**, reached through direct compilation rather than runtime emulation or language reduction. The intended endpoint is not a custom JavaScript sub- or superset; it is mainstream JavaScript semantics defined by ECMAScript and validated through public conformance work, with Test262 used as the current measurement baseline [[2]](https://tc39.es/ecma262/) [[3]](https://github.com/tc39/test262). That matters not only for language purity, but for ecosystem fit: broad compatibility with JavaScript is a cornerstone of compatibility with the wider JavaScript ecosystem, including real-world npm packages and existing application code. The project is still in active development, but it already exposes a public playground, public benchmark and compatibility reporting, and a public ECMAScript conformance milestone of **{{STANDALONE_PCT}}% Test262 compliance** on the standalone (host-free) path, which every environment shares as its native semantic core.
 
 This whitepaper explains the architectural thesis behind the compiler, why WebAssembly GC is the right target, what deployment profile this enables, where the approach fits, and what tradeoffs still remain.
 
@@ -211,12 +211,9 @@ The main risk in any direct JavaScript compiler is semantic coverage. JavaScript
 
 The project tracks ECMAScript compatibility through Test262, the standard conformance suite for JavaScript engines and implementations [[2]](https://tc39.es/ecma262/) [[3]](https://github.com/tc39/test262).
 
-Conformance is measured along **two independent paths** (see §5), and both are reported publicly:
+Conformance is measured on the **standalone / host-free path** (pure WasmGC, no JS host): **{{STANDALONE_PCT}}% Test262 compliance** ({{STANDALONE_PASS}} / {{TEST262_TOTAL}} official conformance tests). Every environment compiles with the same native semantic core, so this is also the semantic figure for a JavaScript environment, which adds only a value adapter, explicit capabilities and named opt-in accelerators.
 
-- **JS-host path** (default target, host imports allowed): **{{TEST262_PCT}}% Test262 compliance** ({{TEST262_PASS}} / {{TEST262_TOTAL}} official conformance tests passing in the current public report, generated {{REPORT_DATE}})
-- **Standalone / host-free path** (pure WasmGC, no JS host): **{{STANDALONE_PCT}}%** ({{STANDALONE_PASS}} / {{TEST262_TOTAL}}), measured host-free on the same official denominator
-
-These are distinct metrics on different targets and are never summed. The JS-host figure is the headline conformance number; the standalone figure is lower today because host-assisted operations are counted as failures unless a Wasm-native implementation exists, and closing that gap is where the current effort concentrates (§5.2, §12.2). Both improve as host fallbacks are replaced with compiled Wasm-native behavior.
+The earlier, separately measured JS-host path (host-assisted semantics) was retired on 2026-10-12. Its last measurement — **{{TEST262_PCT}}%** ({{TEST262_PASS}} / {{TEST262_TOTAL}}, report generated {{REPORT_DATE}}) — is kept as a frozen historical snapshot and is not re-measured.
 
 That number should be interpreted correctly. It does not mean the compiler is finished or suitable for arbitrary npm workloads today. It means there is already a public, measurable conformance baseline that can improve in a disciplined way toward the broader goal of real ecosystem compatibility.
 
@@ -320,7 +317,7 @@ The current tradeoffs are straightforward:
 
 ### 11.1 Conformance is still incomplete
 
-At {{TEST262_PCT}}% Test262 compliance on the JS-host path — and {{STANDALONE_PCT}}% on the standalone, host-free path — the compiler is credible but not complete. There is still significant work to do across language semantics, built-ins, and host-sensitive behaviors, and the standalone gap in particular is a primary focus (§5.2, §12.2).
+At {{STANDALONE_PCT}}% Test262 compliance on the standalone, host-free path the compiler is credible but not complete. There is still significant work to do across language semantics, built-ins, and host-sensitive behaviors (§5.2, §12.2).
 
 ### 11.2 Wasm GC runtime support is required
 

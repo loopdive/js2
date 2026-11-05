@@ -170,6 +170,40 @@ describe("#6795 — --check catches drift in the new blocks", () => {
   });
 });
 
+describe("#6979 S7-e — a standalone-only file (no JS-host block)", () => {
+  const standaloneOnly = `# T\n\n${block("conformance-standalone")}\n\n${block("conformance-scope")}\n`;
+
+  it("is synced without the host block, and its scope line describes one figure", () => {
+    writeFileSync(target("README.md"), standaloneOnly);
+    expect(run().code).toBe(0);
+    const readme = readFileSync(target("README.md"), "utf8");
+    expect(readme).toContain("**standalone (host-free) test262 conformance**: 900 / 1,000 (90.0 %)");
+    expect(readme).not.toContain("**test262 conformance**");
+    expect(readme).toContain(
+      "The figure above is scored against **1,000** official tests (950 ECMAScript standard + 50 Annex B). " +
+        "The 20 TC39 proposal-stage tests are excluded.",
+    );
+    expect(readme).not.toContain("Both figures");
+    expect(run(["--check"]).code).toBe(0);
+  });
+
+  it("uses the standalone denominator when the lanes differ", () => {
+    writeJson("benchmarks/results/test262-standalone-highwater.json", { official_pass: 900, official_total: 990 });
+    writeFileSync(target("README.md"), standaloneOnly);
+    expect(run().code).toBe(0);
+    expect(readFileSync(target("README.md"), "utf8")).toContain(
+      "The figure above is scored against **990** official tests. The 20 TC39 proposal-stage tests are excluded.",
+    );
+  });
+
+  it("POSITIVE CONTROL: a file with neither the host nor the standalone block is still an error", () => {
+    writeFileSync(target("README.md"), "# T\n\nno anchors\n");
+    const { code, out } = run();
+    expect(code).toBe(1);
+    expect(out).toContain("README.md: missing anchor pair");
+  });
+});
+
 describe("#6795 — the new blocks are opt-in and never break a minimal report", () => {
   it("files without the new anchors are untouched, even when the report has no detail", () => {
     writeJson("benchmarks/results/test262-current.json", { summary: { pass: 800, total: 1000 } });
@@ -220,11 +254,20 @@ describe("#6795 — the committed docs carry no hand-typed lane comparison", () 
   it("README and STATUS carry the generated standalone, scope and (STATUS) areas blocks", () => {
     const readme = readFileSync(join(REPO_ROOT, "README.md"), "utf8");
     const status = readFileSync(join(REPO_ROOT, "STATUS.md"), "utf8");
-    for (const name of ["conformance", "conformance-standalone", "conformance-scope"]) {
+    for (const name of ["conformance-standalone", "conformance-scope"]) {
       expect(readme).toContain(`<!-- AUTO:${name}-start -->`);
       expect(status).toContain(`<!-- AUTO:${name}-start -->`);
     }
+    expect(status).toContain("<!-- AUTO:conformance-start -->");
     expect(status).toContain("<!-- AUTO:conformance-areas-start -->");
+  });
+
+  it("#6979 S7-e: the README's first conformance line is the standalone figure; the frozen host figure left it", () => {
+    const readme = readFileSync(join(REPO_ROOT, "README.md"), "utf8");
+    expect(readme).not.toContain("<!-- AUTO:conformance-start -->");
+    expect(readme).not.toContain("**test262 conformance**:");
+    const first = readme.match(/\*\*[^*]*test262 conformance\*\*:/);
+    expect(first?.[0]).toBe("**standalone (host-free) test262 conformance**:");
   });
 });
 

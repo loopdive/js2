@@ -1905,15 +1905,11 @@
                  ~5k TC39 proposal tests on top of the ~43k current-standard
                  baseline. Off by default so the headline number reflects
                  shipped ECMAScript only. -->
-            <!-- Standalone (pure Wasm, no JS host imports) is the DEFAULT lane:
-                 it is the honest floor of what the compiler produces on its
-                 own, so the headline number is not propped up by host imports.
-                 Ticking "JS host" opts into the host-assisted lane. -->
+            <!-- Standalone (pure Wasm, no JS host imports) is the only lane:
+                 the JS-host lane was retired on 2026-10-12 (#6979 S7-e) and
+                 its toggle removed. The trend graph still draws its frozen
+                 history as a subdued background series. -->
             <div class="feat-filter conformance-scope-toggle">
-              <label class="feat-toggle">
-                <input type="checkbox" id="host-support-toggle" />
-                <span>JS host</span>
-              </label>
               <label class="feat-toggle" id="conformance-ir-toggle" hidden style="display: none">
                 <input type="checkbox" />
                 <span>IR</span>
@@ -1928,14 +1924,14 @@
           <div class="diagram-panel">
             <h3 class="diagram-title">ECMAScript Conformance Pass Rate Over Time</h3>
             <!-- Shared with the conformance report page — see
-                 components/t262-conformance-trend.js. Both lanes are plotted;
-                 `mode` picks which one is the thick white line. -->
+                 components/t262-conformance-trend.js. Standalone is the
+                 interactive line; the retired JS-host lane is a frozen,
+                 subdued background series. -->
             <t262-conformance-trend
               id="conformance-history-chart"
               class="conformance-trend"
               runs-base="./benchmarks/results/runs"
               height="260"
-              mode="host"
               scope="overall"
             ></t262-conformance-trend>
           </div>
@@ -4467,8 +4463,9 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                   <strong>not</strong>
                   cover Web APIs, Node.js or other host behavior, or whether an arbitrary real-world npm package runs
                   unchanged. A high pass rate is necessary but not sufficient for &ldquo;runs real JavaScript.&rdquo;
-                  Second, the standalone (no-JS-host) path is less complete than the JS-host path. Check the per-feature
-                  report before relying on anything specific.
+                  Second, the figure is measured on the standalone path (pure Wasm, no JS host). A JavaScript
+                  environment runs the same native semantic core and adds only the value adapter, explicit capabilities
+                  and named accelerators. Check the per-feature report before relying on anything specific.
                 </p>
               </div>
             </details>
@@ -4680,6 +4677,11 @@ console.log(instance.exports.run()); // &rarr; 55</pre
 
     <script>
       const IR_SELECTED = window.t262ViewState.read().ir;
+      // The JS-host conformance lane was retired on 2026-10-12 (#6979 S7-e):
+      // its toggle is gone and every view on this page reads the standalone
+      // lane. The frozen host snapshot stays published; only the trend graph
+      // draws it, as a background series.
+      const HOST_LANE_SELECTED = false;
       window.t262ViewState.bindIrToggle(document.getElementById("conformance-ir-toggle"));
       const showIrProvenance = (measured, mode, report) => {
         const node = document.getElementById("conformance-ir-provenance");
@@ -4697,8 +4699,6 @@ console.log(instance.exports.run()); // &rarr; 55</pre
       };
       if (IR_SELECTED) {
         const view = window.t262ViewState.read();
-        const hostToggle = document.getElementById("host-support-toggle");
-        if (view.mode) hostToggle.checked = view.mode === "host";
         window.__conformanceEditionScope = view.edition || "overall";
         const reportLink = document.getElementById("conformance-report-link");
         reportLink.href = window.t262ViewState.linkTo("./benchmarks/report.html", view);
@@ -4721,7 +4721,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           document.getElementById("compat-pass-rate").textContent = "Unmeasured";
           document.getElementById("compat-pass-rate-label").textContent = message.textContent;
           window.__conformanceHeadlineHydrated = true;
-          const mode = hostToggle.checked ? "host" : "standalone";
+          const mode = "standalone";
           showIrProvenance(false, mode);
           window.t262ViewState.irStatus("./benchmarks/results", mode).then((reason) => {
             if (reason) message.textContent = `IR conformance is unmeasured. ${reason}`;
@@ -4737,7 +4737,6 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           window.t262ViewState.write({ mode });
         };
         showUnmeasured();
-        hostToggle.addEventListener("change", showUnmeasured);
         document.documentElement.classList.remove("t262-ir-pending");
       }
       // #3071 — Prefer the same-origin deployed copy of the JS-host test262
@@ -5270,14 +5269,12 @@ console.log(instance.exports.run()); // &rarr; 55</pre
       // Feature table toggles
       (function () {
         const strictToggle = document.getElementById("strict-only-toggle");
-        const hostToggle = document.getElementById("host-support-toggle");
         const tables = document.querySelector(".feat-tables");
         if (tables) {
           const hostRows = Array.from(document.querySelectorAll(".feat-row")).filter((row) =>
             row.querySelector(".feat-host"),
           );
-          // Cache each host row's badge class/glyph so the "JS host" toggle can
-          // restore it. Exposed as a re-cache hook (#2665) because the live
+          // Cache each host row's badge class/glyph so it can be restored. Exposed as a re-cache hook (#2665) because the live
           // test262 badge hydration runs *after* this IIFE and may have
           // rewritten the badge class/glyph from the static markup; the host
           // toggle must cache the *derived* state, not the stale static one.
@@ -5295,8 +5292,8 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           window.__recacheHostBadges = cacheHostBadges;
           const sync = () => {
             if (strictToggle) tables.classList.toggle("strict-only", strictToggle.checked);
-            if (hostToggle) tables.classList.toggle("host-off", !hostToggle.checked);
-            const hostEnabled = hostToggle ? hostToggle.checked : true;
+            tables.classList.toggle("host-off", !HOST_LANE_SELECTED);
+            const hostEnabled = HOST_LANE_SELECTED;
             // (#4362) Re-apply the per-row counts for the selected lane FIRST.
             // Order is load-bearing: this rewrites every badge from the lane's
             // dataset, so it must run BEFORE the host-only override below —
@@ -5341,7 +5338,6 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           };
           sync();
           strictToggle?.addEventListener("change", sync);
-          hostToggle?.addEventListener("change", sync);
         }
       })();
 
@@ -5382,11 +5378,10 @@ console.log(instance.exports.run()); // &rarr; 55</pre
       // shared <t262-conformance-trend> component (components/
       // t262-conformance-trend.js), which the conformance report page renders
       // too; this page only tells it which scope and lane are selected.
-      const updateConformanceHistoryChart = (scope, hostEnabled) => {
+      const updateConformanceHistoryChart = (scope) => {
         const chart = document.getElementById("conformance-history-chart");
         if (!chart) return;
         chart.setAttribute("scope", scope || "overall");
-        chart.setAttribute("mode", hostEnabled ? "host" : "standalone");
       };
 
       const PROPOSAL_LABEL = "Proposals";
@@ -5408,11 +5403,9 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           ? date.getUTCFullYear()
           : date.getUTCFullYear() - 1;
       };
-      // (#4362) Keyed by lane: the JS-host toggle picks which edition buckets
-      // back the feature-list pass bars. This used to be a single memoised
-      // fetch of the host file, so flipping the toggle re-ran the render over
-      // identical numbers and the bars never moved. Each lane memoises
-      // separately (one fetch per lane, not per toggle).
+      // (#4362) Keyed by lane; since the JS-host lane's retirement (#6979
+      // S7-e) the page only ever asks for the standalone buckets. Each lane
+      // memoises separately (one fetch per lane).
       const loadEditionBuckets = (() => {
         const pendingByLane = new Map();
         return async (hostEnabled = true) => {
@@ -5462,7 +5455,6 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         const donutSlot = document.getElementById("conformance-donut-slot");
         const editionTimeline = document.getElementById("conformance-edition-timeline");
         const strictToggle = document.getElementById("strict-only-toggle");
-        const hostToggle = document.getElementById("host-support-toggle");
         const rateEl = document.getElementById("compat-pass-rate");
         const rateLabelEl = document.getElementById("compat-pass-rate-label");
         if (!donutSlot || !(editionTimeline instanceof HTMLElement)) return;
@@ -5504,7 +5496,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             captionMain,
             IR_SELECTED ? `IR ${captionSub}` : captionSub,
           );
-          showIrProvenance(true, hostToggle.checked ? "host" : "standalone");
+          showIrProvenance(true, "standalone");
         };
         const renderUnavailable = (captionMain, captionSub, detail) => {
           donutSlot.innerHTML = `
@@ -5518,7 +5510,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             </div>
           `;
           updateHeadlineUnavailable(captionMain, IR_SELECTED ? `IR ${captionSub}` : captionSub, detail);
-          showIrProvenance(false, hostToggle.checked ? "host" : "standalone");
+          showIrProvenance(false, "standalone");
         };
         const normalizeSummary = (summary, fallback = {}) => {
           const pass = Number(summary?.pass ?? fallback.pass ?? 0);
@@ -5839,7 +5831,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           let lastDetail = null;
           const conformanceOptions = () => {
             const strictOnly = strictToggle ? strictToggle.checked : false;
-            const hostEnabled = hostToggle ? hostToggle.checked : true;
+            const hostEnabled = HOST_LANE_SELECTED;
             return {
               strictOnly,
               hostEnabled,
@@ -5898,8 +5890,8 @@ console.log(instance.exports.run()); // &rarr; 55</pre
 
             const currentScope = detail.scope || "overall";
             window.__conformanceEditionScope = currentScope;
-            const hostEnabled = hostToggle ? hostToggle.checked : true;
-            updateConformanceHistoryChart(currentScope, hostEnabled);
+            const hostEnabled = HOST_LANE_SELECTED;
+            updateConformanceHistoryChart(currentScope);
             // Keep ?mode=/?edition= in step with the two knobs so the view can
             // be linked to. Shared with the report page — components/
             // t262-view-state.js.
@@ -5951,7 +5943,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           let editionSrcToken = 0;
           const syncEditionTimelineSrc = async () => {
             const token = ++editionSrcToken;
-            const hostEnabled = hostToggle ? hostToggle.checked : true;
+            const hostEnabled = HOST_LANE_SELECTED;
             if (IR_SELECTED) {
               editionTimeline.setAttribute(
                 "src",
@@ -5976,10 +5968,6 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           };
 
           strictToggle?.addEventListener("change", window.updateConformanceDonut);
-          hostToggle?.addEventListener("change", () => {
-            syncEditionTimelineSrc();
-            window.updateConformanceDonut();
-          });
 
           // (?mode=/?edition=) Apply the incoming URL state once, as soon as
           // the timeline has published its own scopes. Driven off the first
@@ -5993,15 +5981,10 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           const applyUrlStateOnce = (detail) => {
             if (urlStateApplied) return;
             urlStateApplied = true;
-            const { mode, edition } = initialViewState;
-            if (!mode && !edition) return;
-            // Dispatch a real `change` rather than calling the donut update
-            // directly: the same checkbox also drives the per-edition pass
-            // bars and the feature-row badges, which listen for the event.
-            if (mode && hostToggle && hostToggle.checked !== (mode !== "standalone")) {
-              hostToggle.checked = mode !== "standalone";
-              hostToggle.dispatchEvent(new Event("change", { bubbles: true }));
-            }
+            // `?mode=` is no longer honoured here: the JS-host lane is
+            // retired (#6979 S7-e), so only the edition is restored.
+            const { edition } = initialViewState;
+            if (!edition) return;
             const scopeMap = detail?.scopeMap;
             const isKnownScope =
               edition === "overall" ||
@@ -6154,7 +6137,6 @@ console.log(instance.exports.run()); // &rarr; 55</pre
 
       (function hydrateEditionPassBars() {
         const strictToggle = document.getElementById("strict-only-toggle");
-        const hostToggle = document.getElementById("host-support-toggle");
 
         const scoreRow = (row, hostEnabled) => {
           const badge = row.querySelector(".feat-badge");
@@ -6203,7 +6185,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
 
         const renderHeuristicEditionPassBars = () => {
           const strictOnly = strictToggle ? strictToggle.checked : false;
-          const hostEnabled = hostToggle ? hostToggle.checked : true;
+          const hostEnabled = HOST_LANE_SELECTED;
 
           document.querySelectorAll(".feat-section").forEach((section) => {
             const header = ensureEditionLabel(section)?.el;
@@ -6315,9 +6297,9 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         };
 
         const updateEditionPassBars = async () => {
-          // (#4362) Read the lane the JS-host toggle currently selects, so the
-          // per-edition bars show standalone numbers in standalone mode.
-          const hostEnabled = hostToggle ? hostToggle.checked : true;
+          // (#4362) The per-edition bars show the standalone lane (the JS-host
+          // lane is retired, #6979 S7-e).
+          const hostEnabled = HOST_LANE_SELECTED;
           try {
             const { editionList, editionMap, proposalBucket, legacyBucket } = await loadEditionBuckets(hostEnabled);
             const panel = document.querySelector(".feat-panel");
@@ -6528,9 +6510,8 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         const standaloneByName = standaloneFeatures ? indexByName(standaloneFeatures) : null;
 
         // (#4362) Applying the counts is now a re-runnable function keyed by
-        // lane, not a one-shot pass. The JS-host toggle calls it, so the
-        // per-row badge / "N / M" chip / "NN%" all switch datasets instead of
-        // staying pinned to the js-host numbers they were hydrated with.
+        // lane, not a one-shot pass; the page applies the standalone lane
+        // (the JS-host lane and its toggle are retired, #6979 S7-e).
         const applyFeatureBadges = (hostEnabled = true) => {
           const byName = !hostEnabled ? standaloneByName || (IR_SELECTED ? new Map() : hostByName) : hostByName;
           applyRows(byName);
@@ -6789,8 +6770,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         // class/glyph on init; the apply re-caches once the badges reflect the
         // live data, so toggling "JS host" off/on restores the derived state,
         // not the stale static markup.
-        const hostToggleEl = document.getElementById("host-support-toggle");
-        applyFeatureBadges(hostToggleEl ? hostToggleEl.checked : true);
+        applyFeatureBadges(HOST_LANE_SELECTED);
       })();
 
       (async function updateHowItWorksSizes() {

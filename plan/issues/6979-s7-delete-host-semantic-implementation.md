@@ -521,3 +521,83 @@ Not touched here: `issue-5226`, `issue-5247`, `issue-5363` (also red on main).
   and `builtins/09-async-await` trap `unreachable` in the optimized binary — a V8 12.4
   bug (Node 23.11/24/25 run the same modules correctly), tracked as #7168 and fixed
   separately in PR #6929.
+
+## S7-e measurement — two-mode wording on main (2026-11-05, before)
+
+Measured on upstream main `04e0adcf10` with
+`grep -rniE "js[- ]host (mode|path|lane)|two modes|host-assisted|dual-mode|dual mode|js-host lane|host mode"`
+over `README.md STATUS.md CLAUDE.md docs/ website/` (sources, not
+`website/public/benchmarks/results/*.json`) and `plan/method/` (0 hits there).
+Only rows that state the two-mode story as the CURRENT state are listed;
+history (release notes, design-lesson write-ups, the eval architecture doc's
+dated tier plan, the blog) is left as written.
+
+| File:line (before) | Current-state claim | S7-e action |
+| --- | --- | --- |
+| `README.md:12-20` | "tracked along the two compile paths"; first conformance line = frozen host figure 39,379 | host block removed; standalone line is first and only (stakeholder decision 1) |
+| `README.md:6` | "the two auto-updated conformance figures" | one figure |
+| `README.md:72,75` | "a JS-hosted compilation path …"; "standalone scored separately from the JS-host path" | one native core; JS environment = adapter + capabilities + accelerators |
+| `README.md:93,151,264-265,274,299` | "default (JS-host) build/mode", "JS-host target/runtime", "In a JS host, js2wasm passes …", standalone listed as a *partial* feature | JavaScript environment wording; partial bullet removed |
+| `STATUS.md:19-29,39,115` | unlabelled host figure first; areas caption "JS-host (`gc`) lane"; standalone as a *partial* feature | standalone first; host line labelled retired/frozen; caption says frozen snapshot; bullet removed |
+| `CLAUDE.md:183-186` | principle already one-core (S7-a); "follows the pattern of #679/#682" | states "no JS-host mode, only environments"; CLI Flags gains `--host-accelerator` |
+| `docs/cli.md:237,241,278,283` | "js-host targets", "calling convention in js-host mode", "Strict dual-mode" | JS-environment / value-adapter / host-free wording |
+| `docs/methodology.md:110-126` | "The dual-mode architecture", "JS-host mode … delegates semantics" | rewritten as one core + environments; the dual-mode design kept as history |
+| `docs/architecture/target-architecture.md:23` | principle "Dual mode" | "One native semantic core" |
+| `docs/architecture/marshaling-contract.md:103` | host-assisted "is the only configuration in which …" (present tense) | past tense; S7-b deletes the emitters |
+| `docs/architecture/codegen-axes.md:43-50` | already "Not an axis: JS host vs standalone semantics" (S7-a) | unchanged |
+| `website/index.html:1908-1916` + every `host-support-toggle` read (4700-6793) | "JS host" toggle; "Ticking JS host opts into the host-assisted lane" | toggle and its state removed (stakeholder decision 2) |
+| `website/index.html:4470` | "standalone path is less complete than the JS-host path" (false: 88.0 % vs frozen 81.6 %) | one-core wording |
+| `website/components/t262-conformance-trend.js` | `mode="host\|standalone"` picks the emphasised lane | standalone always primary; host = background series |
+| `website/public/benchmarks/report.html:1668,2660` | chart `mode`; "Host mode / JS runtime imports" switch | chart follows the component; switch relabelled "JS host (retired) / frozen 2026-10-12 snapshot" |
+| `website/docs/whitepaper.{md,html}` §1/§4/§12 | JS-host figure as "the headline conformance number", "standalone lower today" | standalone headline; host figure as frozen history. §5.1 "JS-host mode" section prose left (see landing) |
+| `website/dashboard/index.html:804` | "The dashboard works in two modes" (local vs deployed data) | unrelated to host/standalone — unchanged |
+
+## S7-e landing (2026-11-05)
+
+Docs + dashboards only; no `src/` change, no committed `benchmarks/results/*`
+artifact touched, `scripts/preserve-frozen-host-baseline.mjs` unchanged (its
+`test262-paths` lane mapping would have pulled the standalone shard matrix in).
+
+- **Stakeholder decision 1 — README's first conformance line is standalone
+  only.** `scripts/sync-conformance-numbers.mjs` keeps its mechanism; a target
+  that carries the `conformance-standalone` anchors and *no* `conformance`
+  anchors is now a standalone-only file (skipped for the host block, and its
+  scope block reads "The figure above is scored against …" instead of "Both
+  figures …"). A file with neither pair is still an error. README:
+  before `**test262 conformance**: 39,379 / 48,232 (81.6 %)` (first) +
+  standalone line; after `**standalone (host-free) test262 conformance**:
+  42,460 / 48,232 (88.0 %)` only. STATUS.md, CLAUDE.md, ROADMAP.md and
+  goal-graph.md keep the host block (decision 1 named the README only); STATUS
+  labels it as the frozen, retired lane.
+- **Stakeholder decision 2 — JS-host series stays as a background series,
+  toggle removed.** `<t262-conformance-trend>` draws standalone as series 0
+  (thick white line, fill, dots, peak label); the host lane is a 1 px dashed
+  line at 0.32 opacity, painted underneath (new `background: true` series
+  option in `trend-chart.js`), clipped at `T262_HOST_LANE_RETIRED_AT`
+  (2026-10-12T23:59:59Z) and never carried forward past it, with no dots or
+  peak label; legend "JS-host lane, retired 2026-10-12". The `mode` attribute
+  is gone. The landing page's "JS host" checkbox and every read/listener of it
+  are removed (`HOST_LANE_SELECTED = false` is the single constant the
+  remaining lane-keyed helpers read); `?mode=host` is no longer honoured
+  there. The provenance caption reads "Historical JS Host · retired
+  2026-10-12 · frozen results …".
+- **Report page** keeps its Host/Standalone dataset switch — it is the only
+  way to browse the frozen per-file host results (standalone has no per-file
+  detail) — relabelled as retired; its trend chart follows the component.
+- Tests: `tests/issue-6979-s7e-conformance-trend.test.ts` (new: clip,
+  no-carry-forward, old merge behaviour unchanged);
+  `tests/issue-6795-conformance-blocks.test.ts` (README has no host block and
+  its first conformance line is standalone; standalone-only file sync, scope
+  wording, both-missing positive control);
+  `tests/issue-4362-landing-host-standalone-toggle.test.ts` and
+  `tests/landing-edition-passbar.test.ts` rewritten for "no toggle, standalone
+  lane". Both jsdom suites were **red on main before this slice** (7/7 —
+  the inline script dies on `window.t262ViewState` because jsdom does not load
+  external scripts); they now install `t262-view-state.js` in `beforeParse` and
+  pass, which also proves the landing script runs to completion without the
+  toggle.
+- Not done here: the full `pnpm run build:pages` (it regenerates committed
+  artifacts and fetches TC39 data); the whitepaper's §5.1 "JS-host mode"
+  narrative; the blog. CLAUDE.md's "Test262" section still describes the
+  linked-harness host shards — CI policy text, not two-mode prose; left for
+  the S7 CI cleanup.
