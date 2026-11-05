@@ -521,3 +521,98 @@ imports fd_write plus the erroneous getter callback; no fake env bridge is
 supplied. The original focused 42 must still run on the corrected source, then
 complete current qualification with the two authentic #4440 baseline failures
 kept distinct. No PASS is inferred from this issue-local disposition.
+
+
+## 2026-11-05 — module-initializer chunk coverage successor
+
+The original mixed string/number initializer is now admitted by the shared
+primitive-concatenation rule. On unchanged canonical main `2ecc07d5`, the whole
+11-test fixture measured 10 passes and one failure at its old refusal-code
+assertion. The same eleven statuses and full failure payload matched the
+committed receiving source `8857f0e4`. This is historical attribution, not a
+passing qualification of that fixture.
+
+Three separate controls then passed on that receiving source: the exact
+original guest with its original helper/options; an active error branch with
+real Node and native Wasm error-text comparison; and the same original guest
+with only the existing numeric-formatter capability withdrawn through a
+restored-in-finally test spy. The active error diagnostic alone explicitly
+requests the canonical `hostBridge: "always"` rendering exports. It is not an
+exact-option baseline. No production capability or test-only rejection was
+added. The withdrawal made 37 real capability queries and reached the ordinary
+`operand-coercion-unsupported` selection refusal before any IR chunk body was
+published; the real legacy chunks still executed.
+
+Installed-function receipts, complete final WAT bodies/numeric call slots and
+source/parent/terminal derived-unit records were joined. The normal and active
+overlays retain both direct and IR body-emission flags and the physical
+`derived-legacy-owner` census. This is not AST-free or IR-only qualification.
+The maintained successor keeps the original guest, all original refusal
+assertions under a genuine missing-capability boundary, and the ten other
+original tests. It adds the normal current-admission and active-error tests:
+13 tests prospectively. Their maintained whole-file qualification is pending.
+The historical 1,581-test run remains 1,578 passed/three failed, with all three
+paired to authentic unchanged baselines; no full 1,583-test pass is inferred.
+The two unchanged #4440 failures remain recorded and outside this PR's changed
+fixture set.
+
+### Historical original default-capability case (verbatim)
+
+The following complete original case preserves the former default-capability
+assertion contract and its guest. It is historical evidence; current progress
+is checked by the stronger normal-admission and active-error cases, while the
+original refusal assertions remain live under real capability withdrawal.
+
+```typescript
+  it("emits legacy chunks, and no IR chunk, when selection refuses the initializer", async () => {
+    // This original mixed string/number `+` guest now refuses during selection,
+    // before IR chunk names are reserved. The legacy initializer must still
+    // retain its bounded helpers; a collision suffix is not an ownership proof.
+    const result = await compileHarnessBody(
+      [
+        "var tick = 0;",
+        ...FILLER,
+        "if (-1 << 0 !== -1) { throw new Test262Error('#1: -1 << 0 === -1. Actual: ' + (-1 << 0)); }",
+      ].join("\n"),
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(moduleInit(result)?.code).toBe("operand-coercion-unsupported");
+    expect(moduleInit(result)).toMatchObject({
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+      irBodyEmissions: 0,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    // Both lanes share the preferred prefix; only real name collisions add a
+    // numeric suffix. Join declared helpers to the dispatcher's actual calls.
+    const chunks = watFunctionNames(result.wat).filter((name) => /^__module_init_chunk_\d+(?:_\d+)?$/.test(name));
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(watCallTargets(result.wat, watFunction(result.wat, "__module_init"))).toEqual(
+      expect.arrayContaining(chunks),
+    );
+    const dispatchedChunks = watCallTargets(result.wat, watFunction(result.wat, "__module_init")).filter((name) =>
+      chunks.includes(name),
+    );
+    expect(dispatchedChunks).toEqual(chunks);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const mod = await WebAssembly.compile(result.binary);
+    expect(WebAssembly.Module.imports(mod)).toEqual([]);
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    (instance.exports.__module_init as () => void)();
+  });
+```
+
+
+### Fresh quality review — remove one dead callback-builder argument
+
+The independent review found `vecTypeIdx` unread by
+`buildBridgeCallInstrs`. Remove only that parameter and the three plain local
+identifier arguments threaded into it. The complete instruction-builder body
+is byte-exact before normal formatting; receiver, argument-state, conversion,
+provider and callback dispatch recipes are unchanged. No binary byte-identity
+claim is inferred. This is the only additional production delta beyond the
+qualified `8857f0e4` source. Qualify the whole 13-test chunk successor plus the
+unchanged whole 101-test getter/callback neighbor and normal typing/gates;
+those new checks are pending. All prior failures and source epochs remain
+recorded, with no full 1,583-test pass inferred.

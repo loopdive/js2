@@ -7177,7 +7177,6 @@ function buildBridgeCallInstrs(
   fctx: FunctionContext,
   setup: ArrayCallbackSetup,
   elemType: ValType,
-  vecTypeIdx: number,
   arrTypeIdx: number,
   loop: ArrayLoopLocals,
   elemSource: { kind: "local"; index: number } | { kind: "inline" },
@@ -7573,7 +7572,7 @@ function buildCallAndCheck(
 ): Instr[] {
   const callInstrs = setup.closureInfo
     ? buildClosureCallInstrs(ctx, fctx, setup, elemType, vecTypeIdx, arrTypeIdx, loop, elemSource, check !== "none")
-    : buildBridgeCallInstrs(ctx, fctx, setup, elemType, vecTypeIdx, arrTypeIdx, loop, elemSource);
+    : buildBridgeCallInstrs(ctx, fctx, setup, elemType, arrTypeIdx, loop, elemSource);
   const checkInstrs =
     check === "truthy" ? buildTruthyCheck(ctx, setup) : check === "falsy" ? buildFalsyCheck(ctx, setup) : [];
   return [...callInstrs, ...checkInstrs];
@@ -7832,7 +7831,7 @@ function compileArrayMap(
   } else {
     const bridgeResultType = setup.bridgeResultType ?? (ctx.fast ? ({ kind: "i32" } as ValType) : { kind: "f64" });
     callInstrs = [
-      ...buildBridgeCallInstrs(ctx, fctx, setup, elemType, vecTypeIdx, arrTypeIdx, loop, { kind: "inline" }),
+      ...buildBridgeCallInstrs(ctx, fctx, setup, elemType, arrTypeIdx, loop, { kind: "inline" }),
       // Coerce the bridge's declared result carrier to the result element type
       // so the downstream `array.set` validates. Numeric bridges retain the
       // #1601 f64→externref boxing; the #4527 dynamic bridge is already exact.
@@ -8412,7 +8411,7 @@ function compileArrayForEach(
 
     emitArrayLoop(fctx, loopBody);
   } else {
-    const callInstrs = buildBridgeCallInstrs(ctx, fctx, setup, elemType, vecTypeIdx, arrTypeIdx, loop, {
+    const callInstrs = buildBridgeCallInstrs(ctx, fctx, setup, elemType, arrTypeIdx, loop, {
       kind: "inline",
     });
 
