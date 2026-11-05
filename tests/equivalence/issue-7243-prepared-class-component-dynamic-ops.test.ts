@@ -11,17 +11,18 @@
 // and compiles on the post-direct overlay. The member now gets the same route:
 // the planner mints its S3c value plan and the member stays on the overlay.
 //
-// Each case asserts the IR route (`trackIrOutcomes`) on standalone and the
-// default gc target (WASI keeps these units on legacy) and the result on all
-// three lanes against the JS evaluation of the same source — or, on WASI, the
-// pinned legacy value where WASI already diverges from JS (base and head agree).
+// Each case asserts the IR route (`trackIrOutcomes`) and the result on all
+// three lanes against the JS evaluation of the same source. (#6979 S7-c) WASI
+// lowers with the native semantic regime, so it takes the IR body like
+// standalone and gives the JS answer; the pre-flip `wasiValue` pins recorded
+// WASI's old legacy divergence and are no longer consulted.
 import { describe, expect, it } from "vitest";
 import { compile, type CompileOptions } from "../../src/index.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
 
 const LANES: { name: string; options: CompileOptions; ir: boolean }[] = [
   { name: "standalone", options: { target: "standalone" }, ir: true },
-  { name: "wasi", options: { target: "wasi" }, ir: false },
+  { name: "wasi", options: { target: "wasi" }, ir: true },
   { name: "gc (default)", options: {}, ir: true },
 ];
 
@@ -53,10 +54,8 @@ async function compileAndRun(source: string, options: CompileOptions) {
 
 interface Case {
   readonly source: string;
-  /** Units that must take the IR body on standalone and gc. */
+  /** Units that must take the IR body on every lane. */
   readonly irUnits: readonly string[];
-  /** WASI already diverges from JS here (`String(e)`, `e.constructor`); base gives the same. */
-  readonly wasiValue?: number;
 }
 
 const CASES: Record<string, Case> = {
@@ -67,7 +66,6 @@ export function test() {
   try { new C().m(1); return 0; } catch (e) { return (e instanceof MyErr ? 1 : 2) + (e.message === "cm" ? 10 : 0) + (String(e) === "MyErr: cm" ? 100 : 0); }
 }`,
     irUnits: ["C_m"],
-    wasiValue: 11,
   },
   "instance method: return new F()": {
     source: `
@@ -77,7 +75,6 @@ class C {
 }
 export function test() { var e = new C().m(); return (e instanceof MyErr ? 1 : 0) + (e.message === "r" ? 10 : 0) + (e.constructor === MyErr ? 100 : 0); }`,
     irUnits: ["C_m"],
-    wasiValue: 11,
   },
   "instance method: x instanceof F": {
     source: `
@@ -127,8 +124,7 @@ describe("#7243 class methods construct a self-guarded function constructor", ()
           expect(kind, `${unit} route`).toBe(lane.ir ? "emitted" : "unsupported");
         }
         expect(outcomes.some((o) => o.kind === "unsupported" && o.code === "late-preparation-unsupported")).toBe(false);
-        const expected =
-          lane.options.target === "wasi" && c.wasiValue !== undefined ? c.wasiValue : evaluateAsJs(source).test!();
+        const expected = evaluateAsJs(source).test!();
         expect(exports.test!()).toBe(expected);
       });
     }
