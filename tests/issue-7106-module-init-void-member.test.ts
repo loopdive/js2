@@ -124,10 +124,12 @@ export function run() { subject.self(1); return 1; }`;
 });
 
 describe("#7106 Stage 4 — method calls on a member closure's dynamic receivers", () => {
-  it("stays legacy: the IR's dynamic method call has no primitive/vec brand arms", async () => {
-    // Measured before the refusal: the IR body answered `undefined` for every
-    // one of these (`__extern_method_call` only dispatches open-`$Object`
-    // methods), while node and legacy agree on 111.
+  it("lowers them through the brand-dispatch wrapper and agrees with node", async () => {
+    // Measured before the #7110 refusal: the IR body answered `undefined` for
+    // every one of these (`__extern_method_call` only dispatches open-`$Object`
+    // methods), while node and legacy agree on 111. The #7106 Stage 4 wrapper
+    // `__ir_dyn_mcall_<m>_<n>` supplies legacy's brand dispatch, so the
+    // initializer is an IR body again — and now exact.
     const source = `/** @returns {number} */ function subject() { return 0; }
 subject.check = function (list, n, sym) {
   if (list.join(", ") !== "1, 2") throw "join";
@@ -140,7 +142,8 @@ export function run() {
   return out;
 }`;
     const result = await compile(source, OPTIONS);
-    expect(row(result, "<module-init>").irBodyEmitted).toBe(false);
+    expect(row(result, "<module-init>").irBodyEmitted).toBe(true);
+    expect(result.wat ?? "").toContain("(func $__ir_dyn_mcall_join_1 ");
     expect(node(source)).toBe(111);
     expect(await initializeAndRun(result)).toBe(111);
   }, 35_000);

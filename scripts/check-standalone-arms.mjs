@@ -1,120 +1,213 @@
 #!/usr/bin/env node
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-//
-// #6979 S7-c — `ctx.standalone` ARM RATCHET.
-//
-// `ctx.standalone` is the native semantic regime flag. After #6979 S7-a/S7-b
-// the regime is the only ECMAScript implementation, so every
-// `if (ctx.standalone) { native } else { host }` is either a dead else-arm (a
-// semantic site) or a mis-keyed environment / value-boundary / accelerator
-// question that belongs on `hostFreeEnvironment(ctx)`, `jsValueBoundary(ctx)`
-// or `hasHostAccelerator(...)`. S7-c collapses them directory by directory;
-// this gate keeps the count from growing back while that happens.
-//
-// What is counted: occurrences of `ctx.standalone` (not followed by an
-// identifier character, so `ctx.standaloneGlobalThisImport` is not a hit) in
-// every `.ts` file under `src/`, grouped by the file's directory.
-//
-// Gate: FAILS when any directory's count exceeds its committed baseline, or a
-// directory with no baseline entry has any hit. Fewer hits always pass.
-//
-// The baseline `scripts/standalone-arms-baseline.json` is written ONLY by
-//   --update-on-decrease   lower every entry to the measured count, never raise
-//                          (post-merge banking; also run by a PR that collapses arms)
-//   --update               deliberate (re)seed — a reviewed diff
-//
-// Usage:
-//   node scripts/check-standalone-arms.mjs                      # gate
-//   node scripts/check-standalone-arms.mjs --update-on-decrease # bank drops
-//   node scripts/check-standalone-arms.mjs --update             # (re)seed
-//   node scripts/check-standalone-arms.mjs --root <dir> --baseline <file>  # alternate tree (tests)
-
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+/**
+ * #7143 slice A1 — standalone-arm ratchet.
+ *
+ * Track A of the legacy-deletion plan collapses the `ctx.standalone` /
+ * `ctx.wasi` / `noJsHost(` lowering arms directory by directory (#6979 S7-c).
+ * Between 10-14 and 10-25 the arm count still GREW (+69 lines), so every
+ * deletion PR was racing new arms. This gate stops the growth: a change-set may
+ * not add net arm lines, and every collapse banks automatically.
+ *
+ * Counted unit: source LINES matching each token as a whole word, over
+ * `src/**\/*.ts`. A field that merely shares the prefix (`ctx.wasiFdWriteIdx`,
+ * `ctx.standaloneGlobalThisImport`) is provider state, not a mode branch, so it
+ * does not count; the plan's §1.1 `rg -c` table counted those too.
+ *   - `ctx.standalone`   — any standalone-mode branch or flag read
+ *   - `!ctx.standalone`  — the host-only else arm (the deletion target)
+ *   - `noJsHost(`        — the combined standalone|wasi predicate
+ *   - `ctx.wasi`         — the WASI branch
+ *
+ * Default run is CHANGE-SCOPED and NET-PER-TOKEN, exactly like
+ * check-coercion-sites.mjs (#3131/#3279): each changed src file is counted at
+ * the base blob and in the working tree, and the gate fails only when the
+ * change-set's NET count of some token grew. Moving an arm between files is
+ * net-neutral; a new arm with no offsetting removal fails. Intentional growth
+ * (a reviewed one-off) is granted per change-set with a
+ * `standalone-arms-allow:` frontmatter list of repo-relative paths in the PR's
+ * own plan/issues/*.md file.
+ *
+ * The committed baseline (scripts/standalone-arms-baseline.json, per-directory
+ * per-token counts) is read only by --all and the no-git fallback; it is
+ * written by --update / --update-on-decrease. PRs must not commit changes to it
+ * (main is the sole writer), apart from the PR that introduces it.
+ *
+ * Usage:
+ *   node scripts/check-standalone-arms.mjs                     # change-scoped net gate (default)
+ *   node scripts/check-standalone-arms.mjs --all               # whole-tree audit vs baseline
+ *   node scripts/check-standalone-arms.mjs --update            # write current counts (main only)
+ *   node scripts/check-standalone-arms.mjs --update-on-decrease
+ *   node scripts/check-standalone-arms.mjs --verbose           # per-directory totals
+ */
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveChangeBase, changedPaths, baseBlob, changeSetAllowances } from "./lib/change-scope.mjs";
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const argv = process.argv.slice(2);
-function flagValue(name) {
-  const i = argv.indexOf(name);
-  return i !== -1 && i + 1 < argv.length ? argv[i + 1] : undefined;
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+const SRC_ROOT = join(REPO_ROOT, "src");
+const BASELINE_PATH = fileURLToPath(new URL("./standalone-arms-baseline.json", import.meta.url));
+const ALLOW_KEY = "standalone-arms-allow";
+
+export const TOKENS = [
+  ["ctx.standalone", /ctx\.standalone\b/],
+  ["!ctx.standalone", /!ctx\.standalone\b/],
+  ["noJsHost(", /noJsHost\(/],
+  ["ctx.wasi", /ctx\.wasi\b/],
+];
+
+/** Per-token count of matching lines in one file's text. */
+export function countLines(text) {
+  const counts = Object.fromEntries(TOKENS.map(([name]) => [name, 0]));
+  for (const line of text.split("\n")) {
+    for (const [name, re] of TOKENS) if (re.test(line)) counts[name]++;
+  }
+  return counts;
 }
-const ROOT = resolve(REPO_ROOT, flagValue("--root") ?? ".");
-const BASELINE_PATH = resolve(REPO_ROOT, flagValue("--baseline") ?? "scripts/standalone-arms-baseline.json");
-const HIT = /\bctx\.standalone(?![\w$])/g;
+
+function addInto(target, counts) {
+  for (const [name] of TOKENS) target[name] = (target[name] ?? 0) + (counts[name] ?? 0);
+}
 
 function walk(dir, out) {
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name);
-    if (statSync(abs).isDirectory()) walk(abs, out);
-    else if (name.endsWith(".ts")) out.push(abs);
+  for (const ent of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, ent.name);
+    if (ent.isDirectory()) walk(full, out);
+    else if (ent.isFile() && ent.name.endsWith(".ts")) out.push(full);
   }
-  return out;
 }
 
-/** `{ "<dir>": hits }` for every directory under src/ with at least one hit, sorted. */
-function measure() {
-  const counts = {};
-  for (const file of walk(join(ROOT, "src"), [])) {
-    const hits = readFileSync(file, "utf8").match(HIT)?.length ?? 0;
-    if (hits === 0) continue;
-    const dir = relative(ROOT, dirname(file)).split(sep).join("/");
-    counts[dir] = (counts[dir] ?? 0) + hits;
+/** Whole-tree counts keyed by src-relative directory, plus a "total" row. */
+function countTree() {
+  const files = [];
+  walk(SRC_ROOT, files);
+  const byDir = {};
+  const total = {};
+  for (const full of files) {
+    const counts = countLines(readFileSync(full, "utf8"));
+    if (!TOKENS.some(([name]) => counts[name] > 0)) continue;
+    const dir = relative(SRC_ROOT, dirname(full)) || ".";
+    addInto((byDir[dir] ??= {}), counts);
+    addInto(total, counts);
   }
-  return Object.fromEntries(
-    Object.keys(counts)
+  const sorted = Object.fromEntries(
+    Object.keys(byDir)
       .sort()
-      .map((d) => [d, counts[d]]),
+      .map((k) => [k, byDir[k]]),
   );
+  return { total, byDir: sorted };
 }
 
-const total = (o) => Object.values(o).reduce((a, b) => a + b, 0);
-const write = (o) => writeFileSync(BASELINE_PATH, `${JSON.stringify(o, null, 2)}\n`);
-const counts = measure();
+const fmt = (counts) => TOKENS.map(([name]) => `${name} ${counts[name] ?? 0}`).join(", ");
 
-if (argv.includes("--update")) {
-  write(counts);
-  console.log(`standalone-arms: baseline written — ${total(counts)} hits in ${Object.keys(counts).length} directories`);
-  process.exit(0);
-}
-if (!existsSync(BASELINE_PATH)) {
-  console.error(`standalone-arms: no baseline at ${BASELINE_PATH} — seed it with --update.`);
-  process.exit(2);
-}
-const baseline = JSON.parse(readFileSync(BASELINE_PATH, "utf8"));
-const dirs = [...new Set([...Object.keys(baseline), ...Object.keys(counts)])].sort();
-
-if (argv.includes("--update-on-decrease")) {
-  const banked = {};
-  const lowered = [];
-  for (const d of Object.keys(baseline).sort()) {
-    const now = Math.min(baseline[d], counts[d] ?? 0);
-    if (now < baseline[d]) lowered.push(`${d} ${baseline[d]} → ${now}`);
-    if (now > 0) banked[d] = now;
+/** Change-scoped net gate. Returns false when no diff base is resolvable. */
+function gateScoped() {
+  const { base, how } = resolveChangeBase(REPO_ROOT);
+  if (!base) return false;
+  const changedAll = changedPaths(REPO_ROOT, base, "src");
+  if (changedAll === undefined) return false;
+  const changed = [...changedAll].filter((p) => p.startsWith("src/") && p.endsWith(".ts")).sort();
+  const allow = changeSetAllowances(REPO_ROOT, base, ALLOW_KEY);
+  const net = {};
+  const grownFiles = [];
+  for (const p of changed) {
+    let nowText = "";
+    try {
+      nowText = readFileSync(join(REPO_ROOT, p), "utf8");
+    } catch {
+      // deleted in the working tree → counts as 0
+    }
+    const now = countLines(nowText);
+    const blob = baseBlob(REPO_ROOT, base, p);
+    const was = blob === undefined ? countLines("") : countLines(blob);
+    const grew = TOKENS.filter(([name]) => now[name] > was[name]).map(([name]) => name);
+    if (allow.has(p)) {
+      if (grew.length) console.log(`standalone-arms: ${p} growth granted by ${allow.get(p).join(", ")}`);
+      continue;
+    }
+    for (const [name] of TOKENS) net[name] = (net[name] ?? 0) + now[name] - was[name];
+    if (grew.length) grownFiles.push(`  ${p}: ${grew.map((n) => `${n} ${was[n]}→${now[n]}`).join(", ")}`);
   }
-  if (lowered.length > 0) write(banked);
-  for (const l of lowered) console.log(`standalone-arms: banked ${l}`);
-  if (lowered.length === 0) console.log("standalone-arms: nothing to bank");
-  process.exit(0);
+  const grownTokens = TOKENS.map(([name]) => name).filter((name) => (net[name] ?? 0) > 0);
+  if (grownTokens.length > 0) {
+    console.error(
+      `standalone-arms gate FAILED — this change-set adds ${grownTokens.map((n) => `${n} +${net[n]}`).join(", ")} on net.`,
+    );
+    console.error("Files whose arm count grew:\n" + grownFiles.join("\n"));
+    console.error(
+      "\nTrack A (#7143 / #6979 S7-c) is collapsing these arms; new code must not add\n" +
+        "standalone/host/WASI branches. Write the mode-neutral (native) lowering once.\n" +
+        "Moving an existing arm between files is net-neutral and passes. If this growth\n" +
+        "is a reviewed one-off, list the path under `" +
+        ALLOW_KEY +
+        ":` in the YAML\nfrontmatter of this PR's own plan/issues/*.md file.",
+    );
+    process.exit(1);
+  }
+  const moved = TOKENS.map(([name]) => name).filter((name) => (net[name] ?? 0) !== 0);
+  const summary = moved.map((n) => `${n} ${net[n]}`).join(", ");
+  console.log(
+    `standalone-arms gate: OK (no net arm growth across ${changed.length} changed src file(s)` +
+      `${summary ? `; net ${summary}` : ""}; base: ${how}).`,
+  );
+  return true;
 }
 
-const rows = dirs.map((d) => ({ d, base: baseline[d] ?? 0, now: counts[d] ?? 0 }));
-const failures = rows.filter((r) => r.now > r.base);
-const width = Math.max(...rows.map((r) => r.d.length), 9);
-console.log(`${"directory".padEnd(width)}  baseline  current`);
-for (const r of rows) {
-  const mark = r.now > r.base ? "  GREW" : r.now < r.base ? "  (bank with --update-on-decrease)" : "";
-  console.log(`${r.d.padEnd(width)}  ${String(r.base).padStart(8)}  ${String(r.now).padStart(7)}${mark}`);
+function readBaseline() {
+  try {
+    return JSON.parse(readFileSync(BASELINE_PATH, "utf8"));
+  } catch {
+    return { total: {}, byDir: {} };
+  }
 }
-console.log(`${"total".padEnd(width)}  ${String(total(baseline)).padStart(8)}  ${String(total(counts)).padStart(7)}`);
-if (failures.length > 0) {
-  console.error("\nstandalone-arms: FAIL — `ctx.standalone` hits grew:");
-  for (const r of failures) console.error(`  - ${r.d}: ${r.base} → ${r.now} (+${r.now - r.base})`);
-  console.error(
-    "\n`ctx.standalone` is the native regime flag and the regime is the only semantic implementation\n" +
-      "(#6979). Key environment questions on hostFreeEnvironment(ctx), the JS value bridge on\n" +
-      "jsValueBoundary(ctx), and host accelerators on hasHostAccelerator(ctx.targetProfile, <family>).",
+
+function writeBaseline(current) {
+  writeFileSync(BASELINE_PATH, `${JSON.stringify(current, null, 2)}\n`);
+}
+
+/** Whole-tree comparison against the committed per-directory baseline. */
+function gateWholeTree(current, { updateOnDecrease, auditAll }) {
+  const baseline = readBaseline();
+  const grown = [];
+  const shrank = [];
+  const dirs = new Set([...Object.keys(baseline.byDir ?? {}), ...Object.keys(current.byDir)]);
+  for (const dir of [...dirs].sort()) {
+    for (const [name] of TOKENS) {
+      const was = baseline.byDir?.[dir]?.[name] ?? 0;
+      const now = current.byDir[dir]?.[name] ?? 0;
+      if (now > was) grown.push(`  ${dir}: ${name} ${was} → ${now}`);
+      else if (now < was) shrank.push(`  ${dir}: ${name} ${was} → ${now}`);
+    }
+  }
+  if (grown.length > 0) {
+    console.error("standalone-arms gate FAILED — arm lines grew vs the committed baseline:\n" + grown.join("\n"));
+    process.exit(1);
+  }
+  if (shrank.length > 0 && updateOnDecrease) {
+    writeBaseline(current);
+    console.log("standalone-arms baseline ratcheted down:\n" + shrank.join("\n"));
+  } else if (shrank.length > 0) {
+    console.log("standalone-arms decreased (run --update-on-decrease to bank it):\n" + shrank.join("\n"));
+  }
+  console.log(
+    `standalone-arms gate: OK (whole-tree${auditAll ? " --all" : ", committed-baseline mode"}; ${fmt(current.total)}).`,
   );
-  process.exit(1);
 }
-console.log("standalone-arms: OK");
+
+function main(args) {
+  const current = countTree();
+  if (args.includes("--verbose")) {
+    for (const [dir, counts] of Object.entries(current.byDir)) console.error(`  ${dir}: ${fmt(counts)}`);
+    console.error(`  total: ${fmt(current.total)}`);
+  }
+  if (args.includes("--update")) {
+    writeBaseline(current);
+    console.log(`standalone-arms baseline written (${fmt(current.total)}).`);
+    return;
+  }
+  const updateOnDecrease = args.includes("--update-on-decrease");
+  const auditAll = args.includes("--all");
+  if (!updateOnDecrease && !auditAll && gateScoped()) return;
+  gateWholeTree(current, { updateOnDecrease, auditAll });
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main(process.argv.slice(2));

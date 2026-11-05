@@ -1,3 +1,46 @@
 {
-  "src/runtime/contracts": 2
+  "total": {
+    "ctx.standalone": 2,
+    "!ctx.standalone": 0,
+    "noJsHost(": 7,
+    "ctx.wasi": 188
+  },
+  "byDir": {
+    ".": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 0,
+      "ctx.wasi": 1
+    },
+    "codegen": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 5,
+      "ctx.wasi": 149
+    },
+    "codegen/declarations": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 0,
+      "ctx.wasi": 2
+    },
+    "codegen/expressions": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 2,
+      "ctx.wasi": 27
+    },
+    "ir": {
+      "ctx.standalone": 0,
+      "!ctx.standalone": 0,
+      "noJsHost(": 0,
+      "ctx.wasi": 7
+    },
+    "runtime/contracts": {
+      "ctx.standalone": 2,
+      "!ctx.standalone": 0,
+      "noJsHost(": 0,
+      "ctx.wasi": 2
+    }
+  }
 }

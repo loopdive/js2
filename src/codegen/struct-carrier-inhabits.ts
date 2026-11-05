@@ -133,11 +133,13 @@ export function hasIncompatibleElementCarrier(
 }
 
 /**
- * One resolution site for every carrier proof in this module: the question is
- * which WasmGC carrier an element LOWERS to, which is a `ValType` fact above
- * what `ctx.oracle` models (#1930 / #3273).
+ * One resolution site for every carrier proof in this module — and for the
+ * IR's Array.prototype borrow admission (`array/ir-array-prototype-borrow.ts`),
+ * which asks the same question of a borrow's result: which WasmGC carrier an
+ * expression LOWERS to, a `ValType` fact above what `ctx.oracle` models
+ * (#1930 / #3273).
  */
-function carrierOf(ctx: CodegenContext, node: ts.Expression): ValType {
+export function carrierOf(ctx: CodegenContext, node: ts.Expression): ValType {
   return resolveWasmType(ctx, ctx.checker.getTypeAtLocation(node));
 }
 

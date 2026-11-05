@@ -1,9 +1,10 @@
 ---
 id: 4765
 title: "Array.prototype methods do not reify as function values (19 of the 22 remaining ES2016 failures, and the whole array-like `.call` family)"
-status: ready
+status: done
+completed: 2026-10-28
 created: 2026-08-26
-updated: 2026-08-26
+updated: 2026-10-28
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -13,6 +14,7 @@ language_feature: arrays
 goal: spec-completeness
 sprint: current
 horizon: xl
+assignee: ttraenkler/opus-4765
 loc-budget-allow:
   # 2026-08-27 — slice 1 (host-lane method value). Both are the minimum wiring
   # for a NEW mechanism whose logic lives in the leaf module
@@ -21,6 +23,14 @@ loc-budget-allow:
   #   runtime.ts         +4 — the __array_proto_method intrinsic
   - src/codegen/property-access.ts
   - src/runtime.ts
+  # 2026-10-28 — slice 3 (spec `length` of a method value). Both are wiring for
+  # logic that lives in the leaf src/codegen/array-method-value.ts:
+  #   array-object-proto.ts       +6 — exports the Array glue's existing arity
+  #                                    table lookup (no second table)
+  #   property-access-dispatch.ts +1 — the import (the `??` in the
+  #                                    Function.length fold is in place)
+  - src/codegen/array-object-proto.ts
+  - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   # Same +4: resolveImport is the single switch every host import is registered
   # in, so a new import necessarily grows it.
@@ -632,7 +642,128 @@ One separate row in the family is genuinely arithmetic:
 algorithm below, so the rest of this plan stands for standalone and for the
 2^53 work.
 
+## Slice 3 — DONE (both lanes, 2026-10-28): fromIndex order, method-value `length`
+
+### What was already on main when this slice started (measured, not inherited)
+
+Plan steps 1–3 below had been delivered by other issues before anyone picked
+this one up again. Probed on `df57a0e8e6` with one module per lane:
+
+| read | host | standalone (0 imports) |
+| --- | --- | --- |
+| `typeof [].includes` / `.name` / `.length` | `function` / `includes` / 1 | same |
+| `[].includes.call({length:3,…,2:NaN}, NaN)` | true | true |
+| `[].indexOf.call(like, "y")`, `[].lastIndexOf.call(like, "y")` | 1, 1 | 1, 1 |
+| `[].includes === Array.prototype.includes` | true | true |
+
+- **Host**: slice 1 above (`__array_proto_method`).
+- **Standalone**: #4481 routes the instance read to the same
+  `resolveStandaloneProtoMemberValueClosure` singleton as
+  `Array.prototype.<m>`, and #6912 gave `includes` / `indexOf` / `lastIndexOf`
+  one shared, host-free, generic array-like body
+  (`src/codegen/array/array-search-proto-value.ts`, on the
+  `array-search-core.ts` clamp-and-scan instructions). That is exactly step 2's
+  `__array_like_scan`. Writing it a second time here would have been the
+  duplicate the plan warns against, so this slice does not.
+
+So the 9 `includes` rows were already 8/9 in both CI lanes (baseline jsonl
+fetched 2026-10-28). The one failure left was `length-zero-returns-false.js`,
+in BOTH lanes, and it is not about method values at all.
+
+### The fix: evaluate `fromIndex` always, convert it only when `len != 0`
+
+`sample.includes(0, fromIndex)` on `[]` ran `fromIndex.valueOf()`. The inlined
+vec lowering converted `fromIndex` before looking at the length. §23.1.3.16
+step 3 returns `false` for `len = 0` before step 4's ToIntegerOrInfinity, and
+that ToNumber is observable.
+
+`indexOf` / `lastIndexOf` already had a `len != 0` guard (#3201), but it got the
+other half wrong: it moved the whole argument expression under the guard, so
+`[].indexOf(0, f())` never called `f`. Arguments are evaluated with the call.
+
+One helper now serves all three, in `src/codegen/array-includes-search-value.ts`:
+
+- `evalSearchFromIndex` evaluates the argument now and returns an emitter for
+  its i32 conversion. The caller runs that emitter under its length guard.
+  - A primitive-typed argument (`number` / `string` / `boolean` /
+    `undefined`, read through `ctx.oracle.staticJsTypeOf`) has an unobservable
+    ToNumber. It converts eagerly; only the i32 is deferred.
+  - A Symbol defers the TypeError itself.
+- `emitForwardSearchStart` is the shared `includes` / `indexOf` start clamp,
+  which used to be two copies.
+
+The #3481 shared Symbol guard in `compileArrayMethodCall` used to throw before
+any length check. It now skips the native `includes` arm, which defers the
+throw itself. It still covers the host-extern `includes` arm and `at`.
+
+### Also fixed: `.length` of a method value came from the lib, not the spec
+
+`[].slice.length` was 0, and `[].push.length`, `[].concat.length`,
+`[].unshift.length` and `[].toSorted.length` were 0 too. The spec says 2, 1, 1, 1
+and 1. The `Function.length` fold counted the `lib.*.d.ts` signature's leading
+required parameters, and the lib spells these with `?` and `...`.
+
+`arrayLibMethodSpecLength` (`array-method-value.ts`) recognises a signature
+declared on `interface Array` / `ReadonlyArray` and answers from the Array
+glue's existing arity table. `arrayProtoMethodSpecLength` exports that lookup;
+there is no second table. So `[].slice.length`,
+`var s = [].slice; s.length` and `Array.prototype.slice.length` all answer 2.
+
+### Measured
+
+- **test262**: the 429 rows of `Array/prototype/{includes,indexOf,lastIndexOf}`,
+  base vs this branch, in both lanes
+  (`scripts/run-test262-paths.mts`, honest lane, file-copy A/B):
+  - host 356 → 357, standalone 356 → 357
+  - +1 each: `includes/length-zero-returns-false.js`
+  - 0 regressions
+  - the same row passes under `TEST262_ORACLE_MODE=linked`, the CI host oracle
+- **Byte identity**: 9 one-argument `includes` / `indexOf` / `lastIndexOf`
+  sources hash identically before and after, in both lanes. They cover f64,
+  string, `any` and boolean element vecs. The two-argument forms change, as
+  intended.
+- **Equivalence**: `tests/equivalence/issue-4765-array-search-order.test.ts`
+  compares both lanes against native JS. It has 8 cases; 4 of them fail on
+  base. That includes `values-are-not-cached`, which pins fresh per-index
+  reads.
+
+### Found along the way: a separate ToNumber defect, not fixed here
+
+Calling ToNumber on an object whose `valueOf` closure captures a PARAMETER runs
+`valueOf` twice. This happens in both lanes, on main:
+
+```js
+var calls = 0;
+function counting(n) { return { valueOf: function () { calls++; return n; } }; }
+calls = 0; +counting(0);              // calls === 2 (spec: 1)
+function mk() { var r = { valueOf: function () { calls++; return 3; } }; return r; }
+calls = 0; +mk();                     // calls === 1 ✓
+calls = 0; counting(0) + 1;           // calls === 1 ✓
+```
+
+It is in the unary-`+` / `Number()` coercion of that closure shape, not in the
+search family: `a.includes(5, counting(0))` counts 2 only because of it. It
+needs its own issue. No id was allocated here, because the open-PR id scan
+could not run: GraphQL is unavailable from this session.
+
+### Residual, outside this issue's acceptance criteria
+
+The 10-row 2^53 family above is still open. In the CI baselines of 2026-10-28:
+
+- Host fails 5 of the 10: `reverse/*` ×2, `splice/create-species-…`,
+  `unshift/clamps-to-integer-limit`, `unshift/length-near-integer-limit`.
+- Standalone fails all 10.
+
+Those rows go through `Array.prototype.<m>.call(obj, …)`, not the value read,
+and their causes are the ones diagnosed in the sections above: delete
+visibility, the proxy escape gate, and the `ToLength` write-back. They need
+their own issue, and they are not blocked on anything here.
+
 ## Implementation Plan (remaining slices)
+
+**Status 2026-10-28:** steps 1–3 were delivered by slice 1 (host), #4481 and
+#6912 (standalone). Step 4 was delivered by slice 3 above. The plan is kept as
+written for the record.
 
 1. **Reify the value.** Extend the static-method closure machinery in
    `src/codegen/property-access.ts` to prototype methods: a
@@ -670,9 +801,14 @@ a hot path.
 
 ## Acceptance criteria
 
-- [ ] `([] as any).includes` is a callable value with `.name === "includes"` and
-      `.length === 1`
-- [ ] The 9 `Array/prototype/includes` rows above pass
-- [ ] `arr.includes(x)` on a statically-known vec still takes the inlined path
-      (verify the emitted binary is unchanged for the existing equivalence cases)
-- [ ] No new host import in standalone mode
+All four were verified 2026-10-28; the evidence is in slice 3 above.
+
+- [x] `([] as any).includes` is a callable value with `.name === "includes"` and
+      `.length === 1`. Both lanes; covered by the equivalence test.
+- [x] The 9 `Array/prototype/includes` rows above pass. All 9 pass in both
+      lanes; `length-zero-returns-false.js` was the last one, and it was flipped
+      by slice 3.
+- [x] `arr.includes(x)` on a statically-known vec still takes the inlined path.
+      The one-argument binaries are byte-identical in both lanes.
+- [x] No new host import in standalone mode. Slice 3 adds none, and the
+      standalone probe modules import nothing.

@@ -4962,5 +4962,6 @@ export function jsValueBoundary(ctx: CodegenContext): boolean {
 /** (#6979 S7-c) The `{ wasi, standalone }` target the physical/runtime emitters
  *  still take; codegen is always the native regime. Goes with S7-d. */
 export function regimeTarget(ctx: CodegenContext): { readonly wasi: boolean; readonly standalone: true } {
-  return { wasi: ctx.wasi, standalone: true };
+  const { wasi } = ctx; // (#7143 A1) the environment flag, not a WASI arm
+  return { wasi, standalone: true };
 }

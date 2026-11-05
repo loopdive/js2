@@ -1,10 +1,10 @@
 ---
 id: 3585
 title: "Standalone: `m.get(k) === lit` false in direct call-result position (true via a local); an any-keyed Map poisons even typed Maps module-wide"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-07-25
-updated: 2026-07-25
+updated: 2026-09-28
 priority: high
 horizon: m
 feasibility: medium
@@ -15,6 +15,17 @@ language_feature: Map, equality
 goal: standalone-gap
 related: [2773, 2141, 2040, 3053]
 origin: "2026-07-25 Fable substrate/async review (plan/agent-context/fable-substrate-async-review-2026-07-24.md), probe s2h/s2i"
+assignee: "ttraenkler/codex-3585-map-result-equality"
+branch: "codex/3585-map-result-equality"
+loc-budget-allow:
+  - src/codegen/binary-ops-typed-dispatch.ts
+func-budget-allow:
+  - src/codegen/binary-ops-typed-dispatch.ts::compileTypedBinaryDispatch
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+coercion-sites-allow:
+  - src/codegen/binary-ops-typed-dispatch.ts
+standalone-arms-allow:
+  - src/codegen/binary-ops-typed-dispatch.ts
 ---
 
 # Standalone: Map.get result compared in direct call-result position answers false
@@ -80,7 +91,254 @@ Host (gc) lane is correct in all variants. `m.has(...)` is correct; arithmetic
 on the value (`(g as number) + 0 === 7`) is correct — only the ==/=== lowering
 against the direct call result is wrong.
 
-## Suspected area
+## Ownership and bounded scope (2026-09-28)
+
+The live claim is the slice-specific
+`3585:direct-result-equality` record for
+`ttraenkler/codex-3585-map-result-equality` on
+`upstream/issue-assignments`. The older bare `3585` record remains untouched:
+it names the July `issue-3585-toplevel-throw` vacuity lane that was renumbered
+to #3592, not this Map equality repair.
+
+This implementation may modify only:
+
+- `src/codegen/binary-ops-typed-dispatch.ts`;
+- one focused standalone regression test; and
+- this issue record.
+
+It must not alter `map-runtime.ts`, `binary-ops.ts`, IR lowering, collection
+storage, or introduce a host equality import. An overlap review found the
+other-machine IR PR #6205 in `binary-ops.ts`, not the owned typed-dispatch
+leaf.
+
+The reviewed issue-scoped LOC allowance covers the exact `+101` lines in
+`binary-ops-typed-dispatch.ts`: wrapper unwrapping, oracle-classified receiver
+recognition, and the narrow raw-`anyref` equality dispatch extracted into a
+small helper for readability. The paired function allowance covers only the
+remaining `+15` lines in `compileTypedBinaryDispatch` for that helper call. No
+allowance covers checker/oracle expansion, coercion-site growth, baseline
+change, or the separately unresolved nullish behavior.
+
+## Current source audit (2026-09-28; source hypothesis, not a runtime verdict)
+
+At upstream `27d215fb9e52c28c2ea7bc38d1fc27c63fe7a227`, native
+`Map.prototype.get` deliberately returns `{ kind: "anyref" }` from
+`tryCompileNativeMapMethodCall`; `$MapEntry.F_VALUE` and `__map_get` use that
+same carrier. That storage/result contract is intentional and stays unchanged.
+
+`compileTypedBinaryDispatch` currently defines its reference arms only for
+`ref` and `ref_null`. A direct `Map.get()` `anyref` compared with a native
+string ref therefore misses the mixed-reference bridge and can reach the strict
+fallback that drops both operands and emits a constant. The retained diagnostic
+trace for `m.get(1) !== "valid"` showed `call $__map_get; drop; i32.const 1`.
+This explains that string shape, but does **not** yet prove the historical
+numeric loose/strict failures take the same route.
+
+The existing native-first semantic pieces are reusable: the forced-honest
+`ensureAnyFromExternHelper` classifier preserves wrapped `$AnyValue` values and
+classifies numeric, boolean, native-string, and eqref values by tag;
+`__any_strict_eq` and `__any_eq` implement the corresponding strict and loose
+comparisons. A raw `ref.eq` expansion is not sound: it would lose numeric
+value equality and native-string content semantics.
+
+## Frozen baseline receipt (2026-09-28)
+
+The source oracle ran under Node `v24.19.0`, terminal exit `0`, from the
+ignored fixture SHA-256
+`255e4b3e2d0c2abd2cc77a47e281d4d67d68ff236b7b5b0e4e93326f9e6c86c3`.
+It returned the expected `133`, `111`, string `5`, object `15` (including
+reversed operands), and nullish `63`/`1023` control values.
+
+The initial standalone matrix used fixture SHA-256
+`b6f2d90b456deae15fcff6fa314895b517804a40b1bacecc818e3302fe7d37af`
+with explicit Node 24, one Vitest fork, and a 4-GiB parent/fork heap. Its
+terminal exit was `1` (`7` failing rows, `1` passing typed-string control); the
+log SHA-256 is
+`09fd255ec7a007701cd7a47cf706fa9baab87d78b4c8a5aab20765fe6bf9f3bc`.
+
+- Original numeric direct/local: `130`, expected `133`; composition: `1`,
+  expected `111`.
+- Direct object identity: `14`, expected `15`; reversed direct object operands:
+  `12`, expected `15`.
+- The typed-string-only control passed, so it does not stand in for the
+  mixed-value case.
+- Nullish direct controls returned `42`, expected `63`.
+- Both the combined mixed-value source and its string-only split compiled with
+  `success: true` but produced invalid Wasm. `WebAssembly.compile` reports
+  `f64.eq[1] expected type f64, found local.get of type anyref` in the direct
+  function. These are compiler-invalid failures with no runtime result, not
+  fixture infrastructure failures.
+
+The combined invalid source remains an acceptance row; the split sources only
+localize its direct string and nullish portions.
+
+## Candidate partial receipt and nullish boundary (2026-09-28; not a full fix)
+
+The owned typed-dispatch candidate was SHA-256
+`c57e53d9daa64a1aa36ae24f0ae70e2b0b7d4b37b61ad24328a771e70399aa6f`.
+The then-current focused fixture was SHA-256
+`bb918119d197f6d64f0e08f10e37bc287d2e75abcd0cc0593ce80ae59daf93c5`;
+the later WAT-target assertion cleanup has a separately recorded fixture hash
+and needs a fresh matched run before it can replace this historical receipt.
+The candidate focused command exited `1` with four passing and four failing
+rows; log SHA-256:
+`0b2fdfc43115a9308041e44a91757f5999ab0f8fc68452b48ea6225b8ec06c98`.
+
+- Both original numeric programs, the direct object identity rows (including
+  reversed operands), and the typed-string positive passed at their expected
+  runtime values. The unannotated mixed-string source now validated and
+  instantiated, so the prior `f64.eq(anyref, f64)` compiler-invalid failure is
+  gone for that slice.
+- The candidate does **not** repair direct Map-result nullish comparisons:
+  `nullishAndTypeMismatch()` returned `2`, not `3`; the combined source returned
+  `687`, not `1023`; and the split nullish source returned `42`, not `63`.
+  In the combined value, the passing bits are the string comparisons and the
+  three `!==` rows; the missing bits are absent `=== undefined`, stored
+  `undefined === undefined`, and stored `null === null`. These remain explicit
+  red acceptances, not a Map-storage conclusion.
+- A one-test candidate WAT diagnostic (terminal `0`, 13.21 s) retained log
+  SHA-256 `24053f43baa61a1b1a5d0369dee449c5dd8f685a37458e33428309dc50c87e0c`.
+  Its temporary runner-visible copy, SHA-256
+  `1d8ece7cb90a4429813c0e2ff9803cefbb91012282c71ac596f65517644123bd`,
+  was removed after the run. The printed `$nullishMapResults` body has six
+  repeated direct-result routes of `call 79; drop; i32.const 0/1` after map/key
+  setup (with `call 82` used for initialization). It contains no observed
+  reference-equality or null-test instruction. Because that diagnostic printed
+  function bodies rather than the full callable inventory, numeric `79` is not
+  claimed as an independently named WAT symbol; source establishes that native
+  `Map.get` emits its helper and returns `anyref`.
+
+The source boundary agrees with the emitted observation. The nullish arm in
+`binary-ops.ts` invokes `compileNullishObservedExpression` before typed binary
+dispatch. For this direct `m.get(...)` **call** that helper itself falls through
+to generic `compileExpression` (its special boxed route is only for a
+`PropertyAccessExpression`), returning raw `anyref`; `binary-ops.ts` has no
+`anyref` nullish arm and reaches its generic `drop; i32.const` fallback. The
+existing `property-nullish-read.ts` helper is therefore a possible future
+normalization seam only after separate ownership/design review, not a change
+made or proven by this direct-result equality slice. `binary-ops.ts` remains
+held and unmodified.
+
+## Receiver-provenance guard (2026-09-28; focused controls measured)
+
+The direct-result predicate uses the existing
+`ctx.oracle.builtinReceiverOf(receiver) === "Map"` boundary rather than a raw
+`ctx.checker` query or the receiver spelling. An oracle result of `undefined`
+is a deliberate decline. This retains an ordinary alias whose *type* is
+oracle-classified as `Map`, while leaving a source-defined `class Map` and an unrelated
+`.get()` on their existing lowering paths.
+
+The focused regression adds two controls alongside the original eight rows:
+
+- a `const alias = m` oracle-classified-Map positive, requiring runtime result `3` and
+  the emitted direct-call body to reach `__extern_strict_eq`; and
+- a source-defined `class Map` negative, requiring runtime result `1` with no
+  emitted `__map_get` helper.
+
+Those controls establish alias preservation and source-class shadow safety;
+they do **not** establish a general project-`.d.ts` provenance rule.
+`TypeOracle.declarationsOf(receiver)` describes the receiver binding (for
+example `alias` or `m`), not the symbol declarations of its resolved type, so
+it cannot prove that a type named `Map` comes from the standard library.
+No binding-declaration source is used as a substitute for that missing fact.
+If a future repair needs that distinction, it requires a separately reviewed
+oracle type-symbol provenance fact and its own controls; this leaf keeps an
+unknown result on the existing path.
+
+## Oracle-guard candidate receipt (2026-09-28; partial result)
+
+The current oracle-only typed-dispatch source is SHA-256
+`56141a4f181385bfe6a33f5ff340fc13029aad6f0f827c91374073ab79ef6225`.
+The final focused fixture is SHA-256
+`948a8a2e5035b694b0e91e217ae893cdb1bd12718c5300f97c9919594e5c2936`.
+Under Node `v24.19.0`, one Vitest fork, and 4-GiB parent/fork heaps, the
+candidate command exited `1`: seven rows passed and the three retained
+nullish rows failed. The terminal log is
+`.tmp/3585/candidate-focused-v5.log`, SHA-256
+`fa5090d3072038859c109d51845b66ff90966527306ffa0a811648c5233654b4`.
+
+- Both original numeric programs, typed-string control, direct object controls
+  (including reversed operands), and the mixed-string direct result pass.
+- The new mixed-seed `const alias = m` control answers `3`; its direct function
+  names the emitted `__extern_strict_eq` target by numeric WAT call identity.
+  The source-defined `class Map` control answers `1` and its module contains
+  no emitted `__map_get` helper.
+- The retained failures are unchanged: `nullishAndTypeMismatch()` answers `2`,
+  not `3`; the combined mixed program answers `687`, not `1023`; and
+  `nullishMapResults()` answers `42`, not `63`. They remain visible acceptance
+  failures outside this owned non-nullish equality boundary.
+
+An immediately preceding v4 control run used a typed
+`Map<number, string>` alias. It answered its runtime value correctly but did
+not name `__extern_strict_eq`, because that source selected a typed
+native-string route rather than the raw-`anyref` route this repair owns. That
+instrumentation mismatch was not treated as a product result: v4 exited `1`
+with six passes/four failures, and its retained log SHA-256 is
+`04c3fa8130f556af3987a87338271149a407b9d75d640c1cac32592d9324e09c`.
+V5 changed only the alias control to a mixed-seed Map, kept all original eight
+rows, and supplied the relevant raw-carrier WAT evidence.
+
+After v5, explanatory comments were revised from an ambient/native wording to
+the precise oracle-classified wording, followed by mechanical formatter
+wrapping. Those intervening documentation-only bytes were source SHA-256
+`525d1be9b2106bc406371acb13ca68c232d258ada891cca424410b831a96684b`;
+the v5 receipt continues to name its exact pre-comment/pre-format hashes.
+
+The subsequent readability extraction produced source SHA-256
+`9b86c06137d527b1b290d6a3df8627b66609e8b4c91e6a8a69c88cce1e967e76`
+with the unchanged test file SHA-256
+`e57e1ee4c5785d3631256d62487d60794eefc7ef2dd940a9c7984aacee56d476`.
+It was re-run under the same Node 24 one-fork/4-GiB configuration: terminal
+exit `1`, seven passing rows, and the same three explicit nullish failures.
+The v6 helper-refactor log SHA-256 is
+`d76134f473348bc35955f554c9211df78f4faa8039fcf46b59f06c0519ef97b2`.
+The plan file at that run was SHA-256
+`9e31d570657425ec07c21428108d0183efed07da5d9e8bd7849430b0db6cff38`;
+the later plan edits record the reviewed budget allowances and this receipt.
+
+## Implementation and evidence plan
+
+1. **Freeze the before-state.** Use a current Node 24 source oracle and a
+   standalone compiler/Wasm fixture at `27d215f` for both historical numeric
+   programs (direct versus local, and the any-keyed-map composition case), plus
+   direct typed-string equality, an unannotated mixed-value Map whose direct
+   string loose/strict comparisons run in both operand orders, explicit
+   missing/stored-`undefined`/stored-`null` distinctions, and object identity
+   controls in both operand orders. Record the precise result and emitted
+   equality route for every case; historical `133`/`111` values are acceptance
+   expectations, not a substitute for this baseline.
+2. **Repair only the direct `anyref` equality boundary.** In
+   `binary-ops-typed-dispatch.ts`, recognize only a direct oracle-classified
+   native `Map.prototype.get()` expression whose compiled value is raw
+   `anyref`, under the native-first standalone/WASI lane. Normalize that result
+   through the existing strict/loose helper boundary. Do not simply include
+   `anyref` in `leftIsRef`/`rightIsRef`, claim a name-only `Map`, infer standard
+   library provenance from a receiver binding declaration, or broaden to
+   another producer's `anyref` expression.
+3. **Add one focused regression file.** It must keep both original numeric
+   acceptance programs and their local-materialization positives, and add the
+   string constant-fallback reproducer plus the mixed-value, nullish, and
+   object-identity controls above. Each assertion must compile, instantiate,
+   and observe the exported runtime value; the WAT evidence must positively
+   show the direct mixed result reaches the native loose/strict equality
+   helpers, not merely omit the old `drop; i32.const` fallback.
+4. **Validate as a matched A/B.** Run the byte-identical fixture against the
+   clean `27d215f` baseline and candidate under the same standalone harness,
+   with Node version, source/fixture hashes, command, terminal exit status, and
+   positive controls recorded. Run the focused regression file and proportionate
+   equality controls afterward. Do not claim full Map or Test262 conformance
+   from this bounded evidence.
+
+The issue remains in progress until both original numeric acceptance programs
+and their positive local controls have a measured candidate result. If either
+remains red, record the residual rather than closing this issue.
+
+The current typed-dispatch candidate is only the direct non-nullish equality
+repair. The recorded nullish residual requires its own source-boundary and
+ownership decision; it must not be hidden by weakening this fixture or treated
+as repaired by the Map carrier work.
+
+## Historical suspected area
 
 Standalone Map carrier value read (collections codegen) returning an
 externref/boxed rep in expression position, vs the any-eq / tag-5 classifier
@@ -90,10 +348,30 @@ inference, which is why the local variant works.
 
 ## Acceptance
 
+### 2026-09-28 upstream-merge checkpoint
+
+The source checkpoint `c63dcf845b585e9a4ede52f18002d13d4c55d676` was merged
+normally with upstream main `45ce4a8e207742df5ca3888c0a458e8a48ee1655`.
+At merge revision `f84bbc4acb2ca0f3c9e40e3afc429e16c948530f`, the focused
+Node 24.19.0 / one-fork / 4 GiB run (retained session `53167`) terminated
+exit 1 after 15.06 seconds: **7 pass / 3 fail**, with unchanged nullish values
+2 versus 3, 687 versus 1023, and 42 versus 63. No assertion was removed.
+The subsequent publication commit adds documentation only to that tested tree.
+
+Source SHA-256: `9b86c06137d527b1b290d6a3df8627b66609e8b4c91e6a8a69c88cce1e967e76`.
+Fixture SHA-256: `e57e1ee4c5785d3631256d62487d60794eefc7ef2dd940a9c7984aacee56d476`.
+Log: `.tmp/3585/root-post-main-focused.log`, SHA-256
+`8511775589b04223cc2b132f0661518a404162eb7f9f09e0f8932517220e0637`.
+This remains an unfinished draft checkpoint, not closure of the issue or a
+claim that the original mixed-Map Test262 failure is fixed.
+
 - Both probes above return the node value (133 / 111) under
   `target: "standalone"`.
+- The mixed-value direct sources validate and instantiate; no `f64.eq(anyref,
+  f64)` failure remains, and the WAT names the native strict/loose equality
+  helpers for the direct mixed-string route.
 - Add both as standalone regression tests (direct-position and
-  module-composition variants).
+  module-composition variants), retaining the direct object and nullish rows.
 
 ## 2026-10-04 — Astra PR6234 nullish observation repair proposal
 
@@ -925,3 +1203,168 @@ shared helper, IR, provider, variant, hook, commit, push or publication changed.
 The original ten green revised-fixture rows, prior eight matched gains and
 zero losses remain separate evidence; physical removal/restoration proofs
 remain UNPROVEN and PR readiness is not asserted.
+
+
+## 2026-10-30 current-main native-provider successor (source proposal only)
+
+The historical source audits and runtime outcomes above remain pinned to their
+recorded epochs. They do not qualify this successor. Its immutable source base is
+`0b44b25a26b8bcba0fd964baf81653829a66807a`; the current production preimages differ
+from the earlier `3a4` composition. The original test path remains absent on this
+base. The original 12,111-byte test prefix and five reviewed default-ON additions
+are retained without changing assertions, guest programs or direct-call checks.
+
+The current `strict-eq-reference-arm.ts` has no callable
+`emitReferenceEqualityFromStack` export. This successor does not restore that
+retired route or a host-equality fallback. A narrow local adapter in the existing
+`binary-ops-typed-dispatch.ts` uses the current native strict provider
+`__extern_strict_eq`. For loose equality it emits the existing native extern-loose
+provider's conversion sequence directly in the guest body: convert each saved
+externref through `__any_from_extern`, then call `__any_eq`. This preserves the
+original guest-direct helper assertion without assuming optimizer inlining.
+Boolean/Symbol scalar brands, raw Map carriers and guarded AnyValue recovery stay
+with the existing coercion/provider owners; no new storage or global ABI is added.
+
+The adapter registers its required native providers before consuming either
+operand, then resolves their canonical indices again after coercion and late
+import settlement. If preparation cannot establish the required providers, the
+new arm declines without consuming its operand stack. Missing prepared bindings
+are a compiler invariant failure, never a host fallback. It compiles no operand
+expression itself. The earlier literal-nullish observer still compiles only the
+nonliteral once, explicitly materializes/reorders the inert literal and retains
+the direct oracle Map.get predicate, shadowed-undefined/effectful-void exclusions
+and `undefinedSingletonActive(ctx)` conjunct. Explicit OFF therefore declines to
+the entire unchanged earlier route; real paired OFF equivalence remains unrun.
+
+This four-path artifact is private, UNAPPLIED, untyped and unrun. Neither the old
+current-production 2-pass/8-fail baseline nor other historical green counts prove
+this successor's outcomes. All 15 source registrations, genuine imports/binary
+validation/runtime assertions, original direct WAT helper assertions, strict
+current typing and the bounded paired OFF observer still need authentic future
+qualification. The specific takeover/AST/qualification/resource disposition
+remains pending; general PR-draining continuation is not that approval.
+
+
+## 2026-11-04 current-main successor after exact user-Map attribution
+
+The prior current643 qualification remains **12 passed / 3 failed of 15**:
+formatting, scoped lint and source typing passed; two original direct strict
+WAT-call witnesses failed, and the added user-class Map nullish control trapped.
+Those original assertions and all five appended controls are retained unchanged.
+
+A separate unchanged-source causal diagnostic used baseline643 and candidate03079,
+the exact 333-byte userMapNullish guest, the same compile options, and the same
+freshly bound Node22/Vitest3.2.7 installation in two serial fresh processes. Both
+one-case arms failed with the same trap and emitted byte-identical 55,586-byte
+binaries and 245,316-byte WAT. This is diagnostic attribution, not a pass of the
+15-case suite and not qualification of current main1abc.
+
+The shared emitted constructor allocated native Map type70, then cast it to the
+user class Map type45. The failed cast supplied null to ref.as_non_null before
+any get comparison. Stack column44319 corresponds to binary byte44318 (0xd4),
+within userMapNullish function53. Equality null/tag boxing was not the cause.
+Current main1abc retains that same native constructor claim. The bounded repair
+uses its already-imported resolvesToNamedAmbientGlobal helper (which delegates
+to the existing ambient declaration check), so a shadowing user class reaches
+its ordinary constructor and an ambient Map retains the native interception.
+No new helper, global representation, storage, flag or constructor API is added.
+
+The two strict WAT witnesses are handled separately by reserving the existing
+native equality providers before competing static string dispatch, compiling
+each original operand once, and using the reviewed native from-stack bridge.
+The original direct __any_eq and __extern_strict_eq witnesses stay required.
+
+This private successor preserves all current-main content and the entire authored
+four-path history, adding only the bounded constructor path. Its whole15 and
+unchanged existing native-Map / shadow-constructor neighbors require fresh actual
+qualification; no current pass result, baseline allowance or floor waiver is
+claimed here.
+
+
+## 2026-11-04 current receiving delivery: bounded dispatch-entry function growth
+
+The normal commit's actual LOC gate passes after the Map equality arms and their
+classification helpers move into `binary-ops-typed-dispatch.ts`: the driver is
+3,393 lines, below its 3,405-line allowance. The normal function gate then reports
+`compileBinaryExpression` at 1,837 lines against 1,822, a 15-line increase.
+The two narrow subsystem-entry calls must retain their source positions: after
+the sole nonliteral nullish observation and before generic string/AnyValue
+dispatch. Provider reservation, source-order operand evaluation, and the
+strict/loose/negated equality semantics remain in the reviewed subsystem helpers.
+This issue-local function allowance covers only those measured entry lines; it
+does not change the main baseline, add a file-size allowance, expand the repair
+scope, or waive a test. Fresh format/lint/source typing and all 51 cases passed
+on the extracted production tree before this documentation-only disposition;
+the failed normal commit and all earlier results remain historical evidence.
+
+
+## 2026-11-04 private current-main receiving composition (054a4e)
+
+The five-path Map repair is now composed privately against main
+`054a4e663bcceba9585c3a80596b0c7003d8297f`, preserving the landed Symbol
+number-boundary changes and the later class/own-key changes. The old
+`1abc4927`-based extracted production tree passed all 51 Map/native-Map/shadow
+controls; those results remain historical and are not current-main proof.
+The actual normal-commit failure in the shared chunking fixture was also
+reproduced on unchanged `1abc4927`. Its independent repair is published as
+PR #7060, commit `72fe5bba999b48a381a8a73e447b03a4428d873a`, with 12 real
+whole-file cases passing, including genuine post-claim ABI withdrawal.
+Until that exact fixture lands, the receiving composition carries its exact
+published body as a temporary sixth path. Once it lands unchanged, the
+Map-only delta is five paths. No production/test assertion is weakened, no
+old main body is restored, and no current-main qualification is claimed by
+this source-only composition. Fresh qualification and all normal hooks remain
+required before publishing the existing Map author branch.
+
+
+## 2026-11-04 receiving after protected harness repair
+
+PR #7060 landed as `510f546af5ea39e66a9c47a5092073ce4a40ad21`, with
+`72fe5bba999b48a381a8a73e447b03a4428d873a` as its direct author parent.
+This receiving branch starts at main `6a89ad65349f8fd9c33324a6934571dbf2469eae`.
+All five reviewed Map preimages match the private 054a4e composition; the
+shared harness fixture is now inherited from main and is not part of this
+five-path repair. The original 15 Map assertions and existing native-Map
+and constructor-shadowing controls remain intact. Fresh current-tree
+qualification and normal delivery hooks follow; earlier results above
+retain their exact historical epochs.
+
+
+## 2026-11-04 canonical native equality call-site disposition
+
+The normal pre-push coercion ratchet reports two new quoted `__any_eq`
+references in `binary-ops-typed-dispatch.ts`: the prepared-provider presence
+check and the canonical function-index lookup. This bounded repair does not
+implement another equality matrix. It uses `coerceType` for physical boxing,
+the existing `__any_from_extern` conversion for each operand, and the existing
+native `__any_eq` semantic provider. The original guest-direct WAT assertions
+require that canonical call in the guest; an extra wrapper would not satisfy
+that preserved contract. Provider reservation precedes operand evaluation,
+and late-import settlement precedes both canonical index lookups.
+
+The issue-local coercion-site declaration records this reviewed native-provider
+migration in the existing dispatch subsystem. It grants no main baseline
+change, new coercion algorithm, test waiver, target policy change, or generic
+raw-anyref admission. The actual normal push RED is retained. All 51 focused
+controls passed on the unchanged production tree; this disposition changes
+only this plan and must pass the genuine normal commit and push gates.
+
+
+## 2026-11-04 existing native Map boundary arm disposition
+
+The actual quality job reports `ctx.standalone +3` and `ctx.wasi +3` in
+`binary-ops-typed-dispatch.ts`. The three checks preserve the same native Map
+provider boundary at the literal-nullish observer, before competing typed
+dispatch, and at the already-emitted raw-anyref bridge. They add no host
+fallback or second semantic implementation. The strict/loose algorithms remain
+the existing native providers; both original operands still evaluate once.
+
+The context's `standalone` field is the canonical native-regime projection,
+not an environment alias. WASI has a separate projection. Native strings and
+`native-first` policy alone do not imply that exact boundary for every GC
+configuration, so removing or disguising these checks just to change token
+counts would broaden the reviewed scope without evidence. This issue-local
+reviewed one-off records the exact three checks under the maintained Track-A
+ratchet policy. It changes no source mode behavior, baseline, test or floor.
+The genuine CI failure remains preserved; the published production tree and
+all 51 focused passing controls remain unchanged by this documentation.

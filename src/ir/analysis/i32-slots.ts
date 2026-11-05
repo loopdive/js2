@@ -65,6 +65,7 @@ import { forEachChild, ts } from "../../ts-api.js";
 import type { IrBinop } from "../nodes.js";
 import { collectI32CoercedLocals } from "./i32-coerced-locals.js";
 import { detectI32LoopVar } from "./loop-shape.js";
+import { numberCompoundBinaryOperator } from "./operand-admissibility.js";
 
 const I32_MIN = -2147483648;
 const I32_MAX = 2147483647;
@@ -90,6 +91,52 @@ export function peelExpr(e: ts.Expression): ts.Expression {
     }
     return inner;
   }
+}
+
+/**
+ * (#7144) `x | 0` / `x ^ 0` is the identity on the ToInt32 bit pattern, so
+ * the operator disappears when `x` is i32-lowerable — from-ast's fused-i32 arm
+ * and the selector's planned-closure walk both read this one spelling.
+ * Returns `x`, or `null` for any other shape.
+ */
+export function i32IdentityBitwiseOperand(expr: ts.BinaryExpression): ts.Expression | null {
+  const op = expr.operatorToken.kind;
+  if (op !== ts.SyntaxKind.BarToken && op !== ts.SyntaxKind.CaretToken) return null;
+  return i32LiteralValue(expr.right) === 0 ? expr.left : null;
+}
+
+/**
+ * The fused-i32 identity a selector can see: `x | 0` / `x ^ 0` over an `x`
+ * that lowers as an exact i32 without a promoted slot (`(k < 1) | 0`). from-ast
+ * takes it before any operand family is judged, so no family check refuses it.
+ */
+function isSlotFreeI32Identity(expr: ts.BinaryExpression): boolean {
+  const operand = i32IdentityBitwiseOperand(expr);
+  return operand !== null && isWrapI32Lowerable(operand, () => false);
+}
+
+/**
+ * Whether from-ast lowers `expr` natively in i32 inside a slot-free fused-i32
+ * identity: the identity itself, or a bitwise or slot-free `+` / `-` node of
+ * its operand (`((k < 1) + (k < 2)) | 0`). None of these takes `lowerBinary`'s
+ * operand-family check; a comparison inside one still does. Both selector
+ * family judges, the binary tail and the planned-closure walk, skip these.
+ */
+export function isSlotFreeI32IdentityLowered(expr: ts.BinaryExpression): boolean {
+  for (let node = expr; !isSlotFreeI32Identity(node); ) {
+    const k = node.operatorToken.kind;
+    const native =
+      jsBitwiseBinop(k) !== null ||
+      ((k === ts.SyntaxKind.PlusToken || k === ts.SyntaxKind.MinusToken) && isWrapI32Lowerable(node, () => false));
+    if (!native) return false;
+    let child: ts.Node = node;
+    while (child.parent !== undefined && ts.isParenthesizedExpression(child.parent)) child = child.parent;
+    const parent = child.parent;
+    if (parent === undefined || !ts.isBinaryExpression(parent)) return false;
+    if (isSlotFreeI32Identity(parent)) return parent.left === child;
+    node = parent;
+  }
+  return true;
 }
 
 /** `expr` is an integer literal that fits in a signed 32-bit int. */
@@ -381,13 +428,7 @@ function writeShapesAreLowerable(
         if (!(isProvenCounter && isCounterStepAssignment(node.right, name))) {
           if (!isCanonI32Lowerable(node.right, promoted)) ok = false;
         }
-      } else if (
-        k === ts.SyntaxKind.AmpersandEqualsToken ||
-        k === ts.SyntaxKind.BarEqualsToken ||
-        k === ts.SyntaxKind.CaretEqualsToken ||
-        k === ts.SyntaxKind.LessThanLessThanEqualsToken ||
-        k === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken
-      ) {
+      } else if (compoundBitwiseToken(k) !== undefined) {
         // Bitwise compound assignment always yields an exact int32.
       } else if (
         (k === ts.SyntaxKind.PlusEqualsToken || k === ts.SyntaxKind.MinusEqualsToken) &&
@@ -597,24 +638,19 @@ export function makePlannedI32Probe(slots: ReadonlySet<ts.VariableDeclaration>):
 // Pure token/op tables shared with `from-ast.ts`'s emitter
 // ---------------------------------------------------------------------------
 
+/** The `js.bit*` IrBinop of each bitwise operator token. */
+export const JS_BITWISE_BINOPS = {
+  [ts.SyntaxKind.AmpersandToken]: "js.bitand",
+  [ts.SyntaxKind.BarToken]: "js.bitor",
+  [ts.SyntaxKind.CaretToken]: "js.bitxor",
+  [ts.SyntaxKind.LessThanLessThanToken]: "js.shl",
+  [ts.SyntaxKind.GreaterThanGreaterThanToken]: "js.shr_s",
+  [ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken]: "js.shr_u",
+} as const satisfies Partial<Record<ts.SyntaxKind, IrBinop>>;
+
 /** The `js.bit*` IrBinop for a bitwise operator token, or null. */
 export function jsBitwiseBinop(k: ts.SyntaxKind): IrBinop | null {
-  switch (k) {
-    case ts.SyntaxKind.AmpersandToken:
-      return "js.bitand";
-    case ts.SyntaxKind.BarToken:
-      return "js.bitor";
-    case ts.SyntaxKind.CaretToken:
-      return "js.bitxor";
-    case ts.SyntaxKind.LessThanLessThanToken:
-      return "js.shl";
-    case ts.SyntaxKind.GreaterThanGreaterThanToken:
-      return "js.shr_s";
-    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken:
-      return "js.shr_u";
-    default:
-      return null;
-  }
+  return JS_BITWISE_BINOPS[k as keyof typeof JS_BITWISE_BINOPS] ?? null;
 }
 
 /** Signed native i32 magnitude compare for a relational operator token. */
@@ -626,16 +662,14 @@ export const I32_COMPARE_BINOPS = {
 } as const satisfies Partial<Record<ts.SyntaxKind, IrBinop>>;
 
 /**
- * The plain bitwise operator a bitwise COMPOUND assignment desugars to.
- * `>>>=` is absent for the same reason `>>>` is absent from `isBitwiseToken`.
+ * The plain bitwise operator a bitwise COMPOUND assignment desugars to, or
+ * `undefined`. `>>>=` is absent for the same reason `>>>` is absent from
+ * `isBitwiseToken`.
  */
-export const COMPOUND_TO_BITWISE_TOKEN = {
-  [ts.SyntaxKind.AmpersandEqualsToken]: ts.SyntaxKind.AmpersandToken,
-  [ts.SyntaxKind.BarEqualsToken]: ts.SyntaxKind.BarToken,
-  [ts.SyntaxKind.CaretEqualsToken]: ts.SyntaxKind.CaretToken,
-  [ts.SyntaxKind.LessThanLessThanEqualsToken]: ts.SyntaxKind.LessThanLessThanToken,
-  [ts.SyntaxKind.GreaterThanGreaterThanEqualsToken]: ts.SyntaxKind.GreaterThanGreaterThanToken,
-} as const satisfies Partial<Record<ts.SyntaxKind, ts.SyntaxKind>>;
+export function compoundBitwiseToken(k: ts.SyntaxKind): ts.SyntaxKind | undefined {
+  const op = numberCompoundBinaryOperator(k);
+  return op !== undefined && isBitwiseToken(op) ? op : undefined;
+}
 
 /**
  * Does `e` read at least one i32-promoted slot? This is the gate that keeps

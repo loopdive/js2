@@ -125,8 +125,8 @@ describe("bounded source inventory, unchanged full async family", () => {
   });
   it("freezes owned support locators and preserves current borrowed associations", () => {
     const { census } = actual();
-    expect(census.supportBuffers).toHaveLength(31);
-    expect(census.supportOccurrences).toHaveLength(157);
+    expect(census.supportBuffers).toHaveLength(43);
+    expect(census.supportOccurrences).toHaveLength(222);
     for (const buffer of census.supportBuffers) {
       expect(Object.isFrozen(buffer.root)).toBe(true);
       expect(Object.isFrozen(buffer.path)).toBe(true);
@@ -195,8 +195,8 @@ describe("bounded source inventory, unchanged full async family", () => {
         expect(census.allocations).toBe(program.allocations);
         expect(census.abiEntries).toBe(program.abi.entries);
         expect(census.supportFunctions).toHaveLength(1);
-        expect(census.supportBuffers).toHaveLength(31);
-        expect(census.supportOccurrences).toHaveLength(157);
+        expect(census.supportBuffers).toHaveLength(43);
+        expect(census.supportOccurrences).toHaveLength(222);
         expect(census.demands.buffers).toHaveLength(80);
         expect(census.demands.occurrences).toHaveLength(216);
         expect(census.paths.some((row) => row.root.kind === "abi")).toBe(true);
@@ -328,7 +328,7 @@ describe("bounded source inventory, unchanged full async family", () => {
           ...input,
           plan: { ...input.plan, declarations },
         }),
-      ).toThrow(/recipe/);
+      ).toThrow("native string values: demand/plan mismatch");
     });
   it("rejects substituted buffers, occurrences, options and foreign producer observations", () => {
     const { program, projection, input } = actual();

@@ -1789,43 +1789,9 @@ export function addIteratorImports(ctx: CodegenContext): void {
  *   - `__gen_result_done`     (externref) → i32
  *   - `__get_caught_exception` () → externref  (for the body's try/catch wrapper)
  */
-export function addGeneratorImports(ctx: CodegenContext, options?: { allowNoJsHost?: boolean }): void {
-  if (!options?.allowNoJsHost) return;
-  // Guard: only register once
-  if (ctx.funcMap.has("__gen_create_buffer")) return;
-
-  // (#2689) Batch + immediate flush — see addIteratorImports for the rationale.
-  // Can be registered lazily (IR-path generator claim / body compilation) after
-  // other functions baked their funcIdx; raw addImport would desync them. The
-  // `__gen_*` / `__create_*` / `__get_caught_exception` names are not in any
-  // standalone-refusal / native-helper set, so the `allowNoJsHost` fallback
-  // behaves exactly as the previous raw additions did.
-  const ER: ValType = { kind: "externref" };
-  ensureLateImport(ctx, "__gen_create_buffer", [], [ER]);
-  ensureLateImport(ctx, "__gen_push_f64", [ER, { kind: "f64" }], []);
-  ensureLateImport(ctx, "__gen_push_i32", [ER, { kind: "i32" }], []);
-  ensureLateImport(ctx, "__gen_push_ref", [ER, ER], []);
-  // __gen_yield_star: (externref, externref) → void  (iterates inner iterable, pushes all values into outer buffer)
-  ensureLateImport(ctx, "__gen_yield_star", [ER, ER], []);
-  // __gen_set_return: (externref, externref) → void  (#2035 — stashes the
-  // generator's `return` value on the buffer instead of pushing it as a yield)
-  ensureLateImport(ctx, "__gen_set_return", [ER, ER], []);
-  // __create_generator: (buf: externref, pendingThrow: externref) -> externref
-  // Takes a buffer of yielded values and an optional pending exception,
-  // returns a Generator-like object that defers the throw to the first next() call.
-  ensureLateImport(ctx, "__create_generator", [ER, ER], [ER]);
-  // __create_async_generator: same Wasm signature as __create_generator, but .next()/.return()/.throw()
-  // return Promise-wrapped results as required by the ES spec for async generators.
-  ensureLateImport(ctx, "__create_async_generator", [ER, ER], [ER]);
-  ensureLateImport(ctx, "__gen_next", [ER], [ER]);
-  ensureLateImport(ctx, "__gen_return", [ER, ER], [ER]);
-  ensureLateImport(ctx, "__gen_throw", [ER, ER], [ER]);
-  ensureLateImport(ctx, "__gen_result_value", [ER], [ER]);
-  ensureLateImport(ctx, "__gen_result_value_f64", [ER], [{ kind: "f64" }]);
-  ensureLateImport(ctx, "__gen_result_done", [ER], [{ kind: "i32" }]);
-  // Ensure __get_caught_exception is available for generator body try/catch wrappers
-  ensureLateImport(ctx, "__get_caught_exception", [], [ER]);
-  flushLateImportShifts(ctx, ctx.currentFunc);
+export function addGeneratorImports(_ctx: CodegenContext): void {
+  // (#7010) The eager buffer is host-only: the regime registers nothing and a
+  // generator neither native lowering claims is refused at its emit site.
 }
 
 /** Scan user code and register only the extern class imports actually used */

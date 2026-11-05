@@ -997,3 +997,54 @@ need a re-merge there.
 **Still open for the stakeholder:** PR 6707 (#7010) `hold`; README
 conformance line after retirement (S7 entry condition 5); schedule-only
 regime test262 lane.
+
+### 2026-10-24/25 — S7 custody moved to the lead lane; S7-a/b re-landed on current main
+
+On 2026-10-20 the stakeholder handed S7 (#6979) from the Codex recovery lane to
+the lead lane (claim taken over). Since then, with Opus implementers per slice:
+
+| Slice | PR | Head | State |
+| --- | --- | --- | --- |
+| S7-a remove `host-assisted` | 6701 | `7b9d2709ab` | re-merged on 2026-10-24 main; every local gate green; CI re-running. 234 → 39 `semanticProviders` hits in `src/`; `__rethrow_host_exception` provider deleted; all 57 touched root test files green on the regime (host-lane pins re-pinned or deleted with a #6979 note) |
+| S7-b `legacy-semantic` compile error + emitter/provider deletion | 6705 (draft) | `8a081af2c3` | re-merged on S7-a's new head; `runtime.ts` 20,232 → 11,539 lines, `resolveImport` 15 → 7 cases; SAB (#7011) and Temporal (#7012) regime-gap entries deleted; `compatibility-semantic-adapter.ts` kept at 19 lines as the `date` accelerator provider; the #7021 own-slot dispatcher half of `own-property-method-shadow.ts` kept |
+| S7-c collapse `ctx.standalone` arms | branch `issue-6979-s7c-collapse-standalone-arms` | merging | S7-b head merged (`19535a0b9f`), folding the +55 hits main brought in |
+
+**Stakeholder decision 2026-10-24 (IR-only readiness floor):** `check:ir-only`'s
+single-host lane was measured under `host-assisted`; under the regime 12 of 38
+playground units compile through the legacy body (#7103, verified as a
+measurement-basis change on main's own tree). Decision: re-bank now at 26/12
+with a dated note; #7103 ratchets the lane back to 38/0. This is the only
+baseline edit in the S7 stack.
+
+**Found and filed on the way:** #7101, #7102 (S7-a landing, 10-20), #7103
+(IR-only), #7140 (arrow callback accepts `new` from JavaScript), #7141
+(defaulted `any` export parameter ignores its default from JavaScript); the
+last two are `it.fails` rows on PR 6701.
+
+**Still open for the stakeholder:** README conformance line after retirement
+(S7 entry condition 5, S7-e implements it); schedule-only regime test262 lane;
+PR 6707 (#7010) on `hold`.
+
+### 2026-11-05 — S7-a on main; S7-e decisions recorded
+
+S7-a merged into main on 2026-10-26 as PR #6899 (the stakeholder's review
+lane re-homed PR 6701's head with a round-2 review fix; 6701 closed in its
+favour). Main moved ~1,250 commits over the pause; S7-b (PR 6705), S7-c
+(PR 6896), the S7-c continuation (711 → 2 `ctx.standalone` hits,
+`CodegenContext.standalone` removed, 15 dead modules deleted; branch
+`issue-6979-s7c2-fold-remaining-arms`) and S7-d (`src/runtime.ts` 11,539 →
+4,995 lines, `resolveImport` 1,940 → 206 lines; branch
+`issue-6979-s7d-runtime-adapters`, `be55974a1e`) are being re-merged onto
+main in that order.
+
+**Stakeholder decisions for S7-e (2026-10-25 and 2026-11-05):**
+
+1. README first conformance line: **standalone only** (the figure CI
+   measures). The frozen host figure leaves the README.
+2. Website/dashboard conformance graph: the JS-host series **stays as a
+   background series** (historical context, frozen at the 2026-10-12
+   retirement) and the **JS-host toggle is removed**; the standalone series
+   is the only interactive one.
+
+S7-e implements both; `scripts/preserve-frozen-host-baseline.mjs` keeps
+publishing the frozen snapshot that the background series reads.

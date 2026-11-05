@@ -62,12 +62,13 @@ describe("nativeStrings flag (standalone, no fast mode)", () => {
     expect(result.wat).not.toContain("wasm:js-string");
   });
 
-  it("non-fast non-nativeStrings mode uses externref strings", async () => {
+  // (#6979 S7-a) The default profile used to fall back to host externref
+  // strings; with host-assisted gone it is the native regime, which uses
+  // native strings without being asked.
+  it("the default (non-fast) profile uses native strings", async () => {
     const result = await compile(`export function test(): string { return "hello"; }`);
     expect(result.success).toBe(true);
-    expect(result.wat).toContain("externref");
-    expect(result.wat).toContain("string_constants");
-    expect(result.wat).not.toContain("NativeString");
+    expect(result.wat).toContain("NativeString");
   });
 
   it("string equality compiles without wasm:js-string", async () => {

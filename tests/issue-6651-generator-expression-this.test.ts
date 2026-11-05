@@ -105,7 +105,7 @@ describe("#6651 A1 — `this` in a standalone native generator function expressi
     expect(value).toBe(11);
   });
 
-  it("A2 — a YIELDING method keeps the host path (the default would cross a suspension)", async () => {
+  it("A2 — a YIELDING method is refused (the default would cross a suspension)", async () => {
     // The zero-suspend precondition is load-bearing, not incidental: with a
     // `yield` in the body the binding must survive the suspension, which is
     // the #3952 cross-suspend shape this deliberately does NOT admit. In
@@ -121,8 +121,9 @@ describe("#6651 A1 — `this` in a standalone native generator function expressi
         return n;
       }
     `;
-    const { genImports } = await runStandalone(src);
-    expect(genImports.length).toBeGreaterThan(0);
+    // (#7010) No longer a `__gen_*` host-import requirement: compile() itself
+    // refuses the shape, naming #7010.
+    await expect(runStandalone(src)).rejects.toThrow(/#7010/);
   });
 
   it("two receivers get two independent frames", async () => {

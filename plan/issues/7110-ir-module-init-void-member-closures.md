@@ -125,9 +125,12 @@ where legacy dispatches by brand. Measured on a void member closure:
 `list.join(", ")`, `n.toString()` and `sym.toString()` all evaluated to
 `undefined` in the IR body. Legacy and node agree on the correct values.
 
-`plannedClosureDynamicMethodCall` therefore refuses any method call on a
+`plannedClosureDynamicMethodCall` therefore refuses a method call on a
 non-string-literal receiver inside a planned member closure, which keeps the
-closure legacy. Function-object member calls (`assert._toString(x)`) take
+closure legacy. Since #7117 it asks the same `dynamicMethodCallIsExact`
+predicate as the move-only scan: only a BUILT-IN method name off the host lane
+is refused; an uncolliding user method name (`o.label()`) is admitted and
+dispatches exactly through the open-`$Object` arm. Function-object member calls (`assert._toString(x)`) take
 their own arm earlier and are not affected. `assert.compareArray`'s
 `message.toString()` (its Symbol branch) is such a call, so that closure, and
 with it the harness `<module-init>`, stays legacy until the dynamic method

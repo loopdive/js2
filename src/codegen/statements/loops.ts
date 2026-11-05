@@ -25,7 +25,7 @@ import {
   emitResolvedIdentifierWriteFromStack,
   tryEmitForOfIdentifierWrite,
 } from "../expressions/identifier-assignment.js";
-import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
 import {
   addIteratorImports,
@@ -45,13 +45,8 @@ import { flatStringType, stringConstantExternrefInstrs } from "../native-strings
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { ensureObjVecBuilders, ensureObjectRuntime } from "../object-runtime.js";
 import { coercionInstrs, defaultValueInstrs } from "../type-coercion.js";
-import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
-import {
-  addFuncType,
-  getArrTypeIdxFromVec,
-  getOrRegisterRefCellType,
-  getOrRegisterVecBaseType,
-} from "../registry/types.js";
+import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
+import { getArrTypeIdxFromVec, getOrRegisterRefCellType, getOrRegisterVecBaseType } from "../registry/types.js";
 import { overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { reserveVecIndexEnumerable } from "../vec-index-enumerable.js"; // (#4491) overlay-aware index [[Enumerable]]
 import { coerceType, compileExpression, compileStatement, valTypesMatch } from "../shared.js";
@@ -70,7 +65,6 @@ import { forInReceiverIsDynamic } from "../builtin-instance-key-presence.js";
 import { blockLoop, restoreBlockScopedShadows, saveBlockScopedShadows, shiftLoopDepths } from "./shared.js";
 import {
   bodyHasMatchingCharRead,
-  collectBindingNames,
   collectForInHeadClosureCaptures,
   detectI32LoopVar,
   findAllNamesCapturedByClosuresInLoop,
@@ -107,6 +101,7 @@ import { forOfArrayOverlayGetIdx, forOfArrayOverlayReadInstrs } from "../forof-a
 import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
 import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 import { isOpenForInReceiver } from "../for-in-open-object.js";
+import { subclassedInstanceReceiver } from "../class-arm-tag-guard.js"; // (#7216)
 import { isDirectProxyBinding } from "../proxy-value-provenance.js"; // (#6651 U3) for-in/for-of over a Proxy
 
 /** Strip the transparent parentheses used by CoverParenthesizedExpression in a
@@ -1541,7 +1536,7 @@ function compileForOfNativeMapEntries(
   const { M_ENTRIES, M_ENTRYCOUNT, F_KEY, F_VALUE, F_HASH, TOMBSTONE_BIT } = MAP_LAYOUT;
   const isConst = !!(stmt.initializer.flags & ts.NodeFlags.Const);
   if (isConst) {
-    (ts.isIdentifier(decl.name) ? [decl.name.text] : collectBindingNames(decl.name)).forEach((n) => {
+    (ts.isIdentifier(decl.name) ? [decl.name.text] : [...collectPatternBindingNames(decl.name)]).forEach((n) => {
       if (!fctx.constBindings) fctx.constBindings = new Set();
       fctx.constBindings.add(n);
     });
@@ -2215,7 +2210,7 @@ function compileForOfArray(
       elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, readElemType);
       // Track const bindings for all identifiers in the destructuring pattern
       if (isConst) {
-        collectBindingNames(decl.name).forEach((n) => {
+        [...collectPatternBindingNames(decl.name)].forEach((n) => {
           if (!fctx.constBindings) fctx.constBindings = new Set();
           fctx.constBindings.add(n);
         });
@@ -2494,7 +2489,7 @@ function compileForOfArrayEntries(
     }
     pattern = decl.name;
     if (stmt.initializer.flags & ts.NodeFlags.Const) {
-      collectBindingNames(decl.name).forEach((n) => {
+      [...collectPatternBindingNames(decl.name)].forEach((n) => {
         if (!fctx.constBindings) fctx.constBindings = new Set();
         fctx.constBindings.add(n);
       });
@@ -2849,7 +2844,7 @@ function compileForOfDirectIterator(
       destructPatternIter = decl.name;
       elemLocal = allocLocal(fctx, `__forit_elem_${fctx.locals.length}`, elemType);
       if (isConst) {
-        collectBindingNames(decl.name).forEach((n) => {
+        [...collectPatternBindingNames(decl.name)].forEach((n) => {
           if (!fctx.constBindings) fctx.constBindings = new Set();
           fctx.constBindings.add(n);
         });
@@ -3289,7 +3284,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
       destructPatternIter = decl.name;
       elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, elemType);
       if (isConst) {
-        collectBindingNames(decl.name).forEach((n) => {
+        [...collectPatternBindingNames(decl.name)].forEach((n) => {
           if (!fctx.constBindings) fctx.constBindings = new Set();
           fctx.constBindings.add(n);
         });
@@ -3575,14 +3570,12 @@ function emitForInMemberTargetWrite(
   target: ts.PropertyAccessExpression | ts.ElementAccessExpression,
   keyLocal: number,
 ): void {
-  let setIdx = ctx.funcMap.get("__extern_set");
-  if (setIdx === undefined) {
-    const importsBefore = ctx.numImportFuncs;
-    const setType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
-    addImport(ctx, "env", "__extern_set", { kind: "func", typeIdx: setType });
-    shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-    setIdx = ctx.funcMap.get("__extern_set");
-  }
+  // (#6979 S7-b) Through the late-import chokepoint, which routes `__extern_set`
+  // to the native object runtime's defined function. The raw `env::__extern_set`
+  // import this used to add is a retired host-semantic import (a compile error).
+  const ext = { kind: "externref" } as const;
+  const setIdx = ensureLateImport(ctx, "__extern_set", [ext, ext, ext], []);
+  flushLateImportShifts(ctx, fctx);
   if (setIdx === undefined) return;
 
   // Receiver
@@ -4266,9 +4259,13 @@ function compileForInStatementInner(ctx: CodegenContext, fctx: FunctionContext, 
     // below is shared. A closed WasmGC struct or an array does NOT lower to
     // `$Object` (so `__object_keys` would return empty) — those keep the
     // static-unroll path below, which is exact for a non-mutated closed shape.
-    const recvWasmType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
+    const recvTsType = ctx.checker.getTypeAtLocation(stmt.expression);
+    const recvWasmType = resolveWasmType(ctx, recvTsType);
     const isDynamicReceiver =
-      proxyReceiver || isOpenForInReceiver(ctx, stmt.expression) || forInReceiverIsDynamic(ctx, recvWasmType);
+      proxyReceiver ||
+      isOpenForInReceiver(ctx, stmt.expression) ||
+      forInReceiverIsDynamic(ctx, recvWasmType) ||
+      subclassedInstanceReceiver(ctx, recvWasmType, recvTsType, stmt.expression); // (#7216)
     if (isDynamicReceiver) {
       ensureObjectRuntime(ctx);
       // #2964 — for-in must enumerate inherited enumerable keys too, so route
