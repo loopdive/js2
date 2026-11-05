@@ -1,7 +1,7 @@
 ---
 id: 7244
 title: "IR class shapes: `class X extends F` where `F` is a compiled top-level function constructor (test262's harness `Iterator` shim) gets no shape"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-11-05
 updated: 2026-11-05
@@ -97,6 +97,32 @@ Merge `origin/main` once #7085 lands.
    than base); the harness shim itself declared before and after the class;
    a user-declared `function Iterator(){}` with and without a `.prototype`
    assignment; the same class with `Iterator` also imported or `var`-bound.
+
+## Step 1 measurements (2026-11-05, on #7243 head `083a9e8128`)
+
+Targeted wrapped ledger (the runner's `--target standalone` assembly,
+`assembleOriginalHarness` primary variant), the 221 files of
+`grep -rl "extends Iterator" test262/test`:
+
+| | base `083a9e8128` | root-shape probe on top of #7243 |
+| --- | --- | --- |
+| files compiled / proposal-skipped | 164 / 57 | 164 / 57 |
+| compileOk | 164 | 164 |
+| test-origin class-member units | 248 | 248 |
+| … of which IR | **0** | **35** |
+| all units IR (any origin) | 1476 | 1511 (+35, 0 lost) |
+| invariants | 0 | 0 |
+
+Base first refusal: all 248 `select:class-member-unsupported` (no shape).
+The 35 gains are exactly the `throw new Test262Error()` methods
+(`TestIterator_return` 14, `ThrowingIterator_next` 13, `IteratorThrows_return`
+8), taking #7243's overlay route. Remaining first refusals on the probe:
+`class-member-unsupported` 139 (constructors / `get next` / `get return`
+accessors and members of classes held back by an accessor sibling — all
+intended legacy), `return-type-not-resolvable` 43 (unannotated `next()`
+returning an object literal, #7235), `error-constructor-unsupported` 29
+(`new Error()`), `body-shape-rejected` 8 (`nontail-module-update`),
+`class-projection-unsupported` 4 (`new ReturnCalledError()`).
 
 ## Acceptance criteria
 
