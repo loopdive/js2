@@ -54,7 +54,7 @@
  */
 import { nativeInheritedSetRuntimeActive } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { noJsHost, type CodegenContext } from "./context/types.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
 import { coldFieldWriteArm, coldTailAllocatorName, findColdStructsForField } from "./fnctor-cold-tail.js";
 import {
@@ -154,7 +154,7 @@ function untombstoneInstrs(
  * skipped). No-op when no closed struct declares a writable exposed field.
  */
 export function fillClosedStructExternSetArms(ctx: CodegenContext): void {
-  if ((!ctx.standalone && !ctx.wasi) || ctx.anyStrTypeIdx < 0) return;
+  if (!noJsHost(ctx) || ctx.anyStrTypeIdx < 0) return;
   const fn: WasmFunction | undefined = ctx.mod.functions.find((candidate) => candidate.name === "__extern_set");
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");

@@ -1573,10 +1573,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   //                                                 undeleted own names were
   //                                                 pushed into vec).
   //
-  // Gated on ctx.standalone: in gc/host mode this runtime is also pulled in
-  // (Object.keys etc.) but builtin function values are host objects there — the
-  // host imports own their metadata, and registering these would only shift
-  // funcMap indices (gc bytes must stay unchanged).
+  // Native callable metadata belongs to the same regime in WASI too. The
+  // SOURCE getter already carries its exact metadata there; shared reads and
+  // descriptor/delete/own-name owners must see that payload together. Outside
+  // this native owner the existing JS-value property bridge remains unchanged.
   const bfnMetaLocals = [
     { name: "any", type: { kind: "anyref" } as ValType },
     { name: "fkey", type: { kind: "ref_null", typeIdx: nativeStrTypeIdx } as ValType },
@@ -1587,7 +1587,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // untouched; `fillFunctionInstanceProps` is the only writer.
     { name: "fnmeta", type: { kind: "externref" } as ValType },
   ];
-  if (ctx.standalone) {
+  if (noJsHost(ctx)) {
     registerNative(
       "__builtinfn_get_meta",
       [{ kind: "externref" }, { kind: "externref" }],
@@ -1638,10 +1638,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       [{ op: "i32.const", value: 0 }],
     );
   }
-  const bfnGetMetaIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_get_meta") : undefined;
-  const bfnGopdIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_gopd") : undefined;
-  const bfnDeleteIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_delete") : undefined;
-  const bfnPushOwnNamesIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_push_ownnames") : undefined;
+  const bfnGetMetaIdx = noJsHost(ctx) ? ctx.funcMap.get("__builtinfn_get_meta") : undefined;
+  const bfnGopdIdx = noJsHost(ctx) ? ctx.funcMap.get("__builtinfn_gopd") : undefined;
+  const bfnDeleteIdx = noJsHost(ctx) ? ctx.funcMap.get("__builtinfn_delete") : undefined;
+  const bfnPushOwnNamesIdx = noJsHost(ctx) ? ctx.funcMap.get("__builtinfn_push_ownnames") : undefined;
 
   const keyResources = {
     anyStrTypeIdx,

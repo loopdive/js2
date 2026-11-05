@@ -3,6 +3,7 @@ import { buildDescriptorCurrentLookup, buildStringCompatibleDescriptorReturn } f
 import type { Instr } from "../../../wasm/model/instructions.js";
 import {
   descriptorFlagBit,
+  descriptorDeletedCarrierCommit,
   descriptorTypeError,
   type OrdinaryDescriptorResources,
 } from "./ordinary-object-descriptor-common.js";
@@ -361,6 +362,7 @@ export function buildOrdinaryObjectDataDescriptorBody(
       blockType: { kind: "empty" },
       then: [{ op: "local.get", index: 4 }, { op: "ref.as_non_null" }, { op: "call", funcIdx: objGrowIdx }],
     },
+    ...descriptorDeletedCarrierCommit(d, 4),
     // seq = o.nextSeq ; o.nextSeq = seq + 1  (#1837)
     { op: "local.get", index: 4 },
     { op: "ref.as_non_null" },

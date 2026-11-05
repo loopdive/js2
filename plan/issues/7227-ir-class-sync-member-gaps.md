@@ -28,6 +28,39 @@ loc-budget-allow:
   - src/codegen/property-access-dispatch.ts
   - src/codegen/expressions/identifiers.ts
   - src/codegen/closures/method-trampolines.ts
+  # 2026-11-05: remaining current-main SOURCE receiver/protocol owner joins.
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/statements/variables.ts
+  - src/codegen/property-access.ts
+  - src/codegen/binary-ops.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  # 2026-11-05 Source24: exact function-marker provider/commit handles for both descriptor appliers.
+  - src/codegen/object-runtime-descriptors.ts
+# 2026-11-05: exact native-owner reuse; per-path token deltas recorded below.
+standalone-arms-allow:
+  # 2026-11-05 Source26: canonical predicate/native accessor/rejection owners; exact token counts below.
+  - src/codegen/context/types.ts
+  - src/codegen/object-ops.ts
+  - src/codegen/object-model/define-rejection-channel.ts
+  # 2026-11-05: existing callable metadata reserve/fill/descriptor-seed owner in WASI.
+  - src/codegen/function-instance-props.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/fn-intrinsic-seed.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/class-proto-lookup.ts
+  - src/codegen/class-proto-object.ts
+  - src/codegen/closed-struct-extern-set.ts
+  - src/codegen/declarations/ir-dynamic-parameter-abi.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/inherited-set-gate.ts
+  - src/codegen/standalone-class-prototype-read.ts
+  - src/ir/prepared-dynamic-support.ts
+import-cycles-allow:
+  - largestSccSize: 730 # 2026-11-05 (#7227): the separate SOURCE getter family owner joins actual metadata/type/undefined/wrapper allocation; pure predicate and shared identity dependencies remove incidental cycles.
 func-budget-allow:
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select.ts::whyNotIrClaimable
@@ -42,6 +75,9 @@ func-budget-allow:
   - src/codegen/binary-ops.ts::compileBinaryExpression
   - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  # 2026-11-05 Source24: bind the existing canonical deletion transaction into both descriptor appliers.
+  - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
 ---
 
 # #7227 — the synchronous class-member gaps left after #7223
@@ -270,3 +306,218 @@ Only these named functions receive this issue-local allowance. The existing
 subsystem capability/body owners retain their classification and implementation;
 no global function baseline, semantic assertion or required gate is relaxed.
 This gate failure occurred before changed-root tests; it adds no runtime credit.
+
+### Current-main SOURCE getter owner LOC measurement
+
+The final current b412 qualification passed normal format and lint, then stopped
+at the LOC gate before typing or any tests. Compared with that receiving main,
+the gate measured these already-reviewed producer/consumer changes:
+
+- call-receiver-method 4819 → 4892 (+73): route the separate SOURCE callable
+  through canonical call/apply/bind while retaining actual raw receiver and
+  argument state; ordinary certified call paths retain their own ABI.
+- array-methods 10874 → 10938 (+64): preserve canonical callback argument state,
+  rest packing and the original callback array for the SOURCE family.
+- calls 10893 → 10924 (+31): classify actual callable provenance and join the
+  receiver-capable SOURCE entry without trusting a mutable checker signature.
+- variables 2583 → 2589 (+6): retain the generic receiver's dynamic alias carrier.
+- property-access 6965 → 6970 (+5): reuse the canonical nullish receiver guard
+  without treating a generic receiver's declaring checker type as a proof.
+- binary-ops 3399 → 3402 (+3): use canonical dynamic addition for generic getter
+  values, preserving string concatenation and once-only coercion.
+- call-builtin-static 4728 → 4729 (+1): reuse the native inline-literal prototype
+  owner in WASI while keeping the compiled-class bridge standalone-only.
+
+Only these existing subsystem paths receive this issue-local LOC allowance.
+No main-only baseline, global policy, executable source or assertion changes.
+The complete current 1,455-case population remains unrun at this checkpoint;
+function, import-cycle, inventory, typing, normal hooks and protected floors
+still apply. Previous failures and their exact historical measurements remain.
+
+The subsequent current-main function gate passed every prior named allowance
+and measured compileBuiltinStaticCall 3865 → 3866 (+1). Its one added line keeps
+the compiled-class prototype bridge standalone-only while the canonical native
+inline-literal prototype writer serves WASI too. This exact existing owner gets
+an issue-local function allowance; source, assertions and global baselines are
+unchanged. Typing and all 1,455 current cases remain unrun at this checkpoint.
+
+### Native-owner reuse and exact standalone-arm one-off
+
+The current qualification passed format, lint, LOC, function, oracle and
+coercion gates, then stopped before typing/tests at the standalone-arm ratchet.
+The shared native implementation now serves WASI as well as the existing native
+regime; these are not separate per-target lowerers. Repeated positive-union and
+dual-negative checks reuse the existing canonical noJsHost owner, whose actual
+body is exactly wasi-or-standalone. The latter standalone field is the native
+semantic regime and can be true for GC, so replacing it by environment-only
+hostFreeEnvironment would incorrectly drop existing GC behavior.
+
+The per-path token deltas against receiving b412 below are explicit reviewed
+one-offs in this issue, not an exemption for unrelated future code:
+
+- src/codegen/array-methods.ts: ctx.standalone -1, noJsHost( +1; canonical opaque native callback recovery; WASI must not request a JS callback import.
+
+- src/codegen/class-proto-lookup.ts: ctx.standalone -1, !ctx.standalone -1, noJsHost( +1; the same nominal-tag/prototype lookup owner now serves the native WASI provider.
+
+- src/codegen/class-proto-object.ts: ctx.standalone -3, !ctx.standalone -3, noJsHost( +3; the same real class-prototype object producer and expression readers serve WASI.
+
+- src/codegen/closed-struct-extern-set.ts: ctx.standalone -3, !ctx.standalone -1, noJsHost( +1; the same native writable-field/descriptor owner, retaining all storage and dirty-key checks.
+
+- src/codegen/declarations/ir-dynamic-parameter-abi.ts: noJsHost( +1; one physical dynamic-externref carrier authority; fast and actual host-free conditions retained.
+
+- src/codegen/expressions/call-builtin-static.ts: ctx.standalone +1, noJsHost( +1; native inline prototype writer reuse while the distinct compiled-class bridge stays standalone-only.
+
+- src/codegen/expressions/call-receiver-method.ts: noJsHost( +2; canonical captured foreign method call uses native argument vectors or the existing host import owner.
+
+- src/codegen/expressions/calls.ts: ctx.standalone -1, noJsHost( +1; the existing inline-literal prototype writer shared by native providers; other expressions unchanged.
+
+- src/codegen/inherited-set-gate.ts: noJsHost( +1; one native descriptor-demand gate reused by all actual inherited-Set consumers.
+
+- src/codegen/standalone-class-prototype-read.ts: ctx.standalone -2, !ctx.standalone -2, noJsHost( +2; the same nominal-tag and singleton identity reads for native class prototypes.
+
+- src/ir/prepared-dynamic-support.ts: ctx.standalone +1, ctx.wasi +1; exact prepared provider/carrier bindings; standalone Number conversion remains with its actual owner.
+
+The prepared IR sidecar keeps its existing explicit carrier/provider checks
+instead of adding a new IR-to-codegen import edge merely for spelling. Actual
+standalone-only Number conversion and compiled-class prototype bridges remain
+unchanged. No new predicate facade, field rename, duplicate semantic lowering,
+main-only baseline, global ratchet policy or test assertion is introduced.
+The full current 1,455-case acceptance remains pending, with every prior RED
+preserved; these grants confer no runtime, byte-identity or IR-only credit.
+
+### Exact SOURCE family import-cycle ownership
+
+The current gate first measured largest SCC 729 → 734 and a codegen-to-IR
+edge 301 → 302. Moving the unchanged pure noJsHost predicate to the existing
+context layer (with its old re-export intact) and importing the exact shared
+identity implementation removed the incidental growth: the actual subsequent
+gate reports largest SCC 730 and codegen-to-IR exactly 301. There is no new
+cross-directory allowance.
+
+Only closures/source-getter-receiver.ts among this change-set's seven new
+source modules belongs to that measured SCC. It is the real SOURCE capability
+family owner: it registers physical callable metadata/types, canonical undefined
+and the existing safe closure header, and is consumed by the exact source
+producer and both guarded dispatchers. Its accounting remains SOURCE; this is
+not an AST-free helper exclusion or new semantic implementation. The existing
+registry/metadata/undefined/wrapper owners remain authoritative.
+
+This change-set grants only the measured largestSccSize 730, with the receiving
+main's 729 and inherited historical 725 retained here. No committed import-cycle
+baseline, cross-directory threshold, global policy or assertion is changed.
+The normal typing and whole current 1,455-case qualification are still pending;
+all previous gate failures and their complete output remain preserved.
+
+### WASI SOURCE callable metadata: actual producer/reader join
+
+The complete current population actually ran 1,455 cases: 1,452 passed and
+three failed. Authentic unmodified b412 whole #4440 has the same 12 passed /
+two failed rows as the candidate; those original programs/assertions remain
+unchanged. A separately instrumented original WASI getter-protocol observation
+retains its expected failure: free/call/apply/bind/HOF = 5/6/6/6/10, length 0 and
+callability all match Node; only the name comparison is 0 rather than 1. Its
+binary validates and imports only WASI fd_write/proc_exit. Getter and outer
+function remain legacy; its generic body retains actual derived SOURCE records.
+
+Actual retained WAT contains the metadata struct/global and registered SOURCE
+closure family, but no __fninst_meta, __fninst_bag_owns or builtin metadata read,
+descriptor/delete/own-name helper. The SOURCE producer already materializes the
+canonical fnMetaSlotOfMeta payload; object-runtime reservation/reader handles and
+function-instance-props reserve/fill stop at standalone-only guards. This repair
+reuses their existing native owners in WASI and includes the same descriptor
+seed owner, so define/delete/redefine cannot disagree with a name read. No
+constant name fold, builtin identity, SOURCE/IR exclusion or second metadata
+implementation is introduced. The existing builtin-fill precedence remains.
+
+Exact source-line arm deltas for this bounded native-owner reuse are:
+
+- src/codegen/function-instance-props.ts: ctx.standalone -2, !ctx.standalone -2, noJsHost( +2.
+
+- src/codegen/object-runtime.ts: ctx.standalone -6, noJsHost( +5.
+
+- src/codegen/fn-intrinsic-seed.ts: ctx.standalone -1, !ctx.standalone -1, noJsHost( +1.
+
+Only these three existing owners receive the documented per-change-set arm
+one-off. Main baselines/global policy and all original 1,455 assertions remain
+unchanged. One genuine Node-comparable descriptor/read/define/delete/redefine
+program adds three lane registrations, making the prospective complete current
+population 1,458. It checks metadata flags and final raw-receiver invocation,
+not a mocked ABI. The new shared owner/control bytes remain UNRUN here; all
+previous results, failures and original #4440 historical expectations are kept.
+
+The control reads function names through an actual value-parameter helper, so
+checker literal narrowing across defineProperty cannot substitute an old name
+for the current function object; descriptor/flags and actual call remain checked.
+
+
+## 2026-11-05 — function metadata deletion and descriptor transaction binding
+
+The actual Source24 normal gates measured object-runtime-descriptors.ts at
+2,948 → 2,956 source lines (+8), and its existing buildObjectDescriptorHelpers
+at 2,744 → 2,751 counted function lines (+7). The import and concrete handle
+bundle wire the actual reserved function-identity marker query plus canonical
+OrdinaryDelete into both existing data/accessor descriptor appliers. These exact
+owner bindings receive the issue-local LOC/function grants above; no global
+baseline, policy, attribute, assertion or gate changes.
+
+The same attempt measured fillFunctionInstanceProps at 416 counted lines,
+crossing 300. Its two concrete marker instruction-array factories are extracted
+within the same module instead of granting that growth. Source inversion proves
+their complete instruction recipes and fill order unchanged; runtime/typing and
+the new measured function sizes remain pending. The hidden marker survives a
+rejected definition, while successful new definitions retain the canonical
+attribute defaults, configurability checks, sequence and insertion owners.
+
+All prior gate failures, the actual first metadata phase and both historical
+#4440 baseline failures remain retained. No new test PASS is inferred here.
+The three existing new metadata controls are strengthened without changing
+names/counts; all old 1,455 assertions remain unchanged. Focused qualification
+is 42 active checks (three metadata lanes plus 39 whole unchanged descriptor/name
+neighbors), with the other 98 getter rows explicitly unselected and receiving
+no credit. Complete current 1,458-case qualification remains pending.
+
+
+### Source24 extraction follow-up: measured 311-line installer
+
+The next normal run passed LOC with the exact driver binding allowance but
+measured fillFunctionInstanceProps at 311 counted lines after the first two
+complete factories (down from 416, still above 300). No typing or test child
+ran. Preserve that RED. The complete existing marker-inclusive bag-ownership
+LOOKUP body is now the third same-module factory, with explicit primitive
+handles and the same params/local index, allocation-free behavior and native
+registration order. Whole-file inverse/source recipe equality is retained;
+no installer allowance, global baseline or test/expectation change is added.
+New actual gate sizes and focused/full runtime results remain pending.
+
+
+## 2026-11-05 — exact native-owner standalone-arm one-off
+
+Source26's real normal run passed format, lint, LOC, function, oracle and
+coercion checks, then the standalone-arm ratchet reported net `noJsHost(` +4.
+The actual three ungranted path measurements against the pinned b412 base are:
+
+- src/codegen/context/types.ts: ctx.standalone 4 → 5, noJsHost( 0 → 1,
+  ctx.wasi 0 → 1. This is the already-reviewed pure canonical noJsHost helper
+  moved verbatim from js-errors with its compatibility re-export retained.
+  Publishing that same predicate is not a second mode policy.
+- src/codegen/object-ops.ts: noJsHost( 2 → 4. The two reviewed operation owners
+  reuse it for native literal-prototype construction and native descriptor
+  accessor closure construction. The separate standalone-only class bridge and
+  all host/capability/carrier guards remain intact. Actual WASI emission showed
+  a live env.__make_getter_callback feeding __defineProperty_accessor; the fix
+  selects that applier's existing native closure operand instead of a JS bridge.
+- src/codegen/object-model/define-rejection-channel.ts: noJsHost( 0 → 2. The
+  already-native WASI descriptor applier must use the existing parked-TypeError
+  identity channel and existing boolean consumer. All validation, same-payload
+  catch and unrelated-error propagation stay in the canonical owner. This
+  rejection obligation is source-proven and was not reached in the prior
+  instantiate failure; it is not claimed as a second measured runtime failure.
+
+Only these exact three paths receive the documented per-change-set one-off.
+No global arm baseline, policy, helper spelling, descriptor decision tree,
+assertion, test name or mode is changed. All measured REDs remain retained.
+The original same-guest WASI artifact is valid, has positive Node result 1, and
+imports fd_write plus the erroneous getter callback; no fake env bridge is
+supplied. The original focused 42 must still run on the corrected source, then
+complete current qualification with the two authentic #4440 baseline failures
+kept distinct. No PASS is inferred from this issue-local disposition.

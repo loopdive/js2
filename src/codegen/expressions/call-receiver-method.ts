@@ -885,8 +885,8 @@ export function compileGenericClassGetterMethodCall(
   ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
   reserveApplyClosure(ctx);
   ensureObjVecBuilders(ctx);
-  const pushName = ctx.standalone || ctx.wasi ? "__objvec_push" : "__js_array_push";
-  if (!ctx.standalone && !ctx.wasi) ensureLateImport(ctx, pushName, [{ kind: "externref" }, { kind: "externref" }], []);
+  const pushName = noJsHost(ctx) ? "__objvec_push" : "__js_array_push";
+  if (!noJsHost(ctx)) ensureLateImport(ctx, pushName, [{ kind: "externref" }, { kind: "externref" }], []);
   flushLateImportShifts(ctx, fctx);
   const receiver = compileExpression(ctx, fctx, callee.expression, { kind: "externref" });
   if (!receiver) throw new Error("generic getter method receiver has no value");

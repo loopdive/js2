@@ -4954,6 +4954,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
 export type { SourcePos };
 
 /**
+ * #1473 — No-JS-host predicate. Both `--target wasi` and `--target standalone`
+ * run without a JS runtime, so neither can rely on host imports such as
+ * `__throw_type_error` / `__new_TypeError` resolving to JS constructors. In
+ * these modes the compiler emits Wasm-native Error constructors instead.
+ */
+export function noJsHost(ctx: CodegenContext): boolean {
+  return ctx.wasi || ctx.standalone;
+}
+
+/**
  * (#5385 S1, #6685) Is there NO JavaScript embedder? Answers the environment
  * question only (`targetProfile.environment !== "javascript"`); which
  * ECMAScript implementation lowers the module is `ctx.standalone`. Console

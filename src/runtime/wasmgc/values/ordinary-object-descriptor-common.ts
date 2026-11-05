@@ -49,6 +49,8 @@ export interface OrdinaryDescriptorResources {
   readonly objFindIdx: FuncHandle;
   /** Only an issued String descriptor selection supplies this virtual-first provider. */
   readonly stringVirtualOwnIdx?: FuncHandle;
+  /** Exact private function-marker provider; receiver is original param 0, not the bag. */
+  readonly deletedCarrierOwn?: { readonly isDeletedIdx: FuncHandle; readonly deleteIdx: FuncHandle };
   readonly objInsertIdx: FuncHandle;
   readonly objGrowIdx: FuncHandle;
   readonly sameValueIdx: FuncHandle;
@@ -85,5 +87,28 @@ export function descriptorTypeError(d: OrdinaryDescriptorErrors, ordinal: number
     { op: "call", funcIdx: d.constructorIdx },
     ...park,
     { op: "throw", tagIdx: d.tagIdx },
+  ];
+}
+
+/** Commit only after descriptor validation: a rejected define must retain absence. */
+export function descriptorDeletedCarrierCommit(d: OrdinaryDescriptorResources, objectLocal: number): Instr[] {
+  const owner = d.deletedCarrierOwn;
+  if (owner === undefined) return [];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: owner.isDeletedIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: objectLocal },
+        { op: "extern.convert_any" },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: owner.deleteIdx },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: descriptorTypeError(d.errors, 0) },
+      ],
+    },
   ];
 }

@@ -27,7 +27,7 @@
 //    vec overlays) activates on `inheritedSetAnyDirty`, so a dynamic set of a
 //    dirty key still reaches the shared decision.
 
-import type { CodegenContext } from "./context/types.js";
+import { noJsHost, type CodegenContext } from "./context/types.js";
 
 /**
  * Does any #4504-relevant descriptor trigger exist in this module at all?
@@ -49,5 +49,5 @@ export function inheritedSetAffectsKey(ctx: CodegenContext, key: string): boolea
 
 /** Native descriptor decisions have no late JS imports in either host-free target. */
 export function nativeInheritedSetRuntimeActive(ctx: CodegenContext): boolean {
-  return (ctx.standalone || ctx.wasi) && inheritedSetAnyDirty(ctx);
+  return noJsHost(ctx) && inheritedSetAnyDirty(ctx);
 }

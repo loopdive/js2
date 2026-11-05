@@ -11,7 +11,7 @@ import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ProgramAbiInvariantError, type ProgramAbiCallableSignature } from "../ir/program-abi.js";
 import type { FuncHandle, FuncTypeDef, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
-import { createDerivedIrUnitId } from "../ir/identity-values.js";
+import { createDerivedIrUnitId } from "../shared/contracts/identity-values.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, definedFuncHandleOf, isImportFuncIdx, pushDefinedFunc } from "./func-space.js";

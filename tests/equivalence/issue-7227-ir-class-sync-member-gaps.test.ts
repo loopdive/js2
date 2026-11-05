@@ -267,6 +267,45 @@ export function test() {
     free === 5 && called === 6 && applied === 6 && bound === 6 && mapped === 10 ? 1 : 0;
 }`,
   },
+  "source callable metadata reads descriptors and mutations share one owner": {
+    source: `
+class P { get value() { return this; } }
+function readName(fn) { return fn.name; }
+export function test() {
+  const actual = Object.getOwnPropertyDescriptor(P.prototype, "value").get;
+  if (typeof actual !== "function") throw new Error("class descriptor must contain its getter");
+  const g = actual;
+  const name = Object.getOwnPropertyDescriptor(g, "name");
+  const length = Object.getOwnPropertyDescriptor(g, "length");
+  if (!name || !length) throw new Error("source getter metadata descriptors must exist");
+  if (readName(g) !== "get value" || g.length !== 0 || name.value !== "get value" || length.value !== 0 ||
+      name.writable !== false || name.enumerable !== false || name.configurable !== true ||
+      length.writable !== false || length.enumerable !== false || length.configurable !== true ||
+      !Object.hasOwn(g, "name") || !Object.hasOwn(g, "length")) return 0;
+  Object.defineProperty(g, "name", {value: "renamed"});
+  const renamed = Object.getOwnPropertyDescriptor(g, "name");
+  if (!renamed || readName(g) !== "renamed" || renamed.value !== "renamed" ||
+      renamed.writable !== false || renamed.configurable !== true) return 0;
+  if (!Reflect.deleteProperty(g, "name") || Object.hasOwn(g, "name")) return 0;
+  Object.defineProperty(g, "name", {value: "after-delete"});
+  const fresh = Object.getOwnPropertyDescriptor(g, "name");
+  if (!fresh || readName(g) !== "after-delete" || fresh.value !== "after-delete" ||
+      fresh.writable !== false || fresh.enumerable !== false || fresh.configurable !== false) return 0;
+  if (Reflect.deleteProperty(g, "name") || readName(g) !== "after-delete") return 0;
+  if (!Reflect.deleteProperty(g, "length") || Object.hasOwn(g, "length")) return 0;
+  Object.defineProperty(g, "length", {get() { return 7; }, configurable: true});
+  const accessor = Object.getOwnPropertyDescriptor(g, "length");
+  if (!accessor || typeof accessor.get !== "function" || accessor.get.call(g) !== 7 ||
+      accessor.enumerable !== false || accessor.configurable !== true) return 0;
+  if (!Reflect.deleteProperty(g, "length") || Object.hasOwn(g, "length")) return 0;
+  Object.preventExtensions(g);
+  if (Reflect.defineProperty(g, "length", {value: 9}) || Object.hasOwn(g, "length") ||
+      Object.getOwnPropertyDescriptor(g, "length") !== undefined) return 0;
+  const token = {};
+  return g.call(token) === token ? 1 : 0;
+}
+`,
+  },
   "strict receiver identity retains null, undefined, primitives and object identity": {
     source: `
 class P { get value() { return this; } }

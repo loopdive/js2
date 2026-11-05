@@ -1983,6 +1983,14 @@
   ],
   "files": [
     {
+      "path": "src/codegen/closures/source-getter-receiver.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7227",
+      "nextBoundary": "Separate context-bound SOURCE callable family registration and exact cache ownership from physical capability layout; emitted getter bodies remain source-owned migration debt."
+    },
+    {
       "path": "src/codegen/array/vec-element-boxing.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -5084,6 +5092,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/declarations/object-property-write-target.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6878-object-property-write-target",
+      "nextBoundary": "Replace AST/oracle-dependent literal write-target discovery with a prepared binding/property identity contract."
     },
     {
       "path": "src/codegen/declarations/object-shape-widening.ts",
@@ -13122,6 +13138,14 @@
       "destination": "frontend-ts",
       "owner": "7106",
       "nextBoundary": "Frontend source-shape planner for destructuring over a fresh literal (#7106); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/module-init-vars.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape classifier for the top-level `var` lists the module initializer models and the bindings they declare (#7106 S5); move with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/binding-pattern-lowering.ts",

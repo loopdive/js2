@@ -94,8 +94,8 @@ const REFUSED: Record<string, string> = {
   spreadSource: "var more = [2];\n" + loop("const [a, b] = [1, ...more]", "assert.sameValue(b, 2);"),
   leafInDefault: loop("const [a = 1, b = a] = []", "assert.sameValue(b, 1);"),
   nullLeaf: loop("const [x = 1] = [null]", "assert.sameValue(x, null);"),
-  // Follow-ups: a script-level pattern (S5), and the call-graph scan still
-  // sees a default IIFE the plan never runs.
+  // Follow-ups: a script-level lexical pattern (S5 admits `var` lists only),
+  // and the call-graph scan still sees a default IIFE the plan never runs.
   scriptLevel: "const [a, b = 2] = [1];\nassert.sameValue(a + b, 3);",
   unusedDefaultCall: loop("const [[] = function () { throw 1; }()] = [[23]]", "assert.sameValue(n, 0);"),
   // Review round 1: an index past the end reads `Array.prototype`, and a
