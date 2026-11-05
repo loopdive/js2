@@ -50,7 +50,6 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { tryCompileHostStringPredicate } from "../host-string-prefix-suffix.js";
 import { tryCompileStringSymbolProtocolDispatch } from "../string-symbol-protocol.js"; // (#6651 B) §22.1.3 step 2
-import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { effectiveLocalCarrier } from "../analysis/mixed-assignment-carrier.js";
 import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
 import {
@@ -4345,8 +4344,6 @@ export function compileReceiverMethodCall(
       // (#799 WI3) Generic host-delegated method call for any/externref receivers.
       // #965: resolve known built-in receivers through __get_builtin rather than null.
       {
-        observeHostDynamicMethodCallArity(ctx, expr.arguments);
-
         // #1888: standalone builds a native $ObjVec; fixed JS-host calls were
         // handled above. Larger/spread host calls and WASI use the array bridge.
         // #1472: the JS-array builders are not globally safe to alias.

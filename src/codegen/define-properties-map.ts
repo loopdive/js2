@@ -120,7 +120,7 @@ export function compileDescriptorMapAsDynamicObject(
   fctx: FunctionContext,
   descsArg: ts.Expression,
 ): ValType | null | undefined {
-  if (!ctx.standalone || !ts.isObjectLiteralExpression(descsArg)) return undefined;
+  if (!ts.isObjectLiteralExpression(descsArg)) return undefined;
   if (descsArg.properties.length === 0) return undefined;
   const everyEntryNameable = descsArg.properties.every(
     (p) =>

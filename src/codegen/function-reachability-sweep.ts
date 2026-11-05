@@ -91,7 +91,7 @@ export function functionSweepEnabled(ctx: CodegenContext): boolean {
   const env = envFlag("JS2WASM_FUNC_SWEEP");
   if (env === "0") return false;
   if (env === "1") return true;
-  return ctx.standalone && !ctx.wasi;
+  return !ctx.wasi;
 }
 
 /** Position in `mod.functions` of a function handle, or -1 (import / unresolvable). */

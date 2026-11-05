@@ -77,7 +77,6 @@ import type { CodegenContext } from "./context/types.js";
  *    so its argument side effects still run through the real ctor.
  */
 export function newExpressionReconstructsAsObject(ctx: CodegenContext, newExpr: ts.NewExpression): boolean {
-  if (!ctx.standalone) return false;
   const gate = ctx.fnctorEscapeGate;
   if (gate === undefined) return false;
   if (!gate.approved.has(newExpr)) return false;

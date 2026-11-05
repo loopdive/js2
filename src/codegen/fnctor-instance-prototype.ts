@@ -157,7 +157,6 @@ export function tryCompileFnctorInstanceGetPrototypeOf(
   fctx: FunctionContext,
   arg0: ts.Expression,
 ): InnerResult | null {
-  if (!ctx.standalone && !ctx.wasi) return null;
   const ctorName = resolveFnctorInstanceCtorName(ctx, arg0);
   if (ctorName === undefined) return null;
   // §20.1.2.12 evaluates its argument; keep the side effects of e.g. a direct

@@ -27,7 +27,6 @@ import { bodyNeedsArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { emitNativeEscape, emitNativeUnescape } from "../escape-native.js";
 import { emitNativeAtob, emitNativeBtoa } from "../helpers/base64-native.js"; // (#7079)
 import { isNativeGeneratorCandidate, sourceNeedsGeneratorHostImports } from "../generators-native.js";
-import { reportEagerGeneratorAbruptResumptions } from "../generator-eager-refusal.js";
 import {
   KNOWN_CONSTRUCTORS,
   MATH_HOST_METHODS_1ARG,
@@ -188,16 +187,8 @@ export function createUnifiedCollectorState(sourceFile: ts.SourceFile): UnifiedC
   };
 }
 
-function needsHostIndirectEvalImport(ctx: CodegenContext, node: ts.Node): boolean {
-  return false;
-}
-
 /** Single-pass visitor called on every AST node */
 export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorState, node: ts.Node): void {
-  // #1164 — `__extern_eval` is an IR-owned host capability only for the exact
-  // certified statement shape. Do not arm it for direct eval, a discarded
-  // non-string, a shadowed callee, or a value-producing call that stays legacy.
-  if (needsHostIndirectEvalImport(ctx, node)) state.hostIndirectEvalNeeded = true;
   noteHostRegExpSource(ctx, node); // (#6978) regexp host accelerator: register its imports up front
 
   // (#5384) A source `throw` means this module can hand a payload of its own to
@@ -1559,7 +1550,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     if (needsNoJsHostFallback) {
       addGeneratorImports(ctx, { allowNoJsHost: needsNoJsHostFallback });
     }
-    reportEagerGeneratorAbruptResumptions(ctx, state.sourceFile); // (#6781) traced .throw()/.return() on eager
+    // (#6781) traced .throw()/.return() on eager
   }
 
   // (#6979) The host iterator / array-iterator import bundles are gone: the

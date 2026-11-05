@@ -371,7 +371,7 @@ import {
   fillIteratorMethodPresent,
 } from "./iterator-native.js";
 import { fillNativeGeneratorMethodDispatches } from "./generators-native-consumer.js";
-import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
+import { inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
 import { fillPromiseSpeciesOfClass } from "./promise-species-then.js"; // (#5197 r3)
@@ -6213,7 +6213,6 @@ export function generateModule(
     // (#3058) __rab_resize / __ab_max_len exports so the host runtime can
     // implement ArrayBuffer.prototype.resize + maxByteLength/resizable on
     // $__resizable_ab vec structs (no-op unless a resizable buffer exists).
-    emitResizableAbExports(ctx);
 
     // (#1503) __vec_set_byte for crypto.getRandomValues to write into Uint8Array vecs.
     emitVecSetByteExport(ctx);
@@ -10705,7 +10704,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("emit-data-view-byte-exports", () => emitDataViewByteExports(ctx));
 
     // (#3058) Resizable-ArrayBuffer helper exports (mirrors generateModule path).
-    profilePhase("emit-resizable-ab-exports", () => emitResizableAbExports(ctx));
 
     // Multi-source parity with generateModule: linked Web Crypto calls need a
     // byte writer for their Wasm vec argument, and exported typed-array params

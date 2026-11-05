@@ -76,7 +76,7 @@ export function fnctorTypedInstancesEnabled(): boolean {
  */
 export function resolveFnctorInstanceType(ctx: CodegenContext, symName: string | undefined): ValType | null {
   if (!fnctorTypedInstancesEnabled()) return null;
-  if (!ctx.standalone || symName === undefined) return null;
+  if (symName === undefined) return null;
   if (ctx.fnctorEscapeGate?.approvedNames.has(symName) !== true) return null;
   const typeIdx = ctx.fnctorReservedTypeIdx.get(symName);
   if (typeIdx === undefined) return null;
@@ -128,7 +128,7 @@ export function legacyPositionCarriesFnctorInstance(
   position: "return" | number,
 ): boolean {
   if (!fnctorTypedInstancesEnabled()) return false;
-  if (!ctx.standalone || name === undefined) return false;
+  if (name === undefined) return false;
   if (ctx.fnctorReservedTypeIdx.size === 0) return false;
   const funcIdx = ctx.funcMap.get(name);
   if (funcIdx === undefined) return false;

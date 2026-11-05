@@ -46,7 +46,7 @@ import { isRuntimeEvalCallableResultExpression } from "./expressions/runtime-eva
 import { funcConstructorForCallee } from "./fnctor-ctor-decl.js";
 import { resolvesToGlobalFunctionAlias } from "./expressions/eval-inline.js";
 import { resolvesToNonConstructableValue } from "./expressions/non-constructable.js";
-import { buildExplicitNullThisElseArm, explicitNullReceiverLane } from "./explicit-null-receiver.js";
+import { buildExplicitNullThisElseArm } from "./explicit-null-receiver.js";
 import { emitFnctorProtoGet } from "./expressions/fnctor-prototype.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
@@ -293,9 +293,7 @@ export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean):
   const yieldReceiver: Instr[] = [{ op: "local.get", index: receiver }];
   // The marker can only arrive where legacy installs it; testing for it in a
   // module that never does is dead code, never a different answer.
-  const installed = explicitNullReceiverLane(ctx)
-    ? (buildExplicitNullThisElseArm(ctx, receiver, explicitNull) ?? yieldReceiver)
-    : yieldReceiver;
+  const installed = buildExplicitNullThisElseArm(ctx, receiver, explicitNull) ?? yieldReceiver;
   helper.body.push(
     { op: "global.get", index: thisGlobal },
     { op: "local.tee", index: receiver },

@@ -60,7 +60,6 @@ import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.
 import { ensureIterStepScratchGlobal, ensureNativeIteratorRuntime } from "../iterator-native.js"; // (#2169c) native Array.from drain / (#3146) Iterator-statics intrinsics / (#3206) native Array.from(src, mapFn)
 import { reserveClosedMethodDispatch, reserveClosedMethodDispatchVararg } from "../closed-method-dispatch.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm Date.parse / new Date(str)
-import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
 import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
 import { buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6769 S7d)
@@ -2597,12 +2596,6 @@ export function emitWrapperDynamicMethodCall(
   methodName: string,
   callExpr?: ts.CallExpression,
 ): ValType | null {
-  // (#4373) The host wrapper can only preserve arguments that have a matching
-  // `__call_fn_method_N` dispatcher. Record the real dynamic call-site width
-  // before module finalization; otherwise modules whose declared closures are
-  // all narrower retain the historical five-argument cap and truncate extras.
-  if (callExpr) observeHostDynamicMethodCallArity(ctx, callExpr.arguments);
-
   // (#1888 Slice 2, #6979) `__extern_method_call` is native and reads its args
   // over a $ObjVec, so the (empty) args list is built with the native $ObjVec
   // builder; the host `__js_array_*` packers are retired.
