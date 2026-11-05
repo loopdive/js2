@@ -18,7 +18,13 @@ import { stripParens } from "../shared/binding-writes.js";
 import { isAnonymousFunctionDefinition } from "../shared/named-evaluation.js";
 import { collectPatternBindingNames, collectReferencedIdentifiers } from "./analysis/ast-scope.js";
 import { isUndefinedCompareOperand } from "./analysis/operand-admissibility.js";
-import type { BindingLeaf, PatternLeafValue, PatternPlan, PatternStep } from "./binding-pattern-plan.js";
+import {
+  patternRootDeclaration,
+  type BindingLeaf,
+  type PatternLeafValue,
+  type PatternPlan,
+  type PatternStep,
+} from "./binding-pattern-plan.js";
 import { phase1PropertyName } from "./property-key-fold.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 
@@ -61,14 +67,7 @@ export type LiteralLeafSource = ts.Expression | "undefined" | "length";
 
 /** The source of `leaf` when its declaration takes the literal plan; undefined otherwise. */
 export function literalLeafSource(leaf: ts.BindingElement): LiteralLeafSource | undefined {
-  let declaration: ts.Node = leaf;
-  while (
-    ts.isBindingElement(declaration) ||
-    ts.isObjectBindingPattern(declaration) ||
-    ts.isArrayBindingPattern(declaration)
-  ) {
-    declaration = declaration.parent;
-  }
+  const declaration = patternRootDeclaration(leaf);
   if (!ts.isVariableDeclaration(declaration) || !declaration.initializer || ts.isIdentifier(declaration.name)) {
     return undefined;
   }
