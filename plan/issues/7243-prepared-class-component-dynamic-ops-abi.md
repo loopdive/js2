@@ -100,3 +100,56 @@ What this blocks, measured on the harness-wrapped ledger (#7240, standalone):
 - Test: `tests/equivalence/issue-7243-prepared-class-component-dynamic-ops.test.ts`
   asserting the IR route (`trackIrOutcomes`) for a class member with
   `throw new F()` / `return new F()`, and the node/base result on 3 lanes.
+
+## Findings (step 1, 2026-11-05)
+
+**Reproduced** (standalone, base `8442217690`, scratch patch: the planner also
+mints S3c value plans for selected class-method owners, and
+`irSelfGuardedConstructorValue` answers yes in a class body). Probe: a
+harness-style self-guarded `Test262Error` (legacy: `message || ""` is
+`logical-value-unsupported`) and `class A { m() { throw new Test262Error("x"); } }`.
+`A_m` fails `resolve:late-preparation-unsupported` with exactly these
+`component.failures`:
+
+| code | detail |
+| --- | --- |
+| `implicit-support-reference-unavailable` | IR callable signature resolves backend callable/type support without a symbolic Program ABI ref |
+| `foreign-source-unit` | unit-bound reference to `Test262Error`'s top-level-function unit, a non-candidate terminal (the cached function-value accessor executes support owned by its target, `recordFunctionValueAccessorOwner`) |
+| `implicit-support-reference-unavailable` | IR dynamic carrier resolves backend type/helper support without a symbolic Program ABI ref |
+| `unplanned-abi-binding` | `runtime\|__ir_dyn_call_box` has no Program ABI identity |
+| `implicit-support-reference-unavailable` | `box` resolves dynamic carrier/helper support without an explicit symbolic ref |
+| `implicit-support-reference-unavailable` | `dyn.construct` resolves dynamic carrier/helper support without an explicit symbolic ref |
+| `unplanned-abi-binding` | class layout of `A` (normally staged by the batch; here the batch is refused because the other failures are not batchable) |
+
+`prepareDynamicInstructionSupportForUnits` does see the member (`classMember:
+true`, `functionObjects` true, native, externref carrier), names `box`, and
+then blocks the whole terminal because it has no arm for `dyn.construct`.
+
+**Where free functions get what class members lack: they do not get it.** The
+same body as a free function (`function f(x) { if (x) throw new
+Test262Error("x"); }`) never reaches the sealed prepared population at all:
+`selectR2PreparedOwnerComponents` withdraws it at admission with
+`function-value-reference` (`containsTopLevelFunctionValueReference`, an
+unprepared top-level function value), and it compiles to IR on the unsealed
+post-direct overlay (`compileIrPathFunctions` without
+`sealPreparedComponents`), which needs no Program ABI identity for the dynamic
+ops. Class members never run the R2 admission predicates ("their admission
+never ran the R2 signature proofs"): a selected, preparable member always
+enters the sealed population, so it must seal or demote. Even with
+`dyn.construct` named, the `foreign-source-unit` edge stays: in the harness
+`Test262Error` is legacy, so no sealed component may execute its value
+accessor. Naming more helpers in the sealed lane therefore cannot admit these
+members while `Test262Error` is legacy.
+
+**Design (revised).** Give class members the free-function route, not a second
+helper table: a selected member whose body carries an S3c self-guarded
+constructor value plan is kept out of the sealed prepared class population and
+stays on the post-direct overlay, exactly as the `function-value-reference`
+withdrawal does for a free function. The overlay already compiles ordinary
+members (the late-feature gate in `planIrFirstBodyRouting` keeps them there
+today). Changes: `planIrImportedCalls` mints the S3c value plan for selected
+class-method owners (value uses only; receiver and stored uses keep their base
+route); `planIrFirstBodyRouting` leaves those members out of the prepared
+`classIds`; `irSelfGuardedConstructorValue` drops the class-body refusal. Scratch
+check: with both, `A_m` emits on the overlay and returns the node result on gc
+and standalone. No Shepherd file changes.
