@@ -1,10 +1,11 @@
 ---
 id: 7242
 title: "IR: `new F(args)` of a compiled top-level function constructor (e.g. harness `Test262Error`) demotes the whole body"
-status: ready
+status: done
 sprint: current
 created: 2026-11-05
 updated: 2026-11-05
+completed: 2026-11-05
 priority: high
 horizon: m
 feasibility: medium
@@ -169,3 +170,58 @@ scope here.
   The 35 `extends Iterator` class members from the #6583 notice are this case;
   they stay legacy until the prepared class component can carry the dynamic
   ops.
+
+## Results (2026-11-05, base `d468fa1a3c`)
+
+Change: `src/codegen/ir-imported-call-planning.ts` (value use with missing
+evidence → opaque signature) and `src/codegen/ir-dynamic-construct.ts`
+(`irSelfGuardedConstructorValue` answers no inside a class body).
+
+**Wrapped ledger** (stride 40, standalone, `--jobs 2`):
+
+| | base | head |
+| --- | --- | --- |
+| files / compileOk / compileFail | 1296 / 1117 / 179 | 1296 / 1117 / 179 |
+| IR units (emitted) | 9633 | **9657 (+24)** |
+| legacy units | 4800 | 4776 |
+| harness IR units | 9547 | 9569 (+22, `assert`) |
+| test IR units | 86 | 88 (+2) |
+| `build:unknown-class-construction` | 27 | **0** |
+| `select:constructor-resolution-unsupported` | 58 | 60 |
+| `select:class-member-unsupported` | 239 | 240 |
+| invariants | 0 | 0 |
+
+Per-unit route dump of the same 1296 files: exactly 23 files change, 27
+units: 24 `build:unknown-class-construction → emitted`, 3 class members →
+refused at select. No other unit moves.
+
+**Raw ledger** (stride 40, standalone): identical JSON apart from
+timing/commit fields.
+
+**Typed corpus bytes** (playground examples, benchmark suites, every
+equivalence snippet; gc/standalone/wasi; 6879 compiles): byte-identical.
+
+**test262 A/B, standalone** (`scripts/run-test262-paths.mts`, 237 files: the
+23 route-changed files plus every 6th file of the sample): base and head both
+175 pass / 52 fail / 10 compile_error, identical output. 8 of the fails on
+both sides are "quickjs provider is not built" (eval engine not present in this
+container).
+
+**Probes** (gc, standalone, wasi; head = base on every lane; gc and standalone
+= node): throw + `instanceof`/`.message`/`.constructor`/`String(e)`, `new F()`
+as a value, F returning an object vs a primitive, F reading `this`, F called
+with and without `new`, `x instanceof F`, a subclass of F, `new.target` in F,
+an exception thrown inside F, `new F()` in a class member. WASI differs from
+node on three of them on base already; unchanged.
+
+Test: `tests/equivalence/issue-7242-ir-new-compiled-function-constructor.test.ts`
+(30 cases; 18 fail on base on the route assertion, values equal).
+
+### Left open
+
+- Class members (the 35 `extends Iterator` members of the #6583 notice) stay
+  legacy: the prepared class component cannot resolve the dynamic-carrier
+  support (`__ir_dyn_call_box`, `box`, `dyn.construct`) without a Program ABI
+  identity. They are now refused at select instead of demoted at build.
+- `new F()` of a NON-self-guarded function constructor still needs the
+  `$__fnctor_F` struct ABI in IR; already refused at select.
