@@ -1,8 +1,8 @@
 ---
 id: 7239
 title: "IR: admit parameters with a compile-time-constant default (functions and class members)"
-status: ready
-sprint: current
+status: backlog
+sprint: Backlog
 created: 2026-11-05
 updated: 2026-11-05
 priority: high
