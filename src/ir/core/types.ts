@@ -278,6 +278,13 @@ export interface IrClassShape {
    * identified by its required `classId` (see the doc there).
    */
   readonly parent?: IrClassShape;
+  /**
+   * (#7241) Present only for `class X extends <lib interface>` (`extends
+   * Iterator`) that the direct backend lays out as an ordinary ROOT struct.
+   * The shape is flat (no `parent`); the selector may claim its own
+   * `super`-free instance methods, never its constructor.
+   */
+  readonly libInterfaceRoot?: true;
 }
 
 export type IrType =
