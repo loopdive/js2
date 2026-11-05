@@ -14,6 +14,12 @@ area: ir
 goal: ir-full-coverage
 related: [7242, 7227, 7233, 5297, 7106, 2949, 3522, 3523]
 assignee: "ttraenkler/c-lead"
+# (2026-11-05) +5 lines in index.ts: two imports, the overlay-member set and
+# its filter in `planIrFirstBodyRouting`, and the multi-source plan drop in
+# `makeMultiIrSafeSelection`. The logic lives in ir-imported-call-planning.ts;
+# these are the call sites.
+loc-budget-allow:
+  - src/codegen/index.ts
 ---
 
 # #7243: the prepared class component has no Program ABI identity for dynamic ops
