@@ -22,6 +22,36 @@ export function isPatternDeclaration(declaration: ts.VariableDeclaration): decla
 /** A destructuring leaf: a binding element that binds an identifier. */
 export type BindingLeaf = ts.BindingElement & { readonly name: ts.Identifier };
 
+export function isBindingLeaf(element: ts.BindingElement): element is BindingLeaf {
+  return ts.isIdentifier(element.name);
+}
+
+/** Every leaf of `pattern`, at any depth, in source order. */
+export function* patternLeaves(pattern: ts.BindingPattern): Iterable<BindingLeaf> {
+  for (const element of pattern.elements) {
+    if (ts.isOmittedExpression(element)) continue;
+    if (isBindingLeaf(element)) yield element;
+    else yield* patternLeaves(element.name as ts.BindingPattern);
+  }
+}
+
+/** The declaration `leaf`'s outermost pattern names: a variable, a parameter or a catch binding. */
+export function patternRootDeclaration(leaf: ts.BindingElement): ts.Node {
+  let node: ts.Node = leaf;
+  while (ts.isBindingElement(node) || ts.isObjectBindingPattern(node) || ts.isArrayBindingPattern(node)) {
+    node = node.parent;
+  }
+  return node;
+}
+
+/** The `var`/`let`/`const` list a variable declaration or a pattern leaf belongs to. */
+export function bindingDeclarationList(
+  declaration: ts.VariableDeclaration | ts.BindingElement,
+): ts.VariableDeclarationList | undefined {
+  const root = ts.isBindingElement(declaration) ? patternRootDeclaration(declaration) : declaration;
+  return ts.isVariableDeclaration(root) && ts.isVariableDeclarationList(root.parent) ? root.parent : undefined;
+}
+
 /**
  * What a leaf binds: an evaluation of the plan, `undefined`, an array
  * literal's length, or a `Read` of the source value (a key or an index; a
@@ -91,11 +121,10 @@ function planFlatReads<Read>(
   const steps: SourceReadStep<Read>[] = [];
   for (const [index, element] of pattern.elements.entries()) {
     if (ts.isOmittedExpression(element)) continue;
-    if (element.dotDotDotToken || element.initializer || !ts.isIdentifier(element.name)) return null;
-    const leaf = element as BindingLeaf;
-    const read = readOf(leaf, index);
+    if (element.dotDotDotToken || element.initializer || !isBindingLeaf(element)) return null;
+    const read = readOf(element, index);
     if (read === null) return null;
-    steps.push({ kind: "bind", leaf, value: { kind: "read", read } });
+    steps.push({ kind: "bind", leaf: element, value: { kind: "read", read } });
   }
   return { evaluations: [], steps };
 }

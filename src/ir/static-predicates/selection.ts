@@ -27,9 +27,11 @@ import {
   isTypedBinaryOperator,
   isUndefinedCompareOperand,
   logicalResultFamily,
+  mayBeElementRead,
   nullComparisonFolds,
   slotWriteVerdict,
   undefinedCompareOperandAdmissible,
+  type AdditiveLane,
   type OperandFamily,
 } from "../analysis/operand-admissibility.js";
 import { ts } from "../../ts-api.js";
@@ -51,6 +53,8 @@ export interface IrStaticPredicateSelection {
   readonly localDeclaration: (identifier: ts.Identifier) => ts.VariableDeclaration | undefined;
   /** The representation family the selector proves any other expression lowers to; `unknown` without a proof. */
   readonly family: (expression: ts.Expression) => OperandFamily;
+  /** How the lane judges a `+` (`additiveOperandsProvable`). */
+  readonly additiveLane: AdditiveLane;
   /** A string method's call: its arguments need a ToString a boolean does not get. */
   readonly isStringMethodCall: (call: ts.CallExpression) => boolean;
   /** The family of the slot a type node declares (`unknown` for a kind no predicate answer fits). */
@@ -130,16 +134,16 @@ function expressionFamily(
   }
   if (ts.isBinaryExpression(candidate)) {
     const op = candidate.operatorToken.kind;
-    if (op === ts.SyntaxKind.PlusToken) return additiveResultFamily(family(candidate.left), family(candidate.right));
+    if (op === ts.SyntaxKind.PlusToken) {
+      return additiveResultFamily(candidate, family(candidate.left), family(candidate.right), options.additiveLane);
+    }
     if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
       return logicalResultFamily(family(candidate.left), family(candidate.right));
     }
     if (op === ts.SyntaxKind.QuestionQuestionToken) return "unknown";
   }
-  // An element read may be out of bounds, which the IR reads as NaN on the GC
-  // lanes and as 0 on linear — never as `undefined`, so its family is no
-  // number a predicate can answer on.
-  if (ts.isElementAccessExpression(candidate)) return "unknown";
+  // Past the end an element read is `undefined`, which no IR scalar holds.
+  if (mayBeElementRead(candidate, options.additiveLane.leafReadsElement)) return "unknown";
   if (ts.isConditionalExpression(candidate)) {
     return conditionalJoinFamily(family(candidate.whenTrue), family(candidate.whenFalse));
   }

@@ -148,7 +148,7 @@ import {
 } from "../ir/host-extern.js"; // (#2856/#3214/#3657/#7091)
 import {
   projectIrBackendTargetProfile,
-  supportsIrBackendTargetCapability,
+  irBackendCapabilityQuery,
   type IrBackendTargetCapability,
 } from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
@@ -196,6 +196,7 @@ import {
   makeIrModuleBindingResolver,
   makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
+  type IrModuleBindingDeclaration,
   type IrModuleBindingResolver,
   type IrScriptVarHome,
 } from "../ir/module-bindings.js"; // (#2856 Capability C)
@@ -3016,8 +3017,7 @@ function planIrOverlay(
   const platformExternClass = irPlatformExternClassPredicate(ctx);
   const hostExternSurface = jsHostExterns || platformExternClass !== undefined;
   const standaloneDomCapability = planStandaloneDomCapability(ctx, ast.checker, ast.sourceFile);
-  const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
-    supportsIrBackendTargetCapability(irTargetProfile, capability);
+  const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   const calendarResolvers = planIrCalendarResolvers(
     ast.checker,
     hostExternSurface,
@@ -4202,7 +4202,10 @@ function compileMultiIrOverlaySource(
  *     `this.p = v`) resolves bare reads through the global-environment object;
  *   - a slot the declaration collector has not placed is not a home at all.
  */
-export function scriptVarHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): IrScriptVarHome | undefined {
+export function scriptVarHome(
+  ctx: CodegenContext,
+  declaration: IrModuleBindingDeclaration,
+): IrScriptVarHome | undefined {
   const type = scriptVarHomeSlot(ctx, declaration)?.type;
   switch (type?.kind) {
     case "externref":
@@ -4217,7 +4220,7 @@ export function scriptVarHome(ctx: CodegenContext, declaration: ts.VariableDecla
   }
 }
 
-function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclaration) {
+function scriptVarHomeSlot(ctx: CodegenContext, declaration: IrModuleBindingDeclaration) {
   if (!ts.isIdentifier(declaration.name)) return undefined;
   const name = declaration.name.text;
   const plan = ctx.runtimeEvalBoundaryPlan;
@@ -4713,10 +4716,7 @@ function preparedLexicalComponentPreflightFailure(
     return "the exact host callback maker ABI is unavailable in the final module context";
   }
   const supportsHostDateSnapshots =
-    supportsIrBackendTargetCapability(
-      projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }),
-      "host-date-snapshot",
-    ) || ctx.requiresStandaloneClockCapability === true;
+    irBackendCapabilityQuery(ctx)("host-date-snapshot") || ctx.requiresStandaloneClockCapability === true;
   if (
     !canPrepareHostDateSnapshotLoweringByIdentity(
       ctx,
@@ -4850,6 +4850,7 @@ function planIrFirstBodyRouting(
       ...plan.suspendingAsyncUnitIds,
     ]),
     generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
+    numberToString: irBackendCapabilityQuery(ctx)("number-to-string"),
     fast: ctx.fast,
   };
   const timerRouting = irTimerShim.inspectIrCompilerTimerShimRouting(plan);
@@ -14481,7 +14482,7 @@ function walkStmtForVars(
     walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
-  if (ts.isLabeledStatement(stmt)) {
+  if (ts.isLabeledStatement(stmt) || ts.isWithStatement(stmt)) {
     walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }

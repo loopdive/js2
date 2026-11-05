@@ -80,7 +80,8 @@ import {
   type IrAsyncSelectionOptions,
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
-import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
+import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
+import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists, isModuleInitVarList } from "./module-init-vars.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
@@ -167,25 +168,35 @@ import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.
 import {
   isPatternDeclaration,
   isPhase1BindingPattern,
+  patternLeaves,
   type BindingLeaf,
   type PatternDeclaration,
 } from "./binding-pattern-plan.js";
-import { literalLeafSource, literalPlanExpressions, planLiteralPattern } from "./literal-pattern-plan.js";
+import {
+  literalLeafSource,
+  literalPlanExpressions,
+  patternLeafReadsElement,
+  planLiteralPattern,
+} from "./literal-pattern-plan.js";
 import { declarationBindingWritten } from "./const-binding-writes.js";
 import { programPatchesDestructuringRealm } from "./realm-keys.js";
 import { collectBindingPatternNames } from "./analysis/ast-scope.js";
 import {
-  binaryOperandsAdmissible,
   conditionalJoinArmFamily,
   conditionalJoinFamily,
+  boxableIntoDynamic,
   isCarrierAddition,
+  additiveResultFamily,
+  provenBinaryOperandsAdmissible,
   isComparisonResultOperator,
   isEqualityOperator,
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   isTypedBinaryOperator,
   isVoidZero,
+  mayBeElementRead,
   wrapperComparisonIsIdentity,
+  type AdditiveLane,
   nativeI32OperandsAdmissible,
   type OperandFamily,
 } from "./analysis/operand-admissibility.js";
@@ -2315,6 +2326,7 @@ function whyNotIrClaimable(
   // yield machinery has no dynamic arm yet.
   // -------------------------------------------------------------------------
   for (const name of currentOpenCarrierNames) dynNames.add(name); // (#7128 S1)
+  for (const read of carrierLeafReads(body, moduleBinding)) dynNames.add(read.text); // (#7106 S5)
   if (dynNames.size > 0 && isGenerator) return "param-type-not-resolvable";
   if (
     dynNames.size > 0 ||
@@ -6877,10 +6889,11 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
   if (stmt.modifiers && stmt.modifiers.length > 0) return shapeNo("vardecl-modifier", stmt);
   const isConst = !!(flags & ts.NodeFlags.Const);
   for (const d of stmt.declarationList.declarations) {
-    // A script-level pattern's leaves are `__mod_` slots the pattern lowering
-    // does not write (S5 of the #7106 destructuring lever).
     if (isPatternDeclaration(d)) {
-      if (currentSubjectIsModuleInit) return shapeNo("vardecl-module-destructuring", d.name);
+      // A `<module-init>` statement's leaves are module globals: only a module-init `var` list writes them (S5).
+      if (currentSubjectIsModuleInit && !isModuleInitVarList(stmt.declarationList)) {
+        return shapeNo("vardecl-module-destructuring", d.name);
+      }
       if (!isPhase1DeclarationPattern(d, isConst, scope, localClasses)) return false;
       continue;
     }
@@ -7087,7 +7100,11 @@ function isPhase1DeclarationPattern(
   if (programPatchesDestructuringRealm(d.getSourceFile())) return shapeNo("vardecl-dstr-realm-patched", pattern);
   if (declarationBindingWritten(d)) return shapeNo("vardecl-dstr-leaf-written", pattern);
   const literalPlan = planLiteralPattern(pattern, d.initializer);
-  if (literalPlan) return isPhase1LiteralPattern(pattern, literalPlanExpressions(literalPlan), scope, localClasses);
+  if (literalPlan) {
+    const moduleVars = currentSubjectIsModuleInit && isModuleInitVarList(d.parent);
+    if (moduleVars && !moduleVarLeavesStorable(pattern, scope)) return false;
+    return isPhase1LiteralPattern(pattern, literalPlanExpressions(literalPlan), scope, localClasses);
+  }
   // A `for (;;)` head is admitted over a fresh literal only.
   if (ts.isForStatement(d.parent.parent)) return shapeNo("for-init-dstr-source", d.initializer);
   if (!isConst) return shapeNo("vardecl-dstr-let", pattern);
@@ -7103,6 +7120,35 @@ function isPhase1DeclarationPattern(
   if (!isPhase1Expr(d.initializer, initializerScope, localClasses)) return shapeNo("vardecl-dstr-init", d.initializer);
   if (ts.isObjectBindingPattern(pattern)) recordDestructuredObjectMethodProjections(pattern, d.initializer, scope);
   collectBindingPatternNames(pattern, scope);
+  return true;
+}
+
+/**
+ * (#7106 S5) Each leaf of a module-init `var` pattern writes its own
+ * `__mod_<name>` slot, so its literal source must fit that slot: `undefined`
+ * or a boxable family in the dynamic carrier, a matching value in a typed one.
+ * An array length has no source expression and stays refused.
+ */
+function moduleVarLeavesStorable(pattern: ts.BindingPattern, scope: ReadonlySet<string>): boolean {
+  const resolver = currentModuleBindingResolver;
+  if (resolver === null) return shapeNo("vardecl-module-storage-unrepresentable", pattern);
+  for (const leaf of patternLeaves(pattern)) {
+    const binding = resolver(leaf.name);
+    if (binding === undefined) return shapeNo("vardecl-module-storage-unrepresentable", leaf);
+    const source = literalLeafSource(leaf);
+    const dynamicSlot = binding.valueKind.kind === "dynamic";
+    // Boolean pattern leaves remain outside this S5 admission slice.
+    const fits =
+      binding.valueKind.kind !== "i32" &&
+      (source === "undefined"
+        ? dynamicSlot
+        : source !== undefined &&
+          source !== "length" &&
+          (dynamicSlot
+            ? boxableIntoDynamic(provenIrFamily(source, scope))
+            : resolver.bindingValueMatches(leaf.name, source)));
+    if (!fits) return shapeNo("vardecl-module-value-flow", leaf);
+  }
   return true;
 }
 
@@ -7284,6 +7330,7 @@ function isPhase1ClosureLiteral(
     nativeDynamicMemberRead:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-member-read") === true,
     directCalls: currentSelectionOptions?.supportsBackendCapability?.("planned-closure-direct-call") === true,
+    additiveLane: additiveLane(),
     nativeDynamicLooseEquality:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-loose-equality") === true,
     isGlobalUndefined: (expression) => isUnshadowedUndefinedIdentifier(expression, scope),
@@ -7903,6 +7950,16 @@ function expressionIsModuleBindingRootedCall(expr: ts.Expression): boolean {
 
 type ObviousModuleValueFamily = "f64" | "boolean" | "extern" | "string" | "nullish";
 
+/** The operand family each obvious family is to the `+` rule (an extern proves nothing). */
+const OBVIOUS_OPERAND_FAMILIES: Record<ObviousModuleValueFamily | "unknown", OperandFamily> = {
+  f64: "number",
+  boolean: "boolean",
+  extern: "unknown",
+  string: "string",
+  nullish: "nullish",
+  unknown: "unknown",
+};
+
 /** Narrow family evidence used only to reject representation mismatches. */
 function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily | undefined {
   const candidate = unwrapPhase1Parens(expr);
@@ -7935,11 +7992,9 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
   if (ts.isBinaryExpression(candidate)) {
     if (isComparisonResultOperator(candidate.operatorToken.kind)) return "boolean";
     if (candidate.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-      const left = obviousModuleValueFamily(candidate.left);
-      const right = obviousModuleValueFamily(candidate.right);
-      if (left === "string" || right === "string") return "string";
-      if (left === "f64" && right === "f64") return "f64";
-      return undefined;
+      const operand = (e: ts.Expression) => OBVIOUS_OPERAND_FAMILIES[obviousModuleValueFamily(e) ?? "unknown"];
+      const family = additiveResultFamily(candidate, operand(candidate.left), operand(candidate.right), additiveLane());
+      return family === "string" ? "string" : family === "number" ? "f64" : undefined;
     }
     if (candidate.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) {
       const left = obviousModuleValueFamily(candidate.left);
@@ -8253,6 +8308,7 @@ export function boundedMixedConditionalPrimitiveFamily(
   expression: ts.Expression,
   classifyPrimitiveExpression: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined,
   classifyDeclaredPrimitiveExpression: (expr: ts.Expression) => IrDeclaredPrimitiveExpressionFamily | undefined,
+  lane: AdditiveLane,
 ): IrPrimitiveExpressionFamily | undefined {
   const visit = (node: ts.Expression): IrPrimitiveExpressionFamily | undefined => {
     const family = classifyPrimitiveExpression(node);
@@ -8292,9 +8348,7 @@ export function boundedMixedConditionalPrimitiveFamily(
       const right = visit(candidate.right);
       switch (candidate.operatorToken.kind) {
         case ts.SyntaxKind.PlusToken:
-          return (family === "number" || family === "string") && left === family && right === family
-            ? family
-            : undefined;
+          return left && right && additiveResultFamily(candidate, left, right, lane) === family ? family : undefined;
         case ts.SyntaxKind.MinusToken:
         case ts.SyntaxKind.AsteriskToken:
         case ts.SyntaxKind.SlashToken:
@@ -8716,14 +8770,12 @@ function exactMixedPrimitiveWrapperCall(
   const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
   const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
   if (!classifyPrimitive || !classifyDeclared) return null;
-  const whenTrue = boundedMixedConditionalPrimitiveFamily(argument.whenTrue, classifyPrimitive, classifyDeclared);
-  const whenFalse = boundedMixedConditionalPrimitiveFamily(argument.whenFalse, classifyPrimitive, classifyDeclared);
-  if (
-    whenTrue === undefined ||
-    whenFalse === undefined ||
-    whenTrue === whenFalse ||
-    boundedMixedConditionalPrimitiveFamily(argument.condition, classifyPrimitive, classifyDeclared) === undefined
-  ) {
+  const lane = additiveLane();
+  const familyOf = (e: ts.Expression) =>
+    boundedMixedConditionalPrimitiveFamily(e, classifyPrimitive, classifyDeclared, lane);
+  const whenTrue = familyOf(argument.whenTrue);
+  const whenFalse = familyOf(argument.whenFalse);
+  if (whenTrue === undefined || whenFalse === undefined || whenTrue === whenFalse || !familyOf(argument.condition)) {
     return null;
   }
   return { kind: expr.expression.text, conditional: argument };
@@ -8887,6 +8939,21 @@ function selectorPrimitiveWrapperOrGenericBinary(
   if (binOp === ts.SyntaxKind.PlusToken && carrierOperand && !carrierAdditionConsumed(expr)) {
     return capabilityNo("operand-coercion-unsupported", "expr-wrapper-carrier-position", expr);
   }
+  // An unbounded Boolean element can have an unknown IR family here, while
+  // the builder's primitive proof still rejects its scalar ToString. Ask the
+  // same rule before claiming; this backstop only refuses, never admits.
+  if (
+    binOp === ts.SyntaxKind.PlusToken &&
+    !carrierOperand &&
+    (mayBeElementRead(expr.left, selectorLeafReadsElement) || mayBeElementRead(expr.right, selectorLeafReadsElement))
+  ) {
+    const classify = currentSelectionOptions?.classifyPrimitiveExpression;
+    const leftProof = classify?.(expr.left);
+    const rightProof = classify?.(expr.right);
+    if (leftProof && rightProof && !provenBinaryOperandsAdmissible(expr, leftProof, rightProof, additiveLane())) {
+      return capabilityNo("operand-coercion-unsupported", "expr-binary-element-concat-proof", expr);
+    }
+  }
   // S0 refuses exactly what `lowerBinary`'s family check refuses, so not what
   // the fused-i32 identity lowers before it (#7034 round 2).
   const judged =
@@ -8896,7 +8963,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
       left !== "unknown" &&
       right !== "unknown" &&
       !isSlotFreeI32IdentityLowered(expr));
-  if (judged && !binaryOperandsAdmissible(binOp, left, right)) {
+  if (judged && !provenBinaryOperandsAdmissible(expr, left, right, additiveLane())) {
     return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
   }
   return (
@@ -8957,7 +9024,8 @@ function carrierAdditionConsumed(expr: ts.BinaryExpression): boolean {
 
 /** The leaf of a destructuring declaration that takes the literal plan, read through `expression`. */
 function literalPatternLeaf(expression: ts.Expression): ts.BindingElement | undefined {
-  if (!ts.isIdentifier(expression)) return undefined;
+  // A script `var` leaf is its module slot: the slot's carrier is its family (#7106 S5).
+  if (!ts.isIdentifier(expression) || moduleBinding(expression) !== undefined) return undefined;
   const declaration = currentModuleBindingResolver?.localValueDeclaration(expression);
   return declaration && ts.isBindingElement(declaration) && literalLeafSource(declaration) !== undefined
     ? declaration
@@ -8995,7 +9063,9 @@ function isSelectableNumberCompound(
   if (expr.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken) {
     return exactNumericExponentiationAdmissible(expr, scope, localClasses);
   }
-  return isNumberCompoundAssignOperator(expr.operatorToken.kind);
+  if (!isNumberCompoundAssignOperator(expr.operatorToken.kind)) return false;
+  // (#7106 S5) A carrier leaf's read is no number, whatever the checker says.
+  return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
 }
 
 /**
@@ -10757,14 +10827,36 @@ function templateSubstitutionFamily(
   scope: ReadonlySet<string>,
 ): "string" | "number" | "boolean" | undefined {
   if (declaredExpressionHasExactFamily(expression, "string", scope)) return "string";
-  if (
-    declaredExpressionHasExactFamily(expression, "number", scope) &&
-    currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true
-  ) {
-    return "number";
-  }
+  if (scalarMayBeElementRead(expression, scope)) return undefined;
+  if (declaredExpressionHasExactFamily(expression, "number", scope) && laneFormatsNumbers()) return "number";
   if (declaredExpressionHasExactFamily(expression, "boolean", scope)) return "boolean";
   return undefined;
+}
+
+/** (#4467, #7066) The lane binds `IR_NUMBER_TO_STRING_FN`: a template or a `+` converts a number. */
+const laneFormatsNumbers = (): boolean =>
+  currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true;
+
+/** (#7066) An array-pattern leaf the selector resolves reads an element (`patternLeafReadsElement`). */
+const selectorLeafReadsElement = patternLeafReadsElement((id) =>
+  currentModuleBindingResolver?.localValueDeclaration(id),
+);
+
+/** (#7066) How this lane judges a `+` (`additiveOperandsProvable`). */
+const additiveLane = (): AdditiveLane => ({
+  numberToString: laneFormatsNumbers(),
+  leafReadsElement: selectorLeafReadsElement,
+});
+
+/** (#7066) A ToString operand that lowers to a scalar and may be an element read ({@link mayBeElementRead}). */
+function scalarMayBeElementRead(operand: ts.Expression, scope: ReadonlySet<string>): boolean {
+  if (!mayBeElementRead(operand, selectorLeafReadsElement)) return false;
+  const family = provenIrFamily(operand, scope);
+  if (family === "number" || family === "boolean") return true;
+  // A Boolean element lacks an IR family until lowering. Its declared scalar
+  // family still needs the same unbounded-element guard before ToString.
+  const declared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression?.(operand);
+  return family === "unknown" && (declared === "number" || declared === "boolean");
 }
 
 function declaredExpressionHasExactFamily(
@@ -11193,6 +11285,7 @@ function isPhase1StaticPredicateCall(
     isGlobalUndefined: (operand) => isUnshadowedUndefinedIdentifier(operand, scope),
     localDeclaration: closureLocalDeclaration,
     family: (expression) => provenIrFamily(expression, scope),
+    additiveLane: additiveLane(),
     isStringMethodCall: (call) =>
       ts.isPropertyAccessExpression(call.expression) &&
       currentSelectionOptions?.classifyPrimitiveExpression?.(call.expression.expression) === "string",
@@ -11686,13 +11779,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       if (!exactMixedPrimitiveConditionalContextReady(expr)) {
         return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-context", expr);
       }
-      const trueFamily = boundedMixedConditionalPrimitiveFamily(expr.whenTrue, classifyPrimitive, classifyDeclared);
-      const falseFamily = boundedMixedConditionalPrimitiveFamily(expr.whenFalse, classifyPrimitive, classifyDeclared);
-      const conditionFamily = boundedMixedConditionalPrimitiveFamily(
-        expr.condition,
-        classifyPrimitive,
-        classifyDeclared,
-      );
+      const lane = additiveLane();
+      const familyOf = (e: ts.Expression) =>
+        boundedMixedConditionalPrimitiveFamily(e, classifyPrimitive, classifyDeclared, lane);
+      const trueFamily = familyOf(expr.whenTrue);
+      const falseFamily = familyOf(expr.whenFalse);
+      const conditionFamily = familyOf(expr.condition);
       if (trueFamily === undefined || falseFamily === undefined || trueFamily === falseFamily || !conditionFamily) {
         return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-proof", expr);
       }
@@ -12269,6 +12361,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // `dyn.to_string` (the dynamic scan gates that on the runtime being
     // buildable); a concrete primitive operand folds inline in from-ast.
     const toStringArg = scope.has("String") ? null : ambientStringToStringCall(expr);
+    if (toStringArg !== null && scalarMayBeElementRead(toStringArg, scope)) {
+      return capabilityNo("operand-coercion-unsupported", "expr-string-element-read", toStringArg);
+    }
     if (toStringArg !== null) return isPhase1Expr(toStringArg, scope, localClasses);
     // (#7106 module-init lever B) `Number(v)` under the source-bound plan.
     const toNumberArgs = preparedNumberConversionCall(expr);

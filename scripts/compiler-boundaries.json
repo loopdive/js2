@@ -5046,6 +5046,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/object-property-write-target.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6878-object-property-write-target",
+      "nextBoundary": "Replace AST/oracle-dependent literal write-target discovery with a prepared binding/property identity contract."
+    },
+    {
       "path": "src/codegen/declarations/object-shape-widening.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12796,6 +12804,14 @@
       "nextBoundary": "Native console producer emits logical strings and symbolic provider calls; keep physical provider selection outside the IR."
     },
     {
+      "path": "src/ir/primitive-to-string.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7066",
+      "nextBoundary": "ToString producer emits logical strings and the symbolic number-to-string provider call; keep physical provider selection outside the IR."
+    },
+    {
       "path": "src/ir/host-free-runtime.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13090,6 +13106,14 @@
       "destination": "frontend-ts",
       "owner": "7106",
       "nextBoundary": "Frontend source-shape planner for destructuring over a fresh literal (#7106); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/module-init-vars.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape classifier for the top-level `var` lists the module initializer models and the bindings they declare (#7106 S5); move with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/binding-pattern-lowering.ts",

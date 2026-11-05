@@ -90,6 +90,9 @@ CLAIMING.branchModuleBooleanTemplate = `var t = true; var c = true; if (\`\${c ?
 CLAIMING.orModuleBooleanTemplate = `var t = true; if (\`\${Number.isNaN(1) || t}\` !== "true") { throw "#30"; }`;
 CLAIMING.orModuleBooleanString = `var t = true; if (String(Number.isNaN(1) || t) !== "true") { throw "#32"; }`;
 
+// #7066 now lowers this exact former refusal through the shared string + rule.
+CLAIMING.concatOperand = `if (Object.is("a" + 1, "a1") !== true) { throw "#10"; }`;
+
 // Refused at selection — legacy answers as node does. (`Object.getPrototypeOf(1)`
 // is the #7189 suite's `primitiveCall`.)
 const REFUSED: Record<string, string> = {
@@ -102,7 +105,6 @@ const REFUSED: Record<string, string> = {
   arrayOperand: `if (Array.isArray([1]) !== true) { throw "#7"; }`,
   objectOperand: `var o = { a: 1 }; if (Number.isNaN(o) !== false) { throw "#8"; }`,
   hoistedOperand: `if (Number.isFinite(x) !== false) { throw "#9"; } var x = 1;`,
-  concatOperand: `if (Object.is("a" + 1, "a1") !== true) { throw "#10"; }`,
   fourArguments: `if (Number.isSafeInteger(1, 2, 3, 4) !== true) { throw "#11"; }`,
   spread: `var a = [NaN]; if (Number.isNaN(...a) !== true) { throw "#12"; }`,
   nullishLeft: `if (Number.isNaN(1) ?? true) { throw "#13"; }`,
