@@ -44,7 +44,6 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { resolveWidenedVarKey, integrityVarKey } from "./widened-var-key.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
-import { recordRuntimeKeyClassMethodRead } from "./runtime-key-class-methods.js"; // (#5358)
 import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { recordStandaloneDynamicPrototypeRead } from "./standalone-class-prototype-read.js"; // (#6457)
 import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4159 S3)
@@ -328,35 +327,6 @@ function prototypeMutationNames(sourceFile: ts.SourceFile): ReadonlySet<string> 
   visit(sourceFile);
   PROTOTYPE_MUTATION_CACHE.set(sourceFile, names);
   return names;
-}
-
-/**
- * Standalone computed-read arm for the inherited Function @@hasInstance
- * method. The generic symbol-key path has no `$NativeProto` symbol-cell
- * lookup, so a callable receiver would otherwise return the undefined
- * sentinel before its method call. Keep this arm limited to checker-certified
- * function receivers; uncertain/object receivers retain the dynamic path.
- */
-/**
- * (#5223) Record a property name read off a DYNAMICALLY typed receiver so
- * finalization can publish the class-accessor dispatch surface for it.
- *
- * ROOT CAUSE this closes. `__member_kind_<key>` / `__call_get_<key>` are
- * emitted only for keys some site put in `ctx.hostDynamicClassMethodNames`,
- * and every writer of that set is a CALL site, a WRITE site, or a
- * class-value crossing. A plain READ — `function f(a: any) { return a.g; }` —
- * registered nothing, so the host resolver found no getter bridge and the
- * read answered `undefined` while a method call on the same receiver worked.
- * Measured on this base: `class P { get y() {…} }` with `f(a: any) => a.y`
- * answered `undefined`; `f(a: any) => a.other()` answered correctly.
- *
- * Only externref-shaped receivers register: a statically resolved class
- * receiver compiles to a direct getter call and needs no bridge, so its bytes
- * stay identical. The set is intersected against `ctx.classAccessorSet` at
- * finalize, so a name no class declares as an accessor emits nothing.
- */
-export function recordDynamicClassAccessorRead(ctx: CodegenContext, receiverWasm: ValType, propName: string): void {
-  return;
 }
 
 function tryCompileStandaloneFunctionHasInstanceRead(
@@ -3689,7 +3659,6 @@ export function compilePropertyAccess(
   const __f4p = tryProxyReceiverPropertyRead(ctx, fctx, expr, propName);
   if (__f4p !== PROXY_READ_DECLINE) return __f4p;
 
-  recordDynamicClassAccessorRead(ctx, resolveWasmType(ctx, objType), propName);
   // (#6457) The standalone twin, for `prototype` only: a dynamic receiver has no
   // class to resolve the name against, so this read lowers to
   // `__extern_get(recv, "prototype")` and needs the same per-class demand a
@@ -5200,9 +5169,6 @@ export function compileElementAccessBody(
       !ts.isNumericLiteral(expr.argumentExpression) &&
       !isNumericIndexExpression(ctx, expr.argumentExpression, fctx)
     ) {
-      // (#5358) A non-numeric runtime key may name a prototype method of
-      // whichever class instance the `any` holds: publish every class's bridges.
-      recordRuntimeKeyClassMethodRead(ctx, undefined);
       // (#5383 S2h) The standalone twin of the same demand — nothing narrows
       // which instance the `any` holds, so every class's prototype `$Object`
       // has to be reachable. Lane-disjoint with the call above.
@@ -5229,7 +5195,7 @@ export function compileElementAccessBody(
     // array-like arms. A genuine string key keeps the byte-exact old result
     // (the string gate below); so does every read the old path answered.
     // Standalone only (NOT wasi: the `$Object` delegation arm inside
-    // `__extern_get_idx` is `ctx.standalone`-gated, same reasoning as the
+    // `__extern_get_idx` is regime-gated, same reasoning as the
     // #2166 numeric arm below).
     if (
       isAnyTypedIndexExpression(ctx, expr.argumentExpression) &&
@@ -5364,10 +5330,10 @@ export function compileElementAccessBody(
     // array-like `$Object` it delegates to `__extern_get(v, ToString(i))` (its
     // #2036 arm), so it is a correct superset of the string-key path for a
     // numeric index — but ONLY in `--target standalone`: that `$Object`
-    // delegation arm is gated on `objArrayLikeArms = ctx.standalone` in
+    // delegation arm is gated on `objArrayLikeArms = the regime flag` in
     // object-runtime.ts, so under `--target wasi` `__extern_get_idx` returns the
     // null sentinel for a genuine `$Object`, which would break a plain-object
-    // numeric read. Hence this is scoped to `ctx.standalone` only (NOT wasi);
+    // numeric read. Hence this is scoped to the regime flag only (NOT wasi);
     // wasi and host mode keep the existing `__extern_get` path. A non-numeric
     // (string/symbol/computed) key always stays on `__extern_get`.
     if (isNumericIndexExpression(ctx, expr.argumentExpression, fctx)) {
@@ -5788,7 +5754,6 @@ export function compileElementAccessBody(
       // (#5358) A non-numeric key: publish the receiver class family's method
       // bridges the host resolver needs (runtime-key-class-methods.ts).
       if (!isNumericIndexExpression(ctx, expr.argumentExpression, fctx)) {
-        recordRuntimeKeyClassMethodRead(ctx, typeIdx, fieldName);
         // (#5383 S2h) …and the standalone twin, narrowed to the receiver's own
         // class family (the struct type IS known on this arm).
         recordStandaloneRuntimeKeyClassMemberRead(ctx, typeIdx);

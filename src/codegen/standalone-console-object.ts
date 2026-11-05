@@ -61,12 +61,12 @@ const OBJECT_FN = "__standalone_console_object";
  * True when `id` is a read of the AMBIENT `console` under the native regime. A
  * user binding (`var console = …`, a parameter, an eval-introduced name) keeps
  * its ordinary lowering; a linked standalone module reads globals from its
- * owning realm; WASI keeps its `fd_write` path (excluded by `!ctx.standalone`).
+ * owning realm; WASI keeps its `fd_write` path (excluded by the host lane).
  * WHICH console the read yields is the environment's question — see
  * {@link tryEmitStandaloneConsoleValue}.
  */
 function isRegimeAmbientConsoleRead(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): boolean {
-  if (!ctx.standalone || ctx.standaloneGlobalThisImport !== undefined) return false;
+  if (ctx.standaloneGlobalThisImport !== undefined) return false;
   if (id.text !== "console") return false;
   if (fctx.localMap.has("console") || (fctx.boxedCaptures?.has("console") ?? false)) return false;
   if (runtimeEvalStateMayShadowBinding(ctx, fctx, "console")) return false;

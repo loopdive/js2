@@ -69,7 +69,7 @@ import {
  *    a companion accessor with the ORIGINAL receiver bound as `this`
  *    (§6.2.5.5) via `__call_accessor_get`.
  *
- * ## Gate — `ctx.standalone && (ctx.protoIndexDirty || ctx.protoNamedDirty)`;
+ * ## Gate — `the regime flag && (ctx.protoIndexDirty || ctx.protoNamedDirty)`;
  * ## byte-identity by construction
  *
  * Both flags are PRE-SCAN flags (array-holes.ts, set before any body compiles
@@ -188,7 +188,7 @@ export const SET_DECISION_REFUSED = 3;
  * Reserve the proto-property-store table global + helper stubs. Called from
  * `ensureObjectRuntime` right after the closure/vec side-table reserves,
  * BEFORE the `__extern_*` bodies bake their `call <idx>`. Self-gated on
- * `ctx.standalone && (ctx.protoIndexDirty || ctx.protoNamedDirty)` (see
+ * `the regime flag && (ctx.protoIndexDirty || ctx.protoNamedDirty)` (see
  * module header) and idempotent. Appends types/globals/funcs only — never
  * shifts an existing index.
  */
@@ -201,11 +201,7 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
   // Dynamic TypedArray instances also demand ordinary prototype properties:
   // their constructor lookup must read a real intrinsic data property even
   // in modules with no source-level prototype reflection or mutation.
-  if (
-    !ctx.standalone ||
-    !(ctx.protoIndexDirty || ctx.protoNamedDirty || ctx.protoMemberDirty || ctx.moduleUsesDynTaView)
-  )
-    return;
+  if (!(ctx.protoIndexDirty || ctx.protoNamedDirty || ctx.protoMemberDirty || ctx.moduleUsesDynTaView)) return;
   if (ctx.protoIndexStoreReserved) return;
   ctx.protoIndexStoreReserved = true;
 

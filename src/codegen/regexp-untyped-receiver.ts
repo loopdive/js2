@@ -259,7 +259,7 @@ function untypedRegExpDemandOf(ctx: CodegenContext, sf: ts.SourceFile): Demand {
  * the RegExp companion seeder (or anything else) mints that member.
  */
 export function noteUntypedRegExpDemand(ctx: CodegenContext, sf: ts.SourceFile): void {
-  if (!ctx.standalone || ctx.wasi) return;
+  if (ctx.wasi) return;
   if (untypedRegExpDemandOf(ctx, sf).members.has("toString")) demandRegExpProtoToStringBody(ctx);
 }
 
@@ -275,7 +275,7 @@ export function mintUntypedRegExpReceiverMembers(
   fctx: FunctionContext,
   sf: ts.SourceFile | undefined,
 ): void {
-  if (!ctx.standalone || ctx.wasi || !sf) return;
+  if (ctx.wasi || !sf) return;
   let seen = mintedSources.get(ctx);
   if (!seen) mintedSources.set(ctx, (seen = new Set()));
   if (seen.has(sf)) return;

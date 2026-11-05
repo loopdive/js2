@@ -166,13 +166,9 @@ function tupleFieldTypes(ctx: CodegenContext, typeIdx: number): ValType[] | null
  * {@link canBuildSpreadArgList} first and rely on the later build not declining.
  */
 function prepareSpreadExpansion(ctx: CodegenContext, fctx: FunctionContext, storeType: ValType): string | undefined {
-  let materializerName: string | undefined;
-  if (ctx.standalone === true) {
-    ensureObjectRuntime(ctx);
-    ensureNativeArrayFromIterN(ctx);
-    materializerName = "__array_from_iter_n";
-  }
-  if (materializerName === undefined) return undefined;
+  ensureObjectRuntime(ctx);
+  ensureNativeArrayFromIterN(ctx);
+  const materializerName = "__array_from_iter_n";
   // A ref/ref_null destination element (a nested vec) cannot be produced by the
   // generic externref coercion — it guarded-casts and silently stores null.
   // Reserve the shared materializer up front, before the index space settles.

@@ -110,7 +110,6 @@ const GUARD_FN = "__regexp_getter_only_set";
  * struct in this module, no native-string subsystem) — declining is always safe.
  */
 export function registerRegExpGetterOnlySet(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
   const existing = ctx.funcMap.get(GUARD_FN);
   if (existing !== undefined) return existing;
   const reTypeIdx = standaloneRegExpStructTypeIdx(ctx);

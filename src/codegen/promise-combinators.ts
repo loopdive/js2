@@ -35,7 +35,7 @@
 // (#2867 S2 correction, 2026-08-15.) This header said "inert until the widen …
 // `ctx.wasi`-only today" for a long time after it stopped being true: slice 1d
 // landed with the **#2980 flip on 2026-07-10**, and `isStandalonePromiseActive`
-// has read `ctx.standalone === true && !widenAsyncGenFallback(ctx)` ever since
+// has read `the regime flag === true && !widenAsyncGenFallback(ctx)` ever since
 // (`async-scheduler.ts:4686`; `isStandaloneThenChainNativeActive` at `:4743` is
 // identical). Only the default **gc/host** lane is still byte-identical.
 //

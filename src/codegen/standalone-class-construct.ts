@@ -127,7 +127,6 @@ function admitsBuiltinParentConstruct(ctx: CodegenContext, className: string): b
  * Every other standalone module emits exactly the bytes it did before.
  */
 function classConstructWanted(ctx: CodegenContext): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   return valueConstructSites.has(ctx) || ctx.exportsConsumedByWasm === true;
 }
 
@@ -221,7 +220,6 @@ function collectCandidates(ctx: CodegenContext): ClassConstructCandidate[] {
  * `structMap`, which `collect-declarations` fills before any body runs.
  */
 export function moduleHasRefTypedConstructFormal(ctx: CodegenContext): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   for (const className of ctx.structMap.keys()) {
     if (ctx.classBuiltinParentMap.has(className)) continue;
     const ctorFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_new`));
@@ -245,7 +243,6 @@ export function moduleHasRefTypedConstructFormal(ctx: CodegenContext): boolean {
  * pays nothing for a TypeError it could never reach.
  */
 export function moduleHasF64TypedConstructFormal(ctx: CodegenContext): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   for (const className of ctx.structMap.keys()) {
     if (ctx.classBuiltinParentMap.has(className)) continue;
     const ctorFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_new`));

@@ -944,7 +944,6 @@ export function emitRuntimeEvalAotCallableAdapter(ctx: CodegenContext, fctx: Fun
  * module's nominal struct table.
  */
 export function fillRuntimeEvalCallablePropertyGetArm(ctx: CodegenContext): void {
-  if (!ctx.standalone && !ctx.wasi) return;
   const carrier = ctx.runtimeEvalAotCallableCarrier;
   if (carrier === undefined) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
@@ -1270,7 +1269,6 @@ export function tryRuntimeEvalRebindCarrierIntrinsic(
   compileArg: (arg: ts.Expression) => void,
 ): ValType | undefined {
   if (
-    (!ctx.standalone && !ctx.wasi) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
     !ts.isIdentifier(expr.expression) ||
     expr.expression.text !== "__runtime_eval_rebind_carrier" ||

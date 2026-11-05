@@ -7,7 +7,7 @@
 // ## The defect
 //
 // `calls.ts::emitDynamicSpreadCall` already repairs this shape, but its first
-// line is `if (ctx.standalone || ctx.wasi || …) return null;` and its header
+// line is `if (the native regime || …) return null;` and its header
 // states the reason:
 //
 // > This path is deliberately limited to the JS-host lane. Standalone/WASI

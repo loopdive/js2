@@ -2709,7 +2709,7 @@ function returnsAnonymousClassFieldInitializer(ctx: CodegenContext, value: ts.Ex
  * Declining costs only the fold: the read falls through to the ordinary property
  * path, which answers from the closure's own `$fnmeta` host-free and from
  * `__extern_get(v, "name")` on the JS host — both measured correct, which is why
- * this is unconditional rather than `ctx.standalone`-gated.
+ * this is unconditional rather than regime-gated.
  */
 function symbolIsPropertyDescriptorAccessorSlot(symbol: ts.Symbol | undefined): boolean {
   if (symbol === undefined) return false;
