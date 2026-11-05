@@ -74,9 +74,7 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     // `22a72e500a` (feat(3523) R4 gap 4, 2026-08-31, "record a truthful
     // non-executable module-init outcome row") stopped leaving a source with an
     // empty module-init population silent, so the ledger now carries a second
-    // row. Keep the exhaustive `toEqual` — the point of this pin is that `test`
-    // is the *only* unit that demotes — and add the new row rather than relaxing
-    // to a containment check that would hide an unexpected third outcome.
+    // row. Keep the exhaustive `toEqual`, so an unexpected third outcome shows.
     // (#7024) The literal plan lowers `const [a, b, c] = [1, 2, 3]` without an
     // array, so `test` no longer demotes at build with
     // `array-representation-unsupported`: it is claimed.
@@ -99,7 +97,7 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     ]);
   });
 
-  it("types mixed string/boolean addition as unsupported operand coercion", async () => {
+  it("lowers mixed string/boolean addition as a concatenation (#7066)", async () => {
     const result = await compile(
       `export function test(): string {
         return "result: " + (2 > 1);
@@ -108,14 +106,12 @@ describe("#3529 — typed AST-to-IR producer capability gaps", () => {
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    // #7034 S0: a typed operator whose operand families `lowerBinary` refuses is
-    // refused at select, before the claim, instead of demoting at build.
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
     expect(terminal(result).find((outcome) => outcome.displayName === "test")).toMatchObject({
-      kind: "unsupported",
-      code: "operand-coercion-unsupported",
-      stage: "select",
-      legacyBodyEmitted: true,
-      irBodyEmitted: false,
+      kind: "emitted",
+      stage: "patch",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
     });
   });
 });
