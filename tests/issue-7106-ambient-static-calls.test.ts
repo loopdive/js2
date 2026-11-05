@@ -83,6 +83,13 @@ function g() { return Object.is(-0, -0); }
 function k() { const r = Number.isSafeInteger(9007199254740992); return r === false; }
 if (!h(Number.isNaN(1)) || !g() || !k()) { throw "#sink"; }`;
 
+CLAIMING.moduleBooleanOperand = `var t = true; if (Object.is(t, true) !== true || Number.isNaN(t)) { throw "#19"; }`;
+CLAIMING.moduleBooleanArray = `var t = true; if (Array.isArray(t) !== false) { throw "#21"; }`;
+CLAIMING.branchModuleBooleanTemplate = `var t = true; var c = true; if (\`\${c ? Number.isNaN(NaN) : t}\` !== "true") { throw "#31"; }`;
+
+CLAIMING.orModuleBooleanTemplate = `var t = true; if (\`\${Number.isNaN(1) || t}\` !== "true") { throw "#30"; }`;
+CLAIMING.orModuleBooleanString = `var t = true; if (String(Number.isNaN(1) || t) !== "true") { throw "#32"; }`;
+
 // Refused at selection — legacy answers as node does. (`Object.getPrototypeOf(1)`
 // is the #7189 suite's `primitiveCall`.)
 const REFUSED: Record<string, string> = {
@@ -104,12 +111,9 @@ const REFUSED: Record<string, string> = {
   stringEquality: `if ("false" == Number.isNaN(1)) { throw "#16"; }`,
   stringMethodArgument: `if ("abc".indexOf(Number.isNaN(1)) !== -1) { throw "#17"; }`,
   throwOperand: `var c = false; if (c) { throw Number.isNaN(1); }`,
-  // (round 2) The family the IR lowers, not the checker's: a module boolean is
-  // an i32 read without the brand, a rewritten or logically joined local is not
-  // its initializer's family, and an out-of-bounds element reads as NaN.
-  moduleBooleanOperand: `var t = true; if (Object.is(t, true) !== true || Number.isNaN(t)) { throw "#19"; }`,
+  // The remaining refused families: an unresolved predicate initializer,
+  // rewritten or logically joined locals, and out-of-bounds numeric elements.
   moduleBooleanFromPredicate: `var t = Number.isNaN(NaN); if (Object.is(t, true) !== true) { throw "#20"; }`,
-  moduleBooleanArray: `var t = true; if (Array.isArray(t) !== false) { throw "#21"; }`,
   logicalLocal: `{ let x = undefined || 1; if (Object.is(x, 1) !== true) { throw "#22"; } }`,
   rewrittenLocal: `{ let x = 1; x = undefined; if (Object.is(x, undefined) !== true) { throw "#23"; } }`,
   outOfBoundsUndefined: `{ let a = [1, 2]; if (Object.is(a[5], undefined) !== true) { throw "#24"; } }`,
@@ -121,12 +125,9 @@ const REFUSED: Record<string, string> = {
   voidOperand: `if (void Number.isNaN(NaN) !== undefined) { throw "#27"; }`,
   elementRead: `if (Number.isNaN(1)[0] !== undefined) { throw "#28"; }`,
   memberRead: `if (Number.isNaN(NaN).toString() !== "true") { throw "#29"; }`,
-  orModuleBooleanTemplate: `var t = true; if (\`\${Number.isNaN(1) || t}\` !== "true") { throw "#30"; }`,
-  branchModuleBooleanTemplate: `var t = true; var c = true; if (\`\${c ? Number.isNaN(NaN) : t}\` !== "true") { throw "#31"; }`,
-  orModuleBooleanString: `var t = true; if (String(Number.isNaN(1) || t) !== "true") { throw "#32"; }`,
   destructuringDeclaration: `function f() { const { toString } = Object.is(1, 1); return typeof toString; }
 if (f() !== "function") { throw "#33"; }`,
-  // A module boolean's slot reads back without the brand, so `String(t)` would withdraw.
+  // This predicate-result declaration route remains outside current admission.
   moduleBooleanDeclaration: `var t = Number.isNaN(NaN); if (String(t) !== "true") { throw "#40"; }`,
 };
 
@@ -232,6 +233,11 @@ describe("#7106 — the ambient boolean statics in IR bodies", () => {
       [[10], [1001]],
     ],
   };
+  // A Boolean module slot now carries the canonical Boolean family.
+  FUNCTIONS.moduleBoolean = [
+    `const flag: boolean = true; export function f(x: number): number { return Object.is(flag, true) ? x : -x; }`,
+    [[1]],
+  ];
   // Typed functions the selector refuses: legacy keeps them and answers as node.
   const REFUSED_FUNCTIONS: Record<string, [string, readonly (readonly number[])[]]> = {
     outOfBoundsUndefined: [
@@ -244,10 +250,6 @@ describe("#7106 — the ambient boolean statics in IR bodies", () => {
     ],
     nativeI32Field: [
       `type i32 = number; class C { v: i32 = 3; } export function f(x: number): number { return Number.isInteger(new C().v) ? x : -x; }`,
-      [[1]],
-    ],
-    moduleBoolean: [
-      `const flag: boolean = true; export function f(x: number): number { return Object.is(flag, true) ? x : -x; }`,
       [[1]],
     ],
     asAny: [`export function f(x: number): number { return (Number.isNaN(x) as any) + 1; }`, [[NaN], [1]]],

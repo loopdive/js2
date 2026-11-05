@@ -99,6 +99,8 @@ loc-budget-allow:
   - src/codegen/builtin-value-read.ts
   # 2026-10-22 (lever B): one provider-id set spread in the manifest registry
   - src/ir/runtime/manifest.ts
+  # 2026-11-05 (#7040 receiving repair): preserve the existing numeric-return ABI
+  # for Boolean-branded module reads through canonical emitUnaryToNumber.
   # 2026-10-29 (#6972 merge-queue root cause C): `activeBufferBranched`, the
   # buffer-end query the shared body-statement lister stops on (from-ast.ts
   # nets -1: two inline guards folded into it)
@@ -107,6 +109,7 @@ loc-budget-allow:
   - src/ir/core/dialect/js.ts
   # 2026-10-31 (boolean statics, round 4): the static-predicate arm, its host, the shared ambient-receiver helper and the name-parameterised unshadowed-global test (+25); the lowering lives in src/ir/static-predicates/
   - src/ir/from-ast.ts
+  # 2026-11-01 (boolean module slot): the `irBool` import and the i32 arm's one-line why (+2); the arms stay separate for readability
   - src/ir/integration.ts
   # 2026-11-01 (finally abrupt exit, #7030 review): the guarded finally copy returns early when unguarded, then pushes, emits and pops its own CtrlFrame (+4)
   - src/ir/lower-generic.ts
@@ -5029,6 +5032,61 @@ inside or across a `finally` does not share the bug: the selector refuses it
   standalone. Playground: 13/13 identical on both lanes (no example has a
   `finally`).
 
+## `<module-init>` boolean module slot (plan, 2026-11-01)
+
+**Root cause.** A script `var` that holds a boolean (`var x = true`,
+`var b = a > 2`) binds through the resolver's `i32` value kind, whose one
+semantic is `boolean` (`scalarKind`, `module-bindings.ts`). Legacy stores a
+JS boolean in that `i32` slot, but `resolveModuleBindingGlobal` typed the
+IR read as a bare `i32`. A consumer that needs the carrier, such as an
+argument of `assert.sameValue`, cannot box an unbranded `i32`
+(`boxConcreteToDynamic`). So the unit was claimed and then withdrawn after
+the claim: "function member operand has no canonical carrier".
+
+**Change.** One arm in `src/ir/integration.ts`, `resolveModuleBindingGlobal`:
+the `i32` kind reads as `irBool()`.
+- It reuses the #4503 boolean brand (`boolean-brand.ts`). The brand changes
+  no representation, and `irTypeEquals` erases it, so no join, slot write or
+  verifier check changes. No second boolean rule is added; the value kind
+  already says `boolean`.
+- The `f64` and `i32` arms stay separate. `integration.ts` grows by 2 lines
+  (the import and the one-line why), under its existing grant with a dated
+  note.
+
+**Why it lands before #7037.** S5 newly reaches this withdrawal: a boolean
+`var` read beside a pattern (`var [a = 1] = [3]; var b = a > 2;`) is claimed
+there, where main refuses the pattern. Main's twin without a pattern,
+`var a = 3; var b = a > 2;`, already withdraws. Fixing the slot first keeps
+S5 free of claim-then-demote, as #7032 landed before #7026. Once both have
+landed, S5's boolean-leaf refusal can go.
+
+**Measured** (standalone, the 792-file sample plus the 1,525 test262 files
+with a top-level boolean `var`; 2,292 files, 2,176 compiled):
+- 1 file has this withdrawal on main (`S12.13_A1.js`), and it is that file's
+  only legacy unit;
+- 2 files have it with #7026, #7037 and #7033 merged in.
+
+So the direct gain is 1 to 2 files. The fix is worth landing because S5
+depends on it, not for its own gain.
+- **The review's 127 #7037 cases** (254 rows), main plus this fix:
+  - `bool-ident` and `plain-var-bool` are newly claimed and right;
+  - no other post-claim error but main's own `shadow-param-str` parity
+    mismatch;
+  - 0 lost claims and 0 value regressions.
+- **With S5 merged in:** `no-leaf-bool` and `default-leaf-bool` are claimed
+  and right too.
+
+**Acceptance.**
+- **Correctness:** no claim-then-demote for a boolean module `var`, 0 flips
+  on both lanes, and legacy bytes and the playground identical.
+- **Tests:** `tests/issue-7106-module-bool-slot.test.ts`, both lanes: six
+  claimed shapes, and the S5 boolean-leaf shape, which withdraws nothing.
+- **Code quality:**
+  - one arm changed;
+  - no new predicate or boolean rule (the existing brand and value kind are
+    reused);
+  - no new function.
+
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
 The following 115 lines are preserved verbatim from the completed #6876 plan
@@ -5157,3 +5215,57 @@ typed wrapper-object carrier in the IR (or a native `any`-receiver fix for
 `toString(radix)` and wrapper objects in legacy's runtime first) — a slice of
 its own, not an admission arm.
 
+
+### 2026-11-05 — #7040 receiving repair
+
+The original fourteen module-Boolean tests pass on receiving main
+`1939868994c22808050c191c1b115b0e9c0709d2` with the authored Boolean
+slot branding. The selector must describe that slot as Boolean rather than
+unbranded int32; native integer slots retain their separate route.
+
+An additional paired diagnostic compiled intentionally invalid TypeScript
+(`function bad(): number { return flag; }`) with the existing semantic-diagnostic
+skip option. Both requested target settings returned Number `1`, but the branded
+candidate recorded a post-claim return-type withdrawal in both. The unchanged
+compiler recorded none in the standalone-requested row and already recorded one
+in the default-target row. Both reported actual IR target `standalone`; these
+are two requested configurations, not evidence of two independent IR targets.
+
+The receiving repair uses the existing Boolean ToNumber lowering at the declared
+f64 return boundary. It keeps Boolean slots outside native numeric-domain
+classification. Four additional controls per requested setting cover template
+spelling, Number conversion, native i32 separation, and actual IR emission of the
+numeric-return function. The original fourteen guest programs and assertions are
+retained. The resulting twenty-two cases and neighboring Boolean-return checks
+are pending qualification; this diagnostic is ABI compatibility evidence, not a
+TypeScript conformance gain or completion of this larger issue.
+
+The first receiving qualification settled all 22 module-slot tests and all 31
+numeric/Boolean equivalence tests. A whole neighboring mixed-return fixture
+settled 1 PASS / 11 FAIL; the unchanged compiler settled the exact same twelve
+statuses with identical normalized failure messages. Those failures remain
+recorded, not converted into passing coverage.
+
+The unchanged ambient-static fixture then settled 265 PASS / 12 FAIL out of
+277. Eight failures were obsolete legacy-only expectations: three module
+programs and a typed function already claimed successfully and answered
+correctly. Four were genuine build withdrawals, with the message that Boolean
+template substitution reached numeric conversion unbranded. The logical
+`&&`/`||` lowering always assigned an unbranded i32 to its value join. The
+receiving fix preserves the brand only when both actual IR operand types are
+Boolean; native integer operands keep their existing unbranded join.
+
+The five affected module programs now use the stronger claimed/node/legacy
+comparison group and the typed function uses the existing claimed/native
+function group. All guest programs remain unchanged. The resulting 287-case
+ambient-static fixture and the changed production source require fresh
+qualification; no historical conformance measurement is restated as current.
+
+The corrected six-file receiving source subsequently passed normal formatting,
+Biome lint (five TypeScript files), source TS7, and all **340 / 340** focused
+tests: module slots 22 / 22, numeric/Boolean equivalence 31 / 31, and the
+strengthened ambient-static fixture 287 / 287. No rows were skipped or pending;
+full streams, source/index/corpus checks, and natural child closure were
+verified. This supersedes the preceding qualification-pending statements for
+this receiving source. Normal commit/push hooks and protected CI remain
+required before delivery and merge.
