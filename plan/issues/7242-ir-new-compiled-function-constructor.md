@@ -129,10 +129,13 @@ from `cx.topLevelFunctionValues`, minted by `planIrImportedCalls`
 2. **Class members (3 rows).** The planner mints plans only for top-level
    function owners and module-init statements; class bodies are never visited.
 
-**Legacy's construct path (step 2).** On standalone (where the S3c arm is
-live: `irSelfGuardedConstructorValue` requires
-`selfGuardedConstructorsLeaveFnctor`, i.e. standalone without a shared-realm
-eval), legacy does **not** use the `__fnctor_F` struct for a self-guarded
+**Legacy's construct path (step 2).** Where the S3c arm is live
+(`irSelfGuardedConstructorValue` requires `selfGuardedConstructorsLeaveFnctor`,
+which tests `ctx.standalone`, the native semantic regime (#5385), not the
+`--target standalone` environment; that regime is also on for the default gc
+target, so gc routes and bytes change with this arm too, while wasi stays
+byte-identical; and never with a shared-realm eval; corrected 2026-11-05 after
+the #7242 review), legacy does **not** use the `__fnctor_F` struct for a self-guarded
 constructor: `compileNewExpression` checks
 `calleeIsStandaloneSelfGuardedConstructor` (`fnctor-ctor-decl.ts`) and builds
 from F's runtime function value through the native construct driver
