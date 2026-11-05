@@ -41,7 +41,7 @@ import type { VecOrClosureReadBinding } from "../runtime/wasmgc/values/object-ge
  * through `funcMap` so the late-import index shifter stays in sync.
  *
  * ## Byte-neutrality
- * Everything is gated on `ctx.standalone || ctx.wasi` (via the reserve call
+ * Everything is gated on the native regime (via the reserve call
  * site). In gc/host mode the `env::__extern_*` host imports own the dynamic
  * property path and none of this is emitted — host output stays byte-identical.
  */

@@ -106,14 +106,13 @@ function ambientIdentifierIsUnavailable(
   ident: ts.Identifier,
   sym: ts.Symbol | undefined,
 ): boolean {
-  if (!(ctx.standalone || ctx.wasi)) return false;
   if (runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text)) return false;
   if (!sym?.declarations?.length || !sym.declarations.every((d) => d.getSourceFile().isDeclarationFile)) return false;
   if (ident.text === "structuredClone") return true;
   if (isStandaloneUnavailableConstructorGlobal(ctx, ident.text)) return true; // (#6664)
   if (isStandaloneUnavailableTimerGlobal(ctx, ident.text)) return true; // (#6675)
   if (!HOST_ONLY_AMBIENT_GLOBALS.has(ident.text)) return false;
-  return !(ctx.standalone && ident.text === "document" && ctx.requiresStandaloneDomCapability === true);
+  return !(ident.text === "document" && ctx.requiresStandaloneDomCapability === true);
 }
 
 /**
@@ -589,7 +588,6 @@ export function compileDeleteExpression(
   }
 
   if (
-    ctx.standalone &&
     ts.isPropertyAccessExpression(inner) &&
     inner.name.text === "prototype" &&
     isFunctionPrototypeExpression(inner.expression)
@@ -1474,7 +1472,6 @@ function insideLoopWithin(node: ts.Node, stop: ts.Node): boolean {
  * the host lane keeps its existing fold byte-for-byte.
  */
 function readPrecedesVarInitializer(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): boolean {
-  if (!(ctx.standalone || ctx.wasi)) return false;
   const ident = skipTransparentExpressions(operand);
   if (!ts.isIdentifier(ident)) return false;
   if (fctx.localMap.get(ident.text) !== undefined) return false;
@@ -1577,7 +1574,7 @@ function runtimeEvalMayRebindIdentifier(
   fctx: FunctionContext,
   expression: ts.Expression,
 ): boolean {
-  if (!(ctx.standalone || ctx.wasi) || !ctx.runtimeEvalGlobalFunctionBindings) return false;
+  if (!ctx.runtimeEvalGlobalFunctionBindings) return false;
   let bare = expression;
   while (
     ts.isParenthesizedExpression(bare) ||
@@ -1695,7 +1692,7 @@ function stringWrapperIndexNeedsRuntimeTypeof(
   fctx: FunctionContext,
   operand: ts.Expression,
 ): boolean {
-  if (!ctx.standalone || !ts.isElementAccessExpression(operand)) return false;
+  if (!ts.isElementAccessExpression(operand)) return false;
   if (!isNumericIndexExpression(ctx, operand.argumentExpression, fctx)) return false;
   return (
     ctx.oracle.builtinReceiverOf(operand.expression) === "String" ||
@@ -1848,7 +1845,7 @@ export function compileTypeofExpression(
         return compileStringLiteral(ctx, fctx, "undefined");
       }
       if (!hasValueDecl) {
-        if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
+        if (ctx.runtimeEvalGlobalFunctionBindings) {
           addUnionImports(ctx);
           const typeofIdx = ctx.funcMap.get("__typeof");
           const valueType = emitRuntimeEvalBindingRead(ctx, fctx, ident.text, true);
@@ -1949,12 +1946,7 @@ export function compileTypeofExpression(
     // result. Keep the read on the normal runtime typeof path whenever the
     // standalone overlay route is armed; the route's dynamic get helper then
     // supplies the actual value before `__typeof` classifies it.
-    if (
-      !forceRuntimeTypeof &&
-      ctx.standalone === true &&
-      overlayRouteActive(ctx) &&
-      ts.isElementAccessExpression(bareTdz)
-    ) {
+    if (!forceRuntimeTypeof && overlayRouteActive(ctx) && ts.isElementAccessExpression(bareTdz)) {
       forceRuntimeTypeof = true;
     }
     // (#4394) JSDoc-typed JS parameter — the declared type is not enforced at
@@ -1988,7 +1980,6 @@ export function compileTypeofExpression(
     // keeps its ordinary static typeof fold.
     if (
       !forceRuntimeTypeof &&
-      ctx.standalone &&
       ts.isPropertyAccessExpression(bareTdz) &&
       ts.isIdentifier(bareTdz.expression) &&
       ctx.sidecarDefinedPropertyKeys.has(`${bareTdz.expression.text}:${bareTdz.name.text}`)
@@ -2264,7 +2255,7 @@ export function compileTypeofComparison(
           if (!literalType) return null;
           return emitHostEqualityFromStack(ctx, fctx, actual, literalType, true, isNeq);
         }
-        if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
+        if (ctx.runtimeEvalGlobalFunctionBindings) {
           addUnionImports(ctx);
           let helperName: string | null = null;
           if (stringLiteral === "number") helperName = "__typeof_number";
@@ -2359,7 +2350,6 @@ export function compileTypeofComparison(
   // its actual runtime result instead.
   if (
     staticTypeof !== null &&
-    ctx.standalone === true &&
     overlayRouteActive(ctx) &&
     ts.isElementAccessExpression(operand) &&
     tf.staticFunctionPrototypeTypeof(ctx, fctx, operand) === null
@@ -2387,7 +2377,6 @@ export function compileTypeofComparison(
   // tombstoned) and the dynamic typeof answers correctly.
   if (
     staticTypeof !== null &&
-    ctx.standalone &&
     (ts.isPropertyAccessExpression(guardOperand) || ts.isElementAccessExpression(guardOperand)) &&
     chainRootIsGrowable(ctx, guardOperand.expression)
   ) {
@@ -2398,7 +2387,6 @@ export function compileTypeofComparison(
   // receiver/key-specific, so an unrelated field keeps its static result.
   if (
     staticTypeof !== null &&
-    ctx.standalone &&
     ts.isPropertyAccessExpression(guardOperand) &&
     ts.isIdentifier(guardOperand.expression) &&
     ctx.sidecarDefinedPropertyKeys.has(`${guardOperand.expression.text}:${guardOperand.name.text}`)

@@ -2342,7 +2342,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * helpers (`__protoidx_*`, proto-index-store.ts) — the runtime companions
    * that make `Object.prototype[i]` / `Array.prototype[i]` writes visible
    * through the prototype chain. Reserved ONLY under
-   * `ctx.standalone && ctx.protoIndexDirty` (pre-scan flag, #4128), so a
+   * `ctx.protoIndexDirty` (pre-scan flag, #4128), so a
    * flag-clear module carries no trace; bodies + chokepoint arms are filled by
    * `fillProtoIndexStore` at FINALIZE.
    */
@@ -3885,8 +3885,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * path (`struct.get`) cannot observe. Membership here suppresses
    * struct-widening for the receiver so it stays on the `$Object` representation
    * and both the dynamic write and the read-back route through the native
-   * runtime consistently. Empty in host/gc/wasi mode (only populated under
-   * `ctx.standalone`).
+   * runtime consistently. Populated under the native regime.
    */
   dynamicDescriptorWidenVars: Set<string>;
   /**
@@ -3901,8 +3900,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * struct-widening for the receiver so it stays a `__new_plain_object` /
    * `$Object`; dot-writes then route through `__extern_set` and every access form
    * reads the same hash consistently. Mirrors `dynamicDescriptorWidenVars`; the
-   * two sets are additive. Empty in host/gc/wasi mode (only populated under
-   * `ctx.standalone`).
+   * two sets are additive. Populated under the native regime.
    */
   objectHashConsumerVars: Set<string>;
   /**
@@ -4941,7 +4939,7 @@ export type { SourcePos };
 /**
  * (#5385 S1, #6685) Is there NO JavaScript embedder? Answers the environment
  * question only (`targetProfile.environment !== "javascript"`); which
- * ECMAScript implementation lowers the module is `ctx.standalone`. Console
+ * ECMAScript implementation lowers the module is the native regime. Console
  * sinks and other environment-shaped arms key on this, never on the regime.
  */
 export function hostFreeEnvironment(ctx: CodegenContext): boolean {

@@ -208,7 +208,7 @@ function writeOnceOwnerOf(ctx: CodegenContext, fn: ts.FunctionLikeDeclaration): 
  * Every clause is a hard requirement, and each failure mode is "miss a
  * monomorphization candidate", never "wrong lowering":
  *
- *  - `ctx.standalone` — the twin's win is the unboxed native field lane, which
+ *  - the regime flag — the twin's win is the unboxed native field lane, which
  *    only exists in the host-free representation.
  *  - S1 write-once verdict for THIS arrow node, under the SAME fnctor the
  *    `this`-struct pin resolved to (a method slot that can be reassigned could

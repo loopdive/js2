@@ -93,7 +93,6 @@ export function vecNamedKeyNeedsRuntime(
   foldedAnswer: number,
 ): boolean {
   if (foldedAnswer !== 0) return false;
-  if (!ctx.standalone) return false;
   if (isCanonicalIndexKey(staticKey)) return false;
   return isVecStructType(ctx, recvWasm);
 }
