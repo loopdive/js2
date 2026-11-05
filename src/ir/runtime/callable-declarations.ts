@@ -32,7 +32,10 @@ import {
   NUMBER_REMAINDER_RUNTIME_PROVIDERS,
   numberRemainderProviderMismatch,
 } from "./number-remainder-callables.js";
-import { irNumberConversionCallableDeclaration } from "./number-conversion-callable.js";
+import {
+  irNumberConversionCallableDeclaration,
+  NUMBER_CONVERSION_RUNTIME_PROVIDERS,
+} from "./number-conversion-callable.js";
 import {
   ORDINARY_OBJECT_RUNTIME_PROVIDERS,
   ordinaryObjectProviderMismatch,
@@ -118,6 +121,7 @@ export const SEMANTIC_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefini
   ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
   ...ORDINARY_OBJECT_RUNTIME_PROVIDERS,
   ...NUMBER_REMAINDER_RUNTIME_PROVIDERS,
+  ...NUMBER_CONVERSION_RUNTIME_PROVIDERS,
 ]);
 
 export function semanticCallableProviderMismatch(provider: RuntimeProviderDefinition): string | undefined {

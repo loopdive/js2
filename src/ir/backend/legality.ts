@@ -21,7 +21,7 @@ export type IrBackendTargetCapability =
   | "standalone-function-prototype-call"
   | "standalone-native-regexp-test-carrier"
   | "standalone-wrapper-instanceof"
-  | "primitive-wrapper-loose-equality"
+  | "primitive-wrapper-to-primitive"
   | "legacy-numeric-array-global"
   | "number-to-string"
   | "native-json-codec"
@@ -31,7 +31,14 @@ export type IrBackendTargetCapability =
   | "native-arguments-length"
   | "native-current-this"
   | "native-own-property-test"
-  | "native-own-property-descriptor";
+  | "host-dynamic-method-call"
+  | "native-own-property-descriptor"
+  | "native-number-conversion"
+  | "prepared-dynamic-helper-abi"
+  | "native-dynamic-member-read"
+  | "planned-closure-direct-call"
+  | "native-dynamic-loose-equality"
+  | "dynamic-method-call-wrapper";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -71,6 +78,19 @@ export function projectIrBackendTargetProfile(
 }
 
 /**
+ * A compile's {@link supportsIrBackendTargetCapability}, over its projected
+ * target profile: the one question selection, lowering and the IR-first gate
+ * ask of a compile.
+ */
+export function irBackendCapabilityQuery(compile: {
+  readonly targetProfile: CompileTargetProfile;
+  readonly fast?: boolean;
+}): (capability: IrBackendTargetCapability) => boolean {
+  const profile = projectIrBackendTargetProfile(compile.targetProfile, { fast: compile.fast });
+  return (capability) => supportsIrBackendTargetCapability(profile, capability);
+}
+
+/**
  * Answer predictable target/provider questions before build/lower.
  *
  * This is deliberately separate from verifyIrBackendLegality: a false result
@@ -103,8 +123,8 @@ export function supportsIrBackendTargetCapability(
         !profile.allowHostImports &&
         profile.fast === true
       );
-    case "primitive-wrapper-loose-equality":
-      // #4208 S4 — the focused producer crosses the wrapper object's
+    case "primitive-wrapper-to-primitive":
+      // #4208 S4 / #7106 — a fresh wrapper operand crosses the wrapper object's
       // externref through the canonical `__to_primitive` runtime boundary,
       // then boxes that primitive into the dynamic carrier. That boundary is
       // representation-exact only for the non-fast externref carrier today.
@@ -126,6 +146,54 @@ export function supportsIrBackendTargetCapability(
     case "native-own-property-descriptor":
       // (#7106 S1g) legacy's uncurried-alias arm is active on the host-free
       // lanes (`uncurriedBuiltinAliasArmActive`); the IR mirrors that lane.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
+    case "host-dynamic-method-call":
+      // (#7117) `recv.m(…)` on a dynamic receiver through the generic
+      // `__ir_dyn_method_call_N` → `__extern_method_call`. The host lane binds
+      // the real JS call; the native object runtime dispatches open-`$Object`
+      // methods only and answers `undefined` for primitive / vec / Map / …
+      // receivers, where legacy dispatches by brand.
+      return profile.backend === "wasmgc" && profile.allowHostImports;
+    case "native-dynamic-member-read":
+    // (#7113, #7177) A property / element read on the boxed-any carrier in
+    // a planned member closure. WASI's IR read has no string or vec
+    // receiver arm and answers `undefined` (`.length`, `[i]`), so only the
+    // standalone regime (native gc projects as standalone) is admitted.
+    case "planned-closure-direct-call":
+      // (#7113) A direct call to a module function from a planned member
+      // closure: WASI mints no AST-site call plan for it and withdraws
+      // ("direct call … has no exact AST-site plan").
+      return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "standalone";
+    case "prepared-dynamic-helper-abi":
+      // (#7113, #7193) A planned member closure inside a prepared
+      // `<module-init>` component binds the carrier's `String` / `in` helpers
+      // by Program ABI identity (`prepared-dynamic-support.ts` names the exact
+      // physical symbols). The native-first gc lane projects as standalone.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
+    case "native-dynamic-loose-equality":
+      // (#7113, #7178, #7193) A loose `==` / `!=` on the carrier in that
+      // closure. Unsound on EVERY lane: no carrier loose-equality helper
+      // ToPrimitives an object operand (`{ valueOf() { return 2 } } == 2`
+      // traps; `[2] != "2"` differs from node — #7194). WASI stays admitted
+      // only to keep main's output, and only against a string other side
+      // (`carrierLooseEqualityAdmissible`, new shapes); standalone is refused.
+      return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "wasi";
+    case "dynamic-method-call-wrapper":
+    // (#7106 Stage 4, #7119) `recv.m(…)` on a dynamic receiver through the
+    // per-(method, arity) `__ir_dyn_mcall_<m>_<n>` wrapper: the call's
+    // [[Get]], then legacy's own any-receiver brand dispatch (host-free
+    // lanes; the native `__extern_method_call` serves open `$Object` only).
+    case "native-number-conversion":
+      // (#7106 module-init lever B) `Number(v)` through the host-free
+      // `js.number.from-value` provider (legacy's emitter over a template).
       return (
         profile.backend === "wasmgc" &&
         profile.fast !== true &&

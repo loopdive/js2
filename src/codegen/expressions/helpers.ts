@@ -289,22 +289,22 @@ export function resolvePrivateThisFieldCarrier(
   return physicalClassName;
 }
 
+/** `className` then its descendants, breadth-first in `classParentMap` order. */
+export function collectClassAndDescendants(ctx: CodegenContext, className: string): string[] {
+  const names = [className];
+  for (let i = 0; i < names.length; i++) {
+    for (const [child, childParent] of ctx.classParentMap) {
+      if (childParent === names[i] && !names.includes(child)) names.push(child);
+    }
+  }
+  return names;
+}
+
 function collectClassAndDescendantTags(ctx: CodegenContext, className: string): number[] {
   const tags: number[] = [];
-  const ownTag = ctx.classTagMap.get(className);
-  if (ownTag !== undefined) tags.push(ownTag);
-
-  const queue = [className];
-  const seen = new Set(queue);
-  while (queue.length > 0) {
-    const parent = queue.shift()!;
-    for (const [child, childParent] of ctx.classParentMap) {
-      if (childParent !== parent || seen.has(child)) continue;
-      seen.add(child);
-      queue.push(child);
-      const tag = ctx.classTagMap.get(child);
-      if (tag !== undefined) tags.push(tag);
-    }
+  for (const name of collectClassAndDescendants(ctx, className)) {
+    const tag = ctx.classTagMap.get(name);
+    if (tag !== undefined) tags.push(tag);
   }
   return tags;
 }

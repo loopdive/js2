@@ -2925,6 +2925,12 @@ export function ensureArrayNativeProtoGlue(ctx: CodegenContext): number | undefi
   return brand;
 }
 
+/** (#4765) Spec `length` of `Array.prototype.<member>` — the Array glue's own answer — or `undefined` for a non-member. */
+export function arrayProtoMethodSpecLength(member: string): number | undefined {
+  if (member.startsWith("@@") || !(ARRAY_PROTO_METHODS as readonly string[]).includes(member)) return undefined;
+  return PROTO_METHOD_LENGTH[member] ?? 1;
+}
+
 /**
  * (#6651 V10b) Demand the `Array.prototype` companion for a DYNAMIC
  * `<vec>[Symbol.iterator]` value read on the host-free lane.

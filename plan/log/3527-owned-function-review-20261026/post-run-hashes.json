@@ -1,0 +1,15 @@
+{
+  "src/backend/wasmgc/resources/native-bigint-number.ts": "c8b8efadfd6de6dc4e119fb2d3897f503b8157fed777a8b1caf3faf769484038",
+  "src/backend/wasmgc/resources/native-booleans.ts": "afae1d4e7acb5a235d3f11c322156d0bdb3bd56afbb750afbcc3a731393597de",
+  "src/backend/wasmgc/resources/native-number-primitive-classifier.ts": "fbd4877f513cf34efc9ffa581c02bc6ab1cbac77e4115245b47d908bde40a799",
+  "src/backend/wasmgc/resources/native-string-output.ts": "a4d039e664837350ca28eb781aa4e4ed3c2946061e5a1420309383c2e72e6e95",
+  "src/wasm/physical/module-reservations.ts": "9dd7b92e36b96f5841cb913f0986f7004c6b9aa4cc411ba2be2ec163fabc24bc",
+  "tests/issue-3518-module-reservations.test.ts": "154e0a84428bbeedf429e63293bc3469181eb75497bea48f86bd9b1279965553",
+  "tests/issue-3518-native-bigint-number-owner.test.ts": "aba2d0a40b89d337cf5cb31fa5f2c1b02c9559de20ececf19c0c1689dac2cbd9",
+  "tests/issue-3518-native-boolean-boxes.test.ts": "1f64d0e44ca9d5fdb23f3a971ed6ae52dd6dceccb1a02288c79c123d1c64b09c",
+  "tests/issue-3518-native-boolean-resources.test.ts": "897820ec7348eddeebaabf3b7e961b269a676436821d08510c5e2c2cca0ebd2e",
+  "tests/issue-3518-native-number-primitive-classifier.test.ts": "40cb3a598e9e3233ed4e3abb67ea09066691bd63dccd1fbc27e9fe354764eeed",
+  "tests/issue-3518-native-string-output-resources.test.ts": "3dea925a9251abd271d73ec847c9397109acaa2e9752b05987a4f6d833dd2c78",
+  "src/wasm/physical/owned-function-data.ts": "7768a885c78d9c0ca1b548174a072ecffe39435b0276bd3e95431491aa473c7d",
+  "tests/issue-3527-owned-function-data.test.ts": "f8321940a2644166786b62e82ba1a605b2abe22ce6a50b0fc4c3a559f33f6459"
+}

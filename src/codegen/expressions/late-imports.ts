@@ -559,8 +559,8 @@ export function ensureLateImport(
     // addUnionImportsAsNativeFuncs happened to run the reconcile in between —
     // on main the hole is hit by a native-CANDIDATE generator that captures an
     // outer local (candidate ⇒ the decl skips the `unionFound` trigger, so no
-    // union finalize reconcile; capture ⇒ sourceNeedsGeneratorHostImports still
-    // pulls the host gen-suite batch right after the raw `__make_callback`).
+    // union finalize reconcile; capture ⇒ the pre-#7010 pre-scan still pulled
+    // the host gen-suite batch right after the raw `__make_callback`).
     // Settling here puts every map/body on the current-numImportFuncs basis, so
     // recording `importsBefore` below is consistent and the #1903 re-base is
     // sound. No-op (added=0) unless a raw import actually landed since the last

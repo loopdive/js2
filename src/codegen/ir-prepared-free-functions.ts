@@ -20,7 +20,6 @@ import {
   buildIrLegacyUnitProjection,
   requireIrPlanningOwnerUnitId,
   type IrLegacyUnitProjection,
-  type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
 import type { IrPromiseDelayLoweringPlan, IrPromiseDelayLoweringPlans } from "../ir/promise-delay-lowering.js";
 import { constructorHasIrSafeReceiverSemantics, type IrSelection } from "../ir/select.js";
@@ -54,6 +53,7 @@ import {
   preparedIrBodyRouting,
   type IrExactBodyClaim,
   type IrExactFunctionClaim,
+  type IrFirstSkipIdentityInput,
 } from "./ir-overlay-safety.js";
 import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
 import { applyArgArrayTypeErrorMaterializesReceiver } from "./apply-arglist-typeerror.js";
@@ -62,30 +62,10 @@ import { hasPreparedFunctionObjectReference } from "./ir-imported-call-planning.
 import type { PreparedCallableBoundaryCandidate } from "../ir/prepared-callable-boundary.js";
 
 /** Preserve the inherited compile-once allowlist for owners not prepared early. */
-export function computePreparedInheritedIrFirstSkipUnitIds(input: {
-  readonly sourceFile: ts.SourceFile;
-  readonly identityContext: IrPlanningIdentityContext;
-  readonly safeFunctionUnitIds: ReadonlySet<IrUnitId>;
-  readonly claimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
-  readonly overridesByUnitId: ReadonlyMap<
-    IrUnitId,
-    { readonly params: readonly IrType[]; readonly returnType: IrType | null }
-  >;
-  readonly potentiallyBlockedOwnerUnitIds: ReadonlySet<IrUnitId>;
-  readonly generatorsSkippable: boolean;
-  readonly fast: boolean;
-}): Set<IrUnitId> {
-  const requestedSkipUnitIds = new Set(
-    computeIrFirstSkipUnitIds({
-      sourceFile: input.sourceFile,
-      identityContext: input.identityContext,
-      safeFunctionUnitIds: input.safeFunctionUnitIds,
-      claimsByUnitId: input.claimsByUnitId,
-      overridesByUnitId: input.overridesByUnitId,
-      potentiallyBlockedOwnerUnitIds: input.potentiallyBlockedOwnerUnitIds,
-      generatorsSkippable: input.generatorsSkippable,
-    }),
-  );
+export function computePreparedInheritedIrFirstSkipUnitIds(
+  input: IrFirstSkipIdentityInput & { readonly fast: boolean },
+): Set<IrUnitId> {
+  const requestedSkipUnitIds = new Set(computeIrFirstSkipUnitIds(input));
   // Keep the inherited fast route to its annotation-proven boolean subset.
   // Numeric scalars have a separate pre-body admission below, where the final
   // IR override is compared with the allocated callable slot before ownership

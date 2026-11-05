@@ -4,6 +4,7 @@
  * subsystem: state shape, factory, per-node visitor, and the finalizer that
  * materializes host imports. Extracted verbatim from codegen/declarations.ts (#3268).
  */
+import { CONSOLE_METHOD_NAMES as CONSOLE_METHODS_SET } from "../../shared/contracts/console-output.js";
 import {
   isBigIntType,
   isBooleanType,
@@ -27,7 +28,7 @@ import { hasStaticModifier } from "../ast-modifiers.js"; // (#3132 S2) method-dr
 import { bodyNeedsArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { emitNativeEscape, emitNativeUnescape } from "../escape-native.js";
 import { emitNativeAtob, emitNativeBtoa } from "../helpers/base64-native.js"; // (#7079)
-import { isNativeGeneratorCandidate, sourceNeedsGeneratorHostImports } from "../generators-native.js";
+import { isNativeGeneratorCandidate } from "../generators-native.js";
 import { reportEagerGeneratorAbruptResumptions } from "../generator-eager-refusal.js";
 import {
   KNOWN_CONSTRUCTORS,
@@ -124,8 +125,6 @@ export interface UnifiedCollectorState {
   // context
   sourceFile: ts.SourceFile;
 }
-
-const CONSOLE_METHODS_SET = new Set(["log", "warn", "error", "info", "debug"]);
 
 /**
  * (#3912) The pure-Wasm §7.1.4.1 StringToNumber helper.
@@ -345,6 +344,8 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
         } else {
           needed.add("externref");
         }
+        // (#7157) The host-free sink renders a bigint argument with the exact formatter.
+        if (hostFreeEnvironment(ctx)) registerBigIntToStringDemand(ctx, state.primitiveNeeded, isBigIntType(argType));
       }
     }
   }
@@ -1328,8 +1329,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   if (!hostFreeEnvironment(ctx)) {
-    const CONSOLE_METHODS = ["log", "warn", "error", "info", "debug"] as const;
-    for (const method of CONSOLE_METHODS) {
+    for (const method of CONSOLE_METHODS_SET) {
       const needed = state.consoleNeededByMethod.get(method);
       if (!needed) continue;
       if (needed.has("number")) {
@@ -1655,12 +1655,12 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // (in `./index.ts`) so the IR path can call the same helper when it
   // claims a generator function (#1169f). The helper is idempotent —
   // guards on `ctx.funcMap.has("__gen_create_buffer")` internally.
+  // (#7010) Host-free builds (standalone, WASI, the native regime) never
+  // register the bundle: the eager buffer has no host-free implementation, so a
+  // generator neither native lowering claims is a compile error at its emit site
+  // (`refuseEagerGeneratorBuffer`), not a silent `__gen_*` host dependency.
   if (state.generatorFound) {
-    const needsNoJsHostFallback =
-      (ctx.standalone || ctx.wasi) && sourceNeedsGeneratorHostImports(ctx, state.sourceFile);
-    if (!(ctx.standalone || ctx.wasi) || needsNoJsHostFallback) {
-      addGeneratorImports(ctx, { allowNoJsHost: needsNoJsHostFallback });
-    }
+    if (!(ctx.standalone || ctx.wasi)) addGeneratorImports(ctx);
     reportEagerGeneratorAbruptResumptions(ctx, state.sourceFile); // (#6781) traced .throw()/.return() on eager
   }
 

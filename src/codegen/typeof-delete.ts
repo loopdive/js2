@@ -11,7 +11,7 @@ import { typeofOperandIsDeclared } from "./expressions/typeof-import-binding.js"
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { elementReadOfRebindWidenedArray } from "./declarations/array-rebind-element-widening.js";
-import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { slotIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
 import {
   emitUninitialisedFieldTypeofComparison,
@@ -20,6 +20,7 @@ import {
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 import { overlayRouteActive } from "./typed-lane-overlay-route.js";
 import { allocLocal, allocTempLocal, externrefCompatibleLocal, releaseTempLocal } from "./context/locals.js";
+import { identifierHoldsRawExternref } from "./array-hof-nullable-elem-param.js"; // (#7152)
 import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./expressions/assignment.js";
@@ -40,6 +41,7 @@ import {
 } from "./arguments-object-mop.js"; // (#4555)
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, isAnyValue, skipTransparentExpressions } from "./shared.js";
+import { externrefOperandAsAnyValue } from "./anyvalue-elem-materialize.js"; // (#7166)
 import { compileStringLiteral } from "./string-ops.js";
 import { emitDynamicWithDelete, findWithBinding, resolveWithBinding } from "./with-scope.js";
 import {
@@ -1937,9 +1939,9 @@ export function compileTypeofExpression(
     if (runtimeEvalMayRebindIdentifier(ctx, fctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
-    // (#4204) Slot is externref, checker still says primitive — folding
+    // (#4204/#4495) Slot is externref, checker still says primitive — folding
     // `typeof x` would report the initializer's type forever.
-    if (ts.isIdentifier(bareTdz) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, bareTdz)) {
+    if (ts.isIdentifier(bareTdz) && slotIsDynamicButStaticallyPrimitive(ctx, fctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
     if (isReturnOverrideMemberRead(ctx, bareTdz)) forceRuntimeTypeof = true; // (#6772 S2)
@@ -2087,6 +2089,7 @@ export function compileTypeofExpression(
   if (
     (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
     isAnyValue(wasmType, ctx) &&
+    !identifierHoldsRawExternref(fctx, operand) &&
     ctx.nativeStrings &&
     ctx.anyStrTypeIdx >= 0
   ) {
@@ -2095,6 +2098,7 @@ export function compileTypeofExpression(
     if (typeofIdx !== undefined) {
       const operandType = compileExpression(ctx, fctx, operand);
       if (operandType === null) return null;
+      externrefOperandAsAnyValue(ctx, fctx, operandType);
       fctx.body.push({ op: "call", funcIdx: typeofIdx });
       return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
     }
@@ -2339,7 +2343,7 @@ export function compileTypeofComparison(
     staticTypeof = null;
   }
   // (#4204) Same unsound-fold guard as compileTypeofExpression.
-  if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
+  if (staticTypeof !== null && ts.isIdentifier(operand) && slotIsDynamicButStaticallyPrimitive(ctx, fctx, operand)) {
     staticTypeof = null;
   }
   // (#6772 S2) the receiver may be a constructor's foreign override object.
@@ -2454,7 +2458,7 @@ export function compileTypeofComparison(
   // Any-typed typeof comparison via tag check
   // Instead of calling __any_typeof + string comparison, we can directly check the tag
   // on the $AnyValue struct. This avoids pulling in the full native string helpers.
-  if (isAnyValue(resolveWasmType(ctx, tsType), ctx)) {
+  if (isAnyValue(resolveWasmType(ctx, tsType), ctx) && !identifierHoldsRawExternref(fctx, operand)) {
     ensureAnyHelpers(ctx);
     // Map the string literal to canonical JsTag (#2104) tag check(s):
     //   0 Null · 1 Undefined · 2 NumberI32 · 3 NumberF64 · 4 Boolean ·
@@ -2481,7 +2485,7 @@ export function compileTypeofComparison(
       // (#6981) The declared type is `any`, but a usage-specialized slot (an
       // `any` local only ever written numbers → `f64`) arrives unboxed. Box it
       // so the tag read sees an `$AnyValue`, never a scalar.
-      if (!isAnyValue(operandType, ctx)) {
+      if (!isAnyValue(operandType, ctx) && !externrefOperandAsAnyValue(ctx, fctx, operandType)) {
         coerceType(ctx, fctx, operandType, { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx });
       }
       // Get the tag field

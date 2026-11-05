@@ -831,10 +831,20 @@ const VERDICTS = {
     why: "ECMAScript OrdinaryCallBindThis (§10.2.1.2) for an ordinary function: the installed receiver, else the global object (sloppy) or undefined (strict), read through the receiver protocol shared with legacy.",
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the `this` binding of an ordinary top-level" }],
   },
+  "dyn.global_object": {
+    verdict: "js",
+    why: "The ECMAScript realm's global object (§9.3.1 [[GlobalObject]], the value of globalThis §19.1.1), the same object legacy's native globalThis read yields.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the realm's global object" }],
+  },
   "dyn.instanceof_fn": {
     verdict: "js",
     why: "ECMAScript InstanceofOperator / OrdinaryHasInstance (§13.10.2, §7.3.20) against a known function constructor's prototype object, shared with legacy's per-function prototype.",
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "OrdinaryHasInstance (§7.3.20) walks" }],
+  },
+  "dyn.instanceof": {
+    verdict: "js",
+    why: "ECMAScript InstanceofOperator / OrdinaryHasInstance (§13.10.2, §7.3.20) over two dynamic values, the same runtime operator legacy's generic instanceof uses.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the generic `value instanceof target`" }],
   },
   "dyn.publish_argc": {
     verdict: "js",

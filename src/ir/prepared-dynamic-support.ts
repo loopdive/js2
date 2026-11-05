@@ -84,6 +84,38 @@ function exactHostHelperName(instr: IrInstr, types: ReadonlyMap<IrValueId, IrTyp
   return operand !== undefined && asVal(operand)?.kind === "f64" ? "__box_number" : null;
 }
 
+type PreparedDynamicHelperName = Parameters<typeof exactPreparedDynamicHelperRef>[2];
+const EXTERNREF: ValType = { kind: "externref" };
+const I32: ValType = { kind: "i32" };
+
+/**
+ * The single call each host-carrier arm of `makeDynamicLowering` emits
+ * (`emitToBoolean`, `emitTypeof`, `emitToString`, `emitStrictEq`). The
+ * native-string re-tag after `__typeof` / `__extern_toString` calls nothing.
+ */
+const HOST_CARRIER_HELPERS: Readonly<
+  Record<
+    "dyn.truthy" | "dyn.typeof" | "dyn.to_string" | "dyn.eq",
+    {
+      readonly name: PreparedDynamicHelperName;
+      readonly params: readonly ValType[];
+      readonly results: readonly ValType[];
+    }
+  >
+> = {
+  "dyn.truthy": { name: "__is_truthy", params: [EXTERNREF], results: [I32] },
+  "dyn.typeof": { name: "__typeof", params: [EXTERNREF], results: [EXTERNREF] },
+  "dyn.to_string": { name: "__extern_toString", params: [EXTERNREF], results: [EXTERNREF] },
+  "dyn.eq": { name: "__extern_strict_eq", params: [EXTERNREF, EXTERNREF], results: [I32] },
+};
+
+/** The callable each host-carrier `emitTagTest` partition arm calls. */
+const TAG_TEST_HELPERS: ReadonlyMap<number, PreparedDynamicHelperName> = new Map([
+  [JS_TAG_IDS.Undefined, "__typeof_undefined"],
+  [JS_TAG_IDS.Object, "__typeof_object"],
+  [JS_TAG_IDS.Function, "__typeof_function"],
+] as const);
+
 /** Value → IrType for one body, the same population `valueTypesOf` visits. */
 function valueTypesOf(fn: IrFunction): Map<IrValueId, IrType> {
   const types = new Map<IrValueId, IrType>();
@@ -152,10 +184,33 @@ export function prepareDynamicInstructionSupportForUnits(input: {
     const types = valueTypesOf(entry.fn);
     const planned = new Map<IrInstr, readonly IrFuncRef[]>();
     let nameable = true;
+    const bindExact = (
+      instr: IrInstr,
+      name: PreparedDynamicHelperName,
+      params: readonly ValType[],
+      results: readonly ValType[],
+    ): void => {
+      const ref = exactPreparedDynamicHelperRef(ctx, callableImports, name, ctx.funcMap.get(name), params, results);
+      if (ref === undefined) nameable = false;
+      else planned.set(instr, [ref]);
+    };
     for (const block of entry.fn.blocks)
       for (const root of block.instrs) {
         forEachInstrDeep(root, (instr) => {
           if (!isDynamicInstruction(instr)) return;
+          // Entry-time argc state also belongs to plain functions without a
+          // local function-object call. Cover all native host-free externref
+          // units, not only the function-object population below.
+          if (
+            native &&
+            (ctx.standalone || ctx.wasi) &&
+            !ctx.fast &&
+            carrierValType.kind === "externref" &&
+            instr.kind === "dyn.arguments_length"
+          ) {
+            bindExact(instr, "__ir_arguments_length", [I32], [{ kind: "f64" }]);
+            return;
+          }
           // The certified function-object producer uses the existing native
           // externref operations. Name their ACTUAL lowering providers, with
           // exact physical signatures, before dependency discovery. Unsupported
@@ -178,34 +233,21 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             functionObjects &&
             !ctx.fast &&
             carrierValType.kind === "externref" &&
-            (instr.kind === "dyn.truthy" || instr.kind === "dyn.typeof" || (instr.kind === "dyn.eq" && !instr.loose))
+            (instr.kind === "dyn.truthy" ||
+              instr.kind === "dyn.typeof" ||
+              instr.kind === "dyn.to_string" ||
+              (instr.kind === "dyn.eq" && !instr.loose))
           ) {
-            const name =
-              instr.kind === "dyn.truthy"
-                ? "__is_truthy"
-                : instr.kind === "dyn.typeof"
-                  ? "__typeof"
-                  : "__extern_strict_eq";
-            const params: readonly ValType[] =
-              instr.kind === "dyn.eq" ? [{ kind: "externref" }, { kind: "externref" }] : [{ kind: "externref" }];
-            const results: readonly ValType[] =
-              instr.kind === "dyn.typeof" ? [{ kind: "externref" }] : [{ kind: "i32" }];
-            const ref = exactPreparedDynamicHelperRef(
-              ctx,
-              callableImports,
-              name,
-              ctx.funcMap.get(name),
-              params,
-              results,
-            );
-            if (ref === undefined) nameable = false;
-            else planned.set(instr, [ref]);
+            const { name, params, results } = HOST_CARRIER_HELPERS[instr.kind];
+            bindExact(instr, name, params, results);
             return;
           }
           // (#7106 Stage 4) `message === undefined` / `thrown === null` over the
-          // externref carrier: the host tag.test arms `emitTagTest` emits —
-          // Undefined calls `__typeof_undefined`, Null is a bare `ref.is_null`
-          // (no callable). Other partitions stay unnamed (unmeasured).
+          // externref carrier, and (#7193) the Object / Function partition
+          // tests `in`'s receiver check emits: the host tag.test arms of
+          // `emitTagTest`. Null is a bare `ref.is_null` (no callable); Object
+          // reads `__typeof_object` beside a `ref.is_null`. Other partitions
+          // stay unnamed (unmeasured).
           if (
             native &&
             functionObjects &&
@@ -218,20 +260,12 @@ export function prepareDynamicInstructionSupportForUnits(input: {
               planned.set(instr, []);
               return;
             }
-            if (instr.tagId !== JS_TAG_IDS.Undefined) {
+            const name = TAG_TEST_HELPERS.get(instr.tagId);
+            if (name === undefined) {
               nameable = false;
               return;
             }
-            const ref = exactPreparedDynamicHelperRef(
-              ctx,
-              callableImports,
-              "__typeof_undefined",
-              ctx.funcMap.get("__typeof_undefined"),
-              [{ kind: "externref" }],
-              [{ kind: "i32" }],
-            );
-            if (ref === undefined) nameable = false;
-            else planned.set(instr, [ref]);
+            bindExact(instr, name, [EXTERNREF], [I32]);
             return;
           }
           // (#7106 Stage 4) `var x;` / missing-member reads produce the
@@ -292,16 +326,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
               // and uses __box_number. The conversion itself calls no helper.
               const boolean = instr.toType.tag === JS_TAG_IDS.Boolean;
               const name = boolean ? "__box_boolean" : "__box_number";
-              const ref = exactPreparedDynamicHelperRef(
-                ctx,
-                callableImports,
-                name,
-                ctx.funcMap.get(name),
-                [{ kind: boolean ? "i32" : "f64" }],
-                [{ kind: "externref" }],
-              );
-              if (ref === undefined) nameable = false;
-              else planned.set(instr, [ref]);
+              bindExact(instr, name, [boolean ? I32 : { kind: "f64" }], [EXTERNREF]);
               return;
             }
             if (ctx.fast) {
@@ -314,19 +339,8 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             }
           }
           const name = exactHostHelperName(instr, types);
-          const ref =
-            name === null
-              ? undefined
-              : exactPreparedDynamicHelperRef(
-                  ctx,
-                  callableImports,
-                  name,
-                  ctx.funcMap.get(name),
-                  [{ kind: "f64" }],
-                  [{ kind: "externref" }],
-                );
-          if (ref === undefined) nameable = false;
-          else planned.set(instr, [ref]);
+          if (name === null) nameable = false;
+          else bindExact(instr, name, [{ kind: "f64" }], [EXTERNREF]);
         });
       }
     if (!nameable) {

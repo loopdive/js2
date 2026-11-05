@@ -1316,20 +1316,7 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
   // allocated before the short-circuit temp below.
   const matInstrs = buildVecFromExternref(ctx, fctx, 0, vecTypeIdx, vecInfo);
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-  const copySidecarIdx = undefined;
   const tmpAny = allocLocal(fctx, `__vfe_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
-  const crossRepInstrs: Instr[] = matInstrs;
-  if (copySidecarIdx !== undefined) {
-    const resultLocal = allocLocal(fctx, `__vfe_result_${fctx.locals.length}`, resultType);
-    crossRepInstrs.push(
-      { op: "local.set", index: resultLocal },
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: resultLocal },
-      { op: "extern.convert_any" },
-      { op: "call", funcIdx: copySidecarIdx },
-      { op: "local.get", index: resultLocal },
-    );
-  }
 
   const body: Instr[] = [
     // (1) null/undefined guard.
@@ -1358,7 +1345,7 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
             { op: "ref.cast", typeIdx: vecTypeIdx },
           ],
           // (3) host externref / cross-rep → materialize a fresh exact-type vec.
-          else: crossRepInstrs,
+          else: matInstrs,
         },
       ],
     },
@@ -2075,14 +2062,6 @@ function emitVecToVecBody(
   srcVec: { arrTypeIdx: number; elemType: ValType },
   dstVec: { arrTypeIdx: number; elemType: ValType },
 ): boolean {
-  // A vec projection changes only the compiler's element heap type; at the
-  // JavaScript level it is still the same Array object. In host-backed GC mode
-  // its non-index properties live in a WeakMap keyed by the raw vec. Reserve a
-  // bridge before emitting the copy so the fresh destination can inherit that
-  // sidecar after its indexed elements are projected. Resolve the funcIdx only
-  // after the late-import flush to avoid retaining a shifted defined index.
-  let copySidecarIdx: number | undefined;
-
   // Save the source vec ref to a temp local
   const srcRefType: ValType = { kind: "ref_null", typeIdx: fromTypeIdx };
   const srcLocal = allocTempLocal(fctx, srcRefType);
@@ -2228,18 +2207,6 @@ function emitVecToVecBody(
   fctx.body.push({ op: "local.get", index: lenLocal });
   fctx.body.push({ op: "local.get", index: dstArrLocal });
   fctx.body.push({ op: "struct.new", typeIdx: toTypeIdx });
-
-  if (copySidecarIdx !== undefined) {
-    const dstVecLocal = allocTempLocal(fctx, { kind: "ref_null", typeIdx: toTypeIdx });
-    fctx.body.push({ op: "local.set", index: dstVecLocal });
-    fctx.body.push({ op: "local.get", index: srcLocal });
-    fctx.body.push({ op: "extern.convert_any" });
-    fctx.body.push({ op: "local.get", index: dstVecLocal });
-    fctx.body.push({ op: "extern.convert_any" });
-    fctx.body.push({ op: "call", funcIdx: copySidecarIdx });
-    fctx.body.push({ op: "local.get", index: dstVecLocal });
-    releaseTempLocal(fctx, dstVecLocal);
-  }
 
   releaseTempLocal(fctx, iLocal);
   releaseTempLocal(fctx, dstArrLocal);
@@ -3184,28 +3151,11 @@ export function coerceType(
       if (to.kind === "ref_null" && !materializeUndefinedVec) {
         ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
       }
-
       const materializeVec = buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo);
       // buildVecFromExternref flushes every late-import shift. Resolve the
-      // helpers afterwards so these calls cannot retain stale defined funcIdxs.
+      // helper afterwards so this call cannot retain a stale defined funcIdx.
       const isUndefinedIdx =
         to.kind === "ref_null" && !materializeUndefinedVec ? ctx.funcMap.get("__extern_is_undefined") : undefined;
-      const copySidecarIdx = undefined;
-      const materializeWithSidecar: Instr[] = materializeVec;
-      if (copySidecarIdx !== undefined) {
-        const resultLocal = allocLocal(fctx, `__coerce_vec_result_${fctx.locals.length}`, {
-          kind: "ref_null",
-          typeIdx: toIdx,
-        });
-        materializeWithSidecar.push(
-          { op: "local.set", index: resultLocal },
-          { op: "local.get", index: tmpExternLocal },
-          { op: "local.get", index: resultLocal },
-          { op: "extern.convert_any" },
-          { op: "call", funcIdx: copySidecarIdx },
-          { op: "local.get", index: resultLocal },
-        );
-      }
       elseBranch = [
         { op: "local.get", index: tmpExternLocal },
         { op: "ref.is_null" },
@@ -3220,7 +3170,7 @@ export function coerceType(
           op: "if",
           blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toIdx } },
           then: [{ op: "ref.null", typeIdx: toIdx }],
-          else: wrapArrayProtoVecAlias(ctx, tmpExternLocal, toIdx, vecInfo.arrTypeIdx, materializeWithSidecar),
+          else: wrapArrayProtoVecAlias(ctx, tmpExternLocal, toIdx, vecInfo.arrTypeIdx, materializeVec),
         },
       ];
     } else {

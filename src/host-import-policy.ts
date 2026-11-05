@@ -158,8 +158,6 @@ function classifyBuiltin(name: string): HostImportPolicy {
     // host-free build substitutes its stand-in at compile time.
     return policy("platform-capability", "node", 1490, false, "Node process capability");
   }
-  const gap = regimeGapOfBuiltin(name);
-  if (gap) return gap;
   return retired(`env builtin '${name}' is not an adapter, capability, lifecycle hook or accelerator`);
 }
 
@@ -175,28 +173,17 @@ function retired(reason: string): HostImportPolicy {
 
 /**
  * (#6979, #5385) Named regime gaps: host imports that are still the ONLY
- * implementation of a construct on the native regime. Exactly this family;
- * `scripts/check-host-import-policy.ts` holds the explicit name ceiling so a
- * second cannot slip in. Each is a #5385 regime slice to close.
- * (`shared-array-buffer` closed with #7011's native provider and
- * `temporal-strings` with #7012's in-module helpers.)
+ * implementation of a construct on the native regime. `scripts/check-host-import-policy.ts`
+ * holds the explicit name ceiling so a new one cannot slip in unreviewed; each
+ * would be a #5385 regime slice to close. None is left: `shared-array-buffer`
+ * closed with #7011's native provider, `temporal-strings` with #7012's
+ * in-module helpers, and `eager-generator-buffer` (the `__gen_*` /
+ * `__create_generator` eager host buffer, #680) with #7010, which made a
+ * generator shape the native lowering declines a compile error
+ * (`generator-no-host-free-lowering`) instead of a `__gen_*` fallback. Those
+ * names now classify `unknown` (retired) like every other host-semantic import.
  */
-export const REGIME_GAP_FAMILIES = {
-  "eager-generator-buffer":
-    "eager-buffer generator fallback for generator shapes the native generator lowering declines (#680)",
-} as const;
-export type RegimeGapFamily = keyof typeof REGIME_GAP_FAMILIES;
-
-function regimeGap(family: RegimeGapFamily): HostImportPolicy {
-  return policy("regime-gap", family, 5385, false, REGIME_GAP_FAMILIES[family]);
-}
-
-function regimeGapOfBuiltin(name: string): HostImportPolicy | undefined {
-  if (name.startsWith("__gen_") || name === "__create_generator" || name === "__create_async_generator") {
-    return regimeGap("eager-generator-buffer");
-  }
-  return undefined;
-}
+export const REGIME_GAP_FAMILIES: Readonly<Record<string, string>> = {};
 
 /**
  * #6707: `env.__exn` is the one `WebAssembly.Tag` the JS embedder hands to

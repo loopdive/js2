@@ -74,7 +74,8 @@ concurrency:
 jobs:
   build:
     name: build libquickjs.wasm (wasm32-wasip1)
-    runs-on: ubuntu-latest
+    # Pinned (2026-10-31): ubuntu-latest moved to 26.04, which has no clang-18.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     outputs:
       hash: ${{ steps.key.outputs.hash }}

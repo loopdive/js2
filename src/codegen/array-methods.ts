@@ -26,7 +26,13 @@ import {
 } from "./array-species.js"; // (#5145) ArraySpeciesCreate + CreateDataPropertyOrThrow
 import { f64JoinSentinelArm } from "./vec-f64-hole-gap.js"; // (#4491 T8)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4638) concat absent-tail marker
-import { buildJoinBoxedElementToString, isAnyStringSubtype } from "./array-join-element.js"; // (#4560)
+import {
+  buildJoinBoxedElementToString,
+  stringJoinElement,
+  CLOSURE_ARRAY_METHODS,
+  isAnyStringSubtype,
+  nativeJoinProbeExpr,
+} from "./array-join-element.js"; // (#4560, #7146)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addStringImports,
@@ -74,6 +80,7 @@ import { tryEmitProtoOverrideTwoArm } from "./builtin-proto-member-override.js";
 import { isStandaloneArraySubclass, withArraySubclassReceiverAsVec } from "./array-subclass-receiver.js"; // (#2917)
 import { withOwnKeyListReceiverAsVec } from "./object-model/object-own-key-order.js"; // (#6770 S5)
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
+import { isGrowthSwitchedReceiver } from "./statements/array-share-group.js";
 import {
   compileArrowAsClosure,
   compileExpression,
@@ -82,9 +89,19 @@ import {
   registerEmitBoundsCheckedArrayGet,
   VOID_RESULT,
 } from "./shared.js";
-import { emitIncludesSearchValue, emitIndexOfAbsentSearchValue } from "./array-includes-search-value.js";
+import {
+  emitForwardSearchStart,
+  emitIncludesSearchValue,
+  emitIndexOfAbsentSearchValue,
+  evalSearchFromIndex,
+} from "./array-includes-search-value.js";
 import { emitUndefined, ensureGetUndefined } from "./expressions/late-imports.js";
-import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper, undefinedExternInstrs } from "./any-helpers.js";
+import {
+  canonicalUndefinedExternInstrs,
+  ensureExternSameValueZeroHelper,
+  ensureExternStrictEqHelper,
+  undefinedExternInstrs,
+} from "./any-helpers.js";
 import {
   ensureNativeStringHelpers,
   nativeStringLiteralInstrs,
@@ -109,6 +126,7 @@ import {
 } from "./array-callback-dyn-invoke.js"; // (#6690)
 import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRepr } from "./builtin-scaffold.js";
 import { ensureTimsortHelper } from "./timsort.js";
+import { prepareExternVecDefaultSortCompare, stringVecSortCompare } from "./array/array-sort-value.js";
 import { emitStableMergeSort } from "./merge-sort.js"; // (#3902) shared stable O(n log n) sort skeleton
 import {
   buildVecFromExternMaterializer,
@@ -2104,19 +2122,7 @@ export function compileArrayMethodCall(
   // (#2007/#1448) Record closure-allocating array methods so the standalone
   // vec-concat join fast-path can avoid a late `number_toString` registration
   // that would shift indices and corrupt this closure's already-emitted code.
-  if (
-    methodName === "map" ||
-    methodName === "filter" ||
-    methodName === "flatMap" ||
-    methodName === "forEach" ||
-    methodName === "reduce" ||
-    methodName === "reduceRight" ||
-    methodName === "find" ||
-    methodName === "findIndex" ||
-    methodName === "sort"
-  ) {
-    fctx.emittedClosureArrayMethod = true;
-  }
+  if (CLOSURE_ARRAY_METHODS.has(methodName)) fctx.emittedClosureArrayMethod = true;
 
   const receiverExpr = propAccess.expression;
   const arrInfo =
@@ -2137,17 +2143,8 @@ export function compileArrayMethodCall(
     );
   }
 
-  // A native-string join over a closure-producing array expression must
-  // compile that receiver exactly once. The ordinary actual-type probe below
-  // recompiles `map`/`filter`/… and closure registration is not transactional;
-  // probing and then emitting the receiver can therefore leave the committed
-  // call wired to a stale/null closure. The resolved TS result type already
-  // describes the array produced by these methods, including `map`'s result
-  // element type, so use it directly for this narrow nested-call shape.
-  const skipReceiverProbeForNativeJoin =
-    ctx.nativeStrings &&
-    (methodName === "join" || methodName === "toString" || methodName === "toLocaleString") &&
-    receiverIsClosureProducingArrayCall(receiverExpr);
+  // The expression whose lowered type replaces the checker's vec (see nativeJoinProbeExpr).
+  const storageExpr = nativeJoinProbeExpr(ctx.nativeStrings, methodName, receiverExpr);
 
   let { vecTypeIdx, arrTypeIdx, elemType } = arrInfo;
   // #1286: tracks whether the probe found the receiver to be externref at
@@ -2180,11 +2177,11 @@ export function compileArrayMethodCall(
   // `[0, true].lastIndexOf(...)` infers i32 elements during construction,
   // but resolveArrayInfo resolves (number|boolean)[] → __vec_externref.
   // Probe-compile the receiver to determine the actual Wasm type (#826).
-  if (receiverExpr && !skipReceiverProbeForNativeJoin) {
+  if (storageExpr) {
     // Fast path: check the Wasm local/global type directly
     let actualType: ValType | undefined;
-    if (ts.isIdentifier(receiverExpr) && !fctx.nativeGeneratorExpressionValueLocals?.has(receiverExpr)) {
-      const name = receiverExpr.text;
+    if (ts.isIdentifier(storageExpr) && !fctx.nativeGeneratorExpressionValueLocals?.has(storageExpr)) {
+      const name = storageExpr.text;
       const localIdx = fctx.localMap.get(name);
       if (localIdx !== undefined) {
         // #1247: localIdx is the wasm-level index (params + locals);
@@ -2208,7 +2205,7 @@ export function compileArrayMethodCall(
       // #1919 — transactional probe: the method function re-compiles the
       // receiver below, so discard the body plus any locals / late imports /
       // errors this probe leaks.
-      const probeResult = probeCompiledType(ctx, fctx, () => compileExpression(ctx, fctx, receiverExpr));
+      const probeResult = probeCompiledType(ctx, fctx, () => compileExpression(ctx, fctx, storageExpr));
       if (
         probeResult &&
         (probeResult.kind === "ref" || probeResult.kind === "ref_null") &&
@@ -2399,16 +2396,15 @@ export function compileArrayMethodCall(
       // wasi lanes keep their unconditional widening (no host globals exist).
       (ctx.standalone || ctx.wasi || hofRefElemClosureLaneSafe(ctx, callExpr)));
 
-  // (#3481) §23.1.3.1 `at(index)` step 3 and §23.1.3.14 `includes(x, fromIndex)`
-  // step 4 both run `? ToIntegerOrInfinity(...)`, whose ToNumber throws on a
-  // Symbol (§7.1.4 step 5). Both have TWO lowerings (native vec and the host
-  // fallback) that each read the argument as a number, so a symbol's `i32` id
-  // flowed through as an ordinary index — `[1,2].at(Symbol())` answered
-  // `undefined` instead of throwing. Guarding at the shared dispatch covers
-  // both arms once; the receiver is passed as a `before` operand so its side
-  // effects still run in §13.3.6.1 order.
+  // (#3481) `at(index)` (§23.1.3.1 step 3) and `includes(x, fromIndex)` (step 4)
+  // run `? ToIntegerOrInfinity(...)`, which throws on a Symbol (§7.1.4 step 5),
+  // but a symbol's `i32` id flowed through as an ordinary index. The receiver is
+  // a `before` operand so its side effects still run in §13.3.6.1 order.
+  // (#4765) Native `includes` is not guarded here: its throw must follow step
+  // 3's `len = 0` return, so `evalSearchFromIndex` emits it under that guard.
   {
-    const symbolIndexArg = methodName === "at" ? 0 : methodName === "includes" ? 1 : -1;
+    const hostIncludes = methodName === "includes" && receiverIsExternref && !ctx.standalone;
+    const symbolIndexArg = methodName === "at" ? 0 : hostIncludes ? 1 : -1;
     const indexArg = symbolIndexArg < 0 ? undefined : callExpr.arguments[symbolIndexArg];
     if (
       indexArg !== undefined &&
@@ -3517,6 +3513,34 @@ function compileArrayAt(
 }
 
 /**
+ * (#7164) A `fromIndex` whose `valueOf` grows the array can reallocate an
+ * externref vec's backing (`length =` past capacity, or `push`). The scan reads
+ * elements live (Get at each index), so re-read the backing after `fromIndex`
+ * and clamp the scan to it; `len` stays the value read before (§23.1.3.14 step 2).
+ */
+function reloadSearchBacking(
+  vecTmp: number,
+  vecTypeIdx: number,
+  dataTmp: number,
+  lenTmp: number,
+  effLenTmp: number,
+): Instr[] {
+  return [
+    { op: "local.get", index: vecTmp },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.tee", index: dataTmp },
+    { op: "array.len" },
+    { op: "local.get", index: lenTmp },
+    { op: "local.get", index: dataTmp },
+    { op: "array.len" },
+    { op: "local.get", index: lenTmp },
+    { op: "i32.lt_s" },
+    { op: "select" },
+    { op: "local.set", index: effLenTmp },
+  ];
+}
+
+/**
  * arr.indexOf(val) -> loop through array, return index (as f64) or -1.
  * Receiver is a vec struct; extract data and length from it.
  */
@@ -3593,62 +3617,15 @@ function compileArrayIndexOf(
     return ctx.fast ? { kind: "i32" } : { kind: "f64" };
   }
 
-  // fromIndex (optional 2nd arg, default 0)
+  // fromIndex (optional 2nd arg, default 0). (#3201) §23.1.3.14 step 3: if len
+  // is 0, return -1 BEFORE step 4's ToIntegerOrInfinity(fromIndex) — a throwing
+  // `valueOf` on the fromIndex object must NOT be observed on an empty array
+  // (indexOf/length-zero-returns-minus-one.js). The len==0 arm leaves iTmp at 0;
+  // the loop bound (effLenTmp == 0) then falls through to the -1 result.
   if (callExpr.arguments.length >= 2) {
-    // (#3201) §23.1.3.14 step 3: if len is 0, return -1 BEFORE step 4's
-    // ToIntegerOrInfinity(fromIndex) — a throwing `valueOf` on the fromIndex
-    // object must NOT be observed on an empty array
-    // (indexOf/length-zero-returns-minus-one.js). Compile the coercion into
-    // the main body, then splice it into a `len != 0` guard arm — spliced
-    // instrs are immediately re-embedded in fctx.body (nested arms ARE
-    // walked by flushLateImportShifts' recursive shiftBody), so no detached-
-    // array funcIdx staleness. The len==0 arm leaves iTmp at 0; the loop
-    // bound (effLenTmp == 0) then falls through to the -1 result.
-    const guardStart = fctx.body.length;
-    if (ctx.fast) {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "i32" });
-    } else {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    }
-    // Clamp negative fromIndex: if (fromIndex < 0) fromIndex = max(0, length + fromIndex)
-    const fromTmp = allocLocal(fctx, `__arr_iof_from_${fctx.locals.length}`, { kind: "i32" });
-    fctx.body.push({ op: "local.tee", index: fromTmp });
-    fctx.body.push({ op: "i32.const", value: 0 });
-    fctx.body.push({ op: "i32.lt_s" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: lenTmp },
-        { op: "local.get", index: fromTmp },
-        { op: "i32.add" },
-        { op: "local.tee", index: fromTmp },
-        { op: "i32.const", value: 0 },
-        { op: "i32.lt_s" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "i32.const", value: 0 },
-            { op: "local.set", index: fromTmp },
-          ],
-        },
-      ],
-    });
-    fctx.body.push({ op: "local.get", index: fromTmp });
-    fctx.body.push({ op: "local.set", index: iTmp });
-    const guarded = fctx.body.splice(guardStart);
-    fctx.body.push({ op: "local.get", index: lenTmp });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: guarded,
-      else: [
-        { op: "i32.const", value: 0 },
-        { op: "local.set", index: iTmp },
-      ],
-    });
+    emitForwardSearchStart(ctx, fctx, callExpr.arguments[1]!, lenTmp, iTmp, "arr_iof");
+    if (elemType.kind === "externref")
+      fctx.body.push(...reloadSearchBacking(vecTmp, vecTypeIdx, dataTmp, lenTmp, effLenTmp));
   } else {
     fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "local.set", index: iTmp });
@@ -3674,6 +3651,8 @@ function compileArrayIndexOf(
     // mode keeps the `__host_eq` host import. Mirrors the standalone arm in
     // `compileArrayLikePrototypeSearch` (the `.call(...)` form).
     const nativeCmp = ctx.standalone || ctx.wasi;
+    // (#7164) The native helper needs the box types; register them if no earlier use did.
+    if (nativeCmp) addUnionImports(ctx);
     const cmpIdx = nativeCmp
       ? ensureExternStrictEqHelper(ctx)
       : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
@@ -3803,44 +3782,18 @@ function compileArrayIncludes(
 
   const incNeverMatches = emitIncludesSearchValue(ctx, fctx, callExpr, valType, valTmp);
 
-  // fromIndex (optional 2nd arg, default 0)
+  // fromIndex (optional 2nd arg, default 0). (#4765) §23.1.3.16 step 3 returns
+  // false on `len = 0` BEFORE step 4 converts fromIndex
+  // (includes/length-zero-returns-false.js), so the conversion is deferred
+  // under the same length guard `indexOf` uses.
   if (callExpr.arguments.length >= 2) {
-    if (ctx.fast) {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "i32" });
-    } else {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    }
-    // Clamp negative fromIndex: if (fromIndex < 0) fromIndex = max(0, length + fromIndex)
-    const fromTmp = allocLocal(fctx, `__arr_inc_from_${fctx.locals.length}`, { kind: "i32" });
-    fctx.body.push({ op: "local.tee", index: fromTmp });
-    fctx.body.push({ op: "i32.const", value: 0 });
-    fctx.body.push({ op: "i32.lt_s" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: lenTmp },
-        { op: "local.get", index: fromTmp },
-        { op: "i32.add" },
-        { op: "local.tee", index: fromTmp },
-        { op: "i32.const", value: 0 },
-        { op: "i32.lt_s" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "i32.const", value: 0 },
-            { op: "local.set", index: fromTmp },
-          ],
-        },
-      ],
-    });
-    fctx.body.push({ op: "local.get", index: fromTmp });
+    emitForwardSearchStart(ctx, fctx, callExpr.arguments[1]!, lenTmp, iTmp, "arr_inc");
   } else {
     fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: iTmp });
   }
-  fctx.body.push({ op: "local.set", index: iTmp });
+  if (callExpr.arguments.length >= 2 && elemType.kind === "externref")
+    fctx.body.push(...reloadSearchBacking(vecTmp, vecTypeIdx, dataTmp, lenTmp, effLenTmp));
 
   // (#2648) View-name-driven signedness for the packed i8/i16 element load.
   const getOp = elemGetOp(elemType, typedArraySearchSignedness(ctx, propAccess.expression));
@@ -3900,6 +3853,8 @@ function compileArrayIncludes(
     // is unsatisfiable. Route SameValueZero through the pure-Wasm
     // `__extern_same_value_zero` helper there; host/gc mode keeps the import.
     const nativeCmp = ctx.standalone || ctx.wasi;
+    // (#7164) The native helper needs the box types; register them if no earlier use did.
+    if (nativeCmp) addUnionImports(ctx);
     const svzIdx = nativeCmp
       ? ensureExternSameValueZeroHelper(ctx)
       : ensureLateImport(ctx, "__same_value_zero", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
@@ -5522,7 +5477,7 @@ function compileArrayJoinExternNative(
     { op: "call", funcIdx: ctx.funcMap.get("__extern_get_idx") ?? externGetIdx },
     ...buildExternJoinElementToString(ctx, fctx, anyStrTypeIdx, externToStrIdx, localizedArm),
   ];
-  emitStringJoinFold(ctx, fctx, repr, foldLocals, elemToStr);
+  emitStringJoinFold(ctx, fctx, repr, foldLocals, elemToStr, [{ op: "local.get", index: recvTmp }]); // (#7147)
 
   // Return the joined native string as externref for the caller.
   fctx.body.push({ op: "local.get", index: resultTmp });
@@ -5573,30 +5528,6 @@ export function compileArrayJoinExtern(
 
   fctx.body.push({ op: "call", funcIdx: joinAnyIdx });
   return { kind: "externref" };
-}
-
-/**
- * True when `expr` is a call to a higher-order array method that allocates a
- * callback closure (`map`/`filter`/`flatMap`/`forEach`/`reduce`/…). The native
- * join path re-compiles its receiver via the dispatcher probe, and closure
- * registration is not idempotent, so such receivers must not route through it
- * (see #2074/#2075). Conservative: any of these method names on a call.
- */
-function receiverIsClosureProducingArrayCall(expr: ts.Expression): boolean {
-  if (!ts.isCallExpression(expr)) return false;
-  if (!ts.isPropertyAccessExpression(expr.expression)) return false;
-  const m = expr.expression.name.text;
-  return (
-    m === "map" ||
-    m === "filter" ||
-    m === "flatMap" ||
-    m === "forEach" ||
-    m === "reduce" ||
-    m === "reduceRight" ||
-    m === "find" ||
-    m === "findIndex" ||
-    m === "sort"
-  );
 }
 
 /**
@@ -5809,8 +5740,7 @@ function compileArrayJoinNative(
       { op: "ref.cast", typeIdx: anyStrTypeIdx },
     );
   } else {
-    // String element: a (ref null $NativeString) — non-null cast up to $AnyString.
-    elemToStr.push({ op: "ref.as_non_null" });
+    elemToStr.push(...stringJoinElement(ctx, fctx, propAccess.expression, elemType, repr.resultType)); // (#7165)
   }
 
   fctx.body.push({ op: "i32.const", value: 0 });
@@ -5835,6 +5765,10 @@ function compileArrayJoinNative(
     elementToLocaleStringTail(ctx, anyStrTypeIdx, localizedArm),
   );
   const joinBoundsCheckedElemToStr: Instr[] = [
+    // (#7164) An element's toString can replace the backing (push / grow): re-read it.
+    { op: "local.get", index: vecTmp },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: dataTmp },
     { op: "local.get", index: foldLocals.iTmp },
     { op: "local.get", index: dataTmp },
     { op: "array.len" },
@@ -5846,7 +5780,7 @@ function compileArrayJoinNative(
       else: protoHoleArm ?? repr.literal(""),
     },
   ];
-  emitStringJoinFold(ctx, fctx, repr, foldLocals, joinBoundsCheckedElemToStr);
+  emitStringJoinFold(ctx, fctx, repr, foldLocals, joinBoundsCheckedElemToStr, emptyElem && vecTmp); // (#7147)
 
   // Return the joined native string as externref for the caller.
   fctx.body.push({ op: "local.get", index: resultTmp });
@@ -6088,6 +6022,10 @@ function compileArrayJoin(
   // slots (`[1,2,3]; a.length=6; a.join(",")` === "1,2,3,,,"). No-op for dense
   // arrays (backing ≥ length ⇒ the guard is always true).
   const joinBoundsCheckedElemToStr: Instr[] = [
+    // (#7164) An element's toString can replace the backing (push / grow): re-read it.
+    { op: "local.get", index: vecTmp },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: dataTmp },
     { op: "local.get", index: foldLocals.iTmp },
     { op: "local.get", index: dataTmp },
     { op: "array.len" },
@@ -6640,7 +6578,7 @@ function setupArrayCallback(
   // type, and the consumer only honours it against the exact non-null twin, so
   // every other receiver compiles byte-for-byte as before.
   const savedNullableElemOverride = ctx.arrayHofNullableElemParamOverride;
-  ctx.arrayHofNullableElemParamOverride = nullableElemParamOverrideFor(elemType, elemParamIndex);
+  ctx.arrayHofNullableElemParamOverride = nullableElemParamOverrideFor(elemType, elemParamIndex, cbArg);
   const cbResult =
     hoistedCallback ??
     (ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)
@@ -6751,6 +6689,8 @@ interface ArrayLoopLocals {
   logicalLenTmp: number;
   iTmp: number;
   getOp: "array.get_u" | "array.get_s" | "array.get";
+  /** (#7164) The receiver's vec type: the loop re-reads `data` from it each iteration. */
+  vecTypeIdx?: number;
 }
 
 /** Substitute closure parameter reads with the HOF loop's concrete operands. */
@@ -6858,7 +6798,8 @@ function setupArrayLoop(
   fctx.body.push({ op: "local.set", index: iTmp });
 
   const getOp = elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
-  return { vecTmp, recvExternTmp, dataTmp, lenTmp, logicalLenTmp, iTmp, getOp };
+  const reload = loopMayNeedReload(ctx, propAccess) ? vecTypeIdx : undefined;
+  return { vecTmp, recvExternTmp, dataTmp, lenTmp, logicalLenTmp, iTmp, getOp, vecTypeIdx: reload };
 }
 
 /**
@@ -7396,6 +7337,15 @@ function gateHoleFlag(
 
 /**
  * Build the standard loop-exit check: if (i >= len) br 1.
+ *
+ * (#7164) A callback can replace the receiver's backing array (`push` or a
+ * `length =` grow past the capacity reallocates it), so each iteration adopts
+ * the vec's current backing when it still covers `i`; reading only the array
+ * loaded before the loop would miss every write the callback makes after the
+ * reallocation. A backing that no longer covers `i` is not adopted: the loop
+ * keeps reading the earlier one exactly as before #7164, so no iteration ends
+ * early (find / findIndex must still visit every index up to the original
+ * length).
  */
 function loopExitCheck(loop: ArrayLoopLocals): Instr[] {
   return [
@@ -7403,7 +7353,84 @@ function loopExitCheck(loop: ArrayLoopLocals): Instr[] {
     { op: "local.get", index: loop.lenTmp },
     { op: "i32.ge_s" },
     { op: "br_if", depth: 1 },
+    ...reloadLoopData(loop),
   ];
+}
+
+/**
+ * (#7164) `if (vec.data !== data && i < array.len(vec.data)) data = vec.data`;
+ * nothing when the loop has no vec type. The identity test keeps the common
+ * (unchanged backing) path to one field read and a compare.
+ */
+function reloadLoopData(loop: ArrayLoopLocals): Instr[] {
+  const vecTypeIdx = loop.vecTypeIdx;
+  if (vecTypeIdx === undefined) return [];
+  const current = (): Instr[] => [
+    { op: "local.get", index: loop.vecTmp },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+  ];
+  return [
+    ...current(),
+    { op: "local.get", index: loop.dataTmp },
+    { op: "ref.eq" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: loop.iTmp },
+        ...current(),
+        { op: "array.len" },
+        { op: "i32.lt_u" },
+        { op: "if", blockType: { kind: "empty" }, then: [...current(), { op: "local.set", index: loop.dataTmp }] },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#7164) A switched binding's `length =` reallocates, and a getter or
+ * `valueOf` the callback reaches without a call can run one, so its loops
+ * always re-read the backing. Other receivers skip it for a pure callback.
+ */
+function loopMayNeedReload(ctx: CodegenContext, propAccess: ts.PropertyAccessExpression): boolean {
+  return isGrowthSwitchedReceiver(ctx, propAccess.expression) || callbackMayReplaceBacking(propAccess.parent);
+}
+
+/**
+ * (#7164) Whether the HOF's callback can replace the receiver's backing array.
+ * An inline arrow / function expression with no call, `new`, tagged template,
+ * assignment, `++` / `--` or `delete` runs no code that replaces a
+ * non-switched receiver's backing except through a getter or `valueOf` that
+ * pushes — and there the loop reads the earlier backing, as before #7164.
+ */
+function callbackMayReplaceBacking(call: ts.Node): boolean {
+  if (!ts.isCallExpression(call)) return true;
+  let callback: ts.Expression | undefined = call.arguments[0];
+  while (callback && ts.isParenthesizedExpression(callback)) callback = callback.expression;
+  if (!callback || (!ts.isArrowFunction(callback) && !ts.isFunctionExpression(callback))) return true;
+  let mutates = false;
+  const visit = (node: ts.Node): void => {
+    if (mutates) return;
+    if (
+      ts.isCallExpression(node) ||
+      ts.isNewExpression(node) ||
+      ts.isTaggedTemplateExpression(node) ||
+      ts.isDeleteExpression(node) ||
+      (ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+      ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken))
+    ) {
+      mutates = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(callback.body);
+  for (const parameter of callback.parameters) visit(parameter);
+  return mutates;
 }
 
 /**
@@ -8072,6 +8099,7 @@ function compileArrayReduceRight(
     logicalLenTmp,
     iTmp,
     getOp,
+    vecTypeIdx: loopMayNeedReload(ctx, propAccess) ? vecTypeIdx : undefined,
   };
 
   // Compile initial value or use the last present element as the default seed.
@@ -8206,11 +8234,8 @@ function compileArrayReduceRight(
   const holeGate = shouldHoleSkip(ctx, elemType);
   // Loop: while (i >= 0) { acc = cb(acc, data[i], i, arr); i--; }
   const loopBody: Instr[] = [
-    // Exit check: if (i < 0) break
-    { op: "local.get", index: iTmp },
-    { op: "i32.const", value: 0 },
-    { op: "i32.lt_s" },
-    { op: "br_if", depth: 1 },
+    // Exit check: if (i < 0) break; (#7164) re-reads `data` as the other HOF loops do.
+    ...loopExitCheckReverse(loop),
     // Callback
     ...(holeGate
       ? ([
@@ -8353,7 +8378,8 @@ function compileArrayFind(
   if (refElemResType) {
     fctx.body.push({ op: "ref.null", typeIdx: refElemResType.typeIdx });
   } else if (elemIsExternref) {
-    fctx.body.push({ op: "ref.null.extern" });
+    // (#7164) "Not found" is `undefined`, not the null externref (`=== undefined` held false).
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
   } else if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
   } else {
@@ -8496,13 +8522,14 @@ function setupArrayLoopReverse(
   return loop;
 }
 
-/** Reverse loop-exit check: if (i < 0) br 1. */
+/** Reverse loop-exit check: if (i < 0) br 1. (#7164) Then adopts a reallocated backing as {@link loopExitCheck} does. */
 function loopExitCheckReverse(loop: ArrayLoopLocals): Instr[] {
   return [
     { op: "local.get", index: loop.iTmp },
     { op: "i32.const", value: 0 },
     { op: "i32.lt_s" },
     { op: "br_if", depth: 1 },
+    ...reloadLoopData(loop),
   ];
 }
 
@@ -8580,7 +8607,7 @@ function compileArrayFindLast(
   if (refElemResType) {
     fctx.body.push({ op: "ref.null", typeIdx: refElemResType.typeIdx });
   } else if (elemIsExternref) {
-    fctx.body.push({ op: "ref.null.extern" });
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx)); // (#7164) not found → `undefined`
   } else if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
   } else {
@@ -9032,13 +9059,15 @@ function compileArrayDefaultToStringSort(
   // NativeString — `ref.cast` of an `(ref extern)` against `(ref $AnyString)` is
   // invalid Wasm (different reference-type hierarchies → "ref.as_non_null of
   // (ref extern) has to be in the same reference type hierarchy as (ref N)" in
-  // `__module_init`). Bail so the caller no-ops the sort (#2502) instead of
-  // emitting a poisoned binary. Boxed-any ToString-order sorting is a separate
-  // follow-up needing a runtime any→string step, not this static cast.
+  // `__module_init`). (#7151) On the no-host lanes that element instead takes
+  // the runtime ToString of `prepareExternVecDefaultSortCompare` (SortCompare,
+  // undefined last); elsewhere bail so the caller no-ops the sort (#2502).
   // HOST mode is unaffected: there `cmpStrType` is `externref` and the string
   // branch emits only `ref.as_non_null` (no cast), so a host externref element
   // sorts correctly — do NOT bail there or valid host string sorts break.
-  if (!isNumeric && native && elemType.kind === "externref") {
+  const externCompare =
+    !isNumeric && native && elemType.kind === "externref" ? prepareExternVecDefaultSortCompare(ctx, fctx) : undefined;
+  if (!isNumeric && native && elemType.kind === "externref" && externCompare === undefined) {
     return null;
   }
 
@@ -9178,7 +9207,7 @@ function compileArrayDefaultToStringSort(
     getOp,
     dataLocal: dataTmp,
     lenLocal: lenTmp,
-    buildCompareGtZero: compareGtZero,
+    buildCompareGtZero: externCompare ?? stringVecSortCompare(ctx, fctx, propAccess, elemType, compareGtZero),
   });
 
   fctx.body.push({ op: "local.get", index: vecTmp });
@@ -10105,13 +10134,11 @@ function compileArrayLastIndexOf(
     // flushLateImportShifts), so no detached-array funcIdx staleness. The
     // len==0 arm sets iTmp to -1 (the same value the no-fromIndex default
     // `len - 1` yields on an empty array), so the reverse loop never runs.
+    // (#4765) The argument itself is still EVALUATED on an empty array — only
+    // its conversion is deferred.
+    const emitFromI32 = evalSearchFromIndex(ctx, fctx, callExpr.arguments[1]!, "arr_liof");
     const guardStart = fctx.body.length;
-    if (ctx.fast) {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "i32" });
-    } else {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    }
+    emitFromI32();
     fctx.body.push({ op: "local.set", index: iTmp });
     // If negative, add length: if (i < 0) i = len + i
     fctx.body.push({ op: "local.get", index: iTmp });
@@ -10217,6 +10244,8 @@ function compileArrayLastIndexOf(
     // `__extern_strict_eq` helper instead of the unsatisfiable `__host_eq` import;
     // host/gc mode keeps the import. Mirrors indexOf / the `.call(...)` form.
     const nativeCmp = ctx.standalone || ctx.wasi;
+    // (#7164) The native helper needs the box types; register them if no earlier use did.
+    if (nativeCmp) addUnionImports(ctx);
     const cmpIdx = nativeCmp
       ? ensureExternStrictEqHelper(ctx)
       : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);

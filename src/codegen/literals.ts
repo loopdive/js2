@@ -46,6 +46,7 @@ import { emptyBackingStoreInstrs } from "./empty-vec-store.js"; // (#3921) share
 import { spreadSourceNeedsRuntimeCopy } from "./object-model/object-spread-extern-source.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { literalContextualType } from "./expressions/destructuring-source-literal.js"; // (#4495)
 import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#5158) absent tuple slot === undefined
@@ -68,6 +69,7 @@ import { widenedVarKeyFromDecl } from "./widened-var-key.js";
 import { argumentsBeforeDefaults, endArgumentsBeforeDefaults } from "./object-method-arguments-first.js"; // (#6651 A11)
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
+import { isGrowthSwitchedReceiver } from "./statements/array-share-group.js";
 import { collectInstrs } from "./statements/shared.js";
 import {
   cacheStringLiterals,
@@ -91,9 +93,10 @@ import {
   nativeGeneratorInfoForForOfSubject,
   registerNativeGenerator,
 } from "./generators-native.js";
+import { refuseEagerGeneratorBuffer } from "./generator-eager-refusal.js";
 import { emitCollectionIteratorVec } from "./map-runtime.js";
 import { emitSymbolDescStore, ensureNativeSymbolBoundaryBridge, ensureSymbolCarrier } from "./symbol-native.js";
-import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
+import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType, isVecBaseSubtype } from "./registry/types.js";
 import {
   coerceType,
   compileExpression,
@@ -826,6 +829,9 @@ function materializableSpreadStructTypeIdx(
   if (srcType.kind !== "ref" && srcType.kind !== "ref_null") return undefined;
   const typeIdx = srcType.typeIdx;
   if (!ctx.typeIdxToStructName.has(typeIdx)) return undefined;
+  // (#7155) An array carrier's physical fields (`length`, `data`) are not its
+  // own properties; `__object_assign`'s array arm copies its indices instead.
+  if (isVecBaseSubtype(ctx, typeIdx)) return undefined;
   return typeIdx;
 }
 
@@ -2432,7 +2438,7 @@ export function compileObjectLiteral(
     // builder declined — fall through to the struct paths below.
   }
 
-  const contextType = ctx.checker.getContextualType(expr);
+  const contextType = literalContextualType(ctx, expr);
   if (!contextType) {
     // #1606: `getTypeAtLocation` can crash inside TypeScript's `checkObjectLiteral`
     // for object literals parsed from a foreign SourceFile (e.g. statically inlined
@@ -4533,6 +4539,8 @@ export function compileObjectLiteralForStruct(
       ) {
         emitAsyncGenerator(ctx, methodFctx, prop);
         methodFctx.body.push({ op: "return" });
+      } else if (isGeneratorMethod && prop.body && refuseEagerGeneratorBuffer(ctx, methodFctx, prop)) {
+        // (#7010) No host-free lowering for this generator method — refused.
       } else if (isGeneratorMethod && prop.body) {
         // Generator method: eagerly evaluate body, collect yields into a buffer,
         // then wrap with __create_generator to return a Generator-like object.
@@ -5310,7 +5318,9 @@ export function compileArrayLiteral(
     if (ts.isOmittedExpression(element)) return false;
     const value = ts.isSpreadElement(element) ? element.expression : element;
     const fact = ctx.oracle.typeFactOf(value);
-    return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function";
+    // (#7164) `...g` of an array #7164 moved onto the externref carrier must not pick the f64 carrier.
+    const spreadAny = ts.isSpreadElement(element) && isGrowthSwitchedReceiver(ctx, value);
+    return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function" || spreadAny;
   });
   // (#5269 R2-4) An element that is an object literal on the HOST-OBJECT path is
   // an open `$Object`, not a closed struct — but the first-element heuristic
@@ -5361,7 +5371,7 @@ export function compileArrayLiteral(
   // Check if the target type is a tuple — compile as struct.new instead of array.
   // Skip if _arrayLiteralForceVec is set (e.g. destructuring default where the target
   // is a vec type, but TS contextual type resolution sees a tuple pattern).
-  const ctxTupleType = ctx.checker.getContextualType(expr) ?? ctx.checker.getTypeAtLocation(expr);
+  const ctxTupleType = literalContextualType(ctx, expr) ?? ctx.checker.getTypeAtLocation(expr);
   if (
     ctxTupleType &&
     isTupleType(ctxTupleType) &&

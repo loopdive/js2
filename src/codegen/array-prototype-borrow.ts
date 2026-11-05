@@ -144,6 +144,17 @@ const STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS = new Set<string>([
  * can go stale-low. The no-init form now compiles the §23.1.3.24 step-6
  * hole-scan seed (first HasProperty index → acc) natively, host-free.
  */
+/**
+ * (#7106 compareArray.format) May `Array.prototype.<method>.call(recv, …)` be
+ * compiled host-free over an UNTYPED receiver — the IR's template-built borrow
+ * wrapper (`array/ir-array-prototype-borrow.ts`)? Legacy's own admission
+ * (`ARRAY_METHODS`) minus the two spellings its standalone path refuses
+ * loudly: the mutating `push` borrow and `STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS`.
+ */
+export function arrayPrototypeBorrowCompilesHostFree(method: string): boolean {
+  return ARRAY_METHODS.has(method) && method !== "push" && !STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS.has(method);
+}
+
 function standaloneArrayLikeMethodRefused(methodName: string, callExpr: ts.CallExpression): boolean {
   void callExpr;
   return STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS.has(methodName);
@@ -181,8 +192,14 @@ function receiverHasPlainClosedStructLength(ctx: CodegenContext, recvWasmType: V
   // native arm — that class must NOT keep the bail. String-ref lengths
   // (`length: "2"`) coerce via StringToNumber (never abrupt) and count as plain.
   if (lengthField.type.kind !== "ref" && lengthField.type.kind !== "ref_null") return true;
-  const lenTypeIdx = (lengthField.type as { typeIdx: number }).typeIdx;
-  return lenTypeIdx >= 0 && (lenTypeIdx === ctx.anyStrTypeIdx || lenTypeIdx === ctx.nativeStrTypeIdx);
+  return isStringCarrier(ctx, lengthField.type);
+}
+
+/** Is `type` a reference to one of this module's string carriers (`$AnyString` / the native string)? */
+export function isStringCarrier(ctx: CodegenContext, type: ValType): boolean {
+  if (type.kind !== "ref" && type.kind !== "ref_null") return false;
+  const typeIdx = (type as { typeIdx: number }).typeIdx;
+  return typeIdx >= 0 && (typeIdx === ctx.anyStrTypeIdx || typeIdx === ctx.nativeStrTypeIdx);
 }
 
 /**

@@ -15,6 +15,7 @@ import { isStandaloneClassProtoObjectExpression } from "../class-proto-object.js
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
 import { newExpressionReconstructsAsObject } from "../fnctor-instance-object-slot.js"; // (#6958)
 import { overlayRouteActive } from "../typed-lane-overlay-route.js";
+import { proxyArgDefeatsRefNarrowing } from "../proxy-value-provenance.js"; // (#7161)
 import { getVecInfo } from "../type-coercion.js";
 import { paramReceivesOnlyProvenanceClosedArrayLiterals } from "./provenance-closed-arrays.js";
 import { functionNameIsStringReplacement } from "./string-replacement-callbacks.js"; // (#6988)
@@ -503,6 +504,7 @@ export function inferParamTypeFromCallSites(
   // carrier. Record it separately from opaque-any evidence so the withdrawal
   // stays confined to this representation mismatch.
   let sawStandaloneCollectionNativeProtoArg = false;
+  let sawProxyArg = false; // (#7161) see proxyArgDefeatsRefNarrowing
 
   const isRecursiveCall = (call: ts.CallExpression | ts.NewExpression): boolean => {
     const target = ctx.oracle.valueDeclarationOf(call.expression);
@@ -689,6 +691,10 @@ export function inferParamTypeFromCallSites(
               return;
             }
             const wasmType = resolveWasmType(ctx, argType);
+            if (proxyArgDefeatsRefNarrowing(ctx, wasmType, arg)) {
+              sawProxyArg = true;
+              return;
+            }
             // (#4611) A GC-ref claim sourced from a DYNAMIC member read is only
             // as strong as the receiver's DECLARED shape. Acorn's
             // `pushComment(options, options.onComment)`: `options` is an open
@@ -744,6 +750,7 @@ export function inferParamTypeFromCallSites(
   // handling observe the actual prototype. Instance-only Map/Set parameters
   // never set this flag and retain their existing specialized fast path.
   if (sawStandaloneCollectionNativeProtoArg) type = null;
+  if (sawProxyArg) type = null; // a Proxy fits neither a struct nor a scalar slot
   // (#3548) Soundness: if ANY call site under-applies this param, the value can
   // be `undefined` at runtime, so a NON-NULLABLE ref inference has no valid
   // filler — widen to the nullable ref of the same type (NOT all the way to

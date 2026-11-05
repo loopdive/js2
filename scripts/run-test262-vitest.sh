@@ -439,7 +439,16 @@ fi
 cd "$WT_DIR"
 LOCAL_SHARD_GLOB="${TEST262_LOCAL_SHARD_GLOB:-tests/test262-local-shard*.test.ts}"
 CHUNKS=$(ls $LOCAL_SHARD_GLOB 2>/dev/null | sort)
-> /tmp/test262-vitest-run.log
+# Keep strict IR qualification logs separate from prior run history.
+VITEST_RUN_LOG="/tmp/test262-vitest-run.log"
+if [ "$TEST262_COMPILER_PATH" = "ir" ]; then
+  VITEST_RUN_LOG="$RESULTS_DIR/${RESULT_PREFIX}-vitest-${RUN_TIMESTAMP}.log"
+  if [ -e "$VITEST_RUN_LOG" ] || [ -L "$VITEST_RUN_LOG" ]; then
+    echo "ERROR: refusing to overwrite existing IR run log: $VITEST_RUN_LOG"
+    exit 1
+  fi
+fi
+> "$VITEST_RUN_LOG"
 
 # Vitest loses TTY detection when piped through tee. Force ANSI colors so
 # failures stay readable in the terminal while still being captured to disk.
@@ -454,10 +463,10 @@ if [ -n "$CHUNKS" ]; then
   if [ ${#forwarded_args[@]} -gt 0 ]; then
     node node_modules/vitest/dist/cli.js run $LOCAL_SHARD_GLOB \
       --reporter="$TEST262_REPORTER" \
-      "${forwarded_args[@]}" 2>&1 | tee /tmp/test262-vitest-run.log || true
+      "${forwarded_args[@]}" 2>&1 | tee "$VITEST_RUN_LOG" || true
   else
     node node_modules/vitest/dist/cli.js run $LOCAL_SHARD_GLOB \
-      --reporter="$TEST262_REPORTER" 2>&1 | tee /tmp/test262-vitest-run.log || true
+      --reporter="$TEST262_REPORTER" 2>&1 | tee "$VITEST_RUN_LOG" || true
   fi
 else
   # Single file mode: run the monolithic test file
@@ -465,10 +474,10 @@ else
   if [ ${#forwarded_args[@]} -gt 0 ]; then
     node node_modules/vitest/dist/cli.js run tests/test262-vitest.test.ts \
       --reporter="$TEST262_REPORTER" \
-      "${forwarded_args[@]}" 2>&1 | tee /tmp/test262-vitest-run.log || true
+      "${forwarded_args[@]}" 2>&1 | tee "$VITEST_RUN_LOG" || true
   else
     node node_modules/vitest/dist/cli.js run tests/test262-vitest.test.ts \
-      --reporter="$TEST262_REPORTER" 2>&1 | tee /tmp/test262-vitest-run.log || true
+      --reporter="$TEST262_REPORTER" 2>&1 | tee "$VITEST_RUN_LOG" || true
   fi
 fi
 # A JSONL can be syntactically valid and still be missing verdict callbacks.
@@ -653,7 +662,7 @@ print('Appended to index: %d pass / %d total' % (entry['pass'], entry['total']))
 else
   echo "INCOMPLETE: $COMPLETENESS_REASON"
   echo "Timestamped JSONL preserved for diagnosis: $JSONL_FILE"
-  echo "Check /tmp/test262-vitest-run.log for errors."
+  echo "Check $VITEST_RUN_LOG for errors."
   exit 2
 fi
 

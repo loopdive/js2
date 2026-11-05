@@ -70,7 +70,6 @@ import { forInReceiverIsDynamic } from "../builtin-instance-key-presence.js";
 import { blockLoop, restoreBlockScopedShadows, saveBlockScopedShadows, shiftLoopDepths } from "./shared.js";
 import {
   bodyHasMatchingCharRead,
-  collectBindingNames,
   collectForInHeadClosureCaptures,
   detectI32LoopVar,
   findAllNamesCapturedByClosuresInLoop,
@@ -107,6 +106,7 @@ import { forOfArrayOverlayGetIdx, forOfArrayOverlayReadInstrs } from "../forof-a
 import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
 import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 import { isOpenForInReceiver } from "../for-in-open-object.js";
+import { subclassedInstanceReceiver } from "../class-arm-tag-guard.js"; // (#7216)
 import { isDirectProxyBinding } from "../proxy-value-provenance.js"; // (#6651 U3) for-in/for-of over a Proxy
 
 /** Strip the transparent parentheses used by CoverParenthesizedExpression in a
@@ -1541,7 +1541,7 @@ function compileForOfNativeMapEntries(
   const { M_ENTRIES, M_ENTRYCOUNT, F_KEY, F_VALUE, F_HASH, TOMBSTONE_BIT } = MAP_LAYOUT;
   const isConst = !!(stmt.initializer.flags & ts.NodeFlags.Const);
   if (isConst) {
-    (ts.isIdentifier(decl.name) ? [decl.name.text] : collectBindingNames(decl.name)).forEach((n) => {
+    (ts.isIdentifier(decl.name) ? [decl.name.text] : [...collectPatternBindingNames(decl.name)]).forEach((n) => {
       if (!fctx.constBindings) fctx.constBindings = new Set();
       fctx.constBindings.add(n);
     });
@@ -2215,7 +2215,7 @@ function compileForOfArray(
       elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, readElemType);
       // Track const bindings for all identifiers in the destructuring pattern
       if (isConst) {
-        collectBindingNames(decl.name).forEach((n) => {
+        [...collectPatternBindingNames(decl.name)].forEach((n) => {
           if (!fctx.constBindings) fctx.constBindings = new Set();
           fctx.constBindings.add(n);
         });
@@ -2503,7 +2503,7 @@ function compileForOfArrayEntries(
     }
     pattern = decl.name;
     if (stmt.initializer.flags & ts.NodeFlags.Const) {
-      collectBindingNames(decl.name).forEach((n) => {
+      [...collectPatternBindingNames(decl.name)].forEach((n) => {
         if (!fctx.constBindings) fctx.constBindings = new Set();
         fctx.constBindings.add(n);
       });
@@ -2864,7 +2864,7 @@ function compileForOfDirectIterator(
       destructPatternIter = decl.name;
       elemLocal = allocLocal(fctx, `__forit_elem_${fctx.locals.length}`, elemType);
       if (isConst) {
-        collectBindingNames(decl.name).forEach((n) => {
+        [...collectPatternBindingNames(decl.name)].forEach((n) => {
           if (!fctx.constBindings) fctx.constBindings = new Set();
           fctx.constBindings.add(n);
         });
@@ -3323,7 +3323,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
       destructPatternIter = decl.name;
       elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, elemType);
       if (isConst) {
-        collectBindingNames(decl.name).forEach((n) => {
+        [...collectPatternBindingNames(decl.name)].forEach((n) => {
           if (!fctx.constBindings) fctx.constBindings = new Set();
           fctx.constBindings.add(n);
         });
@@ -4321,9 +4321,13 @@ function compileForInStatementInner(ctx: CodegenContext, fctx: FunctionContext, 
     // below is shared. A closed WasmGC struct or an array does NOT lower to
     // `$Object` (so `__object_keys` would return empty) — those keep the
     // static-unroll path below, which is exact for a non-mutated closed shape.
-    const recvWasmType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
+    const recvTsType = ctx.checker.getTypeAtLocation(stmt.expression);
+    const recvWasmType = resolveWasmType(ctx, recvTsType);
     const isDynamicReceiver =
-      proxyReceiver || isOpenForInReceiver(ctx, stmt.expression) || forInReceiverIsDynamic(ctx, recvWasmType);
+      proxyReceiver ||
+      isOpenForInReceiver(ctx, stmt.expression) ||
+      forInReceiverIsDynamic(ctx, recvWasmType) ||
+      subclassedInstanceReceiver(ctx, recvWasmType, recvTsType, stmt.expression); // (#7216)
     if (isDynamicReceiver) {
       ensureObjectRuntime(ctx);
       // #2964 — for-in must enumerate inherited enumerable keys too, so route

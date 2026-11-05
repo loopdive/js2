@@ -108,16 +108,28 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { readEnv } from "../env.js";
+import {
+  identifierWritesOf,
+  isNumericCompoundAssignment,
+  isStoreTarget,
+  type IdentifierWrite,
+} from "../shared/binding-writes.js";
 
 /** The host facts this analysis needs; kept tiny so it can run standalone. */
 export interface NumericPropertyAnalysisHost {
   /**
    * Type oracle (`ctx.oracle`). Used only as a FAST PATH for annotated code:
    * when the oracle already says an expression is a number the syntactic
-   * prover is skipped. Never consulted to demote — an `any` verdict just means
+   * prover is skipped. Type facts never demote — an `any` verdict just means
    * "keep proving syntactically", which is the JS case this analysis targets.
+   * The optional declaration query separately certifies Number-only member
+   * ownership; an absent declaration query supplies no ownership evidence.
    */
-  readonly oracle?: { typeFactOf(node: ts.Node): { kind: string } };
+  readonly oracle?: {
+    typeFactOf(node: ts.Node): { kind: string };
+    /** Exact member declarations; absent on partial hosts means no ownership proof. */
+    declarationsOf?(node: ts.Node): readonly ts.Declaration[];
+  };
   /**
    * (#2660) Expressions the fnctor receiver-flow map proved to hold a fnctor
    * instance. A computed write through one of these is the sentinel above.
@@ -187,6 +199,8 @@ type Frame = ts.Node;
 /** One recorded definition of a value slot. `expr` absent ⇒ opaque/unknown. */
 interface ValueDef {
   readonly expr?: ts.Expression;
+  /** Exact declaration identity; still opaque to the arithmetic value prover. */
+  readonly functionDeclaration?: FunctionLike;
   /** `x++` / `x -= 1`: JS guarantees a number regardless of the old value. */
   readonly forcedNumeric?: boolean;
   /**
@@ -206,6 +220,8 @@ interface Slot {
 /** One recorded write to a property NAME. */
 interface PropWrite {
   readonly name: string;
+  /** Preserve a declaration seed's identity separately from later value writes. */
+  readonly declaration?: ts.Declaration;
   readonly value?: ts.Expression;
   readonly forcedNumeric?: boolean;
   /**
@@ -232,21 +248,6 @@ const ALWAYS_NUMERIC_BINARY: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.LessThanLessThanToken,
   ts.SyntaxKind.GreaterThanGreaterThanToken,
   ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
-]);
-
-/** Compound-assignment forms of {@link ALWAYS_NUMERIC_BINARY} (NOT `+=`). */
-const ALWAYS_NUMERIC_COMPOUND: ReadonlySet<ts.SyntaxKind> = new Set([
-  ts.SyntaxKind.MinusEqualsToken,
-  ts.SyntaxKind.AsteriskEqualsToken,
-  ts.SyntaxKind.SlashEqualsToken,
-  ts.SyntaxKind.PercentEqualsToken,
-  ts.SyntaxKind.AsteriskAsteriskEqualsToken,
-  ts.SyntaxKind.AmpersandEqualsToken,
-  ts.SyntaxKind.BarEqualsToken,
-  ts.SyntaxKind.CaretEqualsToken,
-  ts.SyntaxKind.LessThanLessThanEqualsToken,
-  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
-  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
 ]);
 
 /** Comparisons — boolean, which an f64 (or i32-boolean) slot represents. */
@@ -522,7 +523,7 @@ function buildScopes(sourceFiles: readonly ts.SourceFile[]): ScopeTable {
         const frame = isFunctionLikeWithBody(node.parent) ? node.parent : scopes.frameOf(node);
         for (const name of bindingNames(node.name)) scopes.declare(frame, name, true);
       } else if (ts.isFunctionDeclaration(node) && node.name) {
-        scopes.declare(scopes.frameOf(node), node.name.text, false);
+        scopes.declare(scopes.frameOf(node.parent), node.name.text, false);
       } else if (ts.isCatchClause(node) && node.variableDeclaration) {
         for (const name of bindingNames(node.variableDeclaration.name)) {
           scopes.declare(scopes.frameOf(node), name, false);
@@ -541,6 +542,8 @@ function buildScopes(sourceFiles: readonly ts.SourceFile[]): ScopeTable {
 
 interface NumericFlowFacts {
   readonly scopes: ScopeTable;
+  readonly sourceFiles: readonly ts.SourceFile[];
+  identifierWriteTargets: ts.Identifier[];
   functionsByName: Map<string, FunctionLike[]>;
   calls: Map<string, { args: ts.Expression[]; recursive: boolean }[]>;
   parameters: { slot: Slot; owner: string; index: number; initializer?: ts.Expression }[];
@@ -590,6 +593,12 @@ function isSameKeyCopy(node: ts.Node, scopes: ScopeTable): boolean {
   return slot !== undefined && slot === scopes.resolve(rhsKey, rhsKey.text);
 }
 
+/** The definition an identifier store contributes: its named value, a forced number, or an opaque value. */
+function valueDefOf(write: IdentifierWrite): ValueDef {
+  if (write.kind === "value") return { expr: write.expr };
+  return write.kind === "numeric" ? { forcedNumeric: true } : {};
+}
+
 /** Pass 2 — index every definition, call, property write and delete. */
 function collectNumericFlowFacts(
   sourceFiles: readonly ts.SourceFile[],
@@ -598,6 +607,8 @@ function collectNumericFlowFacts(
 ): NumericFlowFacts {
   const facts: NumericFlowFacts = {
     scopes,
+    sourceFiles,
+    identifierWriteTargets: [],
     functionsByName: new Map(),
     calls: new Map(),
     parameters: [],
@@ -615,12 +626,17 @@ function collectNumericFlowFacts(
 
   for (const sourceFile of sourceFiles) {
     const visit = (node: ts.Node): void => {
+      const identifierWrites = identifierWritesOf(node);
+      for (const write of identifierWrites) facts.identifierWriteTargets.push(write.target);
       if (isFunctionLikeWithBody(node)) {
         const name = functionBindingName(node);
         if (name) {
           const list = facts.functionsByName.get(name);
           if (list) list.push(node);
           else facts.functionsByName.set(name, [node]);
+        }
+        if (ts.isFunctionDeclaration(node) && node.name) {
+          define(node.parent, node.name.text, { functionDeclaration: node });
         }
       }
 
@@ -647,13 +663,6 @@ function collectNumericFlowFacts(
         } else {
           for (const name of bindingNames(node.name)) define(node, name, {});
         }
-      } else if (ts.isBinaryExpression(node) && ts.isIdentifier(unwrap(node.left))) {
-        const target = (unwrap(node.left) as ts.Identifier).text;
-        const op = node.operatorToken.kind;
-        if (op === ts.SyntaxKind.EqualsToken) define(node, target, { expr: node.right });
-        else if (ALWAYS_NUMERIC_COMPOUND.has(op)) define(node, target, { forcedNumeric: true });
-        else if (op === ts.SyntaxKind.PlusEqualsToken) define(node, target, { expr: node });
-        else if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment) define(node, target, {});
       } else if (ts.isParameter(node) && isFunctionLikeWithBody(node.parent)) {
         const owner = functionBindingName(node.parent);
         const index = node.parent.parameters.indexOf(node);
@@ -674,16 +683,13 @@ function collectNumericFlowFacts(
         } else {
           for (const name of bindingNames(node.name)) scopes.resolve(node.parent, name)?.defs.push({});
         }
-      } else if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
-        // `for (var k in o)` binds a property key / arbitrary element.
-        const init = node.initializer;
-        if (ts.isVariableDeclarationList(init)) {
-          for (const decl of init.declarations) for (const name of bindingNames(decl.name)) define(node, name, {});
-        } else if (ts.isIdentifier(unwrap(init as ts.Expression))) {
-          define(node, (unwrap(init as ts.Expression) as ts.Identifier).text, {});
-        }
       } else if (ts.isCatchClause(node) && node.variableDeclaration) {
         for (const name of bindingNames(node.variableDeclaration.name)) define(node, name, {});
+      } else {
+        // (#4495) Every other identifier store — assignment of any operator,
+        // destructuring targets, `++`/`--`, for-in/for-of heads — from the one
+        // shared enumerator; a declarator's own store is the branch above.
+        for (const write of identifierWrites) define(node, write.target.text, valueDefOf(write));
       }
 
       // --- property writes -------------------------------------------------
@@ -699,7 +705,7 @@ function collectNumericFlowFacts(
         } else if (ts.isPropertyAccessExpression(lhs) || ts.isElementAccessExpression(lhs)) {
           const name = assignmentPropertyName(lhs);
           if (op === ts.SyntaxKind.EqualsToken) recordWrite(name, { value: node.right });
-          else if (ALWAYS_NUMERIC_COMPOUND.has(op)) recordWrite(name, { forcedNumeric: true });
+          else if (isNumericCompoundAssignment(op)) recordWrite(name, { forcedNumeric: true });
           else if (op === ts.SyntaxKind.PlusEqualsToken) recordWrite(name, { value: node, plusEqualsRhs: node.right });
           else recordWrite(name, {});
         }
@@ -712,8 +718,6 @@ function collectNumericFlowFacts(
           if (isFnctorInstanceReceiver(operand.expression, host)) notePoison(facts, node);
         } else if (ts.isPropertyAccessExpression(operand) || ts.isElementAccessExpression(operand)) {
           recordWrite(assignmentPropertyName(operand), { forcedNumeric: true });
-        } else if (ts.isIdentifier(operand)) {
-          define(node, operand.text, { forcedNumeric: true });
         }
       } else if (ts.isPropertyAssignment(node)) {
         recordWrite(propertyNameText(node.name), { value: node.initializer });
@@ -724,7 +728,7 @@ function collectNumericFlowFacts(
       } else if (ts.isPropertySignature(node) || ts.isMethodDeclaration(node) || ts.isAccessor(node)) {
         // A declared-but-unwritten slot, an accessor, or a method: no numeric
         // evidence, and an accessor must never be turned into a raw slot.
-        recordWrite(propertyNameText(node.name), {});
+        recordWrite(propertyNameText(node.name), { declaration: node });
       } else if (ts.isDeleteExpression(node)) {
         const target = unwrap(node.expression);
         if (ts.isPropertyAccessExpression(target)) facts.deletedNames.add(target.name.text);
@@ -854,6 +858,8 @@ interface FixpointSets {
   readonly numericProperties: ReadonlySet<string>;
   readonly numericSlots: ReadonlySet<Slot>;
   readonly numericFunctions: ReadonlySet<string>;
+  /** Local carriers require Number returns, not arithmetic-compatible Boolean returns. */
+  readonly numberCallReturn?: (call: ts.CallExpression) => boolean;
 }
 
 interface Prover {
@@ -1031,6 +1037,7 @@ function makeProver(
   const isNumeric = (expr: ts.Expression, depth: number): boolean => {
     if (depth > MAX_DEPTH) return false;
     const value = unwrap(expr);
+    if (ts.isCallExpression(value) && sets.numberCallReturn) return sets.numberCallReturn(value);
 
     // Fast path for annotated code — never used to demote.
     const fact = host.oracle?.typeFactOf(value);
@@ -1054,7 +1061,7 @@ function makeProver(
 
     if (ts.isBinaryExpression(value)) {
       const op = value.operatorToken.kind;
-      if (ALWAYS_NUMERIC_BINARY.has(op) || ALWAYS_NUMERIC_COMPOUND.has(op) || BOOLEAN_BINARY.has(op)) return true;
+      if (ALWAYS_NUMERIC_BINARY.has(op) || isNumericCompoundAssignment(op) || BOOLEAN_BINARY.has(op)) return true;
       // `+` / `+=` are the only arithmetic-looking forms that can produce a
       // string; both operands must be provably non-string.
       if (op === ts.SyntaxKind.PlusToken || op === ts.SyntaxKind.PlusEqualsToken) {
@@ -1149,6 +1156,7 @@ function makeProver(
   const isBooleanish = (expr: ts.Expression, depth: number): boolean => {
     if (depth > MAX_DEPTH) return false;
     const value = unwrap(expr);
+    if (ts.isDeleteExpression(value)) return true;
     if (value.kind === ts.SyntaxKind.TrueKeyword || value.kind === ts.SyntaxKind.FalseKeyword) return true;
     if (ts.isPrefixUnaryExpression(value) && value.operator === ts.SyntaxKind.ExclamationToken) return true;
     if (ts.isBinaryExpression(value)) {
@@ -1324,15 +1332,383 @@ export interface NumericPropertyAnalysisTarget {
  * prover's OWN call arm, so every property and slot whose proof ran through a
  * predicate call is demoted with it.
  *
- * What that leaves unfiltered, stated rather than hidden: the prover's internal
- * call arm still proves a LOCAL numeric from a boolean-returning call, so
- * `var f = this.pred(x); "" + f` reads `"1"` where JS says `"true"`. That
- * reproduces identically on the pre-#4406 tree — it belongs to the
- * local-carrier oracle, not to this verdict. The property side is already
- * covered: #2847's brand arrives as `excludeNames` and withdraws it there.
+ * Before #6878 L the unfiltered internal call arm also proved a LOCAL numeric
+ * from a boolean-returning call: `var f = this.pred(x); "" + f` read `"1"`
+ * where JS says `"true"`, identically on the pre-#4406 tree. The grounded local
+ * consumer now supplies its separate Number-only call proof; this loop's
+ * arithmetic-compatible verdict remains unfiltered. The property side keeps
+ * #2847's brand: it arrives as `excludeNames` and withdraws the name there.
  */
 function publishNumericFunctions(numericFunctions: ReadonlySet<string>, returnsBoolean: (name: string) => boolean) {
   return new Set([...numericFunctions].filter((name) => !returnsBoolean(name)));
+}
+
+/**
+ * A deliberately bounded certificate for the NEW Number-only member consumer.
+ * Fresh literal/source-class values plus a closed visible region are positive
+ * evidence; annotations, casts, opaque effects and escapes are not. Refusal
+ * changes no arithmetic verdict or runtime admission: the normal carrier stays.
+ */
+function makeNumberMemberRegionProof(
+  facts: NumericFlowFacts,
+  host: NumericPropertyAnalysisHost,
+): (call: ts.CallExpression, fn: FunctionLike, selectsMember: (decl: ts.Declaration) => boolean) => boolean {
+  const closedByFunction = new Map<FunctionLike, boolean>();
+  const valuesInFlight = new Set<Slot>();
+  const classIsFresh = (decl: ts.Declaration): boolean =>
+    (ts.isClassDeclaration(decl) || ts.isClassExpression(decl)) &&
+    !decl.getSourceFile().isDeclarationFile &&
+    !decl.heritageClauses?.some((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword) &&
+    // Explicit constructors may replace the instance. They need a stronger
+    // constructor-value certificate; the implicit source constructor does not.
+    !decl.members.some(ts.isConstructorDeclaration) &&
+    !facts.identifierWriteTargets.some((target) => host.oracle?.declarationsOf?.(target).includes(decl));
+  const ownedValue = (expr: ts.Expression): boolean => {
+    const value = unwrap(expr);
+    if (ts.isObjectLiteralExpression(value)) {
+      return value.properties.every(
+        (property) =>
+          !ts.isSpreadAssignment(property) &&
+          !ts.isAccessor(property) &&
+          propertyNameText(property.name) !== undefined &&
+          propertyNameText(property.name) !== "__proto__",
+      );
+    }
+    if (ts.isNewExpression(value)) {
+      const callee = unwrap(value.expression);
+      if (!ts.isIdentifier(callee) || facts.scopes.resolve(callee, callee.text)) return false;
+      const declarations = host.oracle?.declarationsOf?.(callee);
+      return !!declarations?.length && declarations.every(classIsFresh);
+    }
+    if (!ts.isIdentifier(value)) return false;
+    const slot = facts.scopes.resolve(value, value.text);
+    if (!slot) {
+      const declarations = host.oracle?.declarationsOf?.(value);
+      return !!declarations?.length && declarations.every(classIsFresh);
+    }
+    if (valuesInFlight.has(slot) || !slot.defs.length) return false;
+    valuesInFlight.add(slot);
+    try {
+      return slot.defs.every((def) => def.expr !== undefined && ownedValue(def.expr));
+    } finally {
+      valuesInFlight.delete(slot);
+    }
+  };
+  const literalPrimitive = (expr: ts.Expression): boolean => {
+    const value = unwrap(expr);
+    return (
+      ts.isNumericLiteral(value) ||
+      ts.isStringLiteral(value) ||
+      ts.isNoSubstitutionTemplateLiteral(value) ||
+      value.kind === ts.SyntaxKind.TrueKeyword ||
+      value.kind === ts.SyntaxKind.FalseKeyword ||
+      value.kind === ts.SyntaxKind.NullKeyword
+    );
+  };
+  return (call, fn, selectsMember) => {
+    if (host.openWorldPropertyReads === true) return false;
+    const callee = unwrap(call.expression);
+    if (!ts.isPropertyAccessExpression(callee) || !ownedValue(callee.expression)) return false;
+    const prior = closedByFunction.get(fn);
+    if (prior !== undefined) return prior;
+    let closed = true;
+    const visit = (node: ts.Node): void => {
+      if (!closed) return;
+      // These execute protocols absent from the named-write model. They do not
+      // poison the old fixpoint; only this additional member proof withdraws.
+      if (
+        ts.isForInStatement(node) ||
+        ts.isForOfStatement(node) ||
+        ts.isWithStatement(node) ||
+        ts.isSpreadAssignment(node) ||
+        ts.isSpreadElement(node) ||
+        ts.isComputedPropertyName(node) ||
+        ts.isObjectBindingPattern(node) ||
+        ts.isArrayBindingPattern(node) ||
+        ts.isDecorator(node) ||
+        ts.isImportDeclaration(node) ||
+        ts.isImportEqualsDeclaration(node) ||
+        ts.isExportDeclaration(node) ||
+        ts.isExportAssignment(node) ||
+        node.kind === ts.SyntaxKind.ExportKeyword ||
+        // AwaitUsing includes the Using bit; its other bit is also Const.
+        (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
+        (ts.isPropertyAssignment(node) && propertyNameText(node.name) === "__proto__") ||
+        ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) &&
+          node.heritageClauses?.some((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword))
+      ) {
+        closed = false;
+        return;
+      }
+      if (ts.isCallExpression(node)) {
+        const target = unwrap(node.expression);
+        const declarations = ts.isPropertyAccessExpression(target)
+          ? host.oracle?.declarationsOf?.(target.name)
+          : undefined;
+        closed =
+          !node.questionDotToken &&
+          ts.isPropertyAccessExpression(target) &&
+          !target.questionDotToken &&
+          ownedValue(target.expression) &&
+          !!declarations?.length &&
+          declarations.every(selectsMember);
+      } else if (ts.isNewExpression(node)) {
+        closed = ownedValue(node);
+      } else if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+        const name = assignmentPropertyName(node);
+        const declarations = host.oracle?.declarationsOf?.(ts.isPropertyAccessExpression(node) ? node.name : node);
+        // The shared target authority also catches destructuring/loop-head
+        // stores. Only direct '=' stores are modeled by the existing pool.
+        closed =
+          name !== undefined &&
+          ownedValue(node.expression) &&
+          !!declarations?.length &&
+          declarations.every((decl) => !decl.getSourceFile().isDeclarationFile) &&
+          (!isStoreTarget(node) ||
+            (ts.isBinaryExpression(node.parent) &&
+              node.parent.left === node &&
+              node.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken));
+      } else if (ts.isBinaryExpression(node)) {
+        const op = node.operatorToken.kind;
+        closed =
+          op === ts.SyntaxKind.EqualsToken ||
+          op === ts.SyntaxKind.CommaToken ||
+          op === ts.SyntaxKind.AmpersandAmpersandToken ||
+          op === ts.SyntaxKind.BarBarToken ||
+          op === ts.SyntaxKind.QuestionQuestionToken ||
+          op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+          op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+          (op !== ts.SyntaxKind.InKeyword &&
+            op !== ts.SyntaxKind.InstanceOfKeyword &&
+            literalPrimitive(node.left) &&
+            literalPrimitive(node.right));
+      } else if (ts.isPrefixUnaryExpression(node)) {
+        closed = node.operator === ts.SyntaxKind.ExclamationToken || literalPrimitive(node.operand);
+      } else if (ts.isExpression(node)) {
+        // Whitelist syntax with no additional implicit user callback. Unknown
+        // expression kinds (templates, coercive updates, iteration, await, JSX,
+        // tagged calls, etc.) fail closed rather than pretending to be pure.
+        const localIdentifier =
+          ts.isIdentifier(node) &&
+          (facts.scopes.resolve(node, node.text) !== undefined ||
+            (() => {
+              const declarations = host.oracle?.declarationsOf?.(node);
+              return !!declarations?.length && declarations.every((decl) => !decl.getSourceFile().isDeclarationFile);
+            })());
+        closed =
+          localIdentifier ||
+          ts.isLiteralExpression(node) ||
+          node.kind === ts.SyntaxKind.TrueKeyword ||
+          node.kind === ts.SyntaxKind.FalseKeyword ||
+          node.kind === ts.SyntaxKind.NullKeyword ||
+          node.kind === ts.SyntaxKind.ThisKeyword ||
+          ts.isObjectLiteralExpression(node) ||
+          ts.isArrayLiteralExpression(node) ||
+          ts.isFunctionExpression(node) ||
+          ts.isArrowFunction(node) ||
+          ts.isClassExpression(node) ||
+          ts.isParenthesizedExpression(node) ||
+          ts.isAsExpression(node) ||
+          ts.isTypeAssertionExpression(node) ||
+          ts.isSatisfiesExpression(node) ||
+          ts.isNonNullExpression(node) ||
+          ts.isConditionalExpression(node) ||
+          ts.isTypeOfExpression(node) ||
+          ts.isVoidExpression(node) ||
+          ts.isDeleteExpression(node) ||
+          ts.isMetaProperty(node);
+      }
+      if (closed && node.kind > ts.SyntaxKind.LastToken) forEachChild(node, visit);
+    };
+    // Facts and binding writes are complete before this lazy region walk.
+    for (const sourceFile of facts.sourceFiles) visit(sourceFile);
+    closedByFunction.set(fn, closed);
+    return closed;
+  };
+}
+
+/**
+ * (#6878 L) Number-only call evidence for the grounded LOCAL consumer. The
+ * arithmetic-compatible greatest fixpoint and public return verdict stay intact.
+ * Follow every definition of returned identifiers, including identity parameters;
+ * opaque definitions, ambiguous names and cycles are refusals, never evidence.
+ */
+function makeNumberCallProof(
+  facts: NumericFlowFacts,
+  host: NumericPropertyAnalysisHost,
+  prover: Prover,
+  numericFunctions: ReadonlySet<string>,
+  returnsByFunction: ReadonlyMap<FunctionLike, readonly ts.Expression[] | undefined>,
+): (call: ts.CallExpression) => boolean {
+  const slotsInFlight = new Set<Slot>();
+  const functionsInFlight = new Set<FunctionLike>();
+  const calls = new Map<ts.CallExpression, boolean>();
+  const memberRegionProof = makeNumberMemberRegionProof(facts, host);
+  const valueSelectsFunction = (value: ts.Expression, fn: FunctionLike): boolean => {
+    value = unwrap(value);
+    if (value === fn) return true;
+    if (!ts.isIdentifier(value)) return false;
+    const binding = facts.scopes.resolve(value, value.text);
+    return (
+      binding !== undefined &&
+      binding.defs.length > 0 &&
+      binding.defs.every((def) => def.functionDeclaration === fn || (def.expr !== undefined && unwrap(def.expr) === fn))
+    );
+  };
+  const isNumber = (expr: ts.Expression, depth: number): boolean => {
+    if (depth > 48) return false;
+    const value = unwrap(expr);
+    if (ts.isCallExpression(value)) return callReturnsNumber(value, depth + 1);
+    if (ts.isIdentifier(value)) {
+      const slot = facts.scopes.resolve(value, value.text);
+      if (!slot || !slot.defs.length || slotsInFlight.has(slot)) return false;
+      slotsInFlight.add(slot);
+      try {
+        return slot.defs.every(
+          (def) => def.forcedNumeric === true || (def.expr !== undefined && isNumber(def.expr, depth + 1)),
+        );
+      } finally {
+        slotsInFlight.delete(slot);
+      }
+    }
+    if (ts.isConditionalExpression(value)) {
+      return isNumber(value.whenTrue, depth + 1) && isNumber(value.whenFalse, depth + 1);
+    }
+    if (ts.isBinaryExpression(value)) {
+      const op = value.operatorToken.kind;
+      if (BOOLEAN_BINARY.has(op)) return false;
+      if (op === ts.SyntaxKind.EqualsToken || op === ts.SyntaxKind.CommaToken) {
+        return isNumber(value.right, depth + 1);
+      }
+      if (
+        op === ts.SyntaxKind.PlusToken ||
+        op === ts.SyntaxKind.PlusEqualsToken ||
+        op === ts.SyntaxKind.AmpersandAmpersandToken ||
+        op === ts.SyntaxKind.BarBarToken ||
+        op === ts.SyntaxKind.QuestionQuestionToken
+      )
+        return isNumber(value.left, depth + 1) && isNumber(value.right, depth + 1);
+    }
+    const kind = host.oracle?.typeFactOf(value).kind;
+    return kind !== "boolean" && kind !== "bigint" && !prover.isBooleanish(value) && prover.isNumeric(value);
+  };
+  const callReturnsNumber = (call: ts.CallExpression, depth: number): boolean => {
+    if (depth > 48 || call.questionDotToken) return false;
+    // This existing stratified evidence certifies a declaration's plain f64
+    // result, not the unfiltered name-keyed arithmetic verdict.
+    if (host.provenNumericCallReturn?.(call) === true) return true;
+    const callee = unwrap(call.expression);
+    if (
+      ts.isIdentifier(callee) &&
+      NUMERIC_GLOBAL_CALLS.has(callee.text) &&
+      !facts.scopes.resolve(callee, callee.text) &&
+      !facts.functionsByName.has(callee.text)
+    )
+      return true;
+    const name = ts.isIdentifier(callee)
+      ? callee.text
+      : ts.isPropertyAccessExpression(callee)
+        ? callee.name.text
+        : undefined;
+    const functions = name === undefined ? undefined : facts.functionsByName.get(name);
+    if (functions) {
+      if (functions.length !== 1 || !numericFunctions.has(name!) || host.excludeFunctionNames?.has(name!)) return false;
+      const fn = functions[0]!;
+      if (
+        fn.asteriskToken ||
+        (ts.canHaveModifiers(fn) &&
+          ts.getModifiers(fn)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword))
+      ) {
+        return false;
+      }
+      if (ts.isIdentifier(callee)) {
+        const binding = facts.scopes.resolve(callee, callee.text);
+        if (!binding?.defs.length || binding !== facts.scopes.resolve(fn.parent, callee.text)) return false;
+        // The scope table pools blocks into function frames. Do not use that
+        // approximation to certify conditional or Annex-B block declarations.
+        if (
+          ts.isFunctionDeclaration(fn) &&
+          !ts.isSourceFile(fn.parent) &&
+          !(ts.isBlock(fn.parent) && isFunctionLikeWithBody(fn.parent.parent) && fn.parent.parent.body === fn.parent)
+        )
+          return false;
+        if (
+          binding.defs.some(
+            (def) => def.functionDeclaration !== fn && (def.expr === undefined || unwrap(def.expr) !== fn),
+          )
+        ) {
+          return false;
+        }
+      } else if (ts.isPropertyAccessExpression(callee)) {
+        const receiver = unwrap(callee.expression);
+        if (ts.isIdentifier(receiver) && NON_INSTANCE_GLOBAL_NAMESPACES.has(receiver.text)) return false;
+        // The name index proposes a candidate; it does not identify a foreign
+        // receiver's member. Every resolved member declaration must select the
+        // same source function before its Number return can narrow this local.
+        const declarations = host.oracle?.declarationsOf?.(callee.name);
+        const methodDeclarations = ts.isMethodDeclaration(fn) ? host.oracle?.declarationsOf?.(fn.name) : undefined;
+        const selectsMember = (declaration: ts.Declaration): boolean => {
+          if (declaration === fn) return true;
+          // Overloads must belong to the actual resolved static/instance member,
+          // not merely share an AST parent with the concrete implementation.
+          if (
+            ts.isMethodDeclaration(fn) &&
+            ts.isMethodDeclaration(declaration) &&
+            declaration.body === undefined &&
+            methodDeclarations?.includes(fn) === true &&
+            methodDeclarations.includes(declaration)
+          )
+            return true;
+          if (
+            (ts.isPropertyAssignment(declaration) || ts.isPropertyDeclaration(declaration)) &&
+            declaration.initializer
+          )
+            return valueSelectsFunction(declaration.initializer, fn);
+          return ts.isShorthandPropertyAssignment(declaration) && valueSelectsFunction(declaration.name, fn);
+        };
+        if (!declarations?.length || !declarations.every(selectsMember)) return false;
+        if (!memberRegionProof(call, fn, selectsMember)) return false;
+        // A resolved declaration is not a runtime immutability certificate.
+        // The existing facts pool every same-name write, including alias writes;
+        // only the original declarations or writes of this exact function agree.
+        if (
+          facts.deletedNames.has(name!) ||
+          facts.propertyWrites.some(
+            (write) =>
+              write.name === name &&
+              (write.declaration
+                ? !selectsMember(write.declaration)
+                : write.value === undefined || !valueSelectsFunction(write.value, fn)),
+          )
+        )
+          return false;
+      }
+      const returns = returnsByFunction.get(fn);
+      if (!returns?.length || functionsInFlight.has(fn)) return false;
+      functionsInFlight.add(fn);
+      try {
+        return returns.every((expr) => isNumber(expr, depth + 1));
+      } finally {
+        functionsInFlight.delete(fn);
+      }
+    }
+    if (!ts.isPropertyAccessExpression(callee)) return false;
+    const receiver = unwrap(callee.expression);
+    const intrinsic =
+      (ts.isIdentifier(receiver) &&
+        !facts.scopes.resolve(receiver, receiver.text) &&
+        (receiver.text === "Math" || (receiver.text === "Date" && callee.name.text === "now"))) ||
+      STRING_NUMERIC_METHODS.has(callee.name.text) ||
+      ARRAY_NUMERIC_METHODS.has(callee.name.text);
+    return intrinsic && prover.isNumeric(call);
+  };
+  return (call) => {
+    const cached = calls.get(call);
+    if (cached !== undefined) return cached;
+    const result = callReturnsNumber(call, 0);
+    calls.set(call, result);
+    return result;
+  };
 }
 
 /** The verdict shape returned when the analysis declines to run at all. */
@@ -1548,6 +1924,7 @@ export function analyzeNumericPropertyNames(
     numericProperties,
     numericSlots: groundedSlots,
     numericFunctions,
+    numberCallReturn: makeNumberCallProof(facts, host, prover, numericFunctions, returnsByFunction),
   });
   const groundedCandidates = [...numericSlots];
   for (let pass = 0; pass <= groundedCandidates.length; pass++) {

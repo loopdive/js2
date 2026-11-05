@@ -14,6 +14,11 @@
  * Part 2 compiles `--target standalone` (which uses the native VM, not the JS
  * host RegExp) and asserts the thrown value is caught and is a `RangeError`,
  * with non-catastrophic regexes unaffected.
+ *
+ * #2723: a backreference-free program no longer reaches the throw — it
+ * finishes on the linear PikeVM (tests/equivalence/issue-2723-*). The cap, and
+ * so these assertions, now concern the programs that stay on backtracking:
+ * the catastrophic cases below carry a backreference.
  */
 import { describe, expect, it } from "vitest";
 import { compilePattern } from "../src/codegen/regex/compile.js";
@@ -23,9 +28,9 @@ import { compile } from "../src/index.js";
 
 describe("#2091 reference VM throws on step-cap exhaustion", () => {
   it("catastrophic backtracking throws RangeError (not a silent null no-match)", () => {
-    // `(a+)+b` over an all-`a` subject with no trailing `b` is the classic
-    // exponential-backtracking ReDoS — it blows past REGEX_STEP_CAP.
-    const c = compilePattern("(a+)+b", parseFlags(""));
+    // `(a+)+\1b` over an all-`a` subject with no trailing `b` is exponential
+    // backtracking that the linear PikeVM cannot take over (backreference).
+    const c = compilePattern("(a+)+\\1b", parseFlags(""));
     const subject = "a".repeat(40);
     expect(() => search(c.prog, c.classTable, c.nGroups, subject, 0, false)).toThrow(RangeError);
   });
@@ -65,7 +70,7 @@ describe("#2091 native (standalone) __regex_run throws on step-cap exhaustion", 
     expect(
       await runStandalone(
         `export function run(): number {
-           const re = /(a+)+b/;
+           const re = /(a+)+\\1b/;
            try { re.test("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); return 0; }
            catch (e) { return (e instanceof RangeError) ? 2 : 1; }
          }`,

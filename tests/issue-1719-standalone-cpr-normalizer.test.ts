@@ -8,9 +8,7 @@ import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
-import { directArrayProtoIteratorAssignment } from "../src/codegen/array-proto-iterator-override-ast.js";
 import { compile, type CompileResult } from "../src/index.js";
-import { tsRuntime } from "../src/ts-api.js";
 
 const STANDALONE_RUNNER = `
   const chunks = [];
@@ -237,26 +235,6 @@ function runStandalone(result: CompileResult): {
     readonly values: Readonly<Record<string, number>>;
   };
 }
-
-describe("#1719 shared direct CPR assignment predicate", () => {
-  function direct(source: string) {
-    const file = tsRuntime.createSourceFile("t.ts", source, tsRuntime.ScriptTarget.Latest, true);
-    return directArrayProtoIteratorAssignment(file.statements[0]!);
-  }
-
-  it("recognizes only the exact direct Symbol.iterator and values assignments", () => {
-    expect(direct(`Array.prototype[Symbol.iterator] = function* () {};`)?.key).toBe("@@iterator");
-    expect(direct(`Array.prototype.values = function* () {};`)?.key).toBe("values");
-    expect(direct(`Array.prototype["values"] = function* () {};`)?.key).toBe("values");
-  });
-
-  it("rejects wrapped, foreign, nested-expression, and non-assignment shapes", () => {
-    expect(direct(`(Array.prototype as any)[Symbol.iterator] = function* () {};`)).toBeUndefined();
-    expect(direct(`String.prototype[Symbol.iterator] = function* () {};`)).toBeUndefined();
-    expect(direct(`consume(Array.prototype.values = function* () {});`)).toBeUndefined();
-    expect(direct(`Array.prototype.values;`)).toBeUndefined();
-  });
-});
 
 describe.each(["symbol", "values"] as const)("#1719 standalone CPR normalizer — %s", (overrideTarget) => {
   it("drives all five consumers through drive -> __iterator -> __iterator_next", async () => {

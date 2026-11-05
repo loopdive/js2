@@ -32,6 +32,7 @@ import { hostFreeEnvironment, jsValueBoundary } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
+import { bigIntToStringIdx } from "./bigint-string-context.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { liteExnRenderPrepareBody, usesLiteExnRender } from "./exn-render-lite.js"; // (#6666)
 import { pendingStringConstantGlobalGet } from "./registry/imports.js";
@@ -815,14 +816,16 @@ export function tryCompileNativeVecConcatOperand(
     }
   }
 
-  // Only element kinds we can stringify by value qualify for the join fast-path:
-  // numeric, native-string, or a nested vec. An `externref`-element vec is what a
-  // closure array method (`[...].map(fn)`) produces — its elements are opaque
-  // boxed `any`s, and such operands stringified as "[object Object]" on baseline.
-  // Routing them here would (a) need a host/ToString bridge the standalone lane
-  // lacks and (b) re-introduce the closure index-desync, so fall back to
-  // `$__any_to_string` (the existing "[object Object]" behaviour — no regression).
-  if (!isNumeric && !isNativeStrElem && nestedElemKind === undefined) return false;
+  // Numeric, native-string and nested-vec elements stringify by value; (#7147) any other vec
+  // takes the runtime ToString → the recursive, cycle-guarded `__array_to_primitive_string`.
+  if (!isNumeric && !isNativeStrElem && nestedElemKind === undefined) {
+    const ext: ValType[] = [{ kind: "externref" }];
+    if (ensureLateImport(ctx, "__extern_toString", ext, ext) === undefined) return false;
+    flushLateImportShifts(ctx, fctx);
+    fctx.body.push({ op: "extern.convert_any" }, { op: "call", funcIdx: ctx.funcMap.get("__extern_toString")! });
+    fctx.body.push({ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: anyStrTypeIdx });
+    return true;
+  }
 
   // (#1448) If a closure-allocating array method (`map`/`filter`/…) was already
   // lowered in this function, the native array-join lowering corrupts the
@@ -874,9 +877,7 @@ export function tryCompileNativeVecConcatOperand(
   } else if (nestedJoinIdx !== undefined) {
     elemToStr.push({ op: "call", funcIdx: nestedJoinIdx });
   } else {
-    // any other ref / externref element → residual "[object Object]".
-    elemToStr.length = 0;
-    elemToStr.push(...nativeStringLiteralInstrs(ctx, "[object Object]"));
+    elemToStr.splice(0, 3, ...nativeStringLiteralInstrs(ctx, "[object Object]")); // residual, as before
   }
 
   // The vec ref is on the stack — tee into vecTmp, guard null → "".
@@ -2037,6 +2038,50 @@ export function ensureStandaloneStdoutSink(ctx: CodegenContext): void {
 }
 
 /**
+ * (#7157) Convert the scalar on top of the stack to a native `$AnyString` ref
+ * with the conversion `String(x)` uses host-free: a boolean i32 (branded, or
+ * `isBoolean`) selects "true"/"false"; any other i32 widens to f64; f64 goes
+ * through the native `number_toString` formatter, minted here on first use; a
+ * branded bigint i64 uses `bigint_toString` when the collector registered it.
+ * Returns false, leaving the scalar on the stack, for anything else (non-scalar
+ * types, a symbol-branded i32, an i64 without a bigint formatter).
+ */
+export function emitScalarToNativeString(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  valType: ValType,
+  isBoolean: boolean,
+): boolean {
+  if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0) return false;
+  if (valType.kind === "i32" && valType.symbol === true) return false; // a symbol id, not a number
+  if (valType.kind === "i32" && (isBoolean || valType.boolean === true)) {
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: nativeStringType(ctx) },
+      then: nativeStringLiteralInstrs(ctx, "true"),
+      else: nativeStringLiteralInstrs(ctx, "false"),
+    });
+    return true;
+  }
+  const bigIntIdx = bigIntToStringIdx(ctx, valType);
+  if (valType.kind !== "f64" && valType.kind !== "i32" && bigIntIdx === undefined) return false;
+  if (bigIntIdx === undefined) {
+    if (valType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
+    if (!ctx.funcMap.has("number_toString")) {
+      emitNativeNumberFormat(ctx, new Set(["number_toString"]));
+      flushLateImportShifts(ctx, fctx);
+    }
+  }
+  const toStrIdx = bigIntIdx ?? ctx.funcMap.get("number_toString");
+  if (toStrIdx === undefined) throw new Error("emitScalarToNativeString: number_toString was not emitted");
+  fctx.body.push({ op: "call", funcIdx: toStrIdx });
+  // The formatter returns its native string widened to externref.
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+  return true;
+}
+
+/**
  * (#3469) Render a `console.log`/`print` argument (already compiled to the top of
  * the value stack with ValType `valType`) to a native `$AnyString` HOST-FREE and
  * append it to the standalone stdout sink. Dispatch is on the COMPILED ValType (a
@@ -2050,13 +2095,16 @@ export function ensureStandaloneStdoutSink(ctx: CodegenContext): void {
  *
  * Lives in native-strings.ts (the coercion-engine-sanctioned owner of
  * `__any_to_string`) so the #2108 coercion-drift gate does not count this as a
- * new hand-rolled coercion site outside the engine. Bare scalars (f64/i32/i64 — a
- * number/boolean passed directly, never a marker) are dropped best-effort.
+ * new hand-rolled coercion site outside the engine. (#7157) Bare scalars
+ * (f64/i32/i64) render through {@link emitScalarToNativeString}, the
+ * `String(n)` conversion; `isBoolean` (the caller's oracle answer) marks an
+ * unbranded i32 as a boolean.
  */
 export function emitStandaloneStdoutAppendValue(
   ctx: CodegenContext,
   fctx: FunctionContext,
   valType: ValType | null,
+  isBoolean = false,
 ): void {
   if (ctx.funcMap.get("__stdout_append") === undefined) {
     // Sink not minted — drop any pushed value to keep the stack balanced.
@@ -2068,7 +2116,15 @@ export function emitStandaloneStdoutAppendValue(
     // externref is a separate hierarchy from anyref — convert first.
     fctx.body.push({ op: "any.convert_extern" });
   } else if (valType.kind !== "ref" && valType.kind !== "ref_null") {
-    fctx.body.push({ op: "drop" }); // scalar — best-effort, never a marker
+    // (#7157) A number/boolean argument the legacy path compiled to a scalar
+    // (multi-argument calls, or any function the IR does not claim) used to be
+    // dropped here, printing an empty line.
+    if (!emitScalarToNativeString(ctx, fctx, valType, isBoolean)) {
+      fctx.body.push({ op: "drop" });
+      return;
+    }
+    const appendIdx = ctx.funcMap.get("__stdout_append");
+    if (appendIdx !== undefined) fctx.body.push({ op: "call", funcIdx: appendIdx });
     return;
   }
   // Native `$AnyString` (literal/concat/template) or struct ref — both `anyref`

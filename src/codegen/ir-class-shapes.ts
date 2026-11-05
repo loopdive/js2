@@ -2,6 +2,8 @@
 
 import { ts } from "../ts-api.js";
 import type { TypeOracle } from "../checker/oracle.js";
+import type { CodegenContext } from "./context/types.js";
+import type { ValType } from "../ir/types.js";
 import { irUnitFuncRef } from "../ir/callable-bindings.js";
 import {
   irPreparedNestedOrdinaryClassBindingName,
@@ -479,4 +481,14 @@ export function createIrClassShapeSidecar(
     }
   }
   return { identityContext: context, byClassId, legacyProjection };
+}
+
+/**
+ * (#7223) Does a legacy slot hold exactly the IR `dynamic` carrier
+ * (`resolveIrDynamicCarrierType`: fast → `ref_null $AnyValue`, otherwise
+ * `externref`)? Pure read: never registers `$AnyValue`.
+ */
+export function irDynamicCarrierMatchesSlot(ctx: CodegenContext, slot: ValType): boolean {
+  if (!ctx.fast) return slot.kind === "externref";
+  return slot.kind === "ref_null" && ctx.anyValueTypeIdx >= 0 && slot.typeIdx === ctx.anyValueTypeIdx;
 }
