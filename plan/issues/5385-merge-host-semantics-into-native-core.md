@@ -1032,6 +1032,30 @@ last two are `it.fails` rows on PR 6701.
 (S7 entry condition 5, S7-e implements it); schedule-only regime test262 lane;
 PR 6707 (#7010) on `hold`.
 
+### 2026-11-05 — S7-a on main; S7-e decisions recorded
+
+S7-a merged into main on 2026-10-26 as PR #6899 (the stakeholder's review
+lane re-homed PR 6701's head with a round-2 review fix; 6701 closed in its
+favour). Main moved ~1,250 commits over the pause; S7-b (PR 6705), S7-c
+(PR 6896), the S7-c continuation (711 → 2 `ctx.standalone` hits,
+`CodegenContext.standalone` removed, 15 dead modules deleted; branch
+`issue-6979-s7c2-fold-remaining-arms`) and S7-d (`src/runtime.ts` 11,539 →
+4,995 lines, `resolveImport` 1,940 → 206 lines; branch
+`issue-6979-s7d-runtime-adapters`, `be55974a1e`) are being re-merged onto
+main in that order.
+
+**Stakeholder decisions for S7-e (2026-10-25 and 2026-11-05):**
+
+1. README first conformance line: **standalone only** (the figure CI
+   measures). The frozen host figure leaves the README.
+2. Website/dashboard conformance graph: the JS-host series **stays as a
+   background series** (historical context, frozen at the 2026-10-12
+   retirement) and the **JS-host toggle is removed**; the standalone series
+   is the only interactive one.
+
+S7-e implements both; `scripts/preserve-frozen-host-baseline.mjs` keeps
+publishing the frozen snapshot that the background series reads.
+
 ### 2026-11-05 — S7-e: stakeholder decisions on the conformance line and graph; docs and dashboards retire the two-mode story
 
 **Stakeholder decisions (S7 entry condition 5), relayed by the lead lane:**
