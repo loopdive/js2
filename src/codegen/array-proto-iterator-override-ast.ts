@@ -52,25 +52,3 @@ export function arrayProtoIteratorDeleteKey(node: ts.Node): ArrayProtoIteratorOv
 export function isArrayProtoIteratorAssignTarget(target: ts.Expression): boolean {
   return arrayProtoIteratorOverrideKeyFromTarget(target) !== undefined;
 }
-
-export interface DirectArrayProtoIteratorAssignment {
-  readonly assignment: ts.BinaryExpression;
-  readonly key: ArrayProtoIteratorOverrideKey;
-  readonly statement: ts.ExpressionStatement;
-  readonly value: ts.Expression;
-}
-
-/**
- * Recognize exactly `Array.prototype[Symbol.iterator] = value;` or
- * `Array.prototype.values = value;` as a direct expression statement. This is
- * the shared future admission seam for the checkpoint-2 receiver exception;
- * checkpoint 1 only installs/tests the predicate and does not broaden native
- * generator eligibility.
- */
-export function directArrayProtoIteratorAssignment(node: ts.Node): DirectArrayProtoIteratorAssignment | undefined {
-  if (!ts.isExpressionStatement(node) || !ts.isBinaryExpression(node.expression)) return undefined;
-  const assignment = node.expression;
-  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return undefined;
-  const key = arrayProtoIteratorOverrideKeyFromTarget(assignment.left);
-  return key === undefined ? undefined : { assignment, key, statement: node, value: assignment.right };
-}

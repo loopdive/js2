@@ -1,18 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-/**
- * Preserve a native Wasm TypedArray's concrete brand at the JS-host boundary.
- *
- * Numeric TypedArrays and ordinary Arrays intentionally share the same compact
- * `$Vec` carrier. Once such a value is widened to `any`, the host cannot infer
- * from the opaque WasmGC struct whether `.buffer` should exist. Register only
- * values produced by a TypedArray constructor; plain vecs remain unbranded.
- */
-import type { ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
-import { allocLocal } from "../context/locals.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { noJsHost } from "./helpers.js";
-import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import type { CodegenContext } from "../context/types.js";
 
 // Runtime contract: keep in lock-step with _COMPILED_TYPED_ARRAY_CTORS in
 // runtime.ts. Zero is deliberately not a valid brand.
@@ -53,41 +41,4 @@ export function hostTypedArrayCarrierNameForExpression(ctx: CodegenContext, expr
     isHostTypedArrayCarrierName(expr.expression.text)
     ? expr.expression.text
     : undefined;
-}
-
-/** Whether an expression is statically one of the branded host-lane carriers. */
-export function isHostTypedArrayCarrierExpression(ctx: CodegenContext, expr: ts.Expression): boolean {
-  return hostTypedArrayCarrierNameForExpression(ctx, expr) !== undefined;
-}
-
-/**
- * Consume the freshly-created native TypedArray carrier on the stack, register
- * its concrete TypedArray brand with the host, then leave the same carrier on
- * the stack. Host-backed TypedArrays do not call this helper because they retain
- * their native JS brand; standalone/WASI remains import-free and byte-identical.
- */
-export function emitHostTypedArrayCarrierRegistration(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  ctorName: string,
-  resultType: ValType,
-): void {
-  if (noJsHost(ctx)) return;
-  const tag = TYPED_ARRAY_HOST_TAGS[ctorName];
-  if (tag === undefined) return;
-
-  ensureLateImport(ctx, "__register_typed_array", [{ kind: "externref" }, { kind: "i32" }], []);
-  flushLateImportShifts(ctx, fctx);
-  const registerIdx = ctx.funcMap.get("__register_typed_array");
-  if (registerIdx === undefined) return;
-
-  const carrierLocal = allocLocal(fctx, `__typed_array_carrier_${fctx.locals.length}`, resultType);
-  fctx.body.push(
-    { op: "local.set", index: carrierLocal },
-    { op: "local.get", index: carrierLocal },
-    { op: "extern.convert_any" },
-    { op: "i32.const", value: tag },
-    { op: "call", funcIdx: registerIdx },
-    { op: "local.get", index: carrierLocal },
-  );
 }

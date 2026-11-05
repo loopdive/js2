@@ -140,10 +140,9 @@ const STANDALONE_UNPROVIDED_EXTERN_CLASSES: ReadonlySet<string> = new Set([
 /** Skip registering `className` as an `env::`-backed extern class. */
 export function isStandaloneUnprovidedExternClass(ctx: CodegenContext, className: string): boolean {
   return (
-    ctx.standalone &&
-    (STANDALONE_UNPROVIDED_EXTERN_CLASSES.has(className) ||
-      isUnavailableName(ctx, className) ||
-      isUnprovidedDomClass(ctx, className))
+    STANDALONE_UNPROVIDED_EXTERN_CLASSES.has(className) ||
+    isUnavailableName(ctx, className) ||
+    isUnprovidedDomClass(ctx, className)
   );
 }
 
@@ -153,7 +152,7 @@ export function isStandaloneUnprovidedExternClass(ctx: CodegenContext, className
  * Name-level only: the caller proves the reference is the ambient binding.
  */
 export function isStandaloneUnavailableConstructorGlobal(ctx: CodegenContext, name: string): boolean {
-  return ctx.standalone && ctx.standaloneGlobalThisImport === undefined && isUnavailableName(ctx, name);
+  return ctx.standaloneGlobalThisImport === undefined && isUnavailableName(ctx, name);
 }
 
 /**
@@ -173,7 +172,6 @@ export function isHostResolvedBuiltinReceiver(
   methodName: string,
 ): boolean {
   if (!ts.isIdentifier(receiver) || !BUILTIN_CLASS_NAMES.has(receiver.text)) return false;
-  if (!ctx.standalone) return true;
   if (receiver.text === "Buffer") return false;
   if (methodName === "captureStackTrace" && STANDALONE_ERROR_CONSTRUCTORS.has(receiver.text)) return false;
   return !isBuiltinCarrierExpandoCall(ctx, receiver, methodName);
@@ -187,7 +185,7 @@ export function isHostResolvedBuiltinReceiver(
  * does not — it resolves the name after them.
  */
 export function isBuiltinCarrierExpandoCall(ctx: CodegenContext, receiver: ts.Expression, methodName: string): boolean {
-  if (!ctx.standalone || !ts.isIdentifier(receiver) || !BUILTIN_CLASS_NAMES.has(receiver.text)) return false;
+  if (!ts.isIdentifier(receiver) || !BUILTIN_CLASS_NAMES.has(receiver.text)) return false;
   if (receiver.text === "Buffer") return false;
   if (methodName === "captureStackTrace" && STANDALONE_ERROR_CONSTRUCTORS.has(receiver.text)) return false;
   return BUILTIN_STATIC_METHOD_ARITY[receiver.text]?.[methodName] === undefined;
@@ -262,7 +260,7 @@ export function tryEmitStandalonePerformanceNow(
   propAccess: ts.PropertyAccessExpression,
   argumentCount: number,
 ): ValType | undefined {
-  if (!ctx.standalone || argumentCount !== 0 || propAccess.name.text !== "now") return undefined;
+  if (argumentCount !== 0 || propAccess.name.text !== "now") return undefined;
   const receiver = propAccess.expression;
   if (!ts.isIdentifier(receiver) || receiver.text !== "performance") return undefined;
   if (fctx.localMap.has("performance") || runtimeEvalStateMayShadowBinding(ctx, fctx, "performance")) return undefined;

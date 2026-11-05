@@ -166,9 +166,9 @@ function needsSymbolThrowArm(ctx: CodegenContext): boolean {
  *
  * A module that never registered the `$Symbol` carrier emits nothing.
  */
-function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
+export function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
   const symTypeIdx = ctx.symbolTypeIdx;
-  if (!ctx.standalone || symTypeIdx < 0) return [];
+  if (symTypeIdx < 0) return [];
   return [
     { op: "local.tee", index: primLocal },
     { op: "any.convert_extern" },
@@ -185,6 +185,26 @@ function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
     },
     { op: "local.get", index: primLocal },
   ];
+}
+
+/**
+ * Reserve the Symbol TypeError dependencies under the existing numeric-provider
+ * policy, before operand compilation or helper-index capture. Relational
+ * callers require the native Symbol carrier; existing fast paths also support
+ * minimal modules without that carrier and retain their preparation policy.
+ */
+export function prepareSymbolToNumberGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  requireSymbolCarrier = true,
+): void {
+  if (requireSymbolCarrier && ctx.symbolTypeIdx < 0) {
+    throw new Error("Missing native Symbol carrier for numeric value conversion");
+  }
+  void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
+    forceInModuleCtor: true,
+    flush: fctx,
+  });
 }
 
 /**
@@ -219,12 +239,7 @@ function ensureDeps(
   // every registration below is idempotent, so that rebuild adds nothing.
   // Doing it the other way round (registering at finalize) would add an
   // imported global after the shift pass had already run.
-  if (ctx.standalone) {
-    void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
-      forceInModuleCtor: true,
-      flush: fctx,
-    });
-  }
+  prepareSymbolToNumberGuard(ctx, fctx, false);
   flushLateImportShifts(ctx, fctx);
   const unboxIdx = ctx.funcMap.get("__unbox_number");
   if (unboxIdx === undefined) return undefined;
@@ -248,7 +263,7 @@ function ensureDeps(
  * `__to_primitive`, Symbol TypeError guard, and `__unbox_number` sequence.
  */
 export function emitStandaloneObjectToNumber(ctx: CodegenContext, fctx: FunctionContext, hint: string): boolean {
-  if (!ctx.standalone || hint !== "number") return false;
+  if (hint !== "number") return false;
 
   const fused = fusedToNumberEnabled();
   // The non-fused arm must retain the post-ToPrimitive value while it tests
@@ -288,7 +303,7 @@ export function emitStandaloneObjectToNumber(ctx: CodegenContext, fctx: Function
  *
  * Read against `__to_primitive` (`object-runtime.ts`) and `__unbox_number`
  * (`registry/imports.ts`); both are the standalone NATIVE definitions, which is
- * why this whole module is gated on `ctx.standalone`.
+ * why this whole module is gated on the regime flag.
  *
  * | value | `__to_primitive(v,"number")` | `__unbox_number(·)` | fused arm |
  * | --- | --- | --- | --- |
@@ -415,7 +430,6 @@ export function prepareStandaloneExternrefToNumberProviders(
       readonly fusedToNumber?: FuncHandle;
     }
   | undefined {
-  if (!ctx.standalone) return undefined;
   const deps = ensureDeps(ctx, fctx);
   if (!deps) return undefined;
   if (!fusedToNumberEnabled()) {
@@ -468,7 +482,6 @@ export function tryEmitFastToNumber(
   // a different abstract operation with a different method order (and, for
   // "default", `+`/`==` semantics) — never fused, never guarded.
   if (hint !== "number") return false;
-  if (!ctx.standalone) return false;
 
   const deps = ensureDeps(ctx, fctx);
   if (deps === undefined) {

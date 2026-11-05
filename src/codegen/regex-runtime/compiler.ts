@@ -35,7 +35,6 @@ import type { Instr } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { hostRegExpRegisterInstrs } from "../helpers/host-regexp-search.js";
-import { noJsHost } from "../js-errors.js";
 import { nativeStringType } from "../native-strings.js";
 import { ReOp, RE_FLAG_I, RE_FLAG_M, RE_FLAG_S, RE_FLAG_U, RE_FLAG_V } from "../regex/bytecode.js";
 import { addFuncType } from "../registry/types.js";
@@ -210,7 +209,6 @@ export function fullDynamicRegExpAttempt(
  * classes; exact ASCII folding, refusing the rest).
  */
 export function simpleSubsetFlagGate(ctx: CodegenContext, flagBitsLocal: number): Instr[] {
-  if (!noJsHost(ctx)) return [];
   return [
     { op: "local.get", index: flagBitsLocal },
     { op: "i32.const", value: RE_FLAG_I | RE_FLAG_U },

@@ -262,7 +262,7 @@ describe("#4787 exact numeric exponentiation IR checkpoint", () => {
     ["generic", `export function p<T extends number>(a: T, b: number): number { return a ** b; }`],
     ["boxed", `export function p(a: Number, b: number): number { return a.valueOf() ** b; }`],
     ["property shape", `export function p(a: { value: number }, b: number): number { return a.value ** b; }`],
-    ["compound assignment", `export function p(a: number, b: number): number { a **= b; return a; }`],
+    // `a **= b` on a number slot is claimed since #7183 (issue-7183-ir-compound-numeric.test.ts).
     ["nested closure", `export function p(a: number, b: number): number { const f = () => a ** b; return f(); }`],
   ])("keeps the %s shape pre-claim", async (_label, source) => {
     const result = await compileTracked(source, `issue-4787-${String(_label)}.ts`);

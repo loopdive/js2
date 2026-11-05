@@ -179,7 +179,7 @@ export function tryEmitObjectLiteralMethodReceiverValue(
 ): boolean {
   if (expectedType?.kind !== "externref") return false;
   if (selfType.kind !== "ref" && selfType.kind !== "ref_null") return false;
-  if (!thisOwnedByReceiverMethod(expr, ctx.standalone)) return false;
+  if (!thisOwnedByReceiverMethod(expr, true)) return false;
 
   const saved = pushBody(fctx);
   if (fctx.localMap.has("__gen_self") || ctx.currentThisGlobalIdx < 0) {

@@ -21,7 +21,7 @@
  * reference identity. Hashing dispatches on the anyref runtime type.
  *
  * Everything here is emitted lazily and only when the native-collections path
- * is active (`ctx.standalone || ctx.wasi`). The JS-host path is untouched.
+ * is active (the native regime). The JS-host path is untouched.
  */
 import { ts } from "../ts-api.js";
 import { isVoidType } from "../checker/type-mapper.js";

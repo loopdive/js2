@@ -35,7 +35,7 @@ const TO_STRING = "__extern_toString";
 
 /** Does an `any`-receiver `.toString()` in this module need the detach-aware helper? */
 export function taToStringApplies(ctx: CodegenContext): boolean {
-  return ctx.standalone && ctx.nativeStrings && ctx.moduleUsesDynTaView;
+  return ctx.nativeStrings && ctx.moduleUsesDynTaView;
 }
 
 /**

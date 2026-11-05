@@ -65,16 +65,18 @@ describe("#4401 host import policy inventory", () => {
     });
   });
 
-  it("names exactly three regime-gap families (#6979, #5385)", () => {
+  it("names no regime-gap family once the last one closed (#6979, #5385)", () => {
     const gap = (name: string, intent: ImportDescriptor["intent"]) => classifyHostImport(descriptor(name, intent));
+    // (#6979 S7-b re-merge, 2026-11-05) `eager-generator-buffer` closed with
+    // #7010: a declined generator shape is a compile error, so the `__gen_*` /
+    // `__create_*generator` eager host buffer is a retired import like the rest.
     expect(gap("__gen_next", { type: "builtin", name: "__gen_next" })).toMatchObject({
-      classification: "regime-gap",
-      family: "eager-generator-buffer",
-      ownerIssue: 5385,
+      classification: "unknown",
+      ownerIssue: 6979,
     });
     expect(gap("__create_async_generator", { type: "builtin", name: "__create_async_generator" })).toMatchObject({
-      classification: "regime-gap",
-      family: "eager-generator-buffer",
+      classification: "unknown",
+      ownerIssue: 6979,
     });
     // (#6979 S7-b) Closed gaps: #7011 (native SharedArrayBuffer) and #7012
     // (in-module Temporal helpers) retired their host imports.

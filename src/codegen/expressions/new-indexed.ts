@@ -27,7 +27,6 @@ import { buildThrowJsErrorInstrs } from "./helpers.js";
 import { compileOneElementArray, widenDenseArrayElementType } from "./array-constructor-carrier.js";
 import { inferArrayElementType } from "./new-super.js";
 import { emitSabConstruct } from "../buffers/shared-array-buffer.js"; // (#7011)
-import { noJsHost } from "../js-errors.js";
 
 /** Sentinel: the `new` target is not one of the indexed built-in constructors. */
 export const NEW_INDEXED_FALLTHROUGH = Symbol("new-indexed-fallthrough");
@@ -39,7 +38,7 @@ export function tryCompileIndexedBuiltinNew(
   className: string | undefined,
 ): ValType | null | typeof NEW_INDEXED_FALLTHROUGH {
   // (#7011) new SharedArrayBuffer(length, options) → the native provider.
-  if (className === "SharedArrayBuffer" && noJsHost(ctx) && !ctx.classSet.has(className)) {
+  if (className === "SharedArrayBuffer" && !ctx.classSet.has(className)) {
     const r = emitSabConstruct(ctx, fctx, expr.arguments ?? [], (e) => compileExpression(ctx, fctx, e));
     if (r !== undefined) return r;
   }

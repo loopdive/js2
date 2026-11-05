@@ -4,6 +4,7 @@
  * subsystem: state shape, factory, per-node visitor, and the finalizer that
  * materializes host imports. Extracted verbatim from codegen/declarations.ts (#3268).
  */
+import { CONSOLE_METHOD_NAMES as CONSOLE_METHODS_SET } from "../../shared/contracts/console-output.js";
 import {
   isBigIntType,
   isBooleanType,
@@ -26,14 +27,12 @@ import { hasStaticModifier } from "../ast-modifiers.js"; // (#3132 S2) method-dr
 import { bodyNeedsArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { emitNativeEscape, emitNativeUnescape } from "../escape-native.js";
 import { emitNativeAtob, emitNativeBtoa } from "../helpers/base64-native.js"; // (#7079)
-import { isNativeGeneratorCandidate, sourceNeedsGeneratorHostImports } from "../generators-native.js";
-import { reportEagerGeneratorAbruptResumptions } from "../generator-eager-refusal.js";
+import { isNativeGeneratorCandidate } from "../generators-native.js";
 import {
   KNOWN_CONSTRUCTORS,
   MATH_HOST_METHODS_1ARG,
   MATH_HOST_METHODS_2ARG,
   STRING_METHODS,
-  addGeneratorImports,
   addIteratorImports,
   addStringImports,
   addUnionImports,
@@ -124,8 +123,6 @@ export interface UnifiedCollectorState {
   sourceFile: ts.SourceFile;
 }
 
-const CONSOLE_METHODS_SET = new Set(["log", "warn", "error", "info", "debug"]);
-
 /**
  * (#3912) The pure-Wasm §7.1.4.1 StringToNumber helper.
  *
@@ -188,16 +185,8 @@ export function createUnifiedCollectorState(sourceFile: ts.SourceFile): UnifiedC
   };
 }
 
-function needsHostIndirectEvalImport(ctx: CodegenContext, node: ts.Node): boolean {
-  return false;
-}
-
 /** Single-pass visitor called on every AST node */
 export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorState, node: ts.Node): void {
-  // #1164 — `__extern_eval` is an IR-owned host capability only for the exact
-  // certified statement shape. Do not arm it for direct eval, a discarded
-  // non-string, a shadowed callee, or a value-producing call that stays legacy.
-  if (needsHostIndirectEvalImport(ctx, node)) state.hostIndirectEvalNeeded = true;
   noteHostRegExpSource(ctx, node); // (#6978) regexp host accelerator: register its imports up front
 
   // (#5384) A source `throw` means this module can hand a payload of its own to
@@ -281,6 +270,8 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
         } else {
           needed.add("externref");
         }
+        // (#7157) The host-free sink renders a bigint argument with the exact formatter.
+        if (hostFreeEnvironment(ctx)) registerBigIntToStringDemand(ctx, state.primitiveNeeded, isBigIntType(argType));
       }
     }
   }
@@ -1228,8 +1219,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   if (!hostFreeEnvironment(ctx)) {
-    const CONSOLE_METHODS = ["log", "warn", "error", "info", "debug"] as const;
-    for (const method of CONSOLE_METHODS) {
+    for (const method of CONSOLE_METHODS_SET) {
       const needed = state.consoleNeededByMethod.get(method);
       if (!needed) continue;
       if (needed.has("number")) {
@@ -1550,17 +1540,9 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   // ── collectGeneratorImports finalize ──
-  // The full set of generator host imports lives in `addGeneratorImports`
-  // (in `./index.ts`) so the IR path can call the same helper when it
-  // claims a generator function (#1169f). The helper is idempotent —
-  // guards on `ctx.funcMap.has("__gen_create_buffer")` internally.
-  if (state.generatorFound) {
-    const needsNoJsHostFallback = sourceNeedsGeneratorHostImports(ctx, state.sourceFile);
-    if (needsNoJsHostFallback) {
-      addGeneratorImports(ctx, { allowNoJsHost: needsNoJsHostFallback });
-    }
-    reportEagerGeneratorAbruptResumptions(ctx, state.sourceFile); // (#6781) traced .throw()/.return() on eager
-  }
+  // (#7010) The regime never registers the eager-buffer `__gen_*` bundle: a
+  // generator neither native lowering claims is a compile error at its emit
+  // site (`refuseEagerGeneratorBuffer`), not a silent host dependency.
 
   // (#6979) The host iterator / array-iterator import bundles are gone: the
   // regime and WASI route `__iterator*` to the native iterator runtime on

@@ -26,8 +26,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { flushLateImportShifts } from "./shared.js";
 import { emitUndefined, ensureLateImport } from "./expressions/late-imports.js";
-import { addFuncType, getOrRegisterTaCtorType, taCtorIdentityTestInstrs } from "./registry/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { getOrRegisterTaCtorType, taCtorIdentityTestInstrs } from "./registry/types.js";
 import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "./native-construct.js";
 import { reserveBuiltinCollectionDynConstruct } from "./builtin-collection-dyn-construct.js";
 import {
@@ -38,7 +37,6 @@ import {
 import { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from "./extern-arg-marshal.js";
 import { armConstructIsConstructorGuard } from "./construct-is-constructor-guard.js";
 import { buildInt8ArrayCarrierMatch, emitTaDynCtorConstructFromLocals } from "./dataview-native.js";
-import { noJsHost } from "./js-errors.js";
 import { isFunctionIntrinsicValueCallee } from "./closures/function-intrinsic-construct.js";
 import { tracesToProxyConstructorValue } from "./proxy-value-provenance.js";
 import { admitBoundValueConstruct } from "./construct-bound.js";
@@ -46,13 +44,14 @@ import { isRuntimeEvalCallableResultExpression } from "./expressions/runtime-eva
 import { funcConstructorForCallee } from "./fnctor-ctor-decl.js";
 import { resolvesToGlobalFunctionAlias } from "./expressions/eval-inline.js";
 import { resolvesToNonConstructableValue } from "./expressions/non-constructable.js";
-import { buildExplicitNullThisElseArm, explicitNullReceiverLane } from "./explicit-null-receiver.js";
+import { buildExplicitNullThisElseArm } from "./explicit-null-receiver.js";
 import { emitFnctorProtoGet } from "./expressions/fnctor-prototype.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { isSelfGuardedConstructor, selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js";
 import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { emitGlobalObjectAsThis } from "./helpers/sloppy-this-global.js";
+import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 
 /** The largest arity `dyn.construct` admits: the fixed-arity driver family. */
 export const IR_DYNAMIC_CONSTRUCT_MAX_ARITY = MAX_NATIVE_CONSTRUCT_ARITY;
@@ -69,7 +68,6 @@ export function irDynamicConstructHelperName(arity: number): string {
  * takes before the ordinary driver; a site any of them claims stays legacy.
  */
 export function irDynamicConstructCalleeIsPlain(ctx: CodegenContext, callee: ts.Identifier): boolean {
-  if (!noJsHost(ctx)) return false;
   if (ctx.classSet.has(callee.text) || ctx.externClasses.has(callee.text)) return false;
   if (funcConstructorForCallee(ctx, callee)) return false; // a compiled fnctor owns the typed-struct path
   if (resolvesToNonConstructableValue(ctx, callee)) return false; // the throwing path
@@ -87,28 +85,20 @@ export function irDynamicConstructCalleeIsPlain(ctx: CodegenContext, callee: ts.
  * Returns the function index, or undefined off the host-free lanes.
  */
 export function ensureIrDynamicConstructHelper(ctx: CodegenContext, arity: number): number | undefined {
-  if (!noJsHost(ctx) || arity < 0 || arity > IR_DYNAMIC_CONSTRUCT_MAX_ARITY) return undefined;
+  if (arity < 0 || arity > IR_DYNAMIC_CONSTRUCT_MAX_ARITY) return undefined;
   const name = irDynamicConstructHelperName(arity);
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
 
   const externref: ValType = { kind: "externref" };
-  const helper: FunctionContext = {
+  const helper = helperFunctionContext(
     name,
-    params: [
+    [
       { name: "callee", type: externref },
       ...Array.from({ length: arity }, (_, i) => ({ name: `arg${i}`, type: externref })),
     ],
-    locals: [],
-    localMap: new Map(),
-    returnType: externref,
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
+    externref,
+  );
 
   // The arming prelude of `tryCompileNativeConstructFromValue`, same order.
   ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
@@ -179,21 +169,7 @@ export function ensureIrDynamicConstructHelper(ctx: CodegenContext, arity: numbe
     helper.body.push(...nativeDriverCall);
   }
 
-  const typeIdx = addFuncType(
-    ctx,
-    helper.params.map((p) => p.type),
-    [externref],
-  );
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(name, funcIdx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name,
-    typeIdx,
-    locals: helper.locals,
-    body: helper.body,
-    exported: false,
-  });
-  return funcIdx;
+  return publishHelperFunction(ctx, helper);
 }
 
 // ---------------------------------------------------------------------------
@@ -220,51 +196,24 @@ export function irInstanceOfFunctionHelperName(functionName: string): string {
   return `${IR_INSTANCEOF_FN_PREFIX}${functionName}`;
 }
 
-function receiverHelperContext(
-  name: string,
-  params: { name: string; type: ValType }[],
-  returnType: ValType,
-): FunctionContext {
-  return {
-    name,
-    params,
-    locals: [],
-    localMap: new Map(params.map((param, index) => [param.name, index])),
-    returnType,
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
-}
-
-function publishReceiverHelper(ctx: CodegenContext, helper: FunctionContext, results: ValType[]): number {
-  const typeIdx = addFuncType(
-    ctx,
-    helper.params.map((param) => param.type),
-    results,
-  );
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(helper.name, funcIdx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name: helper.name,
-    typeIdx,
-    locals: helper.locals,
-    body: helper.body,
-    exported: false,
-  });
-  return funcIdx;
-}
-
-/** Collect what `emit` pushes into a detached sequence. */
-function captureReceiverSequence(helper: FunctionContext, emit: () => void): Instr[] {
+/**
+ * Collect what `emit` pushes into a detached sequence. With `park`, the
+ * sequence (and the outer body while `emit` runs) stays in `savedBodies`, so a
+ * late import registered afterwards still shifts its call indices; the caller
+ * unparks once it has joined the sequences (#7119).
+ */
+export function captureReceiverSequence(
+  helper: FunctionContext,
+  emit: () => void,
+  opts?: { readonly park: boolean },
+): Instr[] {
   const outer = helper.body;
   const captured: Instr[] = [];
+  if (opts?.park) helper.savedBodies.push(outer);
   helper.body = captured;
   emit();
   helper.body = outer;
+  if (opts?.park) helper.savedBodies.splice(helper.savedBodies.lastIndexOf(outer), 1, captured);
   return captured;
 }
 
@@ -273,13 +222,12 @@ function captureReceiverSequence(helper: FunctionContext, emit: () => void): Ins
  * Returns the function index, or undefined off the host-free lanes.
  */
 export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const name = strict ? IR_CURRENT_THIS_STRICT_HELPER : IR_CURRENT_THIS_SLOPPY_HELPER;
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
 
   const externref: ValType = { kind: "externref" };
-  const helper = receiverHelperContext(name, [], externref);
+  const helper = helperFunctionContext(name, [], externref);
   const thisGlobal = ensureCurrentThisGlobal(ctx);
   const receiver = allocLocal(helper, "__receiver", externref);
   // `emitUnboundThis` / `emitExplicitNullThis`, with the strictness decided by
@@ -293,9 +241,7 @@ export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean):
   const yieldReceiver: Instr[] = [{ op: "local.get", index: receiver }];
   // The marker can only arrive where legacy installs it; testing for it in a
   // module that never does is dead code, never a different answer.
-  const installed = explicitNullReceiverLane(ctx)
-    ? (buildExplicitNullThisElseArm(ctx, receiver, explicitNull) ?? yieldReceiver)
-    : yieldReceiver;
+  const installed = buildExplicitNullThisElseArm(ctx, receiver, explicitNull) ?? yieldReceiver;
   helper.body.push(
     { op: "global.get", index: thisGlobal },
     { op: "local.tee", index: receiver },
@@ -303,7 +249,24 @@ export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean):
     { op: "if", blockType: { kind: "val", type: externref }, then: unbound, else: installed },
   );
   flushLateImportShifts(ctx, null);
-  return publishReceiverHelper(ctx, helper, [externref]);
+  return publishHelperFunction(ctx, helper);
+}
+
+export const IR_GLOBAL_OBJECT_HELPER = "__ir_global_object";
+
+/**
+ * (#7106) Reserve the realm-global-object wrapper `dyn.global_object` calls:
+ * legacy's own `globalThis` read (`emitGlobalObjectAsThis`, the sloppy-`this`
+ * fallback), so an IR read of an ambient global sees the realm's bindings.
+ */
+export function ensureIrGlobalObjectHelper(ctx: CodegenContext): number | undefined {
+  const existing = ctx.funcMap.get(IR_GLOBAL_OBJECT_HELPER);
+  if (existing !== undefined) return existing;
+  const externref: ValType = { kind: "externref" };
+  const helper = helperFunctionContext(IR_GLOBAL_OBJECT_HELPER, [], externref);
+  emitGlobalObjectAsThis(ctx, helper);
+  flushLateImportShifts(ctx, null);
+  return publishHelperFunction(ctx, helper);
 }
 
 /**
@@ -312,7 +275,6 @@ export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean):
  * chain walk is unavailable on this lane.
  */
 export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionName: string): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const name = irInstanceOfFunctionHelperName(functionName);
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
@@ -326,14 +288,14 @@ export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionNa
   const isProtoOf = ensureLateImport(ctx, "__isPrototypeOf", [externref, externref], [{ kind: "i32" }]);
   flushLateImportShifts(ctx, null);
   if (isProtoOf === undefined) return undefined;
-  const helper = receiverHelperContext(name, [{ name: "value", type: externref }], { kind: "i32" });
+  const helper = helperFunctionContext(name, [{ name: "value", type: externref }], { kind: "i32" });
   if (!emitFnctorProtoGet(ctx, helper, functionName)) return undefined;
   helper.body.push(
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: ctx.funcMap.get("__isPrototypeOf") ?? isProtoOf },
   );
   flushLateImportShifts(ctx, null);
-  return publishReceiverHelper(ctx, helper, [{ kind: "i32" }]);
+  return publishHelperFunction(ctx, helper);
 }
 
 /**
@@ -350,9 +312,17 @@ export function irFunctionThisStrictness(ctx: CodegenContext, fn: ts.FunctionDec
  * Is `ident` (a `new` callee or an `instanceof` right operand) a self-guarded
  * constructor the IR may use as a value — the declaration legacy keeps out of
  * the fnctor machinery, never reassigned, never a generator?
+ *
+ * (#7242) Never inside a class body: the function-object planner
+ * (`planIrImportedCalls`) mints the value plan for top-level function and
+ * module-init owners only, so a class-member claim had no plan and demoted at
+ * build (`unknown class "Test262Error"`). Minting it there is not enough: the
+ * prepared class component has no Program ABI identity for the dynamic
+ * carrier ops `dyn.construct` needs.
  */
 export function irSelfGuardedConstructorValue(ctx: CodegenContext, ident: ts.Identifier): boolean {
   if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return false;
+  if (ts.findAncestor(ident.parent, ts.isClassLike) !== undefined) return false;
   const decl = ctx.oracle.valueDeclarationOf(ident);
   if (decl === undefined || !isSelfGuardedConstructor(decl) || decl.asteriskToken !== undefined) return false;
   return !identifierIsWrittenTo(ident.getSourceFile(), ident.text);

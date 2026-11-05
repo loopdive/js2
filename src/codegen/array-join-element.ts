@@ -32,8 +32,10 @@
  * disagreeing about how an object stringifies.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { allocLocal } from "./context/locals.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { ts } from "../ts-api.js";
 
 /**
  * Is `typeIdx` `$AnyString` or one of its subtypes (`$NativeString`, a rope)?
@@ -95,4 +97,102 @@ export function buildJoinBoxedElementToString(
       else: [{ op: "local.get", index: emptyElem.elemLocal }, ...toStrPath],
     },
   ];
+}
+
+/**
+ * (#7165) Does `receiver`'s string-element vec hold null elements? A
+ * `(string | undefined)[]` lowers to a nullable `$AnyString`-ref vec that
+ * stores `undefined` as null, so its consumers must not `ref.as_non_null` an
+ * element. A plain `string[]` answers false and keeps its bytes.
+ */
+export function stringVecElementIsNullable(ctx: CodegenContext, receiver: ts.Expression, elemType: ValType): boolean {
+  if (elemType.kind !== "ref_null") return false;
+  const fact = ctx.oracle.elementFactOf(receiver);
+  return fact.kind === "union" && (fact.undefinable || fact.nullable);
+}
+
+/**
+ * String element (on the stack, a `(ref null $NativeString)`) → `(ref
+ * $AnyString)` for the native join: a non-null cast — or, for a vec that can
+ * hold null (#7165), a null element (undefined) joins as "" (§23.1.3.18 step
+ * 4.b). A plain `string[]` keeps the bare `ref.as_non_null`.
+ */
+export function stringJoinElement(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+  elemType: ValType,
+  resultType: ValType,
+): Instr[] {
+  if (!stringVecElementIsNullable(ctx, receiver, elemType)) return [{ op: "ref.as_non_null" }];
+  const elem = allocLocal(fctx, `__njoin_s_${fctx.locals.length}`, elemType);
+  return [
+    { op: "local.tee", index: elem },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: resultType },
+      then: [...nativeStringLiteralInstrs(ctx, ""), { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx }],
+      else: [{ op: "local.get", index: elem }, { op: "ref.as_non_null" }],
+    },
+  ];
+}
+
+/**
+ * The expression `compileArrayMethodCall` reads (local/global slot, else a
+ * transactional probe-compile) to replace the checker's vec type with the
+ * receiver's lowered storage type. Normally the receiver itself.
+ *
+ * A native-string join over a closure-producing array expression must
+ * compile that receiver exactly once. The ordinary actual-type probe
+ * recompiles `map`/`filter`/… and closure registration is not transactional;
+ * probing and then emitting the receiver can therefore leave the committed
+ * call wired to a stale/null closure. The resolved TS result type already
+ * describes the array produced by these methods, including `map`'s result
+ * element type, so it is used directly (`undefined`: no probe at all).
+ *
+ * (#7146) Except a `sort`/`filter` chain: `x.sort(...)` returns `x` itself and
+ * `x.filter(...)` a fresh vec of `x`'s own element storage, so the storage vec
+ * is `x`'s — and the checker's type need not be (an evolving `const keys = []`
+ * filled by `for…in` is stored as `$__vec_externref` while the checker says
+ * `string[]`). Peel those layers and probe what remains, unless it is itself
+ * closure-producing (`map` changes the element type: keep the skip).
+ */
+export function nativeJoinProbeExpr(
+  nativeStrings: boolean | undefined,
+  methodName: string,
+  receiver: ts.Expression,
+): ts.Expression | undefined {
+  const isJoin = methodName === "join" || methodName === "toString" || methodName === "toLocaleString";
+  if (!nativeStrings || !isJoin) return receiver;
+  let e = receiver;
+  while (closureArrayMethodOf(e) === "sort" || closureArrayMethodOf(e) === "filter") {
+    e = ((e as ts.CallExpression).expression as ts.PropertyAccessExpression).expression;
+  }
+  return closureArrayMethodOf(e) === undefined ? e : undefined;
+}
+
+/**
+ * (#2007/#1448, #2074/#2075) Array methods that allocate a callback closure.
+ * Closure registration is not idempotent, so a receiver calling one of these
+ * must not be probe-compiled, and the standalone vec-concat join fast-path
+ * must not late-register `number_toString` after one was emitted.
+ */
+export const CLOSURE_ARRAY_METHODS: ReadonlySet<string> = new Set([
+  "map",
+  "filter",
+  "flatMap",
+  "forEach",
+  "reduce",
+  "reduceRight",
+  "find",
+  "findIndex",
+  "sort",
+]);
+
+/** The closure-allocating method `expr` calls (`a.map(...)` → "map"), if any. */
+function closureArrayMethodOf(expr: ts.Expression): string | undefined {
+  if (!ts.isCallExpression(expr) || !ts.isPropertyAccessExpression(expr.expression)) return undefined;
+  const m = expr.expression.name.text;
+  return CLOSURE_ARRAY_METHODS.has(m) ? m : undefined;
 }

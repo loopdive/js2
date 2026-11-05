@@ -14,7 +14,6 @@ import {
   ITER_KIND_ARRAY_KEYS,
   ITER_KIND_ARRAY_ENTRIES,
 } from "./iterator-native.js";
-import { noJsHost } from "./js-errors.js";
 import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
 import { getOrRegisterVecType } from "./registry/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -31,7 +30,7 @@ export function emitArrayProtoIteratorMemberBody(
   fctx: FunctionContext,
   member: string,
 ): ValType | undefined {
-  if (!noJsHost(ctx) || !ARRAY_PROTO_ITERATOR_MEMBERS.has(member)) return undefined;
+  if (!ARRAY_PROTO_ITERATOR_MEMBERS.has(member)) return undefined;
   ensureObjectRuntime(ctx);
   ensureNativeIteratorRuntime(ctx);
   ensureLateImport(ctx, "__extern_length", [EXT], [F64]);

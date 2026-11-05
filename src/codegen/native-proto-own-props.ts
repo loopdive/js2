@@ -241,7 +241,6 @@ function unseededObjectProtoAccessorArm(
  * (the demand gate) or the native-string subsystem is absent.
  */
 export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
   const existing = ctx.funcMap.get(NATIVE_PROTO_HASOWN_FN);
   if (existing !== undefined) return existing;
   const protoTypeIdx = ctx.nativeProtoTypeIdx;

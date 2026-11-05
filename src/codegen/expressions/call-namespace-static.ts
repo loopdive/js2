@@ -104,7 +104,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -236,7 +235,6 @@ function compilePristineIteratorPrototypeCapture(
   fctx: FunctionContext,
   argument: ts.Expression,
 ): ValType | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const kind = pristineIteratorPrototypeKind(fctx, argument);
   if (!kind) return undefined;
   // Every accepted form is an exact, zero-argument call on an unshadowed
@@ -269,7 +267,6 @@ function compilePristineIntrinsicPrototypeCapture(
   fctx: FunctionContext,
   argument: ts.Expression,
 ): ValType | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const value = unwrapReflectConstructExpr(argument);
 
   if (
@@ -812,7 +809,6 @@ export function compileNamespaceStaticCall(
   // false. Keep this standalone-only arm separate from the argument-bearing
   // implementation below so the host route remains unchanged (#4778).
   if (
-    noJsHost(ctx) &&
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "ArrayBuffer" &&
     propAccess.name.text === "isView" &&
@@ -834,46 +830,33 @@ export function compileNamespaceStaticCall(
     // instantiate. §25.1.4.1 isView is `true` iff the arg has a
     // [[ViewedArrayBuffer]] slot (any TypedArray or DataView). Decide it
     // host-free.
-    if (noJsHost(ctx)) {
-      const arg0 = expr.arguments[0]!;
-      const argTs = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(arg0));
-      const argSym = argTs.getSymbol()?.name;
-      const rawTs = ctx.checker.getTypeAtLocation(arg0);
-      const isAnyOrUnknown = (rawTs.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-      const decision = arrayBufferIsViewStaticDecision(ctx, argSym, isAnyOrUnknown, rawTs, TYPED_ARRAY_NAMES);
-      if (decision !== undefined) {
-        const at = compileExpression(ctx, fctx, arg0);
-        if (at !== null) fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "i32.const", value: decision ? 1 : 0 });
-        return { kind: "i32" };
-      }
-      // Runtime fallback for `any`/union/unresolved receivers: ref.test the
-      // registered vec carriers (TypedArrays lower to a `$Vec`) and the
-      // DataView window struct. NOTE: standalone shares the `$Vec` carrier
-      // between `number[]` and TypedArrays, so a plain array is
-      // indistinguishable here and reads as a view — an accepted imprecision
-      // for the rare `any` arg; the win is NOT leaking the host import (which
-      // breaks the whole module). Most isView call sites are statically typed.
-      const at = compileExpression(ctx, fctx, arg0, { kind: "externref" });
-      if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
-      const anyTmp = allocLocal(fctx, `__isview_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
-      fctx.body.push({ op: "any.convert_extern" });
-      fctx.body.push({ op: "local.set", index: anyTmp });
-      // (#5150) The chain moved to `isViewRefTestInstrs` (dataview-native.ts) so
-      // the first-class `ArrayBuffer.isView` VALUE answers identically.
-      fctx.body.push(...isViewRefTestInstrs(ctx, anyTmp));
+    const arg0 = expr.arguments[0]!;
+    const argTs = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(arg0));
+    const argSym = argTs.getSymbol()?.name;
+    const rawTs = ctx.checker.getTypeAtLocation(arg0);
+    const isAnyOrUnknown = (rawTs.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+    const decision = arrayBufferIsViewStaticDecision(ctx, argSym, isAnyOrUnknown, rawTs, TYPED_ARRAY_NAMES);
+    if (decision !== undefined) {
+      const at = compileExpression(ctx, fctx, arg0);
+      if (at !== null) fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "i32.const", value: decision ? 1 : 0 });
       return { kind: "i32" };
     }
-    const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
-    if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
-    const funcIdx = ensureLateImport(ctx, "__arraybuffer_isView", [{ kind: "externref" }], [{ kind: "i32" }]);
-    flushLateImportShifts(ctx, fctx);
-    if (funcIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx });
-      return { kind: "i32" };
-    }
-    fctx.body.push({ op: "drop" });
-    fctx.body.push({ op: "i32.const", value: 0 });
+    // Runtime fallback for `any`/union/unresolved receivers: ref.test the
+    // registered vec carriers (TypedArrays lower to a `$Vec`) and the
+    // DataView window struct. NOTE: standalone shares the `$Vec` carrier
+    // between `number[]` and TypedArrays, so a plain array is
+    // indistinguishable here and reads as a view — an accepted imprecision
+    // for the rare `any` arg; the win is NOT leaking the host import (which
+    // breaks the whole module). Most isView call sites are statically typed.
+    const at = compileExpression(ctx, fctx, arg0, { kind: "externref" });
+    if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
+    const anyTmp = allocLocal(fctx, `__isview_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "local.set", index: anyTmp });
+    // (#5150) The chain moved to `isViewRefTestInstrs` (dataview-native.ts) so
+    // the first-class `ArrayBuffer.isView` VALUE answers identically.
+    fctx.body.push(...isViewRefTestInstrs(ctx, anyTmp));
     return { kind: "i32" };
   }
 

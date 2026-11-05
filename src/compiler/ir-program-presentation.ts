@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { absoluteFuncIndex } from "../emit/resolve-layout.js";
 import { ts } from "../ts-api.js";
+import { checkPreparedPresentationProfile } from "./prepared-pipeline-boundary.js";
 import type { PipelineOutputContext } from "../compiler.js";
 import type { CompileResult } from "../index.js";
 import type { IrWholeProgramPreparationInput } from "../ir/program-preparation.js";
@@ -30,6 +31,7 @@ import {
   irNumberRemainderCallableDeclaration,
 } from "../ir/runtime/number-remainder-callables.js";
 import type { RuntimeProviderDefinition } from "../ir/runtime/contracts/manifest.js";
+import { releaseOwnedFunctions } from "../wasm/physical/owned-function-data.js";
 
 export interface IrProgramPresentationRequest {
   readonly preparation: IrWholeProgramPreparationInput;
@@ -114,7 +116,9 @@ export type PreparedIrPipelinePresentationResult =
   | Exclude<IrProgramPresentationResult, { kind: "prepared-presentation" }>;
 
 type PresentationSlot = "number" | "boolean" | "promise";
-interface DeclarationCapture {
+/** A declaration whose every parameter and result has a number/Boolean/Promise slot capture. */
+interface PrimitiveDeclaration {
+  readonly slots: "primitive";
   readonly sourceFile: string;
   readonly start: number;
   readonly end: number;
@@ -126,6 +130,12 @@ interface DeclarationCapture {
   readonly exported: boolean;
   readonly fulfillment?: "number" | "boolean" | "void";
 }
+/** A non-exported synchronous helper with a non-primitive slot: it has no slot capture, so no export may target it. */
+type InternalDeclaration = Pick<PrimitiveDeclaration, "sourceFile" | "start" | "end" | "name"> & {
+  readonly slots: "none";
+};
+type DeclarationCapture = PrimitiveDeclaration | InternalDeclaration;
+const promiseResult = (row: DeclarationCapture) => row.slots === "primitive" && row.results.includes("promise");
 const numeric = (type: ValType): boolean => ["i32", "i64", "f32", "f64"].includes(type.kind);
 function booleanCarrier(type: ValType): boolean {
   return type.kind === "i32" && type.boolean === true && type.symbol === undefined && type.int32 === undefined;
@@ -146,7 +156,7 @@ function physicalSlotMatches(slot: PresentationSlot, physical: ValType, logical:
     (slot !== "boolean" || booleanCarrier(physical))
   );
 }
-function booleanExportSignature(declaration: DeclarationCapture): ExportSignature | undefined {
+function booleanExportSignature(declaration: PrimitiveDeclaration): ExportSignature | undefined {
   if (![...declaration.params, ...declaration.results].some((slot) => slot === "boolean" || slot === "promise"))
     return undefined;
   const signature: ExportSignature = {
@@ -262,13 +272,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
         sourceFile: source.fileName,
       });
   }
-  if (
-    backend.target !== "host" ||
-    policy.target !== backend.target ||
-    policy.backend !== backend.backend ||
-    (backend.backend !== "wasmgc" && backend.backend !== "linear")
-  )
-    gap("backend", "option-association", "only matching wasmgc:host or linear:host projections are admitted");
+  checkPreparedPresentationProfile(options, backend, policy, gap);
   if (
     (options.target === "linear" ? "linear" : "wasmgc") !== backend.backend ||
     (options.moduleName ?? "module") !== backend.moduleName ||
@@ -325,6 +329,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
     }
     const visit = (node: ts.Node): void => {
       if (ts.isFunctionDeclaration(node) && node.body) {
+        const exported = node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true;
         const signature = input.checker.getSignatureFromDeclaration(node);
         const params: PresentationSlot[] = [];
         let unsupportedParam = false;
@@ -345,7 +350,10 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
           : returnType && classify(returnType);
         const synchronous =
           !node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) && !node.asteriskToken;
-        if (!signature || unsupportedParam || !result || (!synchronous && (result !== "promise" || node.asteriskToken)))
+        const primitive = signature && !unsupportedParam && result;
+        const loc = { sourceFile: source.fileName, start: node.getStart(source), end: node.end, name: node.name?.text };
+        if (!exported && synchronous && !primitive) declarations.push(Object.freeze({ ...loc, slots: "none" }));
+        else if (!primitive || (!synchronous && (result !== "promise" || node.asteriskToken)))
           gap(
             "declaration",
             "non-numeric-boundary",
@@ -355,9 +363,8 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
         else
           declarations.push(
             Object.freeze({
-              sourceFile: source.fileName,
-              start: node.getStart(source),
-              end: node.end,
+              ...loc,
+              slots: "primitive",
               params: Object.freeze(params),
               ...(options.wit
                 ? {
@@ -368,8 +375,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
                 : {}),
               results: Object.freeze(result === "void" ? [] : [result]),
               synchronous,
-              name: node.name?.text,
-              exported: node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true,
+              exported,
               ...(fulfillment ? { fulfillment } : {}),
             }),
           );
@@ -443,25 +449,21 @@ function checkAbiExports(
           "promise/reference callable contracts require an explicit boundary producer",
           { bindingId: plan.id },
         );
+      const unitId =
+        plan.intent.kind === "callable" && plan.intent.origin === "source" ? plan.intent.unitId : undefined;
+      const declaration = unitId && captures.get(unitId);
       if (
-        plan.intent.kind === "callable" &&
-        plan.intent.origin === "source" &&
-        plan.intent.unitId &&
-        captures.has(plan.intent.unitId)
-      ) {
-        const declaration = captures.get(plan.intent.unitId)!;
-        if (
-          contract.params.length !== declaration.params.length ||
+        declaration?.slots === "primitive" &&
+        (contract.params.length !== declaration.params.length ||
           contract.results.length !== declaration.results.length ||
           declaration.params.some((slot, index) => !sourceSlotMatches(slot, contract.params[index])) ||
           declaration.results.some((slot, index) => !sourceSlotMatches(slot, contract.results[index])) ||
-          !promiseContractMatches(declaration, contract.promise)
-        )
-          gap("abi.callable", "signature-join", "source declaration and prepared callable slots disagree", {
-            unitId: plan.intent.unitId,
-            bindingId: plan.id,
-          });
-      }
+          !promiseContractMatches(declaration, contract.promise))
+      )
+        gap("abi.callable", "signature-join", "source declaration and prepared callable slots disagree", {
+          unitId,
+          bindingId: plan.id,
+        });
     }
     if (contract.kind === "global" && (contract.type.kind !== "val" || !numeric(contract.type.val)))
       gap("abi.global", "non-numeric-contract", "global resources require a primitive numeric contract", {
@@ -541,7 +543,7 @@ function checkAbiExports(
     if (
       !target ||
       target.contract.kind !== "callable" ||
-      !declaration ||
+      declaration?.slots !== "primitive" ||
       !slot ||
       slot.space !== "function" ||
       exports.length !== 1 ||
@@ -575,10 +577,7 @@ function checkAbiExports(
           "exports",
           "physical-signature",
           "actual physical export signature disagrees with primitive source capture",
-          {
-            bindingId: plan.id,
-            unitId,
-          },
+          { bindingId: plan.id, unitId },
         );
       else {
         if (witExports) captureWitExport(contract.externalName, plan.id, unitId!, declaration, witExports, gap);
@@ -602,7 +601,7 @@ function captureWitExport(
   externalName: string,
   bindingId: IrBindingId,
   unitId: IrUnitId,
-  declaration: DeclarationCapture,
+  declaration: PrimitiveDeclaration,
   exports: PreparedWitExport[],
   gap: GapRecorder,
 ): void {
@@ -749,7 +748,7 @@ function joinStartup(
       (row, index) =>
         row.sourceId !== program.inventory.sources[index]?.id ||
         row.gaps.length ||
-        row.invocation.target !== "host" ||
+        row.invocation.target !== input.policy.target ||
         row.executable !== (row.evaluations.length > 0 || row.liveSeeds.length > 0),
     )
   )
@@ -859,10 +858,13 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
   if (result.kind !== "emitted") return result;
   const { program, emission } = result;
   const mod = emission.module;
+  const physical = emittedPhysicalSetupPlan(emission);
+  if (physical.backend !== capture.backend.backend || physical.target !== capture.backend.target)
+    gap("backend", "physical-profile", "completed physical plan must belong to the selected backend and target");
   emittedSupportFunctionReceipts(emission);
   const captures = joinDeclarations(program, capture, gap);
   const signatures: Record<string, ExportSignature> = Object.create(null);
-  const mixed = [...captures.values()].some((row) => row.results.includes("promise"));
+  const mixed = [...captures.values()].some(promiseResult);
   const asyncNames = new Set<string>();
   const witExports: PreparedWitExport[] | undefined = capture.context.options.wit ? [] : undefined;
   const joinedExports = checkAbiExports(
@@ -877,7 +879,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     witExports,
   );
   if (witExports && (mixed || mod.imports.length)) {
-    const promise = [...captures].find(([, declaration]) => declaration.results.includes("promise"));
+    const promise = [...captures].find(([, declaration]) => promiseResult(declaration));
     gap(
       "wit.resources",
       "unmapped-wit-resources",
@@ -954,7 +956,7 @@ function sourcePromiseFulfillment(checker: ts.TypeChecker, type: ts.Type): ts.Ty
   return args.length === 1 ? args[0] : undefined;
 }
 function promiseContractMatches(
-  declaration: DeclarationCapture,
+  declaration: PrimitiveDeclaration,
   promise: Extract<PreparedIrProgram["abi"]["entries"][number]["contract"], { kind: "callable" }>["promise"],
 ): boolean {
   if (!declaration.fulfillment) return promise === undefined;
@@ -1251,8 +1253,9 @@ function checkMixedDemand(
     runtime.length !== 1
   )
     gap("runtime", "mixed-projection", "mixed presentation requires one authentic wasmgc:host projection");
+  const owners = new Set(plan.asyncFrames?.frames.map((row) => row.owner));
   for (const [unitId, declaration] of captures)
-    if (declaration.fulfillment && !plan.asyncFrames?.frames.some((row) => row.owner === unitId))
+    if (declaration.slots === "primitive" && declaration.fulfillment && !owners.has(unitId))
       gap("async.frames", "source-frame", "captured Promise callable must join a completed async owner", { unitId });
   if (emission.module.exportSignatures !== undefined)
     gap("exportSignatures", "boundary-metadata", "source boundary metadata must be derived after all joins");
@@ -1541,7 +1544,7 @@ export function beginPreparedPresentationFinalization(
   const { plan, original } = record;
   for (const row of original) verifyDataObservation(row);
   if (emittedPhysicalSetupPlan(presentation.emission) !== plan) finalizationFailure("invalid-presentation");
-  const outputModule = copyModuleData(presentation.emission.module);
+  const outputModule = copyModuleData(releaseOwnedFunctions(presentation.emission.module));
   const token = Object.freeze({ outputModule });
   finalizations.set(token, {
     presentation,

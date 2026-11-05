@@ -306,7 +306,10 @@ describe("#3526 F2-S6 batched many-arity concat contract", () => {
 // --------------------------------------------------------------------------
 
 const BATCH_LANES: ReadonlyArray<readonly [string, Parameters<typeof compile>[1], StringConcatManyPolicy["batch"]]> = [
-  ["gc-host", {}, "host"],
+  // (#6979 S7-a) The default gc profile is the native regime now, which
+  // keeps the pairwise native arm: the host `__concat_N` cell went with the
+  // host-assisted profile.
+  ["gc-default", {}, "off"],
   ["gc-native-strings", { nativeStrings: true }, "off"],
   ["standalone", { target: "standalone" }, "native"],
   ["wasi", { target: "wasi" }, "off"],
@@ -409,50 +412,8 @@ describe("#3526 F2-S6 batch policy", () => {
 // --------------------------------------------------------------------------
 
 describe("#3526 F2-S6 end-to-end behaviour is unchanged", () => {
-  it("reproduces the census's gc-host bytes for every batching shape", async () => {
-    // Measured on this lane's own base (85/85 cells identical to the census
-    // record). CAT3 is deliberately the same cell F2-S5's fence pins, so a red
-    // here is attributable to whichever slice landed last.
-    for (const [source, bytes, sha, imports] of [
-      [CAT3, 149, "4677a84a2dcd", ["env.__concat_3"]],
-      [CAT9, 167, "c11957fc8004", ["env.__concat_9"]],
-      [TPL6, 235, "1d7f766908cf", ["env.__concat_7"]],
-      [TPLEQ, 246, "7e6dac42d3c7", ["wasm:js-string.equals", "env.__concat_3"]],
-      // The legacy-twin control: `a + n + b` demotes on
-      // `operand-coercion-unsupported`, so `compileBatchedConcat` — NOT the IR
-      // arm — mints `__concat_3`, after `number_toString`. This slice does not
-      // govern that producer and the cell proves it did not move.
-      [CATNUM3, 199, "a4af808e0009", ["env.number_toString", "env.__concat_3"]],
-    ] as const) {
-      const result = await compile(source, { trackIrOutcomes: true });
-      expect(result.success).toBe(true);
-      expect(result.binary.length, source.slice(0, 30)).toBe(bytes);
-      expect(sha12(result.binary), source.slice(0, 30)).toBe(sha);
-      // Import POSITION is the byte-identity lever here, not funcidx: the host
-      // arm mints late, so `__concat_N` lands after every earlier import.
-      expect(orderedFuncImports(hostLaneModule(source))).toEqual([...imports]);
-    }
-  });
-
-  it("keeps the async five-part arm on the host lane, in its measured position", async () => {
-    const source = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../website/playground/examples/js/async.ts"),
-      "utf8",
-    );
-    const result = await compile(source, {
-      trackIrOutcomes: true,
-      fileName: "website/playground/examples/js/async.ts",
-    });
-    expect(result.success).toBe(true);
-    expect(result.binary.length).toBe(10021);
-    expect(sha12(result.binary)).toBe("3c072b5822b4");
-    // Minted inside an already-open late-import batch, at index 21 of 27.
-    // This fixture's imports are all `env` func imports, so the compile
-    // result's own ordered descriptor list IS the import section here.
-    const imports = result.imports.filter((entry) => entry.kind === "func").map((entry) => entry.name);
-    expect(imports).toHaveLength(27);
-    expect(imports[21]).toBe("__concat_5");
-  });
+  // (#6979 S7-a) The census gc-host byte pins and the async five-part host
+  // arm pinned the retired host-assisted `__concat_N` import lane; deleted with it.
 
   it("keeps the standalone lane on the native helper family, capped at eight", async () => {
     // Pinned STRUCTURALLY, not by sha: a standalone module carries the whole
@@ -474,29 +435,9 @@ describe("#3526 F2-S6 end-to-end behaviour is unchanged", () => {
     expect(nine.wat).toContain("$__str_concat");
   });
 
-  it("answers batched chains and templates exactly as JavaScript does — host lane", async () => {
-    const source = `export function three(a: string, b: string, c: string): string { return a + b + c; }
-export function six(a: string, b: string, c: string, d: string, e: string, f: string): string { return a + b + c + d + e + f; }
-export function nine(a: string, b: string, c: string, d: string, e: string, f: string, g: string, h: string, i: string): string { return a + b + c + d + e + f + g + h + i; }
-export function tpl(a: string, b: string, c: string): string { return \`x\${a}-\${b}-\${c}!\`; }`;
-    const result = await compile(source, { trackIrOutcomes: true });
-    expect(result.success).toBe(true);
-    const exports = await instantiate(result);
-    // Empty leaves, lone surrogate halves, non-ASCII BMP and astral, and a
-    // numeric-looking leaf — the shapes a length-summing helper is most likely
-    // to get wrong.
-    const cases: ReadonlyArray<readonly [string, readonly string[]]> = [
-      ["three", ["", "\uD800", "42"]],
-      ["three", ["ä", "", "\uDC00"]],
-      ["six", ["", "a", "", "é", "0", "😀"]],
-      ["nine", ["1", "2", "3", "", "中", "\uD800", "\uDFFF", "x", "9"]],
-      ["tpl", ["", "é", "7"]],
-    ];
-    for (const [name, args] of cases) {
-      const expected = name === "tpl" ? `x${args[0]}-${args[1]}-${args[2]}!` : args.join("");
-      expect((exports[name] as (...rest: never[]) => string)(...(args as readonly never[]))).toBe(expected);
-    }
-  });
+  // (#6979 S7-a) The host-lane twin of the row below passed JS strings into a
+  // host-string module; that lane is retired and the native-strings row covers
+  // the same shapes.
 
   it("answers batched chains and templates exactly as JavaScript does — native-strings lane", async () => {
     // A native-strings module's string params and results are `(ref $AnyString)`

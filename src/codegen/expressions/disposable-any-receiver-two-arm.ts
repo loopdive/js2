@@ -42,7 +42,6 @@ import type { Instr } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { ensureDisposableStackTypes, tryCompileNativeDisposableStackAnyMethodCall } from "../disposable-runtime.js";
-import { noJsHost } from "../js-errors.js";
 import { coerceType, compileExpression, skipTransparentExpressions, VOID_RESULT, type InnerResult } from "../shared.js";
 
 /** Calls whose ELSE arm is being compiled: the shortcut must not claim them again. */
@@ -76,7 +75,7 @@ export function tryEmitDisposableStackAnyTwoArm(
   callExpr: ts.CallExpression,
   methodName: string,
 ): InnerResult | undefined {
-  if (!noJsHost(ctx) || twoArmActive.has(callExpr)) return undefined;
+  if (twoArmActive.has(callExpr)) return undefined;
   const receiver = skipTransparentExpressions(propAccess.expression);
   if (!ts.isIdentifier(receiver) && receiver.kind !== ts.SyntaxKind.ThisKeyword) return undefined;
   const stackTypeIdx = ensureDisposableStackTypes(ctx).stackTypeIdx;

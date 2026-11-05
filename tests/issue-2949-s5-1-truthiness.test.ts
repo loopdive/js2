@@ -295,34 +295,4 @@ function truthyDyn(name: string): IrFunction {
 // pulls in runtime helper bodies that only validate after the full production
 // finalize pipeline.
 
-describe("#2949 S5.1 — host runtime: dyn.truthy over the externref carrier", () => {
-  it('full JS-truthiness spectrum (0/NaN/""/null/undefined/{}/"a"/5) via __is_truthy', async () => {
-    const fns = [truthyDyn("tDyn"), truthyF64("tF64"), truthyBool("tBool")];
-    const ctx = makeHostCtx();
-    install(ctx, fns);
-    const ex = await instantiateCtx(ctx, hostEnvFor(ctx));
-    // Directly pass JS values as the externref carrier and assert ToBoolean.
-    for (const [v, want] of [
-      [0, 0],
-      [NaN, 0],
-      ["", 0],
-      [null, 0],
-      [undefined, 0],
-      [{}, 1],
-      ["a", 1],
-      [5, 1],
-    ] as const) {
-      expect(ex.tDyn(v)).toBe(want);
-    }
-    // Boxed-number / boxed-boolean paths agree in host mode too.
-    for (const [v, want] of [
-      [0, 0],
-      [3.5, 1],
-      [-42, 1],
-    ] as const) {
-      expect(ex.tF64(v)).toBe(want);
-    }
-    expect(ex.tBool(1)).toBe(1);
-    expect(ex.tBool(0)).toBe(0);
-  });
-});
+// (#6979 S7-a) The host-runtime execution describe tested the retired host-assisted import lane (bare host context + JS-host carrier imports); deleted with it.

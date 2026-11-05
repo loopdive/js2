@@ -20,7 +20,6 @@ import {
   buildIrLegacyUnitProjection,
   requireIrPlanningOwnerUnitId,
   type IrLegacyUnitProjection,
-  type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
 import type { IrPromiseDelayLoweringPlan, IrPromiseDelayLoweringPlans } from "../ir/promise-delay-lowering.js";
 import { constructorHasIrSafeReceiverSemantics, type IrSelection } from "../ir/select.js";
@@ -54,6 +53,7 @@ import {
   preparedIrBodyRouting,
   type IrExactBodyClaim,
   type IrExactFunctionClaim,
+  type IrFirstSkipIdentityInput,
 } from "./ir-overlay-safety.js";
 import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
 import { applyArgArrayTypeErrorMaterializesReceiver } from "./apply-arglist-typeerror.js";
@@ -62,30 +62,10 @@ import { hasPreparedFunctionObjectReference } from "./ir-imported-call-planning.
 import type { PreparedCallableBoundaryCandidate } from "../ir/prepared-callable-boundary.js";
 
 /** Preserve the inherited compile-once allowlist for owners not prepared early. */
-export function computePreparedInheritedIrFirstSkipUnitIds(input: {
-  readonly sourceFile: ts.SourceFile;
-  readonly identityContext: IrPlanningIdentityContext;
-  readonly safeFunctionUnitIds: ReadonlySet<IrUnitId>;
-  readonly claimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
-  readonly overridesByUnitId: ReadonlyMap<
-    IrUnitId,
-    { readonly params: readonly IrType[]; readonly returnType: IrType | null }
-  >;
-  readonly potentiallyBlockedOwnerUnitIds: ReadonlySet<IrUnitId>;
-  readonly generatorsSkippable: boolean;
-  readonly fast: boolean;
-}): Set<IrUnitId> {
-  const requestedSkipUnitIds = new Set(
-    computeIrFirstSkipUnitIds({
-      sourceFile: input.sourceFile,
-      identityContext: input.identityContext,
-      safeFunctionUnitIds: input.safeFunctionUnitIds,
-      claimsByUnitId: input.claimsByUnitId,
-      overridesByUnitId: input.overridesByUnitId,
-      potentiallyBlockedOwnerUnitIds: input.potentiallyBlockedOwnerUnitIds,
-      generatorsSkippable: input.generatorsSkippable,
-    }),
-  );
+export function computePreparedInheritedIrFirstSkipUnitIds(
+  input: IrFirstSkipIdentityInput & { readonly fast: boolean },
+): Set<IrUnitId> {
+  const requestedSkipUnitIds = new Set(computeIrFirstSkipUnitIds(input));
   // Keep the inherited fast route to its annotation-proven boolean subset.
   // Numeric scalars have a separate pre-body admission below, where the final
   // IR override is compared with the allocated callable slot before ownership
@@ -669,17 +649,6 @@ function r2StableValType(
 }
 
 /**
- * #2951 — IR-claimed generators compile once only in the JS-host lane. The
- * standalone / WASI / no-host-import lanes lower generators through the
- * disjoint #680 sequential-numeric-yield native carrier, whose self-sufficiency
- * without the legacy body is unproven; keep them on the compile-twice route.
- * Mirrors the `generatorsSkippable` condition of the inherited allowlist.
- */
-function generatorsPreparable(ctx: CodegenContext): boolean {
-  return !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
-}
-
-/**
  * Preparation may replace an empty declaration slot before direct emission,
  * but it must not change that slot's already allocated callable ABI. The
  * Program ABI registry observes the allocation contract, and later direct
@@ -776,56 +745,6 @@ function r2FastPreparedScalarFunctionSignature(
 }
 
 /**
- * Fast mode normally selects native strings, but an explicit nativeStrings:
- * false keeps the JS-host externref string ABI. Its only added
- * prepare-before-direct admission is an annotation-fixed pass-through
- * signature whose constructed IR string contract still equals the allocated
- * callable slot.
- */
-function r2FastJsHostPassThroughStringSignature(
-  ctx: CodegenContext,
-  sourceFile: ts.SourceFile,
-  unitId: IrUnitId,
-  claim: IrExactFunctionClaim,
-  override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
-): boolean {
-  const declaration = claim.declaration;
-  const preparedOverride: { readonly params: readonly IrType[]; readonly returnType: IrType } = {
-    params: declaration.parameters.map(() => ({ kind: "string" })),
-    returnType: { kind: "string" },
-  };
-  const exactJsHostLane = !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
-
-  if (
-    !exactJsHostLane ||
-    !declaration.name ||
-    !ts.isIdentifier(declaration.name) ||
-    declaration.name.text !== claim.legacyName ||
-    declaration.parent !== sourceFile ||
-    !sourceFile.statements.some((statement) => statement === declaration) ||
-    !declaration.body ||
-    (declaration.typeParameters?.length ?? 0) !== 0 ||
-    declaration.asteriskToken !== undefined ||
-    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
-    declaration.type?.kind !== ts.SyntaxKind.StringKeyword ||
-    declaration.parameters.length !== override.params.length ||
-    !declaration.parameters.every(
-      (parameter) =>
-        ts.isIdentifier(parameter.name) &&
-        parameter.questionToken === undefined &&
-        parameter.dotDotDotToken === undefined &&
-        parameter.initializer === undefined &&
-        parameter.type?.kind === ts.SyntaxKind.StringKeyword,
-    ) ||
-    !override.params.every((type) => type.kind === "string") ||
-    override.returnType?.kind !== "string"
-  ) {
-    return false;
-  }
-  return r2SignatureMatchesAllocatedSlot(ctx, unitId, preparedOverride);
-}
-
-/**
  * (#3521 R2-F1) The third fast-mode admission: a declaration whose every
  * position is drawn from the #4514 carrier-fixed family — `number`/`boolean`
  * scalars, `string`, and a `number[]`/`boolean[]` vector — mixed freely, plus
@@ -862,9 +781,7 @@ function r2FastMixedFixedCarrierSignature(
   const declaration = claim.declaration;
   // Mirrors `r2StableValType`'s string arm: the native carrier needs its
   // registered `$anyStr` type, the host carrier needs the exact JS-host lane.
-  const stringCarrierFixed = ctx.nativeStrings
-    ? ctx.anyStrTypeIdx >= 0
-    : !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
+  const stringCarrierFixed = ctx.nativeStrings ? ctx.anyStrTypeIdx >= 0 : false;
 
   type FixedCarrierKind = "f64" | "i32" | "string" | "vec-f64" | "vec-i32";
   const fixedCarrierKind = (type: ts.TypeNode | undefined): FixedCarrierKind | undefined => {
@@ -1513,12 +1430,11 @@ export function selectR2PreparedOwnerComponents(input: {
           input.ctx.fast &&
           !(
             r2FastPreparedScalarFunctionSignature(input.ctx, input.sourceFile, unitId, claim, override) ||
-            r2FastJsHostPassThroughStringSignature(input.ctx, input.sourceFile, unitId, claim, override) ||
             r2FastMixedFixedCarrierSignature(input.ctx, input.sourceFile, unitId, claim, override)
           ),
       ],
       ["async-declaration", () => isAsync],
-      ["generator-lane", () => isGenerator && !generatorsPreparable(input.ctx)],
+      ["generator-lane", () => isGenerator],
       [
         "nested-executable-syntax",
         () =>

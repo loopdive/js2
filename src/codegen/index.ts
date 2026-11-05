@@ -1,11 +1,19 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  irNativeI32SlotRead,
+  irNativeNumericFieldType,
+  irNativeSignatureDiverges,
+} from "./declarations/ir-native-numeric-field.js";
+import { nativeConsoleOutputAvailable } from "./helpers/ir-native-console.js";
 import {
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
   ensureGlobalEnvironmentOperation,
 } from "./global-environment.js";
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
 import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
+import { irDynamicInstanceOfAtLegacyParity } from "./ir-dynamic-instanceof.js"; // (#7106) generic dynamic instanceof
+import { irOpenObjectSelectionOption } from "./declarations/ir-open-object-binding.js"; // (#7128 S1)
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
 import { ts, forEachChild } from "../ts-api.js";
@@ -83,7 +91,14 @@ import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
-import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
+import { irArrayPrototypeBorrowAdmitted } from "./array/ir-array-prototype-borrow.js"; // (#7106 compareArray.format)
+import {
+  compileIrPathFunctions,
+  irAmbientNamespaceConstant, // (#7106 module-init lever A)
+  irNumberConversionPlan, // (#7106 module-init lever B)
+  type IrIntegrationError,
+  type IrIntegrationReport,
+} from "../ir/integration.js";
 import {
   asVal,
   IR_CLASS_SHAPE_CELL,
@@ -133,12 +148,12 @@ import {
 } from "../ir/host-extern.js"; // (#2856/#3214/#3657/#7091)
 import {
   projectIrBackendTargetProfile,
-  supportsIrBackendTargetCapability,
+  irBackendCapabilityQuery,
   type IrBackendTargetCapability,
 } from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
+import { holdModuleInitChunksForIr, releaseModuleInitChunks } from "./module-init-chunks.js";
 import { literalComputedInstanceMethodKey } from "../ir/class-method-names.js";
-import { moduleInitChunksRequired } from "./module-init-chunks.js";
 import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import {
   buildIrModuleInitPlan,
@@ -181,7 +196,9 @@ import {
   makeIrModuleBindingResolver,
   makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
+  type IrModuleBindingDeclaration,
   type IrModuleBindingResolver,
+  type IrScriptVarHome,
 } from "../ir/module-bindings.js"; // (#2856 Capability C)
 import {
   collectPreparedIrAsyncOwners,
@@ -218,6 +235,8 @@ import {
 import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-sweep.js"; // (#6768)
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
+import { irJsInstanceMethodMaySkip } from "./classes/ir-class-member-projection.js"; // (#7233)
+import { irClassExtendsLibInterfaceAsRoot } from "./classes/ir-lib-interface-root-heritage.js"; // (#7241)
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import {
   planIrImportedCalls,
@@ -264,6 +283,7 @@ import {
   type IrClassShapeEntry,
   type IrClassShapeLookup,
   type IrClassShapeSidecar,
+  irDynamicCarrierMatchesSlot,
 } from "./ir-class-shapes.js";
 import {
   buildIrExactFunctionClaimIndex,
@@ -312,7 +332,7 @@ import {
 import { isDomCapabilityImportName, isDomInteractionImportName } from "../dom-capability-contract.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
-import { hostFreeEnvironment } from "./context/types.js";
+import { hostFreeEnvironment, regimeTarget } from "./context/types.js";
 import { reinstallPreHoistedLetConstBinding } from "./statements/eager-capture-box.js";
 import type {
   ClosureInfo,
@@ -371,7 +391,7 @@ import {
   fillIteratorMethodPresent,
 } from "./iterator-native.js";
 import { fillNativeGeneratorMethodDispatches } from "./generators-native-consumer.js";
-import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
+import { inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
 import { fillPromiseSpeciesOfClass } from "./promise-species-then.js"; // (#5197 r3)
@@ -654,9 +674,9 @@ import {
   flatStringType,
   nativeStringType,
   nativeStringTypeNullable,
-  standaloneConsoleSinkAvailable,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
+import { isAnyStringSlot } from "./native-strings-shared.js";
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
 import {
   emitNativeNumberFormat,
@@ -694,11 +714,7 @@ import {
   emitDataViewByteExports,
 } from "./vec-access-exports.js"; // (#3272) extracted verbatim
 import { emitInitMarshalHelperRegistration } from "./init-marshal-helpers.js"; // (#5193)
-import { emitInitClassDispatchRegistration } from "./init-class-dispatch-helpers.js"; // (#5202)
-import { emitClassInstanceProtoExport } from "./class-instance-proto.js"; // (#5347)
 import { hostBridgeMethodKeys } from "./runtime-key-class-methods.js"; // (#5358)
-import { emitClassValueConstructExports } from "./class-value-construct.js"; // (#5242)
-import { emitClassObjectOfExport } from "./class-object-of.js"; // (#5354)
 import {
   emitClosureCallExport,
   publishStandaloneTimerCallbackDispatch,
@@ -840,6 +856,7 @@ installObjectModelPorts(() => ({
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
+  irNativeI32SlotRead,
   hasExportModifier,
   hasDeclareModifier,
   hasAsyncModifier,
@@ -1768,7 +1785,10 @@ function buildIrClassShapes(
     // (`src/ir/select.ts`) so a claimed subclass member always finds a shape here.
     let parentShape: import("../ir/nodes.js").IrClassShape | undefined;
     const parentClassId = resolveIrParentClassId(ctx.checker, stmt, identityContext);
-    if (parentClassId !== null) {
+    // (#7241) `extends <lib interface>` that legacy lays out as a root struct
+    // projects flat, like an `implements`-only class.
+    const libInterfaceRoot = parentClassId === undefined && irClassExtendsLibInterfaceAsRoot(ctx, stmt, className);
+    if (parentClassId !== null && !libInterfaceRoot) {
       const parentPosition = parentClassId === undefined ? undefined : collectionPosition.get(parentClassId);
       const currentPosition = collectionPosition.get(classId)!;
       // Dependency ordering may move a later type-position dependency before
@@ -1864,7 +1884,7 @@ function buildIrClassShapes(
       else return; // computed / string-literal / numeric names → leave to ValType path
       if (astFieldIr.has(mangled)) return;
       const tsType = ctx.checker.getTypeAtLocation(tsNode);
-      const ir = tsTypeToClassPositionIr(ctx, tsType, lookup);
+      const ir = irNativeNumericFieldType(ctx, tsNode) ?? tsTypeToClassPositionIr(ctx, tsType, lookup);
       if (ir) astFieldIr.set(mangled, ir);
     };
     // #3000-E: the legacy `structFields` for a subclass is `[...parentFields,
@@ -1936,7 +1956,7 @@ function buildIrClassShapes(
     // Methods — instance methods only, re-derived from the AST.
     const methods: IrClassMethodDescriptor[] = [];
     let methodsOk = true;
-    for (const member of stmt.members) {
+    instanceMethods: for (const member of stmt.members) {
       if (!ts.isMethodDeclaration(member) || !member.name) continue;
       if (hasStaticModifier(member)) continue; // slice 4 defers static methods
       if (hasAbstractModifier(member)) continue;
@@ -1949,21 +1969,26 @@ function buildIrClassShapes(
       if (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name) && computedMethodName === undefined) {
         continue;
       }
-      if (member.asteriskToken) continue; // generators → defer
+      if (member.asteriskToken || irNativeSignatureDiverges(ctx, member)) continue; // generators, native ABI → defer
       const methodName = ts.isPrivateIdentifier(member.name)
         ? privateMemberMangledName(member.name)
         : ts.isComputedPropertyName(member.name)
           ? computedMethodName!
           : member.name.text;
+      // (#7233) JS sources skip an unprojectable method (it keeps its legacy
+      // body and slot) instead of dropping the whole class; TS keeps all-or-nothing.
+      const maySkip = irJsInstanceMethodMaySkip(sourceFile, parentShape, methodName);
       const params: IrType[] = [];
       for (const p of member.parameters) {
         if (!ts.isIdentifier(p.name) || p.dotDotDotToken || p.questionToken || p.initializer) {
+          if (maySkip) continue instanceMethods;
           methodsOk = false;
           break;
         }
         const tsType = ctx.checker.getTypeAtLocation(p);
         const ir = tsTypeToClassPositionIr(ctx, tsType, lookup);
         if (!ir) {
+          if (maySkip) continue instanceMethods;
           methodsOk = false;
           break;
         }
@@ -1976,8 +2001,9 @@ function buildIrClassShapes(
       if (sig) {
         const retTs = ctx.checker.getReturnTypeOfSignature(sig);
         if (!isVoidType(retTs)) {
-          const ir = tsTypeToClassPositionIr(ctx, retTs, lookup);
+          const ir = tsTypeToClassReturnIr(ctx, retTs, lookup);
           if (!ir) {
+            if (maySkip) continue; // unlabelled: biome noUselessLabel (same loop as instanceMethods)
             methodsOk = false;
             break;
           }
@@ -2007,7 +2033,7 @@ function buildIrClassShapes(
     // filter on `memberKind`, so these never leak into `class.call`
     // resolution.
     for (const member of stmt.members) {
-      if (!member.name) continue;
+      if (!member.name || (ts.isFunctionLike(member) && irNativeSignatureDiverges(ctx, member))) continue;
       const placement = placementFor(member);
       const placementTerminal = placement ? identityContext.terminalByUnitId.get(placement.unitId) : undefined;
       const nestedAccessorPlacement = placementTerminal?.containingTerminalOwnerId !== undefined;
@@ -2075,7 +2101,7 @@ function buildIrClassShapes(
         });
       } else if (
         ts.isMethodDeclaration(member) &&
-        ts.isIdentifier(member.name) &&
+        (ts.isIdentifier(member.name) || ts.isPrivateIdentifier(member.name)) && // (#7227) `__priv_m`
         hasStaticModifier(member) &&
         !hasAbstractModifier(member) &&
         !member.asteriskToken
@@ -2100,7 +2126,7 @@ function buildIrClassShapes(
         if (sig) {
           const retTs = ctx.checker.getReturnTypeOfSignature(sig);
           if (!isVoidType(retTs)) {
-            const ir = tsTypeToClassPositionIr(ctx, retTs, lookup);
+            const ir = tsTypeToClassReturnIr(ctx, retTs, lookup);
             if (!ir) continue;
             returnType = ir;
           }
@@ -2133,6 +2159,7 @@ function buildIrClassShapes(
       ...(constructorInitTarget ? { constructorInitTarget } : {}),
       // #3000-E: present only for a single-level subclass of a local user class.
       ...(parentShape ? { parent: parentShape } : {}),
+      ...(libInterfaceRoot ? { libInterfaceRoot: true as const } : {}),
     };
     const provisional = provisionalEntries.get(classId);
     if (provisional) {
@@ -2226,6 +2253,8 @@ function tsTypeToClassPositionIr(ctx: CodegenContext, t: ts.Type, classShapes: I
   if (t.flags & ts.TypeFlags.NumberLike) return irVal({ kind: "f64" });
   if (t.flags & ts.TypeFlags.BooleanLike) return irVal({ kind: "i32" });
   if (t.flags & ts.TypeFlags.StringLike) return { kind: "string" };
+  // (#7223) untyped positions: same `Any | Unknown` carrier as legacy `resolveWasmType`.
+  if (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return irDynamic();
   const entry = resolveIrClassShapeFromType(ctx.checker, t, classShapes);
   if (entry) return { kind: "class", shape: entry.shape };
   if (t.flags & ts.TypeFlags.Object) {
@@ -2233,6 +2262,31 @@ function tsTypeToClassPositionIr(ctx: CodegenContext, t: ts.Type, classShapes: I
     if (ir) return ir;
   }
   return null;
+}
+
+/**
+ * (#7241) A method result position. Adds one arm to the class-position
+ * projection: a lib `any[]` (`const out = new Array(); …; return out;`), whose
+ * legacy result slot (`resolveWasmType`, class-bodies.ts) is the pre-registered
+ * `$__vec_externref`. Exactly that slot projects — the same carrier an
+ * `any[]`-annotated function position resolves to — and nothing else.
+ */
+function tsTypeToClassReturnIr(ctx: CodegenContext, t: ts.Type, classShapes: IrClassShapeLookup): IrType | null {
+  const ir = tsTypeToClassPositionIr(ctx, t, classShapes);
+  if (ir) return ir;
+  const vecExternref = ctx.vecTypeMap.get("externref");
+  const symbol = t.getSymbol();
+  if (
+    vecExternref === undefined ||
+    !(t.flags & ts.TypeFlags.Object) ||
+    symbol?.name !== "Array" ||
+    !symbol.declarations?.every((d) => d.getSourceFile().hasNoDefaultLib) ||
+    !((t.getNumberIndexType()?.flags ?? 0) & ts.TypeFlags.Any)
+  ) {
+    return null;
+  }
+  const legacy = resolveWasmType(ctx, t);
+  return legacy.kind === "ref_null" && legacy.typeIdx === vecExternref ? irVal(legacy) : null;
 }
 
 /**
@@ -2295,11 +2349,10 @@ function irFieldTypeMatchesLegacyValType(
     return true;
   }
   if (ir.kind === "string") {
-    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
-      return (vt.kind === "ref" || vt.kind === "ref_null") && vt.typeIdx === ctx.anyStrTypeIdx;
-    }
+    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) return isAnyStringSlot(ctx, vt);
     return vt.kind === "externref";
   }
+  if (ir.kind === "dynamic") return irDynamicCarrierMatchesSlot(ctx, vt); // (#7223)
   if (ir.kind === "class") {
     const structTypeIdx = ctx.structMap.get(ir.shape.className);
     return structTypeIdx !== undefined && (vt.kind === "ref" || vt.kind === "ref_null") && vt.typeIdx === structTypeIdx;
@@ -2484,10 +2537,7 @@ function isHostOnlyGeneratorImportName(name: string): boolean {
  * host/gc build where these imports DO register — is not matched and still
  * hard-errors.
  */
-function isTargetOmittedHostImportInvariant(
-  err: IrIntegrationError,
-  ctx?: Pick<CodegenContext, "standalone" | "wasi">,
-): boolean {
+function isTargetOmittedHostImportInvariant(err: IrIntegrationError, ctx?: Pick<CodegenContext, "wasi">): boolean {
   if (!ctx) return false;
   if (err.outcome.kind !== "invariant" || err.outcome.code !== "unknown-function-ref") return false;
   const name = /unknown function ref "([^"]+)"/.exec(err.message)?.[1];
@@ -2496,7 +2546,7 @@ function isTargetOmittedHostImportInvariant(
 
 export function formatIrPathFallbackDiagnostic(
   err: IrIntegrationError,
-  ctx?: Pick<CodegenContext, "standalone" | "wasi">,
+  ctx?: Pick<CodegenContext, "wasi">,
 ): {
   readonly message: string;
   readonly severity: "error" | "warning";
@@ -2572,34 +2622,8 @@ export interface IrOverlayPlan {
   readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
   /** Revalidates the mutable ABI joins immediately before integration. */
   readonly fnctorParameterPreselectionIsCurrent?: () => boolean;
-}
-
-/**
- * IR module-init lowering emits one physical Wasm body. Keep a large source
- * population on the direct route, whose complete-entry dispatcher is the only
- * representation with a bounded body. This runs while both IR-first and the
- * late overlay still share the same mutable safe-selection object.
- */
-function withdrawChunkedModuleInitFromIrSelection(
-  sourceFile: ts.SourceFile,
-  safeSelection: { moduleInit?: import("../ir/select.js").IrModuleInitAssessment },
-  recordPreparationFailure: (name: string, failure: IrPreparationFailure) => void,
-): void {
-  const moduleInit = safeSelection.moduleInit;
-  if (
-    moduleInit?.reason !== null ||
-    moduleInit.stmtCount === 0 ||
-    !moduleInitChunksRequired(collectModuleInitPopulation(sourceFile).map((node) => ({ node })))
-  ) {
-    return;
-  }
-  recordPreparationFailure(MODULE_INIT_UNIT_NAME, {
-    kind: "unsupported",
-    code: "late-preparation-unsupported",
-    stage: "resolve",
-    detail: "module initialization exceeds the complete-entry Wasm body budget and uses direct chunked emission",
-  });
-  safeSelection.moduleInit = undefined;
+  /** (#7106 module-init lever B) The one source-bound `Number(v)` plan of this compile. */
+  readonly preparedNumberCall: (call: ts.CallExpression) => boolean;
 }
 
 function recordWholeSourceFailure(
@@ -2843,12 +2867,7 @@ function makeIrImplicitParamTypeResolver(
     if (inferred?.kind === "i32" && inferred.boolean === true) {
       return { kind: "bool", type: irVal(inferred) };
     }
-    if (
-      inferred?.kind === "ref" &&
-      ctx.nativeStrings &&
-      ctx.anyStrTypeIdx >= 0 &&
-      inferred.typeIdx === ctx.anyStrTypeIdx
-    ) {
+    if (inferred?.kind === "ref" && isAnyStringSlot(ctx, inferred)) {
       return { kind: "string", type: { kind: "string" } };
     }
     if (inferred?.kind === "ref" || inferred?.kind === "ref_null") {
@@ -3014,8 +3033,7 @@ function planIrOverlay(
   const platformExternClass = irPlatformExternClassPredicate(ctx);
   const hostExternSurface = jsHostExterns || platformExternClass !== undefined;
   const standaloneDomCapability = planStandaloneDomCapability(ctx, ast.checker, ast.sourceFile);
-  const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
-    supportsIrBackendTargetCapability(irTargetProfile, capability);
+  const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   const calendarResolvers = planIrCalendarResolvers(
     ast.checker,
     hostExternSurface,
@@ -3046,15 +3064,14 @@ function planIrOverlay(
             resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
-            admitScriptVar: (declaration) => scriptVarSlotIsSoleHome(ctx, declaration),
-            scriptVarDynamicHome: (declaration) => scriptVarSlotIsDynamicHome(ctx, declaration),
-            scriptVarStringHome: (declaration) => scriptVarSlotIsStringHome(ctx, declaration),
+            scriptVarHome: (declaration) => scriptVarHome(ctx, declaration),
           },
           identityContext,
         );
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
+  const numberConversion = irNumberConversionPlan(ast.checker, ast.sourceFile); // (#7106 module-init lever B)
   const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker, ctx.oracle);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
@@ -3222,6 +3239,7 @@ function planIrOverlay(
       ...(platformExternClass ? { platformExternClass, platformHostGlobal: isJsEnvironmentPlatformGlobalName } : {}),
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
       dynMemberReadBuildable: true,
+      builtinProtoCompanionSeeded: ctx.protoMemberDirty, // (#7127)
       ...functionValueSelectionOptions(),
       dynamicRuntimeBuildable: !ctx.fast,
       // #2952 slice 5 — for-in currently owns only the non-fast dynamic
@@ -3234,6 +3252,10 @@ function planIrOverlay(
       },
       // Enumerated keys use the host string ABI; native `in` supplies boxing.
       forInHeadValueIsHostString: !ctx.nativeStrings,
+      // (#7106 propertyHelper) …and on a native-strings lane the same externref
+      // IS the non-fast dynamic carrier of the key string, so the head can be
+      // read as a dynamic value instead.
+      forInHeadValueIsDynamicCarrier: ctx.nativeStrings && !ctx.fast,
       nativeDynamicInBuildable: !ctx.fast && hostFreeEnvironment(ctx),
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
@@ -3247,9 +3269,15 @@ function planIrOverlay(
       classifyArrayElementFamily,
       isRegExpExpression,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+      ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
+      preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
+      // (#7106 compareArray.format)
+      arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
+      dynamicInstanceOfAtLegacyParity: (site) => irDynamicInstanceOfAtLegacyParity(ctx, site), // (#7106)
+      ...irOpenObjectSelectionOption(ctx), // (#7128 S1)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: true,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
@@ -3292,7 +3320,8 @@ function planIrOverlay(
       // so this only adds the native-string lanes.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
-      supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
+      supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
+      isNativeI32SlotRead: (expr) => irNativeI32SlotRead(ctx, ast.checker, expr),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
@@ -3479,7 +3508,6 @@ function planIrOverlay(
     // `calleeTypes` from safeSelection.funcs, so this unit returns to legacy.
     moduleInit: selection.moduleInit,
   };
-  withdrawChunkedModuleInitFromIrSelection(ast.sourceFile, safeSelection, recordPreparationFailure);
   // (#2928) The linked runtime-eval carrier is currently owned by the legacy
   // WasmGC closure/object runtime. Its recursive cross-module types may be
   // registered while module-init writes are compiled, after legacy function
@@ -3602,6 +3630,7 @@ function planIrOverlay(
         }
       : {}),
     ...(fnctorParameterPreselectionIsCurrent ? { fnctorParameterPreselectionIsCurrent } : {}),
+    preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
   };
 }
 
@@ -4174,53 +4203,37 @@ function compileMultiIrOverlaySource(
 }
 
 /**
- * (#7105) May the IR share a SCRIPT-goal top-level `var`'s `__mod_<name>` slot?
- * Legacy allocates that slot for scripts exactly as for modules, and a plain
- * read/write is `global.get`/`global.set` on it — measured 2026-10-20 on the
- * standalone target (`var called = 0; function cb(v) { called = called + 1; … }`
- * compiles `cb` to `global.get 9 … global.set 9`). Three script-only arms move
- * the binding's home away from the slot, and each answers `false` here:
+ * (#7105) The carrier of a SCRIPT-goal top-level `var`'s `__mod_<name>` slot
+ * (`IrScriptVarHome`) when the IR may share that slot as the binding's sole
+ * home. Legacy allocates it for scripts exactly as for modules, and a plain
+ * read or write is `global.get`/`global.set` on it. Three script-only arms
+ * move the binding's home away from the slot, and each answers `undefined`:
  *   - a runtime-eval consumer widens every script `var` to `externref`
  *     (`registerReassignedFunctionGlobals`), so the slot's type no longer
  *     matches the checker type the IR would resolve;
  *   - a name in `sloppyImplicitGlobals` (an undeclared `p = v` or a top-level
  *     `this.p = v`) resolves bare reads through the global-environment object;
- *   - a slot the declaration collector has not placed (or has already widened)
- *     is not a scalar home at all.
- * Scripts are the entire test262 corpus: every top-level `var` read inside a
- * test function was `expr-ident-not-in-scope` before this (e.g. the `kValue`
- * callbacks in `built-ins/Array/prototype/map`, 15/216 tests).
+ *   - a slot the declaration collector has not placed is not a home at all.
  */
-export function scriptVarSlotIsSoleHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
-  const slot = scriptVarHomeSlot(ctx, declaration);
-  return slot !== undefined && slot.type.kind !== "externref";
-}
-
-/**
- * (#7106) The same sole-home slot when legacy allocated it as `externref`
- * (`var o = new Object()`, `var n;`, a function-valued `var`): off fast mode
- * that is exactly `resolveIrDynamicCarrierType`, so the IR binds it as a
- * `dynamic` module binding. Fast mode's dynamic carrier is `$AnyValue`, so it
- * stays excluded.
- */
-export function scriptVarSlotIsDynamicHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
-  return !ctx.fast && scriptVarHomeSlot(ctx, declaration)?.type.kind === "externref";
-}
-
-/**
- * (#7125) The sole-home slot when legacy allocated it as the native-string
- * carrier `(ref null $AnyString)` (`var data = "data"` on standalone). That is
- * exactly the storage `resolveModuleBindingGlobal`'s `string` arm names, so the
- * IR binds it as a `string` module binding. Host strings use `externref`,
- * which is the dynamic home instead.
- */
-export function scriptVarSlotIsStringHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
-  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+export function scriptVarHome(
+  ctx: CodegenContext,
+  declaration: IrModuleBindingDeclaration,
+): IrScriptVarHome | undefined {
   const type = scriptVarHomeSlot(ctx, declaration)?.type;
-  return type?.kind === "ref_null" && type.typeIdx === ctx.anyStrTypeIdx;
+  switch (type?.kind) {
+    case "externref":
+      return ctx.fast ? undefined : "dynamic";
+    case "ref_null":
+      return type.typeIdx === ctx.anyStrTypeIdx ? "string" : undefined;
+    case "f64":
+    case "i32":
+      return "typed";
+    default:
+      return undefined;
+  }
 }
 
-function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclaration) {
+function scriptVarHomeSlot(ctx: CodegenContext, declaration: IrModuleBindingDeclaration) {
   if (!ts.isIdentifier(declaration.name)) return undefined;
   const name = declaration.name.text;
   const plan = ctx.runtimeEvalBoundaryPlan;
@@ -4229,9 +4242,10 @@ function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclarat
     return undefined;
   }
   if (ctx.sloppyImplicitGlobals.has(name)) return undefined;
-  // (#7106) `var g` merged with `function g`: the checker gives the script
-  // `var` its own symbol, but the binding (and its slot) is the function's.
-  if (ctx.funcMap.has(name) || ctx.liveFuncBindingGlobals?.has(name)) return undefined;
+  // (#7106) `var g` merged with `function g` owns the function's slot; (#7189) a same-named object-runtime
+  // helper (`__getOwnPropertyNames`) is not that `function` and can enter `funcMap` after selection.
+  const helperOnly = omObjectRuntime.OBJECT_RUNTIME_HELPER_NAMES.has(name) && !ctx.topLevelFunctionNames.has(name);
+  if ((ctx.funcMap.has(name) && !helperOnly) || ctx.liveFuncBindingGlobals?.has(name)) return undefined;
   const globalIdx = ctx.moduleGlobals.get(name);
   const global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
   return global?.name === `__mod_${name}` ? global : undefined;
@@ -4704,10 +4718,7 @@ function preparedLexicalComponentPreflightFailure(
     return "the exact host callback maker ABI is unavailable in the final module context";
   }
   const supportsHostDateSnapshots =
-    supportsIrBackendTargetCapability(
-      projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }),
-      "host-date-snapshot",
-    ) || ctx.requiresStandaloneClockCapability === true;
+    irBackendCapabilityQuery(ctx)("host-date-snapshot") || ctx.requiresStandaloneClockCapability === true;
   if (
     !canPrepareHostDateSnapshotLoweringByIdentity(
       ctx,
@@ -4841,6 +4852,7 @@ function planIrFirstBodyRouting(
       ...plan.suspendingAsyncUnitIds,
     ]),
     generatorsSkippable: false,
+    numberToString: irBackendCapabilityQuery(ctx)("number-to-string"),
     fast: ctx.fast,
   };
   const timerRouting = irTimerShim.inspectIrCompilerTimerShimRouting(plan);
@@ -5923,6 +5935,9 @@ export function generateModule(
       irPreserveBodies = routing.preserveBodies;
       irSkipBodyUnitIds = routing.skipBodyUnitIds;
       irPreserveBodyUnitIds = routing.preserveBodyUnitIds;
+      if (!preparedModuleInit && (preparedSelection ?? irPlan.safeSelection).moduleInit?.reason === null) {
+        holdModuleInitChunksForIr(ctx);
+      }
     }
     // Third pass: compile function bodies
     // (#1058) Batch throw-message string imports until the bodies are done.
@@ -6076,6 +6091,7 @@ export function generateModule(
         irSkippedModuleInitUnitIds,
       );
     }
+    releaseModuleInitChunks(ctx);
 
     // (#6615) Same post-bodies arming as the multi-source path — see
     // `armExternRefArgTypeGuardForLinkedProvider`.
@@ -6216,7 +6232,6 @@ export function generateModule(
     // (#3058) __rab_resize / __ab_max_len exports so the host runtime can
     // implement ArrayBuffer.prototype.resize + maxByteLength/resizable on
     // $__resizable_ab vec structs (no-op unless a resizable buffer exists).
-    emitResizableAbExports(ctx);
 
     // (#1503) __vec_set_byte for crypto.getRandomValues to write into Uint8Array vecs.
     emitVecSetByteExport(ctx);
@@ -6236,15 +6251,12 @@ export function generateModule(
 
     // (#5347) …and the REVERSE map of the same family: which class minted this
     // struct, and what is its prototype carrier.
-    emitClassInstanceProtoExport(ctx);
 
     // (#5242) `new <class value>(…)` — the CONSTRUCT twin of the same family.
-    emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS);
 
     // (#5354) "which class is this struct an instance of" — the identity the
     // host needs to give a foreign instance the same `[[Prototype]]` object
     // that `C.prototype` answers across the linked-provider seam.
-    emitClassObjectOfExport(ctx);
 
     // (#2038 / #3100, reserve-then-fill #1719) Rebuild the native `__iterator`
     // body with the LATE ladder arms now that every carrier type is known: the
@@ -7029,13 +7041,6 @@ export function generateModule(
     // module header. No-op unless a host-construct call site asked for it.
     emitInitMarshalHelperRegistration(ctx);
 
-    // (#5202) The same window's METHOD-DISPATCH facet: a compiled class's
-    // prototype is bare during module init, and the runtime answers `obj.m()`
-    // from the `__class_call_*` / `__member_kind_*` EXPORTS — unreachable for
-    // the whole of the start section. Register them through the same funcref
-    // channel. No-op unless the module has top-level code AND dispatch exports.
-    emitInitClassDispatchRegistration(ctx);
-
     // (#2800) Allocate + wire the `__in_module_init` flag global now that every
     // import global has settled (final absolute index), patching the recorded
     // delete-aware read `global.get` placeholders and wrapping `__module_init`.
@@ -7404,8 +7409,6 @@ function finalizeMultiPreparedModuleInitStartup(
   owner?.assertPreparedModuleInitCurrent();
   // (#5193) Same placement as the single-module pipeline: before the flag wrap.
   emitInitMarshalHelperRegistration(ctx, owner?.preparedModuleInitUnitId);
-  // (#5202) Method-dispatch facet of the same window, same placement.
-  emitInitClassDispatchRegistration(ctx, owner?.preparedModuleInitUnitId);
   finalizeInModuleInitFlag(ctx, owner?.preparedModuleInitUnitId);
   owner?.finalizePreparedModuleInitStartup();
 }
@@ -7619,7 +7622,7 @@ function addWasiStartExport(ctx: CodegenContext): void {
     const startBody: Instr[] =
       exnPrinterIdx !== undefined && ctx.wasiProcExitIdx >= 0
         ? [
-            buildTargetTaggedTry(ctx, { kind: "empty" }, body, [
+            buildTargetTaggedTry(regimeTarget(ctx), { kind: "empty" }, body, [
               {
                 tagIdx: ctx.exnTagIdx,
                 body: [
@@ -7722,21 +7725,6 @@ function undefinedAwareF64BridgeArg(ctx: CodegenContext, argLocalIdx: number, co
 /** Whether formal `index` of `fullName` carries a default / `?` marker. */
 function hostClassBridgeFormalIsOptional(ctx: CodegenContext, fullName: string, index: number): boolean {
   return (ctx.funcOptionalParams.get(fullName) ?? []).some((info) => info.index === index);
-}
-
-/** Instructions converting one incoming bridge externref into `param`. */
-function hostClassBridgeParamCoercion(ctx: CodegenContext, param: ValType): Instr[] | undefined {
-  if (param.kind === "externref" || param.kind === "ref_extern") return [];
-  if (param.kind !== "f64") return undefined;
-  const unboxIdx = ctx.funcMap.get("__unbox_number");
-  if (unboxIdx === undefined) return undefined;
-  const coercion = callArgCoercionInstrs(
-    { kind: "externref" },
-    param,
-    ctx.funcMap.get("__box_number") ?? null,
-    unboxIdx,
-  );
-  return coercion.length > 0 ? coercion : undefined;
 }
 
 /**
@@ -8351,38 +8339,6 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   // above). Gated on the module actually containing a fnctor subclass so every
   // other module's emitted bytes are IDENTICAL.
 }
-
-/** Box a bridge's Wasm result into the `externref` the host ABI returns. */
-function appendClassBridgeResultBoxing(ctx: CodegenContext, body: Instr[], resultType: ValType | undefined): boolean {
-  if (resultType === undefined) {
-    const undefinedIdx = ctx.funcMap.get("__get_undefined");
-    body.push(undefinedIdx !== undefined ? { op: "call", funcIdx: undefinedIdx } : { op: "ref.null.extern" });
-    return true;
-  }
-  if (resultType.kind === "externref" || resultType.kind === "ref_extern") return true;
-  if (resultType.kind === "ref" || resultType.kind === "ref_null") {
-    body.push({ op: "extern.convert_any" });
-    return true;
-  }
-  const boxIdx = ctx.funcMap.get("__box_number");
-  if (boxIdx === undefined) return false;
-  if (resultType.kind === "f64") body.push({ op: "call", funcIdx: boxIdx });
-  else if (resultType.kind === "i32") body.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx });
-  else if (resultType.kind === "i64") body.push({ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxIdx });
-  else if (resultType.kind === "f32") body.push({ op: "f64.promote_f32" }, { op: "call", funcIdx: boxIdx });
-  else return false;
-  return true;
-}
-
-/**
- * (#5242) The two boundary primitives `emitClassValueConstructExports` needs,
- * passed in rather than imported so the emitter can live in its own file
- * without a cycle back into this module.
- */
-const CLASS_VALUE_CONSTRUCT_HELPERS = {
-  paramCoercion: hostClassBridgeParamCoercion,
-  boxResult: appendClassBridgeResultBoxing,
-};
 
 /**
  * (#1716) Emit `__call_@@toPrimitive(self, hint) -> externref` — a 2-arg
@@ -10758,7 +10714,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("emit-data-view-byte-exports", () => emitDataViewByteExports(ctx));
 
     // (#3058) Resizable-ArrayBuffer helper exports (mirrors generateModule path).
-    profilePhase("emit-resizable-ab-exports", () => emitResizableAbExports(ctx));
 
     // Multi-source parity with generateModule: linked Web Crypto calls need a
     // byte writer for their Wasm vec argument, and exported typed-array params
@@ -10774,15 +10729,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("emit-iterator-method-export", () => emitIteratorMethodExport(ctx));
 
     // (#5347) See the single-source path — same placement, same gate.
-    profilePhase("emit-class-instance-proto", () => emitClassInstanceProtoExport(ctx));
 
     // (#5242) See the single-source path — same placement, same gate.
-    profilePhase("emit-class-value-construct", () =>
-      emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS),
-    );
 
     // (#5354) See the single-source path — same placement, same gate.
-    profilePhase("emit-class-object-of", () => emitClassObjectOfExport(ctx));
 
     // Multi-source parity with generateModule: rebuild the reserved native
     // iterator ladders only after every graph carrier and receiver dispatcher
@@ -13591,7 +13541,7 @@ function walkStmtForVars(
     walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
-  if (ts.isLabeledStatement(stmt)) {
+  if (ts.isLabeledStatement(stmt) || ts.isWithStatement(stmt)) {
     walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
@@ -14450,6 +14400,20 @@ export { createCodegenContext } from "./context/create-context.js";
 export { reportError } from "./context/errors.js";
 export { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 export { attachSourcePos, getSourcePos } from "./context/source-pos.js";
+// (#7106 propertyHelper) the IR's dynamic delete wrappers (ir/integration.ts).
+export {
+  ensureIrDynamicDeleteHelper,
+  IR_DYN_DELETE_SLOPPY_HELPER,
+  IR_DYN_DELETE_STRICT_HELPER,
+  irDeleteSiteIsStrict,
+  irDynamicDeleteHelperName,
+} from "./ir-dynamic-delete.js";
+// (#7106) the IR's generic dynamic instanceof wrapper (ir/integration.ts).
+export {
+  ensureIrDynamicInstanceOfHelper,
+  IR_DYN_INSTANCEOF_HELPER,
+  irDynamicInstanceOfAtLegacyParity,
+} from "./ir-dynamic-instanceof.js";
 // (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
 export {
   buildModuleInitPrologueCall,

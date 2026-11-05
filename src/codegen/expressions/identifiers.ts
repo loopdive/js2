@@ -42,12 +42,11 @@ import {
   addImport,
   addStringConstantGlobal,
   addUnionImports,
-  ensureExnTag,
   findUserBindingDecl,
   localGlobalIdx,
   resolveWasmType,
 } from "../index.js";
-import { addHostStringConstantGlobal, deferrableStringConstantGlobalGet } from "../registry/imports.js";
+import { addHostStringConstantGlobal } from "../registry/imports.js";
 import { emitCapturedBoxGlobalRead, emitNullGuardedStructGet, getCapturedBoxGlobal } from "../property-access.js";
 import { coerceType, compileExpression, isAnyValue } from "../shared.js";
 import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630 / #4648)
@@ -79,7 +78,7 @@ import { tryEmitNativeDynamicInstanceOf } from "../native-dynamic-instanceof.js"
 import { isObjectFamilyCtorName, tryEmitNativeObjectFamilyInstanceOf } from "../native-object-family-instanceof.js";
 import { emitTaCtorValue } from "../dataview-native.js";
 import { taCtorKindOf } from "../registry/types.js";
-import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "./helpers.js";
+import { emitThrowReferenceError, emitThrowTypeError } from "./helpers.js";
 import { tryEmitPromiseSubclassInstanceOf } from "../promise-subclass-proto-link.js";
 import { emitDynamicWithGet, emitWithBindingGet, resolveWithBinding } from "../with-scope.js";
 import {
@@ -108,7 +107,6 @@ import { emitStandaloneIntrinsicEvalValue } from "./eval-inline.js";
 import { runtimeEvalProviderLinkable } from "./runtime-eval-provider.js";
 import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
-import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
@@ -166,40 +164,6 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
   // #1473 — no JS host: build the TDZ flag check and emit a ReferenceError
   // INSTANCE throw inside the `then` branch via the in-module constructor
   // helper (no `__throw_reference_error` host import).
-  if (noJsHost(ctx)) {
-    const boxed = fctx.boxedTdzFlags?.get(name);
-    if (boxed) {
-      fctx.body.push({ op: "local.get", index: boxed.localIdx });
-      fctx.body.push({ op: "struct.get", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
-    } else {
-      fctx.body.push({ op: "local.get", index: flagIdx });
-    }
-    fctx.body.push({ op: "i32.eqz" });
-    // emitThrowReferenceError appends to fctx.body; capture into the `then`
-    // branch by swapping in a temporary body (tracked in savedBodies so any
-    // late-import index shift reaches it).
-    const savedBody = fctx.body;
-    fctx.savedBodies.push(savedBody);
-    fctx.body = [];
-    emitThrowReferenceError(ctx, fctx, msg);
-    fctx.body.push({ op: "unreachable" });
-    const then = fctx.body;
-    const si = fctx.savedBodies.lastIndexOf(savedBody);
-    if (si >= 0) fctx.savedBodies.splice(si, 1);
-    fctx.body = savedBody;
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then,
-      else: [],
-    });
-    return;
-  }
-  const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
-  flushLateImportShifts(ctx, fctx);
-  // If the flag has been boxed in an i32 ref cell (captured by a closure —
-  // see #1177), read it through `struct.get` so we observe mutations the
-  // outer scope made via the same ref cell.
   const boxed = fctx.boxedTdzFlags?.get(name);
   if (boxed) {
     fctx.body.push({ op: "local.get", index: boxed.localIdx });
@@ -208,22 +172,18 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
     fctx.body.push({ op: "local.get", index: flagIdx });
   }
   fctx.body.push({ op: "i32.eqz" });
-  let then: Instr[];
-  if (throwRefErrIdx !== undefined) {
-    // (#1058) One message per captured name: batch its import with the others.
-    const deferred = deferrableStringConstantGlobalGet(ctx, msg);
-    const strIdx = deferred ? undefined : addHostStringConstantGlobal(ctx, msg);
-    if (deferred || strIdx !== undefined) {
-      const get: Instr[] = deferred ?? [{ op: "global.get", index: strIdx! }];
-      then = [...get, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
-    } else {
-      const tagIdx = ensureExnTag(ctx);
-      then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
-    }
-  } else {
-    const tagIdx = ensureExnTag(ctx);
-    then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
-  }
+  // emitThrowReferenceError appends to fctx.body; capture into the `then`
+  // branch by swapping in a temporary body (tracked in savedBodies so any
+  // late-import index shift reaches it).
+  const savedBody = fctx.body;
+  fctx.savedBodies.push(savedBody);
+  fctx.body = [];
+  emitThrowReferenceError(ctx, fctx, msg);
+  fctx.body.push({ op: "unreachable" });
+  const then = fctx.body;
+  const si = fctx.savedBodies.lastIndexOf(savedBody);
+  if (si >= 0) fctx.savedBodies.splice(si, 1);
+  fctx.body = savedBody;
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -775,25 +735,8 @@ function analyzeTdzAccessByPos(ctx: CodegenContext, varName: string, callNode: t
 export function emitStaticTdzThrow(ctx: CodegenContext, fctx: FunctionContext, name: string): void {
   const msg = `${name} is not defined`;
   // #1473 — no JS host: throw a ReferenceError INSTANCE built in-module.
-  if (noJsHost(ctx)) {
-    emitThrowReferenceError(ctx, fctx, msg);
-    fctx.body.push({ op: "unreachable" });
-    return;
-  }
-  const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
-  flushLateImportShifts(ctx, fctx);
-  if (throwRefErrIdx !== undefined) {
-    const strIdx = addHostStringConstantGlobal(ctx, msg);
-    if (strIdx !== undefined) {
-      fctx.body.push({ op: "global.get", index: strIdx });
-      fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
-      fctx.body.push({ op: "unreachable" });
-      return;
-    }
-  }
-  const tagIdx = ensureExnTag(ctx);
-  fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push({ op: "throw", tagIdx });
+  emitThrowReferenceError(ctx, fctx, msg);
+  fctx.body.push({ op: "unreachable" });
 }
 
 function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): ValType | null {
@@ -887,7 +830,7 @@ function emitModuleTdzReadCheck(ctx: CodegenContext, fctx: FunctionContext, id: 
   const flagIdx = moduleTdzGlobalIndexForIdentifier(ctx, id);
   if (flagIdx === undefined) return;
   const tdzResult = analyzeTdzAccess(ctx, id);
-  if (tdzResult === "check") emitTdzCheckAtGlobal(ctx, fctx, flagIdx, id.text, noJsHost(ctx));
+  if (tdzResult === "check") emitTdzCheckAtGlobal(ctx, fctx, flagIdx, id.text, true);
   else if (tdzResult === "throw") emitStaticTdzThrow(ctx, fctx, id.text);
 }
 
@@ -969,7 +912,7 @@ function compileExactAmbientShadowedModuleBinding(
     if (tdzLocalIdx < 0) return undefined;
     const tdzResult = analyzeTdzAccess(ctx, id);
     if (tdzResult === "check") {
-      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text, noJsHost(ctx));
+      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text, true);
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
@@ -2099,28 +2042,8 @@ function compileIdentifierCore(
     // #1473 — no JS host: build the ReferenceError instance in-module so
     // `e instanceof ReferenceError` works under wasmtime, with no
     // `__throw_reference_error` host import.
-    if (noJsHost(ctx)) {
-      emitThrowReferenceError(ctx, fctx, msg);
-      fctx.body.push({ op: "unreachable" });
-      return { kind: "externref" };
-    }
-    const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
-    flushLateImportShifts(ctx, fctx);
-    if (throwRefErrIdx !== undefined) {
-      const strIdx = addHostStringConstantGlobal(ctx, msg);
-      if (strIdx !== undefined) {
-        fctx.body.push({ op: "global.get", index: strIdx });
-        fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
-        fctx.body.push({ op: "unreachable" });
-        return { kind: "externref" };
-      }
-    }
-    {
-      // Fallback: raw exception-tag throw (no JS host to construct a ReferenceError).
-      const tagIdx = ensureExnTag(ctx);
-      fctx.body.push({ op: "ref.null.extern" });
-      fctx.body.push({ op: "throw", tagIdx });
-    }
+    emitThrowReferenceError(ctx, fctx, msg);
+    fctx.body.push({ op: "unreachable" });
     return { kind: "externref" };
   }
 
@@ -2134,7 +2057,6 @@ function compileIdentifierCore(
   // only (the view/construct substrate is host-free); gated on the name not being
   // shadowed by a local/captured binding or a user class.
   if (
-    noJsHost(ctx) &&
     taCtorKindOf(name) >= 0 &&
     fctx.localMap.get(name) === undefined &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
@@ -2513,7 +2435,6 @@ function emitDynamicInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // across a function boundary — see `autoBindingNarrowedAcrossFunctionBoundary`.
   const foldLeft = ctx.checker.getTypeAtLocation(expr.left);
   if (
-    noJsHost(ctx) &&
     !moduleInstallsCallableHasInstance(expr.getSourceFile()) &&
     isExclusivelyPrimitiveType(foldLeft) &&
     !autoBindingNarrowedAcrossFunctionBoundary(ctx, expr.left, foldLeft)
@@ -2843,34 +2764,6 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
 
   const promiseLinked = tryEmitPromiseSubclassInstanceOf(ctx, fctx, expr); // (#6651 D4) standalone bag link
   if (promiseLinked) return promiseLinked;
-  // Promise subclasses are represented by cached host constructors. Their
-  // instances therefore need the actual RHS value, not the name-based user
-  // class/tag predicate used for WasmGC classes and other builtin subclasses.
-  if (
-    ts.isIdentifier(expr.right) &&
-    resolvePromiseSubclassIdentifier(ctx, expr.right) !== undefined &&
-    !noJsHost(ctx)
-  ) {
-    const helperIdx = ensureLateImport(
-      ctx,
-      "__promise_subclass_instanceof",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "i32" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    const leftType = compileExpression(ctx, fctx, expr.left);
-    if (!leftType) fctx.body.push({ op: "ref.null.extern" });
-    else if (leftType.kind !== "externref") coerceType(ctx, fctx, leftType, { kind: "externref" });
-    const rightType = compileExpression(ctx, fctx, expr.right);
-    if (!rightType) fctx.body.push({ op: "ref.null.extern" });
-    else if (rightType.kind !== "externref") coerceType(ctx, fctx, rightType, { kind: "externref" });
-    if (helperIdx === undefined) {
-      fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "i32.const", value: 0 });
-    } else {
-      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__promise_subclass_instanceof") ?? helperIdx });
-    }
-    return { kind: "i32" };
-  }
 
   // Resolve constructor name from the RHS expression (simple identifiers only)
   let ctorName: string | undefined;
@@ -2907,9 +2800,9 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     return emitConstantInstanceOf(ctx, fctx, expr, staticResult);
   }
 
-  const hostDate =
-    ctorName === "Date" ? emitHostOrNativeBuiltinInstanceOf(ctx, fctx, expr, ctorName, [ensureDateStruct(ctx)]) : null;
-  if (hostDate) return hostDate;
+  // (#6979) The folded host Date arm registered the native Date struct here;
+  // keep the registration so the type section is unchanged.
+  if (ctorName === "Date") ensureDateStruct(ctx);
 
   // (#1536c) Standalone / WASI: `instance instanceof MyError` where
   // `class MyError extends Error {}` is an externref-backed user subclass. The
@@ -2937,7 +2830,7 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     // (#3962) Host-free answer for a plain user function constructor — the
     // `e instanceof Test262Error` shape, 26 of the 36 ≤ES5 sole leaks of
     // `env::__instanceof_check`. Declines to null and leaves this path unchanged.
-    const nativeCtor = noJsHost(ctx) ? tryEmitNativeUserCtorInstanceOf(ctx, fctx, expr, ctorName) : null;
+    const nativeCtor = tryEmitNativeUserCtorInstanceOf(ctx, fctx, expr, ctorName);
     if (nativeCtor) return nativeCtor;
     return emitDynamicInstanceOf(ctx, fctx, expr);
   }
@@ -3048,7 +2941,7 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // (a missed conversion, never a wrong `true` — #2916). Date and RegExp ARE now
   // modeled (#1325, distinct $__Date / $__StandaloneRegExp structs). NEVER emit
   // the host import here.
-  if (noJsHost(ctx)) {
+  {
     const vecLinked = tryEmitVecLinkedInstanceOf(ctx, fctx, expr, ctorName); // (#2917) `extends Array` link
     if (vecLinked) return vecLinked;
     if (isStandaloneWrapperConstructorName(ctorName)) {
@@ -3076,65 +2969,6 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };
   }
-
-  // Ensure the __instanceof host import exists
-  const instanceofIdx = ensureLateImport(
-    ctx,
-    "__instanceof",
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "i32" }],
-  );
-  flushLateImportShifts(ctx, fctx);
-
-  if (instanceofIdx === undefined) {
-    const leftType = compileExpression(ctx, fctx, expr.left);
-    if (leftType) fctx.body.push({ op: "drop" });
-    // (#4491 T3) …and here too — same §13.10.1 step-3 obligation.
-    evaluateInstanceOfRhsForEffects(ctx, fctx, expr.right);
-    fctx.body.push({ op: "i32.const", value: 0 });
-    return { kind: "i32" };
-  }
-
-  // Compile left operand (the value to test)
-  const leftType = compileExpression(ctx, fctx, expr.left);
-  if (!leftType) {
-    fctx.body.push({ op: "ref.null.extern" });
-  } else if (leftType.kind === "i32" || leftType.kind === "f64") {
-    // (#2702) §13.10.2 checks the RHS-is-an-object/callable condition (step 1/4,
-    // which may throw a TypeError) BEFORE OrdinaryHasInstance looks at V. So the
-    // "a primitive is never an instance → false" stack-level fast path is only
-    // valid when the RHS is a KNOWN callable constructor (a builtin ctor or a
-    // user class). For a RHS that resolves to a non-callable object
-    // (`1 instanceof Math`) the spec requires a TypeError, so box the primitive
-    // and let the host check return the throw sentinel (2). (The builtin +
-    // statically-numeric-LHS case already short-circuited via
-    // tryStaticInstanceOf, so reaching here with a builtin RHS means an
-    // any-typed LHS — primitive → false is still correct there.)
-    if (isBuiltinTypeName(ctorName) || ctx.classTagMap.has(ctorName)) {
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "i32.const", value: 0 });
-      return { kind: "i32" };
-    }
-    coerceType(ctx, fctx, leftType, { kind: "externref" });
-  } else if (leftType.kind !== "externref") {
-    coerceType(ctx, fctx, leftType, { kind: "externref" });
-  }
-
-  // Push constructor name as a string constant. (#51) Materialize via the
-  // dual-mode helper — under nativeStrings `addStringConstantGlobal` records a
-  // `-1` sentinel global (no host string-constant global), so a bare
-  // `global.get -1` reaches binary emit as "global index out of range — -1".
-  // `stringConstantExternrefInstrs` emits the inline NativeString externref
-  // standalone and the host `global.get` only when a real import global exists.
-  addStringConstantGlobal(ctx, ctorName);
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, ctorName));
-
-  // Call __instanceof(value, ctorName) -> i32 (tri-state: 0/1/2). (#2702) A
-  // RHS that resolves to a non-callable object (`x instanceof Math`) returns 2,
-  // which emitInstanceofThrowGuard turns into a spec-mandated wasm TypeError.
-  fctx.body.push({ op: "call", funcIdx: instanceofIdx });
-  emitInstanceofThrowGuard(ctx, fctx);
-  return { kind: "i32" };
 }
 
 export { analyzeTdzAccessByPos, compileHostInstanceOf, compileIdentifier, narrowTypeToUnbox, resolveInstanceOfRHS };

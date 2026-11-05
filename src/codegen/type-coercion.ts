@@ -30,7 +30,6 @@ import { reserveObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 s
 import { buildRecordFromExternref } from "./record-from-host-object.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
-import { ensureCanonicalUndefinedExtern } from "./undefined-extern-import.js"; // (#6419/#6492 r6)
 import { f64HoleToExternrefInstrs } from "./vec-f64-hole-coercion.js";
 import {
   elemGetOp,
@@ -1284,20 +1283,7 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
   // allocated before the short-circuit temp below.
   const matInstrs = buildVecFromExternref(ctx, fctx, 0, vecTypeIdx, vecInfo);
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-  const copySidecarIdx = undefined;
   const tmpAny = allocLocal(fctx, `__vfe_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
-  const crossRepInstrs: Instr[] = matInstrs;
-  if (copySidecarIdx !== undefined) {
-    const resultLocal = allocLocal(fctx, `__vfe_result_${fctx.locals.length}`, resultType);
-    crossRepInstrs.push(
-      { op: "local.set", index: resultLocal },
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: resultLocal },
-      { op: "extern.convert_any" },
-      { op: "call", funcIdx: copySidecarIdx },
-      { op: "local.get", index: resultLocal },
-    );
-  }
 
   const body: Instr[] = [
     // (1) null/undefined guard.
@@ -1326,7 +1312,7 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
             { op: "ref.cast", typeIdx: vecTypeIdx },
           ],
           // (3) host externref / cross-rep → materialize a fresh exact-type vec.
-          else: crossRepInstrs,
+          else: matInstrs,
         },
       ],
     },
@@ -2043,14 +2029,6 @@ function emitVecToVecBody(
   srcVec: { arrTypeIdx: number; elemType: ValType },
   dstVec: { arrTypeIdx: number; elemType: ValType },
 ): boolean {
-  // A vec projection changes only the compiler's element heap type; at the
-  // JavaScript level it is still the same Array object. In host-backed GC mode
-  // its non-index properties live in a WeakMap keyed by the raw vec. Reserve a
-  // bridge before emitting the copy so the fresh destination can inherit that
-  // sidecar after its indexed elements are projected. Resolve the funcIdx only
-  // after the late-import flush to avoid retaining a shifted defined index.
-  let copySidecarIdx: number | undefined;
-
   // Save the source vec ref to a temp local
   const srcRefType: ValType = { kind: "ref_null", typeIdx: fromTypeIdx };
   const srcLocal = allocTempLocal(fctx, srcRefType);
@@ -2196,18 +2174,6 @@ function emitVecToVecBody(
   fctx.body.push({ op: "local.get", index: lenLocal });
   fctx.body.push({ op: "local.get", index: dstArrLocal });
   fctx.body.push({ op: "struct.new", typeIdx: toTypeIdx });
-
-  if (copySidecarIdx !== undefined) {
-    const dstVecLocal = allocTempLocal(fctx, { kind: "ref_null", typeIdx: toTypeIdx });
-    fctx.body.push({ op: "local.set", index: dstVecLocal });
-    fctx.body.push({ op: "local.get", index: srcLocal });
-    fctx.body.push({ op: "extern.convert_any" });
-    fctx.body.push({ op: "local.get", index: dstVecLocal });
-    fctx.body.push({ op: "extern.convert_any" });
-    fctx.body.push({ op: "call", funcIdx: copySidecarIdx });
-    fctx.body.push({ op: "local.get", index: dstVecLocal });
-    releaseTempLocal(fctx, dstVecLocal);
-  }
 
   releaseTempLocal(fctx, iLocal);
   releaseTempLocal(fctx, dstArrLocal);
@@ -3142,28 +3108,11 @@ export function coerceType(
       if (to.kind === "ref_null" && !materializeUndefinedVec) {
         ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
       }
-
       const materializeVec = buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo);
       // buildVecFromExternref flushes every late-import shift. Resolve the
-      // helpers afterwards so these calls cannot retain stale defined funcIdxs.
+      // helper afterwards so this call cannot retain a stale defined funcIdx.
       const isUndefinedIdx =
         to.kind === "ref_null" && !materializeUndefinedVec ? ctx.funcMap.get("__extern_is_undefined") : undefined;
-      const copySidecarIdx = undefined;
-      const materializeWithSidecar: Instr[] = materializeVec;
-      if (copySidecarIdx !== undefined) {
-        const resultLocal = allocLocal(fctx, `__coerce_vec_result_${fctx.locals.length}`, {
-          kind: "ref_null",
-          typeIdx: toIdx,
-        });
-        materializeWithSidecar.push(
-          { op: "local.set", index: resultLocal },
-          { op: "local.get", index: tmpExternLocal },
-          { op: "local.get", index: resultLocal },
-          { op: "extern.convert_any" },
-          { op: "call", funcIdx: copySidecarIdx },
-          { op: "local.get", index: resultLocal },
-        );
-      }
       elseBranch = [
         { op: "local.get", index: tmpExternLocal },
         { op: "ref.is_null" },
@@ -3178,7 +3127,7 @@ export function coerceType(
           op: "if",
           blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toIdx } },
           then: [{ op: "ref.null", typeIdx: toIdx }],
-          else: wrapArrayProtoVecAlias(ctx, tmpExternLocal, toIdx, vecInfo.arrTypeIdx, materializeWithSidecar),
+          else: wrapArrayProtoVecAlias(ctx, tmpExternLocal, toIdx, vecInfo.arrTypeIdx, materializeVec),
         },
       ];
     } else {
@@ -3273,24 +3222,6 @@ export function coerceType(
   // f64 → externref (box number)
   if (from.kind === "f64" && to.kind === "externref") {
     addUnionImports(ctx);
-    // (#6492 round 6) The sentinel arm below resolves the lane's canonical
-    // `undefined` through `canonicalUndefinedExternInstrs`, which is READ-ONLY
-    // by design and falls back to `ref.null.extern` — JS **`null`** — when
-    // `__get_undefined` is not registered yet. That fallback is not a fallback
-    // here: it changes the VALUE. Measured on the linked test262 lane, where a
-    // body-only compile unit has no other reason to import it,
-    // `for await (let { w: [x, y, z] = [4, 5, 6] } of [{ w: [7, undefined,] }])`
-    // bound `y` to `null` (`typeof y === "object"`) while the honest whole
-    // assembly — whose harness prefix imports `__get_undefined` long before
-    // this site — bound `undefined`.
-    //
-    // It MUST run before `__box_number`'s index is read: registering an import
-    // shifts func indices, and `flushLateImportShifts` remaps already-EMITTED
-    // instructions, not a `funcIdx` already captured in a local. Gated on the
-    // brand so every other f64 box is byte-identical, and `ensureCanonical…`
-    // is itself a no-op on the standalone/native-strings lanes and after the
-    // #1984 index-space freeze.
-    if (from.undefSentinel === true) ensureCanonicalUndefinedExtern(ctx, fctx);
     const funcIdx = ctx.funcMap.get("__box_number");
     // (#2864 wave-2 S1) UNDEF-SENTINEL-BRANDED f64 (`{kind:"f64",
     // undefSentinel:true}`) — an f64 read out of a slot that genuinely holds

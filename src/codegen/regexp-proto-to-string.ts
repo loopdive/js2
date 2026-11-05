@@ -65,7 +65,7 @@ export function emitRegExpProtoToStringBody(
   fctx: FunctionContext,
   thisParam: number,
 ): ValType | null {
-  if (!demanded.has(ctx) || !ctx.standalone) return null;
+  if (!demanded.has(ctx)) return null;
   const repr = nativeStringRepr(ctx);
   if (!repr || ctx.anyStrTypeIdx < 0) return null;
   // Register every native BEFORE an index is read (#2043).

@@ -5,7 +5,6 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
 import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js"; // (#4491 T4) its bracket twin
-import { emitVecLengthHoleFill } from "../vec-length-hole-fill.js"; // (#6482 r4) shared length-store hole fill
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { isReparentObservablePrimitiveWrite } from "../object-model/native-proto-reparent.js"; // (#6651 V11)
 import { integrityVarKey } from "../widened-var-key.js";
@@ -19,7 +18,7 @@ import {
   emitEarlyStrictArrayWrite,
 } from "./destructuring-unresolved.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
-import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
+import { emitArrayLengthStore, emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3; (#7164) shared store
 import { emitArraySetLengthCoercionEffects, emitArraySetLengthNumber } from "../array/array-set-length-coercion.js"; // (#6771 S10a)
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
 import { emitF64GapFillInstrs } from "../vec-f64-hole-gap.js"; // (#4491 T8)
@@ -75,7 +74,6 @@ import { tryEmitFnctorTypedFieldSet } from "../fnctor-typed-reads.js"; // (#4155
 import { tryEmitTypedThisFieldSet } from "../typed-this.js"; // (#3683 S2) typed-`this` field write
 import { guardThisReceiver } from "../classes/derived-ctor-this-guard.js"; // (#6772 S1b)
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/#2686 A3) pre-check set dispatcher
-import { boxNullRefAsUndefined } from "../null-ref-undefined-box.js"; // (#1058)
 import { tryEmitTypedF64MemberSet } from "../member-set-f64.js"; // (#4157 A) typed f64 write twin
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for compound
 import {
@@ -88,7 +86,6 @@ import {
   isNumericIndexExpression,
   isProvablyNonNull,
   isSafeBoundsEliminated,
-  tryEmitDeleteAwareDynamicSet,
   typeErrorThrowInstrs,
 } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
@@ -131,7 +128,6 @@ import {
   emitWebCompatCallAssignmentTarget,
   getFuncParamTypes,
   isConstIdentifierAssignmentTarget,
-  noJsHost,
   resolvePrivateThisFieldCarrier,
   updateLocalType,
   widenLocalToNullable,
@@ -166,7 +162,6 @@ import { emitNativeGlobalThisObject } from "../array-object-proto.js"; // (#4630
 import { resolveEffectiveStructName } from "../property-access.js";
 import { classObjectRestrictedProperty } from "../class-static-metadata.js"; // (#5195 r3-7)
 import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
-import { buildOverlayArrayLengthSet } from "../array-filter-length-set.js";
 import { isForeignEvalNode } from "./eval-source.js";
 import {
   elementAccessTypedArrayName,
@@ -2131,11 +2126,12 @@ function compileArrayDestructuringAssignment(
     if (isVecStruct) return arrDef!.element;
     // Tuple: field type at index i
     const field = typeDef.fields[i];
-    return field ? field.type : { kind: "f64" };
+    return field ? field.type : { kind: "externref" };
   };
 
   // Helper: emit instructions to get element i onto the stack
   const emitElementGet = (i: number) => {
+    if (!isVecStruct && i >= typeDef.fields.length) return emitUndefined(ctx, fctx); // (#4495) a shorter source tuple
     fctx.body.push({ op: "local.get", index: tmpLocal });
     if (isVecStruct) {
       fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 }); // get data array
@@ -2260,29 +2256,20 @@ function compileArrayDestructuringAssignment(
         // Dispatch on the rest target kind (mirrors the non-rest element
         // dispatch below). The collected vec lives in `tmpRestVec`.
         if (ts.isIdentifier(restTarget)) {
-          const restName = restTarget.text;
-          const durableModuleGlobalIdx = fctx.moduleInitChunk
-            ? currentSourceModuleGlobalIndex(ctx, restTarget)
-            : undefined;
-          let restLocalIdx = durableModuleGlobalIdx === undefined ? fctx.localMap.get(restName) : undefined;
-          if (restLocalIdx === undefined) {
-            if (durableModuleGlobalIdx === undefined) restLocalIdx = allocLocal(fctx, restName, resultType);
-          } else {
-            // If the rest local was pre-allocated as externref (e.g. var y;),
-            // allocate a fresh local with the correct vec type and redirect
-            // the name mapping. The old externref slot becomes dead.
-            // Cannot change type in-place: earlier __get_undefined() init
-            // targets externref and would cause illegal cast (#962, #971).
-            const existingSlotIdx = restLocalIdx - fctx.params.length;
-            if (existingSlotIdx >= 0) {
-              const slot = fctx.locals[existingSlotIdx];
-              if (slot && slot.type.kind === "externref") {
-                restLocalIdx = allocLocal(fctx, restName, resultType);
-              }
-            }
+          // (#4495) The same resolution as an element target below: the
+          // binding's own slot — local or module global — coerced on store.
+          // An externref slot (`var y;`, or one widened because the binding
+          // also holds a non-array) is stored into, never shadowed by a fresh
+          // vec local: a redirect made the original slot dead for every read
+          // after a conditional or looped rest write.
+          let restLocalIdx = fctx.localMap.get(restTarget.text);
+          const restGlobalIdx =
+            restLocalIdx === undefined ? currentSourceModuleGlobalIndex(ctx, restTarget) : undefined;
+          if (restLocalIdx === undefined && restGlobalIdx === undefined) {
+            restLocalIdx = allocLocal(fctx, restTarget.text, resultType);
           }
           fctx.body.push({ op: "local.get", index: tmpRestVec });
-          emitResolvedIdentifierWriteFromStack(ctx, fctx, restTarget, resultType, restLocalIdx, durableModuleGlobalIdx);
+          emitResolvedIdentifierWriteFromStack(ctx, fctx, restTarget, resultType, restLocalIdx, restGlobalIdx);
         } else if (ts.isObjectLiteralExpression(restTarget)) {
           // `[...{ 0: x, length }] = vals` — destructure the collected vec
           // through an object pattern using array-like semantics (#2757).
@@ -4020,10 +4007,8 @@ function tryEmitPinnedStructMemberSet(
     getArrTypeIdxFromVec(ctx, (valResult as { typeIdx: number }).typeIdx) >= 0
   ) {
     fctx.body.push({ op: "extern.convert_any" });
-    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   } else if (valResult && valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
-    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   } else if (!valResult) {
     fctx.body.push({ op: "ref.null.extern" });
   }
@@ -4867,40 +4852,10 @@ function compilePropertyAssignment(
         emitArraySetLengthValidation(ctx, fctx);
       }
       fctx.body.push({ op: "local.set", index: newLenTmp });
-      // Set vec.length = newLen
-      const lengthStore: Instr[] = [
-        { op: "local.get", index: vecTmp },
-        { op: "local.get", index: newLenTmp },
-        { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
-      ];
-      // (#6482 r4) This store touches ONLY field 0, so a shrink leaves the
-      // dropped elements sitting in the backing array and a later grow exposes
-      // them again (`[0,1]; length = 1; length = 10` → index 1 read back as
-      // `1`). Mark the orphaned region before the length moves. Shared emitter —
-      // the receiver here is `$__vec_base`, whose only field is `length`, so
-      // reaching the data array needs the per-vec-type ladder that
-      // `vec-length-hole-fill.ts` owns for all three length-store sites.
-      // Overlay validation owns deletion when present. Filling before it can
-      // erase elements even when a non-writable length rejects the shrink.
-      let selectedStore = buildOverlayArrayLengthSet(ctx, fctx, vecTmp, newLenTmp, target);
-      if (selectedStore === null) {
-        const savedBody = fctx.body;
-        fctx.body = [];
-        try {
-          emitVecLengthHoleFill(ctx, fctx, vecTmp, newLenTmp, "shrink-only", true);
-          selectedStore = [...fctx.body, ...lengthStore];
-        } finally {
-          fctx.body = savedBody;
-        }
-      }
-      if (receiverProvenVec) {
-        for (const instr of selectedStore) fctx.body.push(instr);
-      } else {
-        // The guarded cast above parks `null` when the receiver was not a vec;
-        fctx.body.push({ op: "local.get", index: vecTmp });
-        fctx.body.push({ op: "ref.is_null" });
-        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: [], else: selectedStore });
-      }
+      // (#7164) The store, its fill and the overlay route are shared with the
+      // `++` / `--` / `+=` / `-=` forms; a literal `0` cannot grow.
+      const literalClear = ts.isNumericLiteral(value) && Number(value.text) === 0;
+      emitArrayLengthStore(ctx, fctx, vecTmp, newLenTmp, target, receiverProvenVec, literalClear, structObjResult);
       // Assignment result — UNSIGNED widening (#4491, see array-length-define.ts).
       fctx.body.push({ op: "local.get", index: newLenTmp });
       if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
@@ -4940,21 +4895,6 @@ function compilePropertyAssignment(
       const pinnedSet = tryEmitPinnedStructMemberSet(ctx, fctx, target, value);
       if (pinnedSet !== undefined) return pinnedSet;
     }
-  }
-
-  // (#2731) Symmetric tombstone-aware WRITE routing. In a `delete`-using module,
-  // any-receiver READS already route through the tombstone-aware host
-  // `__extern_get` (`tryEmitDeleteAwareDynamicGet`); the WRITE must match. Without
-  // this, `o.x = 9` after `delete o.x` takes the native `struct.set` fast-path
-  // below (`resolveStructNameForExpr` resolves the shape-inferred anon struct),
-  // bypassing `_safeSet`'s tombstone-clear — so the re-added key stays suppressed
-  // in `__extern_get` / `__for_in_*` / `__object_keys`. Runs BEFORE the
-  // struct-name resolution so the native struct.set is skipped for `any`
-  // receivers; concrete-typed receivers and reserved/callable props decline.
-  {
-    const dynPropName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
-    const dynSet = tryEmitDeleteAwareDynamicSet(ctx, fctx, target, value, objType, dynPropName);
-    if (dynSet !== undefined) return dynSet;
   }
 
   let typeName = resolveStructNameForExpr(ctx, fctx, target.expression, target.name, resolveWasmType(ctx, objType));
@@ -5307,7 +5247,6 @@ function compilePropertyAssignmentExternSet(
     coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
   } else if (valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
-    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   }
   let assignmentResultLocal: number | undefined;
   if (wrapRuntimeEvalCallable) {
@@ -5382,7 +5321,7 @@ function compileExternPropertySet(
   // (`re.constructor = f` — the §22.2.6.14 SpeciesConstructor idiom) must not
   // bind the `Object_set_<name>` host import; the caller's `__extern_set`
   // fallback is the native ordinary [[Set]].
-  if (noJsHost(ctx) && propOwner.importPrefix === "Object") return null;
+  if (propOwner.importPrefix === "Object") return null;
 
   // Check if the import exists BEFORE compiling object+value to avoid dangling stack values
   const importName = `${propOwner.importPrefix}_set_${propName}`;
@@ -5797,7 +5736,6 @@ function compileElementAssignment(
     // missing a view type registered by a later constructor. Host-free lane.
     if (
       arrType.kind === "externref" &&
-      noJsHost(ctx) &&
       (ctx.moduleUsesDynTaView || ctx.moduleUsesStaticTaView) &&
       isNumericIndexExpression(ctx, target.argumentExpression, fctx)
     ) {
@@ -6127,7 +6065,7 @@ function compileElementAssignment(
     // proves `i < arr.length`, the index is in [0, length) so capacity is
     // already sufficient and `vec.length` does not need to grow. Skip the
     // grow check + length-update entirely and emit a direct `array.set`.
-    if (isSafeBoundsEliminated(fctx, target) && (!isTypedArray || noJsHost(ctx))) {
+    if (isSafeBoundsEliminated(fctx, target)) {
       // Vec data field is `(ref $arr)` (non-nullable), so struct.get yields
       // a non-null ref directly — no ref.as_non_null needed.
       fctx.body.push({ op: "local.get", index: vecLocal });

@@ -724,7 +724,6 @@ export function emitStandaloneDirectEvalRuntime(
   // Register the builders before emitting argument expressions: doing so can
   // mint functions, and keeping that mutation ahead of the call operands makes
   // late-index repair straightforward.
-  const hostVecTypeIdx = undefined;
   ensureObjVecBuilders(ctx);
   const bindings = currentDirectEvalBindings(ctx, fctx);
   for (const layer of [bindings.activation, bindings.lexical, bindings.outer]) {
@@ -775,23 +774,6 @@ export function emitStandaloneDirectEvalRuntime(
   const freshLayer = (label: string, layer: typeof bindings.activation): [number, number] => {
     const namesLocal = allocLocal(fctx, `__runtime_direct_eval_${label}_names_${fctx.locals.length}`, externref);
     const slotsLocal = allocLocal(fctx, `__runtime_direct_eval_${label}_slots_${fctx.locals.length}`, externref);
-    if (hostVecTypeIdx !== undefined) {
-      for (const binding of layer) fctx.body.push(...stringConstantExternrefInstrs(ctx, binding.name));
-      fctx.body.push(
-        { op: "array.new_fixed", typeIdx: hostVecTypeIdx, length: layer.length },
-        { op: "extern.convert_any" },
-        { op: "local.set", index: namesLocal },
-      );
-      for (const binding of layer) {
-        fctx.body.push({ op: "local.get", index: binding.cellLocal }, { op: "extern.convert_any" });
-      }
-      fctx.body.push(
-        { op: "array.new_fixed", typeIdx: hostVecTypeIdx, length: layer.length },
-        { op: "extern.convert_any" },
-        { op: "local.set", index: slotsLocal },
-      );
-      return [namesLocal, slotsLocal];
-    }
     fctx.body.push(
       { op: "call", funcIdx: objVecNewIdx },
       { op: "local.set", index: namesLocal },

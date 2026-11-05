@@ -246,7 +246,6 @@ function dispatcherBody(ctx: CodegenContext, entries: InstanceProtoEntry[]): Ins
  * #4643 fnctor ladder answers null, the boundary import is absent or declines).
  */
 export function fillStandaloneClassInstanceProtoArm(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   if (ctx.funcMap.has(STANDALONE_CLASS_INSTANCE_PROTO)) return; // idempotent
   if (ctx.standaloneRuntimeKeyClassProtos.size === 0) return;
   const getPrototypeOfIdx = ctx.funcMap.get("__getPrototypeOf");

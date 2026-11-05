@@ -116,7 +116,7 @@ import {
 import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
+import { buildThrowJsErrorInstrs } from "./js-errors.js"; // (#4221) absent-callee TypeError
 import { buildResolvedCalleeGuard } from "./resolved-callee-guard.js"; // (#4656) §7.3.14 callability
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
@@ -128,6 +128,7 @@ import {
   getOrRegisterVecType,
   isVecBaseSubtype,
 } from "./registry/types.js";
+import { assignEnumerationArmTags, classArmTags, enumerationArmTagGuard } from "./class-arm-tag-guard.js"; // (#7158)
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
 import * as bc from "./builtin-ctor-callable.js"; // (#4394/#4656) constructor [[Call]] arms
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
@@ -4224,8 +4225,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // and fill it in post-processing. `$__vec_base` is the shared supertype with
     // `length` at field 0 (#2186) — one `ref.test` detects every element kind.
     const arrayLikeReduce = reserveArgumentsLengthBrand(ctx) !== undefined;
-    const vecBaseTypeIdx = arrayLikeReduce ? getOrRegisterVecBaseType(ctx) : -1;
-    const arrayToPrimIdx = arrayLikeReduce ? reserveArrayToPrimitiveString(ctx) : -1;
+    const vecReduce = arrayLikeReduce || ctx.wasi === true; // (#7153) WASI: the vec arm alone, no arguments/class arms
+    const vecBaseTypeIdx = vecReduce ? getOrRegisterVecBaseType(ctx) : -1;
+    const arrayToPrimIdx = vecReduce ? reserveArrayToPrimitiveString(ctx) : -1;
     // (#6651 E3) …and the OWN-property OrdinaryToPrimitive step in front of it:
     // §7.1.1 step 2 (`@@toPrimitive`) and §7.1.1.1's valueOf/toString cascade
     // never ran for a vec carrier, so an own method on an Array or a TypedArray
@@ -4314,13 +4316,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       error: ctx.errorStructTypeIdx,
     };
     const array =
-      arrayLikeReduce && vecBaseTypeIdx >= 0 && arrayToPrimIdx >= 0
+      vecReduce && vecBaseTypeIdx >= 0 && arrayToPrimIdx >= 0
         ? {
             vecBaseTypeIdx,
             arrayToPrimIdx,
             vecOwnToPrimIdx,
             classToPrimIdx,
-            arguments: captureArgumentsToPrimitiveBindings(ctx, stringExtern),
+            arguments: arrayLikeReduce ? captureArgumentsToPrimitiveBindings(ctx, stringExtern) : undefined,
           }
         : undefined;
     // This lookup/reservation occurs AFTER the selected arguments literals.
@@ -6538,7 +6540,6 @@ export function fillApplyClosure(ctx: CodegenContext): void {
       ? directDataField.type.typeIdx
       : undefined;
   const fastDirectArgs = directVecTypeIdx !== undefined && directVecArrTypeIdx !== undefined;
-  const getUndefinedIdx = undefined;
 
   if (!hasGenericArgsReader && !fastObjArgs && !fastDirectArgs) {
     bridgeFn.body = [{ op: "ref.null.extern" }];
@@ -6564,7 +6565,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
 
   // Locals: 0=fn 1=recv 2=args; 3=n, then widening/result/carrier locals.
   const ARG_OF = (k: number): Instr[] => {
-    const fallbackUndefined = hasGenericArgsReader ? [] : applyUndefinedInstrs(ctx, getUndefinedIdx);
+    const fallbackUndefined = hasGenericArgsReader ? [] : applyUndefinedInstrs(ctx, undefined);
     const object = fastObjArgs
       ? {
           carrier: {
@@ -6573,7 +6574,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
             dataLocal: objArgDataLocal,
             lengthLocal: objArgLenLocal,
           },
-          undefinedValue: applyUndefinedInstrs(ctx, getUndefinedIdx),
+          undefinedValue: applyUndefinedInstrs(ctx, undefined),
         }
       : undefined;
     const direct = fastDirectArgs
@@ -6584,7 +6585,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
             dataLocal: directArgDataLocal,
             lengthLocal: directArgLenLocal,
           },
-          undefinedValue: applyUndefinedInstrs(ctx, getUndefinedIdx),
+          undefinedValue: applyUndefinedInstrs(ctx, undefined),
         }
       : undefined;
     return buildClosureApplyArgument(k, {
@@ -6592,7 +6593,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
       fallbackUndefined,
       object,
       direct,
-      nullishUndefined: applyUndefinedInstrs(ctx, getUndefinedIdx),
+      nullishUndefined: applyUndefinedInstrs(ctx, undefined),
     });
   };
 
@@ -8497,6 +8498,8 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
      * base words at fixed indices regardless of where the VALUE went.
      */
     shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
+    /** (#7200) `__tag` guard against a same-layout twin class (`classArmTags`). */
+    classTags?: number[];
   };
   const byField = new Map<string, Entry[]>();
   for (const [structName, fields] of ctx.structFields) {
@@ -8505,6 +8508,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     if (typeIdx === undefined) continue;
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
+    const tagged = ((tags) => (tags ? { classTags: tags } : {}))(classArmTags(ctx, structName)); // (#7200)
     for (const field of fields) {
       if (field?.name === undefined || isInternalStructFieldName(ctx, structName, field.name)) continue;
       const presenceSlot = presenceSlotOf(fields, field.name);
@@ -8531,6 +8535,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         typeIdx,
         ...(presenceSlot ? { presenceSlot } : {}),
         ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
+        ...tagged,
       });
     }
     // (#3927) The split moved these names off the main struct, so the loop above
@@ -8548,6 +8553,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         typeIdx,
         cold,
         ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
+        ...tagged,
       });
     }
     // (#3927 per-type layouts) The split moved the flow-grown union names off
@@ -8566,6 +8572,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         typeIdx,
         presenceSlot: layoutField.presenceSlot,
         ...(shapeRange ? { shapeRange } : {}),
+        ...tagged,
       });
     }
   }
@@ -8640,6 +8647,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
           { op: "local.get", index: 0 },
           { op: "any.convert_extern" },
           { op: "ref.test", typeIdx: entry.typeIdx },
+          ...enumerationArmTagGuard(entry.typeIdx, entry.classTags), // (#7200) a twin passes `ref.test`
           {
             op: "if",
             blockType: { kind: "empty" },
@@ -8792,6 +8800,9 @@ type EnumShapeEntry = {
    * stamps instead of enumerating the wrong name list.
    */
   shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
+  /** (#7158) Nominal `__tag` guard inputs; see `assignEnumerationArmTags`. */
+  classTags?: number[];
+  structName?: string;
 };
 
 /**
@@ -8811,7 +8822,7 @@ type EnumShapeEntry = {
  * the NAMES from presence words is not possible — a presence word holds bits,
  * not names, and unconditionally-assigned fields have no presence bit at all.)
  */
-function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEntry[] {
+function collectClosedStructEnumerationEntries(ctx: CodegenContext, emptyTypeIdxs?: number[]): EnumShapeEntry[] {
   const entries: EnumShapeEntry[] = [];
   for (const [structName, fields] of ctx.structFields) {
     if (isSyntheticStructName(structName)) continue;
@@ -8848,19 +8859,27 @@ function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEn
         byName.set(layoutField.name, { name: layoutField.name, presenceSlot: layoutField.presenceSlot });
       }
     }
-    if (byName.size === 0) continue;
+    // (#7149) A shape with no enumerable own field (`class C { #x = 1 }`) has
+    // no arm, but it is still an ordinary object: the caller's classifier
+    // needs it so JSON.stringify answers `{}`, not `null`.
+    if (byName.size === 0) {
+      emptyTypeIdxs?.push(typeIdx);
+      continue;
+    }
 
     const orderedNames = orderNamesByInsertion(ctx, structName, [...byName.keys()]);
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
     const shapeRange = fnctorLayoutShapeRangeFor(ctx, structName);
     entries.push({
+      structName,
       typeIdx,
       fields: orderedNames.map((name) => byName.get(name)!),
       ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
       ...(shapeRange ? { shapeRange } : {}),
     });
   }
+  assignEnumerationArmTags(ctx, entries);
   return entries;
 }
 
@@ -8966,6 +8985,7 @@ function buildClosedStructEnumerationArms(
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: entry.typeIdx },
+      ...enumerationArmTagGuard(entry.typeIdx, entry.classTags),
       { op: "if", blockType: { kind: "empty" }, then: exactThen },
     );
   }
@@ -9061,10 +9081,13 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   if (objVecNewIdx === undefined || objVecPushIdx === undefined) return;
 
-  const entries = collectClosedStructEnumerationEntries(ctx);
-  if (entries.length === 0) return;
+  const emptyTypeIdxs: number[] = [];
+  const entries = collectClosedStructEnumerationEntries(ctx, emptyTypeIdxs);
+  const allocatedTypes = allocatedStructTypeIndices(ctx.mod);
+  const emptyAllocated = emptyTypeIdxs.filter((typeIdx) => allocatedTypes.has(typeIdx));
+  if (entries.length === 0 && emptyAllocated.length === 0) return;
 
-  for (const name of ["__object_keys", "__object_keys_forin"]) {
+  for (const name of entries.length === 0 ? [] : ["__object_keys", "__object_keys_forin"]) {
     const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
     if (!fn) continue;
     // `(externref obj) -> externref`: one param, so the first appended local
@@ -9104,13 +9127,13 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
   if (closedAssignSourceClassifier) {
     const seenTypeIdxs = new Set<number>();
     const body: Instr[] = [];
-    for (const entry of entries) {
-      if (seenTypeIdxs.has(entry.typeIdx)) continue;
-      seenTypeIdxs.add(entry.typeIdx);
+    for (const typeIdx of [...entries.map((entry) => entry.typeIdx), ...emptyAllocated]) {
+      if (seenTypeIdxs.has(typeIdx)) continue;
+      seenTypeIdxs.add(typeIdx);
       body.push(
         { op: "local.get", index: 0 },
         { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: entry.typeIdx },
+        { op: "ref.test", typeIdx },
         {
           op: "if",
           blockType: { kind: "empty" },

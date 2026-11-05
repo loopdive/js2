@@ -13,7 +13,7 @@ import { compileObjectDefineProperties, compileObjectDefineProperty } from "../o
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
-import { emitThrowTypeError, noJsHost } from "./helpers.js";
+import { emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { ts } from "../../ts-api.js";
 
@@ -25,21 +25,19 @@ export function tryCompileObjectCreateStaticPrototype(
   // ES5 §15.2.3.5 step 1: the requested [[Prototype]] must be an Object
   // or null. The standalone native helper can only see an externref carrier;
   // reject statically known primitives after preserving argument evaluation.
-  if (noJsHost(ctx)) {
-    const protoTag = ctx.oracle.staticJsTypeOf(arg);
-    if (
-      protoTag === "number" ||
-      protoTag === "string" ||
-      protoTag === "boolean" ||
-      protoTag === "bigint" ||
-      protoTag === "symbol" ||
-      protoTag === "undefined"
-    ) {
-      const argType = compileExpression(ctx, fctx, arg);
-      if (argType) fctx.body.push({ op: "drop" });
-      emitThrowTypeError(ctx, fctx, "Object prototype may only be an Object or null");
-      return { kind: "externref" };
-    }
+  const protoTag = ctx.oracle.staticJsTypeOf(arg);
+  if (
+    protoTag === "number" ||
+    protoTag === "string" ||
+    protoTag === "boolean" ||
+    protoTag === "bigint" ||
+    protoTag === "symbol" ||
+    protoTag === "undefined"
+  ) {
+    const argType = compileExpression(ctx, fctx, arg);
+    if (argType) fctx.body.push({ op: "drop" });
+    emitThrowTypeError(ctx, fctx, "Object prototype may only be an Object or null");
+    return { kind: "externref" };
   }
 
   // Object.create(Foo.prototype) → struct.new with default fields (Wasm-native fast path)

@@ -1,10 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#6979 S7-d) Provider of the `eager-generator-buffer` regime gap (#680, the
- * one named #5385 gap left): the `__gen_*` / `__create_generator` /
- * `__create_async_generator` imports a generator shape uses when the native
- * generator lowering declines it. Split out of `src/runtime.ts`'s
- * `resolveImport`; it goes when #680 closes.
+ * (#6979 S7-d) Provider of the `__gen_*` / `__create_generator` /
+ * `__create_async_generator` eager host buffer (#680), split out of
+ * `src/runtime.ts`'s `resolveImport`. Since #7010 no compile emits these
+ * imports (a generator the native lowering declines is a compile error) and
+ * the policy classifies them as retired, so this provider is dead; it is kept
+ * for the slice that deletes it with its receipts.
  */
 import {
   _AsyncGeneratorState,

@@ -216,12 +216,13 @@ describe("#2949 S5.5 — from-ast lowers dynamic numeric arithmetic via dyn.to_n
     expect(div.blocks.flatMap((b) => b.instrs).find((i) => i.kind === "binary")).toMatchObject({ op: "f64.div" });
   });
 
-  it("`x % y` routes through the shared exact-__fmod helper (#2945), not a hand-rolled sequence", () => {
+  it("`x % y` takes the number remainder, whose exact fallback is the shared __fmod helper (#2945)", () => {
+    // (#7106) The dynamic arm ToNumbers each side, then `emitNumberBinary`'s
+    // remainder: an integer fast path behind a guard, `__fmod` otherwise.
     const fn = irFromSource(`export function mod(x, y) { return x % y; }`, [DYN, DYN], F64);
     expect(verifyIrFunction(fn)).toEqual([]);
     expect(instrKinds(fn).filter((k) => k === "dyn.to_number")).toHaveLength(2);
-    const call = fn.blocks.flatMap((b) => b.instrs).find((i) => i.kind === "call");
-    expect(call).toMatchObject({ kind: "call", target: { kind: "func", name: FMOD_FN } });
+    expect(JSON.stringify(fn.blocks)).toContain(`"name":"${FMOD_FN}"`);
   });
 
   it("unary `-x` is ToNumber + f64.neg; unary `+x` is a BARE dyn.to_number (§13.5.4 IS ToNumber)", () => {
@@ -246,7 +247,7 @@ describe("#2949 S5.5 — from-ast lowers dynamic numeric arithmetic via dyn.to_n
     expect(fn.blocks.flatMap((b) => b.instrs).find((i) => i.kind === "unary")).toMatchObject({ op: "i32.eqz" });
   });
 
-  it("`+` stays EXCLUDED from the numeric arm (concat dispatch), and non-f64 concrete counter-operands demote", () => {
+  it("`+` stays EXCLUDED from the numeric arm (concat dispatch), a non-f64 counter-operand demotes, bitwise lowers", () => {
     // `x + 1` on a dynamic operand must NOT take a numeric fast path — JS `+`
     // is ToPrimitive + concat-or-add, so ToNumber-ing the operand is wrong.
     //
@@ -266,8 +267,10 @@ describe("#2949 S5.5 — from-ast lowers dynamic numeric arithmetic via dyn.to_n
     // A string counter-operand cannot feed the numeric arm (relOperandToF64
     // returns null) — the mixed string/dynamic pair demotes.
     expect(() => irFromSource(`export function subs(x) { return x - "a"; }`, [DYN], F64)).toThrow();
-    // Bitwise ops are ToInt32 territory — not in this slice; demote.
-    expect(() => irFromSource(`export function band(x) { return x & 1; }`, [DYN], F64)).toThrow();
+    // (#7106) A bitwise operator is a ToNumber reader too: ToNumber, then ToInt32.
+    const band = irFromSource(`export function band(x) { return x & 1; }`, [DYN], F64);
+    expect(verifyIrFunction(band)).toEqual([]);
+    expect(instrKinds(band)).toContain("dyn.to_number");
   });
 });
 
@@ -277,53 +280,4 @@ describe("#2949 S5.5 — from-ast lowers dynamic numeric arithmetic via dyn.to_n
 // pulls in runtime helper bodies that only validate after the full production
 // finalize pipeline.
 
-describe("#2949 S5.5 — host runtime: full ToNumber spectrum through the externref carrier", () => {
-  it("number/string/bool/null/undefined operands across - * / % and unary -/+/!", async () => {
-    const fns = [
-      irFromSource(`export function dec(x) { return x - 1; }`, [DYN], F64),
-      irFromSource(`export function sub(x, y) { return x - y; }`, [DYN, DYN], F64),
-      irFromSource(`export function mul(x, y) { return x * y; }`, [DYN, DYN], F64),
-      irFromSource(`export function mod(x, y) { return x % y; }`, [DYN, DYN], F64),
-      irFromSource(`export function neg(x) { return -x; }`, [DYN], F64),
-      irFromSource(`export function toNum(x) { return +x; }`, [DYN], F64),
-      irFromSource(`export function notx(x) { return !x; }`, [DYN], I32),
-    ];
-    for (const f of fns) expect(verifyIrFunction(f)).toEqual([]);
-    const ctx = makeHostCtx();
-    install(ctx, fns);
-    const ex = await instantiateCtx(ctx, hostEnvFor(ctx));
-
-    // the reduce-body shape: obj[idx-1] with a dynamic idx
-    expect(ex.dec(5)).toBe(4);
-    expect(ex.dec("5")).toBe(4); // Number("5") - 1 (§7.1.4 via __unbox_number)
-    expect(ex.dec(true)).toBe(0); // 1 - 1
-    expect(ex.dec(null)).toBe(-1); // 0 - 1
-    expect(ex.dec(undefined)).toBeNaN(); // NaN - 1
-
-    expect(ex.sub(7, 2)).toBe(5);
-    expect(ex.sub("7", "2")).toBe(5); // BOTH ToNumber — `-` never concatenates
-    expect(ex.mul("3", 4)).toBe(12);
-    expect(ex.mul("abc", 4)).toBeNaN();
-    expect(ex.mod(7, 3)).toBe(1);
-    expect(ex.mod(7, 0)).toBeNaN();
-
-    expect(ex.neg(5)).toBe(-5);
-    expect(ex.neg("5")).toBe(-5);
-    expect(ex.neg(undefined)).toBeNaN();
-    expect(ex.toNum("42")).toBe(42);
-    expect(ex.toNum(true)).toBe(1);
-    expect(ex.toNum(null)).toBe(0);
-    expect(ex.toNum("")).toBe(0); // Number("") = 0
-
-    // `!x` = ToBoolean + negate — full JS truthiness spectrum (host
-    // __is_truthy is spec-correct; incl. NaN → falsy → !NaN = true)
-    expect(ex.notx(0)).toBe(1);
-    expect(ex.notx(NaN)).toBe(1);
-    expect(ex.notx("")).toBe(1);
-    expect(ex.notx(null)).toBe(1);
-    expect(ex.notx(undefined)).toBe(1);
-    expect(ex.notx(5)).toBe(0);
-    expect(ex.notx("a")).toBe(0);
-    expect(ex.notx({})).toBe(0);
-  });
-});
+// (#6979 S7-a) The host-runtime execution describe tested the retired host-assisted import lane (bare host context + JS-host carrier imports); deleted with it.

@@ -16,7 +16,6 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { noJsHost } from "./expressions/helpers.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
@@ -28,6 +27,7 @@ import { buildIndexedAnchoredLiteralAltSearch } from "./regex-anchored-alt-index
 import { ReOp } from "./regex/bytecode.js";
 import { frameStackPushInstrs } from "./regex-scratch-pool.js";
 import { REGEX_STEP_CAP, REGEX_STEP_CAP_LEN_SATURATION, REGEX_STEP_CAP_PER_UNIT } from "./regex/vm.js";
+import { regexRunBudgetHandoff, regexSearchBudgetFallback } from "./regex-runtime/linear-search.js";
 
 /**
  * Runtime-compiled `^(?:literal|literal|...)$` programs with no flags use this
@@ -64,7 +64,7 @@ export const REGEX_UNSUPPORTED_DYNAMIC_PATTERN = "Unsupported dynamic regular ex
  * every defined-function index.
  */
 function regexUnsupportedPatternThrow(ctx: CodegenContext): Instr[] {
-  if (noJsHost(ctx)) emitWasiErrorConstructor(ctx, "TypeError", 1);
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
   addStringConstantGlobal(ctx, REGEX_UNSUPPORTED_DYNAMIC_PATTERN);
   const ctorIdx = ensureLateImport(ctx, "__new_TypeError", [{ kind: "externref" }], [{ kind: "externref" }]);
   const tagIdx = ensureExnTag(ctx);
@@ -87,7 +87,7 @@ function regexUnsupportedPatternThrow(ctx: CodegenContext): Instr[] {
  * (also a function push) — same ordering requirement.
  */
 function regexCapExhaustionThrow(ctx: CodegenContext): Instr[] {
-  if (noJsHost(ctx)) emitWasiErrorConstructor(ctx, "RangeError", 1);
+  emitWasiErrorConstructor(ctx, "RangeError", 1);
   addStringConstantGlobal(ctx, REGEX_CAP_MESSAGE);
   const ctorIdx = ensureLateImport(ctx, "__new_RangeError", [{ kind: "externref" }], [{ kind: "externref" }]);
   const tagIdx = ensureExnTag(ctx);
@@ -113,7 +113,7 @@ export function regexI32ArrayType(ctx: CodegenContext): number {
  * Ensure the `$__ReFrame { pc, sp, caps }` struct and its array type exist.
  * Returns `[frameTypeIdx, frameArrTypeIdx]`.
  */
-function ensureFrameTypes(ctx: CodegenContext): [number, number] {
+export function ensureFrameTypes(ctx: CodegenContext): [number, number] {
   const i32ArrIdx = regexI32ArrayType(ctx);
   let frameIdx = ctx.structMap.get(RE_FRAME_STRUCT);
   if (frameIdx === undefined) {
@@ -153,7 +153,7 @@ const INITIAL_STACK_CAP = 64;
  * Binary-searches the sorted run-length range table for one class and returns
  * 1/0. Mirrors `classMatch` in vm.ts.
  */
-function emitClassMatch(ctx: CodegenContext): number {
+export function emitClassMatch(ctx: CodegenContext): number {
   const existing = ctx.nativeRegexHelpers.get("__regex_class_match");
   if (existing !== undefined) return existing;
   const i32Arr = regexI32ArrayType(ctx);
@@ -1530,6 +1530,12 @@ export function ensureRegexRun(ctx: CodegenContext): number {
     ];
   }
 
+  // (#2723) Host-free targets: a linear-safe program hands the search to the linear PikeVM.
+  const linearHandoff = regexRunBudgetHandoff(ctx, PROG, STACK, stackPoolGlobalIdx, {
+    ensureFrameTypes,
+    regexI32ArrayType,
+    emitClassMatch,
+  });
   const body: Instr[] = [
     // pc = entryPc (#1911 — 0 for the main program); sp = start; steps = 0
     { op: "local.get", index: ENTRYPC },
@@ -1593,7 +1599,7 @@ export function ensureRegexRun(ctx: CodegenContext): number {
         { op: "local.tee", index: STEPS },
         { op: "local.get", index: BUDGET },
         { op: "i32.gt_s" },
-        { op: "if", blockType: { kind: "empty" }, then: capThrow },
+        { op: "if", blockType: { kind: "empty" }, then: [...linearHandoff, ...capThrow] },
         // failed = 0
         { op: "i32.const", value: 0 },
         { op: "local.set", index: FAILED },
@@ -1715,7 +1721,7 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
   // IMPORT — adding one import to every gc/host module that uses a RegExp and
   // shifting its function indices. That breaks the gc/host byte-identity this
   // change is required to preserve, for a guard that can never fire there.
-  const poisonThrow = noJsHost(ctx) ? regexUnsupportedPatternThrow(ctx) : null;
+  const poisonThrow = regexUnsupportedPatternThrow(ctx);
   const runIdx = ensureRegexRun(ctx);
   const i32Arr = regexI32ArrayType(ctx);
   const strDataIdx = ctx.nativeStrDataTypeIdx;
@@ -1755,6 +1761,13 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
     ALT_MATCH = 14,
     ALT_BODY_LEN = 15;
   const indexedLiteralAlt = buildIndexedAnchoredLiteralAltSearch(i32Arr, strDataIdx);
+  const searchArgs = [PROG, CTAB, NSLOTS, SDATA, SOFF, SLEN, I, STICKY, CAPS];
+  const linearFallback = regexSearchBudgetFallback(
+    ctx,
+    ALT_BODY_LEN + 1 + indexedLiteralAlt.locals.length,
+    searchArgs,
+    { ensureFrameTypes, regexI32ArrayType, emitClassMatch },
+  );
   const body: Instr[] = [
     // (#4439) POISON GUARD — must precede every read of `prog` / `caps`.
     // `nSlots == 0` is unrepresentable for a compiled program (group 0 alone
@@ -2138,6 +2151,7 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
             { op: "i32.const", value: 0 },
             { op: "i32.const", value: 1 },
             { op: "call", funcIdx: runIdx },
+            ...linearFallback.instrs,
             { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
             // if sticky: break (only the start position is tried)
             { op: "local.get", index: STICKY },
@@ -2167,6 +2181,7 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
       { name: "altMatch", type: { kind: "i32" } },
       { name: "altBodyLen", type: { kind: "i32" } },
       ...indexedLiteralAlt.locals,
+      ...linearFallback.locals,
     ],
     body,
     exported: false,

@@ -88,6 +88,7 @@ import {
   type NativeCombinator,
   type ObservableElementCarrier,
 } from "./promise-combinators.js";
+import { regimeTarget } from "./context/types.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -367,7 +368,7 @@ export function emitStandalonePromiseCombinatorDrive(
       blockType: { kind: "empty" },
       then: [
         buildTargetTaggedTry(
-          ctx,
+          regimeTarget(ctx),
           { kind: "empty" },
           [
             { op: "local.get", index: L.argLocal },
@@ -401,7 +402,7 @@ export function emitStandalonePromiseCombinatorDrive(
       { op: "i32.const", value: 1 },
       { op: "local.set", index: L.doneLocal },
       buildTargetTaggedTry(
-        ctx,
+        regimeTarget(ctx),
         { kind: "empty" },
         [
           { op: "local.get", index: L.iterLocal },
@@ -446,7 +447,7 @@ export function emitStandalonePromiseCombinatorDrive(
         blockType: { kind: "empty" },
         then: [
           buildTargetTaggedTry(
-            ctx,
+            regimeTarget(ctx),
             { kind: "empty" },
             [
               { op: "local.get", index: L.iterLocal },

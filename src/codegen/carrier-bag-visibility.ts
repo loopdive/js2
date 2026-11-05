@@ -327,7 +327,7 @@ export function buildBagMarkerTestInstrs(
  * (non-standalone), so host output is unchanged.
  */
 export function buildBuiltinFnSetRefusalArm(ctx: CodegenContext): Instr[] {
-  const bfnGetMetaIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_get_meta") : undefined;
+  const bfnGetMetaIdx = ctx.funcMap.get("__builtinfn_get_meta");
   if (bfnGetMetaIdx === undefined) return [];
   const refuse: Instr[] =
     ctx.externSetResultGlobalIdx === undefined

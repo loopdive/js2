@@ -143,7 +143,7 @@ import {
   reserveStandaloneObjectCreateClassInstance,
 } from "../standalone-object-create-class-instance.js"; // (#6464)
 import { emitLazyProtoGet } from "./extern.js";
-import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./helpers.js";
 import {
   classIdentityFromExpression,
   classObjectDisplayName,
@@ -480,7 +480,6 @@ export function compileBuiltinStaticCall(
   // and hand back an ordinary array. The value form therefore keeps its
   // existing refusal and this arm handles the spelled-out `.call`.
   if (
-    noJsHost(ctx) &&
     propAccess.name.text === "call" &&
     ts.isPropertyAccessExpression(propAccess.expression) &&
     ts.isIdentifier(propAccess.expression.expression) &&
@@ -540,7 +539,6 @@ export function compileBuiltinStaticCall(
   // in standalone. Keep this exact to the ambient `Function` binding: a local
   // object named Function must retain ordinary member-call semantics.
   if (
-    noJsHost(ctx) &&
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "Function" &&
     propAccess.name.text === "prototype" &&
@@ -561,7 +559,6 @@ export function compileBuiltinStaticCall(
   // receiving `bind`/`call`/`apply`: catchable TypeError, not a `__get_builtin`
   // hard refusal. Rationale + scope live with the helper.
   if (
-    noJsHost(ctx) &&
     ts.isIdentifier(propAccess.expression) &&
     isGlobalBuiltinIdentifier(ctx, fctx, propAccess.expression) &&
     tryEmitNonCallableNamespaceInvokerThrow(ctx, fctx, propAccess)
@@ -595,7 +592,6 @@ export function compileBuiltinStaticCall(
   // `notify(view, {valueOf(){throw}}, …)` "should not evaluate" tests assert.
   // Real atomic semantics stay gated on SharedArrayBuffer (out of scope).
   if (
-    noJsHost(ctx) &&
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "Atomics" &&
     isGlobalBuiltinIdentifier(ctx, fctx, propAccess.expression) &&
@@ -1122,7 +1118,6 @@ export function compileBuiltinStaticCall(
   // silent wrong coercion, no regression). Options / `fromBase64` / instance
   // `toHex`/`setFromHex` are follow-ups; this slice is the hex static factory.
   if (
-    noJsHost(ctx) &&
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "Uint8Array" &&
     propAccess.name.text === "fromHex" &&
@@ -1158,7 +1153,6 @@ export function compileBuiltinStaticCall(
   // applied. Whitespace is skipped, `=` padding is validated, and malformed input
   // throws the spec's SyntaxError.
   if (
-    noJsHost(ctx) &&
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "Uint8Array" &&
     propAccess.name.text === "fromBase64" &&
@@ -1193,7 +1187,7 @@ export function compileBuiltinStaticCall(
   if (
     ts.isIdentifier(propAccess.expression) &&
     TYPED_ARRAY_NAMES.has(propAccess.expression.text) &&
-    (propAccess.name.text === "of" || (noJsHost(ctx) && propAccess.name.text === "from"))
+    (propAccess.name.text === "of" || propAccess.name.text === "from")
   ) {
     const taName = propAccess.expression.text;
     const factory = propAccess.name.text;
@@ -1631,7 +1625,7 @@ export function compileBuiltinStaticCall(
     // `$Vec`/`$ObjVec`/`$Object {length}` carriers, so neither the `@@iterator`
     // property test nor the array-like walk reads them correctly, and the
     // 1-arg forms of both have their own native arms above.
-    if (noJsHost(ctx) && !isNonArrayBuiltinCollection && ensureNativeArrayFrom(ctx) !== undefined) {
+    if (!isNonArrayBuiltinCollection && ensureNativeArrayFrom(ctx) !== undefined) {
       // `this` (§23.1.2.1 step 1) is `undefined` for a direct call — the
       // default lane; the `.call`/value form supplies a real receiver.
       fctx.body.push({ op: "ref.null.extern" });
@@ -1726,76 +1720,70 @@ export function compileBuiltinStaticCall(
     // gate dropped a standalone `Array.of(...xs)` onto the host path whose
     // imports do not exist, so it answered length 0.
     const hasSpreadArg = hasSpreadArgument(expr.arguments);
-    if (noJsHost(ctx)) {
-      // Element type: contextual `Array<T>` type arg, else f64 for a numeric
-      // arg set, else externref (mixed / non-numeric). Mirrors the untyped
-      // dense-array default in compileArrayConstructorCall.
-      const ctxType = ctx.checker.getContextualType(expr) ?? ctx.checker.getTypeAtLocation(expr);
-      const elemTsType = ctx.checker.getTypeArguments(ctxType as ts.TypeReference)?.[0];
-      let elemWasm: ValType;
-      if (elemTsType && (elemTsType.flags & ts.TypeFlags.Any) === 0) {
-        elemWasm = resolveWasmType(ctx, elemTsType);
-      } else {
-        // No resolvable element type: pick f64 only when every arg is a static
-        // number; otherwise box to externref so mixed/object elements survive.
-        // (#6421) A spread's ELEMENTS are invisible to this static scan — the
-        // node is a SpreadElement, not a number — so a spread-containing list
-        // can never be called all-numeric. Box to externref instead of guessing
-        // f64 (the choice #5361 made for `splice`).
-        const allNumeric =
-          !hasSpreadArg &&
-          expr.arguments.every((a) => {
-            const t = ctx.checker.getTypeAtLocation(a);
-            return (t.flags & (ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral)) !== 0;
-          });
-        elemWasm = expr.arguments.length > 0 && allNumeric ? { kind: "f64" } : { kind: "externref" };
-      }
-      const elemKey =
-        elemWasm.kind === "ref" || elemWasm.kind === "ref_null"
-          ? `ref_${(elemWasm as { typeIdx: number }).typeIdx}`
-          : elemWasm.kind;
-      const ofVecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemWasm);
-      const ofArrTypeIdx = getArrTypeIdxFromVec(ctx, ofVecTypeIdx);
-      // (#6421) A runtime-length argument list is sized and filled by the
-      // shared spread builder; it declines (emitting nothing) when this target
-      // cannot expand a spread, and the host path below still catches that.
-      if (ofArrTypeIdx >= 0 && hasSpreadArg) {
-        const ofSpread = tryEmitArrayOfSpreadVec(ctx, fctx, expr.arguments, {
-          vecTypeIdx: ofVecTypeIdx,
-          arrTypeIdx: ofArrTypeIdx,
-          elemType: elemWasm,
+    const ctxType = ctx.checker.getContextualType(expr) ?? ctx.checker.getTypeAtLocation(expr);
+    const elemTsType = ctx.checker.getTypeArguments(ctxType as ts.TypeReference)?.[0];
+    let elemWasm: ValType;
+    if (elemTsType && (elemTsType.flags & ts.TypeFlags.Any) === 0) {
+      elemWasm = resolveWasmType(ctx, elemTsType);
+    } else {
+      // No resolvable element type: pick f64 only when every arg is a static
+      // number; otherwise box to externref so mixed/object elements survive.
+      // (#6421) A spread's ELEMENTS are invisible to this static scan — the
+      // node is a SpreadElement, not a number — so a spread-containing list
+      // can never be called all-numeric. Box to externref instead of guessing
+      // f64 (the choice #5361 made for `splice`).
+      const allNumeric =
+        !hasSpreadArg &&
+        expr.arguments.every((a) => {
+          const t = ctx.checker.getTypeAtLocation(a);
+          return (t.flags & (ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral)) !== 0;
         });
-        if (ofSpread) return ofSpread;
-      }
-      if (ofArrTypeIdx >= 0 && !hasSpreadArg) {
-        if (expr.arguments.length === 0) {
-          fctx.body.push({ op: "i32.const", value: 0 });
-          fctx.body.push({ op: "i32.const", value: 0 });
-          fctx.body.push({ op: "array.new_default", typeIdx: ofArrTypeIdx });
-          fctx.body.push({ op: "struct.new", typeIdx: ofVecTypeIdx });
-          return { kind: "ref_null", typeIdx: ofVecTypeIdx };
-        }
-        for (const arg of expr.arguments) {
-          const at = compileExpression(ctx, fctx, arg, elemWasm);
-          if (at && !valTypesMatch(at, elemWasm)) coerceType(ctx, fctx, at, elemWasm);
-          else if (
-            at === null &&
-            (elemWasm.kind === "ref" || elemWasm.kind === "ref_null" || elemWasm.kind === "externref")
-          )
-            fctx.body.push({ op: "ref.null.extern" });
-        }
-        fctx.body.push({ op: "array.new_fixed", typeIdx: ofArrTypeIdx, length: expr.arguments.length });
-        const ofDataLocal = allocLocal(fctx, `__arrof_data_${fctx.locals.length}`, {
-          kind: "ref",
-          typeIdx: ofArrTypeIdx,
-        });
-        fctx.body.push({ op: "local.set", index: ofDataLocal });
-        fctx.body.push({ op: "i32.const", value: expr.arguments.length });
-        fctx.body.push({ op: "local.get", index: ofDataLocal });
+      elemWasm = expr.arguments.length > 0 && allNumeric ? { kind: "f64" } : { kind: "externref" };
+    }
+    const elemKey =
+      elemWasm.kind === "ref" || elemWasm.kind === "ref_null"
+        ? `ref_${(elemWasm as { typeIdx: number }).typeIdx}`
+        : elemWasm.kind;
+    const ofVecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemWasm);
+    const ofArrTypeIdx = getArrTypeIdxFromVec(ctx, ofVecTypeIdx);
+    // (#6421) A runtime-length argument list is sized and filled by the
+    // shared spread builder; it declines (emitting nothing) when this target
+    // cannot expand a spread, and the host path below still catches that.
+    if (ofArrTypeIdx >= 0 && hasSpreadArg) {
+      const ofSpread = tryEmitArrayOfSpreadVec(ctx, fctx, expr.arguments, {
+        vecTypeIdx: ofVecTypeIdx,
+        arrTypeIdx: ofArrTypeIdx,
+        elemType: elemWasm,
+      });
+      if (ofSpread) return ofSpread;
+    }
+    if (ofArrTypeIdx >= 0 && !hasSpreadArg) {
+      if (expr.arguments.length === 0) {
+        fctx.body.push({ op: "i32.const", value: 0 });
+        fctx.body.push({ op: "i32.const", value: 0 });
+        fctx.body.push({ op: "array.new_default", typeIdx: ofArrTypeIdx });
         fctx.body.push({ op: "struct.new", typeIdx: ofVecTypeIdx });
         return { kind: "ref_null", typeIdx: ofVecTypeIdx };
       }
-      // vec type unavailable — no native lowering.
+      for (const arg of expr.arguments) {
+        const at = compileExpression(ctx, fctx, arg, elemWasm);
+        if (at && !valTypesMatch(at, elemWasm)) coerceType(ctx, fctx, at, elemWasm);
+        else if (
+          at === null &&
+          (elemWasm.kind === "ref" || elemWasm.kind === "ref_null" || elemWasm.kind === "externref")
+        )
+          fctx.body.push({ op: "ref.null.extern" });
+      }
+      fctx.body.push({ op: "array.new_fixed", typeIdx: ofArrTypeIdx, length: expr.arguments.length });
+      const ofDataLocal = allocLocal(fctx, `__arrof_data_${fctx.locals.length}`, {
+        kind: "ref",
+        typeIdx: ofArrTypeIdx,
+      });
+      fctx.body.push({ op: "local.set", index: ofDataLocal });
+      fctx.body.push({ op: "i32.const", value: expr.arguments.length });
+      fctx.body.push({ op: "local.get", index: ofDataLocal });
+      fctx.body.push({ op: "struct.new", typeIdx: ofVecTypeIdx });
+      return { kind: "ref_null", typeIdx: ofVecTypeIdx };
     }
     // (#6979) The host `__array_of` bridge is retired: a shape the native vec
     // builder declines is a compile error, not a host call.
@@ -2354,21 +2342,6 @@ export function compileBuiltinStaticCall(
       return { kind: "externref" };
     }
 
-    // (#2743 a) `Object.getPrototypeOf(arguments)` is %Object.prototype%
-    // (§10.4.4), NOT the array prototype the vec representation would yield.
-    // Emit the compiler's own `Object.prototype` value so ordinary objects and
-    // arguments share one identity. Host-mode only; standalone keeps the vec.
-    if (!noJsHost(ctx) && ts.isIdentifier(arg0) && arg0.text === "arguments" && fctx.localMap.has("arguments")) {
-      const objProtoExpr = ts.factory.createPropertyAccessExpression(
-        propAccess.expression,
-        ts.factory.createIdentifier("prototype"),
-      );
-      (objProtoExpr as { parent?: ts.Node }).parent = propAccess.parent ?? propAccess;
-      ts.setTextRange(objProtoExpr, propAccess.expression);
-      const t = compileExpression(ctx, fctx, objProtoExpr, { kind: "externref" });
-      return t ?? { kind: "externref" };
-    }
-
     // For Object.getPrototypeOf(Child.prototype), return Parent's prototype singleton
     // Must check BEFORE the general class instance check, because TS types
     // Child.prototype as Child (the instance type).
@@ -2455,12 +2428,7 @@ export function compileBuiltinStaticCall(
     // the name-keyed `new Int8Array()` construction path, and is host-mode-neutral
     // (the JS host import already returns the correct intrinsic). A local binding
     // shadowing the name falls through unchanged.
-    if (
-      noJsHost(ctx) &&
-      ts.isIdentifier(arg0) &&
-      !fctx.localMap.has(arg0.text) &&
-      isWiredTypedArrayViewName(arg0.text)
-    ) {
+    if (ts.isIdentifier(arg0) && !fctx.localMap.has(arg0.text) && isWiredTypedArrayViewName(arg0.text)) {
       const ctorType = emitTypedArrayIntrinsicCtorObject(ctx, fctx);
       if (ctorType) return ctorType;
     }
@@ -3581,24 +3549,22 @@ export function compileBuiltinStaticCall(
     // into the host-free `$ObjVec`.  Keep this syntactically narrow (a direct
     // class identifier only) so aliases and dynamic values retain the generic
     // ToObject/reflection path.
-    if (noJsHost(ctx)) {
-      const className = classIdentityFromExpression(ctx, arg);
-      if (className !== undefined) {
-        const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
-        if (argResult) fctx.body.push({ op: "drop" });
+    const className = classIdentityFromExpression(ctx, arg);
+    if (className !== undefined) {
+      const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
+      if (argResult) fctx.body.push({ op: "drop" });
 
-        const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
-        const namesLocal = allocLocal(fctx, `__class_own_names_${fctx.locals.length}`, { kind: "externref" });
-        fctx.body.push({ op: "call", funcIdx: newIdx }, { op: "local.set", index: namesLocal });
-        for (const name of classStaticOwnPropertyNames(ctx, className)) {
-          addStringConstantGlobal(ctx, name);
-          fctx.body.push({ op: "local.get", index: namesLocal });
-          fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
-          fctx.body.push({ op: "call", funcIdx: pushIdx });
-        }
+      const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
+      const namesLocal = allocLocal(fctx, `__class_own_names_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "call", funcIdx: newIdx }, { op: "local.set", index: namesLocal });
+      for (const name of classStaticOwnPropertyNames(ctx, className)) {
+        addStringConstantGlobal(ctx, name);
         fctx.body.push({ op: "local.get", index: namesLocal });
-        return { kind: "externref" };
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
+        fctx.body.push({ op: "call", funcIdx: pushIdx });
       }
+      fctx.body.push({ op: "local.get", index: namesLocal });
+      return { kind: "externref" };
     }
 
     const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
@@ -3630,7 +3596,7 @@ export function compileBuiltinStaticCall(
   ) {
     const arg = expr.arguments[0]!;
     // (#6774 S6) A class's symbol-keyed statics live on its static sidecar `$Object`.
-    const sidecarIdx = noJsHost(ctx) ? classStaticSidecarFor(ctx, arg) : undefined;
+    const sidecarIdx = classStaticSidecarFor(ctx, arg);
     const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
     if (!argResult) {
       fctx.body.push({ op: "ref.null.extern" });

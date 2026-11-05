@@ -44,10 +44,7 @@ import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read 
 import { emitUndefined } from "../expressions/late-imports.js";
 import { emitConstructReturnSelect } from "../construct-return-value.js"; // (#4464)
 import { emitCtorBareReturnOverride, tryEmitCtorOverrideReturn } from "../classes/ctor-return-override.js"; // (#6772 S2)
-import {
-  emitHostTypedArrayCarrierRegistration,
-  isHostTypedArrayCarrierName,
-} from "../expressions/typed-array-host-carrier.js";
+import { isHostTypedArrayCarrierName } from "../expressions/typed-array-host-carrier.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { readEnv } from "../../env.js";
 
@@ -201,7 +198,6 @@ function normalizeReturnExpression(
   // ordinary Array returns that happen to share the same vec representation.
   const returnedName = ctx.oracle.builtinReceiverOf(expression) ?? ctx.oracle.declaredNameOf(expression);
   if (isHostTypedArrayCarrierName(returnedName)) {
-    emitHostTypedArrayCarrierRegistration(ctx, fctx, returnedName, fctx.returnType);
   }
 }
 
@@ -1435,7 +1431,6 @@ function emitSwitchStrictEq(ctx: CodegenContext, fctx: FunctionContext, lTmp: nu
       else: taggedCascade,
     },
   );
-  return;
 }
 
 export function compileSwitchStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.SwitchStatement): void {

@@ -131,7 +131,6 @@ import { singleReturnExpressionOfCall, tracesToProxyConstructorValue } from "../
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { VOID_RESULT, type InnerResult } from "../shared.js";
 import {
-  emitDynamicNewFunctionHostEval,
   emitStandaloneDynamicFunctionStub,
   isGlobalFunctionIdentifier,
   resolvesToGlobalFunctionAlias,
@@ -187,7 +186,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js"; // (#5350 r2, R2) super-call callable guard
@@ -201,7 +199,6 @@ import { SUPER_HOME_OBJECT_CAPTURE_NAME } from "../closures.js";
 import { emitClosedLiteralSuperBase } from "../object-literal-super-base.js"; // (#6651 A13)
 import { NEW_GLOBAL_FALLTHROUGH, tryCompileBuiltinGlobalNew } from "./new-builtin-globals.js"; // (#3281 slice 1) built-in global ctor dispatch
 import { tryCompileBuiltinPrototypeConstructorNew } from "./builtin-prototype-constructor.js";
-import { emitHostTypedArrayCarrierRegistration } from "./typed-array-host-carrier.js";
 import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-indexed.js"; // (#3281 slice 2) indexed builtin ctor dispatch
 import { tryCompileIntlHostOnlyNew } from "./new-intl-host-bridge.js"; // (#5355) standalone Intl refusal
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
@@ -819,7 +816,7 @@ function isOrdinaryFunctionValueNewCallee(
   callSigs: readonly ts.Signature[],
   constructSigs: readonly ts.Signature[],
 ): boolean {
-  if (!noJsHost(ctx) || callee.kind === ts.SyntaxKind.ThisKeyword || callSigs.length === 0) return false;
+  if (callee.kind === ts.SyntaxKind.ThisKeyword || callSigs.length === 0) return false;
   for (const sig of [...callSigs, ...constructSigs]) {
     const decl = sig.getDeclaration() as ts.SignatureDeclaration | undefined;
     if (!decl || decl.getSourceFile().isDeclarationFile) return false;
@@ -1067,7 +1064,6 @@ function compileStandaloneObjectLiteralSuperMethodCall(
   // its own further down.
   const calleeGuardMessage = "called value is not a function";
   const buildNotCallableThrow = (): Instr[] => {
-    if (!noJsHost(ctx)) return [];
     emitWasiErrorConstructor(ctx, "TypeError", 1);
     return buildThrowJsErrorInstrs(ctx, "TypeError", calleeGuardMessage, { flush: fctx });
   };
@@ -3487,7 +3483,7 @@ function resolvesToNativeProxyValue(ctx: CodegenContext, expression: ts.Expressi
 
 /** (#6651 U3) Standalone `new <realm global>.Proxy(…)` — a member callee proven to hold `%Proxy%`. */
 function isMemberProxyConstructorCallee(ctx: CodegenContext, callee: ts.Expression): boolean {
-  return noJsHost(ctx) && ts.isPropertyAccessExpression(callee) && tracesToProxyConstructorValue(ctx, callee);
+  return ts.isPropertyAccessExpression(callee) && tracesToProxyConstructorValue(ctx, callee);
 }
 
 function tryCompileNativeConstructFromValue(
@@ -3509,11 +3505,10 @@ function tryCompileNativeConstructFromValue(
   // `new Temporal.X(…)` lane is untouched.
   // (#6738) …and a callee that SELECTS a ctor value at run time, `new (a || B)()`.
   const dynamicCtorValue =
-    noJsHost(ctx) &&
-    (((ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) &&
+    ((ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) &&
       resolvesToDynamicAnyCtorValue(ctx, calleeExpr)) ||
-      isValueSelectingNewCallee(calleeExpr) ||
-      ts.isTaggedTemplateExpression(calleeExpr)); // (#6774 S3) `new tag\`x\``: the tag call's result
+    isValueSelectingNewCallee(calleeExpr) ||
+    ts.isTaggedTemplateExpression(calleeExpr); // (#6774 S3) `new tag\`x\``: the tag call's result
   // (#6651 U3) `new other.Proxy(t, h)` — the realm-global MEMBER spelling of the
   // proven Proxy-constructor value (`tracesToProxyConstructorValue` already
   // claims `<realm global>.Proxy`); only the identifier form was admitted.
@@ -3550,7 +3545,7 @@ function tryCompileNativeConstructFromValue(
     !dynamicCtorValue &&
     !resolvesToConstructableFunctionValue(ctx, calleeExpr) &&
     !resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr) &&
-    !(noJsHost(ctx) && isDefaultExpressionImport(ctx, calleeExpr)) && // (#6720) the snapshot cell's VALUE
+    !isDefaultExpressionImport(ctx, calleeExpr) && // (#6720) the snapshot cell's VALUE
     !admitBoundValueConstruct(ctx, calleeExpr) // (#6651 W2b) `var D = f.bind(…); new D()`
   )
     return undefined;
@@ -3588,18 +3583,6 @@ function tryCompileNativeConstructFromValue(
   // genuinely runtime-length spreads still decline.
   const args = flattenCallArgs(rawArgs) ?? resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs;
   if (args.some((a) => ts.isSpreadElement(a))) {
-    // (#5383 S34) A genuinely runtime-length spread (`new construct(...args)`
-    // where `args` is a parameter, not a literal or a resolvable local) used to
-    // decline HERE unconditionally — for a callee this module does not own
-    // (every linked-provider class, reached either as a bare identifier or a
-    // member access), no other arm ever attempts the construct, so `new`
-    // silently evaluated to null with its arguments never run
-    // (test262 `built-ins/Temporal/**/subclassing-ignored.js`'s
-    // `checkSubclassConstructorNotObject`, `new construct(...constructArgs)`).
-    // Standalone/WASI route through the arity-generic argv driver instead; the
-    // JS-host lane is unaffected (it constructs through `__construct_closure`,
-    // which already accepts a JS array built from an arbitrary spread).
-    if (!noJsHost(ctx)) return undefined;
     return compileNativeConstructRuntimeArgv(ctx, fctx, calleeExpr, rawArgs);
   }
   // (#5383 S24) The ceiling used to be `MAX_NATIVE_CONSTRUCT_ARITY` (8) because
@@ -3729,7 +3712,7 @@ function tryCompileNativeConstructFromValue(
     ...argLocals.map((argLocal): Instr => ({ op: "local.get", index: argLocal })),
     { op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx },
   ];
-  if (noJsHost(ctx) && ctx.moduleUsesDynTaView) {
+  if (ctx.moduleUsesDynTaView) {
     const taCtorTypeIdx = getOrRegisterTaCtorType(ctx);
     const descLocal = allocLocal(fctx, `__nc_tadesc_${fctx.locals.length}`, { kind: "anyref" } as ValType);
     fctx.body.push({ op: "local.get", index: calleeLocal });
@@ -4051,7 +4034,7 @@ function prepareUserClosureConstructOnNull(
   fctx: FunctionContext,
   arity: number,
 ): number | undefined {
-  if (!noJsHost(ctx) || arity > MAX_DYNAMIC_CONSTRUCT_ARITY) return undefined;
+  if (arity > MAX_DYNAMIC_CONSTRUCT_ARITY) return undefined;
   if (arity > MAX_NATIVE_CONSTRUCT_ARITY) {
     ensureObjVecBuilders(ctx);
     reserveApplyClosure(ctx);
@@ -4278,7 +4261,7 @@ function emitDynamicNewFallback(
   // (#6954) The standalone no-match base's last arm; registered here, on the
   // live body, because the base itself is built detached.
   const uccDriver =
-    noJsHost(ctx) && !useRuntimeArgv && typedConstructDriver === undefined && !plainNullNoMatchBase
+    !useRuntimeArgv && typedConstructDriver === undefined && !plainNullNoMatchBase
       ? prepareUserClosureConstructOnNull(ctx, fctx, args.length)
       : undefined;
 
@@ -4648,17 +4631,6 @@ function emitDynamicNewFallback(
     return arm;
   };
 
-  // No-match base: the descriptor is not a known user class (tag == -1) — e.g.
-  // a genuine host builtin like `Test262Error` that also reached the unknown-ctor
-  // branch. Fall through to the legacy `__new_${ctorName}` host import using the
-  // pre-evaluated externref args, so host builtins keep working. When no such
-  // import exists, yield null (the legacy `else` branch did the same).
-  // In standalone / WASI strict mode there is no `__new_` host import to fall
-  // back to (it is not on the dual-mode allowlist), so the no-match base stays
-  // pure-Wasm (null). Host mode falls through to the existing import so genuine
-  // builtins (Test262Error, …) keep working.
-  const hostImportName = `__new_${ctorName}`;
-  const hostFuncIdx = noJsHost(ctx) ? undefined : ctx.funcMap.get(hostImportName);
   let noMatchBase: Instr[];
   if (typedConstructDriver !== undefined) {
     const base: Instr[] = [
@@ -4671,68 +4643,56 @@ function emitDynamicNewFallback(
       },
     ];
     noMatchBase = base;
-  } else if (hostFuncIdx !== undefined) {
-    const base: Instr[] = [];
-    const savedBody2 = fctx.body;
-    fctx.body = base;
-    const hostParamTypes = getFuncParamTypes(ctx, hostFuncIdx) ?? [];
-    for (let i = 0; i < argLocals.length; i++) {
-      fctx.body.push({ op: "local.get", index: argLocals[i]! });
-    }
-    for (let i = argLocals.length; i < hostParamTypes.length; i++) {
-      pushDefaultValue(fctx, hostParamTypes[i]!, ctx);
-    }
-    fctx.body.push({ op: "call", funcIdx: hostFuncIdx });
-    fctx.body = savedBody2;
-    noMatchBase = base;
-  } else if (plainNullNoMatchBase) {
-    // (#6607) The call-callee arm keeps the PRE-EXISTING no-match outcome
-    // verbatim. Two reasons, and the second is the load-bearing one:
-    //  - a value fetched from an intrinsic registry is never a `$__ta_ctor`, so
-    //    the TA arm below could only ever decline for this shape; and
-    //  - it is not free. Inlining the TA construct + IsConstructor guard at
-    //    each site is the bulk of this arm's code size, and the Temporal
-    //    provider links into EVERY consumer compile. Three prewarm builds of
-    //    the real provider on 2026-09-14, fresh `JS2WASM_TEMPORAL_CACHE` and
-    //    `cacheHit=false` on each: 3,277,842 B without this arm at all,
-    //    3,291,080 B with it and the pinned null base (+0.40 %), and
-    //    3,435,885 B with it and the TA base (+4.8 %). The TA base costs
-    //    ~145 KB in the artifact every consumer links, to serve a shape that
-    //    cannot reach it.
-    // Emitting null here means a non-constructor callee behaves exactly as it
-    // did before this change — no new throw, no new outcome to regress.
-    noMatchBase = [{ op: "ref.null.extern" }];
-  } else if (noJsHost(ctx) && !useRuntimeArgv) {
-    // (#2872) Standalone/WASI unknown-ctor base: the runtime value may be a
-    // first-class `$__ta_ctor` (the TypedArray-harness `function (TA) { new
-    // TA(3) / new TA([…]) }` shape — the callee matched no user-class tag).
-    // Route through the runtime-gated general TA construct; any other runtime
-    // value keeps the pre-existing null-extern outcome (the ref.test declines).
-    const base: Instr[] = [];
-    const savedBase = fctx.body;
-    fctx.body = base;
-    emitBuiltinFnNotAConstructorGuard(ctx, fctx, descLocal);
-    emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
-    bcv.emitBuiltinCtorValueConstructOnNull(ctx, fctx, calleeExpr, descLocal, argLocals);
-    emitBuiltinCollectionConstructOnNull(ctx, fctx, descLocal, argLocals); // (#6720)
-    emitBuiltinArrayConstructOnNull(ctx, fctx, descLocal, argLocals, builtinNativeConstructServices);
-    emitBuiltinPromiseConstructOnNull(ctx, fctx, descLocal, argLocals, builtinNativeConstructServices);
-    if (uccDriver !== undefined) emitUserClosureConstructOnNull(ctx, fctx, uccDriver, descLocal, argLocals); // (#6954)
-    fctx.body = savedBase;
-    noMatchBase = base;
-  } else if (noJsHost(ctx) && useRuntimeArgv) {
-    // A runtime value that matches no compiled class tag has no [[Construct]].
-    // Throw a real, catchable TypeError in host-free targets instead of
-    // silently returning null. The host lane reaches the bridge above, whose
-    // Reflect.construct probe provides the same IsConstructor semantics.
-    const base: Instr[] = [];
-    const savedBase = fctx.body;
-    fctx.body = base;
-    emitThrowTypeError(ctx, fctx, "is not a constructor");
-    fctx.body = savedBase;
-    noMatchBase = base;
   } else {
-    noMatchBase = [{ op: "ref.null.extern" }];
+    if (plainNullNoMatchBase) {
+      // (#6607) The call-callee arm keeps the PRE-EXISTING no-match outcome
+      // verbatim. Two reasons, and the second is the load-bearing one:
+      //  - a value fetched from an intrinsic registry is never a `$__ta_ctor`, so
+      //    the TA arm below could only ever decline for this shape; and
+      //  - it is not free. Inlining the TA construct + IsConstructor guard at
+      //    each site is the bulk of this arm's code size, and the Temporal
+      //    provider links into EVERY consumer compile. Three prewarm builds of
+      //    the real provider on 2026-09-14, fresh `JS2WASM_TEMPORAL_CACHE` and
+      //    `cacheHit=false` on each: 3,277,842 B without this arm at all,
+      //    3,291,080 B with it and the pinned null base (+0.40 %), and
+      //    3,435,885 B with it and the TA base (+4.8 %). The TA base costs
+      //    ~145 KB in the artifact every consumer links, to serve a shape that
+      //    cannot reach it.
+      // Emitting null here means a non-constructor callee behaves exactly as it
+      // did before this change — no new throw, no new outcome to regress.
+      noMatchBase = [{ op: "ref.null.extern" }];
+    } else if (!useRuntimeArgv) {
+      // (#2872) Standalone/WASI unknown-ctor base: the runtime value may be a
+      // first-class `$__ta_ctor` (the TypedArray-harness `function (TA) { new
+      // TA(3) / new TA([…]) }` shape — the callee matched no user-class tag).
+      // Route through the runtime-gated general TA construct; any other runtime
+      // value keeps the pre-existing null-extern outcome (the ref.test declines).
+      const base: Instr[] = [];
+      const savedBase = fctx.body;
+      fctx.body = base;
+      emitBuiltinFnNotAConstructorGuard(ctx, fctx, descLocal);
+      emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
+      bcv.emitBuiltinCtorValueConstructOnNull(ctx, fctx, calleeExpr, descLocal, argLocals);
+      emitBuiltinCollectionConstructOnNull(ctx, fctx, descLocal, argLocals); // (#6720)
+      emitBuiltinArrayConstructOnNull(ctx, fctx, descLocal, argLocals, builtinNativeConstructServices);
+      emitBuiltinPromiseConstructOnNull(ctx, fctx, descLocal, argLocals, builtinNativeConstructServices);
+      if (uccDriver !== undefined) emitUserClosureConstructOnNull(ctx, fctx, uccDriver, descLocal, argLocals); // (#6954)
+      fctx.body = savedBase;
+      noMatchBase = base;
+    } else if (useRuntimeArgv) {
+      // A runtime value that matches no compiled class tag has no [[Construct]].
+      // Throw a real, catchable TypeError in host-free targets instead of
+      // silently returning null. The host lane reaches the bridge above, whose
+      // Reflect.construct probe provides the same IsConstructor semantics.
+      const base: Instr[] = [];
+      const savedBase = fctx.body;
+      fctx.body = base;
+      emitThrowTypeError(ctx, fctx, "is not a constructor");
+      fctx.body = savedBase;
+      noMatchBase = base;
+    } else {
+      noMatchBase = [{ op: "ref.null.extern" }];
+    }
   }
 
   // (2) Flat tag-equality dispatch over every candidate (innermost → host base).
@@ -5722,17 +5682,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // [[Construct]] through the established bridge; host-free builds refuse
   // explicitly until their dynamic construct carrier accepts this exact cell.
   if (isDefaultExpressionImport(ctx, unwrappedLiteralCtor)) {
-    if (noJsHost(ctx)) {
-      // (#6720) lodash-es `import Set from './_Set.js'`: construct the snapshot's runtime VALUE.
-      const fromValue = tryCompileNativeConstructFromValue(ctx, fctx, unwrappedLiteralCtor, expr.arguments ?? []);
-      if (fromValue) return fromValue;
-      reportError(ctx, expr, "Constructing an imported default-expression snapshot is not available without a host");
-      return null;
-    }
-    if (emitDynamicNewFallback(ctx, fctx, expr, unwrappedLiteralCtor, unwrappedLiteralCtor.text)) {
-      return { kind: "externref" };
-    }
-    reportError(ctx, expr, "Could not construct imported default-expression snapshot");
+    const fromValue = tryCompileNativeConstructFromValue(ctx, fctx, unwrappedLiteralCtor, expr.arguments ?? []);
+    if (fromValue) return fromValue;
+    reportError(ctx, expr, "Constructing an imported default-expression snapshot is not available without a host");
     return null;
   }
 
@@ -5740,7 +5692,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // WASI builds cannot depend on host `env.TextEncoder_*` imports. The instance
   // carries no state for the UTF-8-only surface implemented here, so the native
   // method fast paths use this evaluated placeholder receiver.
-  if ((noJsHost(ctx) || ctx.strictNoHostImports) && ctx.nativeStrings && ts.isIdentifier(expr.expression)) {
+  if (ctx.nativeStrings && ts.isIdentifier(expr.expression)) {
     const ctorName = expr.expression.text;
     if (ctorName === "TextEncoder" || ctorName === "TextDecoder") {
       const args = expr.arguments ?? [];
@@ -5776,7 +5728,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     return { kind: "externref" };
   }
 
-  if (ctx.nativeStrings && ts.isIdentifier(expr.expression) && expr.expression.text === "Map") {
+  if (ctx.nativeStrings && resolvesToNamedAmbientGlobal(ctx, expr.expression, "Map")) {
     const args = expr.arguments ?? ([] as readonly ts.Expression[]);
     // `new Map([[k,v],...])` — an array literal of 2-element array-literal pairs
     // (the dominant iterable form). Each pair seeds the map via `__map_set`. Any
@@ -6160,7 +6112,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     const callSigs = ctx.checker.getSignaturesOfType(exprType, ts.SignatureKind.Call);
     // (#6774 S3) A tag call's RESULT is a runtime value; the construct driver
     // performs the IsConstructor check (JS function values have [[Construct]]).
-    const tagResult = noJsHost(ctx) && ts.isTaggedTemplateExpression(unwrappedNonId);
+    const tagResult = ts.isTaggedTemplateExpression(unwrappedNonId);
     // (#6954) An ordinary user `function` value (`NS.C = create()`) constructs
     // natively here (Pattern 2 would throw) or at the terminal refusal below.
     ordinaryFunctionMemberValue = isOrdinaryFunctionValueNewCallee(ctx, unwrappedNonId, callSigs, constructSigs);
@@ -6635,13 +6587,12 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     isRuntimeEvalCallableResultExpression(ctx, expr.expression) ||
     // (#5383 S2g) the standalone member-callee form; the helper re-checks the
     // admission itself, so this only opens the door.
-    (noJsHost(ctx) &&
-      (ts.isPropertyAccessExpression(expr.expression) || ts.isElementAccessExpression(expr.expression)) &&
+    ((ts.isPropertyAccessExpression(expr.expression) || ts.isElementAccessExpression(expr.expression)) &&
       resolvesToDynamicAnyCtorValue(ctx, expr.expression)) ||
     isValueSelectingNewSite(ctx, expr.expression, className) || // (#6738)
     isMemberProxyConstructorCallee(ctx, expr.expression) || // (#6651 U3)
     isFunctionIntrinsicValueCallee(ctx, expr.expression) || // (#6651 W2a)
-    (noJsHost(ctx) && ts.isTaggedTemplateExpression(expr.expression)) // (#6774 S3)
+    ts.isTaggedTemplateExpression(expr.expression) // (#6774 S3)
   ) {
     const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, expr.expression, expr.arguments ?? [], selfGuard);
     if (nativeCtor) return nativeCtor;
@@ -6686,7 +6637,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           : (s1Callee as ts.NonNullExpression).expression;
     }
     // (#4017) Standalone parity — see `emitStaticNotAConstructorThrow`.
-    if (ts.isIdentifier(s1Callee) && noJsHost(ctx) && provablyNonConstructableStatically(ctx, s1Callee)) {
+    if (ts.isIdentifier(s1Callee) && provablyNonConstructableStatically(ctx, s1Callee)) {
       return emitStaticNotAConstructorThrow(ctx, fctx, args);
     }
 
@@ -6873,7 +6824,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // `ref.test`s it, so a call callee needs no new machinery. Gated to
       // `noJsHost` so the JS-host lane's byte output is untouched — there the
       // legacy `__new_` path still reaches a real host global.
-      const dynCallCallee = noJsHost(ctx) && resolvesToDynamicCallCtorValue(ctx, dynCallee);
+      const dynCallCallee = resolvesToDynamicCallCtorValue(ctx, dynCallee);
       if ((ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) || dynCallCallee) {
         // (#3054 D) Dynamic `new <ctorVal>(buffer[, off[, len]])` where `ctorVal`
         // is a first-class `$__ta_ctor` value (a TA constructor held in a var /
@@ -6883,7 +6834,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // shared-backing `$__ta_view` in the standalone lane (no host import).
         // Gated to a buffer-typed first arg so `new ctor(5)` (count ctor) is NOT
         // captured here (a boxed number would `ref.cast`-trap).
-        if (noJsHost(ctx) && args.length >= 1 && !ts.isNumericLiteral(args[0]!)) {
+        if (args.length >= 1 && !ts.isNumericLiteral(args[0]!)) {
           const arg0Sym = ctx.checker.getTypeAtLocation(args[0]!).getSymbol?.()?.name;
           if (arg0Sym === "ArrayBuffer" || arg0Sym === "SharedArrayBuffer" || arg0Sym === "DataView") {
             // Compile the ctor value once into an anyref local to type-test.
@@ -6914,7 +6865,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // construct arm the class-bearing no-match base uses; a non-TA runtime
         // value still yields null-extern (byte-identical outcome to before).
         if (
-          noJsHost(ctx) &&
           resolvesToDynamicAnyCtorValue(ctx, dynCallee) &&
           !(expr.arguments ?? []).some((a) => ts.isSpreadElement(a))
         ) {
@@ -7268,7 +7218,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // is B2 — MUST match `inferTaViewType`'s `args.length === 1` gate so the
         // local's type and the constructed value agree.
         const taViewOk =
-          noJsHost(ctx) &&
           args.length === 1 &&
           (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer" || argSymName === "DataView");
         if (taViewOk && !ts.isNumericLiteral(args[0]!)) {
@@ -7288,7 +7237,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
         fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
       }
-      emitHostTypedArrayCarrierRegistration(ctx, fctx, className, resultType);
       return resultType;
     }
   }

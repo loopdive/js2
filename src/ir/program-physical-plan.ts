@@ -13,6 +13,7 @@
 // Native string declarations are borrowed from the canonical backend recipe;
 // no resource allocation, codegen context or frontend code enters this plan.
 
+import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js";
 import {
   planNativeInvocationInput,
   nativeInvocationSetup,
@@ -70,7 +71,7 @@ import { collectNativeStringValueDemands } from "./program/native-string-value-d
 import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
 import { NATIVE_ASYNC_CALLABLE_DECLARATIONS } from "./runtime/native-async-callables.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
-import { forEachInstrDeep, type IrFunction, type IrType, type IrInstrIntrinsic } from "./nodes.js";
+import type { IrFunction, IrType, IrInstrIntrinsic } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import {
   freezePreparedIrValue,
@@ -1403,52 +1404,44 @@ export function planPhysicalSetup(
       formatter && fn === formatter.support.functions[0]
         ? formatter.requirements.calls.find((row) => row.view === "projection")!.ownerUnitId
         : fn.unitId;
-    for (const buffer of [
-      ...fn.blocks.map((block) => block.instrs),
-      ...(fn.asyncPlan?.states.map((s) => s.body) ?? []),
-    ]) {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instruction) => {
-          if (instruction.kind === "call" || instruction.kind === "closure.new") {
-            const ref = instruction.kind === "call" ? instruction.target : instruction.liftedFunc;
-            if (!reserved.has(irCallableBindingKey(ref.binding))) {
-              gaps.add(
-                `body ${fn.name} references ${ref.binding.kind} callable ${ref.name} that the plan cannot reserve`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "global.get" || instruction.kind === "global.set") {
-            if (!reservedGlobals.has(irGlobalBindingKey(instruction.target.binding))) {
-              gaps.add(
-                `body ${fn.name} references global ${instruction.target.name} that the plan cannot reserve`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "intrinsic") {
-            const provider = instruction.provider;
-            if (!provider)
-              gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
-            else if (
-              missingIntrinsicMaterialization(
-                instruction,
-                provider,
-                reserved,
-                projection,
-                nativeStrings,
-                hostNumberBoundary,
-              )
-            ) {
-              gaps.add(
-                `body ${fn.name} intrinsic ${instruction.id} needs ${provider.kind} provider materialization`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "throw" || instruction.kind === "try") {
-            exceptionRequired = true;
-          }
-        });
+    forEachPreparedIrInstruction(fn, (instruction) => {
+      if (instruction.kind === "call" || instruction.kind === "closure.new") {
+        const ref = instruction.kind === "call" ? instruction.target : instruction.liftedFunc;
+        if (!reserved.has(irCallableBindingKey(ref.binding))) {
+          gaps.add(
+            `body ${fn.name} references ${ref.binding.kind} callable ${ref.name} that the plan cannot reserve`,
+            diagnosticUnit,
+          );
+        }
+      } else if (instruction.kind === "global.get" || instruction.kind === "global.set") {
+        if (!reservedGlobals.has(irGlobalBindingKey(instruction.target.binding))) {
+          gaps.add(
+            `body ${fn.name} references global ${instruction.target.name} that the plan cannot reserve`,
+            diagnosticUnit,
+          );
+        }
+      } else if (instruction.kind === "intrinsic") {
+        const provider = instruction.provider;
+        if (!provider) gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
+        else if (
+          missingIntrinsicMaterialization(
+            instruction,
+            provider,
+            reserved,
+            projection,
+            nativeStrings,
+            hostNumberBoundary,
+          )
+        ) {
+          gaps.add(
+            `body ${fn.name} intrinsic ${instruction.id} needs ${provider.kind} provider materialization`,
+            diagnosticUnit,
+          );
+        }
+      } else if (instruction.kind === "throw" || instruction.kind === "try") {
+        exceptionRequired = true;
       }
-    }
+    });
   }
 
   const startup = planPhysicalStartup(program, bodies, exportNames, gaps);

@@ -19,9 +19,7 @@ import { REGIME_GAP_FAMILIES } from "../src/host-import-policy.ts";
  * these import names (or name prefixes ending in `*`). A second family, or a new
  * name in an existing one, fails this ratchet until it is reviewed.
  */
-const REGIME_GAP_CEILING: Record<string, readonly string[]> = {
-  "eager-generator-buffer": ["__gen_*", "__create_generator", "__create_async_generator"],
-};
+const REGIME_GAP_CEILING: Record<string, readonly string[]> = {};
 {
   const declared = Object.keys(REGIME_GAP_FAMILIES).sort();
   const ceiling = Object.keys(REGIME_GAP_CEILING).sort();
@@ -371,14 +369,9 @@ for (const family of ["js-string"] as const) {
 // #6979 — one probe per named regime gap: each still compiles (the gap is the
 // construct's only implementation), and every import it needs beyond adapters
 // and capabilities is a regime-gap import inside the explicit name ceiling.
-const regimeGapProbes = {
-  "eager-generator-buffer": `
-    export async function run(): Promise<number> {
-      async function* values(): AsyncGenerator<number> { const x = yield 1; yield (x as any) + 1; }
-      const it = values(); await it.next(); return (await it.next(2)).value as number;
-    }
-  `,
-} as const;
+// (2026-11-05) Empty: the last family, `eager-generator-buffer`, closed with
+// #7010 — see the refusal check below.
+const regimeGapProbes: Record<string, string> = {};
 const regimeGapImports: Record<string, string[]> = Object.create(null);
 for (const [family, source] of Object.entries(regimeGapProbes)) {
   const result = await compile(source, { fileName: `host-import-policy-regime-gap-${family}.ts` });
@@ -427,6 +420,36 @@ for (const [family, source] of Object.entries(closedRegimeGapProbes)) {
       `closed regime gap ${family} reopened: ` +
         reopened.map((entry) => `${entry.name} (${entry.classification}/${entry.family})`).join(", "),
     );
+  }
+}
+
+// #6979 S7-b / #7010 — `eager-generator-buffer` closed by refusal, not by a
+// native lowering: a generator shape the native state machine and the
+// async-generator drive decline is a compile error, never a `__gen_*` host
+// buffer. Its old probe must keep refusing with that diagnostic; once a native
+// lowering accepts it, it must compile with no regime-gap and no `unknown`
+// import (then move it to `closedRegimeGapProbes`).
+{
+  const source = `
+    export async function run(): Promise<number> {
+      async function* values(): AsyncGenerator<number> { const x = yield 1; yield (x as any) + 1; }
+      const it = values(); await it.next(); return (await it.next(2)).value as number;
+    }
+  `;
+  const result = await compile(source, { fileName: "host-import-policy-closed-gap-eager-generator-buffer.ts" });
+  if (!result.success) {
+    if (!result.errors.some((error) => error.message.includes("generator-no-host-free-lowering"))) {
+      throw new Error(
+        `eager-generator-buffer probe failed without the #7010 refusal: ${JSON.stringify(result.errors[0])}`,
+      );
+    }
+  } else {
+    const reopened = (result.hostImportInventory ?? []).filter(
+      (entry) => entry.classification === "unknown" || entry.classification === "regime-gap",
+    );
+    if (reopened.length > 0) {
+      throw new Error(`closed regime gap eager-generator-buffer reopened: ${reopened.map((e) => e.name).join(", ")}`);
+    }
   }
 }
 

@@ -61,7 +61,6 @@ export function heritagePrototypeGetTarget(
   ctx: CodegenContext,
   decl: ts.ClassLikeDeclaration,
 ): ts.Expression | undefined {
-  if (!ctx.standalone) return undefined;
   const className = classNameOf(ctx, decl);
   if (className === undefined || !ctx.classDynamicUnresolvedHeritageSet.has(className)) return undefined;
   if (ctx.classLinkedDynamicParentExpr.has(className) || ctx.classBuiltinParentMap.has(className)) return undefined;

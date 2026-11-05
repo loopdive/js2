@@ -141,8 +141,8 @@ const ITER_KIND_OBJ = 4;
  * (#3075) IterRec kind tag for a HOST generator object: the externref returned
  * by the legacy eager-buffer generator runtime (`__create_generator` /
  * `__create_async_generator` — the host fallback that `yield*`-and-friends
- * sync/async generator bodies still take even under `--target standalone`, see
- * `sourceNeedsGeneratorHostImports`). Such a value internalizes OUTSIDE every
+ * sync/async generator bodies take in the JS-host lane; since #7010 host-free
+ * builds refuse those generators instead). Such a value internalizes OUTSIDE every
  * GC heap subhierarchy (not struct / array / i31), so no native arm can read
  * it — before this arm it hit the hard-cast tail (`illegal cast [in
  * __iterator]`, the 468-record standalone for-of/for-await dstr cluster). A
@@ -343,8 +343,8 @@ const GENSTATE_STATE_FIELD = 0;
 /**
  * (#3075) Resolved fill-time deps of the HOSTGEN arm — the legacy eager-buffer
  * generator HOST IMPORTS (`addGeneratorImports` bundle), present exactly when
- * some generator body in the module bailed to the host path
- * (`sourceNeedsGeneratorHostImports`). All are IMPORT funcIdxs resolved from
+ * some generator body in the module bailed to the host path (JS host only
+ * since #7010). All are IMPORT funcIdxs resolved from
  * funcMap at fill time; later import shifts walk the rebuilt bodies like any
  * other defined function (same discipline as the USER/vec-family arms).
  */
@@ -684,7 +684,6 @@ const ARGUMENTS_ITERATOR_LENGTH = "__args_iter_length";
  * arguments-Get substrate's #4622/#3251 residual.
  */
 function ensureArgumentsIteratorLengthHelper(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   if (ctx.structMap.get("__arguments_vec") === undefined) return undefined;
   const existing = ctx.funcMap.get(ARGUMENTS_ITERATOR_LENGTH);
   if (existing !== undefined) return existing;
@@ -971,7 +970,7 @@ function markStrictMethodTypes(
   // canonical structural path.
   const markedByType = new Map<number, StrictMethodLiteral[]>();
   for (const [typeIdx, literals] of byType) {
-    if (ctx.standalone || ctx.wasi || literals.length > 1) markedByType.set(typeIdx, literals);
+    markedByType.set(typeIdx, literals);
   }
 
   // Call-site inlining can retain a template before finalization appends the
@@ -1662,7 +1661,6 @@ export function ensureNativeIteratorRuntime(ctx: CodegenContext): void {
  * reviewable by consumers such as Proxy's dynamic argument list.
  */
 export function ensureNativeStrictSpreadRuntime(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   const existing = strictSpreadRuntimeByCtx.get(ctx);
   if (existing !== undefined) return existing.materializeIdx;
 
@@ -1834,7 +1832,6 @@ export function ensureIterStepScratchGlobal(ctx: CodegenContext): number {
 export function ensureNativeIterResultObject(ctx: CodegenContext): number | undefined {
   const existing = ctx.funcMap.get("__iter_result_obj");
   if (existing !== undefined) return existing;
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
   ensureObjectRuntime(ctx);
   addUnionImportsViaRegistry(ctx);
   addStringConstantGlobal(ctx, "value");
@@ -1977,7 +1974,6 @@ export function fillIterResultObject(ctx: CodegenContext): void {
 export function reserveAnyIterNext(ctx: CodegenContext): number | undefined {
   const existing = ctx.funcMap.get("__any_iter_next");
   if (existing !== undefined) return existing;
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
   ensureNativeIteratorRuntime(ctx);
   if (ensureNativeIterResultObject(ctx) === undefined) return undefined;
   if (ctx.funcMap.get("__iterator_next") === undefined) return undefined;
@@ -2502,7 +2498,6 @@ export function emitStandaloneIterableMaterialize(
   fctx: { body: Instr[] },
   externLocal: number,
 ): void {
-  if (!ctx.standalone && !ctx.wasi) return;
   const afinIdx = ensureNativeStrictSpreadRuntime(ctx);
   if (afinIdx === undefined) return;
   fctx.body.push({ op: "local.get", index: externLocal });
@@ -2767,14 +2762,6 @@ function externSgetIdx(ctx: CodegenContext, name: string): number | undefined {
  */
 export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   if (!ctx.nativeIteratorUserArmPending) {
-    // Ordinary host call-spread lowering registers the strict materializer
-    // directly from `nested-declarations.ts`, without reserving the native
-    // iterator quartet. Still emit the exact empty-tuple discriminator for
-    // that host import at the shared finalize boundary, once all tuple types
-    // are known. Standalone/WASI never consults this host-side export.
-    if (!ctx.standalone && !ctx.wasi && ctx.funcMap.has("__array_from_iter_strict")) {
-      emitEmptyTuplePredicate(ctx);
-    }
     return;
   }
   // Finalization is a single-shot boundary. Clear the reservation before any
@@ -2800,15 +2787,11 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   // The strict provider validates callable iterator methods and Object-valued
   // results.  Native union helpers are the canonical standalone predicates;
   // register them before capturing their final funcIdxs.
-  if (
-    strictRuntime &&
-    (ctx.standalone || ctx.wasi) &&
-    (!ctx.funcMap.has("__typeof_object") || !ctx.funcMap.has("__typeof_function"))
-  ) {
+  if (strictRuntime && (!ctx.funcMap.has("__typeof_object") || !ctx.funcMap.has("__typeof_function"))) {
     addUnionImports(ctx);
   }
 
-  const strictMethods = strictRuntime && (ctx.standalone || ctx.wasi) ? collectStrictMethodDispatch(ctx) : undefined;
+  const strictMethods = strictRuntime ? collectStrictMethodDispatch(ctx) : undefined;
 
   const callIteratorIdx = ctx.funcMap.get("__call_@@iterator");
   const callNextIdx = ctx.funcMap.get("__call_next");
@@ -2853,48 +2836,46 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   // finalize sequence (index.ts), with the `__call_fn_method_N` dispatchers
   // emitted in between.
   let objDeps: ObjCarrierDeps | undefined;
-  if (ctx.standalone || ctx.wasi) {
-    const externGetIdx = ctx.funcMap.get("__extern_get");
-    const externHasIdx = ctx.funcMap.get("__extern_has");
-    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
-    const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
-    if (
-      externGetIdx !== undefined &&
-      boxSymbolIdx !== undefined &&
-      objectTypeIdx !== undefined &&
-      isTruthyIdx !== undefined &&
-      ctx.nativeStrTypeIdx >= 0
-    ) {
-      objDeps = {
-        externGetIdx,
-        externHasIdx,
-        boxSymbolIdx,
-        objectTypeIdx,
-        proxyTypeIdx: ctx.objectRuntimeTypes?.proxyTypeIdx,
-        boundaryHostObjects: ctx.funcMap.has("__boundary_object_get") || undefined,
-        isTruthyIdx,
-        applyClosureIdx: reserveApplyClosure(ctx),
-        sgetValueIdx: ctx.funcMap.get("__sget_value"),
-        sgetDoneIdx: ctx.funcMap.get("__sget_done"),
-        sgetDoneIsExtern,
-        sgetNextIdx: ctx.funcMap.get("__sget_next"),
-        sgetReturnIdx: ctx.funcMap.get("__sget_return"),
-        typeofObjectIdx: ctx.funcMap.get("__typeof_object"),
-        typeofFunctionIdx: ctx.funcMap.get("__typeof_function"),
-        keyInstrs: (name: string) => [...nativeStringLiteralInstrs(ctx, name), { op: "extern.convert_any" }],
-        missInstrs: () => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
-        decodeRead: linksRuntimeEvalProvider(ctx)
-          ? (locals, paramCount) => buildRuntimeEvalValueUnwrap(ctx, locals, paramCount) // (#6651 A9)
-          : undefined,
-      };
-      // (#6651 G4) The for-of statement's own OBJ step (cached `next`, §7.4.4).
-      fillForOfIteratorStep(ctx, iterRuntimeTypes(ctx), objDeps, (l) => externIsObjectInstrs(ctx, l));
-    }
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const externHasIdx = ctx.funcMap.get("__extern_has");
+  const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+  if (
+    externGetIdx !== undefined &&
+    boxSymbolIdx !== undefined &&
+    objectTypeIdx !== undefined &&
+    isTruthyIdx !== undefined &&
+    ctx.nativeStrTypeIdx >= 0
+  ) {
+    objDeps = {
+      externGetIdx,
+      externHasIdx,
+      boxSymbolIdx,
+      objectTypeIdx,
+      proxyTypeIdx: ctx.objectRuntimeTypes?.proxyTypeIdx,
+      boundaryHostObjects: ctx.funcMap.has("__boundary_object_get") || undefined,
+      isTruthyIdx,
+      applyClosureIdx: reserveApplyClosure(ctx),
+      sgetValueIdx: ctx.funcMap.get("__sget_value"),
+      sgetDoneIdx: ctx.funcMap.get("__sget_done"),
+      sgetDoneIsExtern,
+      sgetNextIdx: ctx.funcMap.get("__sget_next"),
+      sgetReturnIdx: ctx.funcMap.get("__sget_return"),
+      typeofObjectIdx: ctx.funcMap.get("__typeof_object"),
+      typeofFunctionIdx: ctx.funcMap.get("__typeof_function"),
+      keyInstrs: (name: string) => [...nativeStringLiteralInstrs(ctx, name), { op: "extern.convert_any" }],
+      missInstrs: () => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+      decodeRead: linksRuntimeEvalProvider(ctx)
+        ? (locals, paramCount) => buildRuntimeEvalValueUnwrap(ctx, locals, paramCount) // (#6651 A9)
+        : undefined,
+    };
+    // (#6651 G4) The for-of statement's own OBJ step (cached `next`, §7.4.4).
+    fillForOfIteratorStep(ctx, iterRuntimeTypes(ctx), objDeps, (l) => externIsObjectInstrs(ctx, l));
   }
 
   // (#3075) HOSTGEN-arm deps — the legacy eager-buffer generator HOST imports.
   // Present exactly when some generator body bailed to the host path under
-  // standalone/wasi (`sourceNeedsGeneratorHostImports`) — the module already
+  // standalone/wasi (unreachable since #7010, which refuses them) — the module already
   // carries the imports, so driving them adds no new host dependency. Without
   // them (the common zero-import standalone module) every body below is
   // byte-identical.
@@ -2904,7 +2885,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   // all-driven module the bundle may be registered yet unreferenced (dead
   // imports, eliminated); building the arm would pin them and break the
   // zero-import host-free contract.
-  if ((ctx.standalone || ctx.wasi) && ctx.legacyGenBufferEmitted === true) {
+  if (ctx.legacyGenBufferEmitted === true) {
     const genNextIdx = ctx.funcMap.get("__gen_next");
     const genResultDoneIdx = ctx.funcMap.get("__gen_result_done");
     const genResultValueIdx = ctx.funcMap.get("__gen_result_value");
@@ -2924,7 +2905,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   // `__async_gen_next_<stem>` driver. Modules without producers (or whose
   // promise/result types never materialized) are byte-identical.
   let agDeps: AsyncGenCarrierDeps | undefined;
-  if ((ctx.standalone || ctx.wasi) && ctx.asyncGenProducers !== undefined && ctx.asyncGenProducers.size > 0) {
+  if (ctx.asyncGenProducers !== undefined && ctx.asyncGenProducers.size > 0) {
     const promiseTypeIdx = ctx.structMap.get("$Promise");
     const resultTypeIdx = ctx.structMap.get("__NativeGeneratorResult_externref");
     if (promiseTypeIdx !== undefined && resultTypeIdx !== undefined) {
@@ -2948,7 +2929,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   // byte-identical. `f64TmpIdx` names the scratch local appended to
   // `__iterator_next` below (params(1) + reserve-time locals(6) = index 7).
   let sgDeps: SyncGenCarrierDeps | undefined;
-  if ((ctx.standalone || ctx.wasi) && ctx.nativeGenerators.size > 0) {
+  if (ctx.nativeGenerators.size > 0) {
     const sgProducers: SyncGenCarrierDeps["producers"] = [];
     const seenStates = new Set<number>();
     for (const info of ctx.nativeGenerators.values()) {
@@ -3428,7 +3409,6 @@ function iteratorMethodProbeInstrs(ctx: CodegenContext): Instr[] | undefined {
  * routing). Idempotent.
  */
 export function ensureNativeIteratorMethodPresent(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   const existing = ctx.funcMap.get(ITERATOR_METHOD_PRESENT);
   if (existing !== undefined) return existing;
   const probe = iteratorMethodProbeInstrs(ctx);
@@ -4006,7 +3986,6 @@ const CLOSE_RESULT_MSG = "iterator result is not an object";
  * classifiers / TypeError constructor are not registered.
  */
 function notAnObjectThrowInstrs(ctx: CodegenContext, scratch: number): Instr[] | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
   const ctorIdx = ctx.funcMap.get("__new_TypeError");
   // (#5267) The Object test itself is `externIsObjectInstrs` — one definition
   // for both this throw and the collection-constructor drive's entry check, so
@@ -4070,7 +4049,6 @@ export function externIsObjectInstrs(ctx: CodegenContext, local: number): Instr[
  * the eager and the finalize build sites only READ already-present symbols.
  */
 function ensureNotAnObjectThrowDeps(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   emitWasiErrorConstructor(ctx, "TypeError", 1);
   addStringConstantGlobal(ctx, CLOSE_RESULT_MSG);
   ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);

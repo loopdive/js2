@@ -32,7 +32,6 @@ import { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitThrowReferenceError } from "../js-errors.js";
-import { noJsHost } from "./helpers.js";
 
 export interface UndeclaredCalleeFacts {
   /** Callee has no value declaration (`ctx.oracle.valueDeclarationOf`). */
@@ -56,13 +55,8 @@ export function tryEmitUndeclaredCalleeReferenceError(
 ): ValType | undefined {
   if (facts.implicitCallee || !facts.declarationIsUndefined) return undefined;
 
-  if (noJsHost(ctx)) {
-    if (facts.isRuntimeEvalGlobal) return undefined;
-    emitThrowReferenceError(ctx, fctx, `${funcName} is not defined`);
-    fctx.body.push({ op: "unreachable" });
-    return { kind: "externref" };
-  }
-
-  // (#4650) JS-host lane.
-  return undefined;
+  if (facts.isRuntimeEvalGlobal) return undefined;
+  emitThrowReferenceError(ctx, fctx, `${funcName} is not defined`);
+  fctx.body.push({ op: "unreachable" });
+  return { kind: "externref" };
 }

@@ -124,11 +124,15 @@ export function collectUpdateRetypedModuleBindings(
   return declarations;
 }
 
+/** Whether `declaration` is update-retyped: only an identifier declaration ever is. */
 export function updateRetypesModuleBinding(
   source: UpdateRetypeQuerySource,
-  declaration: ts.VariableDeclaration,
+  declaration: ts.VariableDeclaration | ts.BindingElement,
 ): boolean {
-  return collectUpdateRetypedModuleBindings(source, declaration.getSourceFile()).has(declaration);
+  return (
+    ts.isVariableDeclaration(declaration) &&
+    collectUpdateRetypedModuleBindings(source, declaration.getSourceFile()).has(declaration)
+  );
 }
 
 /** Whether this exact identifier resolves to an update-retyped module binding. */

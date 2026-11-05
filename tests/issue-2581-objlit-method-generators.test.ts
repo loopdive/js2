@@ -160,7 +160,7 @@ export function test(): number {
     expect(await runNative(src)).toBe(5);
   });
 
-  it("OPTIONAL(`?`)-param object-literal generator method still bails to host (value-rep gap)", async () => {
+  it("OPTIONAL(`?`)-param object-literal generator method is refused, not lowered (value-rep gap, #7010)", async () => {
     // (#3948) The `questionToken` half of the old bail SURVIVES, and was measured
     // rather than inherited: with the argc registration in place, `a?: number`
     // still lowers to a bare f64 with no `undefined` inhabitant, so the missing-arg
@@ -171,9 +171,12 @@ export function test(): number {
   const o = { *m(d?: number) { yield d === undefined ? 42 : d; } };
   return (o.m().next().value as number);
 }`;
-    const { binary, genImports } = await compileNoHost(src);
-    expect(genImports.length, "optional-param objlit generator must still bail to host").toBeGreaterThan(0);
-    expect(WebAssembly.validate(binary), "optional-param bail module must be valid Wasm").toBe(true);
+    // (#7010) The bail no longer reaches the eager host buffer (no host-free
+    // build can satisfy its `__gen_*` imports): it is a compile error.
+    const r = await compile(src, { fileName: "test.ts", target: "wasi" });
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/#7010/);
+    expect((r.imports ?? []).filter((i) => HOST_GEN_RE.test(i.name))).toEqual([]);
   });
 
   it("explicit-arg (no default) object-literal generator method stays native", async () => {

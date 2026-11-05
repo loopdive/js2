@@ -60,7 +60,6 @@ import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.
 import { ensureIterStepScratchGlobal, ensureNativeIteratorRuntime } from "../iterator-native.js"; // (#2169c) native Array.from drain / (#3146) Iterator-statics intrinsics / (#3206) native Array.from(src, mapFn)
 import { reserveClosedMethodDispatch, reserveClosedMethodDispatchVararg } from "../closed-method-dispatch.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm Date.parse / new Date(str)
-import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
 import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
 import { buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6769 S7d)
@@ -247,7 +246,6 @@ import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/ty
 import { jsValueBoundary } from "../context/types.js";
 import {
   addFuncType,
-  addImport,
   addStringConstantGlobal,
   addStringImports,
   addUnionImports,
@@ -319,7 +317,6 @@ import {
   coerceType,
   compileExpression,
   resolveEnclosingClassName,
-  resolveThisStructName,
   valTypesMatch,
   VOID_RESULT,
 } from "../shared.js";
@@ -448,7 +445,6 @@ import {
   tryStaticEvalInline,
   tryStaticFunctionCtorCall,
 } from "./eval-inline.js";
-import { tryHostDynamicFunctionCtorValue } from "./dynamic-function-ctor-value.js"; // (#4650)
 import { tryEvalAsCommentPeephole } from "./eval-comment-peephole.js"; // (#1240) exhaustive comment eval loop
 import { dynamicEvalRefusalMessages, runtimeEvalProviderLinkable } from "./runtime-eval-provider.js";
 import {
@@ -486,7 +482,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import {
@@ -512,7 +507,6 @@ import {
   ensureGetUndefined,
   ensureLateImport,
   flushLateImportShifts,
-  shiftLateImportIndices,
 } from "./late-imports.js";
 import { canonicalUndefinedExternInstrs, ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
 import { emitSymbolToString, ensureSymbolRegistry } from "../symbol-native.js";
@@ -578,7 +572,6 @@ import {
   planClosureReceiverInstall,
 } from "../closure-receiver-install.js";
 import { directEvalRunsAtScriptGlobal } from "../direct-eval-environment.js";
-import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carrier.js";
 
 // Registry extracted to its own leaf module (#1793; LOC ratchet #3102) —
 // re-exported here so existing importers keep resolving via calls.js.
@@ -2598,12 +2591,6 @@ export function emitWrapperDynamicMethodCall(
   methodName: string,
   callExpr?: ts.CallExpression,
 ): ValType | null {
-  // (#4373) The host wrapper can only preserve arguments that have a matching
-  // `__call_fn_method_N` dispatcher. Record the real dynamic call-site width
-  // before module finalization; otherwise modules whose declared closures are
-  // all narrower retain the historical five-argument cap and truncate extras.
-  if (callExpr) observeHostDynamicMethodCallArity(ctx, callExpr.arguments);
-
   // (#1888 Slice 2, #6979) `__extern_method_call` is native and reads its args
   // over a $ObjVec, so the (empty) args list is built with the native $ObjVec
   // builder; the host `__js_array_*` packers are retired.
@@ -3941,12 +3928,9 @@ export function tryEmitInlineDynamicCall(
   // [[Construct]], but no [[Call]]. Register the shared predicate before any
   // funcIdx is captured; the actual check is emitted after every argument has
   // evaluated, matching EvaluateCall's observable order.
-  const wantIsCallableGuard = noJsHost(ctx);
-  if (wantIsCallableGuard) {
-    ensureBoundaryCallableKind(ctx); // (#6686) admitted JS functions are callable
-    ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
-    prepareBuiltinCtorValueInvoke(ctx, fctx, expr.expression); // (#6713) RegExp/Error carrier [[Call]]
-  }
+  ensureBoundaryCallableKind(ctx); // (#6686) admitted JS functions are callable
+  ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
+  prepareBuiltinCtorValueInvoke(ctx, fctx, expr.expression);
 
   // Dedupe by funcTypeIdx — concrete subtypes share funcTypeIdx with their
   // base wrapper; one dispatch arm per unique funcref type is enough.
@@ -4217,7 +4201,7 @@ export function tryEmitInlineDynamicCall(
   }
   if (applyFallback !== undefined) applyFallback = reserveDynamicApplyFallback(ctx);
 
-  if (wantIsCallableGuard && isCallableIdx !== undefined) {
+  if (isCallableIdx !== undefined) {
     // Arguments are already materialised in locals. Throwing here therefore
     // preserves §13.3.6's callee → arguments → IsCallable order and prevents a
     // rejected class from reaching `__apply_closure`'s legacy null fallback.
@@ -5624,7 +5608,7 @@ export function compileFromCharCodeFamily(
       // (#5152) §22.1.2.2 step 2a / §22.1.2.1 step 2a apply ToNumber to every
       // argument, and §7.1.4 ToNumber(Symbol) throws a TypeError. Without this
       // a statically Symbol-typed arg silently coerced its internal id.
-      if (noJsHost(ctx) && tryThrowOnBigIntOrSymbolArg(ctx, fctx, expr.arguments[i]!)) {
+      if (tryThrowOnBigIntOrSymbolArg(ctx, fctx, expr.arguments[i]!)) {
         parts.push(buf);
         continue;
       }
@@ -5635,7 +5619,7 @@ export function compileFromCharCodeFamily(
       // Scoped to standalone/WASI (`noJsHost`): the throw uses the in-module
       // `__new_RangeError` constructor with no host bridge. The JS-host lane
       // keeps its existing host-delegated behaviour (the slice is standalone).
-      const emitRangeGuard = isFromCodePoint === true && noJsHost(ctx);
+      const emitRangeGuard = isFromCodePoint === true;
       if (emitRangeGuard) {
         // Normalise to f64, then test `trunc(cp) != cp` (catches fractional AND
         // NaN) OR `cp < 0` OR `cp > 0x10FFFF` (±∞ caught by the range test).
@@ -6915,14 +6899,6 @@ function compileCallExpression(
     if (r !== undefined) return r;
   }
 
-  // (#4650) JS-host VALUE form `Function(<args>)` called as a plain function —
-  // §20.2.1.1 makes it identical to `new Function(...)`, but only the
-  // NewExpression path routed a declined compile-away to the host shim.
-  {
-    const r = tryHostDynamicFunctionCtorValue(ctx, fctx, expr);
-    if (r !== undefined) return r;
-  }
-
   // #2928 — dynamic standalone Function(...) value form, plus the immediate
   // `new Function(...)(args)` / `Function(...)(args)` form. Seed the canonical
   // runtime callable before the dynamic-dispatch candidate scan.
@@ -7079,49 +7055,15 @@ function compileCallExpression(
       // (#2960) WASI (until its linker grows the provider), or a standalone
       // route that could not materialize its runtime ABI: refuse the
       // unsatisfiable host import with a catchable call-site throw.
-      if (noJsHost(ctx)) {
-        // (#4195) Wording lives with the provider gate that decides it.
-        const refusal = dynamicEvalRefusalMessages(ctx);
-        reportError(ctx, expr, refusal.warning, "warning");
-        // Evaluate the argument expressions for their side effects first.
-        for (const a of expr.arguments) {
-          const t = compileExpression(ctx, fctx, a);
-          if (t !== null) fctx.body.push({ op: "drop" });
-        }
-        emitThrowTypeError(ctx, fctx, refusal.thrown);
-        // The throw is stack-polymorphic; return the nominal eval result type.
-        return { kind: "externref" };
+      const refusal = dynamicEvalRefusalMessages(ctx);
+      reportError(ctx, expr, refusal.warning, "warning");
+      // Evaluate the argument expressions for their side effects first.
+      for (const a of expr.arguments) {
+        const t = compileExpression(ctx, fctx, a);
+        if (t !== null) fctx.body.push({ op: "drop" });
       }
-      let evalIdx = ctx.funcMap.get("__extern_eval");
-      if (evalIdx === undefined) {
-        const importsBefore = ctx.numImportFuncs;
-        const evalType = addFuncType(ctx, [{ kind: "externref" }, { kind: "i32" }], [{ kind: "externref" }]);
-        addImport(ctx, "env", "__extern_eval", { kind: "func", typeIdx: evalType });
-        shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-        evalIdx = ctx.funcMap.get("__extern_eval");
-      }
-      if (evalIdx === undefined) {
-        fctx.body.push({ op: "unreachable" });
-        return null;
-      }
-      if (expr.arguments.length === 0) {
-        // eval() with no args returns undefined per spec.  Avoid the host
-        // round-trip entirely.
-        fctx.body.push({ op: "ref.null.extern" });
-        return { kind: "externref" };
-      }
-      const srcArg = expr.arguments[0]!;
-      const srcType = compileExpression(ctx, fctx, srcArg);
-      if (srcType && srcType.kind !== "externref") {
-        coerceType(ctx, fctx, srcType, { kind: "externref" });
-      }
-      // Push isDirect flag.
-      fctx.body.push({ op: "i32.const", value: evalKind === "direct" ? 1 : 0 });
-      for (let ai = 1; ai < expr.arguments.length; ai++) {
-        const extraType = compileExpression(ctx, fctx, expr.arguments[ai]!);
-        if (extraType) fctx.body.push({ op: "drop" });
-      }
-      fctx.body.push({ op: "call", funcIdx: evalIdx });
+      emitThrowTypeError(ctx, fctx, refusal.thrown);
+      // The throw is stack-polymorphic; return the nominal eval result type.
       return { kind: "externref" };
     }
   }
@@ -7364,16 +7306,9 @@ function compileCallExpression(
     // the native constructor FIRST — before any argument is emitted — so a
     // decline leaves this arm byte-identical to what it was.
     let nativeSuppressedIdx: number | undefined;
-    if (noJsHost(ctx)) {
-      // The native ctor stores `error`/`suppressed` on the `$props` sidecar, so
-      // it needs the object runtime's property helpers; ensure them here, above
-      // the registry layer that owns the constructor itself. Ensuring a runtime
-      // can register late imports, which renumbers every funcIdx already baked
-      // into this body — flush before emitting anything else.
-      ensureObjectRuntime(ctx);
-      flushLateImportShifts(ctx, fctx);
-      nativeSuppressedIdx = ensureNativeSuppressedErrorCtor(ctx);
-    }
+    ensureObjectRuntime(ctx);
+    flushLateImportShifts(ctx, fctx);
+    nativeSuppressedIdx = ensureNativeSuppressedErrorCtor(ctx);
     for (let i = 0; i < 4; i++) {
       if (args.length > i) {
         const t = compileExpression(ctx, fctx, args[i]!, { kind: "externref" });
@@ -7431,58 +7366,6 @@ function compileCallExpression(
     ) {
       const openTargetCall = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, propAccess.name.text);
       if (openTargetCall !== undefined) return openTargetCall;
-    }
-
-    // (#2838 L6) Dynamic-`this` method-call dispatch. When the receiver is `this`
-    // and the runtime `this` is DYNAMIC (the fctx `this` local is not a concrete
-    // struct ref — e.g. inside a runtime-installed accessor getter whose body runs
-    // with `__current_this` set, NOT a real typed method) BUT TypeScript has
-    // contextually typed `this` as a concrete struct/object (acorn's getter `this`
-    // is typed as the descriptor literal `__anon_N`), the static method-dispatch
-    // arms below resolve the receiver against that WRONG nominal type. None match
-    // the real method, so the call silently degrades to a member-get-then-drop
-    // (returns null) and the method never runs — the acorn `this.currentVarScope()`
-    // wall (L6). Route such calls through `__extern_method_call`, which binds the
-    // receiver via `__current_this` and walks the runtime prototype chain
-    // (`_fnctorProtoLookup`) — exactly what the any/externref-receiver fallback
-    // already does for a correctly-`any`-typed receiver. The predicate is precise:
-    // `resolveThisStructName` (the fctx local's actual ref type) is undefined
-    // (dynamic), yet `resolveStructName` of the TS type IS a struct (the lie) — so
-    // a genuine typed class/fnctor method (truth AGREES → struct name defined) is
-    // never intercepted, and a truly-`any`/module-level `this` (no struct either
-    // way) is left to the existing fallback. JS-host only (the dynamic MOP path);
-    // the reflective `.call`/`.apply`/`.bind` forms keep their dedicated handlers.
-    {
-      const mName = propAccess.name.text;
-      // Fire ONLY for the descriptor-literal mistype (the acorn getter case): the
-      // fctx `this` is dynamic (not a concrete struct ref) AND TS typed it as an
-      // `__anon` descriptor object. A genuine typed method (concrete `this`) or a
-      // static-method `this` (TS = a real `typeof C` struct, needed for static /
-      // private dispatch) is NEVER intercepted — mirrors the L5 read-side rule.
-      const tsThisName =
-        propAccess.expression.kind === ts.SyntaxKind.ThisKeyword
-          ? resolveStructName(ctx, ctx.checker.getTypeAtLocation(propAccess.expression))
-          : undefined;
-      if (
-        !noJsHost(ctx) &&
-        propAccess.expression.kind === ts.SyntaxKind.ThisKeyword &&
-        // Private members (`this.#m()`) are brand-checked WasmGC elements the host
-        // MOP can never see — never route them dynamically (would break static/
-        // instance private-method dispatch). The acorn getter chain is all public.
-        !ts.isPrivateIdentifier(propAccess.name) &&
-        mName !== "call" &&
-        mName !== "apply" &&
-        mName !== "bind" &&
-        resolveThisStructName(ctx, fctx) === undefined &&
-        tsThisName !== undefined &&
-        // ONLY the descriptor-literal anon struct (`__anon_<n>`, the acorn getter's
-        // `this`), NEVER an anonymous CLASS struct (`__anonClass_<n>`) whose
-        // static/instance method dispatch must stay static (the #2325 regression).
-        tsThisName.startsWith("__anon_")
-      ) {
-        const dynThisResult = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, mName, expr);
-        if (dynThisResult !== null) return dynThisResult;
-      }
     }
 
     const standaloneRegExpExec = tryCompileStandaloneRegExpExec(ctx, fctx, expr, propAccess);

@@ -16,7 +16,6 @@ import { emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { isBigIntType, isBooleanType, isNumberType, isStringType, isSymbolType } from "../../checker/type-mapper.js";
-import { noJsHost } from "../js-errors.js";
 import { coerceType, pushDefaultValue } from "../type-coercion.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpIdentifier } from "../regexp-standalone.js";
 import { tryCompileBuiltinCtorAliasInvoke } from "../builtin-ctor-value-invoke.js"; // (#6713)
@@ -702,26 +701,24 @@ export function emitObjectCoercion(
   // already an object before the primitive wrapper arms and cross the raw
   // carrier directly, preserving identity (and the object's live methods).
   // Unknown/`any` values deliberately keep the existing fallback below.
-  if (noJsHost(ctx)) {
-    const argFact = ctx.oracle.typeFactOf(args[0]!);
-    if (isObjectLikeFact(argFact)) {
-      const argResult = compileExpression(ctx, fctx, args[0]!);
-      if (argResult === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-      } else if (argResult.kind !== "externref") {
-        if (
-          argResult.kind === "ref" ||
-          argResult.kind === "ref_null" ||
-          argResult.kind === "anyref" ||
-          argResult.kind === "eqref"
-        ) {
-          fctx.body.push({ op: "extern.convert_any" });
-        } else {
-          coerceType(ctx, fctx, argResult, { kind: "externref" });
-        }
+  const argFact = ctx.oracle.typeFactOf(args[0]!);
+  if (isObjectLikeFact(argFact)) {
+    const argResult = compileExpression(ctx, fctx, args[0]!);
+    if (argResult === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    } else if (argResult.kind !== "externref") {
+      if (
+        argResult.kind === "ref" ||
+        argResult.kind === "ref_null" ||
+        argResult.kind === "anyref" ||
+        argResult.kind === "eqref"
+      ) {
+        fctx.body.push({ op: "extern.convert_any" });
+      } else {
+        coerceType(ctx, fctx, argResult, { kind: "externref" });
       }
-      return { kind: "externref" };
     }
+    return { kind: "externref" };
   }
 
   // Object(primitive) — wrap into the corresponding wrapper object.
@@ -789,14 +786,14 @@ export function emitObjectCoercion(
     // Until #6651 the host-free lane had no arm at all and fell through to the
     // identity tail below, so `Object(Symbol())` evaluated to the symbol
     // itself and `typeof Object(Symbol())` read "symbol" (typeof/symbol.js).
-    const symCarrier: ValType = noJsHost(ctx) ? { kind: "externref" } : { kind: "i32" };
+    const symCarrier: ValType = { kind: "externref" };
     compileExpression(ctx, fctx, args[0]!, symCarrier);
     const newSymIdx = ensureLateImport(ctx, "__new_Symbol", [symCarrier], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     const finalSymIdx = ctx.funcMap.get("__new_Symbol") ?? newSymIdx;
     if (finalSymIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: finalSymIdx });
-      if (noJsHost(ctx)) linkSymbolWrapperPrototype(ctx, fctx);
+      linkSymbolWrapperPrototype(ctx, fctx);
       return { kind: "externref" };
     }
   }
@@ -807,14 +804,6 @@ export function emitObjectCoercion(
   // type is `any` (jest-get-type's isPrimitive). Standalone / no-JS-host keeps
   // the historical identity fallback — a native ToObject is separate work.
   compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
-  if (!noJsHost(ctx)) {
-    const toObjIdx = ensureLateImport(ctx, "__to_object", [{ kind: "externref" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
-    const finalToObjIdx = ctx.funcMap.get("__to_object") ?? toObjIdx;
-    if (finalToObjIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: finalToObjIdx });
-    }
-  }
   return { kind: "externref" };
 }
 

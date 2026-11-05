@@ -100,7 +100,10 @@ host implementation without changing the representation contract.
 Accelerator note: a selected accelerator may route a family (strings, RegExp,
 Date, Intl) through host imports classified `host-accelerator`; the native
 provider stays the fallback, and an accelerator is a compile error outside a
-JS environment. There is no `legacy-semantic` class any more (#6979 S7-b): an
+JS environment. The retired `host-assisted` profile (removed in #6979 S7-a;
+js2wasm 0.71.0 was the last release that accepted it) was the last
+configuration in which these cells lowered through `legacy-semantic` host
+imports. There is no `legacy-semantic` class any more (#6979 S7-b): an
 import outside adapters, capabilities, lifecycle hooks, selected accelerators
 and the three named #5385 `regime-gap` families classifies `unknown` and is a
 compile error on every WasmGC profile.

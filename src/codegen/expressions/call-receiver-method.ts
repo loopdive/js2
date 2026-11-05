@@ -50,7 +50,6 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { tryCompileHostStringPredicate } from "../host-string-prefix-suffix.js";
 import { tryCompileStringSymbolProtocolDispatch } from "../string-symbol-protocol.js"; // (#6651 B) §22.1.3 step 2
-import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { effectiveLocalCarrier } from "../analysis/mixed-assignment-carrier.js";
 import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
 import {
@@ -185,7 +184,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  noJsHost,
   resolveReceiverMethodClassName,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
@@ -286,6 +284,7 @@ import {
 } from "./calls.js";
 import { readEnv } from "../../env.js";
 import { emitSabMethodCall } from "../buffers/shared-array-buffer.js"; // (#7011)
+import { methodReceiverStaticType } from "../declarations/heterogeneous-scalar-var-widening.js"; // (#4495)
 
 /**
  * (#742 slice 4) Receiver-type method-call dispatch — extracted verbatim from
@@ -830,8 +829,7 @@ export function compileReceiverMethodCall(
     }
   }
 
-  // Check if receiver is an externref object
-  let receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
+  let receiverType = methodReceiverStaticType(ctx, fctx, propAccess); // (#4495)
   // (#2767) When the static type resolves NO nominal symbol and the receiver
   // is a bare identifier (the evolving-`any` `var d; d = new Date(0)` case),
   // recover the effective nominal type from the binding's assignments so the
@@ -863,7 +861,7 @@ export function compileReceiverMethodCall(
   // TextEncoder/TextDecoder under no-JS-host targets. These are standard
   // Web/Node APIs, but WASI/standalone cannot rely on env.TextEncoder_* host
   // imports. Lower the narrow UTF-8 surface natively.
-  if ((noJsHost(ctx) || ctx.strictNoHostImports) && ctx.nativeStrings) {
+  if (ctx.nativeStrings) {
     const recvSym =
       receiverType.getSymbol()?.name ??
       (ts.isNewExpression(propAccess.expression) && ts.isIdentifier(propAccess.expression.expression)
@@ -1002,7 +1000,6 @@ export function compileReceiverMethodCall(
   // (#7011) SharedArrayBuffer.prototype.slice / grow → the native provider.
   if (
     (propAccess.name.text === "slice" || propAccess.name.text === "grow") &&
-    noJsHost(ctx) &&
     receiverType.getSymbol()?.name === "SharedArrayBuffer"
   ) {
     const sab = emitSabMethodCall(ctx, fctx, propAccess.name.text, propAccess.expression, expr.arguments, (e) =>
@@ -1024,7 +1021,7 @@ export function compileReceiverMethodCall(
   // `$__resizable_ab` receiver actually resizes (checked at runtime inside the
   // emitter — a fixed buffer throws TypeError); reallocs the backing array,
   // swaps `data` + `length` in place so shared views observe the new length.
-  if (propAccess.name.text === "resize" && noJsHost(ctx)) {
+  if (propAccess.name.text === "resize") {
     const recvSym = receiverType.getSymbol()?.name;
     if (recvSym === "ArrayBuffer") {
       emitArrayBufferResize(ctx, fctx, propAccess.expression, expr.arguments, (e, hint) =>
@@ -1038,7 +1035,7 @@ export function compileReceiverMethodCall(
   // ArrayBufferCopyAndDetach helper. The operation itself is shared with the
   // reflective ArrayBuffer.prototype member closures; this surface only
   // compiles the receiver/argument expressions into that common ABI.
-  if (noJsHost(ctx) && (propAccess.name.text === "transfer" || propAccess.name.text === "transferToFixedLength")) {
+  if (propAccess.name.text === "transfer" || propAccess.name.text === "transferToFixedLength") {
     const recvSym = receiverType.getSymbol()?.name;
     if (recvSym === "ArrayBuffer") {
       const transferResult = emitArrayBufferTransfer(
@@ -3816,7 +3813,7 @@ export function compileReceiverMethodCall(
   if (lateFnctorCall !== undefined) return lateFnctorCall;
 
   // Generic dynamic fallback; the native tail reuses this receiver resolution.
-  const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
+  const recvTsType = methodReceiverStaticType(ctx, fctx, propAccess);
   // A mixed mutable local's physical carrier outranks its stale checker type.
   const recvWasm = effectiveLocalCarrier(fctx, propAccess.expression, resolveWasmType(ctx, recvTsType));
   {
@@ -3980,7 +3977,6 @@ export function compileReceiverMethodCall(
         // (#3177 slice 5) `%TypedArray%.of` / `%TypedArray%.from` STATIC methods
         // on a `$__ta_ctor` receiver VALUE — see `tryEmitTaStaticOfFrom`.
         if (
-          noJsHost(ctx) &&
           (ctx.taCtorTypeIdx >= 0 || ctx.builtinObjectGlobals.has("ctor:Int8Array")) &&
           (methodName === "of" || methodName === "from")
         ) {
@@ -4345,8 +4341,6 @@ export function compileReceiverMethodCall(
       // (#799 WI3) Generic host-delegated method call for any/externref receivers.
       // #965: resolve known built-in receivers through __get_builtin rather than null.
       {
-        observeHostDynamicMethodCallArity(ctx, expr.arguments);
-
         // #1888: standalone builds a native $ObjVec; fixed JS-host calls were
         // handled above. Larger/spread host calls and WASI use the array bridge.
         // #1472: the JS-array builders are not globally safe to alias.

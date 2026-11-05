@@ -419,7 +419,6 @@ export function createCodegenContext(
     linkNodeShims: targetProfile.target === "wasi" && linkedNamespaces.has("node:fs"),
     nodeFsReadSyncIdx: -1,
     nodeFsWriteSyncIdx: -1,
-    standalone: targetProfile.nativeRegime, // (#5385) the native semantic regime, not the environment
     ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
     standaloneScriptVarBindings: options?.standaloneScriptVarBindings,
     ...(options?.standaloneMicrotaskNotifyImport
@@ -579,14 +578,13 @@ export function createCodegenContext(
 }
 
 /**
- * (#6979 S7-b/S7-c) The host-semantic lane is gone and WASI joined the regime:
- * every WasmGC build lowers with the native semantic regime, so the regime flag
- * is true wherever src/codegen runs and every arm keyed on its absence is dead.
- * S7-c folds those arms away directory by directory. Fail loudly if a new
- * profile breaks the invariant instead of silently reviving them.
+ * (#6979 S7-c) The host-semantic lane is gone: every WasmGC build lowers with
+ * the native semantic regime, and src/codegen no longer carries a regime flag
+ * (`targetProfile.nativeRegime` is the single truth). Fail loudly if a new
+ * profile breaks the invariant instead of silently compiling host semantics.
  */
 function assertNativeRegime(ctx: CodegenContext, targetProfile: CompileTargetProfile): CodegenContext {
-  if (targetProfile.backend === "wasmgc" && !ctx.standalone) {
+  if (targetProfile.backend === "wasmgc" && !targetProfile.nativeRegime) {
     throw new Error(`#6979: WasmGC target '${targetProfile.target}' must lower with the native regime`);
   }
   return ctx;

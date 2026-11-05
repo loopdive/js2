@@ -117,7 +117,6 @@ export function fnIntrinsicSeedInstrs(
   bagLocalIdx: number,
   keyLocalIdx: number,
 ): Instr[] {
-  if (!ctx.standalone) return [];
   if (ctx.funcMap.get(FNINST_BAG_OWNS) === undefined) return [];
   if (ctx.funcMap.get("__builtinfn_get_meta") === undefined) return [];
   let seedIdx = ctx.funcMap.get(FNINST_SEED);

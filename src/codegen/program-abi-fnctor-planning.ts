@@ -189,7 +189,7 @@ function requireExactCarrierContract(
 }
 
 function requireExactStandaloneParserLayout(ctx: CodegenContext, observation: ProgramAbiFnctorObservation): void {
-  if (!ctx.standalone || ctx.wasi) return;
+  if (ctx.wasi) return;
   const input = observation.fields[0];
   const constructorField = observation.fields[1];
   // (#6951 G3) the construction-time [[Prototype]] snapshot sits between the
@@ -352,9 +352,6 @@ export class ProgramAbiFnctorRegistry {
     }
     if (observation.hiddenIdentity !== !this.ctx.wasi) {
       throw new Error("fnctor observation hidden-identity mode differs from the active ABI lane");
-    }
-    if (observation.resultIsExternref && !(this.ctx.standalone || this.ctx.wasi)) {
-      throw new Error("fnctor observation requests a foreign result outside the standalone/WASI ABI lane");
     }
     if (
       irCallableBindingKey(observation.constructorFunc.binding) !==

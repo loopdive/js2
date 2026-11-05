@@ -51,6 +51,7 @@ import { ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
 import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
 import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
+import { aliasedModuleGlobalVecType } from "./declarations/module-global-vec-alias.js"; // (#7166)
 import { isExpressionRootedAssignmentTarget } from "./declarations/expression-rooted-assignment-target.js"; // (#6651) `f(o).p = v`
 import {
   ASYNC_CPS_ENABLED,
@@ -69,7 +70,6 @@ import {
   emitPreparedAsyncFrameStateMachine,
 } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
-import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
 import { classHasUnresolvedComputedMemberName, classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 Step 1 / R2-3)
 import { classHasComputedKeyAssignment } from "./class-member-keys.js"; // (#6772 S5)
 import { standaloneCommaHeritage } from "./classes/class-heritage-comma.js"; // (#6772 S6)
@@ -95,10 +95,8 @@ import {
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { readsAmbientThisGlobal } from "./helpers/body-references-own-this.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
-import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
 import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
-import { noJsHost } from "./js-errors.js";
 import {
   addGeneratorImports,
   addIteratorImports,
@@ -145,11 +143,7 @@ import { emitNativeParseNumber } from "./parse-number-native.js";
 import { emitNativeUriDecode, emitNativeUriEncode } from "./uri-encoding-native.js";
 import { emitNativeEscape, emitNativeUnescape } from "./escape-native.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
-import {
-  isNativeGeneratorCandidate,
-  registerNativeGenerator,
-  sourceNeedsGeneratorHostImports,
-} from "./generators-native.js";
+import { isNativeGeneratorCandidate, registerNativeGenerator } from "./generators-native.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "./registry/error-types.js";
 import { addImport, addStringConstantGlobal, localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
 import {
@@ -194,12 +188,8 @@ import {
   planModuleClosurePreLift,
   PRELIFT_DISABLE_SEAM,
 } from "./declarations/module-init-closure-prelift.js";
-import {
-  MODULE_INIT_CHUNK_MAX_ENTRIES,
-  moduleInitChunksRequired,
-  planModuleInitChunks,
-  reserveModuleInitChunkHelperName,
-} from "./module-init-chunks.js";
+import { dispatchModuleInitChunks, emitModuleInitChunk } from "./module-init-chunks.js";
+import { moduleInitChunksRequired, planModuleInitChunks } from "../shared/module-init-chunk-plan.js";
 import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js"; // (#7106) GDI prologue
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
@@ -215,7 +205,6 @@ import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-
 import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
 import * as proxy from "./analysis/proxy-binding-escape.js";
-import { bindingMayReceiveHostCallable } from "./analysis/mixed-assignment-carrier.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
 export {
@@ -241,7 +230,6 @@ import { inferImplicitAnyParamType, resolveGenericCallSiteTypes } from "./declar
 import {
   collectInterface,
   collectObjectType,
-  isTypeScriptZeroCostSyntaxTypesSource,
   publishDeclaredShapesForDedup,
   resolveStructFieldTypes,
 } from "./declarations/struct-type-registration.js";
@@ -583,106 +571,6 @@ export function prepareIdentityPreservingStructuralParams(
   assertedStructuralParamsByContext.set(ctx, candidates);
 }
 
-const writtenPropertyParamsByFunction = new WeakMap<ts.FunctionDeclaration, ReadonlySet<ts.ParameterDeclaration>>();
-
-const assertedWrittenPropertyParamsByFunction = new WeakMap<
-  ts.FunctionDeclaration,
-  ReadonlySet<ts.ParameterDeclaration>
->();
-
-/** True when the function writes through a property rooted at this parameter. */
-function parameterHasPropertyWrite(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  stmt: ts.FunctionDeclaration,
-): boolean {
-  const cached = writtenPropertyParamsByFunction.get(stmt);
-  if (cached) return cached.has(param);
-
-  const parameters = new Set(stmt.parameters);
-  const written = new Set<ts.ParameterDeclaration>();
-  const recordRoot = (expression: ts.Expression): void => {
-    const root = getAssignmentRootIdentifierNode(expression);
-    if (!root) return;
-    const declaration = ctx.oracle.valueDeclarationOf(root);
-    if (declaration && ts.isParameter(declaration) && parameters.has(declaration)) written.add(declaration);
-  };
-  const visit = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
-      recordRoot(node.left);
-    } else if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-    ) {
-      recordRoot(node.operand);
-    } else if (ts.isDeleteExpression(node)) {
-      recordRoot(node.expression);
-    }
-    forEachChild(node, visit);
-  };
-  if (stmt.body) forEachChild(stmt.body, visit);
-  writtenPropertyParamsByFunction.set(stmt, written);
-  return written.has(param);
-}
-
-/** True when an erased assertion occurs on a property-write path rooted at this parameter. */
-function parameterHasAssertedPropertyWrite(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  stmt: ts.FunctionDeclaration,
-): boolean {
-  const cached = assertedWrittenPropertyParamsByFunction.get(stmt);
-  if (cached) return cached.has(param);
-
-  const parameters = new Set(stmt.parameters);
-  const written = new Set<ts.ParameterDeclaration>();
-  const recordRoot = (expression: ts.Expression): void => {
-    let current = expression;
-    let sawProperty = false;
-    let sawAssertion = false;
-    while (true) {
-      if (
-        ts.isParenthesizedExpression(current) ||
-        ts.isNonNullExpression(current) ||
-        ts.isSatisfiesExpression(current)
-      ) {
-        current = current.expression;
-        continue;
-      }
-      if (ts.isAsExpression(current) || ts.isTypeAssertionExpression(current)) {
-        sawAssertion = true;
-        current = current.expression;
-        continue;
-      }
-      if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
-        sawProperty = true;
-        current = current.expression;
-        continue;
-      }
-      break;
-    }
-    if (!sawProperty || !sawAssertion || !ts.isIdentifier(current)) return;
-    const declaration = ctx.oracle.valueDeclarationOf(current);
-    if (declaration && ts.isParameter(declaration) && parameters.has(declaration)) written.add(declaration);
-  };
-  const visit = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
-      recordRoot(node.left);
-    } else if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-    ) {
-      recordRoot(node.operand);
-    } else if (ts.isDeleteExpression(node)) {
-      recordRoot(node.expression);
-    }
-    forEachChild(node, visit);
-  };
-  if (stmt.body) forEachChild(stmt.body, visit);
-  assertedWrittenPropertyParamsByFunction.set(stmt, written);
-  return written.has(param);
-}
-
 function directFunctionTypeParameter(
   param: ts.ParameterDeclaration,
   stmt: ts.FunctionDeclaration,
@@ -697,19 +585,6 @@ function directFunctionTypeParameter(
   }
   const typeParameterName = param.type.typeName.text;
   return stmt.typeParameters?.find((candidate) => candidate.name.text === typeParameterName);
-}
-
-/** Whether this is exactly a function-owned type parameter constrained to an object carrier. */
-function isDirectObjectTypeParameter(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  stmt: ts.FunctionDeclaration,
-  paramType: ts.Type,
-): boolean {
-  const typeParameter = directFunctionTypeParameter(param, stmt);
-  if (!typeParameter || !(paramType.flags & ts.TypeFlags.TypeParameter)) return false;
-  const constraint = ctx.checker.getBaseConstraintOfType(paramType);
-  return constraint !== undefined && (constraint.flags & ts.TypeFlags.Object) !== 0;
 }
 
 /** Parameter index when a generic function returns one direct type parameter unchanged by contract. */
@@ -733,48 +608,6 @@ function directIdentityReturnParamIndex(stmt: ts.FunctionDeclaration): number | 
   return index >= 0 ? index : undefined;
 }
 
-interface AssertedMutableStructuralParamCarrier {
-  open: true;
-  compoundStructDispatch?: true;
-}
-
-function typeScriptNodeCompoundDispatchConstraint(ctx: CodegenContext, paramType: ts.Type): boolean {
-  const constraint = ctx.checker.getBaseConstraintOfType(paramType);
-  const symbol = constraint?.getSymbol();
-  return (
-    symbol?.name === "Node" &&
-    symbol.declarations?.some(
-      (declaration) =>
-        ts.isInterfaceDeclaration(declaration) && isTypeScriptZeroCostSyntaxTypesSource(declaration.getSourceFile()),
-    ) === true
-  );
-}
-
-function assertedMutableStructuralParamCarrier(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  index: number,
-  stmt: ts.FunctionDeclaration,
-  wasmType: ValType,
-  paramType: ts.Type,
-): AssertedMutableStructuralParamCarrier | undefined {
-  if (!stmt.body || !ts.isIdentifier(param.name) || noJsHost(ctx)) return undefined;
-
-  const hasDoublyAssertedCall =
-    (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
-    parameterHasPropertyWrite(ctx, param, stmt) &&
-    assertedStructuralParamsByContext.get(ctx)?.get(stmt)?.has(index);
-  const hasGenericAssertedWrite =
-    isDirectObjectTypeParameter(ctx, param, stmt, paramType) && parameterHasAssertedPropertyWrite(ctx, param, stmt);
-  if (!hasDoublyAssertedCall && !hasGenericAssertedWrite) return undefined;
-  return {
-    open: true,
-    ...(hasGenericAssertedWrite && typeScriptNodeCompoundDispatchConstraint(ctx, paramType)
-      ? { compoundStructDispatch: true as const }
-      : {}),
-  };
-}
-
 function preserveIdentityForStructuralParam(
   ctx: CodegenContext,
   param: ts.ParameterDeclaration,
@@ -783,10 +616,7 @@ function preserveIdentityForStructuralParam(
   wasmType: ValType,
   paramType: ts.Type,
 ): ValType {
-  const carrier = assertedMutableStructuralParamCarrier(ctx, param, index, stmt, wasmType, paramType);
-  if (!carrier) return wasmType;
-  markIdentityPreservingStructuralParam(ctx, param, carrier);
-  return { kind: "externref" };
+  return wasmType;
 }
 
 // A call-site-inferred JavaScript parameter starts life as one nominal WasmGC
@@ -1163,21 +993,8 @@ function functionReturnsHostObjectLiteralCarrier(ctx: CodegenContext, stmt: ts.F
   return result;
 }
 
-/**
- * An untyped wrapper around an extracted host builtin returns a host value, not
- * the nominal anonymous struct TypeScript infers from the builtin signature.
- * Keep that value on the externref carrier across the wrapper's Wasm ABI.
- */
-function functionReturnsExtractedHostCall(ctx: CodegenContext, stmt: ts.FunctionDeclaration): boolean {
-  return false;
-}
-
 function functionReturnsReferenceBoundaryCarrier(ctx: CodegenContext, stmt: ts.FunctionDeclaration): boolean {
-  return (
-    functionReturnsDynamicObjectCarrier(stmt) ||
-    functionReturnsHostObjectLiteralCarrier(ctx, stmt) ||
-    functionReturnsExtractedHostCall(ctx, stmt)
-  );
+  return functionReturnsDynamicObjectCarrier(stmt) || functionReturnsHostObjectLiteralCarrier(ctx, stmt);
 }
 
 const withScopedReturnByFunction = new WeakMap<ts.FunctionDeclaration, boolean>();
@@ -1293,21 +1110,6 @@ export function functionReturnsThroughWithScope(
 }
 
 /**
- * A JSDoc `Array` can still be used as an ordinary JavaScript object. Native
- * vecs preserve indexed elements, but cannot preserve named expando properties
- * across a function boundary. Keep parameters that enumerate or dynamically
- * read those properties on the open externref carrier in JS-host builds.
- */
-function jsArrayParamNeedsOpenObjectCarrier(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  stmt: ts.FunctionDeclaration,
-  wasmType: ValType,
-): boolean {
-  return false;
-}
-
-/**
  * JavaScript's optional-parameter spellings (`x?: T`, `@param {T=} x`, and
  * `@param {T} [x]`) all admit a call that supplies no value. A native scalar
  * slot cannot represent that value: the generic missing-argument pad for an
@@ -1375,9 +1177,6 @@ function lowerParamType(
   if (nativeParam === null) {
     wasmType = widenUndefinedDefaultParamSlot(param, wasmType);
     wasmType = preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
-  }
-  if (jsArrayParamNeedsOpenObjectCarrier(ctx, param, stmt, wasmType)) {
-    wasmType = { kind: "externref" };
   }
   // If the parameter has a default value and is a non-null ref type, widen to
   // ref_null so callers can pass ref.null as a sentinel for "use default".
@@ -1629,19 +1428,7 @@ function resolveGenericDeclarationCallSiteTypes(
     ) {
       return { kind: "externref" } as const;
     }
-    if (
-      !param ||
-      !stmt.body ||
-      !ts.isIdentifier(param.name) ||
-      noJsHost(ctx) ||
-      !directFunctionTypeParameter(param, stmt) ||
-      !parameterHasAssertedPropertyWrite(ctx, param, stmt) ||
-      nativeTypeOfDeclaration(ctx.checker, param) !== null
-    ) {
-      return wasmType;
-    }
-    const paramType = ctx.checker.getTypeAtLocation(param);
-    return preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
+    return wasmType;
   });
   const identityReturnParamIndex = directIdentityReturnParamIndex(stmt);
   const identityCarrier = identityReturnParamIndex === undefined ? undefined : params[identityReturnParamIndex];
@@ -1737,7 +1524,7 @@ function registerBodylessFunctionDeclaration(
           lowerParamType(ctx, param, name, i, stmt, sourceFile),
       );
     }
-    if (noJsHost(ctx)) registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
+    registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
     const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
     results = nativeGenerator ? [{ kind: "ref", typeIdx: nativeGenerator.stateTypeIdx }] : [{ kind: "externref" }];
   } else if (resolved) {
@@ -2378,10 +2165,6 @@ function topLevelClassInheritsRuntimeKeys(ctx: CodegenContext, statement: ts.Cla
 }
 
 function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, statement: ts.Statement): boolean {
-  if (shouldCollectTopLevelClassForRuntimeHeritage(ctx, statement)) {
-    ctx.moduleInitStatements.push(statement);
-    return true;
-  }
   // (#5195 Step 1) A class with a METHOD (or an accessor in a body this
   // collector's accessor-only shape test declines) whose computed key does not
   // fold has ClassDefinitionEvaluation work of its own: the key expression must
@@ -2909,7 +2692,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
               lowerParamType(ctx, param, name, i, stmt, sourceFile),
           );
         }
-        if (noJsHost(ctx)) registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
+        registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
         const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
         results = nativeGenerator ? [{ kind: "ref", typeIdx: nativeGenerator.stateTypeIdx }] : [{ kind: "externref" }]; // JS-host fallback returns a Generator object
       } else if (resolved) {
@@ -3312,7 +3095,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // otherwise local→global sync either loses identity or emits a
         // mismatched global.set.
         const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
-        registerModuleGlobal(ctx, element.name.text, wasmType);
+        registerModuleGlobal(ctx, element.name.text, wasmType, element);
         if (lexical && ctx.moduleGlobals.has(element.name.text)) registerModulePatternTdzGlobal(ctx, element);
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         registerBindingNames(element.name, lexical);
@@ -3477,13 +3260,6 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     }
     if (proxyOrTransferredResultNeedsExternref(ctx, decl)) return { kind: "externref" };
     if (bindingHoldsStandaloneClassProto(ctx, decl)) return { kind: "externref" }; // (#7053)
-    // A host builtin static read (`Date.now`, `Object.hasOwn`, …) is a genuine
-    // JS function, not a Wasm closure struct.  Conditional/short-circuit
-    // initializers can select either that externref or a compiled closure, so
-    // retain the common externref carrier and let call dispatch discriminate at
-    // runtime.  This is the module-global twin of the local raw-externref path
-    // in statements/variables.ts and is deliberately host-only.
-    if (bindingMayReceiveHostCallable(ctx, decl)) return { kind: "externref" };
     // A source-file `var` is initialized to `undefined` before its initializer
     // runs. When that value is actually observed, a checker-inferred primitive
     // slot would expose the Wasm zero value instead (`false`, `0`, or an empty
@@ -3664,6 +3440,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // its vec slot but widens the ELEMENT type — a boxed carrier would preserve
     // `x[0]`'s identity and lose `x.length`.
     return (
+      aliasedModuleGlobalVecType(ctx, decl, (d) => moduleGlobalWasmType(d, moduleVarDeclType(d))) ?? // (#7166) `const r = keys.sort()` shares `keys`' slot
       rebindWidenedArrayVecType(ctx, sourceFile, decl) ??
       heterogeneousWidenedModuleGlobalType(ctx, sourceFile, decl) ??
       // (#4491 wave-5 T4) `var x = true; … var x = function () {}` is ONE
@@ -5929,43 +5706,6 @@ export function compileDeclarations(
     };
   }
 
-  /**
-   * Keep the public initializer a compact dispatcher even for a graph with so
-   * many chunks that one direct call per chunk would itself become a large
-   * Cranelift body. Every intermediate node stays private and `[] -> []`.
-   */
-  function appendModuleInitChunkDispatch(
-    initFctx: FunctionContext,
-    initialHandles: readonly FuncHandle[],
-    helperTypeIdx: number,
-  ): void {
-    let handles = [...initialHandles];
-    let level = 0;
-    let ordinal = 0;
-    while (handles.length > MODULE_INIT_CHUNK_MAX_ENTRIES) {
-      const nextLevel: FuncHandle[] = [];
-      for (let start = 0; start < handles.length; start += MODULE_INIT_CHUNK_MAX_ENTRIES) {
-        const body: Instr[] = handles
-          .slice(start, start + MODULE_INIT_CHUNK_MAX_ENTRIES)
-          .map((funcIdx) => ({ op: "call", funcIdx }));
-        // Build the full body before minting the handle. This keeps the helper
-        // safe even if a future dispatch-body extension emits dependencies.
-        const funcIdx = mintDefinedFunc(ctx);
-        pushDefinedFunc(ctx, funcIdx, {
-          name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_dispatch_${level}_${ordinal++}`),
-          typeIdx: helperTypeIdx,
-          locals: [],
-          body,
-          exported: false,
-        });
-        nextLevel.push(funcIdx);
-      }
-      handles = nextLevel;
-      level++;
-    }
-    for (const funcIdx of handles) initFctx.body.push({ op: "call", funcIdx });
-  }
-
   function compileModuleInitBody(
     targetFctx?: FunctionContext,
     includeModuleStatements = true,
@@ -6032,18 +5772,11 @@ export function compileDeclarations(
           // entries above. Only then mint and push this helper's stable handle,
           // so no late helper registration can steal its function slot.
           chunkTypeIdx ??= addFuncType(ctx, [], [], "__module_init_chunk_type");
-          const funcIdx = mintDefinedFunc(ctx);
-          pushDefinedFunc(ctx, funcIdx, {
-            name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_${chunkOrdinal++}`),
-            typeIdx: chunkTypeIdx,
-            locals: chunkFctx.locals,
-            body: chunkFctx.body,
-            exported: false,
-          });
-          chunkHandles.push(funcIdx);
+          const funcIdx = emitModuleInitChunk(ctx, chunkOrdinal++, chunkTypeIdx, chunkFctx);
+          if (funcIdx !== undefined) chunkHandles.push(funcIdx);
         }
         ctx.currentFunc = initFctx;
-        if (chunkTypeIdx !== undefined) appendModuleInitChunkDispatch(initFctx, chunkHandles, chunkTypeIdx);
+        if (chunkTypeIdx !== undefined) dispatchModuleInitChunks(ctx, initFctx.body, chunkHandles, chunkTypeIdx);
       } finally {
         if (!outerBodyWasLive) ctx.liveBodies.delete(initFctx.body);
       }

@@ -153,7 +153,7 @@ export function fillClassObjectExpandoArms(ctx: CodegenContext): void {
   // (#6767) The DECLARED-static twin of these cells, filled first so a
   // module-scope assignment's arm (prepended below) answers ahead of it.
   fillClassStaticReflectiveArms(ctx);
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
+  if (ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
   const cells = collectCells(ctx);
   if (cells.size === 0) return;
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");

@@ -1,47 +1,142 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * Deterministic source-level partitioning for large module initializers.
- *
- * A module initializer cannot safely be split by cutting its emitted Wasm
- * instruction array: a cut can bisect a structured control-flow instruction,
- * detach a `try_table` handler, or accidentally move a function-local carrier
- * across a new Wasm call boundary.  This planner therefore deals exclusively
- * in complete source-order entries.  The declaration emitter gives every
- * planned group a fresh `FunctionContext`, retaining `__module_init` as the
- * compile-time context name while materializing the group as an unexported
- * `[] -> []` helper.
- *
- * The entry cap is the hard, deterministic bound.  The AST-node budget is a
- * second deterministic proxy for emitted instruction volume; a single large
- * entry deliberately remains whole because preserving its control-flow and
- * lexical lifetime is more important than an unsafe split.
+ * Codegen side of module-initializer chunking.  The planner itself (which
+ * complete source entries share one helper, and the dispatch-tree shape) is
+ * `src/shared/module-init-chunk-plan.ts`, shared with the IR lowering.  The
+ * declaration emitter gives every planned group a fresh `FunctionContext`,
+ * retaining `__module_init` as the compile-time context name while
+ * materializing the group as an unexported `[] -> []` helper.
  */
-import { forEachChild, ts } from "../ts-api.js";
+import { ts } from "../ts-api.js";
+import type { FuncHandle, Instr, LocalDef } from "../ir/types.js";
+import {
+  MODULE_INIT_CHUNK_FUNCTION_PREFIX,
+  planModuleInitChunkDispatch,
+  reserveModuleInitChunkHelperName,
+} from "../shared/module-init-chunk-plan.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 
-/** Maximum number of complete top-level initialization entries in one helper. */
-export const MODULE_INIT_CHUNK_MAX_ENTRIES = 16;
+/** Mint and push one private `[] -> []` helper; returns its stable handle. */
+function pushModuleInitChunkHelper(
+  ctx: CodegenContext,
+  name: string,
+  typeIdx: number,
+  locals: LocalDef[],
+  body: Instr[],
+): FuncHandle {
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: reserveModuleInitChunkHelperName(ctx, name),
+    typeIdx,
+    locals,
+    body,
+    exported: false,
+  });
+  return funcIdx;
+}
 
-/** Conservative source-level proxy for generated instruction volume. */
-export const MODULE_INIT_CHUNK_MAX_AST_NODES = 1024;
+/**
+ * Keep the public initializer a compact dispatcher even for a graph with so
+ * many chunks that one direct call per chunk would itself become a large
+ * Cranelift body. Every intermediate node stays private and `[] -> []`.
+ */
+function moduleInitChunkDispatchCalls(ctx: CodegenContext, handles: readonly FuncHandle[], typeIdx: number): Instr[] {
+  const roots = planModuleInitChunkDispatch(handles, (members, level, ordinal) =>
+    pushModuleInitChunkHelper(
+      ctx,
+      `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}dispatch_${level}_${ordinal}`,
+      typeIdx,
+      [],
+      members.map((funcIdx): Instr => ({ op: "call", funcIdx })),
+    ),
+  );
+  return roots.map((funcIdx): Instr => ({ op: "call", funcIdx }));
+}
 
-/** Private function-name prefix reserved for module-init chunk implementation. */
-export const MODULE_INIT_CHUNK_FUNCTION_PREFIX = "__module_init_chunk_";
+/**
+ * (#7106) The one seam between legacy chunk emission and an IR-claimed
+ * initializer. The IR overlay replaces the initializer after legacy compiled
+ * it, so the chunks legacy compiles meanwhile are held instead of emitted:
+ * an installed IR initializer leaves them dead, while a demoted one needs them
+ * as its bounded legacy body (`releaseModuleInitChunks`).
+ */
+export function holdModuleInitChunksForIr(ctx: CodegenContext): void {
+  heldChunks.set(ctx, { chunks: [] });
+}
 
-/** Reserve a WAT-visible private helper name without claiming user spellings. */
-export function reserveModuleInitChunkHelperName(ctx: CodegenContext, preferred: string): string {
-  let name = preferred;
-  let duplicate = 0;
-  while (
-    ctx.moduleInitChunkHelperNames.has(name) ||
-    ctx.funcMap.has(name) ||
-    ctx.mod.functions.some((func) => func.name === name) ||
-    ctx.mod.imports.some((entry) => entry.desc.kind === "func" && entry.name === name)
-  ) {
-    name = `${preferred}_${++duplicate}`;
+interface HeldModuleInitChunks {
+  readonly chunks: { readonly locals: LocalDef[]; readonly body: Instr[] }[];
+  dispatch?: { readonly initBody: Instr[]; readonly placeholder: Instr; readonly typeIdx: number };
+}
+
+const heldChunks = new WeakMap<CodegenContext, HeldModuleInitChunks>();
+
+/** Emit one compiled chunk as a private helper, or hold it for the IR outcome. */
+export function emitModuleInitChunk(
+  ctx: CodegenContext,
+  ordinal: number,
+  typeIdx: number,
+  chunk: FunctionContext,
+): FuncHandle | undefined {
+  const held = heldChunks.get(ctx);
+  if (!held) {
+    return pushModuleInitChunkHelper(
+      ctx,
+      `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}${ordinal}`,
+      typeIdx,
+      chunk.locals,
+      chunk.body,
+    );
   }
-  ctx.moduleInitChunkHelperNames.add(name);
-  return name;
+  // Held bodies stay visible to late index repairs until they are emitted or dropped.
+  ctx.liveBodies.add(chunk.body);
+  held.chunks.push({ locals: chunk.locals, body: chunk.body });
+  return undefined;
+}
+
+/**
+ * Call the emitted chunks from the initializer. A held set instead reserves
+ * the dispatch's place with a `nop` that `releaseModuleInitChunks` replaces.
+ */
+export function dispatchModuleInitChunks(
+  ctx: CodegenContext,
+  initBody: Instr[],
+  handles: readonly FuncHandle[],
+  typeIdx: number,
+): void {
+  const held = heldChunks.get(ctx);
+  if (!held) {
+    initBody.push(...moduleInitChunkDispatchCalls(ctx, handles, typeIdx));
+    return;
+  }
+  const placeholder: Instr = { op: "nop" };
+  initBody.push(placeholder);
+  held.dispatch = { initBody, placeholder, typeIdx };
+}
+
+/**
+ * After the IR overlay: drop the held chunks when the IR replaced the legacy
+ * initializer body, else emit them and their dispatch under the body it kept.
+ */
+export function releaseModuleInitChunks(ctx: CodegenContext): void {
+  const held = heldChunks.get(ctx);
+  if (!held) return;
+  heldChunks.delete(ctx);
+  for (const chunk of held.chunks) ctx.liveBodies.delete(chunk.body);
+  const dispatch = held.dispatch;
+  if (!dispatch || !ctx.mod.functions.some((func) => func.body === dispatch.initBody)) return;
+  const handles = held.chunks.map((chunk, ordinal) =>
+    pushModuleInitChunkHelper(
+      ctx,
+      `${MODULE_INIT_CHUNK_FUNCTION_PREFIX}${ordinal}`,
+      dispatch.typeIdx,
+      chunk.locals,
+      chunk.body,
+    ),
+  );
+  const calls = moduleInitChunkDispatchCalls(ctx, handles, dispatch.typeIdx);
+  dispatch.initBody.splice(dispatch.initBody.indexOf(dispatch.placeholder), 1, ...calls);
 }
 
 export function isModuleInitChunkFunctionContext(fctx: FunctionContext): boolean {
@@ -60,64 +155,4 @@ export function chunkDeclarationIsFunctionLocal(stmt: ts.Node): boolean {
     if (ts.isFunctionLike(node) || ts.isClassStaticBlockDeclaration(node)) return true;
   }
   return false;
-}
-
-/** Minimal shape shared by statement and declaration-static init entries. */
-export interface ModuleInitChunkEntry {
-  readonly node: ts.Node;
-}
-
-/** Immutable AST nodes can be replanned by IR admission and final emission. */
-const sourceNodeWeights = new WeakMap<ts.Node, number>();
-
-/** Count AST nodes iteratively so a pathological source tree cannot grow the JS stack. */
-function sourceNodeWeight(root: ts.Node): number {
-  const cached = sourceNodeWeights.get(root);
-  if (cached !== undefined) return cached;
-  let weight = 0;
-  const pending: ts.Node[] = [root];
-  while (pending.length > 0) {
-    const node = pending.pop()!;
-    weight++;
-    // `forEachChild` treats a non-undefined callback result as an early
-    // traversal result. Array#push returns a number, so keep this callback
-    // explicitly void or only the first child subtree is counted.
-    forEachChild(node, (child) => {
-      pending.push(child);
-    });
-  }
-  sourceNodeWeights.set(root, weight);
-  return weight;
-}
-
-/**
- * Group source-order entries without ever splitting one entry.  The returned
- * groups retain the input order and are stable across runs for the same AST.
- */
-export function planModuleInitChunks<T extends ModuleInitChunkEntry>(entries: readonly T[]): readonly (readonly T[])[] {
-  const chunks: T[][] = [];
-  let chunk: T[] = [];
-  let chunkWeight = 0;
-
-  for (const entry of entries) {
-    const entryWeight = sourceNodeWeight(entry.node);
-    const startsNewChunk =
-      chunk.length > 0 &&
-      (chunk.length >= MODULE_INIT_CHUNK_MAX_ENTRIES || chunkWeight + entryWeight > MODULE_INIT_CHUNK_MAX_AST_NODES);
-    if (startsNewChunk) {
-      chunks.push(chunk);
-      chunk = [];
-      chunkWeight = 0;
-    }
-    chunk.push(entry);
-    chunkWeight += entryWeight;
-  }
-
-  if (chunk.length > 0) chunks.push(chunk);
-  return chunks;
-}
-
-/** Whether complete source entries need more than one private initializer body. */
-export function moduleInitChunksRequired(entries: readonly ModuleInitChunkEntry[]): boolean {
-  return planModuleInitChunks(entries).length > 1;
 }

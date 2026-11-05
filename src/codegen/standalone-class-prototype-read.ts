@@ -128,7 +128,6 @@ function collectEntries(ctx: CodegenContext): PrototypeReadEntry[] {
  * object singleton.
  */
 export function fillClassPrototypeReadArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   if (ctx.standaloneRuntimeKeyClassProtos.size === 0) return;
   const externGetFn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   if (!externGetFn) return;
@@ -251,7 +250,6 @@ export function recordStandaloneDynamicPrototypeRead(
   receiverWasm: ValType,
   propName: string,
 ): void {
-  if (!ctx.standalone) return;
   if (propName !== "prototype") return;
   if (receiverWasm.kind !== "externref") return;
   recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);

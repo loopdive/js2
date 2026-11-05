@@ -30,7 +30,7 @@
  *     reported; only the plain-method spelling needs this.
  *
  * Both answers are target-independent — §15.7 says nothing about a host — so
- * neither is gated on `ctx.standalone`; the host lane was wrong in the same
+ * neither is gated on the regime flag; the host lane was wrong in the same
  * direction and gains the same rows.
  */
 import { ts } from "../ts-api.js";
