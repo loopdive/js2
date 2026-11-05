@@ -32,6 +32,7 @@ import type { PreparedComponentModuleCallableAliasDescriptor } from "./prepared-
 import type { FuncHandle, Import, ValType } from "./types.js";
 import { readEnv } from "../env.js";
 import type { PreparedDynamicBoxObserver } from "./prepared-dynamic-support.js";
+import { compilerTimerShimTerminalUnitIds } from "./injected-timer-shim.js";
 
 interface CompilerTimerShimEntry extends PreparedComponentArtifactEntry {
   readonly fn: IrFunction;
@@ -78,20 +79,6 @@ export interface CompilerTimerShimLoweringBoundary<Entry extends { readonly term
 
 export { resolveIrDynamicCarrierType };
 export type { CodegenContext };
-
-export function compilerTimerShimTerminalUnitIds(inventory: IrUnitInventory): ReadonlySet<IrUnitId> {
-  return new Set(
-    inventory.terminalUnits
-      .filter(
-        (terminal) =>
-          terminal.kind === "synthetic-support" &&
-          terminal.syntheticRole === "compiler-unit:timer-shim:set-timeout" &&
-          terminal.terminalOwnerId === terminal.id &&
-          terminal.lexicalOwnerId === null,
-      )
-      .map((terminal) => terminal.id),
-  );
-}
 
 function isCompilerTimerShimTerminalEntry(
   entry: CompilerTimerShimEntry,

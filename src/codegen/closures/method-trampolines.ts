@@ -657,8 +657,8 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     //     accepts `externref`) — widening can never invalidate a caller that
     //     already matched, because every dispatch arm is `ref.test`-guarded and
     //     a miss falls through to the next arm;
-    //   * only when that wider wrapper ALREADY exists (`peek…`), so the value
-    //     stays dispatchable at call sites already emitted;
+    //   * only when that wider wrapper ALREADY exists (`peek…`) and has real
+    //     allocation demand, so earlier call sites have a dispatch arm;
     //   * result type untouched (a result drift is handled below as before).
     let wrapperUserParams = t.wrapperUserParams;
     let wrapperResult = t.wrapperResult;
@@ -672,7 +672,7 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     if (narrowedParam && wrapperResult?.kind === methodResult?.kind) {
       const widened = peekFuncRefWrapperTypes(ctx, methodUserParams, sig.results);
       const func = widened ? ctx.mod.functions.find((f) => f.body === t.trampolineBody) : undefined;
-      if (widened && func) {
+      if (widened && ctx.closureInfoByTypeIdx.has(widened.structTypeIdx) && func) {
         func.typeIdx = widened.funcTypeIdx;
         wrapperUserParams = methodUserParams;
         wrapperResult = methodResult;
@@ -1047,7 +1047,12 @@ function ensureSourceGetterReceiverSingleton(
   },
 ): FuncClosureSingleton {
   const family = prepareSourceGetterReceiverFamily(ctx);
-  noteFunctionValueInhabitant(ctx, family.bareInfoTypeIdx, source.declaration);
+  // This singleton is an actual zero-argument SOURCE value, unlike the
+  // recognition-only family reservation in modules with no local getters.
+  const bare = getOrCreateFuncRefWrapperTypes(ctx, [], [{ kind: "externref" }]);
+  if (!bare || bare.structTypeIdx !== family.bareInfoTypeIdx || bare.liftedFuncTypeIdx !== family.bareFuncTypeIdx)
+    throw new Error("SOURCE getter singleton lost its exact ordinary bare entry");
+  noteFunctionValueInhabitant(ctx, bare.structTypeIdx, source.declaration);
   const meta = fnMetaOfMember(source.declaration);
   if (!meta || meta.length !== 0) throw new Error("SOURCE getter has no exact source name/zero arity metadata");
   const slot = fnMetaSlotOfMeta(ctx, meta);

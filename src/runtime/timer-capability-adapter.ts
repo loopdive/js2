@@ -8,6 +8,8 @@ type TimerCapabilityIntent = Extract<ImportIntent, { type: "timer_set" | "timer_
 export interface TimerCapabilityAdapterContext {
   deps?: Record<string, any>;
   wrapWasmClosure(value: unknown, arity: number, boundary?: "timer"): ((...args: any[]) => any) | null;
+  marshalTimerValueToHost?(value: unknown): unknown;
+  marshalTimerHandleFromHost?(handle: unknown): unknown;
 }
 
 let warnedTimerCallbackUnresolvable = false;
@@ -49,13 +51,15 @@ export function resolveTimerCapabilityImport(
         warnTimerCallbackUnresolvable(intent.mode);
         return 0;
       }
-      return host(callable, Number(delay));
+      const hostDelay = context.marshalTimerValueToHost ? context.marshalTimerValueToHost(delay) : delay;
+      const handle = host(callable, Number(hostDelay));
+      return context.marshalTimerHandleFromHost ? context.marshalTimerHandleFromHost(handle) : handle;
     };
   }
 
   return (handle: unknown) => {
     try {
-      host(handle);
+      host(context.marshalTimerValueToHost ? context.marshalTimerValueToHost(handle) : handle);
     } catch {
       // Browsers ignore invalid timer handles; retain that behavior.
     }

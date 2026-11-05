@@ -224,6 +224,7 @@ import { bindingHoldsStandaloneClassProto } from "./class-proto-object.js"; // (
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
+import { validateNativeNumberBoundaryExports } from "./native-promise-number-boundary.js";
 import { publishStandaloneLinkBoundaryExports } from "./standalone-link-boundary.js"; // (#5383 S2d)
 import { finalizeStandaloneLinkReversePeer } from "./standalone-link-reverse-peer.js"; // (#5383 S17)
 import { importStandaloneLinkErrorCtorCells } from "./standalone-link-error-ctor-cells.js"; // (#6723 D4)
@@ -7201,6 +7202,8 @@ export function generateModule(
     // closure alive and all type references are remapped together.
     emitSharedRuntimeProviderExports(ctx);
 
+    validateNativeNumberBoundaryExports(ctx);
+
     // Dead import and type elimination pass
     // (#4645) Every whole-module finalize pass below is named so a pathological
     // compile is attributable: before this, `module-init-pass2` was the last
@@ -11946,6 +11949,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // #2527 — same provider publication point as the single-source pipeline.
     profilePhase("emit-shared-runtime-provider-exports", () => emitSharedRuntimeProviderExports(ctx));
+
+    validateNativeNumberBoundaryExports(ctx);
 
     // Dead import and type elimination pass
     // (#4645) Module-scale marker, then main's phase names/signatures.

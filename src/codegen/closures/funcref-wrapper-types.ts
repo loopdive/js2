@@ -18,9 +18,19 @@ import { closureArityField, closureBagField } from "./closure-header-layout.js";
 import { createSignatureWrapperType, type ClosureAllocationMode } from "../../runtime/wasmgc/values/closure-layouts.js";
 export type { ClosureAllocationMode } from "../../runtime/wasmgc/values/closure-layouts.js";
 
-function observeAllocation(info: ClosureInfo, mode: ClosureAllocationMode): void {
-  if (mode === "ordinary") info.hostOneShotOnly = false;
-  else if (mode === "host-one-shot" && info.hostOneShotOnly === undefined) info.hostOneShotOnly = true;
+/** Register actual allocation demand; support reservation keeps metadata only. */
+export function observeClosureAllocation(ctx: CodegenContext, info: ClosureInfo, mode: ClosureAllocationMode): void {
+  if (mode === "support") return;
+  const registered = ctx.closureInfoByTypeIdx.get(info.structTypeIdx);
+  if (!registered) ctx.closureInfoByTypeIdx.set(info.structTypeIdx, info);
+  // Source accounting can enrich a registered row without replacing the
+  // allocator's cached metadata. Ordinary evidence on either retained record
+  // must dominate a later host-only observation on both.
+  const ordinary = mode === "ordinary" || info.hostOneShotOnly === false || registered?.hostOneShotOnly === false;
+  for (const observed of registered && registered !== info ? [info, registered] : [info]) {
+    if (ordinary) observed.hostOneShotOnly = false;
+    else if (observed.hostOneShotOnly === undefined) observed.hostOneShotOnly = true;
+  }
 }
 
 /**
@@ -117,7 +127,7 @@ export function getOrCreateFuncRefWrapperTypes(
       const current = cached.minimumArgumentCount ?? cached.paramTypes.length;
       cached.minimumArgumentCount = Math.min(current, observedMinimum);
     }
-    observeAllocation(cached, allocationMode);
+    observeClosureAllocation(ctx, cached, allocationMode);
     return {
       structTypeIdx: cached.structTypeIdx,
       liftedFuncTypeIdx: cached.funcTypeIdx,
@@ -155,8 +165,7 @@ export function getOrCreateFuncRefWrapperTypes(
     paramTypes: userParams,
     minimumArgumentCount: ctx.closureMinimumArgumentCountByFuncTypeIdx.get(liftedFuncTypeIdx),
   };
-  observeAllocation(closureInfo, allocationMode);
-  ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
+  observeClosureAllocation(ctx, closureInfo, allocationMode);
   ctx.funcRefWrapperCache.set(sigKey, closureInfo);
 
   return { structTypeIdx, liftedFuncTypeIdx, liftedSelfTypeIdx, closureInfo };

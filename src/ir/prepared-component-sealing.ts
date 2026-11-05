@@ -24,6 +24,7 @@ import {
   type PreparedDynamicBoxObserver,
 } from "./prepared-dynamic-support.js";
 import { ProgramAbiInvariantError } from "./program-abi.js";
+import { compilerTimerShimTerminalUnitIds } from "./injected-timer-shim.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiSlotSpace } from "./program-abi.js";
 import type { Import, ValType, WasmFunction } from "./types.js";
 import { readEnv } from "../env.js";
@@ -602,15 +603,15 @@ export function prepareDependencyCompletePreparedComponents(
       entries.flatMap((entry) => (entry.derivedUnit ? ([[entry.derivedUnit.id, entry.derivedUnit]] as const) : [])),
     ).values(),
   ];
-  // (#5297) The timer-shim sidecar names ONE synthetic unit; this generalizes
-  // the same evidence to every prepared unit carrying the externref dynamic
-  // surface. Populations are disjoint by construction, so an overlap is a
-  // producer change, not a precedence question — fail closed.
+  // The exact timer terminal has its own late-prepared dynamic sidecar.
+  // Partition only the general producer; dependency analysis and sealing still
+  // consume every entry, including a timer whose specialized preparation fails.
+  const timerTerminalUnitIds = compilerTimerShimTerminalUnitIds(inventory);
   const dynamicInstructionSupport = mergeDynamicInstructionSupport(
     input.dynamicInstructionSupport,
     prepareDynamicInstructionSupportForUnits({
       ctx,
-      entries,
+      entries: entries.filter((entry) => !timerTerminalUnitIds.has(entry.terminalOwnerUnitId)),
       callableImports: input.callableImports,
       observeDynamicBoxHelpers: input.observeDynamicBoxHelpers,
     }),

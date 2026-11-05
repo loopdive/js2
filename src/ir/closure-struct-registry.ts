@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { CodegenContext } from "../codegen/context/types.js";
+import type { ClosureInfo, CodegenContext } from "../codegen/context/types.js";
 import {
   CLOSURE_CAPTURE_FIELD_BASE,
   getOrCreateFuncRefWrapperTypes,
+  observeClosureAllocation,
   type ClosureAllocationMode,
 } from "../codegen/closures/funcref-wrapper-types.js";
 import { resolveStandaloneDomCallbackClosureSubtype } from "../codegen/standalone-dom-callback-authority.js";
@@ -21,6 +22,11 @@ function signatureKey(signature: IrClosureSignature): string {
   return `(${params})->${signature.returnType === null ? "void" : irTypeKey(signature.returnType)}`;
 }
 
+interface CachedClosureLowering {
+  readonly lowering: IrClosureLowering;
+  readonly info: ClosureInfo;
+}
+
 /**
  * Closure allocation registry shared by preparation and final IR lowering.
  *
@@ -30,27 +36,24 @@ function signatureKey(signature: IrClosureSignature): string {
  * subtype at this allocation seam without changing ordinary closure identity.
  */
 export class ClosureStructRegistry {
-  private readonly baseCache = new Map<string, IrClosureLowering>();
-  private readonly subCache = new Map<string, IrClosureLowering>();
+  private readonly baseCache = new Map<string, CachedClosureLowering>();
+  private readonly subCache = new Map<string, CachedClosureLowering>();
 
   constructor(
     private readonly ctx: CodegenContext,
     private readonly resolveValType: (type: IrType) => ValType,
   ) {}
 
-  private observe(typeIdx: number, mode: ClosureAllocationMode): void {
-    const info = this.ctx.closureInfoByTypeIdx.get(typeIdx);
-    if (!info) return;
-    if (mode === "ordinary") info.hostOneShotOnly = false;
-    else if (mode === "host-one-shot" && info.hostOneShotOnly === undefined) info.hostOneShotOnly = true;
+  private observe(cached: CachedClosureLowering, mode: ClosureAllocationMode): IrClosureLowering {
+    observeClosureAllocation(this.ctx, cached.info, mode);
+    return cached.lowering;
   }
 
   resolveBase(signature: IrClosureSignature, mode: ClosureAllocationMode = "support"): IrClosureLowering | null {
     const key = signatureKey(signature);
     const cached = this.baseCache.get(key);
     if (cached) {
-      this.observe(cached.structTypeIdx, mode);
-      return cached;
+      return this.observe(cached, mode);
     }
 
     let paramTypes: ValType[];
@@ -72,7 +75,7 @@ export class ClosureStructRegistry {
       },
       funcTypeIdx: wrapper.liftedFuncTypeIdx,
     };
-    this.baseCache.set(key, lowering);
+    this.baseCache.set(key, { lowering, info: wrapper.closureInfo });
     return lowering;
   }
 
@@ -109,12 +112,12 @@ export class ClosureStructRegistry {
     const key = `${signatureKey(signature)}#${captureFieldTypes.map(irTypeKey).join(",")}`;
     const cached = this.subCache.get(key);
     if (cached) {
-      this.observe(cached.structTypeIdx, mode);
-      if (!domCallbackAuthority) return cached;
       const base = this.resolveBase(signature, mode);
-      return base
-        ? resolveStandaloneDomCallbackClosureSubtype(this.ctx, domCallbackAuthority, base, cached, liftedFuncIdx)
-        : null;
+      if (!base) return null;
+      const lowering = this.observe(cached, mode);
+      return domCallbackAuthority
+        ? resolveStandaloneDomCallbackClosureSubtype(this.ctx, domCallbackAuthority, base, lowering, liftedFuncIdx)
+        : lowering;
     }
 
     const base = this.resolveBase(signature, mode);
@@ -149,18 +152,19 @@ export class ClosureStructRegistry {
     // Keeping them out of structFields also prevents finalize from emitting
     // data-struct field helpers for closure captures.
 
-    const baseInfo = this.ctx.closureInfoByTypeIdx.get(base.structTypeIdx);
-    if (!baseInfo) {
+    const baseEntry = this.baseCache.get(signatureKey(signature));
+    if (!baseEntry || baseEntry.lowering !== base) {
       throw new Error(`ir/integration: canonical wrapper ${base.structTypeIdx} has no closure metadata`);
     }
-    this.ctx.closureInfoByTypeIdx.set(subtypeIdx, {
+    const baseInfo = baseEntry.info;
+    const info: ClosureInfo = {
       structTypeIdx: subtypeIdx,
       funcTypeIdx: base.funcTypeIdx,
       paramTypes: [...baseInfo.paramTypes],
       returnType: baseInfo.returnType,
       hasCaptures: true,
-      ...(mode === "host-one-shot" ? { hostOneShotOnly: true } : mode === "ordinary" ? { hostOneShotOnly: false } : {}),
-    });
+    };
+    observeClosureAllocation(this.ctx, info, mode);
 
     const fieldIdxByCapture = new Map<number, number>();
     for (let index = 0; index < captureFieldTypes.length; index++) {
@@ -177,7 +181,7 @@ export class ClosureStructRegistry {
       },
       funcTypeIdx: base.funcTypeIdx,
     };
-    this.subCache.set(key, lowering);
+    this.subCache.set(key, { lowering, info });
     return domCallbackAuthority
       ? resolveStandaloneDomCallbackClosureSubtype(this.ctx, domCallbackAuthority, base, lowering, liftedFuncIdx)
       : lowering;

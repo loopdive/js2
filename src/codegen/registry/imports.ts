@@ -815,12 +815,27 @@ export function addUnionImports(ctx: CodegenContext): void {
  * live index went stale-low (`call` into `__num_ryu_to_buf`, invalid Wasm). Same physical slot,
  * resolved at emit, so the binary is byte-identical wherever the live index was already correct.
  */
+// Only this allocator can certify the physical functions used by the numeric host boundary.
+// Retain objects, not positional indices: late import registration can shift the latter.
+const nativeNumberBoundaryFunctions = new WeakMap<CodegenContext, Map<string, WasmFunction>>();
+
+export function nativeNumberBoundaryFunction(ctx: CodegenContext, name: string): WasmFunction | undefined {
+  return nativeNumberBoundaryFunctions.get(ctx)?.get(name);
+}
+
 function pushNativeUnionHelper(ctx: CodegenContext, fn: WasmFunction): void {
-  const stable = fn.name === "__box_number";
+  // All three numeric boundary callables can be published before later timer imports.
+  const stable = fn.name === "__box_number" || fn.name === "__typeof_number" || fn.name === "__unbox_number";
   const funcIdx = stable ? mintDefinedFunc(ctx) : ctx.numImportFuncs + ctx.mod.functions.length;
   ctx.funcMap.set(fn.name, funcIdx);
   if (stable) pushDefinedFunc(ctx, funcIdx, fn);
   else ctx.mod.functions.push(fn);
+  if (stable) {
+    let owned = nativeNumberBoundaryFunctions.get(ctx);
+    if (!owned) nativeNumberBoundaryFunctions.set(ctx, (owned = new Map()));
+    if (owned.has(fn.name)) throw new Error(`duplicate canonical native numeric allocation: ${fn.name}`);
+    owned.set(fn.name, fn);
+  }
 }
 
 /**

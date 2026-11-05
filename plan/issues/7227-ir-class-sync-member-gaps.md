@@ -38,6 +38,10 @@ loc-budget-allow:
   - src/codegen/expressions/call-builtin-static.ts
   # 2026-11-05 Source24: exact function-marker provider/commit handles for both descriptor appliers.
   - src/codegen/object-runtime-descriptors.ts
+  # 2026-11-05 Source05: exact native timer value, canonical mint and real export-intent owners.
+  - src/runtime.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/declarations.ts
 # 2026-11-05: exact native-owner reuse; per-path token deltas recorded below.
 standalone-arms-allow:
   # 2026-11-05 Source26: canonical predicate/native accessor/rejection owners; exact token counts below.
@@ -78,6 +82,13 @@ func-budget-allow:
   - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
   # 2026-11-05 Source24: bind the existing canonical deletion transaction into both descriptor appliers.
   - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
+  # 2026-11-05 Source05: exact native timer and authenticated numeric-boundary publication owners.
+  - src/runtime.ts::resolveImport
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  # 2026-11-05 Source05: unchanged 309-line extern-method callback renumbered #94 -> #95.
+  - src/runtime.ts::<anonymous>#95
 ---
 
 # #7227 — the synchronous class-member gaps left after #7223
@@ -616,3 +627,138 @@ qualified `8857f0e4` source. Qualify the whole 13-test chunk successor plus the
 unchanged whole 101-test getter/callback neighbor and normal typing/gates;
 those new checks are pending. All prior failures and source epochs remain
 recorded, with no full 1,583-test pass inferred.
+
+
+## Published-head CI owner and callable-demand repair — 2026-11-05
+
+The first published receiving head exposed two genuine integration regressions.
+The exact compiler timer shim has a specialized dynamic-support producer; the
+expanded ordinary producer could now claim the same instruction objects too.
+The canonical exact timer inventory predicate moves to the existing injected
+shim seam. Only the general producer excludes those terminal owners; complete
+dependency/sealing inputs and duplicate-claim rejection remain unchanged.
+
+Separately, preparing the SOURCE getter recognition family reserved an ordinary
+zero-argument signature and incorrectly counted it as callable allocation demand,
+even in modules with no local getter. Signature and IR closure caches now retain
+the exact metadata for support-only reservations. Actual ordinary/host allocations
+promote the cached base/captured records; a real SOURCE getter singleton promotes
+its canonical zero-argument bare entry. Source-accounting enrichment is preserved.
+Physical SOURCE capability recognition in modules without local getters remains
+available, with the same explicit unowned-family refusal.
+
+Original export censuses, telemetry parity assertions and all getter programs
+remain intact. Added controls exercise exact timer/general producer separation,
+real ordinary boxing evidence plus duplicate rejection, and cached closure
+reservation/promotion. The earlier qualification and CI failures stay historical;
+this source repair has no new runtime, CI or retirement credit until measured.
+
+
+### 2026-11-05 — Exact timer isolation includes the no-work census
+
+The unchanged Async guest's injected late-seal and late-lower controls both
+compiled successfully with valid binaries. Complete retained outcomes show the
+same five exact source-function owners (`delay`, `fetchUser`,
+`fetchAllSequential`, `fetchAllParallel`, `main`) emitted through IR with no
+legacy body, while the exact timer owner reported its injected unsupported
+resolve result with a legacy body. A separate `<module-init>` non-executable
+census row has no terminal unit ID and emits neither body. The original broad
+non-timer filter counted that census as a sixth patch, so its five-patch assertion
+failed before checking the body flags.
+
+The successor retains the five-patch assertion and every guest/option/injection
+and runtime assertion, verifies all five exact source identities, and separately
+requires exactly the canonical no-work census. It does not grant another
+executable owner or remove outcome evidence. The original 176/180 result and two
+unchanged-assertion diagnostic failures remain historical failures. This source
+change is not runtime qualification or attribution of the two separate host timer
+failures, which remain unresolved.
+
+### 2026-11-05 — Native timer value and Promise boundary owner growth
+
+The unchanged JavaScript-host timer observations fail on both authentic main
+and the receiving source: a real Node Timeout becomes a non-finite exported
+handle, and an exported dynamic Promise does not settle within the original
+one-second assertion. The paired observations retain the same failure payloads;
+they do not establish identical generated binaries or exempt the changed timer
+fixture from required CI.
+
+The reviewed repair keeps the protocol in its existing owners. The native
+numeric functions are authenticated at their actual allocator, their public
+exports are checked against those exact objects, and real source export intents
+cannot be silently hidden by an earlier boundary descriptor. Erased type exports
+remain erased. Numeric timer references publish both readers and the boxer;
+the existing ToPrimitive walker accepts function inputs through the normal
+object protocol and rejects function-valued exotic results without coercing
+them again. The real dynamic export-result owner reserves the existing Promise
+subscription bridge; parameter-only and no-host policy gates remain unchanged.
+
+The first actual formatted-source qualification passed format and lint, then
+stopped naturally at these three measured LOC limits before typing, collection
+or guest execution:
+
+- `src/runtime.ts`: 20,232 to 20,258 (+26). This is the existing private
+  carrier/ToPrimitive/exception-tag owner wiring for the timer value boundary and
+  its real function-valued primitive-result checks. It adds no AST fallback,
+  substitute host exception or global coercion policy switch.
+- `src/codegen/registry/imports.ts`: 2,173 to 2,187 (+14). The existing canonical
+  native union allocator retains the exact three numeric function objects.
+  Names, shapes, signatures or a later locator alone do not certify ownership;
+  moving this record away from the allocator would lose that provenance.
+- `src/codegen/declarations.ts`: 6,668 to 6,680 (+12). This is existing public
+  export ownership: the same numeric publication authority serves dynamic
+  values, actual ESM/CJS value intents reject collisions before suppression, and
+  the real dynamic result requests the existing early Promise subscription.
+  No type-only export becomes a runtime export.
+
+These are issue-local dispositions for that measured existing-owner growth.
+Global LOC baselines, architecture policies, original guest/assertion values,
+deadlines, skips and acceptance floors are unchanged. Preserve the actual LOC
+failure and earlier host failures. The exact whole four-file 69-test population,
+including all original 23 timer tests and the 30 genuine boundary controls,
+remains unrun; format/lint success is not runtime or CI qualification.
+
+## 2026-11-05 Source05: measured function-owner wiring
+
+The first Source05 diagnostics passed the file-size, oracle, coercion,
+native-arm, import-cycle and inventory gates, but stopped at the function
+ratchet before source typing, collection or any of the 69 guests. The exact
+existing owners below grew against the same immutable `d468fa1a` gate base:
+
+- `src/runtime.ts::resolveImport`: 7,859 -> 7,884 lines (+25). The existing
+  timer import branches decode the delay/clear carrier and encode the raw host
+  timer result through the canonical numeric boundary. Coercion still uses
+  the existing tagged-throw owner; no independent timer implementation or
+  global host-value policy is added.
+- `src/codegen/declarations.ts::collectDeclarations`: 2,115 -> 2,122 (+7).
+  Actual runtime source-export intent is checked at the six existing ESM/CJS
+  publication branches before existing-name suppression; erased type-only
+  specifiers are excluded. These seven lines retain the declaration owner's
+  publication order. The separate dynamic-result Promise preparation is
+  outside this function and is not part of its measured growth.
+- `src/codegen/index.ts::generateModule`: 1,930 -> 1,932 (+2), and
+  `src/codegen/index.ts::generateMultiModule`: 1,322 -> 1,324 (+2). Each existing
+  finalizer authenticates the numeric helper's actual canonical callable and
+  public export target before dead elimination. These two exact calls close
+  the same single- and multi-source publication contract; the emitted helper
+  recipes and ordinary export selection remain with their existing owners.
+
+These are per-change-set allowances for the four measured existing owners,
+not edits to the shared function baseline or test assertions. Function-gate
+success, the original timer controls and the 30 new genuine controls remain
+unmeasured on this disposition until their actual checks run.
+
+The same measured failure also reported `src/runtime.ts::<anonymous>#95`
+as newly over 300 lines. Canonical TypeScript AST measurement against the
+immutable gate-base runtime proves this is the existing `__extern_method_call`
+callback, not a newly oversized body: before key `#94` and current key `#95`
+are both exactly 309 lines. Their entire function-node text and body are
+byte-identical (full-node SHA-256
+`05df7361fabc517cd6df4c475e7e8eb682a273e55465287d097b28c407226ace`).
+All 215 existing anonymous function nodes remain in the same order with
+identical texts; only the new six-line canonical timer-coercion callback at
+ordinal `#10` was inserted. It shifts the following anonymous ordinals by
+one. The exact current `#95` per-change-set key therefore preserves the
+existing 309-line owner; it grants no actual callback growth and does not
+change the global baseline, scanner naming or 300-line threshold. The
+one-off AST capture is source metadata evidence, not compiler or test credit.

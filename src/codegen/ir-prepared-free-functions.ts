@@ -10,7 +10,7 @@ import {
 import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
 import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import { irPreparedNestedOrdinaryClass } from "../ir/identity.js";
-import { compilerTimerShimTerminalUnitIds } from "../ir/compiler-timer-shim-preparation.js";
+import { compilerTimerShimTerminalUnitIds } from "../ir/injected-timer-shim.js";
 import type { IrClassId, IrUnitId } from "../ir/identity.js";
 import { compileIrPathFunctions, type IrIntegrationReport, type IrTypeOverrideMap } from "../ir/integration.js";
 import { asVal, type IrClassShape, type IrType } from "../ir/nodes.js";

@@ -21,6 +21,8 @@ export interface PlatformCapabilityAdapterContext {
   instanceState?: PlatformCapabilityInstanceState;
   getNodeRequire(): ((id: string) => any) | undefined;
   wrapWasmClosure(value: unknown, arity: number, boundary?: "timer"): ((...args: any[]) => any) | null;
+  marshalTimerValueToHost?(value: unknown): unknown;
+  marshalTimerHandleFromHost?(handle: unknown): unknown;
   wrapUnknownCallable(value: unknown): unknown;
 }
 

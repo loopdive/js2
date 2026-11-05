@@ -392,10 +392,9 @@ export function prepareDynamicInstructionSupportForUnits(input: {
 }
 
 /**
- * Merge the timer-shim sidecar with the general one. Unit ids are disjoint by
- * construction (a timer-shim terminal is a `synthetic-support` unit that this
- * module's `box`-only arm never names), so an overlap means one of the two
- * producers changed its population — fail closed rather than prefer either.
+ * Merge sidecars whose producer populations are explicitly partitioned at
+ * sealing. A competing claim remains an invariant violation, regardless of
+ * whether the producers happen to resolve the same callable — fail closed.
  */
 export function mergeDynamicInstructionSupport(
   first: ReadonlyMap<IrUnitId, PreparedDynamicInstructionSupportEvidence> | undefined,

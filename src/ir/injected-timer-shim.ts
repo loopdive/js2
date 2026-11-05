@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
-import type { IrUnitId } from "./identity.js";
+import type { IrUnitId, IrUnitInventory } from "./identity.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 
 export interface IrInjectedTimerShimCertification {
@@ -18,6 +18,20 @@ interface IrPreparedTimerShimSelectionOptions {
 
 function symbolAt(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefined {
   return checker.getSymbolAtLocation(node);
+}
+
+export function compilerTimerShimTerminalUnitIds(inventory: IrUnitInventory): ReadonlySet<IrUnitId> {
+  return new Set(
+    inventory.terminalUnits
+      .filter(
+        (terminal) =>
+          terminal.kind === "synthetic-support" &&
+          terminal.syntheticRole === "compiler-unit:timer-shim:set-timeout" &&
+          terminal.terminalOwnerId === terminal.id &&
+          terminal.lexicalOwnerId === null,
+      )
+      .map((terminal) => terminal.id),
+  );
 }
 
 /** Prove the exact compiler-injected #1501 setTimeout wrapper. */
