@@ -92,6 +92,77 @@ Legacy already has two default mechanisms:
    - methods called through subclasses and as values;
    - mixed IR and legacy callers of the same function.
 
+## Step 1 findings (Opus, 2026-11-05) — slice NOT implemented, needs re-scoping
+
+Measured on this branch's base (`bf60bb81a4`, includes #7233), stride 40,
+standalone (`scripts/ir-claim-ledger.mts`): 1340 files, 1720 units — ir 38,
+both 25, legacy 1620, neither 37; invariants 0; compileOk 1081;
+`select:param-shape-rejected` = **22**. Every unit whose function has a
+default / rest / `?` / pattern parameter was attributed by a throwaway probe
+(test262 stride, `trackIrOutcomes`, matched to its declaration by line; not
+committed).
+
+**`select:param-shape-rejected` (22):**
+
+| Class | Units | Where |
+| --- | --- | --- |
+| optional `?` | 8 | all compiler prelude: `__js2wasm_Iterator_zip` / `_zipKeyed` (`options?: any`), 4 files each |
+| rest | 5 | prelude `__js2wasm_Iterator_concat(...items)` ×4; `rest-parameters-apply.js` |
+| default on a binding pattern (`[a] = …`, `{p} = …`) | 6 | `function/dstr/dflt-*` ×3, Temporal `createOptionsObserver` ×2, one generator |
+| non-constant default | 2 | `arguments-with-arguments-lex.js` (sync), `generators/dflt-params-ref-prior.js` |
+| duplicate parameter name | 1 | `param-duplicated-strict-1.js` |
+| **constant default on an identifier (#869 forms)** | **0** | — |
+
+**Class members with such a parameter** (first refusal
+`class-member-unsupported`, 41 units): 39 are patterns (outer default or
+default inside the pattern; about half in generator/async-generator methods).
+The only two constant defaults are `x = 39` in an async-generator method
+(stays legacy by rule 3) and `x = null` in a static method, where the slot is
+externref — `extractConstantDefault` returns nothing for ref slots, so legacy
+treats it as an expression default (rule 3: not this slice).
+
+No unit refused for any *other* reason carries an identifier constant
+default either, so lifting every other blocker would still not reach one. The
+playground population has no parameter refusals at all. A regex over all of
+test262 finds ~200 files with an identifier numeric/boolean default, most in
+async, generator, or expression-position functions.
+
+**Where legacy supplies the constant: both sides.** Probe of
+`function f(x: number = 5)` called as `f()` and `f(2)` (standalone WAT):
+- caller: pushes `f64.const 5` for the missing argument **and** publishes
+  `__argc` (`i32.const 0; global.set $__argc`) — also on the full call
+  (`i32.const 1`), via `maybeSetArgcForKnownCall`;
+- callee (`function-body.ts`, `cacheParamDefaultArgc` +
+  `emitParamDefaultArgMissingCheck` + `emitF64ParamSentinelCheck`): reads and
+  clears `__argc` at entry, then `(argc != -1 && argc <= i) || bits(x) ==
+  sNaN-sentinel` → `x = 5`. The callee test is required because first-class
+  and dynamic callers (`.call`, method values, trampolines) cannot inline the
+  constant.
+
+So an IR body for such a function must emit the callee test. That needs a new
+IR instruction that reads and clears `__argc` (the existing
+`dyn.arguments_length` wrapper also consumes `__extras_argv`, which legacy's
+default prologue does not), a host-free helper beside
+`src/codegen/ir-arguments-length.ts`, and its verify/lowering arms. That is the
+existing `paramDefaultNeedsArgc` contract, not a new ABI, and it is
+standalone/wasi-only (gc has no IR argc protocol and stays legacy).
+
+**Decision: stopped before coding.** The constant slice is buildable without a
+new ABI or a forbidden file, but it reaches **0** units on the stride ledger,
+so the first acceptance criterion (IR units rise, `param-shape-rejected`
+falls) cannot be met by it. Options for the lead:
+1. **Optional `?` on a dynamic (`any`) slot** — 8 units/stride, all prelude.
+   A missing argument is already `undefined` from every caller (the IR's
+   `importedMissingArgument` pads `__get_undefined`), so no callee prologue is
+   needed if the body treats the parameter as an ordinary dynamic one. Check
+   the prelude's IR claimability past this refusal first.
+2. **Rest parameters** — 5 units/stride (4 prelude).
+3. **Defaults on binding patterns** — the largest class (6 function + 39
+   class-member units), but it overlaps the generator lanes and needs the
+   pattern-default machinery.
+4. Keep this constant slice only if typed-corpus value justifies an IR
+   argc-read instruction with no ledger gain.
+
 ## Acceptance criteria
 
 - **Ledger A/B** (stride 40, standalone) in the PR body: IR units rise;
