@@ -20,7 +20,7 @@
    direct front-ends are deprecation-tracked remainders (#2855/#2950).
 2. **Hybrid invariant** (hybrid-soundness-ir-roadmap.md): SAFE lowering by
    default; FAST lowering only behind a discharged proof.
-3. **Dual mode**: no new host import without a standalone fallback.
+3. **One native semantic core** (#6708): no feature depends on a host semantic import; a JS environment adds only the value adapter, explicit capabilities and named accelerators.
 4. **Fail-loud**: no silent fallthrough, no lossy fixup (#1858 family).
 
 ## The layer stack (dependency direction is strictly downward)

@@ -873,13 +873,17 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
                   effectiveIrParamTypeNode(parameter) === undefined && claim?.typeEntry.params[index] === undefined,
               ) ||
               (returnNode === undefined && claim?.typeEntry.returnType === undefined);
-            // Missing flow evidence is not a dynamic signature, so a VALUE use
-            // (the S3c self-guarded constructor) stays on the compatibility
-            // route. A receiver-only use never reads the signature: the
-            // accessor's externref is boxed straight into the dynamic carrier
-            // and every member call/write dispatches dynamically, so it gets
-            // the opaque all-dynamic signature (#7106 census arm 4).
-            if (missingEvidence && !isReceiver && !isStoredValue) return;
+            // Missing flow evidence gets the opaque all-dynamic signature. No
+            // use of an `objectReceiver` plan reads it: the accessor's
+            // externref is boxed straight into the dynamic carrier (#7106
+            // census arm 4). That holds for a receiver-only use (member
+            // calls/writes dispatch dynamically) and, since #7242, for the S3c
+            // self-guarded constructor VALUE use too: `new F(…)` is
+            // `dyn.construct` on that carrier (legacy's own standalone
+            // construct-from-value driver) and `x instanceof F` reads only the
+            // plan's exact unit target. The selector admits both without
+            // evidence, so refusing the plan demoted the claimed owner at build
+            // (`unknown class "Test262Error"` whenever `Test262Error` is legacy).
             const resolvedSignature = (): IrClosureSignature | undefined => {
               try {
                 return {
