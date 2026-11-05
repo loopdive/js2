@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const INDEX_HTML = resolve(ROOT, "website", "index.html");
+const VIEW_STATE_JS = resolve(ROOT, "website", "components", "t262-view-state.js");
 
 const hostEditions = [
   { edition: "Unclassified (legacy)", pass: 273, fail: 0, ce: 0, skip: 0, total: 273, pct: 100 },
@@ -43,6 +44,9 @@ async function bootPage() {
         removeListener() {},
       });
       window.scrollTo = () => {};
+      // jsdom does not load external <script src>; the page's inline script
+      // reads window.t262ViewState at its first line, so install it here.
+      window.eval(readFileSync(VIEW_STATE_JS, "utf8"));
       window.IntersectionObserver = class {
         observe() {}
         unobserve() {}
@@ -78,20 +82,14 @@ function readLegacyPassbar(dom: JSDOM) {
 }
 
 describe("landing ES3/Core edition passbar", () => {
-  it("shows the legacy population without stating a rate, in either lane", async () => {
+  it("shows the legacy population without stating a rate", async () => {
     const dom = await bootPage();
     try {
-      // Standalone lane: the bucket is 271/273, which would have rendered 99%.
+      // Standalone lane (the only lane since the JS-host lane's retirement,
+      // #6979 S7-e): the bucket is 271/273, which would have rendered 99%.
       expect(readLegacyPassbar(dom)).toEqual({ count: "273 unmarked files", pct: "unclassified" });
-
-      const toggle = dom.window.document.getElementById("host-support-toggle") as HTMLInputElement;
-      toggle.checked = true;
-      toggle.dispatchEvent(new dom.window.Event("change"));
-      await new Promise((resolve) => setTimeout(resolve, 250));
-
-      // Host lane: 273/273. A rate here is the specific claim to avoid — it is
-      // the "100%" that reads as "ES3 is done".
-      expect(readLegacyPassbar(dom)).toEqual({ count: "273 unmarked files", pct: "unclassified" });
+      // The JS-host toggle is gone, so there is no host lane to switch to.
+      expect(dom.window.document.getElementById("host-support-toggle")).toBeNull();
     } finally {
       dom.window.close();
     }
