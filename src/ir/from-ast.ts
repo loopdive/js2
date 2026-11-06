@@ -359,6 +359,7 @@ import {
 } from "./nodes.js";
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
+import { lowerAmbientGlobalFunctionCall, type IrAmbientGlobalFunctionName } from "./ambient-global-function-call.js";
 import {
   IR_HOLEY_ARRAY_ELEM_SET,
   IR_HOLEY_ARRAY_NEW,
@@ -588,7 +589,14 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * (#7066) The selector's `supportsBackendCapability` for this compile: the
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
-  supportsBackendCapability?(capability: "number-to-string"): boolean;
+  supportsBackendCapability?(capability: "number-to-string" | "native-global-function-call"): boolean;
+  /**
+   * (#7253) The host-free provider legacy calls for a direct ambient
+   * `parseInt` / `parseFloat` (`(externref, f64) -> f64` / `(externref) -> f64`)
+   * or `escape` / `unescape` (`(externref) -> externref`); null when the lane
+   * has none, which keeps the legacy call.
+   */
+  ambientGlobalFunctionTarget?(name: Exclude<IrAmbientGlobalFunctionName, "isNaN">): IrFuncRef | null;
   /**
    * Does this lane own a host-free `Number::toFixed` provider whose result is
    * already the IR string carrier? The bounded literal-digits lowering asks
@@ -7772,6 +7780,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   }
   const generalToString = tryLowerAmbientStringToStringCall(expr, cx);
   if (generalToString !== null) return generalToString;
+  const globalFunction = tryLowerAmbientGlobalFunctionCall(expr, cx);
+  if (globalFunction !== null) return globalFunction;
   // Slice 4 (#1169d): method call — `<recv>.<methodName>(args)`. The
   // receiver must lower to an IrType.class; the method must exist on
   // the class shape and be non-void (slice 4 only handles methods with
@@ -14026,6 +14036,24 @@ function tryLowerAmbientStringToStringCall(expr: ts.CallExpression, cx: LowerCtx
     "operand-coercion-unsupported",
     `ir/from-ast: String() of ${describeIrType(type)} operand is deferred (${cx.funcName})`,
   );
+}
+
+/** (#7253) The selector's `admitAmbientGlobalFunctionCall`, lowered by the shared module. */
+function tryLowerAmbientGlobalFunctionCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
+  if (!cx.checker) return null;
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => tryLowerAmbientGlobalFunctionCall(expr, cx));
+  return lowerAmbientGlobalFunctionCall(expr, {
+    builder: cx.builder,
+    resolver: cx.resolver,
+    classify: makeIrDeclaredPrimitiveExpressionClassifier(cx.checker),
+    lowerOperand: (argument, family) => lowerExpr(argument, cx, family === "string" ? { kind: "string" } : IR_F64),
+    refuseOperand: (name, index, type) =>
+      demoteToLegacy(
+        "operand-coercion-unsupported",
+        `ir/from-ast: ${name} operand ${index} is ${describeIrType(type)} (${cx.funcName})`,
+      ),
+  });
 }
 
 function tryLowerExactMixedPrimitiveWrapperCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {

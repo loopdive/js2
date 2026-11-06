@@ -178,7 +178,11 @@ import {
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
 import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
-import { ensureNativeStringHelpers, STANDALONE_STDOUT_APPEND_FN } from "../codegen/native-strings.js";
+import {
+  ambientGlobalFunctionProviderSymbol,
+  ensureNativeStringHelpers,
+  STANDALONE_STDOUT_APPEND_FN,
+} from "../codegen/native-strings.js";
 import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
 import {
   nativeStringLiteralMaterialization,
@@ -7152,6 +7156,10 @@ function makeFromAstResolver(
     },
     dynamicCarrierIsExternref() {
       return !ctx.fast;
+    },
+    ambientGlobalFunctionTarget(name) {
+      const symbol = ambientGlobalFunctionProviderSymbol(ctx, name); // (#7253)
+      return symbol === null ? null : irRuntimeFuncRef(symbol);
     },
     dynamicMethodCallWrapper(method: string, arity: number) {
       return irTemplateWrapperLane(ctx) && irWrapperSymbolIsNameable(method, arity);
