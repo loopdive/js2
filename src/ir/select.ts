@@ -774,11 +774,12 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly functionThisStrictness?: (fn: ts.FunctionDeclaration) => boolean | undefined;
   /**
-   * (#7260) The lowering is told each top-level function's code strictness
-   * (`functionCodeStrict`), so a dynamic element store keeps its PutValue
-   * failure rule.
+   * (#7260) A top-level function's code strictness, the same answer the
+   * lowering is told (`functionCodeStrict`). The local-receiver element store
+   * is admitted in sloppy code only, because the strict `__dyn_member_set`
+   * throws for exotic receivers (#7270).
    */
-  readonly lowersFunctionCodeStrictness?: boolean;
+  readonly functionCodeStrictness?: (fn: ts.FunctionDeclaration) => boolean;
   /**
    * (#7106 S3c) May the IR use `ident` as a self-guarded constructor VALUE —
    * `new F(…)` through `dyn.construct`, `x instanceof F` through
@@ -3695,6 +3696,10 @@ function dynamicUsesAreMoveOnly(
       // `this`; the dynamic scan remains the authority for receiver/key/value
       // representations. Keep value-producing assignments, optional stores,
       // compound/update forms, and non-dynamic receivers outside the claim.
+      const stableThisStore =
+        (ts.isPropertyAccessExpression(e.left) || ts.isElementAccessExpression(e.left)) &&
+        subjectHasAmbientThis() &&
+        stableDynamicStoreReceiverHasAdmittedRoot(e.left.expression);
       if (
         op === ts.SyntaxKind.EqualsToken &&
         !expectDyn &&
@@ -3702,13 +3707,11 @@ function dynamicUsesAreMoveOnly(
         e.parent.expression === e &&
         (ts.isPropertyAccessExpression(e.left) || ts.isElementAccessExpression(e.left)) &&
         e.left.questionDotToken === undefined &&
-        ((subjectHasAmbientThis() && stableDynamicStoreReceiverHasAdmittedRoot(e.left.expression)) ||
+        (stableThisStore ||
           (ts.isElementAccessExpression(e.left) && dynamicLocalElementStoreIsLowerable(fn, e.left))) &&
         isDynShaped(e.left.expression)
       ) {
-        needsNoDynamicMethodCall ||= !(
-          subjectHasAmbientThis() && stableDynamicStoreReceiverHasAdmittedRoot(e.left.expression)
-        );
+        needsNoDynamicMethodCall ||= !stableThisStore;
         if (!currentDynamicRuntimeBuildable || !scanExpr(e.left.expression, true)) return false;
         if (ts.isElementAccessExpression(e.left)) {
           const key = unwrap(e.left.argumentExpression);
@@ -4436,7 +4439,7 @@ function dynamicLocalElementStoreIsLowerable(fn: IrClaimableSubject, target: ts.
     ts.isIdentifier(unwrapPhase1Parens(target.expression)) &&
     ts.isFunctionDeclaration(fn) &&
     ts.isSourceFile(fn.parent) &&
-    currentSelectionOptions?.lowersFunctionCodeStrictness === true
+    currentSelectionOptions?.functionCodeStrictness?.(fn) === false
   );
 }
 

@@ -14,7 +14,7 @@ area: ir
 goal: ir-full-coverage
 parent: 7250
 depends_on: [7258, 7260]
-related: [2949, 7106, 7261]
+related: [2949, 7106, 7261, 7270]
 assignee: "ttraenkler/c-r7"
 loc-budget-allow:
   # 2026-11-06: one `calleeReturnKind` helper (the existing
@@ -86,7 +86,9 @@ admission sits next to its sibling checks in the same arm.
 
 - `tests/issue-7265-ir-move-only-bool-call-into-dynamic.test.ts`: the
   stubbed isWritable is IR-emitted and passes through the test262 runner in
-  sloppy and strict mode.
+  sloppy mode. In strict mode it stays legacy and passes, because #7260's
+  store is sloppy-only until
+  [#7270](7270-ir-strict-dyn-member-set-exotic-receivers.md).
 - Typed corpus byte-identical on gc/standalone/wasi.
 - Wrapped ledger: 0 invariants, compileOk not lower.
 - Standalone test262 A/B on propertyHelper includers plus 300 random: no

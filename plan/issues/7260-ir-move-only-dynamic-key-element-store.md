@@ -14,7 +14,7 @@ area: ir
 goal: ir-full-coverage
 parent: 7250
 depends_on: [7258]
-related: [2949, 3795, 3797, 7106, 7261]
+related: [2949, 3795, 3797, 7106, 7261, 7270]
 assignee: "ttraenkler/c-r7"
 loc-budget-allow:
   # 2026-11-06 (#7258, restated so the grant does not strand once #7104 lands):
@@ -158,3 +158,72 @@ the existing arm, with no sibling arm added.
   legacy resolves it as f64, so the legacy body is kept. This existing
   parameter-resolution divergence was unreachable for these bodies until
   now, and the stride ledger shows no new row of it.
+
+## Review fix (2026-11-06, PR #7107 comment 6677683015)
+
+**Blocker: in strict code the store threw for exotic receivers.** A newly
+claimed `obj[k] = v` in strict function code lowers to the strict
+`__dyn_member_set`. Its native body (`ensureDynMemberSet`,
+`src/codegen/dyn-read.ts`) is `__reflect_set` followed by a throw on
+`false`, and `__reflect_set` reports false for several receivers where
+legacy's computed strict store succeeds:
+- the reviewer saw arrays, typed arrays, DataView, ArrayBuffer, Map, Date
+  and Error;
+- in my matrix, head throws on an out-of-bounds typed-array store and on
+  Map.
+
+The defect predates this PR (it is the #3795 strict helper), but this PR is
+the first to route arbitrary dynamic receivers into it. Filed as
+[#7270](7270-ir-strict-dyn-member-set-exotic-receivers.md).
+
+Effect on the harness lever: none in practice. propertyHelper.js has no
+`"use strict"`, and only an `onlyStrict` test prepends one to the assembled
+script. That is 5 of the 5246 propertyHelper includers (measured
+2026-11-06).
+
+The fix narrows the admission: `dynamicLocalElementStoreIsLowerable` now
+requires `functionCodeStrictness(fn) === false`, i.e. sloppy function code.
+The sloppy helper `__dyn_member_set_sloppy` ignores the failure. The
+selector option is now the strictness itself (`functionCodeStrictness`,
+the same `irFunctionCodeStrictness` the lowering is told), not a capability
+flag.
+
+Receiver matrix, `put(obj, name, v)` with widened parameters, standalone
+and gc, base (#7258 head) vs head:
+- rows: array `[0]`, `[10]`, `["1"]`, `length`; Uint8Array in-bounds,
+  string-key and out-of-bounds; Float64Array; Map; Date; Error `message`;
+  DataView; ArrayBuffer; plain object; frozen; function; RegExp.
+- **Sloppy:** `put` is IR-emitted on head. Every row is identical to base,
+  including base's own quirks (`map=null`, `u8oob=0`).
+- **Strict:** `put` stays legacy, as on base. The rows, and the reviewer's
+  repro (`put([1,2,3], 0, 9)`), are identical.
+
+**Secondary 1/2 (claim-then-fallback, wasi bytes).**
+`makeIrDynamicCarrierDivergenceProbe`
+(`src/codegen/fnctor-typed-instances.ts`) now reports a divergence when
+legacy resolved the parameter to a scalar slot (`f64`/`i32`, from numeric
+call sites). The selector refuses such a parameter up front
+(`param-dynamic-carrier-diverges-from-legacy`) instead of claiming and then
+falling back on `abi-signature-parity`. With no abandoned IR attempt left,
+no strict-helper literal is registered. The reviewer's
+`put`/`pk`-with-numeric-`v` probe is now byte-identical to base on wasi,
+standalone and gc.
+
+**Secondary 4 (the existing #3795/#3797 element-store path in sloppy
+code).** `lowerElementStore` used to always emit strict `dyn.member_set`;
+it now follows `functionCodeStrict`. Probe: the #3795 conflict-marker shape
+`function mark(o, k) { o[k] = "true"; }`, sloppy, IR-claimed on both sides:
+
+| receiver | base (IR, strict helper) | head (IR, sloppy helper) | JS / legacy sloppy |
+| --- | --- | --- | --- |
+| plain object | `true` | `true` | `true` |
+| frozen | TypeError | `1` | `1` |
+| non-writable | TypeError | `1` | `1` |
+| getter-only | TypeError | `2` | `2` |
+| array `[0]` | `1` | `1` | `"true"` (a separate defect, the same on both sides) |
+
+Head matches JS and legacy's sloppy `__extern_set` (gc and standalone).
+In strict code (Acorn's module code) nothing changes.
+
+Nit: the #3797 receiver test is bound once (`stableThisStore`) instead of
+being re-evaluated for the guard flag.
