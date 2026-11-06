@@ -476,6 +476,7 @@ import {
   IR_NUMBER_TO_FIXED_FN,
   IR_NUMBER_TO_STRING_FN,
 } from "./number-to-string-provider.js";
+import { classInstanceBindingStorage, exactClassStructTypeIdx } from "./class-instance-storage.js";
 import {
   classifyIrFailure,
   IrInvariantError,
@@ -3206,6 +3207,7 @@ export function compileIrPathFunctions(
   // -------------------------------------------------------------------------
   const fromAstResolver = makeFromAstResolver(
     ctx,
+    classShapes,
     moduleBindingResolver,
     loweringPlans?.postWasmStartTdzSafeBindingsByOwnerUnitId,
     standaloneDomCapability,
@@ -3910,7 +3912,8 @@ export function compileIrPathFunctions(
           }
         }
       }
-      const moduleBindings = buildModuleBindingsMap(ctx, population, moduleBindingResolver);
+      const moduleInitClassShapes = moduleInitInput.classShapes ?? classShapes;
+      const moduleBindings = buildModuleBindingsMap(ctx, population, moduleBindingResolver, moduleInitClassShapes);
       const synthetic = makeModuleInitSynthetic(population);
       for (const statement of population) directCallsFor(statement, moduleInitUnitId);
       const sourceLoweringPlans = moduleInitInput.loweringPlans ?? loweringPlans;
@@ -3930,7 +3933,7 @@ export function compileIrPathFunctions(
         hostDateSnapshots: sourceLoweringPlans?.hostDateSnapshots,
         hostDateGetters: sourceLoweringPlans?.hostDateGetters,
         identityContext: moduleBindingIdentityContext,
-        classShapes: moduleInitInput.classShapes ?? classShapes,
+        classShapes: moduleInitClassShapes,
         resolver: fromAstResolver,
         allocRegistry,
         checker: ctx.checker,
@@ -6086,6 +6089,7 @@ function withoutVoidReturn(ctx: CodegenContext, body: Instr[], typeIdx: number):
 function resolveModuleBindingGlobal(
   ctx: CodegenContext,
   identity: IrModuleBindingIdentity,
+  classShapes: ReadonlyMap<string, IrClassShape> | undefined,
   postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
 ): ModuleBindingGlobal {
   const declaration = identity.declaration;
@@ -6222,19 +6226,22 @@ function resolveModuleBindingGlobal(
       type = { kind: "string" };
       break;
     }
+    case "class-instance":
+      ({ type, storageType } = classInstanceBindingStorage(ctx, name, identity.valueKind, classShapes));
+      break;
   }
   const storageMatches =
     global.type.kind === storageType.kind &&
     ((global.type.kind !== "ref" && global.type.kind !== "ref_null") ||
       (storageType.kind === global.type.kind && storageType.typeIdx === global.type.typeIdx));
-  if (!storageMatches && identity.valueKind.kind === "dynamic") {
+  if (!storageMatches && (identity.valueKind.kind === "dynamic" || identity.valueKind.kind === "class-instance")) {
     // (#7014) `const a: any = x` (x a number const) is NARROWED to f64 by the
     // #4178 const-chain trace; #5289 (163eb5bc5c) assumed the dynamic carrier.
     // A contradicted admission, not a corrupt ABI: demote the module-init.
     throw new IrUnsupportedError(
       "module-init-legacy-coupling",
       "build",
-      `module-init: dynamic binding ${globalName} uses narrowed legacy ${global.type.kind} storage`,
+      `module-init: ${identity.valueKind.kind} binding ${globalName} uses narrowed legacy ${global.type.kind} storage`,
     );
   }
   if (!storageMatches) {
@@ -6313,6 +6320,7 @@ function buildModuleBindingsMap(
   ctx: CodegenContext,
   population: readonly ts.Statement[],
   resolveModuleBinding: IrModuleBindingResolver,
+  classShapes: ReadonlyMap<string, IrClassShape> | undefined,
 ): Map<string, ModuleBindingGlobal> {
   const map = new Map<string, ModuleBindingGlobal>();
   for (const stmt of population) {
@@ -6341,7 +6349,7 @@ function buildModuleBindingsMap(
         );
       }
       const observed = ctx.programAbiGlobals?.moduleBinding(entry.declaration);
-      const binding = resolveModuleBindingGlobal(ctx, inspected.identity);
+      const binding = resolveModuleBindingGlobal(ctx, inspected.identity, classShapes);
       // The lowering map must consume the allocator object authenticated for
       // this exact declaration.  A name-compatible global, or a global already
       // owned by another binding, would let a rebuilt/foreign storage census
@@ -7046,6 +7054,7 @@ function sameValType(a: ValType, b: ValType): boolean {
 
 function makeFromAstResolver(
   ctx: CodegenContext,
+  classShapes: ReadonlyMap<string, IrClassShape> | undefined,
   moduleBindingResolver?: IrModuleBindingResolver,
   postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
   standaloneDomCapability?: IrStandaloneDomCapabilityPlan,
@@ -7486,7 +7495,7 @@ function makeFromAstResolver(
     resolveModuleBinding(node: ts.Identifier, writeValue?: ts.Expression) {
       const identity = moduleBindingResolver?.(node, writeValue);
       return identity
-        ? resolveModuleBindingGlobal(ctx, identity, postWasmStartTdzSafeBindingsByOwnerUnitId)
+        ? resolveModuleBindingGlobal(ctx, identity, classShapes, postWasmStartTdzSafeBindingsByOwnerUnitId)
         : undefined;
     },
     isDirectModuleBinding(node: ts.Identifier): boolean {
@@ -10853,8 +10862,7 @@ class ClassRegistry {
     if (this.ctx.classExternrefBackedSet.has(shape.className)) return null;
 
     const classLayout = this.ctx.programAbiTypes?.layoutForClass(classId);
-    const structTypeIdx =
-      classLayout?.typeIdx ?? (this.ctx.programAbiTypes ? undefined : this.ctx.structMap.get(shape.className));
+    const structTypeIdx = exactClassStructTypeIdx(this.ctx, classId, shape.className);
     if (structTypeIdx === undefined) return null;
     const layoutFields =
       classLayout?.type.fields ?? (this.ctx.programAbiTypes ? undefined : this.ctx.structFields.get(shape.className));
