@@ -4341,10 +4341,8 @@ type Phase1MutatingVerdict =
  * `lowerAdoptedMutatingStatement` in from-ast.ts is its exact builder twin,
  * consulted at the same point in each dispatcher's order.
  *
- * `topLevel` enables the two S0 arms that only the top-level walker lacked
- * (`isPhase1BodyStatement` has admitted plain local assignment and local
- * `++`/`--` since slice 12; adding them here too would shadow those with
- * subtly different bookkeeping for no gain).
+ * `topLevel` enables plain local assignment and local updates; the body walker
+ * already owns those arms.
  */
 function phase1MutatingStatementVerdict(
   expr: ts.Expression,
@@ -4355,10 +4353,12 @@ function phase1MutatingStatementVerdict(
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
     // S3 — `a = b = e;`.
-    if (op === ts.SyntaxKind.EqualsToken && peelAssignmentChain(expr) !== null) {
-      return isPhase1ChainedAssignmentStatement(expr, scope, localClasses)
-        ? { ok: true }
-        : { ok: false, arm: "chained-assign", node: expr };
+    const chain = op === ts.SyntaxKind.EqualsToken ? peelAssignmentChain(expr) : null;
+    if (chain !== null) {
+      const admitted = chain.targets.every(ts.isIdentifier)
+        ? isPhase1ForUpdateExpr(expr, scope, localClasses)
+        : isPhase1ChainedAssignmentStatement(expr, scope, localClasses);
+      return admitted ? { ok: true } : { ok: false, arm: "chained-assign", node: expr };
     }
     // S1/S2 — `o.x += e;` / `a[i] *= e;`. The receiver/index restrictions
     // mirror the plain-`=` arms; the LOWERING differs (it reads the old value
@@ -8086,10 +8086,7 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
   if (binding?.valueKind.kind === "f64") return "f64";
   if (binding?.valueKind.kind === "i32") return "boolean";
   if (binding?.valueKind.kind === "extern" || binding?.valueKind.kind === "capability-extern") return "extern";
-  // A #4208 update-retyped module binding has deliberately stale checker
-  // evidence: after `value--`, a Boolean/string initializer now holds a
-  // Number. Do not fall through to scalarExpressionFamily and resurrect the
-  // initializer's static family after the binding resolver chose dynamic.
+  // Dynamic storage overrides stale checker evidence after updates (#4208).
   if (binding?.valueKind.kind === "dynamic") return undefined;
   const scalarAlias = moduleScalarAliasFamily(candidate);
   if (scalarAlias) return scalarAlias;
@@ -8109,6 +8106,8 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
     }
   }
   if (ts.isBinaryExpression(candidate)) {
+    if (candidate.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(candidate.left))
+      return obviousModuleValueFamily(candidate.right);
     if (isComparisonResultOperator(candidate.operatorToken.kind)) return "boolean";
     if (candidate.operatorToken.kind === ts.SyntaxKind.PlusToken) {
       const operand = (e: ts.Expression) => OBVIOUS_OPERAND_FAMILIES[obviousModuleValueFamily(e) ?? "unknown"];
@@ -11672,10 +11671,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isBinaryExpression(expr)) {
     const binOp = expr.operatorToken.kind;
-    // #4787 — `**` is the first bounded operator retirement checkpoint. Do
-    // not let the shared claim row widen the old shape walk: only operands
-    // `exactNumericExponentiationAdmissible` proves may reach the semantic
-    // `math.pow` builder arm.
+    if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left))
+      return isPhase1ForUpdateExpr(expr, scope, localClasses);
+    // Only exactNumericExponentiationAdmissible's proof may reach math.pow (#4787).
     if (binOp === ts.SyntaxKind.AsteriskAsteriskToken) {
       if (!exactNumericExponentiationAdmissible(expr, scope, localClasses)) return false;
       if (!isPhase1Expr(expr.left, scope, localClasses) || !isPhase1Expr(expr.right, scope, localClasses)) {

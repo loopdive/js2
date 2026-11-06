@@ -3942,27 +3942,22 @@ function lowerBitwiseAsI32(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
 }
 
 /** Invariant W — store `rhs` into an i32-promoted slot. */
-function writePromotedI32Slot(slotIndex: number, rhs: ts.Expression, cx: LowerCtx, targetName?: string): void {
+function writePromotedI32Slot(slotIndex: number, rhs: ts.Expression, cx: LowerCtx, targetName?: string): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== rhs) {
-    withNodeSourceSite(cx, rhs, () => writePromotedI32Slot(slotIndex, rhs, cx, targetName));
-    return;
+    return withNodeSourceSite(cx, rhs, () => writePromotedI32Slot(slotIndex, rhs, cx, targetName));
   }
   const promoted = promotedI32Probe(cx);
   const exactI32 = (id: ts.Identifier): boolean => promoted(id) || cx.i32PureNames.has(id.text);
-  // (#3907) `i = i + <int literal>` — the desugared spelling of the `i += <lit>`
-  // counter step that `lowerPromotedI32CompoundAssignment` already emits. The
-  // planner admits it only for a `detectI32LoopVar`-proven counter, so it
-  // carries the same bounded-by-the-loop-condition proof; emit the same
-  // `i32.add`/`i32.sub` here rather than demoting the whole function. Before
-  // #3907 this never mattered because fast mode narrowed every `number`
-  // unconditionally; it is the spelling the benchmark suite actually uses.
+  // A detectI32LoopVar-proven counter's `i = i +/- <int literal>` uses the
+  // same bounded i32 arithmetic as its compound spelling (#3907).
   const counterStep = targetName === undefined ? null : counterStepAssignment(rhs, targetName);
   if (counterStep !== null) {
     const lhs = cx.builder.emitSlotRead(slotIndex);
     const stepValue = cx.builder.emitConst({ kind: "i32", value: counterStep.step }, IR_I32);
     const binop: IrBinop = counterStep.negate ? "i32.sub" : "i32.add";
-    cx.builder.emitSlotWrite(slotIndex, cx.builder.emitBinary(binop, lhs, stepValue, IR_I32));
-    return;
+    const value = cx.builder.emitBinary(binop, lhs, stepValue, IR_I32);
+    cx.builder.emitSlotWrite(slotIndex, value);
+    return value;
   }
   if (!isCanonI32Lowerable(rhs, exactI32)) {
     throw new IrUnsupportedError(
@@ -3971,7 +3966,9 @@ function writePromotedI32Slot(slotIndex: number, rhs: ts.Expression, cx: LowerCt
       `ir/from-ast: write to i32-promoted slot is not exact-i32 lowerable in ${cx.funcName} (#3741)`,
     );
   }
-  cx.builder.emitSlotWrite(slotIndex, lowerAsI32(rhs, cx, "canon"));
+  const value = lowerAsI32(rhs, cx, "canon");
+  cx.builder.emitSlotWrite(slotIndex, value);
+  return value;
 }
 
 /**
@@ -10963,8 +10960,8 @@ function lowerPropertyCompound(
  * top level and another inside a loop body is exactly the class of divergence
  * the selector's parallel arms are written to prevent.
  *
- * MUST be consulted BEFORE the single-target `=` arms: a chain's outer LHS
- * matches those arms, but its RHS is itself an assignment they cannot lower.
+ * Property chains evaluate receivers before the RHS; identifier chains reuse
+ * the ordinary assignment producer recursively.
  */
 function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boolean {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
@@ -10972,8 +10969,10 @@ function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boole
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
     // S3 — `a = b = e;`.
-    if (op === ts.SyntaxKind.EqualsToken && peelAssignmentChain(expr) !== null) {
-      lowerChainedAssignment(expr, cx);
+    const chain = op === ts.SyntaxKind.EqualsToken ? peelAssignmentChain(expr) : null;
+    if (chain !== null) {
+      if (chain.targets.every(ts.isIdentifier)) lowerIdentifierAssignment(expr.left as ts.Identifier, expr.right, cx);
+      else lowerChainedAssignment(expr, cx);
       return true;
     }
     // `x %= e;` / S1/S2 `o.x += e;` / `a[i] *= e;`. Separate from the `=` arms
@@ -13521,17 +13520,10 @@ function boxForDynamicModuleStorage(value: IrValueId, target: IrType, rhs: ts.Ex
   return boxConcreteToDynamic(value, type, rhs, cx) ?? value;
 }
 
-/**
- * Lower `<id> = <expr>` where `<id>` is a slot-bound identifier.
- * Throws if the binding isn't a slot — mutation of a `local` would
- * silently produce wrong results (the reassignment wouldn't be
- * observable through the existing SSA value), so the mutation
- * pre-pass should have flagged the name.
- */
-function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: LowerCtx): void {
+/** Write a mutable identifier and return the RHS before any storage boxing. */
+function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
-    withMutationSourceSite(cx, id, () => lowerIdentifierAssignment(id, rhs, cx));
-    return;
+    return withMutationSourceSite(cx, id, () => lowerIdentifierAssignment(id, rhs, cx));
   }
   const binding = cx.scope.get(id.text);
   if (!binding) {
@@ -13546,7 +13538,8 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
         );
       }
       requireMatchingModuleBindingOwner(writable, cx.ownerUnitId, cx.funcName);
-      const newValue = boxForDynamicModuleStorage(lowerExpr(rhs, cx, writable.type), writable.type, rhs, cx);
+      const result = lowerExpr(rhs, cx, writable.type);
+      const newValue = boxForDynamicModuleStorage(result, writable.type, rhs, cx);
       const newType = cx.builder.typeOf(newValue);
       if (!moduleStorageCompatible(newType, writable.type)) {
         demoteToLegacy(
@@ -13556,7 +13549,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
       }
       lowerResolvedModuleBindingTdzCheck(id.text, writable, cx);
       cx.builder.emitGlobalSet(writable.globalRef, newValue);
-      return;
+      return result;
     }
     demoteToLegacy(
       "property-write-unsupported",
@@ -13565,7 +13558,8 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   }
   // (#3142 Slice 2) Module-scope binding — write the legacy global.
   if (binding.kind === "moduleGlobal") {
-    const newValue = boxForDynamicModuleStorage(lowerExpr(rhs, cx, binding.type), binding.type, rhs, cx);
+    const result = lowerExpr(rhs, cx, binding.type);
+    const newValue = boxForDynamicModuleStorage(result, binding.type, rhs, cx);
     const newType = cx.builder.typeOf(newValue);
     if (!moduleStorageCompatible(newType, binding.type)) {
       demoteToLegacy(
@@ -13575,7 +13569,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     }
     cx.builder.emitGlobalSet(binding.globalRef, newValue);
     cx.scope.set(id.text, { ...binding, stringEncoding: inferStringEncoding(rhs, cx) });
-    return;
+    return result;
   }
   if (binding.kind === "local" && binding.type.kind === "boxed") {
     const newValue = lowerExpr(rhs, cx, binding.type.inner);
@@ -13587,7 +13581,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
       );
     }
     cx.builder.emitRefCellSet(binding.value, newValue);
-    return;
+    return newValue;
   }
   if (binding.kind === "withField") {
     const newValue = lowerExpr(rhs, cx, binding.type);
@@ -13598,7 +13592,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
       );
     }
     cx.builder.emitObjectSet(binding.receiver, binding.name, newValue);
-    return;
+    return newValue;
   }
   if (binding.kind !== "slot") {
     // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
@@ -13609,8 +13603,8 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   // (#3741) invariant W — an i32-promoted slot's RHS lowers DIRECTLY to an
   // exact i32; it is never an f64 that we then truncate.
   if (binding.i32Storage) {
-    writePromotedI32Slot(binding.slotIndex, rhs, cx, id.text);
-    return;
+    const value = writePromotedI32Slot(binding.slotIndex, rhs, cx, id.text);
+    return cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64);
   }
   // Slice 6 part 4 refactor (#1185): when the binding has an asType
   // widening, the IR type the body sees is `asType`, not the
@@ -13619,7 +13613,8 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   // underlying ValType, which `asType` agrees with at the Wasm
   // level (the asType invariant guarantees this).
   const logicalType = binding.asType ?? binding.type;
-  let newValue = lowerExpr(rhs, cx, logicalType);
+  const result = lowerExpr(rhs, cx, logicalType);
+  let newValue = result;
   let newType = cx.builder.typeOf(newValue);
   if (logicalType.kind === "dynamic" && newType.kind !== "dynamic") {
     const boxed = boxConcreteToDynamic(newValue, newType, rhs, cx);
@@ -13642,6 +13637,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   }
   cx.builder.emitSlotWrite(binding.slotIndex, newValue);
   cx.scope.set(id.text, { ...binding, stringEncoding: inferStringEncoding(rhs, cx) });
+  return result;
 }
 
 /**
@@ -15318,6 +15314,8 @@ function lowerPreparedAsyncConcat(expr: ts.BinaryExpression, cx: LowerCtx): IrVa
 
 function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrValueId {
   const op = expr.operatorToken.kind;
+  if (op === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left))
+    return lowerIdentifierAssignment(expr.left, expr.right, cx);
   const preparedConcat = lowerPreparedAsyncConcat(expr, cx);
   if (preparedConcat !== null) return preparedConcat;
 
@@ -15327,13 +15325,8 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     return lowerNullish(expr, cx, hint);
   }
 
-  // #1820 — `&&` / `||` short-circuit. A prior implementation lowered both
-  // operands eagerly and combined them with `i32.and` / `i32.or`, which
-  // evaluates the right operand unconditionally — losing JS short-circuit
-  // semantics (e.g. `guard && risky()` ran `risky()` even when `guard` was
-  // false). Lower the right operand into its own body buffer and combine with
-  // `IrInstrIf` so it runs only on the branch that needs it. Handled before
-  // the eager operand lowering below, like `??`.
+  // Short-circuit && / || through IrInstrIf before eager operand lowering:
+  // the RHS runs only on the branch that needs it (#1820).
   if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
     return lowerLogicalAndOr(expr, op, cx, hint);
   }

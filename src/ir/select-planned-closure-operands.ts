@@ -418,11 +418,10 @@ export function plannedClosureOperandRefusal(
   const binaryProof = (expr: ts.BinaryExpression): OperandProof => {
     const op = expr.operatorToken.kind;
     if (op === ts.SyntaxKind.CommaToken) return operandProof(expr.right);
-    // A write's value is its slot's (a chained `s = t = v` stores one value
-    // into slots that must share the family).
+    // Compound writes retain the slot family; plain assignment returns its RHS.
     if (isAssignmentOperator(op)) {
       const target = unwrapParens(expr.left);
-      return ts.isIdentifier(target) ? operandProof(target) : UNKNOWN;
+      return ts.isIdentifier(target) ? operandProof(op === ts.SyntaxKind.EqualsToken ? expr.right : target) : UNKNOWN;
     }
     if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
       const family = logicalResultFamily(operandProof(expr.left).family, operandProof(expr.right).family);
