@@ -152,7 +152,6 @@ import {
   lowerNestedYieldStatement,
   type NestedYieldHost,
 } from "./generator-yield-nested.js";
-import { regimeTarget } from "./context/types.js";
 
 const MAX_NATIVE_GENERATOR_STATES = 256;
 
@@ -4583,7 +4582,6 @@ function emitDelegateCloseForward(
             // exceptions (host mode) recover via __get_caught_exception when
             // the resume emitter acquired it (#3050 wrap parity).
             buildTargetTaggedTry(
-              regimeTarget(ctx),
               { kind: "empty" },
               [{ op: "local.get", index: closeDelegLocal }, { op: "call", funcIdx: closeResumeIdx }, { op: "drop" }],
               [{ tagIdx: ensureExnTag(ctx), body: closeCatch }],
@@ -5368,13 +5366,7 @@ function compileState(
     const catchAll: Instr[] | undefined =
       getCaughtExnIdx !== undefined ? [{ op: "call", funcIdx: getCaughtExnIdx }, ...routeInstrs()] : undefined;
     return [
-      buildTargetTaggedTry(
-        regimeTarget(ctx),
-        { kind: "empty" },
-        body,
-        [{ tagIdx: ensureExnTag(ctx), body: routeInstrs() }],
-        catchAll,
-      ),
+      buildTargetTaggedTry({ kind: "empty" }, body, [{ tagIdx: ensureExnTag(ctx), body: routeInstrs() }], catchAll),
     ];
   }
   return body;
@@ -6101,7 +6093,7 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
             ];
       resumeFctx.body.push(...executing(1));
       resumeFctx.body.push(
-        buildTargetTaggedTry(regimeTarget(ctx), { kind: "empty" }, tryBody, [
+        buildTargetTaggedTry({ kind: "empty" }, tryBody, [
           {
             tagIdx: ensureExnTag(ctx),
             body: [

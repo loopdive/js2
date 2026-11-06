@@ -2582,7 +2582,6 @@ export function ensureAsyncResumeFunction(
   emitScopedClassLocalRebinds(ctx, resumeFctx, info.decl); // (#4618)
   resumeFctx.body.push(
     buildAsyncFrameDispatch({
-      target: { wasi: ctx.wasi, standalone: true },
       stateTypeIdx: info.stateTypeIdx,
       stateField: STATE_FIELD,
       modeField: MODE_FIELD,

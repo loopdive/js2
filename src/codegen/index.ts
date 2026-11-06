@@ -334,7 +334,7 @@ import {
 import { isDomCapabilityImportName, isDomInteractionImportName } from "../dom-capability-contract.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
-import { hostFreeEnvironment, regimeTarget } from "./context/types.js";
+import { hostFreeEnvironment } from "./context/types.js";
 import { reinstallPreHoistedLetConstBinding } from "./statements/eager-capture-box.js";
 import type {
   ClosureInfo,
@@ -7627,7 +7627,7 @@ function addWasiStartExport(ctx: CodegenContext): void {
     const startBody: Instr[] =
       exnPrinterIdx !== undefined && ctx.wasiProcExitIdx >= 0
         ? [
-            buildTargetTaggedTry(regimeTarget(ctx), { kind: "empty" }, body, [
+            buildTargetTaggedTry({ kind: "empty" }, body, [
               {
                 tagIdx: ctx.exnTagIdx,
                 body: [

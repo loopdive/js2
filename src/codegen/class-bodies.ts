@@ -154,7 +154,6 @@ import {
   valTypesMatch,
 } from "./shared.js";
 import { readEnv } from "../env.js";
-import { regimeTarget } from "./context/types.js";
 
 /**
  * (#846h / #1682) Returns true if `body` lexically contains a `super(...)` call
@@ -3412,7 +3411,6 @@ function compileClassBodiesInner(
             : [];
         fctx.body.push(
           buildTargetTaggedTry(
-            regimeTarget(ctx),
             { kind: "empty" },
             [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
             [{ tagIdx, body: catchBody }],

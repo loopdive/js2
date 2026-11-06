@@ -120,7 +120,6 @@ import { compileTaggedTemplateExpression, compileTemplateExpression } from "./st
 import { compileDeleteExpression, compileRegExpLiteral, compileTypeofExpression } from "./typeof-delete.js";
 import { describeInternalError } from "./internal-error.js";
 import { isNodeBuiltinNamedImportCallee } from "./expressions/node-builtin-named-import.js"; // (#6450)
-import { regimeTarget } from "./context/types.js";
 
 // ── Public re-exports (preserves the external API) ────────────────────
 
@@ -622,13 +621,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
     }
   }
   fctx.body.push(
-    buildTargetTaggedTry(
-      regimeTarget(ctx),
-      { kind: "val", type: { kind: "externref" } },
-      inner,
-      [{ tagIdx, body: catchExn }],
-      catchAll,
-    ),
+    buildTargetTaggedTry({ kind: "val", type: { kind: "externref" } }, inner, [{ tagIdx, body: catchExn }], catchAll),
   );
   releaseTempLocal(fctx, reasonLocal);
   if (rejectedLocal !== undefined) releaseTempLocal(fctx, rejectedLocal);

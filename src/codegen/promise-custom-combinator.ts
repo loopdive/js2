@@ -73,7 +73,6 @@ import {
 } from "./promise-combinators.js";
 import { demandPromiseDynamicMember } from "./promise-dynamic-member-read.js"; // (#6651 D5)
 import { buildTargetTaggedTry } from "../ir/try-table.js";
-import { regimeTarget } from "./context/types.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -208,7 +207,6 @@ function buildCustomCombFinishBody(res: CombBodyRes): Instr[] {
     // (`all/capability-resolve-throws-{reject,no-close}.js`), never rethrown
     // into the caller.
     buildTargetTaggedTry(
-      regimeTarget(ctx),
       { kind: "empty" },
       [
         { op: "local.get", index: 0 },
@@ -429,7 +427,7 @@ function buildCustomCombLoopBody(res: CombBodyRes, kind: "all" | "race"): Instr[
    * depth bookkeeping is never a correctness question.
    */
   const guardedElementWork = (work: Instr[]): Instr[] => [
-    buildTargetTaggedTry(regimeTarget(ctx), { kind: "empty" }, work, [
+    buildTargetTaggedTry({ kind: "empty" }, work, [
       {
         tagIdx: ensureExnTag(ctx),
         body: [

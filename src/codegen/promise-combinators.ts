@@ -62,7 +62,7 @@ import {
   buildRejectBody,
   buildNativePromiseCombinatorVectorBody,
 } from "../runtime/wasmgc/promise/combinator-bodies.js";
-import { type ClosureInfo, type CodegenContext, type FunctionContext, regimeTarget } from "./context/types.js";
+import { type ClosureInfo, type CodegenContext, type FunctionContext } from "./context/types.js";
 import {
   createNativeCombinatorStateShape,
   createNativeCombinatorElementShape,
@@ -1384,7 +1384,6 @@ export function emitObservableCombinatorPreparation(
   fctx.body.push({ op: "local.set", index: ctorLocal });
   fctx.body.push(
     buildTargetTaggedTry(
-      regimeTarget(ctx),
       { kind: "empty" },
       [
         { op: "local.get", index: ctorLocal },
@@ -1658,7 +1657,6 @@ export function emitObservableCombinatorElement(
         blockType: { kind: "empty" },
         then: [
           buildTargetTaggedTry(
-            regimeTarget(ctx),
             { kind: "empty" },
             [
               { op: "local.get", index: nextLocal },
@@ -1701,7 +1699,6 @@ export function emitObservableCombinatorElement(
   // objects, closure bags, and finalized closed-struct field ladders.
   const buildNonNativeInvoke = (): Instr[] => [
     buildTargetTaggedTry(
-      regimeTarget(ctx),
       { kind: "empty" },
       [
         { op: "local.get", index: nextLocal },
@@ -1745,7 +1742,6 @@ export function emitObservableCombinatorElement(
   const pipeline: Instr[] = [
     // Call(promiseResolve, C, «nextValue»).
     buildTargetTaggedTry(
-      regimeTarget(ctx),
       { kind: "empty" },
       [
         { op: "call", funcIdx: ctx.funcMap.get("__objvec_new")! },

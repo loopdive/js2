@@ -50,7 +50,6 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { BUILTIN_TYPE_TAGS } from "./builtin-tags.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
-import { regimeTarget } from "./context/types.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -610,9 +609,7 @@ export function fillDisposableStackDisposeDriver(ctx: CodegenContext): void {
       ],
     },
   ];
-  dispatch.push(
-    buildTargetTaggedTry(regimeTarget(ctx), { kind: "empty" }, invokeSwitch, [{ tagIdx: exnTag, body: catchHandler }]),
-  );
+  dispatch.push(buildTargetTaggedTry({ kind: "empty" }, invokeSwitch, [{ tagIdx: exnTag, body: catchHandler }]));
   loopBody.push({ op: "if", blockType: { kind: "empty" }, then: dispatch, else: [] });
   // i = i - 1; continue
   loopBody.push({ op: "local.get", index: I });

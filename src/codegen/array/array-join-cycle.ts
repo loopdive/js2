@@ -28,7 +28,7 @@
  * tell a stale frame from a live outer join, so it is not reset here.
  */
 import type { Instr, ValType } from "../../ir/types.js";
-import { regimeTarget, type CodegenContext } from "../context/types.js";
+import { type CodegenContext } from "../context/types.js";
 import { addFuncType, registerStructType } from "../registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { buildTargetTaggedTry } from "../../wasm/physical/exception-control.js";
@@ -141,7 +141,6 @@ export function guardedJoinFold(ctx: CodegenContext, arr: Instr[], fold: Instr[]
   // The legacy `try` (JS-host-embedded lane) also pops on a foreign exception;
   // standalone/WASI throw nothing but the module tag (and traps, see above).
   const guarded = buildTargetTaggedTry(
-    regimeTarget(ctx),
     { kind: "empty" },
     fold,
     [{ tagIdx, body: [pop(), { op: "throw", tagIdx }] }],

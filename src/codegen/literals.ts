@@ -132,7 +132,6 @@ import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
 import { readEnv } from "../env.js";
 import { recordObjectLiteralCarrier } from "./object-model/anon-expando-bag-slot.js";
-import { regimeTarget } from "./context/types.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -4574,7 +4573,6 @@ export function compileObjectLiteralForStruct(
             : [];
         methodFctx.body.push(
           buildTargetTaggedTry(
-            regimeTarget(ctx),
             { kind: "empty" },
             [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
             [{ tagIdx, body: catchBody }],

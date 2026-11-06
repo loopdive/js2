@@ -17,7 +17,6 @@ import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { allocLocal } from "./context/locals.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import type { ts } from "../ts-api.js";
-import { regimeTarget } from "./context/types.js";
 
 /**
  * Build the descriptor-overlay `.length` store, or return `null` when the
@@ -80,5 +79,5 @@ export function buildOverlayArrayLengthSet(
       },
     );
   }
-  return [buildTargetTaggedTry(regimeTarget(ctx), { kind: "empty" }, call, [{ tagIdx: exnTag, body: handler }])];
+  return [buildTargetTaggedTry({ kind: "empty" }, call, [{ tagIdx: exnTag, body: handler }])];
 }

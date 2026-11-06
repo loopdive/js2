@@ -3,7 +3,7 @@
     "ctx.standalone": 0,
     "!ctx.standalone": 0,
     "noJsHost(": 7,
-    "ctx.wasi": 186
+    "ctx.wasi": 183
   },
   "byDir": {
     ".": {
@@ -16,7 +16,7 @@
       "ctx.standalone": 0,
       "!ctx.standalone": 0,
       "noJsHost(": 5,
-      "ctx.wasi": 149
+      "ctx.wasi": 146
     },
     "codegen/declarations": {
       "ctx.standalone": 0,

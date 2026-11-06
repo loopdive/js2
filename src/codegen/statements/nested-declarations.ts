@@ -45,7 +45,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { recordNestedFunctionBody } from "../context/body-route-audit.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
-import { type CodegenContext, type FunctionContext, type OptionalParamInfo, regimeTarget } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, type OptionalParamInfo } from "../context/types.js";
 import { installFrameTrap } from "../frame-trap.js";
 import {
   compileNativeGeneratorFunction,
@@ -2049,7 +2049,6 @@ function compileNestedFunctionDeclarationInScope(
           : [];
       liftedFctx.body.push(
         buildTargetTaggedTry(
-          regimeTarget(ctx),
           { kind: "empty" },
           [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
           [{ tagIdx, body: catchBody }],
@@ -2567,7 +2566,6 @@ function compileNestedFunctionDeclarationInScope(
           : [];
       liftedFctx.body.push(
         buildTargetTaggedTry(
-          regimeTarget(ctx),
           { kind: "empty" },
           [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
           [{ tagIdx, body: catchBody }],

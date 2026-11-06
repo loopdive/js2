@@ -55,7 +55,6 @@ import { addFuncType } from "./index.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
-import { regimeTarget } from "./context/types.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -171,7 +170,6 @@ export function fillAsyncClosurePromiseWrappers(ctx: CodegenContext): void {
     const tagIdx = ensureExnTag(ctx);
     wrapper.body = [
       buildTargetTaggedTry(
-        regimeTarget(ctx),
         { kind: "val", type: EXTERNREF },
         inner,
         [{ tagIdx, body: [{ op: "call", funcIdx: rejectIdx }] }],

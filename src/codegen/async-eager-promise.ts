@@ -45,7 +45,6 @@ import { emitStandalonePromiseReject, emitStandalonePromiseResolve } from "./asy
 import { ensureExnTag } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { emitUndefined } from "./expressions/late-imports.js";
-import { regimeTarget } from "./context/types.js";
 
 /**
  * Should a PARKED (legacy pass-through) async arrow / function expression get an
@@ -182,8 +181,6 @@ export function wrapEagerAsyncClosureRejection(ctx: CodegenContext, fctx: Functi
   emitStandalonePromiseReject(ctx, fctx, [{ op: "local.get", index: reason }]);
   const rejected = fctx.body.splice(0);
   fctx.body.push(
-    buildTargetTaggedTry(regimeTarget(ctx), { kind: "val", type: { kind: "externref" } }, body, [
-      { tagIdx, body: rejected },
-    ]),
+    buildTargetTaggedTry({ kind: "val", type: { kind: "externref" } }, body, [{ tagIdx, body: rejected }]),
   );
 }

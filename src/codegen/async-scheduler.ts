@@ -25,7 +25,7 @@ import {
 //                   propagation.
 
 import type { FieldDef, Instr, LocalDef, ValType } from "../ir/types.js";
-import { type ClosureInfo, type CodegenContext, type FunctionContext, regimeTarget } from "./context/types.js";
+import { type ClosureInfo, type CodegenContext, type FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -1071,7 +1071,6 @@ function ensurePromiseThenableSubstrate(
   const capsTypeIdx = getOrRegisterThenCapsType(ctx);
   const applyClosureIdx = reserveApplyClosure(ctx);
   const job = buildPromiseThenableJob({
-    target: { wasi: ctx.wasi, standalone: true },
     promiseTypeIdx: state.promiseTypeIdx,
     promiseRejectFuncIdx: state.promiseRejectFuncIdx,
     capsTypeIdx,
@@ -1135,7 +1134,6 @@ function buildPromiseResolveValueBody(
   const thenGetStringInstrs = hasOwnThenArm ? stringConstantExternrefInstrs(ctx, "then") : [];
   return buildResolutionBody({
     rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx),
-    target: { wasi: ctx.wasi, standalone: true },
     state,
     promiseTypeIdx,
     callbackTypeIdx,
@@ -1379,7 +1377,7 @@ function emitThenWrapperFunction(
   );
 
   body.push(
-    buildTargetTaggedTry(regimeTarget(ctx), { kind: "empty" }, tryBody, [
+    buildTargetTaggedTry({ kind: "empty" }, tryBody, [
       {
         tagIdx: exnTag,
         body: [
@@ -1482,7 +1480,6 @@ function ensureDynamicThenWrapper(ctx: CodegenContext, kind: "fulfill" | "reject
 
   const applyArm: Instr[] = [
     buildTargetTaggedTry(
-      regimeTarget(ctx),
       { kind: "empty" },
       [
         { op: "call", funcIdx: objVecNewIdx },
@@ -4286,7 +4283,7 @@ function emitFinallyWrapperFunction(ctx: CodegenContext, info: ClosureInfo, isRe
   );
 
   body.push(
-    buildTargetTaggedTry(regimeTarget(ctx), { kind: "empty" }, tryBody, [
+    buildTargetTaggedTry({ kind: "empty" }, tryBody, [
       {
         tagIdx: exnTag,
         body: [
@@ -4358,7 +4355,6 @@ function ensureDynamicFinallyWrapper(ctx: CodegenContext, isReject: boolean): nu
   ];
   const invoke: Instr[] = [
     buildTargetTaggedTry(
-      regimeTarget(ctx),
       { kind: "empty" },
       [
         { op: "call", funcIdx: objVecNewIdx },
