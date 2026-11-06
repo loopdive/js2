@@ -924,7 +924,39 @@ function bindingDeclarationCandidates(
   source: BindingQuerySource,
 ): readonly (ts.Declaration | undefined)[] {
   const oracle = bindingOracle(source);
-  return [oracle.valueDeclarationOf(node), ...oracle.declarationsOf(node)];
+  const candidates = [oracle.valueDeclarationOf(node), ...oracle.declarationsOf(node)];
+  return scriptVarBehindLibGlobal(node, candidates) ?? candidates;
+}
+
+/**
+ * (#7287) A script's top-level `var NAME` and a lib global of the same name
+ * (the test262 prelude's `var print = …` against lib.dom's
+ * `declare function print`) are a duplicate identifier to the checker, which
+ * binds every use to the lib declaration alone. At run time the script `var`
+ * IS the global binding — legacy binds its `__mod_NAME` slot by name — so a
+ * use whose every declaration is a lib one takes the file's unique top-level
+ * `var` of that name. A redeclared `var` stays unresolved, as an ordinary
+ * redeclaration does without `allowRedeclaredVar`.
+ */
+function scriptVarBehindLibGlobal(
+  node: ts.Identifier,
+  candidates: readonly (ts.Declaration | undefined)[],
+): readonly IrModuleBindingDeclaration[] | undefined {
+  const sourceFile = node.getSourceFile();
+  if (ts.isExternalModule(sourceFile)) return undefined;
+  const declared = candidates.filter((candidate) => candidate !== undefined);
+  if (declared.length === 0 || !declared.every((candidate) => candidate.getSourceFile().isDeclarationFile)) {
+    return undefined;
+  }
+  const vars = sourceFile.statements.flatMap((statement) =>
+    ts.isVariableStatement(statement)
+      ? statement.declarationList.declarations.filter(
+          (declaration) =>
+            ts.isIdentifier(declaration.name) && declaration.name.text === node.text && lexicalFlags(declaration) === 0,
+        )
+      : [],
+  );
+  return vars.length === 1 ? vars : undefined;
 }
 
 function isModuleBindingDeclaration(

@@ -14,6 +14,12 @@ area: ir
 goal: ir-full-coverage
 related: [7198, 7195, 7271, 7284, 7286, 7252, 7274]
 assignee: "ttraenkler/c-lead"
+loc-budget-allow:
+  # 2026-11-06 (#7287 slice A): +32 — `scriptVarBehindLibGlobal`, the one
+  # rule `bindingDeclarationCandidates` applies before every binding query
+  # (the shared seam both the selector and from-ast resolve through). It reads
+  # only the candidates that function already gathers, so it lives beside it.
+  - src/ir/module-bindings.ts
 ---
 
 # #7287: a script `var` holding a function expression, callable from IR units
