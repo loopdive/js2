@@ -60,20 +60,24 @@ function ambientGlobalFunctionCall(
 }
 
 /**
- * The selector's admission: the shared one, an unshadowed ambient binding and
- * the `native-global-function-call` lane capability. The arguments, else null
- * — a lowering, not a call edge.
+ * The selector's admission: the shared one, a lib-only ambient binding and the
+ * `native-global-function-call` lane capability. The arguments, else null — a
+ * lowering, not a call edge.
  *
- * `escape` / `unescape` stay refused in an ES module's `<module-init>`: that
- * unit lowers as a prepared component, whose Program ABI has no identity for
- * the `__escape` / `__unescape` runtime callables nor for `dyn.string_carrier`
- * (measured: `late-preparation-unsupported`). Scripts — every test262 body —
- * and ordinary functions are unaffected.
+ * Lib-only, not merely "has a lib declaration": in a script a source
+ * `function unescape() {}` merges with the lib's `declare function`, and the
+ * call must keep binding to the source function (#7118's `function Number`).
+ *
+ * In an ES module `escape` / `unescape` are admitted only from a top-level
+ * function declaration. Every other unit there (`<module-init>`, class
+ * members, closures) lowers as a prepared component, whose Program ABI has no
+ * identity for the `__escape` / `__unescape` runtime callables nor for
+ * `dyn.string_carrier` (measured: `late-preparation-unsupported`). Scripts —
+ * every test262 body — are unaffected.
  */
 export function admitAmbientGlobalFunctionCall(
   expr: ts.CallExpression,
-  callerIsModuleInit: boolean,
-  isAmbientBinding: (node: ts.Identifier) => boolean,
+  isLibOnlyBinding: (node: ts.Identifier) => boolean,
   options: Pick<IrSelectionOptions, "supportsBackendCapability" | "classifyDeclaredPrimitiveExpression"> | undefined,
 ): readonly ts.Expression[] | null {
   const classify = options?.classifyDeclaredPrimitiveExpression;
@@ -81,17 +85,22 @@ export function admitAmbientGlobalFunctionCall(
     return null;
   }
   const call = ambientGlobalFunctionCall(expr, classify);
-  if (call === null || !isAmbientBinding(call.callee)) return null;
+  if (call === null || !isLibOnlyBinding(call.callee)) return null;
   const escapeFamily = call.name === "escape" || call.name === "unescape";
-  if (escapeFamily && callerIsModuleInit && ts.isExternalModule(expr.getSourceFile())) return null;
+  if (escapeFamily && ts.isExternalModule(expr.getSourceFile()) && !inTopLevelFunctionDeclaration(expr)) return null;
   return expr.arguments;
+}
+
+function inTopLevelFunctionDeclaration(node: ts.Node): boolean {
+  const unit = ts.findAncestor(node.parent, ts.isFunctionLike);
+  return unit !== undefined && ts.isFunctionDeclaration(unit) && ts.isSourceFile(unit.parent);
 }
 
 /** What the lowering needs from from-ast (no import of the lowerer itself). */
 export interface AmbientGlobalFunctionLoweringHost {
   readonly builder: IrFunctionBuilder;
   readonly resolver:
-    | Pick<IrFromAstResolver, "isAmbientBinding" | "supportsBackendCapability" | "ambientGlobalFunctionTarget">
+    | Pick<IrFromAstResolver, "isLibOnlyBinding" | "supportsBackendCapability" | "ambientGlobalFunctionTarget">
     | undefined;
   readonly classify: ClassifyDeclared;
   readonly lowerOperand: (argument: ts.Expression, family: OperandFamily) => IrValueId;
@@ -115,7 +124,7 @@ export function lowerAmbientGlobalFunctionCall(
   const { builder, resolver } = host;
   if (resolver?.supportsBackendCapability?.("native-global-function-call") !== true) return null;
   const call = ambientGlobalFunctionCall(expr, host.classify);
-  if (call === null || resolver.isAmbientBinding?.(call.callee) !== true) return null;
+  if (call === null || resolver.isLibOnlyBinding?.(call.callee) !== true) return null;
   const lowerOperands = (): IrValueId[] =>
     call.operands.map(({ argument, family }, index) => {
       const value = host.lowerOperand(argument, family);
@@ -134,7 +143,6 @@ export function lowerAmbientGlobalFunctionCall(
   const parse = call.name === "parseInt" || call.name === "parseFloat";
   const args =
     call.name === "parseInt" ? [textRef, radix ?? builder.emitConst({ kind: "f64", value: NaN }, F64)] : [textRef];
-  const result = builder.emitCall(target, args, parse ? F64 : irDynamic());
-  if (result === null) throw new Error(`ir/ambient-global-function-call: ${call.name} provider returned no value`);
+  const result = builder.emitCall(target, args, parse ? F64 : irDynamic())!; // non-void result type
   return parse ? result : builder.emitDynStringCarrier(result);
 }
