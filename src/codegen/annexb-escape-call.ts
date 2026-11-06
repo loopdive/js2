@@ -174,14 +174,13 @@ export function compileAnnexBEscapeCall(
  * `parseFloat` / `escape` / `unescape` binds: exactly the ones legacy's call
  * sites resolve — the ambient parse scanners (the `runtime` parse symbols map
  * through `ambientBuiltinFuncMap`, never a same-named source function) and this
- * module's helper table. Null off the native-string host-free lanes or when the
- * provider was not registered.
+ * module's helper table. Null when the provider was not registered; the lane is
+ * the `native-global-function-call` capability's question, not this lookup's.
  */
 export function ambientGlobalFunctionProviderSymbol(
   ctx: CodegenContext,
   name: "parseInt" | "parseFloat" | "escape" | "unescape",
 ): string | null {
-  if ((!ctx.standalone && !ctx.wasi) || ctx.fast || !ctx.nativeStrings) return null;
   if (name === "parseInt" || name === "parseFloat") return ctx.ambientBuiltinFuncMap.has(name) ? name : null;
   const helper = NATIVE_STRING_TRANSFORM_HELPERS.get(name)!;
   return ctx.funcMap.has(helper) ? helper : null;
