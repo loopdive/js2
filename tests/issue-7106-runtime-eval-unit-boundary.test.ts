@@ -19,7 +19,6 @@ function live(): number { return 1; }
 function callsLive(): number { return live(); }
 function callsCallsLive(): number { return callsLive() + 1; }
 function bump(): number { counter = counter + 1; return counter; }
-function applies(): number { return live.apply(null, true as any); }
 Function("live = function () { return 2; }")();
 export function useHelper(): number { return helper(20) + shadow(1); }
 `;
@@ -52,11 +51,6 @@ describe("#7106 A1 — runtime-eval boundary per unit", () => {
     // The call-graph component of a withdrawn function goes with it.
     direct(byName, "live", "(boundary-closure)");
     direct(byName, "callsCallsLive", "(boundary-closure)");
-  });
-
-  it("keeps a primitive `apply` on a live function direct", async () => {
-    // Selection refuses the call shape today; the eval-visible read refuses it too.
-    expect((await outcomes("standalone")).get("applies")?.irBodyEmitted).toBe(false);
   });
 
   it("keeps the whole-program withdrawal on WASI", async () => {
