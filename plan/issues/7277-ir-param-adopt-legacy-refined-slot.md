@@ -107,3 +107,40 @@ the existing resolver; no new import, no selector change.
   propertyHelper includers, 100 async/doneprintHandle files): no pass→fail,
   no new trap.
 - A vitest test pins the projection and runtime parity.
+
+## Results (2026-11-06; base = main `8b349439`, head `b6c06be1`)
+
+- **Wrapped ledger** (stride 40, standalone, SHAPE_DIAG), compileOk and
+  invariants unchanged:
+
+  | | base | head |
+  | --- | --- | --- |
+  | compileOk | 1118 | 1118 |
+  | invariants | `{}` | `{}` |
+  | route `legacy` | 4750 | 4621 (−129) |
+  | route `both` | 8561 | 8684 (+123) |
+  | route `ir` | 1137 | 1143 (+6) |
+
+  `select:param-type-not-resolvable` falls 978 → 650. Every
+  `param-dynamic-carrier-diverges-from-legacy` row for a string/f64 slot is
+  gone: `msg` −278, `value` −126, `name` −15, `s0` −14, `string` −11,
+  `type` −10, `n` −9, `prop` −7, `tag0` −7. Those units move to their next
+  refusal:
+  - `__consolePrintHandle__` → `external-call` (+139), and its sibling
+    `move-only[concrete]` on the `'Test262:AsyncTestFailure:' + …` concat
+    (+139);
+  - template literals → `template-substitution-unsupported` (45 → 84);
+  - a string `name` passed to a dynamic parameter → `move-only[dyn]` (+9).
+
+  No new `abi-signature-parity` row and no build-stage demote: every change
+  is a select-stage refusal or a route gain.
+- **Standalone test262 A/B**, 493 files (300 seeded random, 100
+  propertyHelper includers, 94 async/doneprintHandle files):
+  `{ pass: 341, fail: 113, compile_error: 28, skip: 11 }` on both sides, with
+  the same non-pass set row for row.
+- **Typed corpus:** 264/264 byte-identical to main (gc/standalone/wasi).
+- **Test:** `tests/issue-7277-ir-param-legacy-refined-slot.test.ts`.
+  verifyEqualTo is IR-emitted, its throw path keeps legacy's messages
+  (including `-0`), and `built-ins/Boolean/prop-desc.js` passes.
+- **Gates** (bare, also vs `origin/main`): green.
+- **Equivalence gate:** running; the result will go on the PR.
