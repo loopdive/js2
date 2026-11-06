@@ -16,7 +16,7 @@
  *    `(n, {maxByteLength: m})` or `(n, {maxByteLength: undefined})` of the
  *    lib-only, unshadowed `ArrayBuffer` (a script `function ArrayBuffer(){}`
  *    is not it, though the checker resolves only the lib declaration: the
- *    #7264 lesson), with number-typed `n` / `m`;
+ *    #7264 lesson), with a number-typed `n` and a number-literal `m`;
  *  - a top-level script `var` every write of which is a certified producer
  *    (a construction or a certified `slice` result);
  *  - on a certified receiver (a producer, or such a var read in module-init
@@ -109,6 +109,41 @@ function makeNumberOperand(checker: ts.TypeChecker): (expr: ts.Expression) => bo
   return (expr) => classify(expr) === "number";
 }
 
+/**
+ * An `undefined` slice bound: the global `undefined`, or a read of a `var`
+ * initialized to it (whose lowering is the dynamic carrier, whatever is
+ * written to it later). Name resolution only, like the number classifier's
+ * own provenance walk.
+ */
+function isUndefinedOperand(checker: ts.TypeChecker, expr: ts.Expression): boolean {
+  const candidate = stripParens(expr);
+  if (isUnshadowedUndefined(candidate)) return true;
+  if (!ts.isIdentifier(candidate)) return false;
+  const declaration = checker.getSymbolAtLocation(candidate)?.valueDeclaration;
+  return (
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    isUnshadowedUndefined(declaration.initializer)
+  );
+}
+
+/**
+ * A `maxByteLength` operand that cannot throw or run code: a number literal,
+ * possibly negated. Legacy validates the length BEFORE evaluating the option
+ * (new-indexed.ts) while the IR's call evaluates both first; with a literal
+ * option (even a TDZ read could throw) the two orders cannot be told apart.
+ */
+function isLiteralNumber(expr: ts.Expression): boolean {
+  const candidate = stripParens(expr);
+  return (
+    ts.isNumericLiteral(candidate) ||
+    (ts.isPrefixUnaryExpression(candidate) &&
+      candidate.operator === ts.SyntaxKind.MinusToken &&
+      ts.isNumericLiteral(candidate.operand))
+  );
+}
+
 /** The construction shape of `expr`, or `undefined` outside the table. */
 function makeConstructShape(
   checker: ts.TypeChecker,
@@ -136,7 +171,7 @@ function makeConstructShape(
     }
     const max = property.initializer;
     if (isUnshadowedUndefined(max)) return { kind: "construct", length, maxByteLength: undefined };
-    return isNumber(max) ? { kind: "construct", length, maxByteLength: max } : undefined;
+    return isLiteralNumber(max) ? { kind: "construct", length, maxByteLength: max } : undefined;
   };
 }
 
@@ -159,8 +194,7 @@ function isSliceCall(
 
 function collectBufferSites(checker: ts.TypeChecker, sourceFile: ts.SourceFile): BufferSites {
   const isNumber = makeNumberOperand(checker);
-  const isBound = (expr: ts.Expression): boolean =>
-    isNumber(expr) || checker.getTypeAtLocation(expr).flags === ts.TypeFlags.Undefined;
+  const isBound = (expr: ts.Expression): boolean => isNumber(expr) || isUndefinedOperand(checker, expr);
   const constructShape = makeConstructShape(checker, isNumber);
   const constructions = new Map<ts.NewExpression, Construct>();
   const sliceCalls = new Set<ts.CallExpression>();

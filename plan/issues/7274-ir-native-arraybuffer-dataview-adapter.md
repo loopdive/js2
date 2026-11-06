@@ -376,8 +376,12 @@ and builds the plan once for both planning sites (`planIrNativeBufferSurface`).
   as the lib declarations alone, so the lib-only quantifier is not enough;
   the plan also requires that the file declares no `ArrayBuffer`
   (`isUnshadowedLibBinding`, factored out of `ambient-intrinsics.ts`).
-- **Operands.** Lengths and `maxByteLength` must be number-typed (a string,
-  `undefined` or object length stays legacy, where ToPrimitive runs). The
+- **Operands.** The length must be number-typed (a string, `undefined` or
+  object length stays legacy, where ToPrimitive runs) and `maxByteLength` a
+  number literal, so legacy's length-first evaluation order cannot be
+  observed (#7121 review nit 2). Slice bounds are number-typed or
+  `undefined` (the global, or a var initialized to it), resolved by the
+  primitive classifier and name resolution, not the raw checker type. The
   `slice` bounds travel as the IR dynamic carrier, which is the externref the
   shared slice body ToNumbers — hence `!ctx.fast` in the availability check.
 - **`{maxByteLength: undefined}`** builds a fixed buffer (§25.1.3.1
@@ -463,6 +467,24 @@ ABI identity). The adapters are still minted, so such a module carries them
 unused. Script files (test262) are unaffected.
 
 ## Follow-ups
+
+- **Legacy `{maxByteLength: undefined}`** builds a resizable buffer with
+  max 0 (`new-indexed.ts` treats any `maxByteLength` property as present);
+  §25.1.3.1 GetArrayBufferMaxByteLengthOption says fixed-length. The IR
+  route builds the fixed buffer, so the two routes differ here (measured:
+  `options-maxbytelength-undefined.js` fails on legacy, passes on the IR).
+- **Legacy resizable length rejects fractions.** `new ArrayBuffer(1.5,
+  {maxByteLength: 4})` throws a RangeError (`emitResizableAbLength` tests
+  `len != floor(len)`); ToIndex truncates. The shared emitter keeps legacy's
+  behaviour on both routes.
+- **Legacy `maxByteLength` clamps to 2^31-1** (`i32.trunc_sat_f64_s`)
+  instead of throwing for a value past the i32-indexed backing, and the
+  resizable length has no upper bound before `array.new_default` (a trap).
+  Shared by both routes.
+- **Legacy argument order.** Legacy validates the length before evaluating
+  the `maxByteLength` expression; the spec evaluates the whole argument list
+  first. The IR admits only a number-literal `maxByteLength`, so the
+  difference is not observable on the IR route (#7121 review nit 2).
 
 - **The 7 closure / object-literal files.** They need planned-closure bodies
   that can capture script vars and construct intrinsics (#7271 piece 1, lane

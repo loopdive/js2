@@ -9,8 +9,11 @@
  *    one in a plain helper function.
  *
  * Each emitter takes its operand from the stack (or from a local the caller
- * owns) so one instruction sequence serves both, and the IR and legacy paths
- * can never disagree about what a buffer is.
+ * owns), so one instruction sequence serves both and the two paths build the
+ * same buffer from the same operands. They differ, measured, in what reaches
+ * these emitters: for `{maxByteLength: undefined}` legacy emits the resizable
+ * path with max 0 while the IR admission builds a fixed buffer (§25.1.3.1);
+ * see the #7274 follow-ups.
  *
  * Representation: a fixed buffer is a `$__vec_i32_byte` (packed i8 data,
  * field 0 = byte length, -1 once detached); a resizable one is its subtype
