@@ -13390,8 +13390,7 @@ export function buildLocalCallGraph(
           // (#7253) …and the host-free global functions.
           const globalFunctionArgs = admitAmbientGlobalFunctionCall(
             node,
-            callerName === MODULE_INIT_UNIT_NAME,
-            selectorSeesAmbientBinding,
+            (callee) => currentModuleBindingResolver?.isLibOnlyBinding(callee) === true,
             currentSelectionOptions,
           );
           if (globalFunctionArgs !== null) {
