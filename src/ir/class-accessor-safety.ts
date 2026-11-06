@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import type { IrClassMethodDescriptor } from "./nodes.js";
+import type { IrStructuralSelectorAccessorAbiEvidence } from "./select.js";
 
 function hasDecorators(node: ts.Node): boolean {
   return ts.canHaveDecorators(node) && (ts.getDecorators(node)?.length ?? 0) > 0;
@@ -507,4 +509,64 @@ export function exactPreparedAccessorSyntaxKey(name: ts.PropertyName): string | 
     ts.isIdentifier(expression.left)
     ? exactPreparedAccessorExpressionKey(expression.right)
     : exactPreparedAccessorExpressionKey(expression);
+}
+
+/**
+ * (#7223) A class member whose projected descriptor carries `dynamic` (the
+ * checker typed the position `any`/`unknown` — every untyped JS member) has no
+ * propagation-lattice entry, so the selector's own resolution would refuse
+ * the position. The descriptor is the legacy-ABI evidence: both the legacy
+ * class body and the IR `dynamic` lowering take `resolveWasmType`'s
+ * `Any | Unknown` carrier. Only the dynamic positions are supplied; every
+ * other position keeps its ordinary resolution, and a member without a
+ * dynamic position gets no evidence at all (typed classes are untouched).
+ */
+export function dynamicDescriptorAbiEvidence(
+  member: ts.ClassElement,
+  descriptor: IrClassMethodDescriptor | undefined,
+): IrStructuralSelectorAccessorAbiEvidence | undefined {
+  if (!descriptor) return undefined;
+  if (!ts.isMethodDeclaration(member) && !ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) {
+    return undefined;
+  }
+  if (descriptor.params.length !== member.parameters.length) return undefined;
+  const params = descriptor.params.map((type) => (type.kind === "dynamic" ? ("dynamic" as const) : undefined));
+  const dynamicReturn = descriptor.returnType?.kind === "dynamic";
+  const fallbackReturnType = ts.isSetAccessorDeclaration(member)
+    ? undefined
+    : jsConcreteReturnEvidence(member, descriptor);
+  if (!dynamicReturn && !params.includes("dynamic") && fallbackReturnType === undefined) return undefined;
+  const returnType = ts.isSetAccessorDeclaration(member) ? "void" : dynamicReturn ? "dynamic" : undefined;
+  return fallbackReturnType === undefined ? { params, returnType } : { params, returnType, fallbackReturnType };
+}
+
+/**
+ * (#7227) A JS class member's concrete return (`return this.#m()`, `return
+ * this.x`) has no annotation and no lattice entry, so the selector refused it
+ * as `return-type-unresolved(lattice=absent)`. Its descriptor return is the
+ * checker inference legacy registers the slot from — the same evidence every
+ * IR caller of the member already relies on — so it is supplied as a FALLBACK,
+ * consulted only when ordinary resolution fails. JS sources only: an
+ * unannotated TS member keeps its current verdict (typed corpus unchanged).
+ *
+ * STATIC METHODS only. An IR instance body (method or getter) dereferences its
+ * receiver unchecked, while the `__obj_meth_tramp_*_cached` trampoline hands a
+ * foreign receiver (`get.call({})`, `Reflect.apply(m, {}, [])`) through as
+ * `ref.null` and the legacy body raises the catchable TypeError itself — so
+ * newly claiming instance members would turn that TypeError into a Wasm trap
+ * (review of #7054). A static method has no struct receiver to dereference.
+ */
+function jsConcreteReturnEvidence(
+  member: ts.MethodDeclaration | ts.GetAccessorDeclaration,
+  descriptor: IrClassMethodDescriptor,
+): "f64" | "string" | undefined {
+  if ((member.flags & ts.NodeFlags.JavaScriptFile) === 0) return undefined;
+  const isStatic = ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false;
+  if (!ts.isMethodDeclaration(member) || !isStatic) return undefined;
+  const returnType = descriptor.returnType;
+  if (returnType?.kind === "string") return "string";
+  // A boolean descriptor (`i32`) is NOT admitted: the IR body's slot type
+  // diverges from the legacy boolean slot (class-method typeIdx parity
+  // mismatch, measured 2026-11-04), so it stays on the legacy body.
+  return returnType?.kind === "val" && returnType.val.kind === "f64" ? "f64" : undefined;
 }

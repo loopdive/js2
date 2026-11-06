@@ -1,10 +1,11 @@
 ---
 id: 7215
 title: "Constructor parameter properties (`constructor(public x)`) are never stored"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-10-31
-updated: 2026-10-31
+updated: 2026-11-04
+completed: 2026-11-04
 priority: high
 horizon: s
 feasibility: medium
@@ -14,6 +15,16 @@ area: codegen
 language_feature: classes
 goal: correctness
 related: [7199]
+# 2026-11-04 (#7215): parameter properties reuse the existing property-field
+# builder (extracted into a closure, not duplicated) and the existing
+# field-initializer store loop in the class constructor; the eligibility rule
+# (rounds 2-3 of the PR #7045 review) is a top-level helper. Measured: +27 LOC
+# in class-bodies.ts, +6 (collectClassDeclaration) / +3 (compileClassBodiesInner).
+loc-budget-allow:
+  - src/codegen/class-bodies.ts
+func-budget-allow:
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
 ---
 
 # #7215 — TypeScript parameter properties are dropped
@@ -35,3 +46,85 @@ console.log(JSON.stringify(a), a.x);   // node: {"x":1,"y":"p"} 1 — we: {} NaN
    constructor body, before user statements and after `super(...)`.
 2. Tests on 3 lanes: plain, `readonly`, mixed with normal fields and
    initializers (order), in a subclass with `super`, and JSON/keys order.
+
+## Resolution (2026-11-04)
+
+**Cause.** Nothing in the legacy class lowering looked at parameter
+properties: `collectClassDeclaration` built struct fields only from
+`PropertyDeclaration`s and `this.x = …` statements in the constructor body,
+and the constructor emitted only property initializers. The IR selector
+already declines constructors with parameter properties
+(`src/ir/select.ts`, `body-shape-rejected`), so every such class took the
+legacy path and lost the fields on all lanes.
+
+**Fix** (`src/codegen/class-bodies.ts`, helper
+`constructorParameterProperties` in `src/codegen/ast-modifiers.ts`):
+
+- Each parameter property (`public`/`private`/`protected`/`readonly`/
+  `override`, any combination) declares an own field ahead of the class
+  properties, through the same builder the property declarations use.
+- The constructor stores `this.x = x` right after the own field initializers
+  (base class: at entry; derived class: right after `super(...)` returns),
+  in parameter order, after parameter defaults are applied. This is the
+  `tsc` ES2022 emit (`x; z = …; constructor(x) { super(); this.x = x; … }`).
+- The IR path is unchanged and still declines these constructors, so both
+  paths agree.
+
+## Not fixed here
+
+Each case below compiles **byte-identically to base**: no field is declared and
+nothing is stored.
+
+- **Classes where any parameter property cannot get a field yet** declare none
+  of their parameter properties. Declaring only some of them is worse than
+  declaring none: a declared field turns `o.next!.v` on an undeclared
+  `next` into a struct read off a typed null, which traps, while base falls
+  back and does not trap. "Cannot get a field yet" means one of:
+  - **An argument that may be `undefined`:** `public s?: string`,
+    `public s: string | undefined`, `public p?: P`, `public x?: number` and
+    `public c?: boolean` without a default. With a default, the default's own
+    type decides, so `= void 0`, `= undefined` and `= d()` with
+    `d(): string | undefined` count; `= "d"` does not. No field slot holds
+    `undefined` yet. A typed slot reads `null`/`0`/`false`. An externref slot
+    reads correctly but serialises as `"s":null` and, for `x?: number`,
+    boxes the omitted argument as `0`. Both were measured in round 2.
+  - **A native annotation (`public n: i32`).** An `i32` field fails the IR
+    methods' type check, a compile error where base compiled. An `f64` field
+    still fails `run` ("'+' operands not provably both-number"). Explicit
+    `n: i32` fields fail to compile on base as well.
+  Because the rule is all or none, two shapes that the first revision of this
+  PR fixed are back to base output:
+  - **Mixed classes**, such as `constructor(public x: number, public s?: string)`:
+    `x` reads `NaN` and JSON prints `{}`.
+  - **`public n: i32` classes without methods**, which print `1{}` again instead
+    of `5{"n":4}`.
+- **`any` / `unknown` / generic `T` holding `undefined`.** These types are not
+  "undefinable", so they get a field. Reads and `Object.keys` are correct, but
+  JSON writes the `undefined` field as `null`: `new A(undefined)` prints
+  `{"v":null}` where node prints `{}`. Base printed `{}` for every argument,
+  including `new A(3)`, and the explicit-field form (`v: any; this.v = v`)
+  prints `{"v":null}` on base. This is the existing "JSON writes an undefined
+  field as null" gap. It is pinned in the test file.
+- **Externref-backed builtin subclasses** (`class E extends Error { constructor(public
+  code: number) … }`, also `extends Object`, `Map`, `Array`, …). Their
+  own-field writes go through the `$Error_struct`/`$Object` props backing,
+  which field initializers do not reach either: `class E extends Error {
+  code = 7 }` reads `NaN` on base too.
+- **`super(...)` nested in a statement** (`if (f) super(1); else super(2);`).
+  The store is not emitted. TS rejects this program (TS2401).
+
+Pre-existing gaps seen while probing. The equivalent explicit-field class has
+each of them too, so they are not part of this fix:
+- A declared field assigned in the constructor body enumerates before
+  earlier initialised fields.
+- An uninitialised `number` field reads `0` instead of `undefined`. This shows
+  up as `y = this.x * 2`, a TS2729 program, giving `0`.
+- On wasi, `"x" in o` and `Object.prototype.hasOwnProperty.call(o, "x")`
+  throw.
+- `Object.keys` through an abstract-base-typed value omits the derived
+  class's own field.
+
+Tests: `tests/equivalence/issue-7215-ctor-parameter-properties.test.ts`
+(38 rows × gc/standalone/wasi: diffed against node, including the
+undeclared optional and undefined-default shapes, the native `i32` compile
+rows, and one row pinned to the `any` residual).

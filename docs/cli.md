@@ -234,11 +234,11 @@ a plain `obj.field` on a WasmGC struct yields `undefined`), `__call_fn*`
 
 | Value | Effect |
 |-------|--------|
-| `auto` (default) | On for js-host targets, **off** for `wasi` / `standalone`. |
+| `auto` (default) | On for JS-environment targets (`gc`), **off** for `wasi` / `standalone`. |
 | `always` | Always publish it — what a JS harness that inspects the module needs. |
 | `off` | Never publish it. |
 
-These exports are the **calling convention** in js-host mode, not debug
+These exports are the **calling convention** of the JS value adapter, not debug
 information: `src/runtime.ts` cannot materialize an array or read a struct field
 without them. But a `wasi` / `standalone` binary runs under a JS-free host
 (wasmtime), where the only consumers are inspection tools — and because exports
@@ -275,12 +275,12 @@ flag (#2603).
 
 ### `--no-host-imports`
 
-Strict dual-mode: reject any JS-host `env` import that is not on the allowlist
+Strict host-free check: reject any `env` import that is not on the allowlist
 (#1524). Implied by `--target wasi`.
 
 ### `--allow-host-imports`
 
-Debug-only escape hatch that turns strict dual-mode off for a WASI build, for
+Debug-only escape hatch that turns the strict host-free check off for a WASI build, for
 temporarily mixing host and WASI imports while migrating a program.
 
 ## Permission flags

@@ -64,6 +64,7 @@
 // SATELLITE-ONLY, like every sibling rule: the always-on main-map path passes
 // no extension, so #1712 flag-off byte-parity holds by construction.
 import { forEachChild, ts } from "../ts-api.js";
+import { hasDynamicScope } from "../shared/binding-writes.js";
 import { isFunctionLikeNode, unwrap } from "./fnctor-graph-model.js";
 import { _propagationCore as core, type InferExtension, type LatticeType } from "./propagate.js";
 
@@ -118,23 +119,6 @@ function isDirectBodyStatement(decl: ts.VariableDeclaration, fn: ts.SignatureDec
   if (!ts.isVariableStatement(stmt)) return false; // for/for-in/for-of heads excluded here
   const body = (fn as { body?: ts.Node }).body;
   return body !== undefined && ts.isBlock(body) && stmt.parent === body;
-}
-
-/** `with` anywhere, or a direct `eval(...)` identifier call, in the subtree. */
-const dynamicScopeCache = new WeakMap<ts.Node, boolean>();
-function hasDynamicScope(root: ts.Node): boolean {
-  const cached = dynamicScopeCache.get(root);
-  if (cached !== undefined) return cached;
-  let found = false;
-  const visit = (n: ts.Node): void => {
-    if (found) return;
-    if (ts.isWithStatement(n)) found = true;
-    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "eval") found = true;
-    forEachChild(n, visit);
-  };
-  visit(root);
-  dynamicScopeCache.set(root, found);
-  return found;
 }
 
 /** Inside a nested (relative to `fn`) hoisted FunctionDeclaration? */

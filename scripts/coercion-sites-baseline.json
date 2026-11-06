@@ -19,7 +19,7 @@
   "codegen/async-scheduler.ts": 3,
   "codegen/bigint-string-context.ts": 1,
   "codegen/bigint-wide.ts": 1,
-  "codegen/binary-ops-typed-dispatch.ts": 9,
+  "codegen/binary-ops-typed-dispatch.ts": 11,
   "codegen/binary-ops.ts": 6,
   "codegen/bound-fn-meta.ts": 1,
   "codegen/box-boolean-fuse.ts": 2,

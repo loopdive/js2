@@ -69,6 +69,7 @@ import { widenedVarKeyFromDecl } from "./widened-var-key.js";
 import { argumentsBeforeDefaults, endArgumentsBeforeDefaults } from "./object-method-arguments-first.js"; // (#6651 A11)
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
+import { isGrowthSwitchedReceiver } from "./statements/array-share-group.js";
 import { collectInstrs } from "./statements/shared.js";
 import {
   cacheStringLiterals,
@@ -5317,7 +5318,9 @@ export function compileArrayLiteral(
     if (ts.isOmittedExpression(element)) return false;
     const value = ts.isSpreadElement(element) ? element.expression : element;
     const fact = ctx.oracle.typeFactOf(value);
-    return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function";
+    // (#7164) `...g` of an array #7164 moved onto the externref carrier must not pick the f64 carrier.
+    const spreadAny = ts.isSpreadElement(element) && isGrowthSwitchedReceiver(ctx, value);
+    return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function" || spreadAny;
   });
   // (#5269 R2-4) An element that is an object literal on the HOST-OBJECT path is
   // an open `$Object`, not a closed struct — but the first-element heuristic

@@ -45,6 +45,26 @@ import { allocLocal } from "./context/locals.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
 import { HOLE_F64_BITS } from "./value-tags.js";
 import { holeSentinelInstrs } from "./array-holes.js";
+import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
+
+/**
+ * - `both`: fill `[min(oldLen, newLen), cap)` — the store has no pending
+ *   element write (defineProperty, the dynamic `__extern_set` arm).
+ * - `shrink-only`: fill `[newLen, cap)` only when the length moves down.
+ * - `length-store` (#7164): the static `arr.length = n` store. Every carrier
+ *   keeps the `shrink-only` fill. An externref carrier also GROWS: the backing
+ *   is reallocated to `newLen` (same 16M allocation guard as the
+ *   defineProperty and `__extern_set` paths) so the vec keeps
+ *   `length <= cap`, and `[oldLen, cap)` is filled with the canonical
+ *   `undefined` — not `$Hole`, which every element reader would have to map,
+ *   and not the `null` that `array.new_default` / an earlier capacity grow
+ *   left there. Only a binding #7164 moved onto this carrier uses it; every
+ *   other vec keeps `shrink-only`, as before #7164. The new indices therefore read as present `undefined` (`in`
+ *   answers true: a documented #7170 gap). A JS element write bumps `length`
+ *   itself, so the `arr[len] = v; arr.length = len + 1` append shape stores an
+ *   unchanged length and fills nothing it wrote.
+ */
+export type VecLengthHoleFillMode = "shrink-only" | "both" | "length-store";
 
 /**
  * Emit, for every admitted vec type, a guarded fill of
@@ -59,7 +79,7 @@ export function emitVecLengthHoleFill(
   fctx: FunctionContext,
   vecLocal: number,
   newLenLocal: number,
-  mode: "shrink-only" | "both" = "both",
+  mode: VecLengthHoleFillMode = "both",
   // (#6482 r7) Also fill EXTERNREF-backed carriers with the `$Hole` singleton.
   //
   // Opt-in, and only sound when `ctx.usesArrayHoles` is already true: `$Hole`
@@ -92,7 +112,7 @@ export function buildVecLengthHoleFill(
   local: (name: string, type: ValType) => number,
   vecLocal: number,
   newLenLocal: number,
-  mode: "shrink-only" | "both",
+  mode: VecLengthHoleFillMode,
   includeExternref: boolean,
   finalized: boolean,
 ): Instr[] {
@@ -128,7 +148,7 @@ export function buildVecLengthHoleFill(
       kind: "ref_null",
       typeIdx: arrTypeIdx,
     });
-    const fillBody: Instr[] = [
+    const fillWith = (marker: Instr[]): Instr[] => [
       // data — a null backing has nothing to fill
       { op: "local.get", index: vecLocal },
       { op: "ref.cast", typeIdx: vecTypeIdx },
@@ -150,7 +170,7 @@ export function buildVecLengthHoleFill(
             then: [
               { op: "local.get", index: dataLocal },
               { op: "local.get", index: startLocal },
-              ...markerInstrs,
+              ...marker,
               { op: "local.get", index: dataLocal },
               { op: "array.len" },
               { op: "local.get", index: startLocal },
@@ -162,8 +182,37 @@ export function buildVecLengthHoleFill(
         then: [],
       },
     ];
+    const fillBody = fillWith(markerInstrs);
+    const growing = mode === "length-store";
+    const carrierMode = growing ? "shrink-only" : mode;
+    // (#7164) The static store's externref GROW: realloc, then `undefined` in the new slots.
+    const growArm: Instr[] =
+      growing && isExternrefCarrier
+        ? [
+            ...lengthStoreGrowInstrs(local, vecLocal, newLenLocal, vecTypeIdx, arrTypeIdx),
+            { op: "local.get", index: vecLocal },
+            { op: "ref.cast", typeIdx: vecTypeIdx },
+            { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+            { op: "local.tee", index: startLocal },
+            { op: "local.get", index: newLenLocal },
+            { op: "i32.lt_u" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: growFillInstrs(
+                vecLocal,
+                vecTypeIdx,
+                arrTypeIdx,
+                dataLocal,
+                startLocal,
+                newLenLocal,
+                canonicalUndefinedExternInstrs(ctx),
+              ),
+            },
+          ]
+        : [];
     const then: Instr[] =
-      mode === "both"
+      carrierMode === "both"
         ? [
             // start = min(oldLen, newLen)
             { op: "local.get", index: vecLocal },
@@ -198,10 +247,139 @@ export function buildVecLengthHoleFill(
               blockType: { kind: "empty" },
               then: [{ op: "local.get", index: newLenLocal }, { op: "local.set", index: startLocal }, ...fillBody],
             },
+            ...growArm,
           ];
     body.push({ op: "local.get", index: vecLocal });
     body.push({ op: "ref.test", typeIdx: vecTypeIdx });
     body.push({ op: "if", blockType: { kind: "empty" }, then });
   }
   return body;
+}
+
+/**
+ * (#7164) Fill `[start, min(newLen, array.len(data)))` with `marker`. Only the
+ * slots the grow exposes: a one-step grow in a loop must not refill the whole
+ * spare capacity each time (that made `length = i + 1` loops quadratic).
+ */
+function growFillInstrs(
+  vecLocal: number,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  dataLocal: number,
+  startLocal: number,
+  newLenLocal: number,
+  marker: Instr[],
+): Instr[] {
+  return [
+    { op: "local.get", index: vecLocal },
+    { op: "ref.cast", typeIdx: vecTypeIdx },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.tee", index: dataLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [],
+      else: [
+        { op: "local.get", index: dataLocal },
+        { op: "local.get", index: startLocal },
+        ...marker,
+        // count = min(newLen, array.len(data)) - start  (start < newLen here)
+        { op: "local.get", index: newLenLocal },
+        { op: "local.get", index: dataLocal },
+        { op: "array.len" },
+        { op: "local.get", index: newLenLocal },
+        { op: "local.get", index: dataLocal },
+        { op: "array.len" },
+        { op: "i32.lt_u" },
+        { op: "select" },
+        { op: "local.get", index: startLocal },
+        { op: "i32.sub" },
+        { op: "array.fill", typeIdx: arrTypeIdx },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#7164) `cap < newLen <= 16M` → reallocate the backing to
+ * `min(max(newLen, 2 * cap), 16M)`, copying the old capacity (amortised O(1)
+ * per one-step grow). Only the exposed slots are filled after this; huge
+ * lengths keep the #4491 length/capacity split (slots past the backing read
+ * as absent).
+ */
+function lengthStoreGrowInstrs(
+  local: (name: string, type: ValType) => number,
+  vecLocal: number,
+  newLenLocal: number,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+): Instr[] {
+  const dataLocal = local(`__vlhf_gdata_${vecTypeIdx}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const capLocal = local(`__vlhf_gcap_${vecTypeIdx}`, { kind: "i32" });
+  const newDataLocal = local(`__vlhf_gnew_${vecTypeIdx}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const newCapLocal = local(`__vlhf_gncap_${vecTypeIdx}`, { kind: "i32" });
+  return [
+    { op: "local.get", index: vecLocal },
+    { op: "ref.cast", typeIdx: vecTypeIdx },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.tee", index: dataLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [{ op: "local.get", index: dataLocal }, { op: "array.len" }],
+    },
+    { op: "local.tee", index: capLocal },
+    { op: "local.get", index: newLenLocal },
+    { op: "i32.lt_u" },
+    { op: "local.get", index: newLenLocal },
+    { op: "i32.const", value: 16777216 },
+    { op: "i32.le_u" },
+    { op: "i32.and" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // newCap = min(max(newLen, 2 * cap), 16M); newLen <= 16M, so newCap >= newLen.
+        { op: "local.get", index: capLocal },
+        { op: "i32.const", value: 1 },
+        { op: "i32.shl" },
+        { op: "local.get", index: newLenLocal },
+        { op: "local.get", index: capLocal },
+        { op: "i32.const", value: 1 },
+        { op: "i32.shl" },
+        { op: "local.get", index: newLenLocal },
+        { op: "i32.gt_u" },
+        { op: "select" },
+        { op: "local.tee", index: newCapLocal },
+        { op: "i32.const", value: 16777216 },
+        { op: "local.get", index: newCapLocal },
+        { op: "i32.const", value: 16777216 },
+        { op: "i32.lt_u" },
+        { op: "select" },
+        { op: "array.new_default", typeIdx: arrTypeIdx },
+        { op: "local.set", index: newDataLocal },
+        { op: "local.get", index: capLocal },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: newDataLocal },
+            { op: "i32.const", value: 0 },
+            { op: "local.get", index: dataLocal },
+            { op: "i32.const", value: 0 },
+            { op: "local.get", index: capLocal },
+            { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
+          ],
+        },
+        { op: "local.get", index: vecLocal },
+        { op: "ref.cast", typeIdx: vecTypeIdx },
+        { op: "local.get", index: newDataLocal },
+        { op: "ref.as_non_null" },
+        { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 1 },
+      ],
+    },
+  ];
 }
