@@ -259,10 +259,10 @@ function ensureRuntimeEvalGlobalLexicalCell(
   return { globalIdx, refCellTypeIdx };
 }
 
-function runtimeEvalSyncFunctionContext(ctx: CodegenContext, name: string): FunctionContext {
+function runtimeEvalSyncFunctionContext(ctx: CodegenContext, name: string, params: ValType[] = []): FunctionContext {
   const fctx: FunctionContext = {
     name,
-    params: [],
+    params: params.map((type, index) => ({ name: `source${index}`, type })),
     locals: [],
     localMap: new Map(),
     returnType: null,
@@ -748,6 +748,47 @@ export function emitHostEvalGlobalBindingSeed(ctx: CodegenContext, fctx: Functio
   }
   const pushIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
   if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
+}
+
+/** (#7106 A2) Each global-scope provider entry, by its source-argument count. */
+const RUNTIME_EVAL_GLOBAL_ENTRY_ARITY = {
+  __runtime_indirect_eval: 1,
+  __runtime_script_eval: 1,
+  __runtime_new_function: 2,
+} as const;
+export type RuntimeEvalGlobalEntry = keyof typeof RUNTIME_EVAL_GLOBAL_ENTRY_ARITY;
+
+/**
+ * (#7106 A2) The one support function for a global-scope provider entry,
+ * `(source…: externref) -> externref`: publish the script bindings and mark
+ * the provider active (`emitRuntimeEvalGlobalBindingSeed`), append the realm's
+ * global environment object, call the entry, then pull the bindings back and
+ * unwrap the result envelope (`emitRuntimeEvalResultUnwrap`). Callers evaluate
+ * the sources first, so the push observes every side effect of the arguments
+ * (§19.2.1.1: the argument is evaluated before PerformEval). `undefined` when
+ * the entry cannot link.
+ */
+export function ensureRuntimeEvalGlobalCall(ctx: CodegenContext, entry: RuntimeEvalGlobalEntry): number | undefined {
+  const name = `__runtime_eval_global_call${entry}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const externref: ValType = { kind: "externref" };
+  const sources = new Array<ValType>(RUNTIME_EVAL_GLOBAL_ENTRY_ARITY[entry]).fill(externref);
+  const importIdx = ensureLateImport(ctx, entry, [...sources, externref], [externref], RUNTIME_EVAL_IMPORT_MODULE);
+  flushLateImportShifts(ctx, null);
+  if (importIdx === undefined) return undefined;
+  const funcIdx = mintDefinedFunc(ctx);
+  const typeIdx = addFuncType(ctx, sources, [externref]);
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: [], body: [], exported: false });
+  ctx.funcMap.set(name, funcIdx);
+  const fctx = runtimeEvalSyncFunctionContext(ctx, name, sources);
+  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
+  sources.forEach((_, index) => fctx.body.push({ op: "local.get", index }));
+  if (emitGlobalEnvironmentObject(ctx, fctx) === null) fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(entry) ?? importIdx });
+  emitRuntimeEvalResultUnwrap(ctx, fctx);
+  definedFuncAt(ctx, ctx.funcMap.get(name)!)!.locals = fctx.locals;
+  return ctx.funcMap.get(name);
 }
 
 /** Mark whether carrier calls are executing across the provider boundary. */
