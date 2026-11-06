@@ -24,12 +24,11 @@ loc-budget-allow:
   - src/ir/select.ts
   - src/ir/from-ast.ts
 func-budget-allow:
-  # 2026-11-06 (review fix, #7261 guard): +4 in dynamicUsesAreMoveOnly (two
-  # scan flags and the final check) and +2 in scanExprInner (the flag is set
-  # at the one call arm every call passes). The flags are closure state of
-  # the scan, so they cannot move to a helper. Removed with #7261.
+  # 2026-11-06 (review fix, #7261 guard): +2 in dynamicUsesAreMoveOnly (the
+  # flag the return arm sets and the final check). The member-call search
+  # itself is the module helper `bodyCallsThroughMemberAccess`. Removed with
+  # #7261.
   - src/ir/select.ts::dynamicUsesAreMoveOnly
-  - src/ir/select.ts::scanExprInner
 ---
 
 # IR move-only scan: return a boolean-holding `var x;` carrier into a boolean result
@@ -78,9 +77,13 @@ Wrapped ledger A/B: see "Results".
   - `dynamicUsesAreMoveOnly` records the Stage 4 names in
     `dynamicUndefinedVars` and calls the helper once in its return arm.
   - (review fix, 2026-11-06) The bool admission is withdrawn from any body
-    that makes a dynamic method call (`callsDynamicMethod`, set in
-    `scanExprInner`'s call arm on an access callee over a dynamic receiver),
-    whatever the statement order. Reason:
+    that calls through a member access outside its nested functions
+    (`bodyCallsThroughMemberAccess`, one syntactic traversal). That is a
+    superset of the dynamic method calls, independent of statement order and
+    of which scan arm, or the conservative `subtreeTouchesDynamic` fallback,
+    visits the call. The second follow-up review (comment 6677137857) showed
+    that the first version, a flag set in `scanExprInner`'s call arm, missed
+    calls reached only through that fallback, e.g. `void mk(1).f()`. Reason:
     [#7261](7261-ir-dynamic-method-call-on-returned-object-traps.md). `o.f()`
     on an object-literal method traps in an IR body on main, and (c) would
     newly route such bodies there.

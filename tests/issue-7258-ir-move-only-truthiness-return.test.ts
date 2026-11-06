@@ -23,6 +23,7 @@ function viaElementMethod(o) { var ws; ws = !!o["f"](); return ws; }
 function viaMethodArgs(o) { var ws; ws = !!o.h(o.k, 2); return ws; }
 function viaReturnedMethod(o) { var ws; ws = !!mk(o.k).f(); return ws; }
 function viaDroppedMethod(o) { var ws; ws = o.k === 1; o.f(); return ws; }
+function viaVoidMethod(o) { var ws; ws = o.k === 1; void o.f(); return ws; }
 function noMethod(o) { var ws; ws = o.k === 2; return ws; }
 function mk(k) { return { k: k, a: { f: function () { return k; } }, f: function () { return k; }, h: function (x) { return x; } }; }
 export function m1(k) { return viaMethod(mk(k)) ? 1 : 0; }
@@ -31,6 +32,7 @@ export function m3(k) { return viaMethodArgs(mk(k)) ? 1 : 0; }
 export function m4(k) { return viaReturnedMethod(mk(k)) ? 1 : 0; }
 export function m5(k) { return viaDroppedMethod(mk(k)) ? 1 : 0; }
 export function m6(k) { return noMethod(mk(k)) ? 1 : 0; }
+export function m8(k) { return viaVoidMethod(mk(k)) ? 1 : 0; }
 export function m7(k) { return viaElementMethod(mk(k)) ? 1 : 0; }
 export function t5(n) { var o = { a: n }; return numberWrite(o) + annotated(o, 1) ? 1 : 0; }
 `;
@@ -67,6 +69,7 @@ describe("#7258 dynamic-carrier local returned into a boolean result", () => {
       "viaMethodArgs",
       "viaReturnedMethod",
       "viaDroppedMethod",
+      "viaVoidMethod",
     ]) {
       expect(outcome(name)?.irBodyEmitted, name).not.toBe(true);
     }
@@ -88,6 +91,7 @@ describe("#7258 dynamic-carrier local returned into a boolean result", () => {
         name,
       ).toEqual([0, 1, 1]);
     expect([0, 1, 2].map((n) => exports.m5!(n))).toEqual([0, 1, 0]);
+    expect([0, 1, 2].map((n) => exports.m8!(n))).toEqual([0, 1, 0]);
     expect([0, 1, 2].map((n) => exports.m6!(n))).toEqual([0, 0, 1]);
     // `o["f"]()` throws on the legacy path too (#7261 notes); the body stays legacy.
     expect(() => exports.m7!(1)).toThrow();

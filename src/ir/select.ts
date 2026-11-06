@@ -3195,6 +3195,24 @@ function containsCarrierAbiCall(body: ts.Block): boolean {
 }
 
 /**
+ * (#7261) Does `body` call through a member access (`a.f()`, `a[k]()`)
+ * outside its nested functions? This is a syntactic superset of the dynamic
+ * method calls that trap in IR bodies. The scan's newer admissions stay off
+ * such bodies whichever scan arm, or conservative fallback, visits the call.
+ */
+function bodyCallsThroughMemberAccess(body: ts.Block): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found || ts.isFunctionLike(node)) return;
+    const callee = ts.isCallExpression(node) ? unwrapPhase1Parens(node.expression) : undefined;
+    found = callee !== undefined && (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee));
+    if (!found) forEachChild(node, visit);
+  };
+  forEachChild(body, visit);
+  return found;
+}
+
+/**
  * Can `return <dynamic>` land in the subject's CONCRETE result? Each arm names
  * the canonical recovery from-ast's `coerceReturnValue` emits:
  *
@@ -3264,9 +3282,8 @@ function dynamicUsesAreMoveOnly(
   const body = fn.body;
   if (!body) return false;
   const dynamicUndefinedVars = new Set<string>(); // the `var x;` names (#7106 Stage 4)
-  // (#7261) A dynamic method call (`dyn.f()`) traps in IR bodies; a body
-  // with one keeps the #7258 bool return and the #7260 local store off.
-  let callsDynamicMethod = false;
+  // (#7261) The #7258 bool return and the #7260 local store stay off a body
+  // that calls through a member access: see the final check.
   let needsNoDynamicMethodCall = false;
 
   const unwrap = (e: ts.Expression): ts.Expression => {
@@ -3470,10 +3487,6 @@ function dynamicUsesAreMoveOnly(
       return true;
     }
     if (ts.isCallExpression(e)) {
-      const callee = unwrap(e.expression);
-      callsDynamicMethod ||=
-        (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
-        isDynShaped(callee.expression);
       // (#7128 S1) A U1 define: literal key and descriptor, result dropped.
       if (isOpenCarrierDefine(e)) return !expectDyn;
       // (#7106 S1b) `JSON.stringify(<dynamic>)` → `dyn.json_stringify`: a
@@ -4123,7 +4136,9 @@ function dynamicUsesAreMoveOnly(
   for (const s of body.statements) {
     if (!scanStmt(s)) return false;
   }
-  return !(needsNoDynamicMethodCall && callsDynamicMethod) || shapeNo("move-only[dynamic-method-call]", body);
+  return (
+    !(needsNoDynamicMethodCall && bodyCallsThroughMemberAccess(body)) || shapeNo("move-only[dynamic-method-call]", body)
+  );
 }
 
 // ---------------------------------------------------------------------------
