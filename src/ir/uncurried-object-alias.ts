@@ -29,12 +29,32 @@ export type UncurriedObjectAliasMethod = "hasOwnProperty" | "propertyIsEnumerabl
  * k)`. Legacy certifies the same initializer (`resolveStoredObjectStaticMethod`)
  * and lowers the call to the lane's `__getOwnPropertyDescriptor(externref,
  * externref) -> externref` provider.
+ *
+ * (#7272) `var __isArray = Array.isArray;`, called as `__isArray(obj)`. Legacy
+ * does not certify this one: it calls the stored builtin through the module
+ * slot. The IR lowers it to the provider legacy's own `Array.isArray(x)` arm
+ * uses for an erased operand (`__extern_is_array`), so both answer from the
+ * same runtime predicate.
  */
-export type StoredObjectStaticAliasMethod = "getOwnPropertyDescriptor";
+export type StoredStaticAliasMethod = "getOwnPropertyDescriptor" | "isArray";
+
+/** Each stored static: the builtin namespace it reads and its call arity. */
+const STORED_STATICS: Readonly<Record<StoredStaticAliasMethod, { readonly receiver: string; readonly arity: number }>> =
+  {
+    getOwnPropertyDescriptor: { receiver: "Object", arity: 2 },
+    isArray: { receiver: "Array", arity: 1 },
+  };
 
 type ObjectAlias =
   | { readonly form: "uncurried"; readonly method: UncurriedObjectAliasMethod }
-  | { readonly form: "stored-static"; readonly method: StoredObjectStaticAliasMethod };
+  | { readonly form: "stored-static"; readonly method: StoredStaticAliasMethod };
+
+/**
+ * A call of a certified alias with the arity its native lowering takes, and
+ * the kind of value that lowering produces: an exact boolean (the
+ * Object.prototype predicates, `isArray`) or the dynamic descriptor.
+ */
+export type CertifiedAliasCall = ObjectAlias & { readonly result: "boolean" | "dynamic" };
 
 const cache = new WeakMap<ts.SourceFile, ReadonlyMap<string, ObjectAlias>>();
 
@@ -55,14 +75,19 @@ function collectAliases(sourceFile: ts.SourceFile): ReadonlyMap<string, ObjectAl
       declared.add(name);
       const method = uncurriedObjectMethodOfInitializer(declaration.initializer);
       if (method !== undefined) candidates.set(name, { form: "uncurried", method });
-      const staticMethod = storedObjectStaticMethodOfInitializer(declaration.initializer);
+      const staticMethod = storedStaticMethodOfInitializer(declaration.initializer);
       if (staticMethod !== undefined) candidates.set(name, { form: "stored-static", method: staticMethod });
     }
   }
-  // A top-level binding of `Object` itself makes the initializer read a
-  // user value, not the builtin: no stored-static alias survives it.
-  if (declared.has("Object")) {
-    for (const [name, alias] of candidates) if (alias.form === "stored-static") candidates.delete(name);
+  // A top-level binding of the namespace itself makes the initializer read a
+  // user value, not the builtin: no stored-static alias of it survives.
+  for (const statement of sourceFile.statements) {
+    if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name) {
+      declared.add(statement.name.text);
+    }
+  }
+  for (const [name, alias] of candidates) {
+    if (alias.form === "stored-static" && declared.has(STORED_STATICS[alias.method].receiver)) candidates.delete(name);
   }
   // Any write to the name anywhere in the file (assignment, update, a
   // nested re-declaration) withdraws the alias: the identity is no longer
@@ -96,12 +121,13 @@ function collectAliases(sourceFile: ts.SourceFile): ReadonlyMap<string, ObjectAl
   return candidates;
 }
 
-function storedObjectStaticMethodOfInitializer(
-  init: ts.Expression | undefined,
-): StoredObjectStaticAliasMethod | undefined {
+function storedStaticMethodOfInitializer(init: ts.Expression | undefined): StoredStaticAliasMethod | undefined {
   if (!init || !ts.isPropertyAccessExpression(init) || init.questionDotToken) return undefined;
-  if (!ts.isIdentifier(init.expression) || init.expression.text !== "Object") return undefined;
-  return init.name.text === "getOwnPropertyDescriptor" ? "getOwnPropertyDescriptor" : undefined;
+  if (!ts.isIdentifier(init.expression)) return undefined;
+  const method = init.name.text;
+  if (!Object.hasOwn(STORED_STATICS, method)) return undefined;
+  const known = method as StoredStaticAliasMethod;
+  return STORED_STATICS[known].receiver === init.expression.text ? known : undefined;
 }
 
 function uncurriedObjectMethodOfInitializer(init: ts.Expression | undefined): UncurriedObjectAliasMethod | undefined {
@@ -136,67 +162,20 @@ function uncurriedObjectMethodOfInitializer(init: ts.Expression | undefined): Un
 }
 
 /**
- * The Object.prototype predicate `callee` is an immutable module-level
- * uncurried alias of, or undefined. `shadowed` tells whether a local binding
- * of the same name is in scope at the call (the selector's scope set).
+ * The certified alias `call` invokes, with its native arity, or undefined.
+ * `shadowed` tells whether a local binding of the callee's name is in scope at
+ * the call (the selector's scope set): such a call reads the local instead.
  */
-export function uncurriedObjectAliasMethod(
-  callee: ts.Expression,
-  shadowed: (name: string) => boolean,
-): UncurriedObjectAliasMethod | undefined {
-  const alias = objectAliasOf(callee, shadowed);
-  return alias?.form === "uncurried" ? alias.method : undefined;
-}
-
-/**
- * `alias(obj, name)` where `alias` is an immutable uncurried Object.prototype
- * predicate: exactly the two plain arguments its native lowering takes.
- */
-export function isUncurriedObjectAliasCall(call: ts.CallExpression, shadowed: (name: string) => boolean): boolean {
-  return (
-    call.arguments.length === 2 &&
-    !call.questionDotToken &&
-    !call.arguments.some(ts.isSpreadElement) &&
-    uncurriedObjectAliasMethod(call.expression, shadowed) !== undefined
-  );
-}
-
-/**
- * (#7269) A call of either certified alias form with the arity its native
- * lowering takes. Its result is the provider's (an exact boolean, or the
- * dynamic descriptor), never the module slot's value, so a local initialised
- * from it does not alias module storage.
- */
-export function isCertifiedObjectAliasCall(call: ts.CallExpression, shadowed: (name: string) => boolean): boolean {
-  return isUncurriedObjectAliasCall(call, shadowed) || isStoredObjectDescriptorAliasCall(call, shadowed);
-}
-
-/**
- * The `Object` static `callee` is an immutable module-level stored alias of
- * (`var x = Object.getOwnPropertyDescriptor;`, no other write), or undefined.
- */
-function storedObjectStaticAliasMethod(
-  callee: ts.Expression,
-  shadowed: (name: string) => boolean,
-): StoredObjectStaticAliasMethod | undefined {
-  const alias = objectAliasOf(callee, shadowed);
-  return alias?.form === "stored-static" ? alias.method : undefined;
-}
-
-/**
- * (#7106 propertyHelper) `alias(obj, name)` where `alias` is the immutable
- * stored `Object.getOwnPropertyDescriptor`: exactly two plain arguments.
- */
-export function isStoredObjectDescriptorAliasCall(
+export function certifiedAliasCall(
   call: ts.CallExpression,
   shadowed: (name: string) => boolean,
-): boolean {
-  return (
-    call.arguments.length === 2 &&
-    !call.questionDotToken &&
-    !call.arguments.some(ts.isSpreadElement) &&
-    storedObjectStaticAliasMethod(call.expression, shadowed) === "getOwnPropertyDescriptor"
-  );
+): CertifiedAliasCall | undefined {
+  if (call.questionDotToken || call.arguments.some(ts.isSpreadElement)) return undefined;
+  const alias = objectAliasOf(call.expression, shadowed);
+  if (alias === undefined) return undefined;
+  if (alias.form === "uncurried") return call.arguments.length === 2 ? { ...alias, result: "boolean" } : undefined;
+  if (call.arguments.length !== STORED_STATICS[alias.method].arity) return undefined;
+  return { ...alias, result: alias.method === "getOwnPropertyDescriptor" ? "dynamic" : "boolean" };
 }
 
 /**
@@ -210,7 +189,7 @@ export function isStoredObjectDescriptorMemberRead(expr: ts.Expression, shadowed
     !expr.questionDotToken &&
     ts.isIdentifier(expr.name) &&
     ts.isCallExpression(expr.expression) &&
-    isStoredObjectDescriptorAliasCall(expr.expression, shadowed)
+    certifiedAliasCall(expr.expression, shadowed)?.method === "getOwnPropertyDescriptor"
   );
 }
 

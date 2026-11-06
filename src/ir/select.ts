@@ -55,15 +55,14 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { localIsRewritten } from "./lattice-param-facts.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import {
-  isCertifiedObjectAliasCall,
-  isStoredObjectDescriptorAliasCall,
+  certifiedAliasCall,
+  type CertifiedAliasCall,
   isStoredObjectDescriptorMemberRead,
-  isUncurriedObjectAliasCall,
-  uncurriedObjectAliasMethod,
 } from "./uncurried-object-alias.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
@@ -857,6 +856,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-own-property-test"
       | "host-dynamic-method-call"
       | "native-own-property-descriptor"
+      | "native-array-is-array"
       | "native-number-conversion"
       | "prepared-dynamic-helper-abi"
       | "native-dynamic-member-read"
@@ -3359,7 +3359,8 @@ function dynamicUsesAreMoveOnly(
     // (#7106 S3a) `new <dynamic param>(…)` constructs a dynamic value.
     if (dynamicConstructCallee(e) !== null) return true;
     // (#7106 propertyHelper) the stored descriptor alias yields a carrier.
-    if (ts.isCallExpression(e) && isStoredObjectDescriptorAliasCall(e, (name) => dynNames.has(name))) return true;
+    if (ts.isCallExpression(e) && certifiedAliasCall(e, (name) => dynNames.has(name))?.result === "dynamic")
+      return true;
     if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
       return calleeReturnIsDynamic(e.expression.text, typeMap);
     }
@@ -3417,6 +3418,8 @@ function dynamicUsesAreMoveOnly(
     if (ts.isConditionalExpression(e) && isDynShaped(e.whenTrue) && isDynShaped(e.whenFalse)) {
       return true;
     }
+    // (#7272) a #5092 mixed conditional boxes both concrete arms into a carrier.
+    if (ts.isConditionalExpression(e) && mixedPrimitiveConditionalArmsProven(e)) return true;
     if (ts.isPropertyAccessExpression(e)) return isDynShaped(e.expression);
     if (ts.isElementAccessExpression(e)) return isDynShaped(e.expression);
     return false;
@@ -3609,15 +3612,13 @@ function dynamicUsesAreMoveOnly(
             : scanExpr(argument, false),
         );
       }
-      // (#7106 S1g) the uncurried Object.prototype aliases: a concrete bool
-      // result; receiver and key are carriers (a concrete key boxes).
-      if (
-        e.arguments.length === 2 &&
-        uncurriedObjectAliasMethod(e.expression, (name) => dynNames.has(name)) !== undefined
-      ) {
+      // (#7106 S1g, #7272) the boolean aliases (the uncurried Object.prototype
+      // predicates, `__isArray`): a concrete bool result; every operand is a
+      // carrier (a concrete one boxes).
+      const alias = certifiedAliasCall(e, (name) => dynNames.has(name));
+      if (alias?.result === "boolean") {
         if (expectDyn || !currentDynamicRuntimeBuildable) return false;
         for (const argument of e.arguments) {
-          if (ts.isSpreadElement(argument)) return false;
           if (isDynShaped(argument)) {
             if (!scanExpr(argument, true)) return false;
           } else {
@@ -3629,7 +3630,7 @@ function dynamicUsesAreMoveOnly(
       }
       // (#7106 propertyHelper) `__getOwnPropertyDescriptor(obj, name)`: a
       // dynamic result; each operand is a carrier or a boxable concrete.
-      if (isStoredObjectDescriptorAliasCall(e, (name) => dynNames.has(name))) {
+      if (alias?.result === "dynamic") {
         if (!expectDyn || !currentDynamicRuntimeBuildable) return false;
         for (const argument of e.arguments) {
           if (isDynShaped(argument)) {
@@ -3927,6 +3928,12 @@ function dynamicUsesAreMoveOnly(
       if (folded !== undefined) return scanExpr(folded ? e.whenTrue : e.whenFalse, expectDyn);
       const trueIsDynamic = isDynShaped(e.whenTrue);
       const falseIsDynamic = isDynShaped(e.whenFalse);
+      // (#7272) #5092 boxes each concrete arm onto the carrier it produces.
+      if (expectDyn && !trueIsDynamic && !falseIsDynamic && mixedPrimitiveConditionalArmsProven(e)) {
+        return (
+          scanExpr(e.condition, isDynShaped(e.condition)) && scanExpr(e.whenTrue, false) && scanExpr(e.whenFalse, false)
+        );
+      }
       if (expectDyn) {
         // The builder already accepts equal dynamic branch types. Keep mixed
         // dynamic/concrete joins out until the join can box the concrete arm.
@@ -7098,14 +7105,11 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     if (!currentSubjectIsModuleInit) {
       const initializer = unwrapPhase1Parens(d.initializer);
       const exactMapGetAlias = ts.isCallExpression(initializer) && exactModuleMapMethod(initializer) === "get";
-      // (#7269) `var hadValue = __hasOwnProperty(obj, name)`: the callee is a
-      // certified alias whose result is the provider's, not module storage.
-      // Its arguments still obey the alias rule.
-      const certifiedAliasCall =
-        ts.isCallExpression(initializer) &&
-        isCertifiedObjectAliasCall(initializer, (name) => scope.has(name)) &&
-        !initializer.arguments.some(expressionTouchesTrackedModuleValue);
-      if (expressionTouchesTrackedModuleValue(d.initializer) && !exactMapGetAlias && !certifiedAliasCall) {
+      // (#7272) A mixed conditional boxes each arm into a fresh carrier: the
+      // local holds a copy, never the module slot.
+      const freshMixedCarrier =
+        ts.isConditionalExpression(initializer) && mixedPrimitiveConditionalArmsProven(initializer);
+      if (expressionTouchesTrackedModuleValue(d.initializer) && !exactMapGetAlias && !freshMixedCarrier) {
         const family = obviousModuleValueFamily(d.initializer);
         if (!isConst || (family !== "f64" && family !== "boolean")) {
           return shapeNo("vardecl-module-binding-alias", d.initializer);
@@ -7906,6 +7910,14 @@ function expressionTouchesModuleBinding(expr: ts.Expression): boolean {
       touched = true;
       return;
     }
+    // (#7269, #7272) A certified alias call's callee is never read as a
+    // value: the call lowers to the native provider, whose result is not
+    // module storage. Only its arguments can touch a module value. A local
+    // that shadows the alias is no module binding either way.
+    if (ts.isCallExpression(node) && certifiedAliasCall(node, () => false) !== undefined) {
+      node.arguments.forEach(visit);
+      return;
+    }
     forEachChild(node, visit);
   };
   visit(expr);
@@ -8509,6 +8521,43 @@ export function boundedMixedConditionalPrimitiveFamily(
   };
 
   return visit(expression);
+}
+
+/**
+ * #5092 — both arms of `expr` are bounded primitives of DIFFERENT families, so
+ * the route boxes each into a fresh dynamic carrier (from-ast's
+ * `mixedPrimitiveConditionalClaim` is the same test). The condition is any
+ * Phase-1 condition: it lowers through the ordinary truthiness test.
+ */
+function mixedPrimitiveConditionalArmsProven(expr: ts.ConditionalExpression): boolean {
+  const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
+  const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
+  if (classifyPrimitive === undefined || classifyDeclared === undefined) return false;
+  const lane = additiveLane();
+  const familyOf = (e: ts.Expression) =>
+    boundedMixedConditionalPrimitiveFamily(e, classifyPrimitive, classifyDeclared, lane);
+  const whenTrue = familyOf(expr.whenTrue);
+  const whenFalse = familyOf(expr.whenFalse);
+  return whenTrue !== undefined && whenFalse !== undefined && whenTrue !== whenFalse;
+}
+
+/**
+ * (#7272) An unannotated, never-written local of the current function whose
+ * initializer is a proven #5092 mixed conditional: it holds that conditional's
+ * fresh dynamic carrier (`var unlikelyValue = c ? 4294967295 : "unlikely"`).
+ */
+function mixedConditionalCarrierLocal(identifier: ts.Identifier): boolean {
+  if (moduleBinding(identifier)) return false;
+  const declaration = currentModuleBindingResolver?.localVariableDeclaration(identifier);
+  const initializer = declaration?.initializer && unwrapPhase1Parens(declaration.initializer);
+  return (
+    initializer !== undefined &&
+    declaration!.type === undefined &&
+    ts.isConditionalExpression(initializer) &&
+    exactMixedPrimitiveConditionalContextReady(declaration!) &&
+    !localIsRewritten(declaration!) &&
+    mixedPrimitiveConditionalArmsProven(initializer)
+  );
 }
 
 function exactMixedPrimitiveConditionalContextReady(node: ts.Node): boolean {
@@ -11016,12 +11065,11 @@ function declaredExpressionHasExactFamily(
       declaredExpressionHasExactFamily(candidate.right, "boolean", scope)
     );
   }
-  // (#7106 S1g) the uncurried Object.prototype predicates are exactly boolean.
+  // (#7106 S1g, #7272) the boolean aliases are exactly boolean.
   if (
     expected === "boolean" &&
     ts.isCallExpression(candidate) &&
-    candidate.arguments.length === 2 &&
-    uncurriedObjectAliasMethod(candidate.expression, (name) => scope.has(name)) !== undefined
+    certifiedAliasCall(candidate, (name) => scope.has(name))?.result === "boolean"
   ) {
     return true;
   }
@@ -11194,7 +11242,7 @@ function dynamicLogicalValueCarrier(operand: ts.Expression): boolean {
   const e = unwrapPhase1Parens(operand);
   // (#7106 item 1) the unshadowed global `undefined` is the carrier's undefined.
   if (ts.isIdentifier(e) && e.text === "undefined" && !currentDynamicParamNames.has("undefined")) return true;
-  if (ts.isIdentifier(e)) return currentDynamicParamNames.has(e.text);
+  if (ts.isIdentifier(e)) return currentDynamicParamNames.has(e.text) || mixedConditionalCarrierLocal(e);
   if (
     ts.isBinaryExpression(e) &&
     (e.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
@@ -11208,6 +11256,20 @@ function dynamicLogicalValueCarrier(operand: ts.Expression): boolean {
     ts.isIdentifier(e.expression) &&
     currentDynamicParamNames.has(e.expression.text)
   );
+}
+
+/** The backend capability each certified alias lowers through, and its refusal arm. */
+function certifiedAliasLane(alias: CertifiedAliasCall): {
+  readonly capability: "native-own-property-test" | "native-own-property-descriptor" | "native-array-is-array";
+  readonly refusal: string;
+} {
+  if (alias.form === "uncurried") {
+    return { capability: "native-own-property-test", refusal: "expr-call-uncurried-object-alias-lane" };
+  }
+  return {
+    capability: alias.method === "isArray" ? "native-array-is-array" : "native-own-property-descriptor",
+    refusal: "expr-call-stored-object-static-alias-lane",
+  };
 }
 
 /** The parameter names of the function-like node enclosing `node` (empty at top level). */
@@ -11907,13 +11969,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       if (!exactMixedPrimitiveConditionalContextReady(expr)) {
         return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-context", expr);
       }
-      const lane = additiveLane();
-      const familyOf = (e: ts.Expression) =>
-        boundedMixedConditionalPrimitiveFamily(e, classifyPrimitive, classifyDeclared, lane);
-      const trueFamily = familyOf(expr.whenTrue);
-      const falseFamily = familyOf(expr.whenFalse);
-      const conditionFamily = familyOf(expr.condition);
-      if (trueFamily === undefined || falseFamily === undefined || trueFamily === falseFamily || !conditionFamily) {
+      if (!mixedPrimitiveConditionalArmsProven(expr)) {
         return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-proof", expr);
       }
       return true;
@@ -11940,34 +11996,20 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return isPhase1ConditionalParts(expr, scope, localClasses);
   }
   if (ts.isCallExpression(expr)) {
-    // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
-    // `__propertyIsEnumerable(obj, name)` aliases: the lane's own-property
-    // provider over two carriers (legacy's `call-object-builtins.ts` arm).
-    if (isUncurriedObjectAliasCall(expr, (name) => scope.has(name))) {
+    // (#7106 S1g, propertyHelper; #7272) propertyHelper's certified aliases —
+    // `__hasOwnProperty(obj, name)`, `__getOwnPropertyDescriptor(obj, name)`,
+    // `__isArray(obj)` — lower to the lane's native provider over carriers
+    // (legacy's `call-object-builtins.ts` / `Array.isArray` arms).
+    const alias = certifiedAliasCall(expr, (name) => scope.has(name));
+    if (alias !== undefined) {
+      const lane = certifiedAliasLane(alias);
       if (
         !currentDynamicRuntimeBuildable ||
-        currentSelectionOptions?.supportsBackendCapability?.("native-own-property-test") !== true
+        currentSelectionOptions?.supportsBackendCapability?.(lane.capability) !== true
       ) {
-        return capabilityNo("call-resolution-unsupported", "expr-call-uncurried-object-alias-lane", expr);
+        return capabilityNo("call-resolution-unsupported", lane.refusal, expr);
       }
-      return (
-        isPhase1Expr(expr.arguments[0]!, scope, localClasses) && isPhase1Expr(expr.arguments[1]!, scope, localClasses)
-      );
-    }
-    // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor`
-    // alias, `__getOwnPropertyDescriptor(obj, name)`: the object runtime's
-    // native provider over two carriers, a dynamic result (legacy's
-    // `tryCompileStoredObjectBuiltinCall` arm).
-    if (isStoredObjectDescriptorAliasCall(expr, (name) => scope.has(name))) {
-      if (
-        !currentDynamicRuntimeBuildable ||
-        currentSelectionOptions?.supportsBackendCapability?.("native-own-property-descriptor") !== true
-      ) {
-        return capabilityNo("call-resolution-unsupported", "expr-call-stored-object-static-alias-lane", expr);
-      }
-      return (
-        isPhase1Expr(expr.arguments[0]!, scope, localClasses) && isPhase1Expr(expr.arguments[1]!, scope, localClasses)
-      );
+      return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
     }
     // (#7106 S1e) A direct call to a local function that reads `arguments`
     // needs no `__argc` publication from an IR caller: the direct-call plan
@@ -13490,17 +13532,10 @@ export function buildLocalCallGraph(
             // local/external calls retain their ordinary classification.
             for (const argument of node.arguments) visit(argument);
             return;
-          } else if (
-            node.arguments.length === 2 &&
-            uncurriedObjectAliasMethod(node.expression, (name) => localBindings.names.has(name)) !== undefined
-          ) {
-            // (#7106 S1g) propertyHelper's uncurried Object.prototype aliases
-            // lower to the lane's own-property provider (`dyn.own_property`),
-            // not a call edge; the per-function arms decide the lane.
-            for (const argument of node.arguments) visit(argument);
-            return;
-          } else if (isStoredObjectDescriptorAliasCall(node, (name) => localBindings.names.has(name))) {
-            // (#7106 propertyHelper) likewise the stored descriptor alias.
+          } else if (certifiedAliasCall(node, (name) => localBindings.names.has(name)) !== undefined) {
+            // (#7106 S1g) propertyHelper's certified aliases lower to the
+            // lane's native provider, not a call edge; the per-function arms
+            // decide the lane.
             for (const argument of node.arguments) visit(argument);
             return;
           } else {

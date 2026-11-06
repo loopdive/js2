@@ -9296,6 +9296,17 @@ function buildTemplateWrapperFamily(
   flushLateImportShifts(ctx, null);
 }
 
+/** Legacy's import signature of each stored-static alias provider (#7106 propertyHelper, #7272). */
+const STORED_STATIC_PROVIDER_IMPORTS: Readonly<
+  Record<"__getOwnPropertyDescriptor" | "__extern_is_array", { params: ValType[]; results: ValType[] }>
+> = {
+  __getOwnPropertyDescriptor: {
+    params: [{ kind: "externref" }, { kind: "externref" }],
+    results: [{ kind: "externref" }],
+  },
+  __extern_is_array: { params: [{ kind: "externref" }], results: [{ kind: "i32" }] },
+};
+
 function preregisterDynamicSupport(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
@@ -9378,8 +9389,8 @@ function preregisterDynamicSupport(
   const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
   // (#7106 propertyHelper) a dynamic delete calls its strictness's wrapper.
   const dynDeleteStrictness = new Set<boolean>();
-  // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor` alias.
-  let usesOwnPropertyDescriptor = false;
+  // (#7106 propertyHelper, #7272) the stored-static aliases' object-runtime providers.
+  const storedStaticProviders = new Set<keyof typeof STORED_STATIC_PROVIDER_IMPORTS>();
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9476,7 +9487,8 @@ function preregisterDynamicSupport(
                 usesRuntimeUnboxNumber = true;
                 break;
               case "__getOwnPropertyDescriptor":
-                usesOwnPropertyDescriptor = true;
+              case "__extern_is_array":
+                storedStaticProviders.add(symbol);
                 break;
               // (#4461) native `$Map` module-binding storage.
               case IR_DYN_DELETE_STRICT_HELPER:
@@ -9621,15 +9633,13 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
   }
-  if (usesOwnPropertyDescriptor && (ctx.standalone || ctx.wasi) && !ctx.fast) {
-    // (#7106 propertyHelper) exactly legacy's registration for the stored
-    // alias (`call-object-builtins.ts`): `(externref, externref) -> externref`.
-    ensureLateImport(
-      ctx,
-      "__getOwnPropertyDescriptor",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
+  if (storedStaticProviders.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    // (#7106 propertyHelper, #7272) exactly legacy's registration of each
+    // provider (`call-object-builtins.ts`, `emitArrayIsArrayExternrefPredicate`).
+    for (const symbol of storedStaticProviders) {
+      const { params, results } = STORED_STATIC_PROVIDER_IMPORTS[symbol];
+      ensureLateImport(ctx, symbol, [...params], [...results]);
+    }
     flushLateImportShifts(ctx, null);
   }
   if (dynConstructArities.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
