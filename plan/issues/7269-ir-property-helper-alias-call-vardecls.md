@@ -1,7 +1,8 @@
 ---
 id: 7269
 title: "IR: propertyHelper.js alias-call vardecls (#7250 steps 1–2)"
-status: blocked
+status: done
+completed: 2026-11-06
 sprint: current
 created: 2026-11-06
 updated: 2026-11-06
@@ -13,7 +14,7 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 parent: 7250
-related: [7190, 7106, 7258, 7265, 7266]
+related: [7190, 7106, 7258, 7265, 7266, 7272]
 assignee: "ttraenkler/c-r11"
 ---
 
@@ -33,10 +34,16 @@ This issue was to admit the two harness alias-call vardecls:
 the boolean `__isArray(obj)` call in the conditional of isWritable's first
 statement.
 
-## Result: stopped after step 1 (measurement)
+## Result
 
-**Ships 0 units and 0 zero-legacy files. No code in this PR.** Base:
-`issue-7265-ir-move-only-bool-into-dynamic` @ `30856ab9`.
+The measurement stopped this issue at first (0 units, 0 files). The lead
+then split it on 2026-11-06:
+
+- **This PR ships admission (1)**, the alias-call vardecl exemption (see
+  "Shipped" below). It frees 0 units on its own, by design.
+- **isWritable's first statement moves to #7272**, with admissions (d)–(f).
+
+Base: `issue-7265-ir-move-only-bool-into-dynamic` @ `30856ab9`.
 
 ### Refusal chains (wrapped standalone compile, `JS2WASM_IR_SHAPE_DIAG=1`)
 
@@ -149,6 +156,35 @@ verifyCallableProperty, verifyAccessorProperty, verifyEqualTo, the two
 verifyPrimordial* units and `<module-init>` (`Function`) legacy in every
 includer. So **zero-legacy files freed: 0** for anything in this issue's
 scope.
+
+## Shipped: the alias-call vardecl exemption
+
+- **`src/ir/uncurried-object-alias.ts`** gains two predicates:
+  - `isUncurriedObjectAliasCall`: the 2-argument, non-optional, non-spread
+    uncurried call. It folds the selector's inline copy of the same test.
+  - `isCertifiedObjectAliasCall`: the uncurried call, or the stored
+    `getOwnPropertyDescriptor` call.
+- **`isPhase1VarDecl` (`src/ir/select.ts`)** no longer raises
+  `vardecl-module-binding-alias` when a local's initializer is a certified
+  alias call and none of its arguments touches a module value.
+- **Nothing else changes.** The call itself is still checked by the existing
+  expression arms, and from-ast already lowers it to the native provider. The
+  result is an exact boolean (`__hasOwnProperty`) or the dynamic descriptor
+  (`__getOwnPropertyDescriptor`). The resolver contract and
+  `dynamicUsesAreMoveOnly` are untouched.
+- **verifyProperty now stops at `vardecl-module-binding-alias` on
+  `__getOwnPropertyNames(desc)`.** isWritable still stops on its first
+  statement (#7272).
+
+Adversarial cases (`tests/issue-7269-ir-property-helper-alias-call-vardecls.test.ts`):
+
+- **Still refused:** an alias that is reassigned later, a wrong-arity call
+  (`__hasOwnProperty(obj)`), and a module value as an argument.
+- **Not certified:** a call through a shadowing parameter.
+- **Alias called before its `var` runs:** both IR and legacy lower the call
+  natively, so neither throws the TypeError that JS would. That was already
+  legacy's behaviour; head and base give the same result.
+- **Alias that throws (`probe(null, "x")`):** TypeError on both.
 
 ## Next slice (proposal; needs the rules owner, #2949 / #7106)
 

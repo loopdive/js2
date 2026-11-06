@@ -149,6 +149,29 @@ export function uncurriedObjectAliasMethod(
 }
 
 /**
+ * `alias(obj, name)` where `alias` is an immutable uncurried Object.prototype
+ * predicate: exactly the two plain arguments its native lowering takes.
+ */
+export function isUncurriedObjectAliasCall(call: ts.CallExpression, shadowed: (name: string) => boolean): boolean {
+  return (
+    call.arguments.length === 2 &&
+    !call.questionDotToken &&
+    !call.arguments.some(ts.isSpreadElement) &&
+    uncurriedObjectAliasMethod(call.expression, shadowed) !== undefined
+  );
+}
+
+/**
+ * (#7269) A call of either certified alias form with the arity its native
+ * lowering takes. Its result is the provider's (an exact boolean, or the
+ * dynamic descriptor), never the module slot's value, so a local initialised
+ * from it does not alias module storage.
+ */
+export function isCertifiedObjectAliasCall(call: ts.CallExpression, shadowed: (name: string) => boolean): boolean {
+  return isUncurriedObjectAliasCall(call, shadowed) || isStoredObjectDescriptorAliasCall(call, shadowed);
+}
+
+/**
  * The `Object` static `callee` is an immutable module-level stored alias of
  * (`var x = Object.getOwnPropertyDescriptor;`, no other write), or undefined.
  */
