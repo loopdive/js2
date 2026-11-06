@@ -58,7 +58,13 @@ import {
   taCtorIdentityTestInstrs,
   taCtorKindOf,
 } from "./registry/types.js";
-import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#2872) __ta_dyn_fill minting
+import {
+  funcSignatureOf,
+  mintDefinedFunc,
+  ownedHelperHandle,
+  pushDefinedFunc,
+  pushOwnedHelperFunc,
+} from "./func-space.js"; // (#2872) __ta_dyn_fill minting
 import { canonicalUndefinedExternInstrs, ensureAnyValueType, undefinedExternInstrs } from "./any-helpers.js"; // (#2864/#3177) semantic undefined vs null; (#5150) explicit-undefined tests
 import { ensureObjectRuntime } from "./object-runtime.js"; // (#2872) $Object array-like construct arm
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -2268,7 +2274,9 @@ export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): num
   const acc = DV_ACCESSORS[member];
   if (!acc) return undefined;
   const helperName = `__dv_m_${member}`;
-  const existing = ctx.funcMap.get(helperName);
+  // (#7274) Compiler-owned: a source `function __dv_m_getInt32() {}` shares
+  // `ctx.funcMap` and is never this helper.
+  const existing = ownedHelperHandle(ctx, helperName);
   if (existing !== undefined) return existing;
 
   const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
@@ -2293,7 +2301,6 @@ export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): num
   const params: ValType[] = Array.from({ length: userArgs + 1 }, () => ({ kind: "externref" }) as ValType);
   const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }]);
   const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(helperName, funcIdx);
 
   const fctx: FunctionContext = {
     name: helperName,
@@ -2410,7 +2417,7 @@ export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): num
     fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
   }
 
-  pushDefinedFunc(ctx, funcIdx, {
+  pushOwnedHelperFunc(ctx, funcIdx, {
     name: helperName,
     typeIdx,
     locals: fctx.locals,
