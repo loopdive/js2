@@ -141,6 +141,18 @@ export function test(): number { return f("ff", 16) + g("1.5e1x") + h("%41%u0042
 var r = parseInt("5");
 export function test() { return r; }`,
   },
+  "a local parseInt binding keeps its own call": {
+    source: `export function test() { const parseInt = (s) => 7; return parseInt("5"); }`,
+  },
+  // acorn's shape: an untyped operand keeps the pre-#7253 dynamic-carrier
+  // route (the selector and from-ast read one admission, so neither demotes it).
+  "acorn stringToNumber (regex-free) keeps its dynamic-carrier route": {
+    source: `function stringToNumber(str, isLegacyOctalNumericLiteral) {
+  if (isLegacyOctalNumericLiteral) { return parseInt(str, 8); }
+  return parseFloat(str);
+}
+export function test() { return stringToNumber("1000.5x", false) + stringToNumber("17", true); }`,
+  },
   "non-string operands keep legacy's ToString": {
     skipSemanticDiagnostics: true,
     source: `var x = 12; var y = parseInt(x); var z = parseFloat(true); var u = unescape(65); var w = parseInt("10", undefined);

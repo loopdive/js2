@@ -13313,10 +13313,12 @@ export function buildLocalCallGraph(
             return;
           }
           // (#7253) …and the host-free global functions.
-          const globalFunctionArgs = admitAmbientGlobalFunctionCall(node, callerName === MODULE_INIT_UNIT_NAME, {
-            isAmbientBinding: selectorSeesAmbientBinding,
-            options: currentSelectionOptions,
-          });
+          const globalFunctionArgs = admitAmbientGlobalFunctionCall(
+            node,
+            callerName === MODULE_INIT_UNIT_NAME,
+            selectorSeesAmbientBinding,
+            currentSelectionOptions,
+          );
           if (globalFunctionArgs !== null) {
             for (const argument of globalFunctionArgs) visit(argument);
             return;

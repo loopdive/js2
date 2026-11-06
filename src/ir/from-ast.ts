@@ -14040,12 +14040,13 @@ function tryLowerAmbientStringToStringCall(expr: ts.CallExpression, cx: LowerCtx
 
 /** (#7253) The selector's `admitAmbientGlobalFunctionCall`, lowered by the shared module. */
 function tryLowerAmbientGlobalFunctionCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
+  if (!cx.checker) return null;
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => tryLowerAmbientGlobalFunctionCall(expr, cx));
   return lowerAmbientGlobalFunctionCall(expr, {
     builder: cx.builder,
     resolver: cx.resolver,
-    inScope: (name) => cx.scope.has(name),
+    classify: makeIrDeclaredPrimitiveExpressionClassifier(cx.checker),
     lowerOperand: (argument, family) => lowerExpr(argument, cx, family === "string" ? { kind: "string" } : IR_F64),
     refuseOperand: (name, index, type) =>
       demoteToLegacy(
