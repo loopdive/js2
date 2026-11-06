@@ -104,6 +104,12 @@ if (o.k !== "v") throw "k";`,
     source: `var r = JSON.parse("{");`,
     irUnits: ["<module-init>"],
   },
+  // A statement-position member call enters from-ast through the method-call path, not `lowerCall`.
+  "a statement-position call": {
+    source: `JSON.parse("[1]");
+JSON.parse("{");`,
+    irUnits: ["<module-init>"],
+  },
   "a typed function parameter": {
     fileName: "issue-7267.ts",
     source: `function f(s: string): any { return JSON.parse(s); }

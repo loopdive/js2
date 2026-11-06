@@ -22,8 +22,9 @@ loc-budget-allow:
   # list) and the three sibling arms beside `JSON.stringify`'s (Phase-1 call,
   # dynamic-shape, dynamic scan); integration.ts +13 — the provider constant,
   # the resolver row, and the finalize pre-registration beside
-  # `dyn.json_stringify`'s; from-ast.ts +8 — the resolver capability union and
-  # the admission adapter.
+  # `dyn.json_stringify`'s; from-ast.ts +10 — the resolver capability union,
+  # the admission adapter, and the same arm on the statement-call entry
+  # (`lowerMethodCallWithSourcePlan`, which statement calls enter directly).
   - src/ir/select.ts
   - src/ir/integration.ts
   - src/ir/from-ast.ts
@@ -121,6 +122,18 @@ not have as a callable. Those stay out of this slice (see Left).
   adapter (`selectorAmbientGlobalFunctionCall`). Integration: the resolver
   names `__json_parse_text`; finalize pre-registers it (`emitJsonParseText`)
   beside `dyn.json_stringify`'s root, so no Phase-3 body drives a late shift.
+- **Closure bodies (lead's R10 note).** A planned closure body reaches the
+  same seam: `assert.throws(SyntaxError, function () { JSON.parse("{"); })`
+  takes the IR body, zero legacy units (wrapped compile, SHAPE_DIAG). The
+  first cut missed it: a statement-position member call enters from-ast at
+  `lowerMethodCallWithSourcePlan`, not `lowerCall`, so the selector claimed
+  and from-ast withdrew (`identifier "JSON" is not in scope in
+  <module-init>__closure_8`); the arm now sits on both entries, like the
+  function-object certificate beside it. Array-method callbacks
+  (`[…].map((x) => JSON.parse(x))`) are refused earlier
+  (`array-method-unsupported`, base and head alike), so they are not
+  measurable through this seam; `Date.UTC` / `Object.keys` inside callbacks
+  stay `expr-ident-not-in-scope` — not admitted here (see the shape table).
 - **Out.** A reviver (second argument), an untyped / non-string text, WASI
   (its IR member read answers NaN for the codec's graph — measured
   `JSON.parse('{"a":3}').a`), an ES module's `<module-init>`, any source
