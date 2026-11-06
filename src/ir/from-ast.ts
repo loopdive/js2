@@ -3992,10 +3992,9 @@ function lowerPromotedI32CompoundAssignment(
   compoundOp: ts.SyntaxKind,
   rhs: ts.Expression,
   cx: LowerCtx,
-): void {
+): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
-    withMutationSourceSite(cx, id, () => lowerPromotedI32CompoundAssignment(id, slotIndex, compoundOp, rhs, cx));
-    return;
+    return withMutationSourceSite(cx, id, () => lowerPromotedI32CompoundAssignment(id, slotIndex, compoundOp, rhs, cx));
   }
   const bitwiseToken = compoundBitwiseToken(compoundOp);
   if (bitwiseToken !== undefined) {
@@ -4006,8 +4005,9 @@ function lowerPromotedI32CompoundAssignment(
       // invariant (producer-promise): caller contract: reachable only for bitwise operators — #4502.
       throw new Error(`ir/from-ast: unmapped bitwise compound op in ${cx.funcName} (#3741)`);
     }
-    cx.builder.emitSlotWrite(slotIndex, cx.builder.emitBinary(binop, lhs, rhsValue, IR_I32));
-    return;
+    const result = cx.builder.emitBinary(binop, lhs, rhsValue, IR_I32);
+    cx.builder.emitSlotWrite(slotIndex, result);
+    return result;
   }
   const step = i32LiteralValue(rhs);
   if (
@@ -4017,8 +4017,9 @@ function lowerPromotedI32CompoundAssignment(
     const lhs = cx.builder.emitSlotRead(slotIndex);
     const stepValue = cx.builder.emitConst({ kind: "i32", value: step }, IR_I32);
     const binop: IrBinop = compoundOp === ts.SyntaxKind.PlusEqualsToken ? "i32.add" : "i32.sub";
-    cx.builder.emitSlotWrite(slotIndex, cx.builder.emitBinary(binop, lhs, stepValue, IR_I32));
-    return;
+    const result = cx.builder.emitBinary(binop, lhs, stepValue, IR_I32);
+    cx.builder.emitSlotWrite(slotIndex, result);
+    return result;
   }
   throw new IrUnsupportedError(
     "operand-coercion-unsupported",
@@ -13644,17 +13645,16 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   cx.scope.set(id.text, { ...binding, stringEncoding: inferStringEncoding(rhs, cx) });
 }
 
-/**
- * Lower `<id> <op>= <expr>` by desugaring to `<id> = <id> <op> <expr>`: a
- * string `+=` concatenates, a dynamic `+=` is the dynamic `+`, and every
- * numeric compound applies its binary operator through `emitNumberBinary`
- * (#7183) — the producer the binary form uses. i32-promoted slots keep their
- * own all-i32 lowering (#3741).
- */
-function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, rhs: ts.Expression, cx: LowerCtx): void {
+/** Store and return `<id> <op>= <expr>` through the existing binary producers.
+ * Promoted slots retain i32 storage but return the JavaScript numeric value. */
+function lowerCompoundAssignment(
+  id: ts.Identifier,
+  compoundOp: ts.SyntaxKind,
+  rhs: ts.Expression,
+  cx: LowerCtx,
+): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
-    withMutationSourceSite(cx, id, () => lowerCompoundAssignment(id, compoundOp, rhs, cx));
-    return;
+    return withMutationSourceSite(cx, id, () => lowerCompoundAssignment(id, compoundOp, rhs, cx));
   }
   const binding = cx.scope.get(id.text);
   if (!binding) {
@@ -13672,13 +13672,17 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
   }
   const storage = binding.kind === "slot" || binding.kind === "moduleGlobal" ? binding : capturedCell!;
   const capturedCellType = storage.kind === "local" && storage.type.kind === "boxed" ? storage.type : undefined;
-  // (#3741) i32-promoted slot — invariant W. `planI32Slots` only admits the
-  // compound shapes handled here (bitwise compounds, plus `+=`/`-=` by an
-  // integer literal on a `detectI32LoopVar`-proven counter); anything else
-  // demotes rather than approximating.
+  // (#3741) Promotion admits bitwise compounds and exact literal counter steps.
+  // Unsupported shapes remain refusals in the shared i32 producer.
   if (storage.kind === "slot" && storage.i32Storage) {
-    lowerPromotedI32CompoundAssignment(id, storage.slotIndex, compoundOp, rhs, cx);
-    return;
+    const result = lowerPromotedI32CompoundAssignment(id, storage.slotIndex, compoundOp, rhs, cx);
+    return cx.builder.emitUnary(
+      compoundOp === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken
+        ? "f64.convert_i32_u"
+        : "f64.convert_i32_s",
+      result,
+      IR_F64,
+    );
   }
   const logicalType =
     storage.kind === "slot" ? (storage.asType ?? storage.type) : (capturedCellType?.inner ?? storage.type);
@@ -13726,7 +13730,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
       cx.builder.emitRefCellSet(storage.value, result);
     }
     cx.scope.set(id.text, { ...storage, stringEncoding: proof.resultEncoding });
-    return;
+    return result;
   }
   // (#7106 Stage 4) `message += …` on a dynamic slot (assert.js's reassigned
   // `message` parameter): GetValue(lhs) first, then the RHS, then the SAME
@@ -13753,7 +13757,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [lhs, dynamicRhs], irDynamic());
     if (added === null) throw new Error(`ir/from-ast: dynamic '+=' produced no result in ${cx.funcName}`);
     cx.builder.emitSlotWrite(storage.slotIndex, added);
-    return;
+    return added;
   }
   // Dynamic captured cells need a separately proven storage contract.
   if (capturedCellType?.inner.kind === "dynamic" || !compoundWriteAdmissible(compoundOp, slotFamily, "number")) {
@@ -13794,15 +13798,10 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
   const numericResult = emitNumberBinary(binaryOp, numericLhs, numericRhs, id, rhs, cx);
   const result =
     slotFamily === "dynamic" ? cx.builder.emitBox(numericResult, irDynamic(JS_TAG_IDS.NumberF64)) : numericResult;
-  if (storage.kind === "moduleGlobal") {
-    cx.builder.emitGlobalSet(storage.globalRef, result);
-    return;
-  }
-  if (storage.kind === "slot") {
-    cx.builder.emitSlotWrite(storage.slotIndex, result);
-    return;
-  }
-  cx.builder.emitRefCellSet(storage.value, result);
+  if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, result);
+  else if (storage.kind === "slot") cx.builder.emitSlotWrite(storage.slotIndex, result);
+  else cx.builder.emitRefCellSet(storage.value, result);
+  return numericResult;
 }
 
 /**
@@ -15318,6 +15317,8 @@ function lowerPreparedAsyncConcat(expr: ts.BinaryExpression, cx: LowerCtx): IrVa
 
 function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrValueId {
   const op = expr.operatorToken.kind;
+  if (isNumberCompoundAssignOperator(op) && ts.isIdentifier(expr.left))
+    return lowerCompoundAssignment(expr.left, op, expr.right, cx);
   const preparedConcat = lowerPreparedAsyncConcat(expr, cx);
   if (preparedConcat !== null) return preparedConcat;
 
@@ -15365,14 +15366,8 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     return lowerDynamicLaneIn(expr, cx);
   }
 
-  // #2135 — capability-table invariant (shared with the selector via
-  // `src/ir/capability.ts`). The old slice-11 "shape-only acceptance" list
-  // (`%` / `in` / `instanceof` claimed by the selector, thrown here) is
-  // retired: those ops are table-deferred, while #4787's exact numeric `**`
-  // arm has a semantic intrinsic lowering. An op arriving here with a
-  // "defer" capability is a claim-path BUG (loud internal error), not a
-  // legitimate legacy fallback. Checked BEFORE operand lowering so a
-  // violation reports cleanly without cascading operand errors.
+  // #2135 — a deferred operator reaching a claimed body is a selector/build
+  // contradiction. Check before operands so the original failure stays visible.
   assertNotDeferred(binaryOpCapability(op), `binary operator '${ts.tokenToString(op) ?? op}'`, cx.funcName);
 
   // #4787 — the exact numeric exponentiation checkpoint. Once selection has

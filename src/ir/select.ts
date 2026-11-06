@@ -5677,13 +5677,8 @@ function recordForInitLeaks(stmt: ts.ForStatement, scope: Set<string>): void {
   }
 }
 
-/**
- * Slice 12 (#1280): the `update` clause of a `for` loop. Same as
- * Phase-1 expressions plus postfix `i++` / `i--` on identifiers in
- * scope (which the body-statement layer accepts as an
- * ExpressionStatement but `isPhase1Expr` does not — postfix is a
- * mutation, not a pure expression).
- */
+/** Check identifier mutation scope/storage for loop updates and compound values.
+ * Postfix updates are supported here only when the caller discards their value. */
 function isPhase1ForUpdateExpr(
   expr: ts.Expression,
   scope: ReadonlySet<string>,
@@ -11672,10 +11667,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isBinaryExpression(expr)) {
     const binOp = expr.operatorToken.kind;
-    // #4787 — `**` is the first bounded operator retirement checkpoint. Do
-    // not let the shared claim row widen the old shape walk: only operands
-    // `exactNumericExponentiationAdmissible` proves may reach the semantic
-    // `math.pow` builder arm.
+    if (isNumberCompoundAssignOperator(binOp) && ts.isIdentifier(expr.left)) {
+      if (binOp === ts.SyntaxKind.PlusEqualsToken && moduleBinding(expr.left)?.valueKind.kind === "dynamic")
+        return shapeNo("expr-dynamic-module-add-assign", expr);
+      return isSelectableNumberCompound(expr, scope, localClasses) && isPhase1ForUpdateExpr(expr, scope, localClasses);
+    }
+    // #4787 — only exactNumericExponentiationAdmissible's proved operands
+    // may reach the semantic math.pow arm; the shared claim row is insufficient.
     if (binOp === ts.SyntaxKind.AsteriskAsteriskToken) {
       if (!exactNumericExponentiationAdmissible(expr, scope, localClasses)) return false;
       if (!isPhase1Expr(expr.left, scope, localClasses) || !isPhase1Expr(expr.right, scope, localClasses)) {
@@ -11683,10 +11681,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       return true;
     }
-    // (#5164 S1) VALUE-position comma. Checked here, ahead of the module-value
-    // and module-extern operand rules below, because those model a COMBINING
-    // operator's representation agreement and a comma performs none — see
-    // `selectorValuePositionComma`.
+    // #5164 — comma sequences values; it does not combine their representations.
     if (binOp === ts.SyntaxKind.CommaToken) {
       if (selectorValuePositionComma(expr, scope, localClasses)) return true;
       return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
