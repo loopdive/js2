@@ -13676,13 +13676,8 @@ function lowerCompoundAssignment(
   // Unsupported shapes remain refusals in the shared i32 producer.
   if (storage.kind === "slot" && storage.i32Storage) {
     const result = lowerPromotedI32CompoundAssignment(id, storage.slotIndex, compoundOp, rhs, cx);
-    return cx.builder.emitUnary(
-      compoundOp === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken
-        ? "f64.convert_i32_u"
-        : "f64.convert_i32_s",
-      result,
-      IR_F64,
-    );
+    // Promotion excludes >>>=, whose result may exceed signed i32.
+    return cx.builder.emitUnary("f64.convert_i32_s", result, IR_F64);
   }
   const logicalType =
     storage.kind === "slot" ? (storage.asType ?? storage.type) : (capturedCellType?.inner ?? storage.type);
