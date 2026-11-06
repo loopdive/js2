@@ -1862,3 +1862,81 @@ per-row verdict in a table under this plan when done.
   --policy=hybrid` READY; boundaries inventory valid; loc/func/coercion/oracle/
   dead-exports/import-cycles at `LOC_GATE_BASE=$(git rev-parse upstream/main)`
   with no new grants; equivalence gate "No new equivalence regressions".
+
+## S7-f landing — per-row verdicts and measurements (2026-11-06)
+
+Three commits on `issue-6979-s7f-follow-ups`, stacked on PR 7094 (S7-d,
+`6a20eb9f18`). Every step is byte-identical to `6a20eb9f18`: the S7 corpus
+(2573 programs — equivalence sources, playground examples and a 1-in-40
+test262 sample) compiles to the same bytes and imports on gc, standalone and
+wasi after F1 and after F2.
+
+### Measured
+
+| What | Before | After |
+| --- | --- | --- |
+| `src/runtime/eager-generator-buffer.ts` | 321 lines | deleted |
+| orphaned by it (fixpoint of a `--noUnusedLocals` diff) | — | `src/runtime/strict-iterator-host.ts` (211 lines) and five runtime.ts helpers deleted |
+| `resolveImport` `case` count (`check:host-import-policy`) | 7 | 7 — the provider was a call inside the default arm, not a `case`; the plan's 7 → 6 did not apply |
+| host-import policy (probes / imports / regime-gap / unknown) | 33/452/0/0 | 33/452/0/0 |
+| `grep -rn regimeTarget src` | 58 hits in 20 files | 0 |
+| `standalone: boolean` target field in the seven consumers | 7 | 0 — the target parameter is gone, not narrowed (its only use was the dead legacy-`try` arm) |
+| `check:standalone-arms --all`, codegen `ctx.wasi` | 149 | 146 (banked with `--update-on-decrease`) |
+| `__gen_` test receipts | 71 files; 50 rows in 20 of them red on base and on upstream/main | every edited file green; 7 non-receipt rows in untouched files still red (same on main) |
+
+New issues filed by this slice (all are pre-existing gaps that the old
+raw-exports harnesses or the missing QuickJS adapter had hidden; each fails
+identically on `upstream/main` `ed76cef7a0`):
+[#7259](7259-exported-generator-next-result-boundary.md) (a native
+IteratorResult is not an ordinary object — exported `next()` and
+`JSON.stringify`), [#7262](7262-native-module-level-typedarray-view-illegal-cast.md)
+(module-level TypedArray view traps with `illegal cast`), and
+[#7263](7263-standalone-generator-resume-binding-before-yield-star.md)
+(standalone resume binding before `yield*` refused).
+
+### F3 — the 34 JS-host-lane rows
+
+Rule: (a) the row selects a removed profile / asserts a removed lane →
+deleted with a note; (b) the value still holds on the regime → re-pointed and
+kept; (c) fails for a reason S7 did not cause → `it.fails` with an issue.
+"Embedder view" = the row read a string result through raw
+`instance.exports`, which on the native regime is a Wasm string carrier
+(`{}`); it now reads through `jsFacingExports` (`wrapCompiledExports`), the
+way an embedder does.
+
+| File | Row(s) | Verdict | Now |
+| --- | --- | --- | --- |
+| issue-2179 | all 5 (tombstone read, dynamic key, `Object.keys`, for-in, string field) | (b) embedder view | green |
+| issue-2731 | all 5 (for-in delete + re-add symmetry) | (b) embedder view | green |
+| issue-2805 | both (init-time write; delete-tombstone write) | (b) embedder view | green |
+| issue-5150 | module-level buffer views; ctor validation; `ArrayBuffer.isView` (the three "host-lane behaviour" pins) | (b) re-pinned from the old host lane's answers (18 / 7 / 29) to the regime's, which are the standalone answers (63 / 255 / 31) | green |
+| issue-5150 | host: `Atomics/notify/null-bufferdata-throws.js` | (c) | `it.fails` #7262 |
+| issue-6781 | refused: class generator method; function expression; `.return()` after exhaustion | (b) the eager buffer is gone, so the refusal has nothing to refuse; pinned to Node parity | green |
+| issue-6781 | refused: probes 1, 2, 3 | (b) re-pointed to Node parity; they differ only in `JSON.stringify(IteratorResult)` | `it.fails` #7259 |
+| issue-6781 | not refused: lazy `.throw()`; lazy `.return()`; next-only manual loop; next-only for-of/spread/`Array.from` | (b) embedder view | green |
+| issue-6781 | not refused: the three "eager generator …" parity rows | (c) `JSON.stringify(IteratorResult)` is `null` | `it.fails` #7259 |
+| issue-7106-ir-dyn-instanceof | "the host-assisted gc lane" | (a) `semanticProviders: "host-assisted"` | deleted |
+| issue-7106-prophelper-gopd-alias | refuses on the host-assisted gc lane | (a) | deleted (and the helper's `semanticProviders` parameter) |
+| issue-7106-s3a-dynamic-construct | does not admit the construct on the JS-host lane | (a) | deleted |
+| issue-7106-module-init-chunks | legacy chunks when selection refuses the initializer | (b) selection now claims that initializer (IR progress on main); pinned to the claim, dispatch/validate/run checks kept | green |
+| issue-7150 | host-assisted: message text | (a) | deleted (lane dropped from the loop) |
+
+One row outside the 34 changed too: issue-5150 "host, no illegal cast:
+`TypedArray/out-of-bounds-behaves-like-detached.js`" read green in S7-d only
+because its run had no QuickJS adapter (the runner failed before the trap and
+the row accepts a plain `fail`). With the adapter it traps on base and on main;
+it is `it.fails` #7262. Measured across the ten F3 files: 35 rows red at HEAD →
+0 red; no other row changed status.
+
+### Left out, and why
+
+- The 7 red rows in `__gen_` files F1 did not need to edit (issue-1367
+  `take(-1)`, issue-2961 worker guard, issue-2993 BigInt yield, issue-3526
+  boundary-residuals ×4) are not `__gen_` receipts and fail the same on main;
+  they belong to their own areas, not to S7.
+- The `issue-3518-*` / `issue-4376-*` source-receipt suites carry ~1,100
+  pre-existing red rows at the S7-d base (stale raw-source profiles). F2 keeps
+  each of them at its F1-state status; only the two native-await edge rows in
+  the one receipt file F2 edits were re-pinned (fix-on-touch).
+- `buildTargetTaggedTry` keeps its name although it no longer takes a target —
+  renaming it touches ~50 sites and the receipt fixtures for no behaviour.

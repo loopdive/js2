@@ -50,10 +50,28 @@ All 11 fail identically on `upstream/main` `ed76cef7a0`:
 - `tests/issue-1665.test.ts` — "compiled generators resolve Iterator.prototype helpers", "preserves the compiler-owned %IteratorPrototype% object…" ×2
 - `tests/issue-2662-gc-lazy-nested-generators.test.ts` — "GUARD: an exported (escaping) generator stays a JS-callable Generator" ×1
 
+## Second witness family: `JSON.stringify` of an IteratorResult inside Wasm
+
+The same object is not an ordinary object inside the module either.
+`function* g() { yield 1 } … const r: any = g().next(); JSON.stringify(r) +
+"|" + Object.keys(r).join(",")` answers `null|` on the default target (Node:
+`{"value":1,"done":false}|value,done`), although `r.value` reads `1`. A native
+IteratorResult has no enumerable own `value` / `done` (§7.4.14
+CreateIterResultObject makes both ordinary data properties). Fixing the
+object model is likely the root fix for the boundary symptom above too.
+
+Witnesses, `it.fails` against this issue by #6979 S7-f (they used to hide
+behind the raw-exports `{}` string result; with the embedder view they fail on
+the JSON text, identically on `upstream/main`):
+
+- `tests/issue-6781-generator-eager-refuse.test.ts` — probes 1, 2, 3 and the
+  three "eager generator …" parity rows (6).
+
 ## Acceptance
 
 - An exported generator's `next()` / `return()` / `throw()` results read
   `value` and `done` as JS values at the boundary (§27.5.3.3 / §7.4.14
   CreateIterResultObject), and the object inherits the helper-bearing
   `Iterator.prototype` (#1665).
-- The 11 rows above pass as plain `it` (drop the `it.fails`).
+- `JSON.stringify` / `Object.keys` of an IteratorResult match Node.
+- All 17 witness rows pass as plain `it` (drop the `it.fails`).
