@@ -87,3 +87,27 @@ host import.
 - Wrapped ledger: 0 invariants, compileOk not lower.
 - Standalone test262 A/B on every file whose route changed: no pass→fail, no
   new trap.
+
+## Results (2026-11-06, base `92305e40` vs head `f6c1d280`)
+
+- **Wrapped ledger** (`--wrapped --stride 40 --target standalone --jobs 2`,
+  `JS2WASM_IR_SHAPE_DIAG=1`): head equals base apart from timing and the
+  commit field. 1296 files, 14448 units; ir 1137, both 8531, legacy 4780;
+  compileOk 1118 → 1118; invariants 0 → 0. All 807 `unsupportedDetails` rows
+  are identical, so the slice moves no unit in the stride corpus.
+- **Why 0:** propertyHelper's `isWritable` is the motivating shape, but its
+  first refusal is still rule (a), `obj[name] = newValue`, then (b), so (c)
+  alone frees nothing there. No stride test body has the
+  `var x; x = <bool>; return x;` shape with no earlier refusal.
+- **Per-file route diff** (wrapped compile, IR-emitted unit names): stride-40
+  plus a 300-file seeded random sample, kept where `return X;` names a
+  `var X;` local. That leaves 175 files, including every propertyHelper
+  includer. 0 route changes; compile ok 164, fail 11, the same on both sides.
+- **Typed corpus:** 88 files (playground, `examples/`, the first 60 of
+  `tests/equivalence/`) × gc/standalone/wasi = 264 compiles, byte-identical.
+- **Unit test:** `tests/issue-7258-ir-move-only-truthiness-return.test.ts`
+  passes.
+
+This slice is groundwork: it lands the (c) admission so that isWritable
+(and so verifyWritable, verifyNotWritable and verifyProperty) can reach its
+tail once (a) and (b) are admitted.
