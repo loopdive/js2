@@ -4,7 +4,7 @@ title: "IR: nested expression statements refused as `body-exprstmt-other` — me
 status: in-progress
 sprint: current
 created: 2026-11-05
-updated: 2026-11-05
+updated: 2026-11-06
 priority: high
 horizon: s
 feasibility: medium
@@ -110,6 +110,62 @@ the stride, the biggest single item this attribution uncovers.
 
 Files with no legacy-only unit (compiled OK): 25 → 25 (no claim decision changes by design; the 13
 sole-blocker files stay on legacy `<module-init>`).
+
+## Sole-blocker census for the step-2 admission (2026-11-06)
+
+Same wrapped stride-40 corpus, standalone, SHAPE_DIAG on, at this branch after
+merging `origin/main` (2026-11-06). Per file: the units emitted ONLY by legacy
+(`legacyBodyEmitted && !irBodyEmitted`, the ledger's "no legacy-only unit"
+definition). 1340 paths, 44 skipped, 1118 compiled OK, 0 invariants,
+**25 zero-legacy files** (matches the evidence above). 516 files have exactly
+one legacy-only unit; their first refusal, restricted to the shapes in scope:
+
+| Only blocker | Files | Paths (under `test262/test/`) |
+| --- | ---: | --- |
+| plain IIFE statement | 5 | `annexB/language/function-code/{if-decl-no-else-func-skip-early-err-try,block-decl-func-skip-early-err-try,if-decl-else-decl-b-func-skip-early-err-for,switch-case-func-skip-early-err}.js`, `built-ins/ArrayIteratorPrototype/next/args-unmapped-iteration.js` |
+| plain IIFE initializer | 3 | `built-ins/Object/create/15.2.3.5-4-94.js`, `language/function-code/S10.4.3_A1.js`, `language/statements/function/S13.2.1_A1_T1.js` |
+| generator IIFE (`function* () {…}()`) | 7 | out of scope (generator lane) |
+| tagged-template IIFE | 1 | `language/expressions/tagged-template/template-object-frozen-strict.js` (`expr-unhandled`) |
+| `delete` statement | 1 | `language/statements/for/dstr/let-ary-init-iter-get-err-array-prototype.js` (stays refused, #2949) |
+| bare member-read statement | 0 | already admitted (#4459) |
+| `f.bind(…)()` | 0 | — |
+
+The census counts the unit's FIRST refusal, so an admitted IIFE can still
+reveal a later one in the same unit; 8 is an upper bound for the plain IIFE.
+
+### Why no IIFE is admitted (the chain)
+
+A test262 file is unannotated JS, so a closure literal reaches the IR only
+through a source plan (`src/codegen/function-member-closure-planning.ts`,
+#7195 / #7198 / #7130): without one, `closureLiteralIsBuildable` refuses with
+`closure-return-type` (no annotation). Two things are missing for an IIFE:
+
+1. **No callee site.** The plan sites are `member-assignment`,
+   `call-argument` (two shapes) and `script-var`; a FunctionExpression in
+   callee position has none, and the selector's call arm refuses any
+   non-identifier callee (`expr-call-callee-nonident`).
+2. **The body proof refuses every candidate.** Even with an `iife` site, the
+   shared open-body proof (`openBodyKey`) and the plan's result rules decline
+   all 8 files:
+
+| File | What its IIFE body needs | Plan rule that refuses it |
+| --- | --- | --- |
+| 3 annexB `*-func-skip-early-err-*` | nested `function() { f; }` passed to `assert.throws`, Annex B block function | `ts.isFunctionLike` in the body |
+| annexB `switch-case-func-skip-early-err` | function declaration in `switch`, writes script vars `init` / `after` | nested function; script-level binding (`moduleGlobals` off) |
+| `args-unmapped-iteration`, `15.2.3.5-4-94` | `arguments` | `arguments` identifier |
+| `S10.4.3_A1` | `return this` (an object result) | `this` with a non-void, non-string result |
+| `S13.2.1_A1_T1` | 32 nested IIFEs | nested function |
+
+So every candidate needs new machinery — nested closure captures, an
+`arguments` object, a non-string `this` result, or script-var writes from a
+closure — on top of a new callee site and a selector + `from-ast` arm
+(`lowerClosureExpression` → `lowerClosureCall`). That is a feature, not this
+`s` slice. Per the brief, step 2 stops here; the diagnostics change ships.
+
+## What is left
+
+- The IIFE lowering above (callee site + nested-capture / `arguments` /
+  `this`-result support), measured against these 8 files. Not filed yet.
 
 ## Acceptance
 
