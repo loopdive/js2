@@ -275,9 +275,26 @@ function probeShape(check: () => boolean): boolean {
   const savedDetail = shapeRejectDetail;
   const savedReason = typedShapeRejectReason;
   if (check()) return true;
+  if (SHAPE_DIAG_ON && shapeRejectDetail !== savedDetail) declinedProbeArm = shapeRejectDetail?.split(":")[0] ?? null;
   shapeRejectDetail = savedDetail;
   typedShapeRejectReason = savedReason;
   return false;
+}
+
+/** (#7254) SHAPE_DIAG only: the first-refusal arm of the last declined discard probe. */
+let declinedProbeArm: string | null = null;
+
+/**
+ * (#7254) An ExpressionStatement catch-all (`body-exprstmt-other`, …). Under
+ * SHAPE_DIAG the label names the refusal the discard probe declined with —
+ * `body-exprstmt-other(expr-binary-op-in)` — so a census attributes the row to
+ * the value lowering that is missing rather than to the statement position.
+ * The probe's restore is unchanged: only the detail string moves.
+ */
+function expressionStatementCatchAllNo(arm: string, expr: ts.Expression): false {
+  const inner = ts.isDeleteExpression(unwrapPhase1Parens(expr)) ? "expr-delete-no-ir-lowering" : declinedProbeArm;
+  declinedProbeArm = null;
+  return shapeNo(inner === null ? arm : `${arm}(${inner})`, expr);
 }
 
 /** (#7003) Selector-owned hooks for `./closure-signature-flow.ts`. */
@@ -4460,6 +4477,7 @@ function expressionStatementIsPhase1Discardable(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  declinedProbeArm = null;
   if (expressionStatementMutatesAtTopLevel(expr)) return false;
   return probeShape(() => isPhase1DiscardedExpr(expr, scope, localClasses));
 }
@@ -4718,7 +4736,7 @@ function isPhase1StatementListInScope(
       // binding bookkeeping; the two labels below survive for expressions
       // the Phase-1 walker still cannot admit.
       if (expressionStatementIsPhase1Discardable(es, scope, localClasses)) continue;
-      return shapeNo(nontailExpressionStatementArm(es), es);
+      return expressionStatementCatchAllNo(nontailExpressionStatementArm(es), es);
     }
     // Phase 2 extension: an `if (cond)` with NO else, split by whether the
     // then-arm unconditionally terminates — mirroring `lowerStatementList`'s
@@ -6065,7 +6083,7 @@ function isPhase1BodyStatement(
     if (expressionStatementIsPhase1Discardable(stmt.expression, scope, localClasses)) return true;
     // (#7106 propertyHelper) a dropped dynamic delete.
     if (dynamicDeleteStatementOperand(unwrapPhase1Parens(stmt.expression)) !== null) return true;
-    return shapeNo("body-exprstmt-other", stmt.expression);
+    return expressionStatementCatchAllNo("body-exprstmt-other", stmt.expression);
   }
   if (ts.isForOfStatement(stmt)) {
     return isPhase1ForOf(stmt, scope, localClasses, labels, breaks);
@@ -12352,7 +12370,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       return true;
     }
-    if (!ts.isIdentifier(expr.expression)) return false;
+    if (!ts.isIdentifier(expr.expression)) return shapeNo("expr-call-callee-nonident", expr.expression);
     const mixedPrimitiveWrapper = exactMixedPrimitiveWrapperCall(expr);
     if (mixedPrimitiveWrapper) {
       return isPhase1Expr(mixedPrimitiveWrapper.conditional, scope, localClasses);
