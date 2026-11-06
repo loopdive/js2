@@ -5445,6 +5445,140 @@ depends on it, not for its own gain.
     reused);
   - no new function.
 
+## ES5 IR-only: ranked levers (census 2026-11-06)
+
+Goal: every ES5 test262 file passes on standalone **with 0 legacy units**. On
+main's standalone JSONL, 9,029 ES5 rows pass and 654 of them are IR-only; this
+census ranks what keeps the other 8,375 on legacy. Plan only; nothing is
+implemented.
+
+### Method
+
+- **Tree:** origin/main `53c7c2f910` (#7033, #7037, #7040 merged), standalone,
+  the conformance runner's harness assembly, `JS2WASM_IR_SHAPE_DIAG=1
+  JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, one worker.
+- **Sample:** 1,100 of the 8,375 files, stratified by directory (two levels,
+  184 strata) and by legacy-unit count (1 / 2–8 / 9+ / unmeasured), seeded
+  (`sha256("es5-7106:" + path)`). 1,046 were measured; 54 are negative, raw or
+  module files the census skips. Every count below is weighted back to the
+  8,375 (the sample covers 7,936 of them); one sample file is about 7.6 files,
+  so a count under ~100 is a handful of sample files.
+- **Units:** every legacy unit is attributed to its owner: `<module-init>`
+  (the test body plus every harness top-level statement), a harness include's
+  function (by name, from `test262/harness/*.js`), or a test function.
+  Cascades are dropped: `call-graph-closure`, and a name or class that is
+  itself a legacy unit.
+- **Levers:** each root refusal is grouped by mechanism into one lever (table
+  below). A file is freed by a set of levers when every one of its roots
+  belongs to the set.
+- **Unmasking:** a refusal hides whatever the selector would refuse next in
+  the same statement. Six levers were prototyped as selection-only patches on
+  a scratch copy (never committed), all at once, and the census rerun on the
+  whole sample: `S`, `O`, `N`, `T`, `D`, `P` below. Every refusal that run
+  revealed (selector or build-side `ir/from-ast` demote) is added to the
+  file's needs. For those six, "alone" is **measured**; for the others it is
+  an upper bound (their own masking is not lifted). Compare `O`: 310 files
+  alone before unmasking, 168 after; `S`: 55 → 27.
+
+### The lever table
+
+"Carry" is the files that need the lever (in any combination); "alone" is the
+files it frees by itself. Percentages are of 7,936.
+
+| | lever | carry | alone | what the census shows | target module, reuse | depends on |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | runtime-eval program | 1,142 (14.4 %) | **405 (5.1 %)** | Any `eval` / `(0, eval)` / `Function(...)` site in the program makes `generateModule` withdraw **every** IR unit on standalone ("the linked runtime-eval callable carrier is still owned by the direct frontend", `codegen/index.ts` ~3545, #2928). The eval sites themselves are module-init refusals (`expr-indirect-eval-host-statement`, an eval IIFE, `var f = new Function(…)`). | `ir/runtime-eval-boundary-plan.ts` + integration: the IR owns the linked carrier and lowers the eval sites through the existing runtime-eval provider. | none for its 405; with `D` 628 |
+| F | function values | 1,831 (23.1 %) | 275 (3.5 %) | Function expressions as module-init values: `var f = function () {}` (`vardecl-let-closure`), IIFEs (`expr-call-callee-nonident`), `closure-return-type`, calls through a local function value (`expr-local-call-target`). Includes the runner's `var print = function (value) {…}` (390 files, unmasked behind `S`). | `select-closure-literal.ts` / the function-object value path (#7112). | — |
+| N | ambient builtins as values | 2,153 (27.1 %) | **241 (3.0 %)**, measured | `Function` as a value (121 of the alone files: `Function.prototype…` reads), `String(…)` / `new String/Number/Boolean(…)`, `new Error(…)`, `globalThis`, `JSON`, `Math` as values. | #7118's ambient intrinsic values plus the wrapper constructors (#7034's S0 operand arm). | — |
+| L | object literal values | 2,846 (35.9 %) | 228 (2.9 %) | `{}` used as a value (`objectlit-empty`, 200 of the alone files, most unmasked behind `O`/`S`), objects with `valueOf`/`toString` (ToPrimitive), `for (k in obj)` over a literal, `with (obj)`, and the runner's `$262 = { global: globalThis, … }` (390 files). | #7128's open `$Object` carrier (`ir/empty-object-literal.ts`, `ir/open-object-carrier.ts`). | — |
+| O | `Object` namespace | 2,910 (36.7 %) | **168 (2.1 %)**, measured | `Object.<static>(…)` (`getPrototypeOf`, `create`, `getOwnPropertyDescriptor`, `keys`, `defineProperties`, …), `Object.prototype.<m>.call(…)`, `new Object(…)`, and `Object.defineProperty` on standalone (`expr-object-define-property-target`, 190 of the 1,046 sample files carry it). | One table-driven arm over the object runtime's native helpers, the `uncurried-object-alias.ts` pattern. | `L` in 59 % of its files, `S` in 57 % |
+| R | RegExp | 548 (6.9 %) | 135 (1.7 %) | Regex literals, `new RegExp(…)`, `re.exec(s)` on standalone (`expr-regexp-literal`, `expr-new-regexp-target`, `expr-regexp-method-target`). | The native RegExp backend (#682) behind an IR arm. | `D`+`S` in the S15.10 tests (`D+R+S` 489) |
+| Q | dynamic operators | 251 (3.2 %) | 115 (1.4 %) | A value-position `x = 1` on a dynamic script var, `in` / `instanceof` / `==` on carriers, static-predicate operands. | `analysis/operand-admissibility.ts` (the #7066 rule family). | — |
+| K | annexB block functions | 175 (2.2 %) | 91 (1.1 %) | B.3.3 hoisting: a function declaration in a block or `switch` case, and reads of its `f` outside. | The module-init statement walker. | — |
+| M | builtin methods on script values | 980 (12.3 %) | 74 (0.9 %) | `obj.hasOwnProperty(k)` on a script-var object (`expr-module-scalar-method`), Date methods, array/string methods off the IR surface. | The string-method surface (afc4f80) and its array twin. | `O` 61 %, `S` 42 % |
+| T | `throw new Test262Error('…' + x)` over a script scalar | 463 (5.8 %) | 52 (0.6 %), measured | The ES5 `S…` tests' `if (x !== 1) throw new Test262Error('#1: …' + x)` where `x` is a script var (`throw-module-scalar-unboxed`, then `expr-module-value-representation-mismatch` on the message concatenation). | `select.ts`'s throw arm and #7066's `+` rule. | `N`+`P` (493 together) |
+| P | compound assignment on script vars | 226 (2.8 %) | 42 (0.5 %), measured | `x ^= 1`, `x <<= 1`, `x %= 2` on a dynamic script var (`expr-binary-op-<op>=`; build: "compound assign … (dynamic) not in slice 6"). | from-ast's compound-assignment arm over the dynamic carrier. | `T` |
+| S | script-var storage | 3,192 (40.2 %) | 27 (0.3 %), measured | A script `var` whose legacy slot no IR value kind matches (`*-module-storage-unrepresentable`), including the runner's `$262`/`print` and `fnGlobalObject.js`'s `__globalObject`. | `ir/module-bindings.ts`, codegen `scriptVarHome` (follow-ups (a)–(h) of "Script `var` reference homes"). | is the gate: `S+O+L` frees 1,111 |
+| D | script `var` forms | 937 (11.8 %) | 8 (0.1 %), measured | `for (var i = 0; …)` at script level (`for-init-var-kind`), `var x;` with no IR binding (`vardecl-noinit`), var lists outside `collectIrSafeModuleVarDeclarationLists` (`vardecl-var-kind`). | `function-local-var.ts`'s safe-list collector. | `A+D` 628, `D+R+S` 489 |
+| H | propertyHelper.js | 886 (11.2 %) | 0 | 9 harness units (below). | The harness functions, through the existing alias / carrier arms. | `N`+`O`+`S`: 1,080; with `L` 2,087 |
+| B | caller-activation program | 91 (1.1 %) | 0 | `f.caller` withdraws every unit ("the source observes a current function's legacy caller activation"). | as `A`, for the caller activation | — |
+| ? | the tail | — | 267 (3.4 %) | No other lever: `expr-module-extern-consumer` 59, `unattributed-arm` 42, `expr-module-extern-call-brand` 26, `param-dynamic-carrier-diverges` 20, `nontail-elemstore-recv` 17, literal `replace` shapes 17, …, each under 1 %. | per arm | — |
+
+**The 9–10-legacy-unit rows are two harness populations:**
+
+- **Runtime-eval programs** (lever `A`): `assert.js`'s `isNegativeZero`,
+  `isPrimitive`, `formatIdentityFreeValue`, `formatSimpleValue`, `assert`,
+  `compareArray`, `sta.js`'s `Test262Error` (`return-type-unresolved
+  (lattice=dynamic)`) and `$DONOTEVALUATE`, plus `<module-init>`. None of
+  these is refused for its own shape: the program-wide withdrawal and the
+  eval site's dynamic lattice are the cause.
+- **`propertyHelper.js`** (lever `H`), 9 units:
+  - `verifyProperty`, `isWritable`: `vardecl-module-binding-alias`
+    (`__getOwnPropertyDescriptor(obj, name)` assigned to a local);
+  - `verifyCallableProperty`: `expr-logical-value-family`
+    (`options && options.verifyProperty || verifyProperty`);
+  - `verifyAccessorProperty`: `param-type-unresolved(desc)`;
+  - `verifyEqualTo`, `verifyPrimordialCallableProperty`,
+    `verifyPrimordialAccessorProperty`:
+    `param-dynamic-carrier-diverges-from-legacy`;
+  - `verifyWritable`, `verifyNotWritable`: cascades of the above.
+
+### Order: parallel waves
+
+Most files need two or more levers (weighted: 1 lever 1,782; 2 levers 2,087;
+3 levers 1,889; 4 or more 2,171). The commonest exact sets: `A` 405, `F` 275,
+`L+O+S` 246, `O+S` 243, `N` 241, `D+R+S` 236, `L` 228, `A+D` 207,
+`A+F+L+S` 202, `F+L+O+S` 193.
+
+**Wave 1 — independent; each frees files by itself, so they can run in
+parallel:**
+
+| lever | frees alone | note |
+| --- | --- | --- |
+| A runtime-eval program | 405 | largest single lever |
+| F function values | 275 | |
+| N ambient builtins | 241 | measured |
+| L object literal values | 228 | #7128 in flight; `O`'s main prerequisite |
+| O `Object` namespace | 168 | measured; reuses the object runtime |
+| R RegExp | 135 | |
+| Q dynamic operators | 115 | |
+| K annexB block functions | 91 | |
+| M builtin methods | 74 | string surface: afc4f80 |
+| T + P throw messages, compound assignment | 52 + 42 | measured; `N+P+T` frees 493 |
+| H propertyHelper.js | 0 | independent work, but frees files only with `N`, `O`, `S` |
+
+**Wave 2 — the gates, whose value is in combination:**
+
+| combination | files freed (measured) |
+| --- | --- |
+| `S+O` | 446 |
+| `S+O+L` | 1,111 |
+| `F+L+O+S` | 1,629 |
+| `H+N+O+S` | 1,080 |
+| `H+L+N+O+S` | 2,087 |
+| `A+D` | 628 |
+| `D+R+S` | 489 |
+| `A+F+L+S` | 1,236 |
+
+**Greedy cover** (each step the lever that frees the most further files):
+`A` 5.2 % → `+F` 8.7 % → `+N` 12.3 % → `+O` 16.5 % → `+L` 22.3 % → `+S`
+37.3 % → `+M` 46.4 % → `+H` 54.8 % → `+D` 60.0 % → `+R` 65.8 % → unresolved
+names 68.8 % → `+Q` 71.6 % → `+T` 74.2 %. The rest is the tail and `K`, `P`,
+`E` (`delete`), `V` (logical values).
+
+### Caveats
+
+- `A`, `F`, `L`, `M`, `R`, `Q`, `K`, `H` were not prototyped, so their
+  "alone" counts still include files whose next refusal is hidden. `A`'s 405
+  are the least exposed: every unit in them already passed selection and was
+  withdrawn afterwards; only the eval sites themselves were refused.
+- The prototypes admitted at select only. 33 sample files then failed to
+  compile because the storage bypass gives the builder no binding; they are
+  counted by their base needs.
+- The 416 unmeasured rows of the input list are inside the 8,375 and were
+  sampled like the rest; 54 sample files are negative/raw/module files the
+  census does not compile.
+
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
 The following 115 lines are preserved verbatim from the completed #6876 plan
