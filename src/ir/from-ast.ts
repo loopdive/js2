@@ -1401,6 +1401,8 @@ export interface AstToIrOptions extends functionObjects.FunctionValueLoweringPla
    * the value is the function code's strictness. Absent → `this` is unbound.
    */
   readonly ambientThisStrict?: boolean;
+  /** (#7260) The function code's strictness: a dynamic PutValue's failure rule. Absent → unknown. */
+  readonly functionCodeStrict?: boolean;
   /**
    * (#3142 Slice 2) Module-scope bindings → the Wasm global the legacy
    * backend allocated for each (`__mod_<name>`, plus the `__tdz_<name>`
@@ -1950,7 +1952,7 @@ export function lowerFunctionAstToIr(
       ? { argumentsLength: {} }
       : {}),
     booleanReturnBuilder: options.booleanReturnBoundary === fn ? builder : undefined,
-    ...(options.ambientThisStrict === undefined ? {} : { functionCodeStrict: options.ambientThisStrict }),
+    ...(options.functionCodeStrict === undefined ? {} : { functionCodeStrict: options.functionCodeStrict }),
     scope,
     funcName: name,
     ownerUnitId: options.ownerUnitId,
@@ -3118,7 +3120,7 @@ interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLow
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
   readonly countedStringAppends?: ReadonlyMap<ts.ForStatement, IrCountedStringAppendLoweringPlan>;
   readonly consumedCountedStringAppends: IrCountedStringAppendLoweringPlan[];
-  /** (#7106 S3c) The function code's strictness, when the lowering was told it (an ambient-`this` subject). */
+  /** (#7106 S3c / #7260) The function code's strictness, when the lowering was told it. */
   readonly functionCodeStrict?: boolean;
   /** (#7106 S1e) The entry-time `arguments.length` value of this top-level function, when its body reads it. */
   readonly argumentsLength?: { value?: IrValueId };
@@ -6885,6 +6887,20 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
   return cx.safeIndexedArrays.has(expr.expression.text + ":" + expr.argumentExpression.text);
 }
 
+/** A dynamic member store's key or value, boxed onto the carrier when it lowers concrete. */
+function lowerDynamicStoreOperand(expr: ts.Expression, cx: LowerCtx): IrValueId {
+  const value = lowerExpr(expr, cx, irDynamic());
+  const type = cx.builder.typeOf(value);
+  if (type.kind === "dynamic") return value;
+  const boxed = boxConcreteToDynamic(value, type, expr, cx);
+  if (boxed !== null) return boxed;
+  throw new IrUnsupportedError(
+    "operand-coercion-unsupported",
+    "build",
+    `ir/from-ast: dynamic member-store operand of ${describeIrType(type)} has no dynamic carrier (${cx.funcName})`,
+  );
+}
+
 /**
  * Lower an element access whose argument is a string literal — sugar
  * for property access on a known shape. Numeric / computed keys are
@@ -6934,36 +6950,11 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   const recv = lowerExpr(lhs.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
   if (recvType.kind === "dynamic") {
-    const key = lowerExpr(lhs.argumentExpression, cx, irDynamic());
-    if (cx.builder.typeOf(key).kind !== "dynamic") {
-      throw new IrUnsupportedError(
-        "element-store-unsupported",
-        "build",
-        `ir/from-ast: dynamic member-store key is not dynamic (${cx.funcName})`,
-      );
-    }
-    let value = lowerExpr(rhs, cx, irDynamic());
-    const valueType = cx.builder.typeOf(value);
-    if (valueType.kind !== "dynamic") {
-      const candidate = peelParensExpr(rhs);
-      if (!ts.isStringLiteralLike(candidate) || candidate.text !== "true") {
-        throw new IrUnsupportedError(
-          "element-store-unsupported",
-          "build",
-          `ir/from-ast: concrete dynamic member-store value is outside the #3795 conflict marker (${cx.funcName})`,
-        );
-      }
-      const boxed = boxConcreteToDynamic(value, valueType, rhs, cx);
-      if (boxed === null) {
-        throw new IrUnsupportedError(
-          "operand-coercion-unsupported",
-          "build",
-          `ir/from-ast: dynamic member-store conflict marker has no dynamic carrier (${cx.funcName})`,
-        );
-      }
-      value = boxed;
-    }
-    cx.builder.emitDynMemberSet(recv, key, value);
+    // (#3795 / #7260) A literal key and a concrete value are boxed onto the
+    // carrier; a known sloppy function code ignores a failed `[[Set]]`.
+    const key = lowerDynamicStoreOperand(lhs.argumentExpression, cx);
+    const value = lowerDynamicStoreOperand(rhs, cx);
+    cx.builder.emitDynMemberSet(recv, key, value, cx.functionCodeStrict === false);
     return;
   }
   const recvVal = asVal(recvType);
@@ -10752,19 +10743,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
   // boxed as a string key, PutValue's strict/sloppy failure rule preserved.
   if (recvType.kind === "dynamic" && cx.functionCodeStrict !== undefined && ts.isIdentifier(lhs.name)) {
     const key = cx.builder.emitBox(cx.builder.emitStringConst(fieldName), irDynamic(JS_TAG_IDS.String));
-    let value = lowerExpr(expr.right, cx, irDynamic());
-    const valueType = cx.builder.typeOf(value);
-    if (valueType.kind !== "dynamic") {
-      const boxed = boxConcreteToDynamic(value, valueType, expr.right, cx);
-      if (boxed === null) {
-        throw new IrUnsupportedError(
-          "operand-coercion-unsupported",
-          "build",
-          `ir/from-ast: dynamic member-store value of ${describeIrType(valueType)} has no dynamic carrier (${cx.funcName})`,
-        );
-      }
-      value = boxed;
-    }
+    const value = lowerDynamicStoreOperand(expr.right, cx);
     cx.builder.emitDynMemberSet(recv, key, value, !cx.functionCodeStrict);
     return;
   }
