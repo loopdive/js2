@@ -167,3 +167,77 @@ Acceptance:
   no pass→fail.
 - `tests/equivalence/issue-7252-module-binding-class-instance.test.ts`: IR
   route via `trackIrOutcomes`, values against node and base, 3 lanes.
+
+## Results (2026-11-06)
+
+Measured on head 6e5202fd against base e73e190c. Both are `git archive`
+snapshots run side by side.
+
+| Check | Base | Head |
+| --- | --- | --- |
+| Wrapped ledger: `vardecl-module-storage-unrepresentable` rows | 409 | 405 |
+| Wrapped ledger: `expr-module-storage-unrepresentable` rows | 0 | 0 |
+| Wrapped ledger: module-init units with an IR body | 27 | 28 |
+| Wrapped ledger: compileOk (of 1296 files) | 1118 | 1118 |
+| Wrapped ledger: invariants | 0 | 0 |
+| Raw ledger | — | identical apart from timing and commit |
+| Typed corpus (50 files × gc/standalone/wasi) | — | 150/150 byte-identical (44 compile fails, the same on both) |
+| Probe set (56 cases × 3 lanes) | 0 IR | 66 IR, 0 verdict differences |
+
+Of the four rows that move, three now stop at a later, unrelated refusal
+(`Promise`, a private-reference argument, `helper-internal`). The fourth
+becomes a fully IR module-init.
+
+The census lever is smaller than its 92 `new X()` rows suggested. Most of
+those `X` are not in-file classes with a projected shape, or the test reads
+the binding inside a function, which the use-site rule keeps legacy.
+
+Equivalence test: 66/66 pass on gc, standalone and wasi.
+- 15 IR cases agree with node and legacy.
+- 11 refused cases stay legacy and agree with legacy: a `null` write, `+=`,
+  a for-in head, destructuring, `with`, a declaration inside a block,
+  `typeof`, a read in a function, a subclass write in a function, a
+  base-class annotation, a read before the declaration.
+
+## Adversarial review (fresh-context agent, 2026-11-06)
+
+Correctness verdict: no severe hole found.
+- A null-slot read is unreachable. The declaration must be a direct
+  source-file statement, and uses are refused in functions, classes and the
+  declaration's own statement.
+- Writes are scanned by symbol across the whole file.
+- `eval`, `this.c` and implicit globals are excluded by `scriptVarHome`.
+
+Quality findings, and what was done with each:
+1. *`ref.as_non_null` is keyed on the IR type, not on the storage.*
+   Rebutted: the `class` IR type is by definition the non-null `(ref $C)`
+   (`lower-generic` `class` → `ref`), and every module-storage global is
+   `ref null`. So "class-typed `global.get` ⇒ refine" is the carrier
+   invariant. A storage-keyed rule would need a new resolver query used by
+   this one site. No earlier `global.get` produces a `class` type (checked:
+   TDZ, static private fields, function-object caches, receiver globals).
+2. *Sixth copy of `with` detection.* Fixed for this change:
+   `hasDynamicScope` moved from `fnctor-local-bindings.ts` to
+   `src/shared/binding-writes.ts`, cached, and is now used by both. The new
+   module also refuses on a direct `eval`. The remaining copies (in
+   `fnctor-string-producers`, `fnctor-module-consts`,
+   `heterogeneous-module-bindings` and `select.ts`) are a follow-up; see
+   Follow-ups.
+3. *`stripParensUpward` duplicates `outermostParenthesized`.* Fixed:
+   `outermostParenthesized` moved from `select.ts` to
+   `src/shared/binding-writes.ts`, and both callers use it.
+4. *The `scriptVarHome` class check is a second struct lookup.* Rebutted:
+   it classifies the slot that the allocator wrote, by reading it back.
+   `resolveModuleBindingGlobal` then checks that slot against
+   `exactClassStructTypeIdx`, and a disagreement demotes. The spread copies
+   one name set per script `var` per compile.
+5. *Widened parameter types.* Kept: the callers pass the resolver's
+   `IrModuleBindingDeclaration`, and the narrowing happens once, inside.
+
+## Follow-ups
+
+- Fold the remaining `with`-statement scans (listed in finding 2) into
+  `hasDynamicScope`. No id was allocated: `claim-issue --allocate` refused
+  because the open-PR scan was degraded.
+- `let` / `const` class-instance bindings (`no-value-kind`). This needs an
+  eval stand-down for script lexicals.

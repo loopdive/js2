@@ -94,6 +94,12 @@ const REFUSED_CASES: Record<string, string> = {
   "written with a subclass in a function": `${CD} var c = new C(); function f() { c = new D(); } f(); if (c.m() !== 2) throw "m";`,
   "declared as the base class": `${CD} var c: C = new D(); if (c.m() !== 2) throw "m";`,
   "read before the declaration": `${C} var ok = false; try { c.m(); } catch (e) { ok = true; } var c = new C(); if (!ok) throw "o";`,
+  "written null": `${C} var c: C | null = new C(); c = null; if (c !== null) throw "n";`,
+  "compound assignment": `${C} var c: any = new C(); c += 1; if (typeof c !== "string") throw "c";`,
+  "for-in head": `${C} var c: any = new C(); for (c in { k: 1 }) {} if (c !== "k") throw "k";`,
+  "destructured from a non-literal": `${C} var c = new C(); var src = [new C()]; [c] = src; if (c.m() !== 1) throw "m";`,
+  "with statement in the source": `${C} var c = new C(); var o = { z: 1 }; with (o) { z = 2; } if (c.m() !== 1) throw "m";`,
+  "declared inside a block": `${C} { var c = new C(); } if (c.m() !== 1) throw "m";`,
   "typeof the binding": `${C} var c = new C(); if (typeof c !== "object") throw "t";`,
 };
 

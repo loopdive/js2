@@ -6,7 +6,8 @@
  * class's non-null `class` value, so every IR read must see a written slot:
  *   - every write anywhere in the source (the initializer, `=`, a `var`
  *     redeclaration, a nested function's assignment) is `new X(...)` of the
- *     same class, so a written slot never holds `null` or another class;
+ *     same class, and no `with` / direct `eval` resolves a name outside
+ *     checker identity, so a written slot never holds `null` or another class;
  *   - an IR use is a module-init use that runs after the declaration: a
  *     top-level statement after it, outside every function and class body,
  *     and not the operand of `typeof` / `delete`.
@@ -14,7 +15,7 @@
  * which reads the same slot.
  */
 import { ts } from "../ts-api.js";
-import { identifierWritesOf, stripParens } from "../shared/binding-writes.js";
+import { hasDynamicScope, identifierWritesOf, outermostParenthesized, stripParens } from "../shared/binding-writes.js";
 import type { IrModuleBindingValueKind } from "./module-binding-value-kinds.js";
 
 type ClassInstanceKind = Extract<IrModuleBindingValueKind, { kind: "class-instance" }>;
@@ -34,11 +35,6 @@ function constructedTopLevelClass(checker: ts.TypeChecker, expr: ts.Expression):
     : undefined;
 }
 
-function sourceHasWithStatement(sourceFile: ts.SourceFile): boolean {
-  const visit = (node: ts.Node): boolean => ts.isWithStatement(node) || (ts.forEachChild(node, visit) ?? false);
-  return ts.forEachChild(sourceFile, visit) ?? false;
-}
-
 function computeBindingClass(
   checker: ts.TypeChecker,
   declaration: ts.VariableDeclaration,
@@ -49,9 +45,8 @@ function computeBindingClass(
   const declaredType = checker.getTypeAtLocation(declaration.name);
   const classSymbol = checker.getSymbolAtLocation(classDeclaration.name!);
   if (declaredType.isUnion() || declaredType.getSymbol() !== classSymbol) return undefined;
-  // A `with` body resolves a bare name dynamically, outside checker identity.
   const sourceFile = declaration.getSourceFile();
-  if (sourceHasWithStatement(sourceFile)) return undefined;
+  if (hasDynamicScope(sourceFile)) return undefined;
   const bindingSymbol = checker.getSymbolAtLocation(declaration.name);
   let exact = true;
   const visit = (node: ts.Node): void => {
@@ -97,16 +92,10 @@ export function classInstanceUseFollowsDeclaration(
   if (node === declaration.name) return true;
   const statement = ts.findAncestor(declaration, ts.isVariableStatement);
   if (statement === undefined || node.pos < statement.end) return false;
-  const parent = stripParensUpward(node).parent;
+  const parent = outermostParenthesized(node).parent;
   if (ts.isTypeOfExpression(parent) || ts.isDeleteExpression(parent)) return false;
   for (let current = node.parent; !ts.isSourceFile(current); current = current.parent) {
     if (ts.isFunctionLike(current) || ts.isClassLike(current)) return false;
   }
   return true;
-}
-
-function stripParensUpward(node: ts.Expression): ts.Expression {
-  let current = node;
-  while (ts.isParenthesizedExpression(current.parent)) current = current.parent;
-  return current;
 }
