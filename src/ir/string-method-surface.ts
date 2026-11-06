@@ -3,7 +3,8 @@
 // #7106 — the one `String.prototype` method surface the IR lowers. The
 // selector, the WasmGC resolver and the linear resolver all read
 // {@link stringMethodPlan}, so a call is claimed exactly when the backend that
-// builds it has a plan for it. Adding a method is adding a row.
+// builds it has a plan for it: a helper, or the typed string intrinsic. Adding
+// a method is adding a row.
 //
 // Pure data and pure functions: no builder, no checker.
 
@@ -37,9 +38,15 @@ export interface StringMethodParameter {
 /** `index` is a number the helper answers as an i32. */
 export type StringMethodResult = "string" | "number" | "index" | "boolean";
 
-/** One backend's plan for a call: the helper, its parameters after the receiver, and its result. */
+/**
+ * One backend's plan for a call: the helper, its parameters after the receiver,
+ * and its result. Without a helper the call lowers only through the typed
+ * string intrinsic, which needs the receiver's encoding evidence.
+ */
 export interface StringMethodPlan {
-  readonly helper: string;
+  readonly helper?: string;
+  /** `charAt` / `charCodeAt`: a receiver with encoding evidence lowers to the typed string intrinsic. */
+  readonly typedIntrinsic?: true;
   /** The helper for a receiver proven ASCII, where one exists. */
   readonly asciiHelper?: string;
   readonly parameters: readonly StringMethodParameter[];
@@ -51,7 +58,7 @@ export interface StringMethodPlan {
 }
 
 interface StringMethodRow extends Omit<StringMethodPlan, "helper"> {
-  /** The helper per backend; a backend without one has no plan. */
+  /** The helper per backend; a backend with neither a helper nor the typed intrinsic has no plan. */
   readonly helpers: Partial<Record<IrBackendKind, string>>;
 }
 
@@ -90,9 +97,10 @@ const ROWS: Readonly<Record<string, StringMethodRow>> = Object.freeze({
   trimEnd: trimRow("__str_trimEnd"),
   padStart: padRow("__str_padStart"),
   padEnd: padRow("__str_padEnd"),
-  charAt: { helpers: wasmgc("__str_charAt"), parameters: [position("zero")], result: "string" },
+  charAt: { helpers: wasmgc("__str_charAt"), typedIntrinsic: true, parameters: [position("zero")], result: "string" },
   charCodeAt: {
     helpers: { wasmgc: NATIVE_CHARCODEAT_FN, linear: "__linear_ir_str_char_code_at" },
+    typedIntrinsic: true,
     parameters: [position("zero")],
     result: "number",
   },
@@ -128,11 +136,11 @@ function stringMethodRow(method: string): StringMethodRow | undefined {
 export function stringMethodPlan(backend: IrBackendKind, method: string, argCount: number): StringMethodPlan | null {
   const row = stringMethodRow(method);
   const helper = row?.helpers[backend];
-  if (!row || helper === undefined) return null;
+  if (!row || (helper === undefined && !row.typedIntrinsic)) return null;
   const required = row.parameters.filter((parameter) => parameter.omitted === undefined).length;
   if (argCount < required || argCount > row.parameters.length) return null;
-  const { asciiHelper, parameters, result, literalArguments, fold } = row;
-  return { helper, asciiHelper, parameters, result, literalArguments, fold };
+  const { typedIntrinsic, asciiHelper, parameters, result, literalArguments, fold } = row;
+  return { helper, typedIntrinsic, asciiHelper, parameters, result, literalArguments, fold };
 }
 
 /** Whether `symbol` names a WasmGC string-method helper (the resolver materialises them on demand). */

@@ -151,7 +151,7 @@ const NATIVE_STRINGS_FROMAST_RESOLVER: IrFromAstResolver = {
   },
   stringMethodPlan(method: string, argCount: number) {
     const plan = stringMethodPlan("wasmgc", method, argCount);
-    return plan && SELF_HOST_STRING_HELPERS.has(plan.helper) ? plan : null;
+    return plan?.helper !== undefined && SELF_HOST_STRING_HELPERS.has(plan.helper) ? plan : null;
   },
 };
 

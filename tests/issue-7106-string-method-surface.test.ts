@@ -131,11 +131,13 @@ export function run(): number { return check("ab", "cd") === "c" ? 1 : 0; }`;
   });
 
   it("the linear backend refuses at selection what its plan does not lower", async () => {
+    // `charAt` has no linear helper: a receiver with encoding evidence lowers to the typed intrinsic.
     const source = `export function upper(s: string): string { return s.toUpperCase(); }
-export function code(s: string): number { return s.charCodeAt(0); }`;
+export function code(s: string): number { return s.charCodeAt(0); }
+export function second(): string { const t = "abc"; return t.charAt(1); }`;
     await compile(source, { fileName: "t.ts", target: "linear" });
     const report = getLastLinearIrReport();
-    expect(report?.compiled).toEqual(["code"]);
+    expect(report?.compiled).toEqual(["code", "second"]);
     expect(report?.rejected).toEqual([{ func: "upper", reason: "select:string-method-unsupported" }]);
   });
 });

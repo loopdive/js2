@@ -10325,8 +10325,17 @@ function lowerStringMethodCall(
   const lowered = args.map((arg, i) =>
     lowerStringMethodArgument(plan.parameters[i]!, arg, methodName, recv, receiverExpr, cx),
   );
-  const typed = typedStringMethodCall(methodName, recv, receiverExpr, receiverEncoding, lowered, cx);
+  const typed = plan.typedIntrinsic
+    ? typedStringMethodCall(methodName, recv, receiverExpr, receiverEncoding, lowered, cx)
+    : null;
   if (typed !== null) return typed;
+  if (plan.helper === undefined) {
+    // The selector cannot see encoding evidence, so a helper-less backend withdraws here, as before #7106.
+    demoteToLegacy(
+      "string-evidence-unsupported",
+      `ir/from-ast: String.${methodName} requires typed string receiver/encoding evidence (${cx.funcName})`,
+    );
+  }
   const operands = [recv, ...lowered.map((arg) => arg.value)];
   for (const parameter of plan.parameters.slice(args.length)) {
     operands.push(omittedStringMethodArgument(parameter.omitted!, recv, receiverExpr, cx));
