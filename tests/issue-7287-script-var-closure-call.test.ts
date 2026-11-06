@@ -61,6 +61,10 @@ interface Case {
   readonly wasiLegacy?: true;
   /** Units that keep the legacy body on every lane. */
   readonly legacyUnits?: readonly string[];
+  /** Legacy (IR off) traps here instead of throwing the TypeError node and the IR throw. */
+  readonly legacyTraps?: true;
+  /** The source reassigns the var to a value outside its declared type. */
+  readonly skipSemanticDiagnostics?: true;
 }
 
 const CASES: Record<string, Case> = {
@@ -117,11 +121,85 @@ if (n !== 1 || b !== undefined) throw "args";`,
     expected: "completed",
     irUnits: ["h"],
   },
-  "slice B: a call before the initializer runs throws": {
-    source: `function h() { p(); }
-try { h(); throw "no throw"; } catch (e) { if (!(e instanceof TypeError)) throw e; }
+  "message: var p; (no initializer)": {
+    source: `var p;
+function h() { p(1); }
+try { h(); throw "no throw"; } catch (e) {
+  if (!(e instanceof TypeError) || e.message !== "called value is not a function") throw "msg";
+}`,
+    expected: "completed",
+    irUnits: ["h"],
+  },
+  "message: var p = null": {
+    source: `var p = null;
+function h() { p(1); }
+try { h(); throw "no throw"; } catch (e) {
+  if (!(e instanceof TypeError) || e.message !== "called value is not a function") throw "msg";
+}`,
+    expected: "completed",
+    irUnits: ["h"],
+  },
+  "message: var p = undefined": {
+    source: `var p = undefined;
+function h() { p(1); }
+try { h(); throw "no throw"; } catch (e) {
+  if (!(e instanceof TypeError) || e.message !== "called value is not a function") throw "msg";
+}`,
+    expected: "completed",
+    irUnits: ["h"],
+  },
+  "message: function-initialized, then null": {
+    skipSemanticDiagnostics: true,
+    source: `var p = function () {};
+p = null;
+function h() { p(1); }
+try { h(); throw "no throw"; } catch (e) {
+  if (!(e instanceof TypeError) || e.message !== "Cannot access property on null or undefined") throw "msg";
+}`,
+    expected: "completed",
+    irUnits: ["h"],
+  },
+  "message: function-initialized, then undefined": {
+    skipSemanticDiagnostics: true,
+    source: `var p = function () {};
+p = undefined;
+function h() { p(1); }
+try { h(); throw "no throw"; } catch (e) {
+  if (!(e instanceof TypeError) || e.message !== "Cannot access property on null or undefined") throw "msg";
+}`,
+    expected: "completed",
+    irUnits: ["h"],
+  },
+  "message: arrow-initialized, then null": {
+    skipSemanticDiagnostics: true,
+    source: `var p = (v) => v;
+p = null;
+function h() { p(1); }
+try { h(); throw "no throw"; } catch (e) {
+  if (!(e instanceof TypeError) || e.message !== "Cannot access property on null or undefined") throw "msg";
+}`,
+    expected: "completed",
+    irUnits: ["h"],
+  },
+  "message: function-initialized, called before the initializer runs": {
+    source: `function h() { p(1); }
+try { h(); throw "no throw"; } catch (e) {
+  if (!(e instanceof TypeError) || e.message !== "Cannot access property on null or undefined") throw "msg";
+}
 var p = function () {};`,
     expected: "completed",
+    irUnits: ["h"],
+  },
+  "message: function-initialized, reassigned to a number": {
+    skipSemanticDiagnostics: true,
+    source: `var p = function () {};
+p = 5;
+function h() { p(1); }
+try { h(); throw "no throw"; } catch (e) {
+  if (!(e instanceof TypeError) || e.message !== "Cannot access property on null or undefined") throw "msg";
+}`,
+    expected: "completed",
+    legacyTraps: true,
     irUnits: ["h"],
   },
   "slice B: a throwing callee propagates": {
@@ -146,9 +224,12 @@ describe("#7287 script-var closures callable from IR units", () => {
   for (const [label, testCase] of Object.entries(CASES)) {
     for (const lane of LANES) {
       it(`${label} (${lane.name})`, async () => {
-        const off = await verdict(testCase.source, { ...lane.options, experimentalIR: false });
-        const { result, value } = await verdict(testCase.source, lane.options);
-        expect(value).toBe(off.value);
+        const options = testCase.skipSemanticDiagnostics
+          ? { ...lane.options, skipSemanticDiagnostics: true }
+          : lane.options;
+        const off = await verdict(testCase.source, { ...options, experimentalIR: false });
+        const { result, value } = await verdict(testCase.source, options);
+        expect(off.value).toBe(testCase.legacyTraps ? "threw" : value);
         expect(value).toBe(testCase.expected);
         const irRoute = !(testCase.wasiLegacy && lane.options.target === "wasi");
         for (const unit of testCase.irUnits ?? []) expect(route(result, unit), unit).toBe(irRoute);
