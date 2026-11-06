@@ -210,11 +210,16 @@ multi-PR cover, not one lever.
   facet in `src/ir/analysis/effects.ts`) now agrees with `effectsOf` for
   every value-producing call-like dyn op. Added: `dyn.own_property` (the
   blocker), `dyn.member_get`, `dyn.instanceof`, `dyn.instanceof_fn`,
-  `dyn.arguments_length`, `iter.done`, `iter.value`.
+  `dyn.arguments_length`.
+  - The `dyn.member_get` row also fixes a bug already on main: an unused
+    `o.a` / `o[k]` in an IR-claimed function dropped its getter call (and the
+    null-receiver TypeError). This is now tested.
+  - `iter.done` / `iter.value` are left out: nothing builds them, and
+    lower-generic rejects them as unreachable scaffolding.
   - Left droppable on purpose: `dyn.current_this` and `dyn.global_object`
     only read. `dyn.publish_argc` has no result, so the null-result rule
     keeps it.
-  - `vec.set` / `vec.set_length` are #7134's (not on main yet).
+  - `vec.set` / `vec.set_length` came in from #7134 through the main merge.
 - **Code-quality criterion:** no new copy of an alias predicate, the
   exemption sits next to its siblings in `isPhase1VarDecl`, and the effect
   facets agree op for op on the dyn ops.

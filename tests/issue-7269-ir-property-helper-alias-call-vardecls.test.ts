@@ -53,7 +53,7 @@ function fixture(name: string, body: string, flag = "noStrict"): string {
   return path;
 }
 
-async function probeOutcome(path: string) {
+async function probeOutcome(path: string, unit = "probe") {
   const source = readFileSync(path, "utf8");
   const meta = parseMeta(source);
   const variant = assembleOriginalHarness(source, meta).primary;
@@ -63,7 +63,7 @@ async function probeOutcome(path: string) {
     trackIrOutcomes: true,
   });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  return (result.irOutcomes ?? []).find((outcome) => outcome.displayName === "probe");
+  return (result.irOutcomes ?? []).find((outcome) => outcome.displayName === unit);
 }
 
 describe("#7269 certified alias-call vardecls", () => {
@@ -119,6 +119,34 @@ assert.sameValue(log, "kk", "ToPropertyKey must run once per alias call");
         expect(await runTest262File(path, "issue-7269", undefined, lane)).toMatchObject({ status: "pass" });
       });
     }
+  }
+
+  // The same DCE rule for a dynamic member read (already reachable on main):
+  // an unused `o.a` / `o[k]` still runs its getter, and still throws on a
+  // null receiver.
+  const UNUSED_MEMBER_READ = `function touch(o, k) {
+  var v = o.a;
+  var w = o[k];
+  return 1;
+}
+var log = "";
+var o = {};
+Object.defineProperty(o, "a", { get: function () { log += "a"; return 1; } });
+Object.defineProperty(o, "b", { get: function () { log += "b"; return 2; } });
+assert.sameValue(touch(o, "b"), 1);
+assert.sameValue(touch(o, 0), 1);
+assert.sameValue(log, "aba", "every getter runs");
+var threw = false;
+try { touch(null, "b"); } catch (e) { threw = e instanceof TypeError; }
+assert.sameValue(threw, true, "null receiver throws");
+`;
+  for (const target of ["gc", "standalone"] as const) {
+    it(`keeps an unused dynamic member read (${target})`, async () => {
+      const path = fixture(`unused-member-${target}`, UNUSED_MEMBER_READ);
+      expect(await probeOutcome(path, "touch")).toMatchObject({ irBodyEmitted: true });
+      const lane = target === "standalone" ? "standalone" : undefined;
+      expect(await runTest262File(path, "issue-7269", undefined, lane)).toMatchObject({ status: "pass" });
+    });
   }
 
   it("does not certify a call through a shadowing local", async () => {
