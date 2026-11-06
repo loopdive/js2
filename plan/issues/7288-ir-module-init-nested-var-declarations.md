@@ -14,6 +14,20 @@ area: ir
 goal: ir-full-coverage
 related: [7276, 3523]
 assignee: "ttraenkler/c-lead"
+loc-budget-allow:
+  # 2026-11-06 (#7288): one shared predicate, `isModuleInitVarList`, decides
+  # which hoisted `var` lists are module bindings; the growth is its wiring.
+  # module-bindings.ts +2: `isModuleBindingDeclaration` admits a script's
+  # modelled `for (;;)` head. declarations.ts +2: the one call that observes
+  # the head's `__mod_<name>` slot under its exact declaration, and its import.
+  - src/ir/module-bindings.ts
+  - src/codegen/declarations.ts
+func-budget-allow:
+  # 2026-11-06 (#7288): the one observe call in the for-head arm of
+  # `walkModuleStmtForVars`, which is nested in `collectDeclarations`.
+  - src/codegen/declarations.ts::collectDeclarations
+import-cycles-allow:
+  - codegen->ir: 303 # 2026-11-06 (#7288): module-global-registration.ts reads the IR's `isModuleInitVarList`, the one predicate for which hoisted `var` lists are module bindings, so legacy observes exactly the slots the IR resolves
 ---
 
 # #7288: nested top-level `var` in `<module-init>`

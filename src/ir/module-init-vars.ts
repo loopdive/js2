@@ -6,8 +6,9 @@
 //
 //   - a top-level `var` statement: its identifier declarations and, in a
 //     script, its pattern leaves;
-//   - a top-level `for (;;)` `var` head, labelled or not, whose declarations
-//     are all patterns: its leaves. An identifier head is the S6 follow-up.
+//   - a top-level `for (;;)` `var` head, labelled or not: its pattern leaves
+//     and (#7288, scripts) its identifier declarations. Legacy hoists the head
+//     into the same `__mod_<name>` slot as a top-level `var` statement.
 //
 // Every other `var` is nested hoisting the IR refuses. The ordinary module
 // selector still rejects duplicate declarations, missing initializers,
@@ -15,7 +16,7 @@
 // represent.
 
 import { ts } from "../ts-api.js";
-import { isPatternDeclaration, patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
+import { patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
 import { isVarDeclarationList } from "./function-local-var.js";
 
 /** The `var` list `statement` contributes to the module initializer, if it models one. */
@@ -26,8 +27,7 @@ export function moduleInitVarList(statement: ts.Node): ts.VariableDeclarationLis
     : ts.isForStatement(loop) && loop.initializer && ts.isVariableDeclarationList(loop.initializer)
       ? loop.initializer
       : undefined;
-  if (!list || !isVarDeclarationList(list)) return undefined;
-  return ts.isVariableStatement(statement) || list.declarations.every(isPatternDeclaration) ? list : undefined;
+  return list && isVarDeclarationList(list) ? list : undefined;
 }
 
 /** Whether `node` is the `var` list of a top-level statement that {@link moduleInitVarList} models. */
@@ -83,6 +83,8 @@ export function moduleBindingLexicalFlags(declaration: ts.VariableDeclaration | 
 interface ModuleInitLeaves {
   readonly leaves: readonly BindingLeaf[];
   readonly names: ReadonlySet<string>;
+  /** (#7288) The identifier declarations of the modelled `for (;;)` heads, in source order. */
+  readonly forHeadDeclarations: readonly ts.VariableDeclaration[];
 }
 
 const leavesBySource = new WeakMap<ts.SourceFile, ModuleInitLeaves>();
@@ -91,12 +93,16 @@ const leavesBySource = new WeakMap<ts.SourceFile, ModuleInitLeaves>();
 function moduleInitLeaves(sourceFile: ts.SourceFile): ModuleInitLeaves {
   let cached = leavesBySource.get(sourceFile);
   if (!cached) {
-    const leaves = sourceFile.statements
-      .flatMap(moduleInitBindings)
-      .flatMap((binding) =>
-        "name" in binding && ts.isBindingElement(binding.declaration) ? [binding.declaration] : [],
-      );
-    cached = { leaves, names: new Set(leaves.map((leaf) => leaf.name.text)) };
+    const bindings = sourceFile.statements.flatMap((statement) =>
+      ts.isVariableStatement(statement) ? [] : moduleInitBindings(statement),
+    );
+    const leaves = bindings.flatMap((binding) =>
+      "name" in binding && ts.isBindingElement(binding.declaration) ? [binding.declaration] : [],
+    );
+    const forHeadDeclarations = bindings.flatMap((binding) =>
+      "name" in binding && ts.isVariableDeclaration(binding.declaration) ? [binding.declaration] : [],
+    );
+    cached = { leaves, names: new Set(leaves.map((leaf) => leaf.name.text)), forHeadDeclarations };
     leavesBySource.set(sourceFile, cached);
   }
   return cached;
@@ -112,7 +118,8 @@ export function moduleBindingDeclarationOrder(sourceFile: ts.SourceFile): readon
   const declarations = sourceFile.statements.flatMap((statement): readonly ts.Node[] =>
     ts.isVariableStatement(statement) ? statement.declarationList.declarations : [],
   );
-  return [...declarations, ...moduleInitLeaves(sourceFile).leaves];
+  const { leaves, forHeadDeclarations } = moduleInitLeaves(sourceFile);
+  return [...declarations, ...leaves, ...forHeadDeclarations];
 }
 
 /**

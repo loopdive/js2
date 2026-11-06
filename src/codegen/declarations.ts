@@ -200,6 +200,7 @@ import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
+  observeHoistedForHeadVars, // (#7288)
   prepareModuleTdzGlobals,
   prepareSelfImportingModuleTdzGlobals,
   registerModuleGlobal,
@@ -3895,6 +3896,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (ts.isForStatement(stmt)) {
       if (stmt.initializer && ts.isVariableDeclarationList(stmt.initializer)) {
         registerVarDeclListGlobals(stmt.initializer);
+        observeHoistedForHeadVars(ctx, stmt.initializer);
       }
       walkModuleStmtForVars(stmt.statement);
       return;
