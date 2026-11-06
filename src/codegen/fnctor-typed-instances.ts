@@ -40,6 +40,7 @@
 import ts from "typescript";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
+import { irVal, type IrType } from "../ir/nodes.js";
 import { definedFuncAt } from "./func-space.js";
 import { isAnyStringSlot } from "./native-strings-shared.js";
 import { readEnv } from "../env.js";
@@ -171,6 +172,22 @@ function legacyParamSlot(ctx: CodegenContext, parameter: ts.ParameterDeclaration
  */
 export function legacyParamSlotIsExternref(ctx: CodegenContext, parameter: ts.ParameterDeclaration): boolean {
   return legacyParamSlot(ctx, parameter)?.kind === "externref";
+}
+
+/**
+ * (#7277) The IR parameter type that IS legacy's refined slot for `parameter`,
+ * when the IR can name it: the non-null native string (`ref $AnyString`, every
+ * call site passes a string) or `f64` (every call site passes a number). An IR
+ * parameter of that type has the same ABI by construction, whatever the body
+ * does with it.
+ */
+export function legacyParamSlotProjection(
+  ctx: CodegenContext,
+  parameter: ts.ParameterDeclaration,
+): { readonly kind: "string" | "f64"; readonly type: IrType } | undefined {
+  const slot = legacyParamSlot(ctx, parameter);
+  if (slot?.kind === "f64") return { kind: "f64", type: irVal({ kind: "f64" }) };
+  return slot?.kind === "ref" && isAnyStringSlot(ctx, slot) ? { kind: "string", type: { kind: "string" } } : undefined;
 }
 
 /**

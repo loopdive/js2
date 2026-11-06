@@ -56,6 +56,7 @@ import {
 } from "./ir-fnctor-parameter-planning.js";
 import {
   legacyParamSlotIsExternref,
+  legacyParamSlotProjection,
   makeIrDynamicCarrierDivergenceProbe,
   resolveFnctorInstanceType,
 } from "./fnctor-typed-instances.js";
@@ -2879,9 +2880,11 @@ function makeIrImplicitParamTypeResolver(
       }
       candidatesByDeclaration.set(declaration, candidates);
     }
-    if (!candidates.has(parameter)) return undefined;
     const parameterFact = ctx.oracle.typeFactOf(parameter);
     if (parameterFact.kind !== "any" && parameterFact.kind !== "unknown") return undefined;
+    const legacyProjection = legacyParamSlotProjection(ctx, parameter); // (#7277) same ABI by construction
+    if (legacyProjection) return legacyProjection;
+    if (!candidates.has(parameter)) return undefined;
     const parameterIndex = declaration.parameters.indexOf(parameter);
     if (parameterIndex < 0) return undefined;
     const callSites = inferParamTypeFromCallSites(ctx, declaration.name.text, parameterIndex, sourceFile);
