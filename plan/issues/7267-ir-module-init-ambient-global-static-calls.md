@@ -13,7 +13,7 @@ reasoning_effort: high
 task_type: implementation
 area: ir
 goal: ir-full-coverage
-related: [7253, 7264, 7106, 7118, 7123, 7127, 7189]
+related: [7253, 7264, 7106, 7118, 7123, 7127, 7189, 7290]
 assignee: "ttraenkler/c-lead"
 loc-budget-allow:
   # 2026-11-06 (#7267): the shape, admission and lowering live in
@@ -229,15 +229,13 @@ An absent seam reads as "folds", so the call is refused.
   passes `'"\u0008…"'`, which the host parser rejects, so legacy does not fold
   it. It is still zero-legacy.
 
-**Follow-ups** (ids not allocated: `claim-issue.mjs --allocate` refused
-because the open-PR scan was degraded):
+**Follow-ups:** [#7290](7290-json-codec-number-scan-rounding.md) covers both.
 
-- (a) The runtime codec's number scan (`__json_parse_text`) rounds wrongly for
-  11 of 20 number texts given as runtime strings. This is pre-existing and
-  hit by both paths for non-static texts.
+- (a) The runtime codec's number scan (`__json_parse_text`) rounds wrongly:
+  10 of 20 texts measured, 11 of 20 in the reviewer's set. This is
+  pre-existing and hits both paths for runtime texts.
 - (b) Legacy's fold gets `JSON.parse("true")` / `("false")` wrong on
-  standalone and gc. The runtime path answers them right; the fold is where
-  it goes wrong.
+  standalone and gc; the runtime path answers them right.
 
 ## Left (follow-ups)
 
