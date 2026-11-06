@@ -64,6 +64,11 @@ export function isIrModuleMapValueKind(valueKind: IrModuleBindingValueKind): boo
   return valueKind.kind === "native-map" || (valueKind.kind === "extern" && valueKind.className === "Map");
 }
 
+/** (#7252) A class instance: its uses are the class arms', neither scalar nor extern-like. */
+export function isIrModuleClassInstanceValueKind(valueKind: IrModuleBindingValueKind): boolean {
+  return valueKind.kind === "class-instance";
+}
+
 /**
  * True when a binding exposes a reference carrier whose consumers need the
  * conservative extern discipline: ambient/capability externref, native Map, or
@@ -87,11 +92,6 @@ export function isIrModuleMapValueKind(valueKind: IrModuleBindingValueKind): boo
  * here instead would change every existing #4208 retype binding's consumer
  * discipline, which this issue did not measure.
  */
-/** (#7252) A class instance: its uses are the class arms', neither scalar nor extern-like. */
-export function isIrModuleClassInstanceValueKind(valueKind: IrModuleBindingValueKind): boolean {
-  return valueKind.kind === "class-instance";
-}
-
 export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind): boolean {
   return (
     valueKind.kind === "extern" ||
