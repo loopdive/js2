@@ -3048,11 +3048,26 @@ function calleeHasAnyDynamicParam(calleeName: string, typeMap: TypeMap | undefin
   return false;
 }
 
-/** Resolve whether local function `calleeName`'s return is dynamic. */
-function calleeReturnIsDynamic(calleeName: string, typeMap: TypeMap | undefined): boolean {
+/** Local function `calleeName`'s resolved return kind; `null` for no local function or a generator. */
+function calleeReturnKind(calleeName: string, typeMap: TypeMap | undefined): ResolvedKind {
   const decl = currentDynScanDecls?.get(calleeName);
-  if (!decl || decl.asteriskToken) return false;
-  return resolveReturnType(decl, typeMap?.get(calleeName)?.returnType) === "dynamic";
+  if (!decl || decl.asteriskToken) return null;
+  return resolveReturnType(decl, typeMap?.get(calleeName)?.returnType);
+}
+
+function calleeReturnIsDynamic(calleeName: string, typeMap: TypeMap | undefined): boolean {
+  return calleeReturnKind(calleeName, typeMap) === "dynamic";
+}
+
+/** (#7106 lever T) A call to a local `void` function has no value to combine (from-ast: "returned void"). */
+function isVoidLocalCall(expr: ts.Expression, scope: ReadonlySet<string>): boolean {
+  const call = unwrapPhase1Parens(expr);
+  return (
+    ts.isCallExpression(call) &&
+    ts.isIdentifier(call.expression) &&
+    !scope.has(call.expression.text) &&
+    calleeReturnKind(call.expression.text, currentClaimTypeMap) === "void"
+  );
 }
 
 /**
@@ -11698,6 +11713,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       if (selectorValuePositionComma(expr, scope, localClasses)) return true;
       return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
     }
+    const voidOperand = [expr.left, expr.right].find((side) => isVoidLocalCall(side, scope));
+    if (voidOperand) return shapeNo("expr-void-call-operand", voidOperand);
     if (!nativeI32OperandsAdmissible(expr, currentSelectionOptions)) {
       return capabilityNo("operand-coercion-unsupported", "expr-native-i32-operand", expr);
     }

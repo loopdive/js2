@@ -52,6 +52,10 @@ const REFUSED: Record<string, string> = {
   // `lowerCompoundAssignment` writes no dynamic module slot yet (#7130).
   dynamicCompound: "var y;\ny = 1;\ny *= -1;\nif (y !== -1) { throw new Test262Error('#1: ' + y); }",
   dynamicAppend: "var y;\ny = 1;\ny += 1;\nif (y !== 2) { throw new Test262Error('#1: ' + y); }",
+  // A void local call has no value to combine (S13.2.1_A9_T1).
+  voidCallOperand:
+    "var x;\nfunction f() { x = 1; return; }\n" +
+    "if (f() !== undefined) { throw new Test262Error('#1: ' + f()); }\nif (x !== 1) { throw new Test262Error('#2: ' + x); }",
 };
 
 describe("#7106 lever T — throw messages over a script scalar", () => {
