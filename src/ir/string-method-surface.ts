@@ -7,6 +7,8 @@
 //
 // Pure data and pure functions: no builder, no checker.
 
+import { stripParens } from "../shared/binding-writes.js";
+import { ts } from "../ts-api.js";
 import type { IrBackendKind } from "./analysis/backend-legality.js";
 import { NATIVE_CHARCODEAT_FN } from "./runtime-symbols.js";
 
@@ -51,28 +53,43 @@ export interface StringMethodPlan {
 interface StringMethodRow extends Omit<StringMethodPlan, "helper"> {
   /** The helper per backend; a backend without one has no plan. */
   readonly helpers: Partial<Record<IrBackendKind, string>>;
-  /** Fewer arguments than parameters accepted (default: all of them). */
-  readonly maxArguments?: number;
 }
 
 const position = (omitted: StringArgumentDefault): StringMethodParameter => ({ role: "position", omitted });
 const search: StringMethodParameter = { role: "search" };
+const caseRow = (helper: string): StringMethodRow => ({
+  helpers: wasmgc(helper),
+  asciiHelper: `${helper}_ascii`,
+  parameters: [],
+  result: "string",
+});
+const trimRow = (helper: string): StringMethodRow => ({ helpers: wasmgc(helper), parameters: [], result: "string" });
+const padRow = (helper: string): StringMethodRow => ({
+  helpers: wasmgc(helper),
+  parameters: [
+    { role: "length", omitted: "zero" },
+    { role: "fill", omitted: "space" },
+  ],
+  result: "string",
+});
+const searchRow = (helper: string, omitted: StringArgumentDefault): StringMethodRow => ({
+  helpers: wasmgc(helper),
+  parameters: [search, position(omitted)],
+  result: "boolean",
+});
 const wasmgc = (helper: string): Partial<Record<IrBackendKind, string>> => ({ wasmgc: helper });
 
 const ROWS: Readonly<Record<string, StringMethodRow>> = Object.freeze({
-  toUpperCase: {
-    helpers: wasmgc("__str_toUpperCase"),
-    asciiHelper: "__str_toUpperCase_ascii",
-    parameters: [],
-    result: "string",
-  },
-  toLowerCase: {
-    helpers: wasmgc("__str_toLowerCase"),
-    asciiHelper: "__str_toLowerCase_ascii",
-    parameters: [],
-    result: "string",
-  },
-  trim: { helpers: wasmgc("__str_trim"), parameters: [], result: "string" },
+  toUpperCase: caseRow("__str_toUpperCase"),
+  toLowerCase: caseRow("__str_toLowerCase"),
+  // Without ECMA-402 the locale forms are the default case mappings (§22.1.3.27 / §22.1.3.29).
+  toLocaleUpperCase: caseRow("__str_toUpperCase"),
+  toLocaleLowerCase: caseRow("__str_toLowerCase"),
+  trim: trimRow("__str_trim"),
+  trimStart: trimRow("__str_trimStart"),
+  trimEnd: trimRow("__str_trimEnd"),
+  padStart: padRow("__str_padStart"),
+  padEnd: padRow("__str_padEnd"),
   charAt: { helpers: wasmgc("__str_charAt"), parameters: [position("zero")], result: "string" },
   charCodeAt: {
     helpers: { wasmgc: NATIVE_CHARCODEAT_FN, linear: "__linear_ir_str_char_code_at" },
@@ -88,17 +105,17 @@ const ROWS: Readonly<Record<string, StringMethodRow>> = Object.freeze({
   indexOf: {
     helpers: wasmgc("__str_indexOf"),
     parameters: [search, position("zero")],
-    maxArguments: 1,
     result: "index",
     fold: (receiver, needle) => receiver.indexOf(needle),
   },
-  includes: {
-    helpers: wasmgc("__str_includes"),
-    parameters: [search, position("zero")],
-    maxArguments: 1,
-    result: "boolean",
-    fold: (receiver, needle) => receiver.includes(needle),
+  lastIndexOf: {
+    helpers: wasmgc("__str_lastIndexOf"),
+    parameters: [search, { role: "position", omitted: "end", nanIsOmitted: true }],
+    result: "index",
   },
+  includes: { ...searchRow("__str_includes", "zero"), fold: (receiver, needle) => receiver.includes(needle) },
+  startsWith: searchRow("__str_startsWith", "zero"),
+  endsWith: searchRow("__str_endsWith", "end"),
   replace: { helpers: wasmgc("__str_replace"), parameters: [search, search], result: "string", literalArguments: true },
 });
 
@@ -113,7 +130,7 @@ export function stringMethodPlan(backend: IrBackendKind, method: string, argCoun
   const helper = row?.helpers[backend];
   if (!row || helper === undefined) return null;
   const required = row.parameters.filter((parameter) => parameter.omitted === undefined).length;
-  if (argCount < required || argCount > (row.maxArguments ?? row.parameters.length)) return null;
+  if (argCount < required || argCount > row.parameters.length) return null;
   const { asciiHelper, parameters, result, literalArguments, fold } = row;
   return { helper, asciiHelper, parameters, result, literalArguments, fold };
 }
@@ -121,4 +138,20 @@ export function stringMethodPlan(backend: IrBackendKind, method: string, argCoun
 /** Whether `symbol` names a WasmGC string-method helper (the resolver materialises them on demand). */
 export function isStringMethodHelper(symbol: string): boolean {
   return Object.values(ROWS).some((row) => row.helpers.wasmgc === symbol || row.asciiHelper === symbol);
+}
+
+/**
+ * A literal argument whose ToNumber is static: `undefined` (or `void 0`), which
+ * takes the parameter's omitted value, or `null` / `false` / `true`, which are
+ * 0, 0 and 1. A shadowed `undefined` (`isGlobalUndefined` false) is a value.
+ */
+export function staticStringMethodArgument(
+  expression: ts.Expression,
+  isGlobalUndefined: (identifier: ts.Identifier) => boolean,
+): "undefined" | 0 | 1 | undefined {
+  const arg = stripParens(expression);
+  if (ts.isIdentifier(arg)) return arg.text === "undefined" && isGlobalUndefined(arg) ? "undefined" : undefined;
+  if (ts.isVoidExpression(arg)) return ts.isNumericLiteral(arg.expression) ? "undefined" : undefined;
+  if (arg.kind === ts.SyntaxKind.TrueKeyword) return 1;
+  return arg.kind === ts.SyntaxKind.NullKeyword || arg.kind === ts.SyntaxKind.FalseKeyword ? 0 : undefined;
 }

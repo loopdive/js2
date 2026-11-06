@@ -46,7 +46,12 @@ import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
 import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./select-expression-structure.js";
 import { IR_STRING_COMPARE_FN, NATIVE_CHARCODEAT_FN } from "./runtime-symbols.js";
-import type { StringArgumentDefault, StringMethodParameter, StringMethodPlan } from "./string-method-surface.js";
+import {
+  staticStringMethodArgument,
+  type StringArgumentDefault,
+  type StringMethodParameter,
+  type StringMethodPlan,
+} from "./string-method-surface.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
@@ -10316,7 +10321,9 @@ function lowerStringMethodCall(
         : cx.builder.emitConst({ kind: "f64", value: answer }, irVal({ kind: "f64" }));
     }
   }
-  const lowered = args.map((arg, i) => lowerStringMethodArgument(plan.parameters[i]!, arg, methodName, cx));
+  const lowered = args.map((arg, i) =>
+    lowerStringMethodArgument(plan.parameters[i]!, arg, methodName, recv, receiverExpr, cx),
+  );
   const typed = typedStringMethodCall(methodName, recv, receiverExpr, receiverEncoding, lowered, cx);
   if (typed !== null) return typed;
   const operands = [recv, ...lowered.map((arg) => arg.value)];
@@ -10339,13 +10346,26 @@ interface LoweredStringMethodArgument {
   readonly numberType?: IrType;
 }
 
-/** An argument as its role converts it: a string, or an i32 position or length. Selection proved it. */
+/**
+ * An argument as its role converts it: a string, or an i32 position or length.
+ * Selection proved it; a literal with a static ToNumber folds, and `undefined`
+ * takes the omitted value.
+ */
 function lowerStringMethodArgument(
   parameter: StringMethodParameter,
   arg: ts.Expression,
   methodName: string,
+  recv: IrValueId,
+  receiverExpr: ts.Expression,
   cx: LowerCtx,
 ): LoweredStringMethodArgument {
+  const literal = staticStringMethodArgument(
+    arg,
+    (identifier) => !cx.scope.has("undefined") && cx.resolver?.isDirectModuleBinding?.(identifier) !== true,
+  );
+  if (literal === "undefined") {
+    return { value: omittedStringMethodArgument(parameter.omitted ?? "zero", recv, receiverExpr, cx) };
+  }
   if (parameter.role === "search" || parameter.role === "fill") {
     const value = lowerExpr(arg, cx, { kind: "string" });
     if (cx.builder.typeOf(value).kind !== "string") {
@@ -10358,13 +10378,17 @@ function lowerStringMethodArgument(
     }
     return { value };
   }
+  if (literal !== undefined)
+    return { value: cx.builder.emitConst({ kind: "i32", value: literal }, irVal({ kind: "i32" })) };
   const numeric = lowerExpr(arg, cx, irVal({ kind: "f64" }));
   const numberType = cx.builder.typeOf(numeric);
-  const value =
-    asVal(numberType)?.kind === "i32"
-      ? numeric
-      : cx.builder.emitUnary("i32.trunc_sat_f64_s", numeric, irVal({ kind: "i32" }));
-  return { value, numberType };
+  if (asVal(numberType)?.kind === "i32") return { value: numeric, numberType };
+  const integer = cx.builder.emitUnary("i32.trunc_sat_f64_s", numeric, irVal({ kind: "i32" }));
+  if (!parameter.nanIsOmitted) return { value: integer, numberType };
+  // `lastIndexOf`: a NaN position is the omitted one.
+  const notANumber = cx.builder.emitBinary("f64.ne", numeric, numeric, irVal({ kind: "i32" }));
+  const omitted = omittedStringMethodArgument(parameter.omitted!, recv, receiverExpr, cx);
+  return { value: cx.builder.emitSelect(notANumber, omitted, integer, irVal({ kind: "i32" })), numberType };
 }
 
 /** The value an omitted argument takes (`StringArgumentDefault`). */

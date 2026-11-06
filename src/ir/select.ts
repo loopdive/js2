@@ -171,7 +171,12 @@ import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
-import { stringMethodPlan, type StringArgumentRole, type StringMethodPlan } from "./string-method-surface.js";
+import {
+  staticStringMethodArgument,
+  stringMethodPlan,
+  type StringArgumentRole,
+  type StringMethodPlan,
+} from "./string-method-surface.js";
 import type { IrBackendKind } from "./analysis/backend-legality.js";
 import {
   isPatternDeclaration,
@@ -9349,19 +9354,31 @@ function isLiteralStringReplaceCall(expr: ts.CallExpression): boolean {
  * proven for its role: a position or a length a number, a search or a fill a
  * string. The builder then lowers the plan with no conversion of its own.
  */
-function stringMethodSelection(expr: ts.CallExpression, method: string): StringMethodPlan | false {
+function stringMethodSelection(
+  expr: ts.CallExpression,
+  method: string,
+  scope: ReadonlySet<string>,
+): StringMethodPlan | false {
   const backend = currentSelectionOptions?.backendTargetProfile?.backend ?? "wasmgc";
   const plan = expr.arguments.some(ts.isSpreadElement)
     ? null
     : stringMethodPlan(backend, method, expr.arguments.length);
   if (plan === null) return capabilityNo("string-method-unsupported", "expr-string-method-surface", expr);
-  const unproven = expr.arguments.find((arg, i) => !stringMethodArgumentProven(plan.parameters[i]!.role, arg));
+  const unproven = expr.arguments.find((arg, i) => !stringMethodArgumentProven(plan.parameters[i]!.role, arg, scope));
   if (unproven !== undefined) return capabilityNo("string-method-unsupported", "expr-string-method-argument", unproven);
   return plan;
 }
 
-function stringMethodArgumentProven(role: StringArgumentRole, arg: ts.Expression): boolean {
-  return role === "search" || role === "fill" ? expressionIsClassifiedString(arg) : expressionIsProvenNumber(arg);
+/**
+ * A literal with a static ToNumber stands for a position or a length; an
+ * `undefined` fill is the omitted one (a space). The builder folds both.
+ */
+function stringMethodArgumentProven(role: StringArgumentRole, arg: ts.Expression, scope: ReadonlySet<string>): boolean {
+  const literal = staticStringMethodArgument(arg, (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope));
+  if (literal === undefined) {
+    return role === "search" || role === "fill" ? expressionIsClassifiedString(arg) : expressionIsProvenNumber(arg);
+  }
+  return literal === "undefined" ? role !== "search" : role === "position" || role === "length";
 }
 
 function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
@@ -12295,7 +12312,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;
           return expr.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
         }
-        const plan = stringMethodSelection(expr, expr.expression.name.text);
+        const plan = stringMethodSelection(expr, expr.expression.name.text, scope);
         if (plan === false) return false;
         if (plan.literalArguments) {
           if (currentSelectionOptions?.supportsLiteralStringReplace !== true) {
