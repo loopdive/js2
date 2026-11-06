@@ -3463,7 +3463,9 @@ function dynamicUsesAreMoveOnly(
     }
     if (ts.isCallExpression(e)) {
       const callee = unwrap(e.expression);
-      callsDynamicMethod ||= ts.isAccessExpression(callee) && isDynShaped(callee.expression);
+      callsDynamicMethod ||=
+        (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
+        isDynShaped(callee.expression);
       // (#7128 S1) A U1 define: literal key and descriptor, result dropped.
       if (isOpenCarrierDefine(e)) return !expectDyn;
       // (#7106 S1b) `JSON.stringify(<dynamic>)` → `dyn.json_stringify`: a
