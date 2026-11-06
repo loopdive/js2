@@ -133,6 +133,7 @@ import {
   IR_GLOBAL_OBJECT_HELPER,
   irDynamicConstructCalleeIsPlain,
   irDynamicConstructHelperName,
+  irFunctionCodeStrictness,
   irFunctionThisStrictness,
   irInstanceOfFunctionHelperName,
   irSelfGuardedConstructorValue,
@@ -2595,6 +2596,7 @@ export function compileIrPathFunctions(
       preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
+      functionCodeStrictness: (fn) => irFunctionCodeStrictness(ctx, fn), // (#7260)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
       // (#7106 compareArray.format)
       arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
@@ -3299,6 +3301,7 @@ export function compileIrPathFunctions(
           funcName: name,
           ownerUnitId,
           ...(ambientThisStrict === undefined ? {} : { ambientThisStrict }),
+          functionCodeStrict: irFunctionCodeStrictness(ctx, stmt), // (#7260)
           directCalls: directCallsFor(stmt, ownerUnitId),
           fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
           fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,

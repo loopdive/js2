@@ -11,7 +11,11 @@ import {
   ensureGlobalEnvironmentOperation,
 } from "./global-environment.js";
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
-import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
+import {
+  irFunctionCodeStrictness,
+  irFunctionThisStrictness,
+  irSelfGuardedConstructorValue,
+} from "./ir-dynamic-construct.js"; // (#7106 S3c, #7260)
 import { irDynamicInstanceOfAtLegacyParity } from "./ir-dynamic-instanceof.js"; // (#7106) generic dynamic instanceof
 import { irOpenObjectSelectionOption } from "./declarations/ir-open-object-binding.js"; // (#7128 S1)
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
@@ -3300,6 +3304,7 @@ function planIrOverlay(
       preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
+      functionCodeStrictness: (fn) => irFunctionCodeStrictness(ctx, fn), // (#7260)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
       // (#7106 compareArray.format)
       arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
