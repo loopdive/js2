@@ -107,6 +107,7 @@ import {
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
 import { admitAmbientGlobalFunctionCall } from "./ambient-global-function-call.js";
+import { objectCreateDescriptorMap } from "./object-create-call.js";
 import {
   isAffineThreeDeepElementAccess,
   unwrapTypeErasedExpression,
@@ -8619,6 +8620,15 @@ function isAmbientIntrinsicValue(expr: ts.Identifier): boolean {
   );
 }
 
+/** (#7276) The shared `Object.create` plan, on the selector's lane and binding facts. */
+function selectorObjectCreateDescriptorMap(expr: ts.CallExpression) {
+  const resolver = currentModuleBindingResolver;
+  return objectCreateDescriptorMap(expr, {
+    supportsBackendCapability: currentSelectionOptions?.supportsBackendCapability,
+    isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding(node) === true,
+  });
+}
+
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
   return (
     currentSelectionOptions?.isAmbientBinding?.(node) === true ||
@@ -12198,6 +12208,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // symbolic host-helper operation, not an instance method on a value
       // named `Object`. Reject shadowed bindings and host-free targets before
       // walking the three ordinary Phase-1 arguments.
+      // (#7276) `Object.create({}, { <literal data descriptors> })`: literal operands only.
+      if (selectorObjectCreateDescriptorMap(expr) !== null) return true;
       if (isAmbientObjectDefineProperty(expr) && !scope.has("Object")) {
         if (isOpenCarrierDefine(expr)) return true;
         if (currentSelectionOptions?.supportsBackendCapability?.("host-object-define-property") === false) {

@@ -14,6 +14,21 @@ area: ir
 goal: ir-full-coverage
 related: [7275, 7128, 7267, 7189]
 assignee: "ttraenkler/c-lead"
+loc-budget-allow:
+  # 2026-11-06 (#7276): the plan and the lowering live in the new
+  # src/ir/object-create-call.ts. What remains in the god-files is wiring
+  # with no other home: select.ts +12, the selector adapter (lane + binding
+  # facts) and the one Phase-1 call arm beside `Object.defineProperty`'s;
+  # from-ast.ts +24, the resolver capability union, the from-ast adapter, the
+  # arm at `lowerMethodCallWithSourcePlan` (the seam both call entries
+  # share) and `lowerDataDescriptorFields`, which the #7128 open-carrier
+  # define now shares instead of keeping its own copy.
+  - src/ir/select.ts
+  - src/ir/from-ast.ts
+func-budget-allow:
+  # 2026-11-06 (#7276): one sibling arm in the flat call dispatch, beside
+  # `Object.defineProperty`'s; splitting the dispatcher is its own refactor.
+  - src/ir/select.ts::isPhase1Expr
 ---
 
 # #7276: `Object.create(proto, {descriptor map})` in the IR

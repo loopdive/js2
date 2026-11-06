@@ -163,24 +163,40 @@ function declaresUndefined(file: ts.SourceFile): boolean {
 /** The ToPropertyDescriptor fields of a data descriptor (§6.2.5.5). */
 const DATA_DESCRIPTOR_FIELDS: ReadonlySet<string> = new Set(["value", "writable", "enumerable", "configurable"]);
 
+/** One field of a literal data descriptor, in source order. */
+export interface DataDescriptorField {
+  readonly name: string;
+  readonly initializer: ts.Expression;
+}
+
 /** A U1 define: its static property key and the descriptor fields in source order. */
 export interface OpenCarrierDefinePlan {
   readonly key: string;
-  readonly fields: readonly { readonly name: string; readonly initializer: ts.Expression }[];
+  readonly fields: readonly DataDescriptorField[];
 }
 
 /**
  * The U1 plan of `Object.defineProperty(target, key, descriptor)`, or null.
  * The key is a string or numeric literal (the scanner already canonicalised the
- * numeric text, so it is the ToPropertyKey string). The descriptor is an inline
- * literal of distinct data-descriptor fields whose values are number, string
- * or boolean literals: source order is then unobservable, as no getter runs.
+ * numeric text, so it is the ToPropertyKey string); the descriptor is
+ * {@link literalDataDescriptorFields}.
  */
 export function openCarrierDefinePlan(call: ts.CallExpression): OpenCarrierDefinePlan | null {
   const [, key, descriptor] = call.arguments;
   if (call.arguments.length !== 3 || !(ts.isStringLiteral(key!) || ts.isNumericLiteral(key!))) return null;
-  if (!ts.isObjectLiteralExpression(descriptor!)) return null;
-  const fields: { name: string; initializer: ts.Expression }[] = [];
+  const fields = literalDataDescriptorFields(descriptor!);
+  return fields === null ? null : { key: key.text, fields };
+}
+
+/**
+ * An inline literal of distinct data-descriptor fields whose values are
+ * number, string or boolean literals, or null. Source order is then
+ * unobservable, as no getter runs. Shared with the #7276 `Object.create`
+ * descriptor map (`ir/object-create-call.ts`).
+ */
+export function literalDataDescriptorFields(descriptor: ts.Expression): readonly DataDescriptorField[] | null {
+  if (!ts.isObjectLiteralExpression(descriptor)) return null;
+  const fields: DataDescriptorField[] = [];
   for (const property of descriptor.properties) {
     if (!ts.isPropertyAssignment(property) || !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
       return null;
@@ -190,7 +206,7 @@ export function openCarrierDefinePlan(call: ts.CallExpression): OpenCarrierDefin
     if (!isPrimitiveLiteral(property.initializer)) return null;
     fields.push({ name, initializer: property.initializer });
   }
-  return { key: key.text, fields };
+  return fields;
 }
 
 function isPrimitiveLiteral(expr: ts.Expression): boolean {
