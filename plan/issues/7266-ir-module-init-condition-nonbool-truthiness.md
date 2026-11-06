@@ -101,7 +101,22 @@ a blocker class but cannot move the zero-legacy count by itself.
 - test262 A/B (the 50 affected files + 300 seeded-random, standalone + gc):
   see the PR body.
 
+## Scope note: function bodies too
+
+`isPhase1ConditionExpr` and the `!` arm are shared by every unit kind, so the
+admission also reaches ordinary function bodies whose conditions read an f64 /
+dynamic module binding (e.g. `function test() { if (count) … }`), not only
+`<module-init>`. The fresh PR review's lane matrix measured **2,142 newly
+IR-routed `test()` bodies, all with correct results**; on gc those bodies shed
+host imports. (The stride-40 wrapped census above counts no route change because
+its affected files' function units have other refusals.)
+
 ## Follow-ups found (pre-existing on main, not caused here)
+
+- On gc, an IR-claimed `let x = Number("")` module-init pulls 15
+  `env.__boundary_object_*` imports. That comes from the pre-existing IR
+  `Number()` gc lowering, which this admission now reaches more often. No new
+  issue is filed; this line records it.
 
 Both are claim-then-demote mismatches (selector admits, from-ast demotes at
 build with an `unsupported` code, legacy body kept, output correct):
