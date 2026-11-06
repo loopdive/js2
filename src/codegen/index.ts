@@ -56,7 +56,7 @@ import {
 } from "./ir-fnctor-parameter-planning.js";
 import {
   legacyParamSlotIsExternref,
-  legacyParamSlotProjection,
+  legacyRefinedParamSlot,
   makeIrDynamicCarrierDivergenceProbe,
   resolveFnctorInstanceType,
 } from "./fnctor-typed-instances.js";
@@ -2882,34 +2882,43 @@ function makeIrImplicitParamTypeResolver(
     }
     const parameterFact = ctx.oracle.typeFactOf(parameter);
     if (parameterFact.kind !== "any" && parameterFact.kind !== "unknown") return undefined;
-    const legacyProjection = legacyParamSlotProjection(ctx, parameter); // (#7277) same ABI by construction
-    if (legacyProjection) return legacyProjection;
-    if (!candidates.has(parameter)) return undefined;
     const parameterIndex = declaration.parameters.indexOf(parameter);
     if (parameterIndex < 0) return undefined;
+    // (#7277) Off the candidate set, legacy's refined slot is the only evidence;
+    // adopting it gives the IR parameter the same ABI by construction.
+    if (!candidates.has(parameter)) return projectIrImplicitParamSlot(ctx, legacyRefinedParamSlot(ctx, parameter));
     const callSites = inferParamTypeFromCallSites(ctx, declaration.name.text, parameterIndex, sourceFile);
     if (callSites.sawCallSite && callSites.type === null) {
       return { kind: "dynamic", type: irDynamic() };
     }
-    const inferred = inferImplicitAnyParamType(ctx, declaration.name.text, parameterIndex, sourceFile, declaration);
-    if (inferred?.kind === "f64") return { kind: "f64", type: irVal(inferred) };
-    if (inferred?.kind === "i32" && inferred.boolean === true) {
-      return { kind: "bool", type: irVal(inferred) };
-    }
-    if (inferred?.kind === "ref" && isAnyStringSlot(ctx, inferred)) {
-      return { kind: "string", type: { kind: "string" } };
-    }
-    if (inferred?.kind === "ref" || inferred?.kind === "ref_null") {
-      const structName = ctx.typeIdxToStructName.get(inferred.typeIdx);
-      if (structName === "__vec_f64") {
-        return { kind: "object", type: irVec(irVal({ kind: "f64" }), true) };
-      }
-      if (structName?.startsWith("__vec_") || structName?.startsWith("__arr_")) {
-        return { kind: "object", type: irVal(inferred) };
-      }
-    }
-    return undefined;
+    return projectIrImplicitParamSlot(
+      ctx,
+      inferImplicitAnyParamType(ctx, declaration.name.text, parameterIndex, sourceFile, declaration),
+    );
   };
+}
+
+function projectIrImplicitParamSlot(
+  ctx: CodegenContext,
+  inferred: ValType | null | undefined,
+): IrImplicitParamProjection | undefined {
+  if (inferred?.kind === "f64") return { kind: "f64", type: irVal(inferred) };
+  if (inferred?.kind === "i32" && inferred.boolean === true) {
+    return { kind: "bool", type: irVal(inferred) };
+  }
+  if (inferred?.kind === "ref" && isAnyStringSlot(ctx, inferred)) {
+    return { kind: "string", type: { kind: "string" } };
+  }
+  if (inferred?.kind === "ref" || inferred?.kind === "ref_null") {
+    const structName = ctx.typeIdxToStructName.get(inferred.typeIdx);
+    if (structName === "__vec_f64") {
+      return { kind: "object", type: irVec(irVal({ kind: "f64" }), true) };
+    }
+    if (structName?.startsWith("__vec_") || structName?.startsWith("__arr_")) {
+      return { kind: "object", type: irVal(inferred) };
+    }
+  }
+  return undefined;
 }
 
 function resolveIrOverrideParamType(
