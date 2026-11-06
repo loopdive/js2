@@ -129,3 +129,70 @@ describe("#7274 IR native ArrayBuffer (standalone)", () => {
     expect(wat).not.toContain("__ir_ab_");
   });
 });
+
+/** Count the defined functions named `name` in a WAT dump. */
+function definitions(wat: string, name: string): number {
+  return wat.split(`(func $${name} `).length - 1;
+}
+
+async function compileModule(source: string) {
+  const result = await compile(source, { fileName: "test.ts", target: "standalone", emitWat: true });
+  expect(result.success, result.errors?.[0]?.message).toBe(true);
+  const { instance } = await WebAssembly.instantiate(result.binary, {});
+  return { wat: (result as { wat?: string }).wat ?? "", test: instance.exports.test as () => number };
+}
+
+// The adapters are compiler-owned functions, registered by the exact handle
+// they were minted as. A source declaration sharing an adapter's name lives
+// in the same `funcMap` namespace and must be neither picked as the provider
+// nor displaced.
+describe("#7274 adapter ownership vs a same-name source function", () => {
+  it.each([
+    ["a matching ABI", "function __ir_ab_byte_length(x) { return 777; }", "ab.byteLength", 8],
+    ["a different ABI", 'function __ir_ab_slice(a) { return "s" + a; }', "ab.slice(2).byteLength", 6],
+  ])("keeps the IR claim and the adapter with %s", async (_label, namesake, read, expected) => {
+    const path = probe(`${namesake} var ab = new ArrayBuffer(8); assert.sameValue(${read}, ${expected});`);
+    expect((await route(path, "standalone")).claimed).toBe(true);
+    await passes(path);
+  });
+
+  it("keeps both the adapter result and the source function's result", async () => {
+    const { wat, test } = await compileModule(`
+      export function __ir_ab_byte_length(x: any): number { return 777; }
+      const n = new ArrayBuffer(8).byteLength;
+      const m = new ArrayBuffer(4, { maxByteLength: 9 }).slice(1).byteLength;
+      export function test(): number { return n * 1000000 + m * 1000 + __ir_ab_byte_length(null); }
+    `);
+    expect(test()).toBe(8_003_777);
+    expect(definitions(wat, "__ir_ab_byte_length")).toBeLessThanOrEqual(2);
+  });
+
+  it("keeps the Map adapters apart from a same-name source function", async () => {
+    const { wat, test } = await compileModule(`
+      export function __ir_map_new(): number { return 5; }
+      const cache = new Map<number, number>();
+      function put(k: number, v: number): number {
+        cache.set(k, v);
+        const hit = cache.get(k);
+        return hit !== undefined ? hit : -1;
+      }
+      export function test(): number { return put(3, 4) * 10 + __ir_map_new(); }
+    `);
+    expect(test()).toBe(45);
+    expect(definitions(wat, "__ir_map_new")).toBe(2);
+  });
+
+  it("mints each adapter once however many sites call it", async () => {
+    const path = probe(`
+      var a = new ArrayBuffer(3);
+      var b = new ArrayBuffer(5);
+      assert.sameValue(a.byteLength + b.byteLength + a.slice(1).byteLength + b.slice(1).byteLength, 14);
+    `);
+    const { claimed, wat } = await route(path, "standalone");
+    expect(claimed).toBe(true);
+    for (const adapter of ["__ir_ab_new", "__ir_ab_byte_length", "__ir_ab_slice"]) {
+      expect(definitions(wat, adapter), adapter).toBe(1);
+    }
+    await passes(path);
+  });
+});

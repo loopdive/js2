@@ -7643,8 +7643,11 @@ function makeFromAstResolver(
  * Best-effort by design: a symbol the lane did not register simply stays
  * unobserved, and the component fails the same way it would have.
  */
-function observeNativeRuntimeProvider(ctx: CodegenContext, symbol: string): void {
-  const index = ctx.funcMap.get(symbol);
+/**
+ * Register `symbol`'s provider. (#7274) A compiler-owned adapter passes its
+ * exact handle: a same-name source declaration also lives in `ctx.funcMap`.
+ */
+function observeNativeRuntimeProvider(ctx: CodegenContext, symbol: string, index = ctx.funcMap.get(symbol)): void {
   if (index === undefined) return;
   ctx.programAbiCallableProviders?.observe(irRuntimeFuncRef(symbol), index);
 }
@@ -9336,8 +9339,7 @@ function buildTemplateWrapperFamily(
 function reserveNativeBufferAdapters(ctx: CodegenContext, symbols: ReadonlySet<IrNativeBufferFn>): void {
   if (symbols.size === 0) return;
   for (const symbol of [...symbols].sort()) {
-    ensureIrNativeBufferAdapter(ctx, symbol);
-    observeNativeRuntimeProvider(ctx, symbol);
+    observeNativeRuntimeProvider(ctx, symbol, ensureIrNativeBufferAdapter(ctx, symbol));
   }
   flushLateImportShifts(ctx, null);
 }
@@ -9743,11 +9745,12 @@ function preregisterDynamicSupport(
   }
   reserveNativeBufferAdapters(ctx, nativeBufferAdapters);
   if (usesNativeMapAdapters) {
-    ensureIrNativeMapAdapters(ctx);
+    const mapAdapters = ensureIrNativeMapAdapters(ctx);
     flushLateImportShifts(ctx, null);
-    observeNativeRuntimeProvider(ctx, IR_NATIVE_MAP_NEW_FN);
-    observeNativeRuntimeProvider(ctx, IR_NATIVE_MAP_GET_NUM_FN);
-    observeNativeRuntimeProvider(ctx, IR_NATIVE_MAP_SET_NUM_FN);
+    for (const symbol of [IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_SET_NUM_FN]) {
+      const handle = mapAdapters.get(symbol);
+      if (handle !== undefined) observeNativeRuntimeProvider(ctx, symbol, handle);
+    }
     // A native-map `.get` result reaching an `f64` return unboxes through the
     // native `__unbox_number`, so its provider is discovered here too.
     observeNativeRuntimeProvider(ctx, "__unbox_number");

@@ -33,7 +33,7 @@
  * `__mod_<name>` slot is unreachable after module init, and both paths trap
  * rather than silently reading a missing table.
  */
-import type { Instr, ValType } from "../ir/types.js";
+import type { FuncHandle, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureNamedHelperFunc } from "./func-space.js";
@@ -48,13 +48,21 @@ export const IR_NATIVE_MAP_GET_NUM_FN = "__ir_map_get_num";
 /** `map.set(numberKey, numberValue)`, returning the receiver (chainable). */
 export const IR_NATIVE_MAP_SET_NUM_FN = "__ir_map_set_num";
 
-function addAdapter(ctx: CodegenContext, name: string, params: ValType[], results: ValType[], body: Instr[]): void {
-  ensureNamedHelperFunc(
+function addAdapter(
+  ctx: CodegenContext,
+  handles: Map<string, FuncHandle>,
+  name: string,
+  params: ValType[],
+  results: ValType[],
+  body: Instr[],
+): void {
+  const handle = ensureNamedHelperFunc(
     ctx,
     name,
     () => addFuncType(ctx, params, results),
     () => ({ locals: [], body }),
   );
+  handles.set(name, handle);
 }
 
 /**
@@ -63,14 +71,17 @@ function addAdapter(ctx: CodegenContext, name: string, params: ValType[], result
  * box/unbox family FIRST (both may add imports / shift defined-function
  * indices) and only then mints append-only adapter functions, so no funcIdx
  * read after this call can be stale.
+ * Returns each adapter's compiler-owned handle, which the caller registers
+ * as the provider (never a same-name `ctx.funcMap` entry, #7274).
  */
-export function ensureIrNativeMapAdapters(ctx: CodegenContext): void {
+export function ensureIrNativeMapAdapters(ctx: CodegenContext): ReadonlyMap<string, FuncHandle> {
+  const handles = new Map<string, FuncHandle>();
   // Ordering is load-bearing: `addUnionImports` can add an import batch (host
   // lanes) whose flush shifts every defined-function index. Run the shifting
   // registrations before minting anything of our own.
   addUnionImports(ctx);
   ensureMapHelpers(ctx);
-  if (ctx.mapTypeIdx < 0) return;
+  if (ctx.mapTypeIdx < 0) return handles;
 
   const mapRef: ValType = { kind: "ref", typeIdx: ctx.mapTypeIdx };
   const mapRefNull: ValType = { kind: "ref_null", typeIdx: ctx.mapTypeIdx };
@@ -82,7 +93,7 @@ export function ensureIrNativeMapAdapters(ctx: CodegenContext): void {
   const mapSetIdx = ctx.mapHelpers.get("__map_set");
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   if (mapNewIdx === undefined || mapGetIdx === undefined || mapSetIdx === undefined || boxNumberIdx === undefined) {
-    return;
+    return handles;
   }
 
   // f64 → anyref, the exact sequence `coerceArgToAnyref` emits for a number.
@@ -94,6 +105,7 @@ export function ensureIrNativeMapAdapters(ctx: CodegenContext): void {
 
   addAdapter(
     ctx,
+    handles,
     IR_NATIVE_MAP_NEW_FN,
     [],
     [mapRef],
@@ -105,6 +117,7 @@ export function ensureIrNativeMapAdapters(ctx: CodegenContext): void {
 
   addAdapter(
     ctx,
+    handles,
     IR_NATIVE_MAP_GET_NUM_FN,
     [mapRefNull, f64],
     [externref],
@@ -122,6 +135,7 @@ export function ensureIrNativeMapAdapters(ctx: CodegenContext): void {
 
   addAdapter(
     ctx,
+    handles,
     IR_NATIVE_MAP_SET_NUM_FN,
     [mapRefNull, f64, f64],
     [externref],
@@ -136,4 +150,5 @@ export function ensureIrNativeMapAdapters(ctx: CodegenContext): void {
       { op: "extern.convert_any" },
     ],
   );
+  return handles;
 }

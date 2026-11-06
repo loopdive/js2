@@ -426,6 +426,42 @@ Rebutted:
 
 9. One entry point instead of per-arm consultation: the extern-new / prop / call arms sit behind the host-extern capability and the extern-class registry, which is empty on these lanes, so a per-arm hook would add three copies of the same consult; a single plan lookup at the head of `isPhase1Expr` and `lowerExprUnchecked` keeps the selector and the builder symmetric by construction. The plan reads the checker directly, like its sibling `dom-capability.ts` (the oracle ratchet covers `src/codegen`). Availability reads the target profile's *environment* on purpose: the IR's provider-regime projection reports a JS-environment build as standalone, and that lane's output must stay byte-identical.
 
+### Second review (RV7121, 2026-11-06): helper ownership
+
+**Finding (P1).** `ensureNamedHelperFunc` accepted any same-name defined
+function in `ctx.funcMap` as the requested helper. Source declarations share
+that namespace, and the provider was then observed by name.
+
+**Reproduction.** A script with an uncalled `function __ir_ab_byte_length(x)
+{ return 777; }`, next to an IR-claimed `ab.byteLength`, failed to compile on
+standalone ("callable provider … lost its defined allocator object"). Same
+result for `__ir_ab_slice` with a different ABI.
+
+**The Map family had the same defect on main.** A TS module with
+`export function __ir_map_new()` next to a native-`Map` module binding failed
+to compile on standalone before this change.
+
+**Repair.**
+
+- `ensureNamedHelperFunc` keeps a compiler-owned registry (per compile, the
+  exact `WasmFunction` it minted). It never consults or writes `ctx.funcMap`.
+- Both adapter families return their handles.
+- `observeNativeRuntimeProvider` registers that exact handle, so the source
+  function keeps its own `funcMap` entry and its own calls.
+
+**Regressions added to `tests/issue-7274-*`:**
+
+- a matching-ABI namesake and a different-ABI namesake (IR claim kept, test passes);
+- a TS module asserting both the adapter's and the source function's results (8_003_777);
+- the Map namesake (45);
+- one definition per adapter across repeated sites.
+
+**Known residual (not a regression).** In a TS *module*, the IR `<module-init>`
+that uses these adapters demotes at prepared-component planning
+(`unplanned-abi-binding`: the runtime adapters have no planning-time Program
+ABI identity). The adapters are still minted, so such a module carries them
+unused. Script files (test262) are unaffected.
+
 ## Follow-ups
 
 - **The 7 closure / object-literal files.** They need planned-closure bodies
