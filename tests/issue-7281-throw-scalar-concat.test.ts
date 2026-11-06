@@ -4,7 +4,8 @@
 // concatenates an f64 module binding no longer refuses `<module-init>` as
 // `throw-module-scalar-unboxed`: a `new` yields an object, so only a scalar
 // argument would be unboxed, and `'…' + x` is a string. A scalar argument
-// (`new Test262Error(x)`) and a bare `throw x` stay refused.
+// (`new Test262Error(x)`) and a bare `throw x` stay refused. The `+` exemption
+// also admits a string concat over an f64 module read outside a throw.
 //
 // Each case runs through the test262 runner (the original harness) on
 // standalone and gc, asserting the thrown message the JS spec gives
@@ -65,6 +66,19 @@ const CASES: Record<string, Case> = {
     ir: true,
   },
   "not firing": { body: "var x = 1; if (x !== 1) { throw new Test262Error('A: ' + (x)); }", ir: true },
+  // The `+` exemption is not throw-specific: any proven string `+` over an f64 module read.
+  "module-init string concat outside a throw": {
+    body: "var x = 1.5; if ('a' + x !== 'a1.5') { throw new Test262Error('bad'); }",
+    ir: true,
+  },
+  "function-body string concat": {
+    body: "var x = 4; function f() { return 'v' + x; } if (f() !== 'v4') { throw new Test262Error('bad'); }",
+    ir: true,
+  },
+  "boolean binding concat stays refused": {
+    body: "var b = true; var s = 'a' + b; if (s !== 'atrue') { throw new Test262Error('bad'); }",
+    ir: false,
+  },
   "scalar argument stays refused": {
     body: "var x = 3; if (x) { throw new Test262Error(x); }",
     message: "3",
@@ -82,7 +96,7 @@ describe("#7281 module-init throw with a scalar binding inside a string concat",
         expect(await moduleInitIsIr(path)).toBe(c.ir);
         for (const target of ["standalone", undefined] as const) {
           const result = await runTest262File(path, "issue-7281", 20000, target);
-          if (c.message === undefined && c.ir) {
+          if (c.message === undefined && !name.startsWith("bare")) {
             expect(result.status, `${target ?? "gc"}: ${result.error ?? ""}`).toBe("pass");
           } else {
             expect(result.status, target ?? "gc").toBe("fail");

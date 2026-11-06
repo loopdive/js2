@@ -1,7 +1,8 @@
 ---
 id: 7281
 title: "IR module-init: throw new X('…' + x) where x is a scalar module binding"
-status: in-progress
+status: done
+completed: 2026-11-06
 sprint: current
 created: 2026-11-06
 updated: 2026-11-06
@@ -15,8 +16,8 @@ goal: ir-full-coverage
 related: [7240, 7249, 7251, 7266]
 assignee: "ttraenkler/c-lane-opus"
 loc-budget-allow:
-  # 2026-11-06 (#7281): src/ir/select.ts +18 — two small selector predicates
-  # beside their siblings: `mayYieldUnboxedModuleScalar` (+13 incl. doc) next to
+  # 2026-11-06 (#7281): src/ir/select.ts +16 — two small selector predicates
+  # beside their siblings: `throwValueReadsUnboxedModuleScalar` (+11 incl. doc) next to
   # `isPhase1ThrowStatement`, its only caller, and `isModuleStringConcat` (+5)
   # next to `obviousModuleValueFamily`, whose result it reads. Both extend the
   # existing refusals in place; neither is a new arm, so there is nothing to
@@ -75,10 +76,11 @@ throwaway probe) only moves them to unrelated refusals —
 Module: `src/ir/select.ts` only. No from-ast change: `new X(<string>)` and a
 string `+` over an f64 read already lower; only the selector refused them.
 
-- `isPhase1ThrowStatement` calls a new `mayYieldUnboxedModuleScalar(expr)`,
+- `isPhase1ThrowStatement` calls a new `throwValueReadsUnboxedModuleScalar(expr)`,
   which keeps the old test (`expressionTouchesScalarModuleBinding` and family
-  not string) but, for a `new`, applies it to the callee and each argument
-  instead of to the object. `throw new X(x)` (scalar argument) and `throw x`
+  not string) but, for a `new`, applies it to each argument instead of to the
+  object (the callee is always a class/constructor name — `phase1NewExpression`
+  admits nothing else). `throw new X(x)` (scalar argument) and `throw x`
   stay refused.
 - The `isPhase1Expr` module-value guard exempts `isModuleStringConcat(expr)`:
   a `+` whose `obviousModuleValueFamily` is string. Boolean module operands are
@@ -88,7 +90,30 @@ string `+` over an f64 read already lower; only the selector refused them.
 Quality criterion: both changes extend the existing refusal in place; no new
 lowering arm, no duplicated predicate.
 
-## Validation
+## Validation (2026-11-06, base = main 8b349439)
 
-See the PR body for the numbers (ledger A/B, typed corpus, test262 A/B,
-probes, gates).
+- Wrapped stride-40 standalone ledger A/B: zero-legacy 32 → 34 (the two f64
+  files above), compileOk 1118/1118, invariants 0/0, no other file's legacy
+  units changed.
+- Playground examples (13 files) × gc / standalone / wasi: byte-identical.
+- Standalone test262 A/B, 652 files (all 454 of `compound-assignment`, the 6
+  targets, 200 seeded-random): identical status and message on every row
+  (554 pass / 73 fail / 24 CE / 1 skip on both).
+- Probes (`-0`, `NaN`, `0.5`, `1e21`, compound-assigned, nested and
+  number-first concats, right-hand concat, a throw inside a function,
+  `new Error('' + x)`, string and boolean bindings, `throw new X(x)`,
+  `throw x`): identical results base vs head on gc, standalone and wasi.
+- `tests/issue-7281-throw-scalar-concat.test.ts`: 13 cases, standalone + gc.
+
+## Adversarial review (fresh context, 2026-11-06)
+
+Verdict: quality goal met, no blocking findings; soundness (a) the `+`
+exemption admits only a proven string `+` over an f64 module scalar — boolean
+is still refused by the next guard, extern/nullish/dynamic never prove a string
+family; (b) spread and nested `new` arguments stay refused.
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 (should-fix) | no test covered the `+` exemption outside a throw | added module-init and function-body concat cases (IR, correct value) and a boolean-binding concat (stays refused) |
+| 2 (nit) | `isModuleStringConcat` is a one-caller wrapper; comment unclear | comment rewritten; helper kept — inlining it grows `isPhase1Expr`, which sits at its function budget |
+| 3 (nit) | the callee recursion is unreachable; name overstates | dropped the callee; renamed to `throwValueReadsUnboxedModuleScalar` |

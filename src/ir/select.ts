@@ -4972,22 +4972,20 @@ function isPhase1ThrowStatement(
   if (expressionTouchesModuleMapGetAlias(stmt.expression)) {
     return shapeNo("throw-module-map-get-alias", stmt.expression);
   }
-  if (mayYieldUnboxedModuleScalar(stmt.expression)) {
+  if (throwValueReadsUnboxedModuleScalar(stmt.expression)) {
     return shapeNo("throw-module-scalar-unboxed", stmt.expression);
   }
   return isPhase1Expr(stmt.expression, scope, localClasses);
 }
 
 /**
- * True when a value built from `expr` may carry an unboxed f64/boolean module
- * read. A `new` yields an object, so only its callee and arguments can (#7281):
- * `new Test262Error('Actual: ' + x)` reads `x` inside a string concat.
+ * True when a thrown value may carry an unboxed f64/boolean module read. A
+ * `new` throws an object, so only an argument can (#7281): in
+ * `new Test262Error('Actual: ' + x)` the read of `x` is a string concat.
  */
-function mayYieldUnboxedModuleScalar(expr: ts.Expression): boolean {
+function throwValueReadsUnboxedModuleScalar(expr: ts.Expression): boolean {
   const candidate = unwrapPhase1Parens(expr);
-  if (ts.isNewExpression(candidate)) {
-    return [candidate.expression, ...(candidate.arguments ?? [])].some(mayYieldUnboxedModuleScalar);
-  }
+  if (ts.isNewExpression(candidate)) return candidate.arguments?.some(throwValueReadsUnboxedModuleScalar) ?? false;
   return expressionTouchesScalarModuleBinding(candidate) && obviousModuleValueFamily(candidate) !== "string";
 }
 
@@ -8119,7 +8117,7 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
   return currentModuleBindingResolver?.scalarExpressionFamily(candidate);
 }
 
-/** A string `+` converts its scalar side, so its mixed operand families are the concat itself (#7281). */
+/** A proven string `+` applies ToString to its scalar side, so mixed operand families are no mismatch (#7281). */
 function isModuleStringConcat(expr: ts.BinaryExpression): boolean {
   return expr.operatorToken.kind === ts.SyntaxKind.PlusToken && obviousModuleValueFamily(expr) === "string";
 }
