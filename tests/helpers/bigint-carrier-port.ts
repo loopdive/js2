@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { beforeSameValueNaNCorrection } from "./same-value-nan-correction.js";
 
 export const bigintPortBase = "f52f6ae020d6d5ddb07e69a3b18811a5b4f86c24";
 export const bigintPortFixture = "tests/fixtures/issue-3518-bigint-carrier-port.json";
@@ -12,7 +13,7 @@ export const bigintPortPaths = [
   "src/runtime/wasmgc/values/object-same-value-body.ts",
 ] as const;
 export const readBigIntPortSource = (path: string): string =>
-  readFileSync(new URL("../../" + path, import.meta.url), "utf8");
+  beforeSameValueNaNCorrection(path, readFileSync(new URL("../../" + path, import.meta.url), "utf8"));
 export const bigintPortHash = (source: string) => createHash("sha256").update(source).digest("hex");
 interface Span {
   before: string;
@@ -97,5 +98,7 @@ export function applyBigIntCarrierPort(
 }
 /** Preservation-only view of actual current bytes. Runtime compilation never imports this helper. */
 export function beforeBigIntCarrierPort(path: string, source: string): string {
-  return (bigintPortPaths as readonly string[]).includes(path) ? applyBigIntCarrierPort(path, source, true) : source;
+  return (bigintPortPaths as readonly string[]).includes(path)
+    ? applyBigIntCarrierPort(path, beforeSameValueNaNCorrection(path, source), true)
+    : source;
 }

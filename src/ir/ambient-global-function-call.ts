@@ -42,9 +42,9 @@ interface IrAmbientGlobalFunctionCall {
 }
 
 /**
- * The admission both sides read: the call shape, and every operand
- * checker-classified as its position's family. Binding and lane proofs are
- * the caller's.
+ * The admission both sides read: the call shape, no script declaration of the
+ * name, and every operand checker-classified as its position's family. The
+ * lib-only binding and lane proofs are the caller's.
  */
 function ambientGlobalFunctionCall(
   expr: ts.CallExpression,
@@ -55,25 +55,67 @@ function ambientGlobalFunctionCall(
   const name = callee.text as IrAmbientGlobalFunctionName;
   const families = OPERAND_FAMILIES.get(name);
   if (families === undefined || expr.arguments.length < 1 || expr.arguments.length > families.length) return null;
+  if (scriptDeclaresName(expr.getSourceFile(), name)) return null;
   const operands = expr.arguments.map((argument, index) => ({ argument, family: families[index]! }));
   return operands.every(({ argument, family }) => classify(argument) === family) ? { name, callee, operands } : null;
 }
 
+const SCRIPT_DECLARED_NAMES = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+
 /**
- * The selector's admission: the shared one, an unshadowed ambient binding and
- * the `native-global-function-call` lane capability. The arguments, else null
- * — a lowering, not a call edge.
+ * Does a script declare `name` anywhere? A script's `var unescape = …` does not
+ * merge with the lib's `declare function unescape` — the checker resolves the
+ * call to the lib symbol alone — so no binding predicate can see it.
+ * Conservative: any declaration of the name in the file, at any depth,
+ * refuses. ES modules scope their bindings, so the checker answers there.
+ */
+function scriptDeclaresName(sourceFile: ts.SourceFile, name: string): boolean {
+  if (ts.isExternalModule(sourceFile)) return false;
+  let names = SCRIPT_DECLARED_NAMES.get(sourceFile);
+  if (names === undefined) {
+    const declared = new Set<string>();
+    const visit = (node: ts.Node): void => {
+      if (
+        (ts.isVariableDeclaration(node) ||
+          ts.isParameter(node) ||
+          ts.isBindingElement(node) ||
+          ts.isFunctionDeclaration(node) ||
+          ts.isFunctionExpression(node) ||
+          ts.isClassDeclaration(node) ||
+          ts.isClassExpression(node)) &&
+        node.name !== undefined &&
+        ts.isIdentifier(node.name)
+      ) {
+        declared.add(node.name.text);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    names = declared;
+    SCRIPT_DECLARED_NAMES.set(sourceFile, names);
+  }
+  return names.has(name);
+}
+
+/**
+ * The selector's admission: the shared one, a lib-only ambient binding and the
+ * `native-global-function-call` lane capability. The arguments, else null — a
+ * lowering, not a call edge.
  *
- * `escape` / `unescape` stay refused in an ES module's `<module-init>`: that
- * unit lowers as a prepared component, whose Program ABI has no identity for
- * the `__escape` / `__unescape` runtime callables nor for `dyn.string_carrier`
- * (measured: `late-preparation-unsupported`). Scripts — every test262 body —
- * and ordinary functions are unaffected.
+ * Lib-only, not merely "has a lib declaration": in a script a source
+ * `function unescape() {}` merges with the lib's `declare function`, and the
+ * call must keep binding to the source function (#7118's `function Number`).
+ *
+ * In an ES module `escape` / `unescape` are admitted only from a top-level
+ * function declaration. Every other unit there (`<module-init>`, class
+ * members, closures) lowers as a prepared component, whose Program ABI has no
+ * identity for the `__escape` / `__unescape` runtime callables nor for
+ * `dyn.string_carrier` (measured: `late-preparation-unsupported`). Scripts —
+ * every test262 body — are unaffected.
  */
 export function admitAmbientGlobalFunctionCall(
   expr: ts.CallExpression,
-  callerIsModuleInit: boolean,
-  isAmbientBinding: (node: ts.Identifier) => boolean,
+  isLibOnlyBinding: (node: ts.Identifier) => boolean,
   options: Pick<IrSelectionOptions, "supportsBackendCapability" | "classifyDeclaredPrimitiveExpression"> | undefined,
 ): readonly ts.Expression[] | null {
   const classify = options?.classifyDeclaredPrimitiveExpression;
@@ -81,17 +123,22 @@ export function admitAmbientGlobalFunctionCall(
     return null;
   }
   const call = ambientGlobalFunctionCall(expr, classify);
-  if (call === null || !isAmbientBinding(call.callee)) return null;
+  if (call === null || !isLibOnlyBinding(call.callee)) return null;
   const escapeFamily = call.name === "escape" || call.name === "unescape";
-  if (escapeFamily && callerIsModuleInit && ts.isExternalModule(expr.getSourceFile())) return null;
+  if (escapeFamily && ts.isExternalModule(expr.getSourceFile()) && !inTopLevelFunctionDeclaration(expr)) return null;
   return expr.arguments;
+}
+
+function inTopLevelFunctionDeclaration(node: ts.Node): boolean {
+  const unit = ts.findAncestor(node.parent, ts.isFunctionLike);
+  return unit !== undefined && ts.isFunctionDeclaration(unit) && ts.isSourceFile(unit.parent);
 }
 
 /** What the lowering needs from from-ast (no import of the lowerer itself). */
 export interface AmbientGlobalFunctionLoweringHost {
   readonly builder: IrFunctionBuilder;
   readonly resolver:
-    | Pick<IrFromAstResolver, "isAmbientBinding" | "supportsBackendCapability" | "ambientGlobalFunctionTarget">
+    | Pick<IrFromAstResolver, "isLibOnlyBinding" | "supportsBackendCapability" | "ambientGlobalFunctionTarget">
     | undefined;
   readonly classify: ClassifyDeclared;
   readonly lowerOperand: (argument: ts.Expression, family: OperandFamily) => IrValueId;
@@ -115,7 +162,7 @@ export function lowerAmbientGlobalFunctionCall(
   const { builder, resolver } = host;
   if (resolver?.supportsBackendCapability?.("native-global-function-call") !== true) return null;
   const call = ambientGlobalFunctionCall(expr, host.classify);
-  if (call === null || resolver.isAmbientBinding?.(call.callee) !== true) return null;
+  if (call === null || resolver.isLibOnlyBinding?.(call.callee) !== true) return null;
   const lowerOperands = (): IrValueId[] =>
     call.operands.map(({ argument, family }, index) => {
       const value = host.lowerOperand(argument, family);
@@ -134,7 +181,6 @@ export function lowerAmbientGlobalFunctionCall(
   const parse = call.name === "parseInt" || call.name === "parseFloat";
   const args =
     call.name === "parseInt" ? [textRef, radix ?? builder.emitConst({ kind: "f64", value: NaN }, F64)] : [textRef];
-  const result = builder.emitCall(target, args, parse ? F64 : irDynamic());
-  if (result === null) throw new Error(`ir/ambient-global-function-call: ${call.name} provider returned no value`);
+  const result = builder.emitCall(target, args, parse ? F64 : irDynamic())!; // non-void result type
   return parse ? result : builder.emitDynStringCarrier(result);
 }
