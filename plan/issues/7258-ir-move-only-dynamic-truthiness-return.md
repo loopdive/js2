@@ -105,6 +105,12 @@ host import.
   includer. 0 route changes; compile ok 164, fail 11, the same on both sides.
 - **Typed corpus:** 88 files (playground, `examples/`, the first 60 of
   `tests/equivalence/`) × gc/standalone/wasi = 264 compiles, byte-identical.
+- **Standalone test262 A/B** (`scripts/run-test262-paths.mts --standalone`)
+  over the 175 route-diff files plus the 300-file random sample (440
+  distinct): base and head both `{ pass: 309, fail: 103, compile_error: 19,
+  skip: 9 }`, with the same non-pass set row for row. 17 of those failures
+  are local-only: the QuickJS eval provider is not built in this container.
+  No pass→fail and no new trap.
 - **Unit test:** `tests/issue-7258-ir-move-only-truthiness-return.test.ts`
   passes.
 
