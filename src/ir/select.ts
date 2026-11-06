@@ -1800,7 +1800,9 @@ let currentDynamicParamNames = new Set<string>();
 /**
  * (#7272) The #5092 mixed conditionals the current subject's shape walk
  * admitted. The move-only scan and the carrier-local test run after that walk
- * and read its verdict instead of re-deriving it out of scope.
+ * and read its verdict instead of re-deriving it out of scope. A conditional
+ * inside a sub-tree the walk later rejects may still be recorded; that is
+ * sound because every reader runs only for a subject whose whole walk passed.
  */
 let currentProvenMixedConditionals = new Set<ts.ConditionalExpression>();
 // The current subject's resolved return kind: `concreteResultRecoversDynamic`
@@ -8529,9 +8531,11 @@ export interface MixedPrimitiveConditionalArms {
  * #5092 — the claim the selector and from-ast's `mixedPrimitiveConditionalClaim`
  * share: both arms are bounded primitives of DIFFERENT families, each boxed
  * into a fresh dynamic carrier, and the condition lowers to an i32 boolean.
- * The condition is a bounded primitive, or (#7272) a comparison result over
+ * The condition is a bounded primitive, or (#7272) a strict (in)equality over
  * any operands, `!`, `&&` or `||` of such, or a certified boolean alias call
- * (`__isArray(obj) && name === "length"`).
+ * (`__isArray(obj) && name === "length"`). Relational and loose operators
+ * keep the operand-family proof: their dynamic-operand lowering does not
+ * apply ToPrimitive to an object operand (`0 >= []`, filed separately).
  */
 export function mixedPrimitiveConditionalArms(
   expr: ts.ConditionalExpression,
@@ -8557,7 +8561,7 @@ function booleanResultCondition(expr: ts.Expression, shadowed: (name: string) =>
   }
   if (!ts.isBinaryExpression(e)) return false;
   const op = e.operatorToken.kind;
-  if (isComparisonResultOperator(op)) return true;
+  if (isStrictEqualityOperator(op)) return true;
   return (
     (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) &&
     booleanResultCondition(e.left, shadowed) &&
