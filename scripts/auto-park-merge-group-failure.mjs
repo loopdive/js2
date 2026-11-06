@@ -30,14 +30,15 @@
 //     Reads the run, maps gh-readonly-queue/main/pr-<N>-<sha> -> PR N, checks
 //     for a genuinely-failed job, and parks PR N. Requires `gh` authenticated
 //     with pull-requests:write, issues:write, actions:read (GITHUB_TOKEN is
-//     sufficient — labelling/commenting does not need to trigger a downstream
-//     workflow).
+//     sufficient; queue enforcement is called directly and never depends on a
+//     downstream labeled-event workflow).
 //   node scripts/auto-park-merge-group-failure.mjs --self-check
 //     Runs the pure-logic unit checks (branch parse + real-vs-cancellation
 //     classification) with no network access and exits non-zero on failure.
 //   DRY_RUN=1 ... : log the decision without labelling/commenting.
 
 import { execFileSync } from "node:child_process";
+import { enforceQueueHold } from "./enforce-pr-queue-hold.mjs";
 
 const REPO = process.env.GH_REPO || "loopdive/js2wasm";
 const DRY = process.argv.includes("--dry-run") || process.env.DRY_RUN === "1";
@@ -348,16 +349,37 @@ function prHasHoldLabel(prNumber) {
   }
 }
 
-function park(prNumber, failedDetails, runUrl, groupPrs = [prNumber]) {
+async function enforceParkedPullRequest(prNumber) {
+  const identity = JSON.parse(gh(["api", `repos/${REPO}/pulls/${prNumber}`, "--jq", "{number,node_id}"]));
+  if (identity.number !== prNumber || typeof identity.node_id !== "string" || identity.node_id.length === 0)
+    throw new Error("unknown parked pull-request identity");
+  const graphql = async (query, variables) => {
+    const response = JSON.parse(gh(["api", "graphql", "-f", "query=" + query, "-f", "id=" + variables.id]));
+    if (
+      !response ||
+      typeof response !== "object" ||
+      ("errors" in response && (!Array.isArray(response.errors) || response.errors.length > 0)) ||
+      !response.data
+    )
+      throw new Error("unknown queue-hold GraphQL response");
+    return response.data;
+  };
+  // GITHUB_TOKEN label events need not start another workflow: enforce here.
+  const state = await enforceQueueHold(graphql, identity.node_id);
+  if (state !== "blocked") throw new Error("parked pull request is not confirmed held/draft and dequeued");
+}
+
+async function park(prNumber, failedDetails, runUrl, groupPrs = [prNumber]) {
   const failedJobs = failedDetails.map((d) => d.job);
   if (DRY) {
     console.log(`auto-park: DRY RUN — would park #${prNumber} (failed: ${failedJobs.join(", ")})`);
     console.log(renderFailureLines(failedDetails));
     return;
   }
-  // Idempotent: if already held, do nothing (avoids re-commenting on requeues).
+  // Already-held PRs still need queue enforcement, but never another comment.
   if (prHasHoldLabel(prNumber)) {
-    console.log(`auto-park: #${prNumber} already has \`${HOLD_LABEL}\` — nothing to do.`);
+    await enforceParkedPullRequest(prNumber);
+    console.log(`auto-park: #${prNumber} hold confirmed and queue entry absent.`);
     return;
   }
   // Add the hold label. REST API (not `gh pr edit --add-label`, which has hit a
@@ -371,6 +393,8 @@ function park(prNumber, failedDetails, runUrl, groupPrs = [prNumber]) {
     "-f",
     `labels[]=${HOLD_LABEL}`,
   ]);
+  if (!label.ok) throw new Error(`hold label failed: ${(label.stderr || "").slice(0, 160)}`);
+  await enforceParkedPullRequest(prNumber);
   // #3914 — when the group held more than one PR, the failure is attributable
   // to the GROUP, not to this PR specifically. Say so, and name the co-members
   // so whoever triages knows to look across them rather than assuming this PR
@@ -393,7 +417,6 @@ Run: ${runUrl}
   console.log(
     `auto-park: parked #${prNumber} (label=${label.ok} comment=${comment.ok}) — failed: ${failedJobs.join(", ")}`,
   );
-  if (!label.ok) console.error(`  label error: ${(label.stderr || "").split("\n")[0].slice(0, 160)}`);
   if (!comment.ok) console.error(`  comment error: ${(comment.stderr || "").split("\n")[0].slice(0, 160)}`);
 }
 
@@ -850,5 +873,5 @@ if (isMain()) {
     `auto-park: run ${runId} (${runJson.name}) for group [${groupPrs.map((n) => `#${n}`).join(", ")}] has ${failedJobs.length} genuinely-failed job(s)` +
       `${unclassifiable ? " (at least one failing step unidentifiable — parking conservatively)" : ""} — parking.`,
   );
-  for (const pr of groupPrs) park(pr, failedDetails, runUrl, groupPrs);
+  for (const pr of groupPrs) await park(pr, failedDetails, runUrl, groupPrs);
 }
