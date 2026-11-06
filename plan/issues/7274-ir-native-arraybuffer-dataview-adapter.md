@@ -88,6 +88,48 @@ planned bodies. Those files are listed as follow-ups and are out of scope here.
 | `new DataView(buf[, off[, len]])` | `tryCompileIndexedBuiltinNew` DataView arm | inline; same split |
 | `new SharedArrayBuffer(n[, opts])` | `emitSabConstruct(ctx, fctx, args, compileArg)` | already takes a compile callback |
 
+### Second-refusal probe (2026-11-06, `.tmp/` selector bypasses, reverted)
+
+With the three constructors exempted from `expr-new-extern-host-free`, the 7
+straight-line files stop at:
+
+- **`objectlit-empty`** on the `{}` options argument (2 files). The
+  constructor admission must consume its options literal itself; it cannot
+  hand `{}` to the generic object-literal arm.
+- **from-ast `unknown class "ArrayBuffer"`** (4 files). On standalone the
+  extern-class registry (`getExternClassInfo`) is empty, so the native arm
+  must sit before the `externInfo` path, not inside it.
+- **`expr-module-scalar-method`** on `buffer.slice(…)` / `sample.setUint8(…)`
+  (3 files).
+  - A script `var buffer = new ArrayBuffer(n)` lives in an `externref`
+    `__mod_` slot, so `scriptVarHome` answers `"dynamic"` and the binding's
+    value kind is `dynamic`.
+  - `expressionTouchesScalarModuleBinding` counts a dynamic binding as
+    scalar, so every member call on it is refused.
+
+### Route decision: typed provider calls, not dynamic dispatch
+
+Admitting member uses on the `dynamic` binding would lower them through the
+IR's dynamic method-call path:
+
+- `sample.setUint8(…)` and `buffer.slice(…).byteLength` are exactly the
+  dynamic-receiver method calls on a returned object that trap on main
+  (#7261). The dispatch forbids routing them.
+- It would also widen a module-init arm that is not buffer-specific.
+
+So the plan keeps the typed route:
+
+- A script `var` (or a `let`/`const`) whose every write is a certified
+  native-buffer construction (or a certified `slice` result) binds as
+  `capability-extern` with a new `capability: "native-buffer"`. The physical
+  carrier is the same `externref` slot.
+  - It is certified the way #7252 certifies `class-instance` homes: every
+    write must construct that one surface class.
+  - It reuses the existing `IrModuleCapabilityExternResolver` seam (#4576),
+    not a new kind.
+- Every member use lowers to a direct call of its native helper, never
+  through dynamic dispatch.
+
 ## Implementation Plan
 
 ### Target structure
