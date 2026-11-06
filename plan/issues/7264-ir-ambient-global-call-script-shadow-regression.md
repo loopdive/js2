@@ -1,7 +1,8 @@
 ---
 id: 7264
 title: "IR: a script's own `escape` / `unescape` (and shadowed parse/isNaN) bound to the native provider (#7253 regression)"
-status: in-progress
+status: done
+completed: 2026-11-06
 sprint: current
 created: 2026-11-06
 updated: 2026-11-06
@@ -99,3 +100,17 @@ no binding predicate can see it.
 - **Legacy script-shadow misbinding** (above), and the same `var`-shadow hole
   for #7118's ambient intrinsic value reads (`isLibOnlyBinding` cannot see a
   `var Number = …` in a script either).
+
+## Result (2026-11-06, vs main `4a1a0dc883`)
+
+- Script shadows: 90 binaries (5 names × 6 shapes × gc / standalone / wasi)
+  byte-identical to the pre-#7103 base; main differed on 42 of them (the 12
+  escape/unescape declaration rows plus the 30 `var`/`let` rows).
+- The new test cases fail on main (12, escape/unescape) and pass on head
+  (132/132).
+- Typed corpus (4797 rows, 3 lanes): byte-identical to main.
+- Wrapped ledger (stride 40, standalone): identical to main — 32 zero-legacy
+  files, 0 invariants, compileOk 1118, both / legacy / ir 8560 / 4751 / 1137.
+- Standalone test262 (`run-test262-paths --isolate`, the five directories +
+  200 seeded random files, 359 rows): 294 pass / 47 fail / 13 CE / 5 skip on
+  both, every row identical.
