@@ -1782,3 +1782,83 @@ never resolve if called, requiring standalone counts and zero host feature
 requests with the existing hydration wait and test deadlines. The host-missing,
 standalone-missing, and strict-mode stale-measurement controls remain. Source01
 is preserved separately; this successor is also private, unapplied, and unrun.
+
+## S7-f — Implementation Plan: the three S7-d follow-ups (Fable, 2026-11-06)
+
+One PR, branch `issue-6979-s7f-follow-ups`, stacked on PR 7094 (S7-d, head
+`6a20eb9f18`). Horizon m. Every step must keep **byte identity** of the emitted
+Wasm against `6a20eb9f18` on gc, standalone and wasi (the S7-c/S7-d corpus
+runner in `.tmp/`): this slice deletes dead code and stale test receipts, it
+does not change lowering.
+
+### F1 — delete the dead `eager-generator-buffer` provider
+
+Measured on `6a20eb9f18`: `src/runtime/eager-generator-buffer.ts` is 321 lines;
+its only production reader is `src/runtime.ts` (import at L116, the
+`resolveEagerGeneratorImport` call at L4163–4173 inside `resolveImport`); its
+`compiler-boundaries.json` row is at L15800. Main's #7010 made every
+`__gen_*` / `__create_*generator` import unreachable (`check:host-import-policy`
+classifies the names as retired), so no compile links the provider.
+
+1. Delete the file and its boundaries row; drop the import and the
+   `resolveImport` arm (the dispatch-case count goes 7 → 6, under the 15
+   ceiling). Do not touch `plan/audit/host-import-policy-baseline.json`.
+2. `__gen_` receipts: 71 test files name those imports. Classify each
+   occurrence, measuring on the base first: (a) a row asserting the import is
+   *emitted or resolved* — delete it with a `(#6979 S7-f, #7010)` note; (b) a
+   row asserting the import is *absent* or *refused* — keep, it is the
+   invariant; (c) a row that merely names the string in a comment — leave.
+   The `src/ir/*` and `src/host-import-policy.ts` mentions are retired-name
+   tables and comments; keep them unless `check:dead-exports` says otherwise.
+
+### F2 — remove `regimeTarget` and the always-true `standalone` target field
+
+Measured: `regimeTarget` is defined at `src/codegen/context/types.ts:4964`
+and returns `{ wasi, standalone: true }`; 58 hits in 20 files. The consumers
+that still take a `{ wasi, standalone }` target are
+`src/wasm/physical/exception-control.ts:151` (its `!target.wasi &&
+!target.standalone` arm at L157 is unreachable), `src/runtime/wasmgc/async/
+frame-engine.ts:44`, `src/runtime/wasmgc/promise/resolution-bodies.ts:17,467`,
+`src/backend/wasmgc/resources/native-promises.ts:770`,
+`src/codegen/async-scheduler.ts:1074,1138`, `src/codegen/async-frame.ts:2585`.
+
+1. Change every such parameter/field to `wasi: boolean` (or
+   `{ readonly wasi: boolean }` where a struct is threaded), delete the dead
+   `!standalone` arms, and replace each `regimeTarget(ctx)` call with
+   `ctx.wasi` (or `{ wasi: ctx.wasi }`). Then delete `regimeTarget`.
+2. Expect `check:standalone-arms --all` to report `ctx.wasi` growth from the
+   substitution; that ratchet counts *regime arms*, not plumbing, so prefer
+   threading `wasi` once at the entry point over re-reading `ctx.wasi` at every
+   site. If growth remains, grant it in this issue's frontmatter with a dated
+   rationale — never edit `scripts/standalone-arms-baseline.json` by hand.
+
+### F3 — re-pin the 34 JS-host-lane test rows left by S7-d
+
+All 34 fail identically on `6a20eb9f18` and on main-merged S7-c2: `issue-2179`
+×5, `issue-2731` ×5, `issue-2805` ×2, `issue-5150` ×4, `issue-6781` ×13, and
+one host-assisted gc row each in `issue-7106-ir-dyn-instanceof`,
+`issue-7106-module-init-chunks`, `issue-7106-prophelper-gopd-alias`,
+`issue-7106-s3a-dynamic-construct`, `issue-7150`. Apply the S7 fix-on-touch
+rule per row, in this order: (a) the row selects a removed profile or asserts a
+removed host import/lane (`semanticProviders: "host-assisted"`, delete-aware
+host get/set, `legacy-semantic` emitters) — delete it with a `(#6979 S7-a/S7-b)`
+note; (b) the row's *value* assertion still holds on the regime — re-point the
+lane (`ir: true`, drop `wasiValue`/host pins) and keep it; (c) the row fails on
+main for a reason unrelated to S7 — `it.fails` with a filed issue id. Record the
+per-row verdict in a table under this plan when done.
+
+### Acceptance
+
+- `grep -rn regimeTarget src` → 0; no `standalone: boolean` target field in the
+  seven consumers above; `src/runtime/eager-generator-buffer.ts` gone.
+- Byte identity vs `6a20eb9f18`: 0 differences on gc, standalone, wasi.
+- The 34 rows are deleted, re-pinned green, or `it.fails` with an issue; no
+  other row changes status. `tests/issue-6474-linked-script-goal` needs the
+  QuickJS adapter rebuilt (`node --import tsx
+  scripts/build-quickjs-eval-provider.mjs`) after every src change.
+- tsc (ts7) 0; Biome/Prettier clean; guard suite (`node
+  scripts/run-guard-suite.mjs`) green; `check:standalone-arms` default and
+  `--all`; host-import policy 33/452/0/0; `check:ir-fallbacks`; `check:ir-only
+  --policy=hybrid` READY; boundaries inventory valid; loc/func/coercion/oracle/
+  dead-exports/import-cycles at `LOC_GATE_BASE=$(git rev-parse upstream/main)`
+  with no new grants; equivalence gate "No new equivalence regressions".
