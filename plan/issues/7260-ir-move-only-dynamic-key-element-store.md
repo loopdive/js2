@@ -117,3 +117,40 @@ the existing arm, with no sibling arm added.
 - Wrapped ledger: 0 invariants, compileOk not lower.
 - Standalone test262 A/B on route-changed files plus 300 random: no
   pass→fail, no new trap.
+
+## Results (2026-11-06; base = #7258 head `3f9e2593`, head `c9f24adc`/`d0ace9ef`)
+
+- **isWritable:** with #7250 step 1 stubbed locally (`var unlikelyValue =
+  "unlikelyValue"`, the `new Test262Error` throw simplified), the first
+  refusal moves from (a) `obj[name]` (`move-only[concrete]`) to (b)
+  `writeSucceeded = isSameValue(...)`. In the real harness, isWritable still
+  stops first at #7250 step 1 (`vardecl-module-binding-alias` on the
+  `__isArray` conditional), so no whole unit is freed yet.
+- **Wrapped ledger** (stride 40, standalone, SHAPE_DIAG): head equals base
+  apart from timing. compileOk 1118 → 1118, invariants 0, ir 1137 / both 8531
+  / legacy 4780, and all `unsupportedDetails` rows are equal. The
+  `move-only[dynamic-method-call]` row does not appear.
+- **Per-file route diff:** stride-40 plus a 300-file seeded sample, kept where
+  the assembled source has an element assignment. That leaves 457 files.
+  0 route changes.
+- **Standalone test262 A/B** (`run-test262-paths.mts --standalone`) over those
+  457 files plus the 300-file sample (668 distinct): `{ pass: 417, fail: 207,
+  compile_error: 27, skip: 17 }` on both sides, with the same non-pass set
+  row for row.
+- **Typed corpus:** 88 files × gc/standalone/wasi = 264 compiles,
+  byte-identical.
+- **Runtime probes** (test262-format fixtures, standalone): `put(obj, name,
+  v)` is IR-emitted and passes in sloppy mode (a store to a frozen object is
+  ignored, a setter runs once) and in strict mode (TypeError). The
+  `store + o.f()` bodies stay refused.
+- **Tests:** `tests/issue-7260-*.test.ts` passes, and so do the #3797 and
+  #7106 S3c tests. #3795's two gc cases (`throws like direct codegen … on gc`,
+  `Acorn's exact private-name conflict family on gc`) also fail on main.
+- **Gates** (bare, also with `LOC_GATE_BASE=origin/main`): loc, func,
+  coercion-sites, oracle-ratchet, dead-exports, ir-layering, lint, prettier,
+  typecheck and compiler-boundaries inventory all pass.
+- **New post-claim fallbacks:** `abi-signature-parity` on two probe helpers
+  (`tryPut`, `putLiteral`). The IR resolves a parameter as externref where
+  legacy resolves it as f64, so the legacy body is kept. This existing
+  parameter-resolution divergence was unreachable for these bodies until
+  now, and the stride ledger shows no new row of it.
