@@ -1,0 +1,12 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts (21 tests) 2066ms
+   ✓ #6921 D1 — inlined callee slots are remapped into the caller > t10: helper with a mutable let does not clobber the caller's let (gc)  690ms
+   ✓ #6921 D2 — ToNumber / loose == run user code (gc host objects) > standalone: tonum / eqq / twice stay IR-emitted and keep their base results  411ms
+
+ Test Files  1 passed (1)
+      Tests  21 passed (21)
+   Start at  22:45:11
+   Duration  26.79s (transform 17.25s, setup 0ms, collect 24.32s, tests 2.07s, environment 0ms, prepare 59ms)
+

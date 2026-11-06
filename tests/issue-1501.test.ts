@@ -79,6 +79,9 @@ describe("browser timer host imports (#1501) — preprocessImports shim", () => 
       name: "global_document",
       kind: "func",
       intent: { type: "declared_global", name: "document" },
+      // Import descriptors carry their arity since #4150 (a41115bc78), which
+      // the host uses to avoid a per-crossing argument array.
+      paramCount: 0,
     });
   });
 

@@ -1,0 +1,644 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > authenticates the independently fixed receipt and complete current domain 19ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > recovers genuine445 raw bytes and replays all14 spans before unchanged old API 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > detaches semantic input and independently replays rows layer history and moves 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > proves all three actual full donor inverses canonical replays and exact facades 8ms
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses stale445 while the unchanged program-validator API accepts it 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses stale445 while the unchanged program-validator API accepts it 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain retained description drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain missing owner drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain duplicate owner drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain reordered owners drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain donor state drift 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain donor extra key drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain owner extra key drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain facade neighbor drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain backend entry drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain backend floor drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain old activation prefix drift 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain new activation tail drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain missing activation tail drift 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain old move prefix drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain move tail order drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain extra move drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain allowed edge drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain extra top-level field drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain retained description drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain missing owner drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain duplicate owner drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain reordered owners drift 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain donor state drift 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain donor extra key drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain owner extra key drift 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain facade neighbor drift 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain backend entry drift 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain backend floor drift 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain old activation prefix drift 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain new activation tail drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain missing activation tail drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain old move prefix drift 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain move tail order drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain extra move drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain allowed edge drift 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain extra top-level field drift 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses whitespace drift 9ms
+   → expected [Function] to not throw an error but 'Error: Deno post-position main succes…' was thrown
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses a one-byte valid-JSON retained-field change 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 0 omission 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 0 duplicated literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 0 reordered literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 1 omission 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 1 duplicated literal 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 1 reordered literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 2 omission 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 2 duplicated literal 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 2 reordered literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 3 omission 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 3 duplicated literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 3 reordered literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 4 omission 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 4 duplicated literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 4 reordered literal 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 5 omission 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 5 duplicated literal 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 5 reordered literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 6 omission 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 6 duplicated literal 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 6 reordered literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 7 omission 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 7 duplicated literal 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 7 reordered literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 8 omission 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 8 duplicated literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 8 reordered literal 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 9 omission 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 9 duplicated literal 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 9 reordered literal 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 10 omission 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 10 duplicated literal 8ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 10 reordered literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 11 omission 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 11 duplicated literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 11 reordered literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 12 omission 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 12 duplicated literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 12 reordered literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 13 omission 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 13 duplicated literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 13 reordered literal 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects primitive before missing receipt with valid ENOENT witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects boxed before missing receipt with valid ENOENT witness 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects cyclic before missing receipt with valid ENOENT witness 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects sparse before missing receipt with valid ENOENT witness 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects symbol before missing receipt with valid ENOENT witness 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects hidden before missing receipt with valid ENOENT witness 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses accessor without getter invocation before missing receipt 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects boxed before missing receipt with valid ENOENT witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects null before missing receipt with valid ENOENT witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects undefined before missing receipt with valid ENOENT witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects number before missing receipt with valid ENOENT witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects boolean before missing receipt with valid ENOENT witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects array before missing receipt with valid ENOENT witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing tests/helpers/ir-runtime-program-policy-program-validator.json after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing tests/helpers/ir-runtime-program-policy-evolution.ts after warm success 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/ir/lowering-dynamic-scratch.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/backend/wasmgc/lowering/dynamic-scratch.ts after warm success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/ir/backend/wasm-int32-coercion.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/backend/wasmgc/lowering/wasm-int32-coercion.ts after warm success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/ir/backend/wasm-math-minmax.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/backend/wasmgc/lowering/wasm-math-minmax.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation tests/helpers/ir-runtime-program-policy-program-validator.json after warm success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation tests/helpers/ir-runtime-program-policy-evolution.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/ir/lowering-dynamic-scratch.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/backend/wasmgc/lowering/dynamic-scratch.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/ir/backend/wasm-int32-coercion.ts after warm success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/backend/wasmgc/lowering/wasm-int32-coercion.ts after warm success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/ir/backend/wasm-math-minmax.ts after warm success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/backend/wasmgc/lowering/wasm-math-minmax.ts after warm success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json after warm success 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing tests/helpers/ir-runtime-program-policy-program-validator.json after warm success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing tests/helpers/ir-runtime-program-policy-evolution.ts after warm success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/ir/lowering-dynamic-scratch.ts after warm success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/backend/wasmgc/lowering/dynamic-scratch.ts after warm success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/ir/backend/wasm-int32-coercion.ts after warm success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/backend/wasmgc/lowering/wasm-int32-coercion.ts after warm success 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/ir/backend/wasm-math-minmax.ts after warm success 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/backend/wasmgc/lowering/wasm-math-minmax.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json after warm success 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation tests/helpers/ir-runtime-program-policy-program-validator.json after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation tests/helpers/ir-runtime-program-policy-evolution.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/ir/lowering-dynamic-scratch.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/backend/wasmgc/lowering/dynamic-scratch.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/ir/backend/wasm-int32-coercion.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/backend/wasmgc/lowering/wasm-int32-coercion.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/ir/backend/wasm-math-minmax.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/backend/wasmgc/lowering/wasm-math-minmax.ts after warm success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 134 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > authenticates the independently fixed receipt and complete current domain
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1354:27
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > recovers genuine445 raw bytes and replays all14 spans before unchanged old API
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1360:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > detaches semantic input and independently replays rows layer history and moves
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ policy tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1090:33
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1370:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses stale445 while the unchanged program-validator API accepts it
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses stale445 while the unchanged program-validator API accepts it
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1413:33
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain retained description drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain missing owner drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain duplicate owner drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain reordered owners drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain donor state drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain donor extra key drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain owner extra key drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain facade neighbor drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain backend entry drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain backend floor drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain old activation prefix drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain new activation tail drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain missing activation tail drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain old move prefix drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain move tail order drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain extra move drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain allowed edge drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain extra top-level field drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain retained description drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain missing owner drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain duplicate owner drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain reordered owners drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain donor state drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain donor extra key drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain owner extra key drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain facade neighbor drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain backend entry drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain backend floor drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain old activation prefix drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain new activation tail drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain missing activation tail drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain old move prefix drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain move tail order drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain extra move drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain allowed edge drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain extra top-level field drift
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ policy tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1090:33
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1532:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses whitespace drift
+AssertionError: expected [Function] to not throw an error but 'Error: Deno post-position main succes…' was thrown
+
+[32m- Expected:[39m 
+undefined
+
+[31m+ Received:[39m 
+"Error: Deno post-position main successor: complete raw source profile mismatch"
+
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1545:73
+    1543|       "complete raw source profile mismatch",
+    1544|     );
+    1545|     expect(() => captureWasmGcHelperPredecessorPolicySource(raw())).no…
+       |                                                                         ^
+    1546|   });
+    1547|   it("raw refuses a one-byte valid-JSON retained-field change", () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses a one-byte valid-JSON retained-field change
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1548:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 0 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 1 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 2 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 3 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 4 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 5 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 6 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 7 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 8 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 9 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 10 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 11 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 12 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 13 omission
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1563:30
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 0 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 1 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 2 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 3 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 4 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 5 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 6 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 7 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 8 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 9 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 10 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 11 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 12 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 13 duplicated literal
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1567:30
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 0 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 1 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 2 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 3 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 4 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 5 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 6 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 7 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 8 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 9 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 10 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 11 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 12 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 13 reordered literal
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1571:30
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects primitive before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects boxed before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects cyclic before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects sparse before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects symbol before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects hidden before missing receipt with valid ENOENT witness
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1618:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses accessor without getter invocation before missing receipt
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ policy tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1090:33
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1628:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects boxed before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects null before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects undefined before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects number before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects boolean before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects array before missing receipt with valid ENOENT witness
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1655:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/134]⎯
+
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing tests/helpers/ir-runtime-program-policy-program-validator.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing tests/helpers/ir-runtime-program-policy-evolution.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/ir/lowering-dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/backend/wasmgc/lowering/dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/ir/backend/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/backend/wasmgc/lowering/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/ir/backend/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/backend/wasmgc/lowering/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation tests/helpers/ir-runtime-program-policy-program-validator.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation tests/helpers/ir-runtime-program-policy-evolution.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/ir/lowering-dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/backend/wasmgc/lowering/dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/ir/backend/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/backend/wasmgc/lowering/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/ir/backend/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/backend/wasmgc/lowering/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing tests/helpers/ir-runtime-program-policy-program-validator.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing tests/helpers/ir-runtime-program-policy-evolution.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/ir/lowering-dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/backend/wasmgc/lowering/dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/ir/backend/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/backend/wasmgc/lowering/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/ir/backend/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/backend/wasmgc/lowering/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation tests/helpers/ir-runtime-program-policy-program-validator.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation tests/helpers/ir-runtime-program-policy-evolution.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/ir/lowering-dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/backend/wasmgc/lowering/dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/ir/backend/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/backend/wasmgc/lowering/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/ir/backend/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/backend/wasmgc/lowering/wasm-math-minmax.ts after warm success
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1080:17
+ ❯ tests/issue-3518-wasmgc-helper-policy-evolution.test.ts:1667:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/134]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  134 failed | 1 passed (135)
+   Start at  20:20:14
+   Duration  1.54s (transform 525ms, setup 0ms, collect 601ms, tests 473ms, environment 0ms, prepare 106ms)
+

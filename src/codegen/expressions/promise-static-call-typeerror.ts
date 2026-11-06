@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../../ts-api.js";
-import { isStandalonePromiseActive } from "../async-scheduler.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
@@ -22,7 +21,16 @@ const NON_CONSTRUCTOR_GLOBALS = new Set([
   "encodeURI",
   "encodeURIComponent",
 ]);
-const PROMISE_STATIC_METHODS = new Set(["all", "allSettled", "race", "any", "resolve", "reject"]);
+const PROMISE_STATIC_METHODS = new Set([
+  "all",
+  "allSettled",
+  "race",
+  "any",
+  "resolve",
+  "reject",
+  "withResolvers",
+  "try",
+]);
 
 function isSideEffectFreeLiteralArg(arg: ts.Expression): boolean {
   return ts.isNumericLiteral(arg) || ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg);
@@ -89,7 +97,6 @@ export function tryEmitStandalonePromiseStaticCallTypeError(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): InnerResult | undefined {
-  if (!isStandalonePromiseActive(ctx)) return undefined;
   const inner = propAccess.expression;
   if (!ts.isPropertyAccessExpression(inner)) return undefined;
   if (!resolvesToNamedAmbientGlobal(ctx, inner.expression, "Promise")) return undefined;

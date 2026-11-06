@@ -85,19 +85,19 @@ describe("#3611 promote-baseline must survive the #3448 HIT path", () => {
   });
 });
 
-describe("#3611 the sibling job that proved the actor value", () => {
-  /**
-   * This job is the positive control that disproved the issue's stated root
-   * cause: it is gated on the actor being `github-merge-queue[bot]` and it RAN
-   * on all 30 runs, which pins `github.actor` and therefore proves every
-   * conjunct of promote-baseline's old `if:` was true while it skipped anyway.
-   *
-   * Pinned here because that control only works while this gate keeps naming
-   * the actor explicitly — if it is ever relaxed, the disproof in the issue
-   * stops being reproducible from the workflow alone.
-   */
-  it("still names github-merge-queue[bot] explicitly", () => {
-    expect(WF).toContain("github.event_name == 'push' && github.actor == 'github-merge-queue[bot]'");
+describe("#3611 queue pushes retain a live standalone baseline writer", () => {
+  it("retires the host cache writer while keeping queue actors admitted to common promotion", () => {
+    expect(job("write-run-cache-bot")).toContain("if: false # Retired host cache writer");
+    const code = promote
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    const condition = code.slice(code.indexOf("if:"), code.indexOf("name:"));
+    expect(condition).toContain("github.event_name == 'push'");
+    expect(condition).toContain("github.actor != 'github-actions[bot]'");
+    expect(condition).not.toContain("github-merge-queue[bot]");
+    expect(condition).toContain("!cancelled()");
+    expect(condition).toContain("needs.merge-report.result == 'success'");
   });
 
   it("is a different job from the one carrying the raise", () => {

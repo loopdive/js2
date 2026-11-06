@@ -7,6 +7,7 @@
  * behaviour-preserving leaf move. This module owns the `x op= y` lowering; plain
  * `=` assignment and destructuring stay in assignment.ts.
  */
+import { tryCompileArrayLengthUpdate } from "../array-length-define.js"; // (#7164)
 import { ts, forEachChild } from "../../ts-api.js";
 import { isBooleanType, isStringType } from "../../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";
@@ -14,10 +15,10 @@ import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { elementAccessTypedArrayName } from "../array-nonindex-key.js";
 import { tryEmitLinearU8ElementCompound } from "../linear-uint8-codegen.js";
 import {
-  bigIntHostBinopOpcode,
   compileI64BinaryOp,
   emitAnyAdd,
   emitAnyAddFromExternTemps,
+  emitNativeStringSlotPlus as slotPlus,
   emitModulo,
   emitHostTypedArrayElementCoercion,
   emitToInt32,
@@ -53,13 +54,13 @@ import { identityPreservingStructuralParamCarrier } from "../identity-preserving
 import { isSealedNominalStructParent } from "../struct-hierarchy-layout.js";
 import {
   emitAlternateStructSetDispatch,
-  emitBoundsGuardedArraySet,
   emitCapturedBoxGlobalRead,
   emitCapturedBoxGlobalWrite,
   emitNullGuardedStructGet,
   getCapturedBoxGlobal,
 } from "../property-access.js";
-import { coerceType, compileExpression, VOID_RESULT } from "../shared.js";
+import { coerceType, compileExpression } from "../shared.js";
+import { tryEmitNativeStringFieldAppend, tryEmitNativeStringGlobalAppend } from "./string-field-append.js";
 import { emitBoolToAnyStr, rhsStringForcesConcatLane } from "../string-compound-lane.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { patchStructNewForDynamicField } from "./extern.js";
@@ -81,7 +82,6 @@ import { ensureLateImport, flushLateImportShifts, patchStructNewForAddedField } 
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { isSloppyImplicitGlobalBinding, tryEmitImplicitGlobalCompoundAssign } from "./implicit-global-binding.js"; // (#4640 D3)
 import { resolveStructNameForExpr } from "./misc.js";
-import { emitHostBigIntBinaryOpFromStack, isHostBigIntUpdate } from "./host-bigint-updates.js";
 import {
   compileStringBuilderAppend,
   emitStringBuilderAppendCodeUnit,
@@ -90,12 +90,12 @@ import {
 } from "../string-builder.js";
 import {
   coerceVecBigIntElementStoreValue,
-  compileAssignment,
   compileExternSetFallback,
   isNonWritableDataProperty,
   isStrictContext,
 } from "./assignment.js";
 import { tryEmitConstIdentifierCompoundAssignment } from "./identifier-assignment.js";
+import { emitElementCompoundAnyAdd } from "./element-compound-any-add.js"; // (#7084)
 import { hostTypedArrayCarrierNameForExpression } from "./typed-array-host-carrier.js";
 
 /** Numeric and BigInt TypedArray view name for the native vec element lane. */
@@ -1844,22 +1844,6 @@ function compoundBinaryOperator(op: ts.SyntaxKind): ts.BinaryOperator | undefine
   }
 }
 
-function tryCompileHostBigIntCompoundAssignment(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  left: ts.Identifier,
-  right: ts.Expression,
-  op: ts.SyntaxKind,
-): ValType | null | undefined {
-  if (!isHostBigIntUpdate(ctx, left)) return undefined;
-  const binaryOp = compoundBinaryOperator(op);
-  if (binaryOp === undefined) return undefined;
-  const value = ts.factory.createBinaryExpression(left, binaryOp, right);
-  const assignment = ts.factory.createBinaryExpression(left, ts.SyntaxKind.EqualsToken, value);
-  const result = compileAssignment(ctx, fctx, assignment);
-  return result === VOID_RESULT ? null : result;
-}
-
 export function compileCompoundAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1907,10 +1891,6 @@ export function compileCompoundAssignment(
 
   // const bindings — compound assignment throws TypeError at runtime
   if (tryEmitConstIdentifierCompoundAssignment(ctx, fctx, expr.left, expr.right)) return { kind: "f64" };
-
-  // Reuse ordinary binary and assignment paths for JS-host BigInt identifiers.
-  const hostBigIntCompound = tryCompileHostBigIntCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
-  if (hostBigIntCompound !== undefined) return hostBigIntCompound;
 
   const implicitGlobal = compileImplicitGlobalCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
   if (implicitGlobal !== undefined) return implicitGlobal;
@@ -2491,6 +2471,7 @@ export function emitCompoundOp(ctx: CodegenContext, fctx: FunctionContext, op: t
 function tryCompileExternrefStructFieldPlusEquals(
   ctx: CodegenContext,
   fctx: FunctionContext,
+  target: ts.Expression,
   rhs: ts.Expression,
   op: ts.SyntaxKind,
   fieldType: ValType,
@@ -2498,6 +2479,9 @@ function tryCompileExternrefStructFieldPlusEquals(
   typeIdx: number,
   fieldIdx: number,
 ): ValType | null | undefined {
+  // (#7214) A native-string field: `+=` is `string + rhs` (was ToNumber + f64.add).
+  const sa = tryEmitNativeStringFieldAppend(ctx, fctx, slotPlus, target, rhs, op, fieldType, objTmp, typeIdx, fieldIdx);
+  if (sa !== undefined) return sa;
   if (op !== ts.SyntaxKind.PlusEqualsToken || fieldType.kind !== "externref") return undefined;
 
   const leftTmp = allocTempLocal(fctx, { kind: "externref" });
@@ -2564,6 +2548,12 @@ function compilePropertyCompoundAssignment(
   rhs: ts.Expression,
   op: ts.SyntaxKind,
 ): ValType | null {
+  // (#7164) `arr.length += k` / `-= k`: the static length store, so a grow fills its new slots.
+  if (op === ts.SyntaxKind.PlusEqualsToken || op === ts.SyntaxKind.MinusEqualsToken) {
+    const update = { kind: "compound", op: op === ts.SyntaxKind.PlusEqualsToken ? "+" : "-", value: rhs } as const;
+    const lengthUpdate = tryCompileArrayLengthUpdate(ctx, fctx, target, update);
+    if (lengthUpdate) return lengthUpdate;
+  }
   const objType = ctx.checker.getTypeAtLocation(target.expression);
   const propName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
 
@@ -2632,6 +2622,9 @@ function compilePropertyCompoundAssignment(
     if (globalIdx !== undefined) {
       // Read current value
       fctx.body.push({ op: "global.get", index: globalIdx });
+      const staticType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type; // (#7214)
+      const sa = tryEmitNativeStringGlobalAppend(ctx, fctx, slotPlus, target, rhs, op, globalIdx, staticType);
+      if (sa !== undefined) return sa;
       // Compile RHS
       const rhsType = compileExpression(ctx, fctx, rhs, { kind: "f64" });
       if (!rhsType) return null;
@@ -2772,22 +2765,10 @@ function compilePropertyCompoundAssignment(
   fctx.body.push({ op: "local.get", index: objTmp });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
 
-  const hostBigIntCompound = tryEmitHostBigIntStructCompoundAssignment(
-    ctx,
-    fctx,
-    target,
-    rhs,
-    op,
-    fieldType,
-    objTmp,
-    structTypeIdx,
-    fieldIdx,
-  );
-  if (hostBigIntCompound !== undefined) return hostBigIntCompound;
-
   const externrefPlusEquals = tryCompileExternrefStructFieldPlusEquals(
     ctx,
     fctx,
+    target,
     rhs,
     op,
     fieldType,
@@ -2901,22 +2882,10 @@ function compilePropertyCompoundAssignmentExternref(
           fctx.body.push({ op: "local.get", index: objTmp });
           fctx.body.push({ op: "struct.get", typeIdx, fieldIdx });
 
-          const hostBigIntCompound = tryEmitHostBigIntStructCompoundAssignment(
-            ctx,
-            fctx,
-            target,
-            rhs,
-            op,
-            fieldType,
-            objTmp,
-            typeIdx,
-            fieldIdx,
-          );
-          if (hostBigIntCompound !== undefined) return hostBigIntCompound;
-
           const externrefPlusEquals = tryCompileExternrefStructFieldPlusEquals(
             ctx,
             fctx,
+            target,
             rhs,
             op,
             fieldType,
@@ -3069,44 +3038,20 @@ function compilePropertyCompoundAssignmentExternref(
   // `__str_concat` or `f64.add`) that `emitAnyAdd` already builds for this lane,
   // split out so a caller with pre-evaluated operands can reach it.
   if (op === ts.SyntaxKind.PlusEqualsToken) {
-    const noJsHostAdd = ctx.targetProfile.semanticProviders === "native-first";
-    if (noJsHostAdd) {
-      // Current value is on the stack (from the read above) — park it, then
-      // evaluate the RHS, so both operands are temps the dispatch can re-read.
-      const lTmp = allocLocal(fctx, `__cmpd_padd_l_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "local.set", index: lTmp });
-      const rhsAny = compileExpression(ctx, fctx, rhs, { kind: "externref" });
-      if (!rhsAny) return null;
-      if (rhsAny.kind !== "externref") {
-        coerceType(ctx, fctx, rhsAny, { kind: "externref" });
-      }
-      const rTmp = allocLocal(fctx, `__cmpd_padd_r_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "local.set", index: rTmp });
-      const addType = emitAnyAddFromExternTemps(ctx, fctx, lTmp, rTmp);
-      // The no-native-strings fallback yields f64; box it so the write-back
-      // below (which stores an externref) stays uniform.
-      if (addType.kind !== "externref") {
-        coerceType(ctx, fctx, addType, { kind: "externref" });
-      }
-    } else {
-      const rhsAny = compileExpression(ctx, fctx, rhs, { kind: "externref" });
-      if (!rhsAny) return null;
-      if (rhsAny.kind !== "externref") {
-        coerceType(ctx, fctx, rhsAny, { kind: "externref" });
-      }
-      const hostAddIdx = ensureLateImport(
-        ctx,
-        "__host_add",
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      const finalAddIdx = ctx.funcMap.get("__host_add") ?? hostAddIdx;
-      if (finalAddIdx === undefined) {
-        reportError(ctx, target, "Missing __host_add for compound externref property assignment");
-        return null;
-      }
-      fctx.body.push({ op: "call", funcIdx: finalAddIdx });
+    const lTmp = allocLocal(fctx, `__cmpd_padd_l_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: lTmp });
+    const rhsAny = compileExpression(ctx, fctx, rhs, { kind: "externref" });
+    if (!rhsAny) return null;
+    if (rhsAny.kind !== "externref") {
+      coerceType(ctx, fctx, rhsAny, { kind: "externref" });
+    }
+    const rTmp = allocLocal(fctx, `__cmpd_padd_r_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: rTmp });
+    const addType = emitAnyAddFromExternTemps(ctx, fctx, lTmp, rTmp);
+    // The no-native-strings fallback yields f64; box it so the write-back
+    // below (which stores an externref) stays uniform.
+    if (addType.kind !== "externref") {
+      coerceType(ctx, fctx, addType, { kind: "externref" });
     }
     const anyResultLocal = allocLocal(fctx, `__cmpd_pany_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: anyResultLocal });
@@ -3219,49 +3164,6 @@ function compilePropertyCompoundAssignmentExternref(
   return { kind: "f64" };
 }
 
-function tryEmitHostBigIntArrayCompoundAssignment(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  target: ts.ElementAccessExpression,
-  rhs: ts.Expression,
-  op: ts.SyntaxKind,
-  elemType: ValType,
-  objTmp: number,
-  vecTypeIdx: number,
-  idxTmp: number,
-  arrayTypeIdx: number,
-): ValType | null | undefined {
-  if (elemType.kind !== "externref" || !isHostBigIntUpdate(ctx, target)) return undefined;
-  const binaryOp = compoundBinaryOperator(op);
-  const hostOpcode = binaryOp === undefined ? undefined : bigIntHostBinopOpcode(binaryOp);
-  if (hostOpcode === undefined) return undefined;
-  return emitHostBigIntBinaryOpFromStack(ctx, fctx, elemType, rhs, hostOpcode, false, (newValue) =>
-    emitBoundsGuardedArraySet(fctx, objTmp, vecTypeIdx, idxTmp, newValue, arrayTypeIdx),
-  );
-}
-
-function tryEmitHostBigIntStructCompoundAssignment(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  target: ts.PropertyAccessExpression,
-  rhs: ts.Expression,
-  op: ts.SyntaxKind,
-  fieldType: ValType,
-  objTmp: number,
-  structTypeIdx: number,
-  fieldIdx: number,
-): ValType | null | undefined {
-  if (fieldType.kind !== "externref" || !isHostBigIntUpdate(ctx, target)) return undefined;
-  const binaryOp = compoundBinaryOperator(op);
-  const hostOpcode = binaryOp === undefined ? undefined : bigIntHostBinopOpcode(binaryOp);
-  if (hostOpcode === undefined) return undefined;
-  return emitHostBigIntBinaryOpFromStack(ctx, fctx, fieldType, rhs, hostOpcode, false, (newValue) => {
-    fctx.body.push({ op: "local.get", index: objTmp });
-    fctx.body.push({ op: "local.get", index: newValue });
-    fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
-  });
-}
-
 function compileVecElementCompoundAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3316,20 +3218,6 @@ function compileVecElementCompoundAssignment(
     emitThrowTypeError(ctx, fctx, "BigInts have no unsigned right shift, use >> instead");
     return elemType.kind === "externref" ? { kind: "externref" } : { kind: "i64", bigint: true };
   }
-
-  const hostBigIntResult = tryEmitHostBigIntArrayCompoundAssignment(
-    ctx,
-    fctx,
-    target,
-    rhs,
-    op,
-    elemType,
-    objTmp,
-    typeIdx,
-    idxTmp,
-    arrayTypeIdx,
-  );
-  if (hostBigIntResult !== undefined) return hostBigIntResult;
 
   let resultType: ValType;
   if (isBigIntTypedArray) {
@@ -3495,6 +3383,13 @@ function compileElementCompoundAssignment(
     flushLateImportShifts(ctx, fctx);
     if (getIdx === undefined) return null;
     fctx.body.push({ op: "call", funcIdx: getIdx });
+
+    // (#7084) `o[k] += rhs` on a dynamic receiver is §13.15.3 ApplyStringOrNumericBinaryOperator,
+    // not numeric-only — the element twin of the #3673 property arm below.
+    // hono's `escapeToBuffer` does `buffer[0] += str` and answered NaN.
+    if (op === ts.SyntaxKind.PlusEqualsToken) {
+      return emitElementCompoundAnyAdd(ctx, fctx, target, rhs, objLocal, keyLocal);
+    }
 
     // Ensure union imports (including __unbox_number, __box_number) are registered
     addUnionImports(ctx);

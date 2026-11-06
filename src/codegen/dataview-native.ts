@@ -68,6 +68,7 @@ import { reserveNativeConstructDriver } from "./native-construct.js"; // (#4449)
 import { ensureSymbolCarrier } from "./symbol-native.js"; // (#4449) Symbol.species key
 import { ensureNativeArrayFromIterN } from "./iterator-native.js"; // (#5138 A1) iterable ctor arg
 import { orNativeGeneratorCarrierInstrs } from "./generators-native-protocol.js"; // (#6651 A13) generator-object ctor arg
+import { emitPatchedArrayIterCopy } from "./iterator-proto-next.js"; // (#6651 W9)
 import { reserveBuiltinConstructorIdentityGlobal } from "./builtin-static-globals.js"; // (#5349 r4) %ArrayBuffer% identity
 
 /** DataView accessor descriptor parsed from a method name like "getUint32". */
@@ -301,11 +302,6 @@ const DV_ACCESSORS: Record<string, DvAccessor> = {
 
 export function isDataViewAccessor(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(DV_ACCESSORS, name);
-}
-
-/** Select the Wasm-owned DataView carrier independently of the embedder. */
-export function usesNativeDataViewProvider(ctx: CodegenContext): boolean {
-  return noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first";
 }
 
 /**
@@ -562,12 +558,6 @@ export function emitArrayBufferSlice(
   const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" }); // (#2835) packed byte buffer
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   if (arrTypeIdx < 0) return null;
-  const detachedThrow = buildThrowJsErrorInstrs(
-    ctx,
-    "TypeError",
-    "TypeError: ArrayBuffer.prototype.slice called on a detached buffer",
-  );
-
   // Recover the source vec struct from the receiver (externref → struct).
   const srcVecLocal = allocLocal(fctx, `__abs_src_${fctx.locals.length}`, {
     kind: "ref",
@@ -605,6 +595,14 @@ export function emitArrayBufferSlice(
   fctx.body.push({ op: "local.set", index: srcLenLocal });
   // §25.1.5.3 step 4 — validate detachment before coercing begin/end. The
   // native detached state is the shared buffer vec's negative length marker.
+  // (#7014) Built here, flushed: a list built before the receiver compiled
+  // missed its late-import shift (#3061 invalid Wasm since 514b55dfa2).
+  const detachedThrow = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "TypeError: ArrayBuffer.prototype.slice called on a detached buffer",
+    { flush: fctx },
+  );
   emitArrayBufferDetachedCheck(fctx, srcVecLocal, vecTypeIdx, detachedThrow);
   const srcArrLocal = allocLocal(fctx, `__abs_srcarr_${fctx.locals.length}`, {
     kind: "ref",
@@ -2263,7 +2261,6 @@ export function emitDataViewAccessor(
  * throw templates capture their ctor indices anyway.
  */
 export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): number | undefined {
-  if (!usesNativeDataViewProvider(ctx)) return undefined;
   const acc = DV_ACCESSORS[member];
   if (!acc) return undefined;
   const helperName = `__dv_m_${member}`;
@@ -2442,7 +2439,6 @@ export function emitDataViewProtoMemberBody(
   fctx: FunctionContext,
   member: string,
 ): ValType | null {
-  if (!usesNativeDataViewProvider(ctx)) return null;
   const resultType: ValType = { kind: "externref" };
 
   if (DV_GETTER_MEMBERS.has(member)) {
@@ -6401,6 +6397,16 @@ function emitTaDynCtorConstructInline(
       trackChain(vecArm);
       const saved = fctx.body;
       fctx.body = vecArm;
+      // (#6484 / #6651 W9) an ARRAY source is iterated through a patched
+      // `%ArrayIteratorPrototype%.next`; the copy below stays the fast path.
+      const isTaCarrier = carrierKey === "i8_byte" || carrierKey === "i16_byte";
+      const patched = isTaCarrier ? undefined : emitPatchedArrayIterCopy(ctx, fctx, a0CandidateLocal, trackChain);
+      if (patched) {
+        patched.emitCopy(dstNLocal, emitAllocViewFromN, (push) =>
+          emitCopyLoop((i) => emitTaExternrefElementToF64(ctx, fctx, () => push(i))),
+        );
+        fctx.body = patched.restArm;
+      }
       const srcVecLocal = allocLocal(fctx, `__dtac_sv_${fctx.locals.length}`, { kind: "ref", typeIdx: vIdx });
       const srcDataLocal = allocLocal(fctx, `__dtac_sd_${fctx.locals.length}`, { kind: "ref", typeIdx: srcArrIdx });
       fctx.body.push({ op: "local.get", index: a0CandidateLocal });

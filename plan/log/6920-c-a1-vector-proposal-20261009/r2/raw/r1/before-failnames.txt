@@ -1,0 +1,14 @@
+ FAIL  tests/ir-backend-emitter.test.ts > #2953 WasmGcEmitter — Promise aggregate family byte-identity > emitPromiseNew → struct.new $Promise
+ FAIL  tests/issue-2956.test.ts > #2956 L2: selector-claimed vec construction > flag ON lowers fixed number vecs with value, alias, and bounds parity
+ FAIL  tests/issue-2956.test.ts > #2956 L3: selector-claimed linear strings > adds flag-gated UTF-16 charCodeAt capability, including surrogate halves and NaN bounds
+ FAIL  tests/issue-2956.test.ts > #2956 L3: selector-claimed linear strings > lowers the core i32-pointer string surface with direct-path parity
+ FAIL  tests/issue-3499-porffor-typed-bitwise-composites.test.ts > #3499 backend-neutral typed bitwise composites > feeds the exact checked-in fib.js bytes through shared linear IR and its memory plan
+ FAIL  tests/issue-3499-porffor-typed-bitwise-composites.test.ts > #3499 backend-neutral typed bitwise composites > keeps the WasmGC and linear instruction streams byte-for-byte aligned
+ FAIL  tests/issue-3500-linear-ir-recursive-call-graph-type-evidence.test.ts > #3500 conservative recursive SCC rejection > keeps conflicting cycles dynamic with a stable diagnostic
+ FAIL  tests/issue-3500-linear-ir-recursive-call-graph-type-evidence.test.ts > #3500 conservative recursive SCC rejection > keeps escaping cycles dynamic with a stable diagnostic
+ FAIL  tests/issue-3500-linear-ir-recursive-call-graph-type-evidence.test.ts > #3500 conservative recursive SCC rejection > keeps polymorphic cycles dynamic with a stable diagnostic
+ FAIL  tests/issue-3518-logical-vector-lowering.test.ts > source-bound logical vectors without physical resolution > retains receiver → length → effectful argument → growth → returned length exactly once
+ FAIL  tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > preserves registry getOrRegisterVecType allocation/cache/publication control flow
+ FAIL  tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > retains every declaration and original order in registry
+ FAIL  tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > inverts the exact ordered addition before checking the unchanged historical registry
+ FAIL  tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > fills the early deferred callable with one direct body after a prepared withdrawal

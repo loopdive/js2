@@ -1,0 +1,9 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+No test files found, exiting with code 1
+
+filter: tests/issue-6920-vector-representation.test.ts
+include: tests/**/*.test.ts
+exclude:  **/node_modules/**, **/dist/**, tests/dogfood/.*-upstream-suite/**, tests/dogfood/.*-implementation/**, tests/dogfood/.*-upstream-suite-impl/**
+

@@ -1,0 +1,4 @@
+target	rows	binaries	no_binary	identical_sha256	IR_differs_from_legacy	vec_scratch_present	witness_same_as_base
+gc	29	29	0	29	25	18	29
+standalone	29	29	0	29	22	18	29
+linear	29	15	14	29	0	8	29

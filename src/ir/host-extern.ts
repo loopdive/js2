@@ -12,6 +12,8 @@
 
 import { ts } from "../ts-api.js";
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
+import { isEcmascriptExternClass } from "../host-import-policy.js";
+import type { CompileTargetProfile } from "../target-profile.js";
 
 export interface IrAmbientClassCallCertification {
   readonly call: ts.CallExpression;
@@ -431,4 +433,101 @@ export function makeIrHostGlobalResolver(checker: ts.TypeChecker): (node: ts.Ide
       return undefined;
     }
   };
+}
+
+function isIrPlatformExternClass(className: string): boolean {
+  return className !== "Console" && !isEcmascriptExternClass(className);
+}
+
+/**
+ * (#7091) The IR platform-extern lane: a JavaScript environment with ambient
+ * capabilities and the JS value bridge (`jsValueBoundary`), lowered by the
+ * native semantic regime. `allowHostImports` is false there — no implicit host
+ * SEMANTIC import — yet DOM and other declared external APIs are platform
+ * capabilities the environment still provides, and the runtime's platform-arg
+ * marshal (#6708) converts the native-string and closure carriers passed to
+ * them. Returns the per-class admission predicate, or `undefined` off the lane
+ * (host-assisted keeps its own `jsHostExterns` surface; standalone and WASI
+ * have no host externs to call). `console` and ECMAScript builtins are never
+ * admitted: they keep their native / host-free-sink arms.
+ */
+export function irPlatformExternClassPredicate(
+  lane: IrPlatformExternLaneFacts,
+): ((className: string) => boolean) | undefined {
+  const profile = lane.targetProfile;
+  // `nativeRegime && target === "gc"` in an ambient-JS environment is exactly
+  // the case `projectIrBackendTargetProfile` projects as
+  // `allowHostImports: false`; `hostValueInterop === "required"` is
+  // `jsValueBoundary(ctx)`.
+  if (!profile.nativeRegime || profile.target !== "gc" || lane.fast || !lane.nativeStrings) return undefined;
+  if (profile.environment !== "javascript" || profile.capabilityPolicy !== "ambient-js") return undefined;
+  return profile.hostValueInterop === "required" ? isIrPlatformExternClass : undefined;
+}
+
+/** The compile facts the lane is decided by (a `CodegenContext` satisfies it). */
+export interface IrPlatformExternLaneFacts {
+  readonly targetProfile: Pick<
+    CompileTargetProfile,
+    "nativeRegime" | "target" | "environment" | "capabilityPolicy" | "hostValueInterop"
+  >;
+  readonly nativeStrings: boolean;
+  readonly fast: boolean;
+}
+
+/**
+ * (#7091) A probe for "does this subtree name an ambient platform global the
+ * platform lane registers" — `document`, `window`, … — per the same
+ * checker-backed resolver the selector arms, filtered by the lane's class
+ * predicate and its registered global names. `undefined` off the lane.
+ *
+ * Two consumers key on it: the multi-source imported-call surface (a source
+ * that touches the DOM gets the certified imported-call plans its host-assisted
+ * twin has) and the callable-component route (a host-free mechanism that must
+ * not attempt — and so withdraw — a component containing such an owner).
+ * Sources that touch no platform global keep their existing routes untouched.
+ */
+export function makeIrPlatformGlobalUseProbe(
+  lane: IrPlatformExternLaneFacts,
+  checker: ts.TypeChecker,
+  isPlatformGlobalName: (name: string) => boolean,
+): ((root: ts.Node) => boolean) | undefined {
+  const isPlatformClass = irPlatformExternClassPredicate(lane);
+  if (!isPlatformClass) return undefined;
+  const resolveHostGlobal = makeIrHostGlobalResolver(checker);
+  const cache = new WeakMap<ts.Node, boolean>();
+  return (root) => {
+    const cached = cache.get(root);
+    if (cached !== undefined) return cached;
+    let found = false;
+    const visit = (node: ts.Node): void => {
+      if (found) return;
+      if (ts.isIdentifier(node)) {
+        if (!isPlatformGlobalName(node.text)) return;
+        const className = resolveHostGlobal(node);
+        found = className !== undefined && isPlatformClass(className);
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(root);
+    cache.set(root, found);
+    return found;
+  };
+}
+
+const ECMASCRIPT_LIB_FILE = /(^|[\\/])lib\.(es\d|es20\d\d|esnext|decorators)[^\\/]*\.d\.ts$/;
+
+/**
+ * (#7091) Is this extern-declared type a PLATFORM declaration — lib.dom /
+ * webworker or a user `declare` — rather than an ECMAScript lib interface
+ * (`Function`, `String`, `PropertyDescriptor`, …)? Read from the type's own
+ * declarations, so a lib interface the name-based ECMAScript set does not list
+ * can never enter the platform lane through a parameter annotation.
+ */
+export function irTypeHasPlatformDeclaration(type: ts.Type): boolean {
+  const declarations = type.getSymbol()?.declarations ?? [];
+  return (
+    declarations.length > 0 &&
+    declarations.every((declaration) => !ECMASCRIPT_LIB_FILE.test(declaration.getSourceFile().fileName))
+  );
 }

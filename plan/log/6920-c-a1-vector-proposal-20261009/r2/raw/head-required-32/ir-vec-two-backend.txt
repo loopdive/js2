@@ -1,0 +1,23 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/ir-vec-two-backend.test.ts > #1714 vec primitives diverge per backend (same intent, two emitters) > emitVecLen: WasmGC struct.get vs linear i32.load@8 3ms
+ ✓ tests/ir-vec-two-backend.test.ts > #1714 vec primitives diverge per backend (same intent, two emitters) > emitVecDataPtr: WasmGC struct.get(data) vs linear base+16 0ms
+ ✓ tests/ir-vec-two-backend.test.ts > #1714 vec primitives diverge per backend (same intent, two emitters) > emitElemGet: WasmGC array.get vs linear index*stride+load (f64) 0ms
+ ✓ tests/ir-vec-two-backend.test.ts > #1714 vec primitives diverge per backend (same intent, two emitters) > emitElemGet stride follows elementValType (i32 → stride 4, i32.load) 0ms
+ ✓ tests/ir-vec-two-backend.test.ts > #1714 LinearEmitter ops execute correctly against the linear layout > sums an f64 array via the emitted len + dataPtr + elemGet ops 57ms
+ ✓ tests/ir-vec-two-backend.test.ts > #2954 LinearEmitter core-op families are byte-identical to WasmGc > emitConst (f64 / i32 / bool) — identical literal ops 1ms
+ ✓ tests/ir-vec-two-backend.test.ts > #2954 LinearEmitter core-op families are byte-identical to WasmGc > emitBinary / emitUnary — identical pass-through ops 1ms
+ ✓ tests/ir-vec-two-backend.test.ts > #2954 LinearEmitter core-op families are byte-identical to WasmGc > locals / globals — identical index ops 1ms
+ ✓ tests/ir-vec-two-backend.test.ts > #2954 LinearEmitter core-op families are byte-identical to WasmGc > stack / return ops — identical 1ms
+ ✓ tests/ir-vec-two-backend.test.ts > #2954 LinearEmitter core-op families are byte-identical to WasmGc > structured control flow (if / block / loop) + br / br_if — identical 1ms
+ ✓ tests/ir-vec-two-backend.test.ts > #2954 LinearEmitter core-op families are byte-identical to WasmGc > direct call — identical 0ms
+ ✓ tests/ir-vec-two-backend.test.ts > #2954 LinearEmitter core-op families are byte-identical to WasmGc > representation-divergent families still fail loudly on LinearEmitter 1ms
+ ✓ tests/ir-vec-two-backend.test.ts > #2954 whole-function lowering through LinearEmitter runs in linear memory > recursive numeric fib lowers through LinearEmitter and computes correctly 680ms
+ ✓ tests/ir-vec-two-backend.test.ts > #2954 whole-function lowering through LinearEmitter runs in linear memory > a for-loop / branch function lowers through LinearEmitter and computes correctly 26ms
+
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+   Start at  19:27:17
+   Duration  37.33s (transform 25.38s, setup 0ms, collect 35.89s, tests 773ms, environment 0ms, prepare 128ms)
+

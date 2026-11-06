@@ -1,0 +1,40 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 string-char-code-at contract > governs exactly ONE feature — the GUARDED read, not the proof-licensed arms 3ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 string-char-code-at contract > mints ONE new signature, and it is the only one with (externref, i32) params 2ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 string-char-code-at contract > is TWO-armed, and BOTH arms are runtime-callable defined helpers 1ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 string-char-code-at contract > names TWO capability records on the host row and NONE on the native one 0ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 string-char-code-at contract > is excluded from the async projection TWICE, by two different mechanisms 2ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 string-char-code-at contract > carries NO intrinsic instruction — the demand is requested at freeze 8ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 string-char-code-at contract > publishes both records when host answers and neither when native does 3ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 provider policy > selects the host helper and reports the two records it closes over 4ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 provider policy > selects the native helper, requesting NO host capability 6ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 provider policy > refuses the arm its caller resolved to unsupported, naming the feature and the policy 3ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 provider policy > defaults an omitted policy closed and publishes the resolved decision 2ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 provider policy > resolves independently of compare, eq, len, concat and every family-1 arm 2ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 provider policy > adds no row when nothing calls charCodeAt 2ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 end-to-end behaviour is unchanged > keeps the host lane's two wasm:js-string builtins in the same positions 895ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 end-to-end behaviour is unchanged > defines __str_charCodeAt with no wasm:js-string import on every native lane 425ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 end-to-end behaviour is unchanged > answers charCodeAt exactly as JavaScript does on the host lane 66ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 end-to-end behaviour is unchanged > compiles and validates the same source on a native-strings lane 130ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 end-to-end behaviour is unchanged > still lowers charCodeAt on the linear backend, which ignores the frozen row 56ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 end-to-end behaviour is unchanged > leaves the hoist/trusted arms byte-for-byte alone 766ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 the instr arm reads the frozen manifest > consults the prepared charCodeAt provider 3ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 the instr arm reads the frozen manifest > reads NO lane discriminator 2ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 the instr arm reads the frozen manifest > keeps both materializers and never reaches through funcMap or a late import 2ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 the instr arm reads the frozen manifest > fails closed when the frozen row is missing 2ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 the instr arm reads the frozen manifest > counts BOTH producers in the demand scan 0ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 the instr arm reads the frozen manifest > partitions an unsupported charCodeAt policy owner-locally, naming the policy 2ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 string.char_code_at has ONE emit authority > refuses to lower an unattached string.char_code_at instead of re-deciding the lane 1ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 string.char_code_at has ONE emit authority > accepts an already-attached provider, so the guard is not a blanket refusal 1ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 string.char_code_at has ONE emit authority > keeps the retired fallback's lane read and both materializers out of the emitter 2ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 the plan path verifies against the frozen row > verifies the host plan symbol and keeps its materializer 2ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 the plan path verifies against the frozen row > verifies the native plan symbol and keeps its materializer 2ms
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts > #3526 F2-S7 the plan path verifies against the frozen row > leaves the plan-time decision and the proof-licensed arms untouched 2ms
+
+ Test Files  1 passed (1)
+      Tests  31 passed (31)
+   Start at  22:41:33
+   Duration  32.69s (transform 21.48s, setup 0ms, collect 29.82s, tests 2.40s, environment 0ms, prepare 68ms)
+

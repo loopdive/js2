@@ -11,7 +11,9 @@ import { collectScopeLocalDeclNames } from "./scope-local-decl-names.js";
 import { registerResolvedRestParam, restPatternParamVecType } from "./resolved-rest-param.js"; // (#1058)
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
+import { bindingHoldsStandaloneClassProto } from "./class-proto-object.js"; // (#7053)
 import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
+import { isCjsModuleExportsObject } from "./declarations/cjs-module-exports.js"; // (#7032)
 import { ts, forEachChild } from "../ts-api.js";
 import {
   isBigIntType,
@@ -45,12 +47,11 @@ import {
   isAssignmentOperator,
   isSynchronousTopLevelAwaitRecovery,
 } from "./module-init-collection.js";
-import { emitUndefinedExtern, ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
-import { emitScriptGlobalFunctionBindings } from "./global-function-bindings.js"; // (#4394) §9.1.1.4.18
-import { emitScriptGlobalVarBindings } from "./global-var-bindings.js"; // (#4491 T4) §9.1.1.4.17
+import { ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
 import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
 import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
+import { aliasedModuleGlobalVecType } from "./declarations/module-global-vec-alias.js"; // (#7166)
 import { isExpressionRootedAssignmentTarget } from "./declarations/expression-rooted-assignment-target.js"; // (#6651) `f(o).p = v`
 import {
   ASYNC_CPS_ENABLED,
@@ -62,7 +63,6 @@ import {
 } from "./async-cps.js";
 import { supportedAsyncGraphModulePlan } from "./async-graph-module-plan.js";
 import {
-  asyncFnNeedsHostDrive,
   asyncGenDrivableUnderCarrier,
   asyncGenStem,
   buildAsyncFrameInfo,
@@ -76,12 +76,7 @@ import { classHasComputedKeyAssignment } from "./class-member-keys.js"; // (#677
 import { standaloneCommaHeritage } from "./classes/class-heritage-comma.js"; // (#6772 S6)
 import { heritagePrototypeGetTarget } from "./classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
-import {
-  collectBindingPatternNames,
-  collectReferencedIdentifiers,
-  emitCachedFuncClosureAccess,
-  functionBodyReferencesThis,
-} from "./closures.js";
+import { collectBindingPatternNames, collectReferencedIdentifiers, functionBodyReferencesThis } from "./closures.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { widenMixedUndefinedReturn } from "./mixed-return-widening.js"; // (#4641) `T | undefined` return slots
 import { concatCallYieldsDynamicCarrier } from "./array-concat-carrier.js"; // (#4655) concat result-slot carrier
@@ -89,8 +84,11 @@ import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
+import { usesJsEnvironmentPlatformGlobal } from "./extern-declarations.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
+import { prepareIntlAcceleratorBoundary } from "./helpers/host-intl-locale.js"; // (#6986)
 import {
   objectLiteralTakesHostCarrier,
   unwrapReturnCarrierExpression,
@@ -101,7 +99,7 @@ import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.j
 import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
 import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
-import { emitThrowJsError, noJsHost } from "./js-errors.js";
+import { noJsHost } from "./js-errors.js";
 import {
   addArrayIteratorImports,
   addForInImports,
@@ -133,7 +131,6 @@ import {
   ensureAsyncDriveRuntime,
   ensureNativePromiseBoundaryBridge,
   getOrRegisterPromiseType,
-  isStandalonePromiseActive,
 } from "./async-scheduler.js";
 import {
   ensureNativeDynamicBoundaryTag,
@@ -152,11 +149,7 @@ import { emitNativeParseNumber } from "./parse-number-native.js";
 import { emitNativeUriDecode, emitNativeUriEncode } from "./uri-encoding-native.js";
 import { emitNativeEscape, emitNativeUnescape } from "./escape-native.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
-import {
-  isNativeGeneratorCandidate,
-  registerNativeGenerator,
-  sourceNeedsGeneratorHostImports,
-} from "./generators-native.js";
+import { isNativeGeneratorCandidate, registerNativeGenerator } from "./generators-native.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "./registry/error-types.js";
 import { addImport, addStringConstantGlobal, localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
 import {
@@ -183,6 +176,7 @@ import { pushProgramAbiModuleInitCallable } from "./program-abi-module-init-plan
 import {
   pushProgramAbiNestedFunctionDeclaration,
   pushProgramAbiTopLevelCallable,
+  sourceFunctionPositionForDeclaration,
 } from "./program-abi-source-callable-planning.js";
 import {
   isolateRuntimeModuleCallableRegistration,
@@ -200,13 +194,9 @@ import {
   planModuleClosurePreLift,
   PRELIFT_DISABLE_SEAM,
 } from "./declarations/module-init-closure-prelift.js";
-import {
-  MODULE_INIT_CHUNK_MAX_ENTRIES,
-  moduleInitChunksRequired,
-  planModuleInitChunks,
-  reserveModuleInitChunkHelperName,
-} from "./module-init-chunks.js";
-import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined-seed.js";
+import { dispatchModuleInitChunks, emitModuleInitChunk } from "./module-init-chunks.js";
+import { moduleInitChunksRequired, planModuleInitChunks } from "../shared/module-init-chunk-plan.js";
+import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js"; // (#7106) GDI prologue
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
@@ -217,10 +207,8 @@ import {
   registerModuleTdzGlobal,
   scriptVarRedeclaresAmbientGlobal, // (#6651 V10b)
 } from "./module-global-registration.js";
-import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
 import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-object-slot.js";
 import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
-import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
 import * as proxy from "./analysis/proxy-binding-escape.js";
 import { bindingMayReceiveHostCallable } from "./analysis/mixed-assignment-carrier.js";
@@ -383,6 +371,29 @@ function ensureNativeDynamicBoundaryBridge(ctx: CodegenContext): void {
   ensureNativeDynamicBoundaryTag(ctx);
 }
 
+/**
+ * (#6879) `export { parse }` exports a function declared elsewhere in the
+ * file; only `export function` recorded its boundary signature, so on the
+ * native regime the adapter passed such an export's JS arguments through raw
+ * (an un-admitted options object, an un-marshalled string) and acorn's
+ * `parse(input, { ecmaVersion })` lost its options. Gated on the regime's JS
+ * value boundary so the host lane and the host-free targets keep their bytes.
+ */
+function recordExportListSignature(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  localName: string,
+  exportedName: string,
+): void {
+  if (!jsValueBoundary(ctx)) return;
+  if (ctx.exportSignatures.has(exportedName)) return;
+  const decl = sourceFile.statements.find(
+    (s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === localName && !!s.body,
+  );
+  if (!decl) return;
+  recordExportSignature(ctx, exportedName, decl, hasAsyncModifier(decl));
+}
+
 function recordExportSignature(
   ctx: CodegenContext,
   exportName: string,
@@ -444,10 +455,10 @@ function recordExportSignature(
   if (!anyHit) return;
   ctx.exportSignatures.set(exportName, { params, result });
   if (ctx.nativeStrings && stringHit) ensureNativeStringBoundaryBridge(ctx);
-  if ((symbolHit || dynamicHit) && ctx.targetProfile.semanticProviders === "native-first") {
+  if (symbolHit || dynamicHit) {
     ensureNativeSymbolBoundaryBridge(ctx);
   }
-  if (dynamicHit && ctx.targetProfile.semanticProviders === "native-first") {
+  if (dynamicHit) {
     ensureNativeDynamicBoundaryBridge(ctx);
   }
   if (promiseHit) {
@@ -2541,7 +2552,39 @@ function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Express
 }
 
 function isTopLevelFunctionPropertyReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
-  let current = receiver;
+  const current = skipReceiverWrappers(receiver);
+  if (ts.isIdentifier(current)) return ctx.topLevelFunctionNames.has(current.text);
+  if (!ts.isPropertyAccessExpression(current) && !ts.isElementAccessExpression(current)) return false;
+  const rootName = getAssignmentRootIdentifier(current);
+  return (
+    rootName !== undefined && ctx.topLevelFunctionNames.has(rootName) && ctx.oracle.signatureOf(current) !== undefined
+  );
+}
+
+/**
+ * (#6950) A top-level `<recv>.prototype.<m> = …` or `<recv>.prototype = …`
+ * whose `<recv>` is a member chain (NOT a bare identifier — those are owned by
+ * #2660/#4618) rooted at a top-level function and proven callable by the
+ * oracle (`SplayTree.Node`). Every other keep arm misses it, so the statement
+ * compiled to nothing. The same write inside a function body already lowers
+ * through the dynamic member path (bag-vivified prototype), so keeping it is
+ * the whole fix. `<recv>.prototype[expr] = …` stays dropped.
+ */
+function isMemberHeldFnctorPrototypeWrite(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(target) || ts.isPrivateIdentifier(target.name)) return false;
+  let proto: ts.Expression = target;
+  if (target.name.text !== "prototype") {
+    if (STANDALONE_FN_STATIC_KEEP_EXCLUDED.has(target.name.text)) return false;
+    proto = skipReceiverWrappers(target.expression);
+  }
+  if (!ts.isPropertyAccessExpression(proto) || ts.isPrivateIdentifier(proto.name)) return false;
+  if (proto.name.text !== "prototype") return false;
+  const recv = skipReceiverWrappers(proto.expression);
+  return !ts.isIdentifier(recv) && isTopLevelFunctionPropertyReceiver(ctx, recv);
+}
+
+function skipReceiverWrappers(expr: ts.Expression): ts.Expression {
+  let current = expr;
   while (
     ts.isParenthesizedExpression(current) ||
     ts.isAsExpression(current) ||
@@ -2550,12 +2593,7 @@ function isTopLevelFunctionPropertyReceiver(ctx: CodegenContext, receiver: ts.Ex
   ) {
     current = current.expression;
   }
-  if (ts.isIdentifier(current)) return ctx.topLevelFunctionNames.has(current.text);
-  if (!ts.isPropertyAccessExpression(current) && !ts.isElementAccessExpression(current)) return false;
-  const rootName = getAssignmentRootIdentifier(current);
-  return (
-    rootName !== undefined && ctx.topLevelFunctionNames.has(rootName) && ctx.oracle.signatureOf(current) !== undefined
-  );
+  return current;
 }
 
 function inferNativeTaViewFunctionResult(ctx: CodegenContext, declaration: ts.FunctionDeclaration): ValType | null {
@@ -2598,9 +2636,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // restores #4931's unconditional module-Proxy widening for same-tree A/B.
   const proxyModuleEscapeGateEnabled = readEnv("JS2WASM_PROXY_MODULE_ESCAPE_GATE") !== "0";
   const runtimeModuleGroups = runtimeModuleDeclarationGroups(sourceFile);
+  // (#6708) A JS-environment regime module that binds a DOM platform global
+  // hands it Wasm-owned strings; export the bridge the runtime marshal reads.
+  if (isEntryFile && ctx.nativeStrings && jsValueBoundary(ctx) && usesJsEnvironmentPlatformGlobal(ctx)) {
+    ensureNativeStringBoundaryBridge(ctx);
+  }
 
   // First: collect enum declarations (so enum values are available)
   collectEnumDeclarations(ctx, sourceFile);
+  prepareIntlAcceleratorBoundary(ctx, sourceFile, ensureNativeDynamicBoundaryBridge); // (#6986)
 
   // Second: collect interfaces and type aliases (so struct types are available).
   // Skip declarations from `.d.ts` files: those describe shapes of host
@@ -3160,6 +3204,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           name: "default",
           desc: { kind: "func", index: funcIdx },
         });
+        for (const name of [targetName, "default"]) recordExportListSignature(ctx, sourceFile, targetName, name);
       }
     }
   }
@@ -3186,6 +3231,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         if (func && !func.exported) func.exported = true;
         if (!ctx.mod.exports.some((e) => e.name === exportedName)) {
           ctx.mod.exports.push({ name: exportedName, desc: { kind: "func", index: funcIdx } });
+          recordExportListSignature(ctx, sourceFile, localName, exportedName);
         }
       }
     }
@@ -3196,20 +3242,13 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // This runs after the ESM export-default block so CJS and ESM don't conflict.
   if (isEntryFile) {
     // Helper: check if expression is `module.exports`
-    function isModuleExports(e: ts.Expression): boolean {
-      return (
-        ts.isPropertyAccessExpression(e) &&
-        ts.isIdentifier(e.expression) &&
-        e.expression.text === "module" &&
-        e.name.text === "exports"
-      );
-    }
+    const isModuleExports = isCjsModuleExportsObject;
 
     // Helper: extract export name from `module.exports.foo` or `exports.foo`
     function getCjsNamedExportName(e: ts.Expression): string | undefined {
       if (!ts.isPropertyAccessExpression(e)) return undefined;
-      // module.exports.foo
-      if (isModuleExports(e.expression)) return e.name.text;
+      // module.exports.foo (or its rewritten export-cell spelling)
+      if (isCjsModuleExportsObject(e.expression)) return e.name.text;
       // exports.foo
       if (ts.isIdentifier(e.expression) && e.expression.text === "exports") return e.name.text;
       return undefined;
@@ -3261,10 +3300,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             // pre-unwrap under the carrier so the declared result matches the
             // raw-T body (else externref-result vs f64-body = invalid Wasm).
             // Carrier-gated → off-carrier bytes identical.
-            const effRetType =
-              isStandalonePromiseActive(ctx) && hasAsyncModifier(fnExpr)
-                ? unwrapPromiseType(retType, ctx.checker)
-                : retType;
+            const effRetType = hasAsyncModifier(fnExpr) ? unwrapPromiseType(retType, ctx.checker) : retType;
             const results = isVoidType(effRetType) ? [] : [resolveWasmType(ctx, effRetType)];
             const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
             const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
@@ -3331,10 +3367,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           // function-expression export; pre-unwrap an async fn's Promise<T>
           // result under the carrier so the declared result matches the raw-T
           // body. Carrier-gated → off-carrier bytes identical.
-          const effRetType =
-            isStandalonePromiseActive(ctx) && hasAsyncModifier(fnExpr)
-              ? unwrapPromiseType(retType, ctx.checker)
-              : retType;
+          const effRetType = hasAsyncModifier(fnExpr) ? unwrapPromiseType(retType, ctx.checker) : retType;
           const results = isVoidType(effRetType) ? [] : [resolveWasmType(ctx, effRetType)];
           const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
           const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
@@ -3381,7 +3414,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // otherwise local→global sync either loses identity or emits a
         // mismatched global.set.
         const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
-        registerModuleGlobal(ctx, element.name.text, wasmType);
+        registerModuleGlobal(ctx, element.name.text, wasmType, element);
         if (lexical && ctx.moduleGlobals.has(element.name.text)) registerModulePatternTdzGlobal(ctx, element);
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         registerBindingNames(element.name, lexical);
@@ -3545,6 +3578,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       return { kind: "externref" };
     }
     if (proxyOrTransferredResultNeedsExternref(ctx, decl)) return { kind: "externref" };
+    if (bindingHoldsStandaloneClassProto(ctx, decl)) return { kind: "externref" }; // (#7053)
     // A host builtin static read (`Date.now`, `Object.hasOwn`, …) is a genuine
     // JS function, not a Wasm closure struct.  Conditional/short-circuit
     // initializers can select either that externref or a compiled closure, so
@@ -3732,6 +3766,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // its vec slot but widens the ELEMENT type — a boxed carrier would preserve
     // `x[0]`'s identity and lose `x.length`.
     return (
+      aliasedModuleGlobalVecType(ctx, decl, (d) => moduleGlobalWasmType(d, moduleVarDeclType(d))) ?? // (#7166) `const r = keys.sort()` shares `keys`' slot
       rebindWidenedArrayVecType(ctx, sourceFile, decl) ??
       heterogeneousWidenedModuleGlobalType(ctx, sourceFile, decl) ??
       // (#4491 wave-5 T4) `var x = true; … var x = function () {}` is ONE
@@ -4449,6 +4484,12 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // keep, so the statement compiled to NOTHING. Measurement and scope:
         // class-proto-toplevel-write.ts.
         if (isTopLevelClassPrototypeWrite(ctx, expr.left)) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
+        }
+        // (#6950) `o.F.prototype.m = …`, `o.F` a callable member of a top-level
+        // function (Octane splay). Both lanes; scope: isMemberHeldFnctorPrototypeWrite.
+        if (isMemberHeldFnctorPrototypeWrite(ctx, expr.left)) {
           ctx.moduleInitStatements.push(stmt);
           continue;
         }
@@ -6089,43 +6130,6 @@ export function compileDeclarations(
     };
   }
 
-  /**
-   * Keep the public initializer a compact dispatcher even for a graph with so
-   * many chunks that one direct call per chunk would itself become a large
-   * Cranelift body. Every intermediate node stays private and `[] -> []`.
-   */
-  function appendModuleInitChunkDispatch(
-    initFctx: FunctionContext,
-    initialHandles: readonly FuncHandle[],
-    helperTypeIdx: number,
-  ): void {
-    let handles = [...initialHandles];
-    let level = 0;
-    let ordinal = 0;
-    while (handles.length > MODULE_INIT_CHUNK_MAX_ENTRIES) {
-      const nextLevel: FuncHandle[] = [];
-      for (let start = 0; start < handles.length; start += MODULE_INIT_CHUNK_MAX_ENTRIES) {
-        const body: Instr[] = handles
-          .slice(start, start + MODULE_INIT_CHUNK_MAX_ENTRIES)
-          .map((funcIdx) => ({ op: "call", funcIdx }));
-        // Build the full body before minting the handle. This keeps the helper
-        // safe even if a future dispatch-body extension emits dependencies.
-        const funcIdx = mintDefinedFunc(ctx);
-        pushDefinedFunc(ctx, funcIdx, {
-          name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_dispatch_${level}_${ordinal++}`),
-          typeIdx: helperTypeIdx,
-          locals: [],
-          body,
-          exported: false,
-        });
-        nextLevel.push(funcIdx);
-      }
-      handles = nextLevel;
-      level++;
-    }
-    for (const funcIdx of handles) initFctx.body.push({ op: "call", funcIdx });
-  }
-
   function compileModuleInitBody(
     targetFctx?: FunctionContext,
     includeModuleStatements = true,
@@ -6152,92 +6156,9 @@ export function compileDeclarations(
     ctx.currentFunc = initFctx;
     mintUntypedRegExpReceiverMembers(ctx, initFctx, sourceFile); // (#6651 B10) untyped-RegExp proto reads
 
-    // (#5271 step 8) §16.1.7 GlobalDeclarationInstantiation step 5.d — a
-    // top-level lexical declaration whose name is a RESTRICTED GLOBAL
-    // (`undefined`, `NaN`, `Infinity`: own, non-configurable properties of the
-    // global object) is a SyntaxError. The Script goal decides this at
-    // instantiation, i.e. before ANY statement of the script runs, so the throw
-    // is the very first instruction of `__module_init`. The runner accepts a
-    // runtime throw for `negative: { phase: runtime }`; this deliberately is
-    // NOT a compile diagnostic.
-    if (ctx.restrictedGlobalLexicalName !== undefined) {
-      emitThrowJsError(
-        ctx,
-        initFctx,
-        "SyntaxError",
-        `Identifier '${ctx.restrictedGlobalLexicalName}' has already been declared`,
-      );
-      initFctx.body.push({ op: "unreachable" });
-    }
-
-    // (#4489, subsuming the #4264 `with`-body seed) §9.1.1.4.18: every
-    // module-scope `var` reads as `undefined` before its declaration. Must stay
-    // AHEAD of the function-binding seeds below — rationale, scope and the
-    // measured before/after in `declarations/module-var-undefined-seed.ts`.
-    emitModuleVarUndefinedSeeds(ctx, sourceFile, initFctx);
-
-    // (#2931) Seed each reassigned-function live-binding global with the
-    // function's closure BEFORE any user init statement runs, so a read of the
-    // name before its reassignment still yields the function. Emitted via
-    // `emitCachedFuncClosureAccess` (NOT the identifier read-path, which would
-    // recurse into the live-binding `global.get` arm). Dedupe by global index so
-    // an import alias sharing the same global is seeded once.
-    // (#4394) §9.1.1.4.18 — a SCRIPT's top-level function declarations are own
-    // properties of the global object. Seeded here, ahead of every user
-    // statement, which is what declaration hoisting requires.
-    emitScriptGlobalFunctionBindings(ctx, initFctx);
-    // (#4491 T4) §9.1.1.4.17 — and the `var` twin of the same instantiation
-    // step, AFTER the functions so a name declared both ways keeps the function
-    // binding GDI actually initialises. See global-var-bindings.ts.
-    emitScriptGlobalVarBindings(ctx, initFctx, sourceFile);
-
-    if (ctx.liveFuncBindingGlobals && ctx.liveFuncBindingGlobals.size > 0) {
-      const seededGlobals = new Set<number>();
-      for (const liveName of ctx.liveFuncBindingGlobals) {
-        // (#4182) A module-scope Annex B block-fn binding starts as `undefined`
-        // (B.3.3.2.b CreateGlobalFunctionBinding(F, undefined)) unless a real
-        // top-level `function f` also exists — GDI initializes only that one.
-        // Without this split, pass 2 of the #2965 two-pass init compile would
-        // seed the block function's closure (its funcMap entry exists by then),
-        // making the pre-evaluation read wrongly observe the function. Under
-        // the `undefinedSingleton` regime the binding must read as `undefined`,
-        // not `null`, so seed the `$undefined` singleton rather than leaving
-        // the `ref.null.extern` global init.
-        if (!annexBModuleGlobalSeedsFromTopLevel(ctx, liveName)) {
-          // Standalone/WASI only: the host lane's `undefined` IS the null
-          // extern (a host boundary crossing reads it back as undefined),
-          // while the tag-1 singleton would surface to host helpers as an
-          // opaque object (`typeof` → "object", `=== undefined` → false).
-          const annexBGlobalIdx = ctx.moduleGlobals.get(liveName);
-          if (
-            (ctx.standalone || ctx.wasi) &&
-            annexBGlobalIdx !== undefined &&
-            !seededGlobals.has(annexBGlobalIdx) &&
-            emitUndefinedExtern(ctx, initFctx)
-          ) {
-            initFctx.body.push({ op: "global.set", index: annexBGlobalIdx });
-            seededGlobals.add(annexBGlobalIdx);
-          }
-          continue;
-        }
-        const liveGlobalIdx = ctx.moduleGlobals.get(liveName);
-        const liveFuncIdx = ctx.funcMap.get(liveName);
-        if (liveGlobalIdx === undefined || liveFuncIdx === undefined) continue;
-        if (seededGlobals.has(liveGlobalIdx)) continue;
-        const closureType = emitCachedFuncClosureAccess(ctx, initFctx, liveName, liveFuncIdx);
-        if (closureType === null) {
-          // Could not build the closure — leave the global null-initialised.
-          continue;
-        }
-        // Closure struct (internal ref) → externref for the externref global.
-        initFctx.body.push({ op: "extern.convert_any" });
-        if (ctx.runtimeEvalGlobalFunctionBindings) {
-          emitRuntimeEvalAotCallableAdapter(ctx, initFctx);
-        }
-        initFctx.body.push({ op: "global.set", index: liveGlobalIdx });
-        seededGlobals.add(liveGlobalIdx);
-      }
-    }
+    // (#7106) GlobalDeclarationInstantiation prologue — shared with the
+    // IR-claimed initializer, which runs it as a private helper.
+    emitModuleInitPrologue(ctx, sourceFile, initFctx);
 
     // The async graph frame enters this helper once for declaration
     // instantiation and then again through its state-machine segments for
@@ -6275,18 +6196,11 @@ export function compileDeclarations(
           // entries above. Only then mint and push this helper's stable handle,
           // so no late helper registration can steal its function slot.
           chunkTypeIdx ??= addFuncType(ctx, [], [], "__module_init_chunk_type");
-          const funcIdx = mintDefinedFunc(ctx);
-          pushDefinedFunc(ctx, funcIdx, {
-            name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_${chunkOrdinal++}`),
-            typeIdx: chunkTypeIdx,
-            locals: chunkFctx.locals,
-            body: chunkFctx.body,
-            exported: false,
-          });
-          chunkHandles.push(funcIdx);
+          const funcIdx = emitModuleInitChunk(ctx, chunkOrdinal++, chunkTypeIdx, chunkFctx);
+          if (funcIdx !== undefined) chunkHandles.push(funcIdx);
         }
         ctx.currentFunc = initFctx;
-        if (chunkTypeIdx !== undefined) appendModuleInitChunkDispatch(initFctx, chunkHandles, chunkTypeIdx);
+        if (chunkTypeIdx !== undefined) dispatchModuleInitChunks(ctx, initFctx.body, chunkHandles, chunkTypeIdx);
       } finally {
         if (!outerBodyWasLive) ctx.liveBodies.delete(initFctx.body);
       }
@@ -6384,7 +6298,7 @@ export function compileDeclarations(
       if (stmt.name && stmt.body && lastFnWithBody.get(stmt.name.text) !== stmt) continue;
       const fnName = stmt.name ? stmt.name.text : "default";
       if (stmt.body) {
-        const idx = funcByName.get(fnName);
+        const idx = sourceFunctionPositionForDeclaration(ctx, stmt) ?? funcByName.get(fnName);
         if (idx !== undefined) {
           const func = ctx.mod.functions[idx]!;
           // (#2138/#3521) Skip direct body emission. The compatibility overlay
@@ -6490,13 +6404,8 @@ export function compileDeclarations(
       } else if (ts.isPropertyAccessExpression(left)) {
         // module.exports.foo or exports.foo
         const inner = left.expression;
-        const isModExports =
-          ts.isPropertyAccessExpression(inner) &&
-          ts.isIdentifier(inner.expression) &&
-          inner.expression.text === "module" &&
-          inner.name.text === "exports";
         const isExports = ts.isIdentifier(inner) && inner.text === "exports";
-        if (isModExports || isExports) {
+        if (isCjsModuleExportsObject(inner) || isExports) {
           fnExpr = expr.right;
           funcName = left.name.text;
         }

@@ -593,12 +593,7 @@ export function tryRegExpConstructorCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
-  if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    !expr.questionDotToken &&
-    ts.isIdentifier(expr.expression) &&
-    isGlobalRegExpIdentifier(ctx, expr.expression)
-  ) {
+  if (!expr.questionDotToken && ts.isIdentifier(expr.expression) && isGlobalRegExpIdentifier(ctx, expr.expression)) {
     return compileStandaloneRegExpConstructor(ctx, fctx, expr.arguments ?? [], expr);
   }
   // (#6713) …and a typed ALIAS of the RegExp / Error-family constructor
@@ -767,8 +762,7 @@ export function emitObjectCoercion(
     // the standalone i64 carrier truncates it before Object(v) can preserve the
     // primitive in the wrapper's [[BigIntData]] slot. Native-first/host-free
     // targets keep the established i64 ABI and native `$BigInt` wrapper.
-    const hostBigInt = !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first";
-    const bigIntCarrier: ValType = hostBigInt ? { kind: "externref" } : { kind: "i64", bigint: true };
+    const bigIntCarrier: ValType = { kind: "i64", bigint: true };
     compileExpression(ctx, fctx, args[0]!, bigIntCarrier);
     const newBigIntIdx = ensureLateImport(ctx, "__new_BigInt", [bigIntCarrier], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);

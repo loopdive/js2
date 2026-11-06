@@ -20,11 +20,21 @@ type ExportsSource = { getExports(): Record<string, Function> | undefined } | un
 
 export function wrapConsoleForHost(
   capability: Function,
-  intent: { type: string; variant?: string },
+  intent: { type: string; variant?: string; name?: string },
   exportsSource: ExportsSource,
   primitiveToHost: (value: any, exports: Record<string, Function> | undefined) => unknown,
   miss: unknown,
+  fromHost?: (value: unknown, exports: Record<string, Function>) => unknown,
 ): Function {
+  // (#6890) `console` read as a VALUE (native regime: `global_console`) crosses
+  // the value boundary, which ADMITS the host object so its members read through
+  // the boundary object MOP. Before exports exist (start section) it passes raw.
+  if (intent.type === "declared_global" && intent.name === "console" && fromHost) {
+    return () => {
+      const exports = exportsSource?.getExports();
+      return exports ? fromHost(capability(), exports) : capability();
+    };
+  }
   if (intent.type !== "console_log" || intent.variant === undefined || intent.variant.endsWith("bool")) {
     return capability;
   }

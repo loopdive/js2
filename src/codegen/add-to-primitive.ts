@@ -69,7 +69,6 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
  * in the dispatch), and anything statically numeric or string.
  */
 export function admitsObjectAdd(ctx: CodegenContext, left: ts.Type, right: ts.Type): boolean {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
   if ((left.flags & TO_PRIMITIVE_EXCLUDED_FLAGS) !== 0 || (right.flags & TO_PRIMITIVE_EXCLUDED_FLAGS) !== 0) {
     return false;
@@ -123,7 +122,6 @@ export function addOperandCallableSourceText(
   fctx: FunctionContext,
   expr: ts.Expression,
 ): string | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   if (!ts.isIdentifier(expr)) return undefined;
   const captured = ctx.funcSourceText.get(expr.text);
   if (!captured) return undefined;

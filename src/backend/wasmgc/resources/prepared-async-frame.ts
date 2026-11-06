@@ -2,14 +2,10 @@
 
 import { createIrBindingId } from "../../../shared/contracts/identity-values.js";
 import type { IrBindingId } from "../../../shared/contracts/ir-identity.js";
-import type {
-  PreparedHostAsyncFramePlan,
-  PreparedAsyncFrameSignatureType,
-} from "../../../ir/program/prepared-async-frame-plan.js";
+import type { PreparedHostAsyncFramePlan } from "../../../ir/program/prepared-async-frame-plan.js";
 import type { PreparedIrFunction } from "../../../ir/runtime/contracts/prepared.js";
 import { assertPreparedIrAsyncRuntimeCurrent } from "../../../ir/runtime/async-attachment.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
-import type { ValType } from "../../../wasm/model/instructions.js";
 import type { StructTypeDef, WasmFunction } from "../../../wasm/model/module-records.js";
 import type {
   PhysicalModuleReservations,
@@ -24,6 +20,7 @@ import type {
   PreparedFrameFunction,
   PreparedIrAsyncFrameResources,
 } from "../../../runtime/wasmgc/async/prepared-async-frame-types.js";
+import { reservePreparedFrameLayout } from "./prepared-frame-layout.js";
 import { emitPreparedIrAsyncFrame } from "../async/prepared-async-frame-adapter.js";
 
 export interface PreparedAsyncFrameReservations {
@@ -47,29 +44,7 @@ export function reservePreparedAsyncFrame(
   plan: PreparedHostAsyncFramePlan,
   entry: FunctionReservation,
 ): PreparedAsyncFrameReservations {
-  if (entry.key !== plan.primary.bindingId) fail("foreign primary slot");
-  const frame = transaction.reserveType(plan.frame.entry.id, {
-    kind: "struct",
-    name: plan.frame.entry.displayName,
-    fields: plan.frame.fields.map((field) => ({ ...field })),
-  });
-  const value = (type: PreparedAsyncFrameSignatureType): ValType => {
-    if (type.kind !== "support-ref") return type;
-    if (type.ref.binding.bindingId !== plan.frame.entry.id) return fail("foreign frame signature");
-    return { kind: type.nullable ? "ref_null" : "ref", typeIdx: frame.typeIndex };
-  };
-  const reserve = (row: PreparedHostAsyncFramePlan["primary"]): FunctionReservation =>
-    transaction.reserveFunction(row.bindingId, row.entry.displayName, {
-      params: row.params.map(value),
-      results: row.results.map(value),
-    });
-  const result = Object.freeze({
-    frame,
-    entry,
-    resume: reserve(plan.auxiliaries.resume),
-    fulfillStep: reserve(plan.auxiliaries.fulfillStep),
-    rejectStep: reserve(plan.auxiliaries.rejectStep),
-  });
+  const result = reservePreparedFrameLayout(transaction, plan, entry);
   owners.set(result, { transaction, plan });
   return result;
 }

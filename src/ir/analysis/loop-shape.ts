@@ -23,6 +23,7 @@
  */
 import { forEachChild, ts } from "../../ts-api.js";
 import { collectPatternBindingNames, collectReferencedIdentifiers } from "./ast-scope.js";
+import { isLexicalBindingWrite } from "../../shared/binding-writes.js";
 
 /**
  * Detect integer loop counter pattern: for (let i = INT; i < EXPR; i++)
@@ -482,41 +483,106 @@ export function findHeadBindingsCapturedByClosures(stmt: ts.ForStatement, headNa
 
 /**
  * #1589: Find every identifier name that appears inside a nested closure
- * anywhere in the for-loop's condition/incrementor/body. Used to pre-emptively
- * box outer-scope (`var`-declared or enclosing-function) variables before
- * compiling the loop condition.
+ * anywhere in a loop's per-iteration parts (for: condition/incrementor/body;
+ * while/do-while: condition/body; for-in/for-of: head/subject/body). Used to
+ * pre-emptively box outer-scope (`var`-declared, parameter or
+ * enclosing-function) variables before compiling the loop condition.
  *
  * Without this pre-pass, the closure-construction codegen promotes the
  * variable to a ref-cell mid-loop. The loop condition (compiled first) reads
  * the original unboxed slot, while the incrementor (compiled after the body)
  * writes through the ref cell — so the condition's view never updates and the
- * loop spins forever.
+ * loop spins forever. (#6960) The construction site also re-wraps the raw slot
+ * into a FRESH cell every time it runs, dropping the previous iteration's write.
  */
-export function findAllNamesCapturedByClosuresInForLoop(stmt: ts.ForStatement): Set<string> {
+export function findAllNamesCapturedByClosuresInLoop(stmt: ts.IterationStatement): Set<string> {
   const captured = new Set<string>();
-  function visit(node: ts.Node | undefined): void {
-    if (!node) return;
-    if (
-      ts.isArrowFunction(node) ||
-      ts.isFunctionExpression(node) ||
-      ts.isFunctionDeclaration(node) ||
-      ts.isMethodDeclaration(node) ||
-      ts.isGetAccessorDeclaration(node) ||
-      ts.isSetAccessorDeclaration(node) ||
-      ts.isClassDeclaration(node) ||
-      ts.isClassExpression(node)
-    ) {
-      const refs = new Set<string>();
-      collectReferencedIdentifiers(node, refs);
-      for (const n of refs) captured.add(n);
-      return;
+  const visit = (node: ts.Node | undefined): void => collectNamesCapturedByClosures(node, captured);
+  if (ts.isForStatement(stmt)) {
+    visit(stmt.condition);
+    visit(stmt.incrementor);
+  } else if (ts.isForInStatement(stmt) || ts.isForOfStatement(stmt)) {
+    visit(stmt.initializer);
+    visit(stmt.expression);
+  } else if (ts.isWhileStatement(stmt) || ts.isDoStatement(stmt)) {
+    visit(stmt.expression);
+  }
+  visit(stmt.statement);
+  return captured;
+}
+
+/**
+ * Add to `out` every identifier name referenced from a nested closure (arrow,
+ * function expression/declaration, method, accessor, class) inside `node`.
+ * Scope-aware per closure (`collectReferencedIdentifiers`). Shared by the loop
+ * pre-box (#1589) and the try/finally pre-box (#6993).
+ */
+export function collectNamesCapturedByClosures(node: ts.Node | undefined, out: Set<string>): void {
+  if (!node) return;
+  if (
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isFunctionDeclaration(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isClassDeclaration(node) ||
+    ts.isClassExpression(node)
+  ) {
+    collectReferencedIdentifiers(node, out);
+    return;
+  }
+  forEachChild(node, (child) => collectNamesCapturedByClosures(child, out));
+}
+
+/** Push every identifier name inside an assignment target (destructuring included). */
+function collectAssignmentTargetNames(target: ts.Node, out: Set<string>): void {
+  if (ts.isIdentifier(target)) {
+    out.add(target.text);
+    return;
+  }
+  if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) return;
+  forEachChild(target, (child) => collectAssignmentTargetNames(child, out));
+}
+
+/** (#6960) Names a for-in/for-of head binds or assigns; empty for other loops. */
+export function findForInOfHeadNames(stmt: ts.IterationStatement): Set<string> {
+  const names = new Set<string>();
+  if (!ts.isForInStatement(stmt) && !ts.isForOfStatement(stmt)) return names;
+  if (ts.isVariableDeclarationList(stmt.initializer)) {
+    for (const decl of stmt.initializer.declarations) {
+      for (const n of collectPatternBindingNames(decl.name)) names.add(n);
+    }
+  } else {
+    collectAssignmentTargetNames(stmt.initializer, names);
+  }
+  return names;
+}
+
+/**
+ * (#6960) Names a loop may WRITE on some iteration: assignment / update
+ * targets, `var` re-declarations and for-in/for-of head bindings anywhere in
+ * the loop — including inside nested closures (a write from a closure built in
+ * the loop is still a write the loop condition must observe). Scope-unaware on
+ * purpose: over-approximating only boxes a binding that did not strictly need
+ * it. The pre-box admits a parameter, or any binding of a non-`for` loop, only
+ * when it is in this set, so read-only captures keep their unboxed slot.
+ * (#6993) Node-generic: the try/finally pre-box scans a whole `TryStatement`.
+ */
+export function findNamesWrittenInLoop(stmt: ts.Node): Set<string> {
+  const written = new Set<string>();
+  function visit(node: ts.Node): void {
+    // (#6992) The shared write contract: assignment / update / destructuring
+    // targets and for-in/for-of heads.
+    if (ts.isIdentifier(node) && isLexicalBindingWrite(node)) {
+      written.add(node.text);
+    } else if (ts.isVariableDeclaration(node)) {
+      for (const n of collectPatternBindingNames(node.name)) written.add(n);
     }
     forEachChild(node, visit);
   }
-  visit(stmt.condition);
-  visit(stmt.incrementor);
-  visit(stmt.statement);
-  return captured;
+  visit(stmt);
+  return written;
 }
 
 /**
@@ -534,7 +600,7 @@ export function findAllNamesCapturedByClosuresInForLoop(stmt: ts.ForStatement): 
  * We do NOT descend into nested closures or nested blocks/loops: only bindings
  * whose scope is the loop body's own lexical environment matter here.
  */
-export function findBodyLocalLexicalNames(stmt: ts.ForStatement): Set<string> {
+export function findBodyLocalLexicalNames(stmt: ts.IterationStatement): Set<string> {
   const names = new Set<string>();
   const body = stmt.statement;
   const statements = ts.isBlock(body) ? body.statements : [body];
@@ -552,22 +618,6 @@ export function findBodyLocalLexicalNames(stmt: ts.ForStatement): Set<string> {
       names.add(s.name.text);
     } else if (ts.isClassDeclaration(s) && s.name) {
       names.add(s.name.text);
-    }
-  }
-  return names;
-}
-
-/** Collect all identifier names from a binding pattern (ObjectBindingPattern or ArrayBindingPattern) */
-export function collectBindingNames(pattern: ts.BindingPattern): string[] {
-  const names: string[] = [];
-  for (const element of pattern.elements) {
-    if (ts.isOmittedExpression(element)) continue;
-    if (ts.isBindingElement(element)) {
-      if (ts.isIdentifier(element.name)) {
-        names.push(element.name.text);
-      } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
-        names.push(...collectBindingNames(element.name));
-      }
     }
   }
   return names;

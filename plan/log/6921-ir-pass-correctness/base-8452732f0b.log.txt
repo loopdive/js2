@@ -1,0 +1,63 @@
+# base-arm probe capture — main 8452732f0b, 2026-10-08T21:32Z, node v22.22.0
+# probe sources are stored as *.txt so no tooling picks them up; to replay: copy them to a scratch dir, drop the .txt suffix, point run.mts at <repo>/src/index.ts and src/runtime.ts, then run the commands below with npx tsx
+
+$ npx tsx ref.mts
+node t10.main 105007
+node t11.main 70 t11.loop(5) 25 t12.loop(5) 25
+node t9.tonum 1 c=1
+node t9.eqq 1 c=1
+node t9.twice 20 c=2
+
+$ npx tsx run.mts t10.ts main
+gc-IR => 6007 c=undefined    g:emitted[IR] main:emitted[IR] <module-init>:non-executable
+gc-legacy => 105007 c=undefined    
+linear => 105007 c=undefined    
+standalone => 6007 c=undefined    g:emitted[IR] main:emitted[IR] <module-init>:non-executable
+
+$ npx tsx run.mts t11.ts main
+gc-IR COMPILE FAIL Codegen error: IR path failed for main: post-inline verify: slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots); slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 sl
+gc-legacy => 70 c=undefined    
+linear => 70 c=undefined    
+standalone COMPILE FAIL Codegen error: IR path failed for main: post-inline verify: slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots); slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 sl
+
+$ npx tsx run.mts t11.ts loop [5]
+gc-IR COMPILE FAIL Codegen error: IR path failed for main: post-inline verify: slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots); slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 sl
+gc-legacy => 25 c=undefined    
+linear => 25 c=undefined    
+standalone COMPILE FAIL Codegen error: IR path failed for main: post-inline verify: slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots); slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 sl
+
+$ npx tsx run.mts t12.ts loop [5]
+gc-IR => 25 c=undefined    g:emitted[IR] loop:emitted[IR] <module-init>:non-executable
+gc-legacy => 25 c=undefined    
+linear => 25 c=undefined    
+standalone => 25 c=undefined    g:emitted[IR] loop:emitted[IR] <module-init>:non-executable
+
+$ npx tsx run.mts t9.ts tonum '[(globalThis.__c=0,{valueOf(){globalThis.__c++;return 10}})]'
+gc-IR => 1 c=0    getr:unsupported[legacy](param-type-not-resolvable) tonum:emitted[IR][legacy] eqq:emitted[IR][legacy] twice:emitted[IR][legacy] <module-init>:non-executable
+gc-legacy => 1 c=1    
+linear COMPILE FAIL Codegen error: Unsupported property access: .x
+standalone => 1 c=0    getr:unsupported[legacy](param-type-not-resolvable) tonum:emitted[IR][legacy] eqq:emitted[IR][legacy] twice:emitted[IR][legacy] <module-init>:non-executable
+
+$ npx tsx run.mts t9.ts eqq '[(globalThis.__c=0,{valueOf(){globalThis.__c++;return 10}})]'
+gc-IR => 1 c=0    getr:unsupported[legacy](param-type-not-resolvable) tonum:emitted[IR][legacy] eqq:emitted[IR][legacy] twice:emitted[IR][legacy] <module-init>:non-executable
+gc-legacy => 1 c=1    
+linear COMPILE FAIL Codegen error: Unsupported property access: .x
+standalone => 1 c=0    getr:unsupported[legacy](param-type-not-resolvable) tonum:emitted[IR][legacy] eqq:emitted[IR][legacy] twice:emitted[IR][legacy] <module-init>:non-executable
+
+$ npx tsx run.mts t9.ts twice '[(globalThis.__c=0,{valueOf(){globalThis.__c++;return 10}})]'
+gc-IR => 20 c=2    getr:unsupported[legacy](param-type-not-resolvable) tonum:emitted[IR][legacy] eqq:emitted[IR][legacy] twice:emitted[IR][legacy] <module-init>:non-executable
+gc-legacy => 20 c=2    
+linear COMPILE FAIL Codegen error: Unsupported property access: .x
+standalone => NaN c=0    getr:unsupported[legacy](param-type-not-resolvable) tonum:emitted[IR][legacy] eqq:emitted[IR][legacy] twice:emitted[IR][legacy] <module-init>:non-executable
+
+$ JS2WASM_IR_GVN=1 npx tsx run.mts t9.ts twice '[(globalThis.__c=0,{valueOf(){globalThis.__c++;return 10}})]'
+gc-IR => 20 c=1    getr:unsupported[legacy](param-type-not-resolvable) tonum:emitted[IR][legacy] eqq:emitted[IR][legacy] twice:emitted[IR][legacy] <module-init>:non-executable
+gc-legacy => 20 c=2    
+linear COMPILE FAIL Codegen error: Unsupported property access: .x
+standalone => NaN c=0    getr:unsupported[legacy](param-type-not-resolvable) tonum:emitted[IR][legacy] eqq:emitted[IR][legacy] twice:emitted[IR][legacy] <module-init>:non-executable
+
+$ npx tsx run.mts t9.ts tonum '[{valueOf(){throw new Error("boom")}}]'
+gc-IR => 1 c=undefined    getr:unsupported[legacy](param-type-not-resolvable) tonum:emitted[IR][legacy] eqq:emitted[IR][legacy] twice:emitted[IR][legacy] <module-init>:non-executable
+gc-legacy => "THREW boom" c=undefined    
+linear COMPILE FAIL Codegen error: Unsupported property access: .x
+standalone => 1 c=undefined    getr:unsupported[legacy](param-type-not-resolvable) tonum:emitted[IR][legacy] eqq:emitted[IR][legacy] twice:emitted[IR][legacy] <module-init>:non-executable

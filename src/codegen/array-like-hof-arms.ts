@@ -412,7 +412,7 @@ export function emitArrayLikeHofArm(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...gatedBody([
+              ...(nativeBuilder ? positionalMapGate(ctx, hasIdxCheck, resultTmp, arrPushIdx!) : gatedBody)([
                 ...loadElem,
                 ...withThisInstalled(callClosure),
                 ...mapReturnToExternref,
@@ -764,4 +764,31 @@ export function emitArrayLikeHofArm(
     default:
       return undefined;
   }
+}
+
+/**
+ * (#6898) Gate for the native array-like `map` loop. Its `__objvec_push` store is
+ * positional, so an index the HasProperty gate skips must still occupy its slot
+ * (the hole reads back as `undefined`); otherwise `map.call({5: v, length: 100}, f)`
+ * answered a 1-element array with `f(v)` at index 0.
+ */
+function positionalMapGate(
+  ctx: CodegenContext,
+  hasIdxCheck: Instr[],
+  resultTmp: number,
+  pushIdx: number,
+): (inner: Instr[]) => Instr[] {
+  return (inner) => [
+    ...hasIdxCheck,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: inner,
+      else: [
+        { op: "local.get", index: resultTmp },
+        ...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } satisfies Instr]),
+        { op: "call", funcIdx: pushIdx },
+      ],
+    },
+  ];
 }

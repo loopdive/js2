@@ -594,10 +594,13 @@ export function test(): number {
     (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
     const exports = wrapExports(instance, { signatures: result.exportSignatures }) as unknown as { test(): number };
 
-    // No source-certified arm is emitted for `(Node | undefined) => ...`:
-    // host `undefined` is not Wasm null, so `ref.cast_null` would trap. The
-    // existing dynamic-dispatch miss remains a catchable TypeError instead.
-    expect(() => exports.test()).toThrow(/Cannot access property on null or undefined/);
+    // No source-certified arm may be emitted for `(Node | undefined) => ...`:
+    // host `undefined` is not Wasm null, so `ref.cast_null` would trap. When
+    // this was pinned, the dynamic-dispatch miss surfaced as a catchable
+    // TypeError, and the pin recorded that interim answer. The dispatch now
+    // reaches the callback and answers what JS answers (`42`) — the property
+    // this guards is still "no illegal-cast trap".
     expect(() => exports.test()).not.toThrow(/illegal cast/);
+    expect(exports.test()).toBe(42);
   });
 });

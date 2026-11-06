@@ -1,0 +1,17 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a4022d934675184ae
+
+ ✓ tests/issue-6931-standalone-host-loose-eq.test.ts (6 tests) 3953ms
+   ✓ #6931 standalone loose == on a host value in an `any` parameter > IR path stays IR-emitted on gc  1410ms
+   ✓ #6931 standalone loose == on a host value in an `any` parameter > IR path stays IR-emitted on standalone  655ms
+   ✓ #6931 standalone loose == on a host value in an `any` parameter > gc: IR and legacy sources match Node for every input  347ms
+   ✓ #6931 standalone loose == on a host value in an `any` parameter > standalone IR path: native inputs match Node, host inputs throw the deliberate TypeError  386ms
+   ✓ #6931 standalone loose == on a host value in an `any` parameter > standalone legacy path: same decision as the IR path  563ms
+   ✓ #6931 standalone loose == on a host value in an `any` parameter > standalone: the refusal is a catchable TypeError inside the module  588ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  21:35:12
+   Duration  42.14s (transform 26.65s, setup 0ms, collect 37.64s, tests 3.95s, environment 0ms, prepare 91ms)
+
+EXIT 0

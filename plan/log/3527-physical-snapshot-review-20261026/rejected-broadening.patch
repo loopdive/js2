@@ -1,0 +1,246 @@
+--- a/src/wasm/physical/module-reservations.ts
++++ b/src/wasm/physical/module-reservations.ts
+@@ -178,43 +178,6 @@
+   | Instr[]
+   | LocalDef[];
+ 
+-// Snapshots describe plain compiler-produced data, not transport authentication.
+-// JSON alone erases NaN/infinities/-0 and present-undefined fields. Encode all
+-// scalar kinds and own field presence explicitly, including array holes/length.
+-// No Node dependency: the same snapshots work in the browser compiler.
+-function dataText(data: PhysicalData): string {
+-  const active = new Set<object>();
+-  const numberBits = new DataView(new ArrayBuffer(8));
+-  const encode = (value: object | string | number | bigint | boolean | undefined | null): string => {
+-    if (value === null) return "null";
+-    if (value === undefined) return "undefined";
+-    switch (typeof value) {
+-      case "string":
+-        return `string:${JSON.stringify(value)}`;
+-      case "boolean":
+-        return `boolean:${value}`;
+-      case "bigint":
+-        return `bigint:${value}`;
+-      case "number":
+-        // Same Float64 store as WasmEncoder.f64: even distinct NaN payloads
+-        // can change emitted bytes. Do not normalize or stringify the value.
+-        numberBits.setFloat64(0, value, true);
+-        return `number:${numberBits.getUint32(4, true).toString(16).padStart(8, "0")}${numberBits.getUint32(0, true).toString(16).padStart(8, "0")}`;
+-      case "object": {
+-        if (active.has(value)) throw new Error("cyclic physical descriptor");
+-        active.add(value);
+-        const tag = Array.isArray(value) ? `array:${value.length}` : value instanceof Uint8Array ? "bytes" : "object";
+-        const fields = Object.entries(value).map(([key, entry]) => `${JSON.stringify(key)}:${encode(entry)}`);
+-        active.delete(value);
+-        return `${tag}{${fields.join(",")}}`;
+-      }
+-      default:
+-        throw new Error("unsupported physical descriptor value");
+-    }
+-  };
+-  return encode(data);
+-}
+-
+ /**
+  * Completion ledger around the existing module allocator. Start on empty
+  * physical storage; reserve the complete ordered demand set, freeze, fill,
+@@ -229,22 +192,22 @@
+   readonly #tokens = new Set<PhysicalReservation>();
+   readonly #objects = new Set<object>();
+   readonly #positions = new Map<PhysicalReservation, number>();
+-  readonly #records = new Map<PhysicalReservation, string>();
+-  readonly #typeRecords = new Map<TypeDef, { text: string; members: readonly TypeDef[] }>();
++  readonly #records = new Map<PhysicalReservation, PhysicalDataSnapshot>();
++  readonly #typeRecords = new Map<TypeDef, { snapshot: PhysicalDataSnapshot; members: readonly TypeDef[] }>();
+   readonly #arrays: { [K in PopulationKey]: PhysicalModuleStorage[K] };
+   readonly #expected: { [K in PopulationKey]: PhysicalModuleStorage[K] };
+   readonly #filledFunctions = new Map<
+     FunctionReservation,
+     { locals: LocalDef[]; body: Instr[]; snapshot: PhysicalDataSnapshot }
+   >();
+-  readonly #filledGlobals = new Map<GlobalReservation, { init: Instr[]; text: string }>();
+-  readonly #publications = new Map<Element | WasmExport, string>();
++  readonly #filledGlobals = new Map<GlobalReservation, { init: Instr[]; snapshot: PhysicalDataSnapshot }>();
++  readonly #publications = new Map<Element | WasmExport, PhysicalDataSnapshot>();
+   readonly #exportNames = new Set<string>();
+   #start: number | undefined;
+   #startPresent: boolean;
+   #canonicalGroup: PhysicalModuleStorage["canonicalRuntimeRecGroup"];
+   #canonicalGroupPresent: boolean;
+-  #canonicalGroupText: string;
++  #canonicalGroupSnapshot: PhysicalDataSnapshot;
+   #canonicalGroupRegistered = false;
+   #importsClosed = false;
+   #checkingSelfDefinition = false;
+@@ -254,7 +217,7 @@
+     this.#startPresent = Object.hasOwn(module, "startFuncIdx");
+     this.#canonicalGroup = module.canonicalRuntimeRecGroup;
+     this.#canonicalGroupPresent = Object.hasOwn(module, "canonicalRuntimeRecGroup");
+-    this.#canonicalGroupText = this.#snapshot(module.canonicalRuntimeRecGroup);
++    this.#canonicalGroupSnapshot = this.#captureData(module.canonicalRuntimeRecGroup);
+     this.#arrays = {
+       types: module.types,
+       imports: module.imports,
+@@ -303,15 +266,7 @@
+     throw new Error(`physical module reservations: ${detail}`);
+   }
+ 
+-  #snapshot(data: PhysicalData): string {
+-    try {
+-      return dataText(data);
+-    } catch (error) {
+-      return this.#fail(error instanceof Error ? error.message : String(error));
+-    }
+-  }
+-
+-  #captureFunction(data: PhysicalData): PhysicalDataSnapshot {
++  #captureData(data: PhysicalData): PhysicalDataSnapshot {
+     try {
+       return capturePhysicalDataSnapshot(data);
+     } catch (error) {
+@@ -319,7 +274,7 @@
+     }
+   }
+ 
+-  #matchesFunction(data: PhysicalData, expected: PhysicalDataSnapshot): boolean {
++  #matchesData(data: PhysicalData, expected: PhysicalDataSnapshot): boolean {
+     try {
+       return matchesPhysicalDataSnapshot(data, expected);
+     } catch (error) {
+@@ -346,20 +301,20 @@
+     Object.freeze(token);
+     this.#tokens.add(token);
+     this.#positions.set(token, position);
+-    this.#records.set(token, this.#recordText(token));
++    this.#records.set(token, this.#captureData(this.#recordData(token)));
+     return token;
+   }
+ 
+-  #recordText(token: PhysicalReservation): string {
++  #recordData(token: PhysicalReservation): PhysicalData {
+     if (token.kind === "function") {
+       const { name, typeIdx, exported } = token.object;
+-      return this.#snapshot({ name, typeIdx, exported });
++      return { name, typeIdx, exported };
+     }
+     if (token.kind === "global") {
+       const { name, type, mutable } = token.object;
+-      return this.#snapshot({ name, type, mutable });
+-    }
+-    return this.#snapshot(token.object);
++      return { name, type, mutable };
++    }
++    return token.object;
+   }
+ 
+   #owned(token: PhysicalReservation): void {
+@@ -389,15 +344,16 @@
+     if (
+       this.#module.canonicalRuntimeRecGroup !== this.#canonicalGroup ||
+       Object.hasOwn(this.#module, "canonicalRuntimeRecGroup") !== this.#canonicalGroupPresent ||
+-      this.#snapshot(this.#module.canonicalRuntimeRecGroup) !== this.#canonicalGroupText
++      !this.#matchesData(this.#module.canonicalRuntimeRecGroup, this.#canonicalGroupSnapshot)
+     ) {
+       this.#fail("unregistered, substituted or altered canonical runtime rec-group");
+     }
+-    for (const [token, text] of this.#records) {
+-      if (this.#recordText(token) !== text) this.#fail(`altered ${token.kind} descriptor ${token.key}`);
+-    }
+-    for (const [type, { text, members }] of this.#typeRecords) {
+-      if (this.#snapshot(type) !== text) this.#fail("altered reserved type definition/signature");
++    for (const [token, snapshot] of this.#records) {
++      if (!this.#matchesData(this.#recordData(token), snapshot))
++        this.#fail(`altered ${token.kind} descriptor ${token.key}`);
++    }
++    for (const [type, { snapshot, members }] of this.#typeRecords) {
++      if (!this.#matchesData(type, snapshot)) this.#fail("altered reserved type definition/signature");
+       const current = this.#typeMembers(type);
+       if (current.length !== members.length || current.some((member, index) => member !== members[index]))
+         this.#fail("substituted reserved type member/payload");
+@@ -406,16 +362,16 @@
+       if (
+         token.object.locals !== fill.locals ||
+         token.object.body !== fill.body ||
+-        !this.#matchesFunction(token.object, fill.snapshot)
++        !this.#matchesData(token.object, fill.snapshot)
+       )
+         this.#fail(`altered completed function ${token.key}`);
+     }
+     for (const [token, fill] of this.#filledGlobals) {
+-      if (token.object.init !== fill.init || this.#snapshot(fill.init) !== fill.text)
++      if (token.object.init !== fill.init || !this.#matchesData(fill.init, fill.snapshot))
+         this.#fail(`altered completed global ${token.key}`);
+     }
+-    for (const [record, text] of this.#publications) {
+-      if (this.#snapshot(record) !== text) this.#fail("altered publication descriptor");
++    for (const [record, snapshot] of this.#publications) {
++      if (!this.#matchesData(record, snapshot)) this.#fail("altered publication descriptor");
+     }
+   }
+ 
+@@ -459,7 +415,7 @@
+     const type = this.#module.types[recordIndex]!;
+     this.#cache.set(key, index);
+     this.#expected.types.push(type);
+-    this.#typeRecords.set(type, { text: this.#snapshot(type), members: this.#typeMembers(type) });
++    this.#typeRecords.set(type, { snapshot: this.#captureData(type), members: this.#typeMembers(type) });
+     return index;
+   }
+ 
+@@ -473,7 +429,10 @@
+     this.#module.types.push(definition);
+     this.#expected.types.push(definition);
+     this.#flatTypes();
+-    this.#typeRecords.set(definition, { text: this.#snapshot(definition), members: this.#typeMembers(definition) });
++    this.#typeRecords.set(definition, {
++      snapshot: this.#captureData(definition),
++      members: this.#typeMembers(definition),
++    });
+     return this.#register({ kind: "type", key, object: definition, typeIndex }, typeIndex);
+   }
+ 
+@@ -598,7 +557,7 @@
+     this.#module.canonicalRuntimeRecGroup = definition;
+     this.#canonicalGroup = definition;
+     this.#canonicalGroupPresent = true;
+-    this.#canonicalGroupText = this.#snapshot(definition);
++    this.#canonicalGroupSnapshot = this.#captureData(definition);
+   }
+ 
+   reserveFunctionImport(
+@@ -802,7 +761,7 @@
+     this.#validateInstructions(definition.body);
+     token.object.locals = definition.locals;
+     token.object.body = definition.body;
+-    this.#filledFunctions.set(token, { ...definition, snapshot: this.#captureFunction(token.object) });
++    this.#filledFunctions.set(token, { ...definition, snapshot: this.#captureData(token.object) });
+   }
+ 
+   fillGlobal(token: GlobalReservation, initializer: Instr[]): void {
+@@ -813,7 +772,7 @@
+     if (initializer.length === 0) this.#fail(`global initializer is empty ${token.key}`);
+     this.#validateInstructions(initializer);
+     token.object.init = initializer;
+-    this.#filledGlobals.set(token, { init: initializer, text: this.#snapshot(initializer) });
++    this.#filledGlobals.set(token, { init: initializer, snapshot: this.#captureData(initializer) });
+   }
+ 
+   defineElement(
+@@ -837,7 +796,7 @@
+     };
+     this.#module.elements.push(element);
+     this.#expected.elements.push(element);
+-    this.#publications.set(element, this.#snapshot(element));
++    this.#publications.set(element, this.#captureData(element));
+     return element;
+   }
+ 
+@@ -873,7 +832,7 @@
+     this.#exportNames.add(externalName);
+     this.#module.exports.push(exported);
+     this.#expected.exports.push(exported);
+-    this.#publications.set(exported, this.#snapshot(exported));
++    this.#publications.set(exported, this.#captureData(exported));
+     return exported;
+   }
+ 

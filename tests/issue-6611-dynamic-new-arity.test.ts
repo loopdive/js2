@@ -261,8 +261,12 @@ describe("#6611 — `new <ctor value>(…)` above eight arguments, standalone", 
       // arity 10 and at arity 8 is what proves the bound-identifier spelling is
       // a different mechanism, and the third shows it reaching the argument
       // evaluation this defect skipped.
-      expect(ex.boundIdentifierTenArgs()).toBe(-2);
-      expect(ex.boundIdentifierEightArgs()).toBe(-2);
+      // (#6954) The bound-identifier pair is CLOSED: the standalone dynamic-
+      // `new` chains now end in a user-closure / runtime-function [[Construct]]
+      // arm, so the foreign class value bound to a local constructs (node:
+      // 55 / 36). Was -2 / -2.
+      expect(ex.boundIdentifierTenArgs()).toBe(55);
+      expect(ex.boundIdentifierEightArgs()).toBe(36);
       expect(ex.boundIdentifierEvaluatesArguments()).toBe(10);
       expect(ex.callCalleeTenArgs()).toBe(-2);
     },

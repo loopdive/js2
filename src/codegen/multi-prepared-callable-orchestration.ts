@@ -8,6 +8,8 @@ import type { IrBindingId, IrSourceId, IrUnitId } from "../ir/identity.js";
 import type { IrIntegrationError } from "../ir/integration.js";
 import type { IrFuncRef } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
+import { makeIrPlatformGlobalUseProbe } from "../ir/host-extern.js"; // (#7091)
+import { isJsEnvironmentPlatformGlobalName } from "./extern-declarations.js";
 import {
   planMultiPreparedModuleInit,
   type MultiPreparedModuleInitPlanningInput,
@@ -625,6 +627,17 @@ function preflightMultiPreparedCallableComponents(
     group.push(member);
     groupsByRoot.set(root, group);
   }
+  // (#7091) The platform-extern lane routes a component that touches a DOM /
+  // declared-API global through the imported-call surface it shares with the
+  // host lane. Dropping the WHOLE group is the same as the group never forming
+  // (the population filter below), so the attempted census stays closed.
+  const namesPlatformGlobal = makeIrPlatformGlobalUseProbe(
+    input.ctx,
+    input.multiAst.checker,
+    isJsEnvironmentPlatformGlobalName,
+  );
+  const groupNamesPlatformGlobal = (group: readonly CallablePreflightMember[]): boolean =>
+    !!namesPlatformGlobal && group.some(({ declaration }) => namesPlatformGlobal(declaration));
   const order = new Map(input.identityContext.inventory.terminalUnits.map((unit, index) => [unit.id, index] as const));
   const compare = (left: CallablePreflightMember, right: CallablePreflightMember): number =>
     (order.get(left.unitId) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.unitId) ?? Number.MAX_SAFE_INTEGER) ||
@@ -636,7 +649,8 @@ function preflightMultiPreparedCallableComponents(
         const unitIds = new Set(group.map(({ unitId }) => unitId));
         return (
           new Set(group.map(({ sourceId }) => sourceId)).size > 1 &&
-          crossSourceEdges.some(([owner, target]) => unitIds.has(owner) && unitIds.has(target))
+          crossSourceEdges.some(([owner, target]) => unitIds.has(owner) && unitIds.has(target)) &&
+          !groupNamesPlatformGlobal(group)
         );
       })
       .sort((left, right) => compare(left[0]!, right[0]!))

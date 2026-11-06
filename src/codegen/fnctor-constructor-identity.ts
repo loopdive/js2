@@ -6,7 +6,8 @@ import { captureSourceSlot, recordLiftedCaptureSlots } from "./closures/capture-
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitFnctorCtorCallSiteArgc } from "./fnctor-ctor-arguments.js";
-import { FNCTOR_CONSTRUCTOR_FIELD } from "./fnctor-identity-fields.js";
+import { FNCTOR_CONSTRUCTOR_FIELD, FNCTOR_PROTO_FIELD } from "./fnctor-identity-fields.js";
+import { emitFnctorProtoGet, resolveUserFnctorName } from "./expressions/fnctor-prototype.js"; // (#6951 G3)
 import { getOrRegisterRefCellType, refCellValueType } from "./registry/types.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { resolveStaticSpreadArgs } from "./static-spread-arity.js"; // (#6460)
@@ -91,9 +92,14 @@ export function registerFnctorCaptureParams(
     const capture = layout.captures[i]!;
     if (!capture.mutable) {
       const valueType = layout.valueParamTypes[i]!;
+      // (#6970) Ref-cell struct types are registered by `getOrRegisterRefCellType`
+      // in `ctx.refCellTypeMap` only — never in `typeIdxToStructName` — so the
+      // name lookup alone never fired and an already-boxed capture (a nested
+      // fnctor's own name, read in its body as `w.b2T`) was read as the cell.
       const isRefCell =
         (valueType.kind === "ref" || valueType.kind === "ref_null") &&
-        ctx.typeIdxToStructName.get(valueType.typeIdx)?.startsWith("__ref_cell_");
+        (ctx.typeIdxToStructName.get(valueType.typeIdx)?.startsWith("__ref_cell_") ||
+          [...ctx.refCellTypeMap.values()].includes(valueType.typeIdx));
       if (isRefCell) {
         const inner = refCellValueType(ctx, valueType.typeIdx);
         if (inner) {
@@ -206,10 +212,19 @@ export function emitFnctorFieldInitializers(
   fields: FieldDef[],
   constructorIdentityParamIdx: number,
 ): void {
+  // (#6951 G3) Evaluate the snapshot BEFORE any field operand is pushed: the
+  // vivify can register helpers, and nothing it emits may land between the
+  // `struct.new` operands.
+  const protoSnapshotLocal =
+    ctx.standalone && fields.some((field) => field.name === FNCTOR_PROTO_FIELD)
+      ? emitFnctorProtoSnapshot(ctx, fctx)
+      : undefined;
   for (const field of fields) {
     let instr: Instr;
     if (ctx.standalone && field.name === FNCTOR_CONSTRUCTOR_FIELD) {
       instr = { op: "local.get", index: constructorIdentityParamIdx };
+    } else if (field.name === FNCTOR_PROTO_FIELD && protoSnapshotLocal !== undefined) {
+      instr = { op: "local.get", index: protoSnapshotLocal };
     } else if (field.type.kind === "f64") {
       instr = { op: "f64.const", value: 0 };
     } else if (field.type.kind === "i32") {
@@ -225,6 +240,49 @@ export function emitFnctorFieldInitializers(
     }
     fctx.body.push(instr);
   }
+}
+
+/**
+ * (#6951 G3) §10.1.14 GetPrototypeFromConstructor, performed ONCE per
+ * construction: read F's per-fnctor prototype global (vivifying it exactly as
+ * every other `F.prototype` site does) into a fresh local, in the canonical
+ * STORAGE form the global holds. The instance's `$__fnctorProto` slot is
+ * initialized from it, so a later `F.prototype = other` re-links only the
+ * instances constructed after it — deltablue's nested `Inheriter`, rewritten
+ * per `inheritsFrom` activation, is exactly that shape.
+ *
+ * The vivify is built into a detached body and runs only while the global is
+ * still null, so a warm construction pays one `global.get` + null test.
+ * Answers `undefined` (slot stays null ⇒ readers use the live global, the
+ * pre-#6951 answer) when the constructor has no resolvable fnctor name.
+ */
+function emitFnctorProtoSnapshot(ctx: CodegenContext, fctx: FunctionContext): number | undefined {
+  const binding = fctx.newTargetValueNode;
+  if (binding === undefined) return undefined;
+  const fnctorName = resolveUserFnctorName(ctx, binding);
+  if (fnctorName === undefined) return undefined;
+  const savedBody = fctx.body;
+  const vivify: Instr[] = [];
+  fctx.body = vivify;
+  ctx.liveBodies.add(savedBody);
+  let ok: boolean;
+  try {
+    ok = emitFnctorProtoGet(ctx, fctx, fnctorName);
+  } finally {
+    fctx.body = savedBody;
+    ctx.liveBodies.delete(savedBody);
+  }
+  const protoGlobalIdx = ctx.fnctorPrototypeObject.get(fnctorName);
+  if (!ok || protoGlobalIdx === undefined) return undefined;
+  const slot = allocLocal(fctx, `__fnctor_proto_snapshot_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push(
+    { op: "global.get", index: protoGlobalIdx },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: [...vivify, { op: "drop" }] },
+    { op: "global.get", index: protoGlobalIdx },
+    { op: "local.set", index: slot },
+  );
+  return slot;
 }
 
 /**

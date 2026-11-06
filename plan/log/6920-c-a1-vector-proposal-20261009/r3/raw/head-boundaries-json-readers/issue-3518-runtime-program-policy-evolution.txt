@@ -1,0 +1,1018 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > authenticates WKS-derived C1 raw and complete ordered data with independently fixed populations 18ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > pins all eighteen unchanged B authority, C1 source proof and reader inputs 17ms
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > derives B from actual C1 and independently replays complete ordered C1 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > returns frozen detached current and mutable detached B copies on every call 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects before-C1 B as full current policy 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects pre-B historical view as full current policy 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects history-only as full current policy 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects empty object as full current policy 57ms
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 delete 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 replace 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 reorder 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 unknown-addition 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 state 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 layer 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 key-order 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 unknown-addition 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 state 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 layer 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 key-order 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 unknown-addition 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 state 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 layer 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 key-order 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 delete 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 replace 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 unknown-addition 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 state 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 layer 8ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 key-order 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program old entry delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program old entry duplicate 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program old entry replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program old entry reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program old entry unknown-addition 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program owner entry delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program owner entry duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program owner entry replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program owner entry reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program owner entry unknown-addition 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program lookup entry delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program lookup entry duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program lookup entry replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program lookup entry reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program lookup entry unknown-addition 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program support entry delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program support entry duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program support entry replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program support entry reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program support entry unknown-addition 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime old entry delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime old entry duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime old entry replace 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime old entry reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime old entry unknown-addition 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime generator entry delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime generator entry duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime generator entry replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime generator entry reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime generator entry unknown-addition 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 unknown-addition 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 layer 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 floor 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 entry-delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 entry-duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 entry-replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 key-order 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 reorder 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 unknown-addition 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 layer 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 floor 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 entry-delete 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 entry-duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 entry-replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 key-order 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects order-only program activation entry changes 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 8 id 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 8 status 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 8 required 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 8 roots 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 8 minModules 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 9 id 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 9 status 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 9 required 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 9 roots 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 9 minModules 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original files prefix delete 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original files prefix duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original files prefix replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original files prefix reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original files prefix unknown-addition 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original activationHistory prefix delete 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original activationHistory prefix duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original activationHistory prefix replace 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original activationHistory prefix reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original activationHistory prefix unknown-addition 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original layers prefix delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original layers prefix duplicate 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original layers prefix replace 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original layers prefix reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original layers prefix unknown-addition 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects old classification change src/ir/analysis/dominance.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects old classification change src/ir/verify.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects old classification change src/ir/verify-alloc.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects old classification change src/ir/program-allocations.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects old classification change src/ir/program-class-layouts.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects preserved analysis floor 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects preserved core floor 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects preserved native floor 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects changed receipt before digest 1ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects changed receipt current digest 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects changed receipt reviewed base 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects changed receipt immutable B authority 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects changed receipt raw bytes 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects changed receipt raw pin 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects changed receipt file denominator 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects changed receipt history denominator 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects changed receipt recipe suffix 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects changed receipt recipe layer 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects changed receipt receipt census 0ms
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects allowed edge replacement at fixed count 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field schema 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field description 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field sourceRoot 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field tsconfig 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field requireGitProvenance 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field externalAssets 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field frontendWrapper 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field moduleExtensions 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field externalPackages 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field nonModules 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field moves 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field evidence 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > recaptures previously accepted object after changing old row 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > recaptures previously accepted object after changing new row 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > recaptures previously accepted object after changing layer entry 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > recaptures previously accepted object after changing history tail 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects root getter without invoking it 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects row getter without invoking it 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects array-index getter without invoking it 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects root hidden without serialization effects 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects root symbol without serialization effects 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects root toJSON without serialization effects 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects row hidden without serialization effects 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects row symbol without serialization effects 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects row toJSON without serialization effects 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects array hidden without serialization effects 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects array symbol without serialization effects 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects array toJSON without serialization effects 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects null record prototype 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects foreign record prototype 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects inherited record prototype 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects foreign array prototype 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects sparse array 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects inherited array element 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects array extra field 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects cycle 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON undefined 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON bigint 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON function 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON symbol 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON NaN 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON infinity 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON negative infinity 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON negative zero 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects a literal extra __proto__ key without prototype pollution 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects null as complete policy 59ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects string as complete policy 55ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects number as complete policy 70ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects boolean as complete policy 59ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects fixed receipt replacement schema 1ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects fixed receipt replacement kind 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects fixed receipt replacement provenance 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects fixed receipt replacement before 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects fixed receipt replacement current 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects fixed receipt replacement allowedEdgesSha256 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects fixed receipt replacement layerDeltas 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects fixed receipt replacement addedFiles 1ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects fixed receipt replacement activationAdditions 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects fixed receipt replacement census 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects malformed or noncanonical receipt 021fb596db81 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects malformed or noncanonical receipt 74234e98afe7 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects malformed or noncanonical receipt e3b0c44298fc 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects malformed or noncanonical receipt ef055ca9d21b 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects malformed or noncanonical receipt b6662cf37fd7 0ms
+ ✓ tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects receipt missing field and extra field 1ms
+ × tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > repeated independently fresh controls remain accepted and detached 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 171 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > authenticates WKS-derived C1 raw and complete ordered data with independently fixed populations
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:191:45
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > derives B from actual C1 and independently replays complete ordered C1
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:253:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > returns frozen detached current and mutable detached B copies on every call
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:268:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects before-C1 B as full current policy
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:291:56
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:296:64
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects pre-B historical view as full current policy
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:292:99
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:296:64
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects history-only as full current policy
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:293:28
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:296:64
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 state
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 layer
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1765 key-order
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 state
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 layer
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1766 key-order
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 state
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 layer
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1767 key-order
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 state
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 layer
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects new file 1768 key-order
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ rejected tests/issue-3518-runtime-program-policy-evolution.test.ts:133:18
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:310:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program old entry delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program old entry duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program old entry replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program old entry reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program old entry unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program owner entry delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program owner entry duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program owner entry replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program owner entry reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program owner entry unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program lookup entry delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program lookup entry duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program lookup entry replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program lookup entry reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program lookup entry unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program support entry delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program support entry duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program support entry replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program support entry reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects program support entry unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime old entry delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime old entry duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime old entry replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime old entry reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime old entry unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime generator entry delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime generator entry duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime generator entry replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime generator entry reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects runtime generator entry unknown-addition
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ rejected tests/issue-3518-runtime-program-policy-evolution.test.ts:133:18
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:334:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 layer
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 floor
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 entry-delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 entry-duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 entry-replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 94 key-order
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 layer
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 floor
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 entry-delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 entry-duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 entry-replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects activation 95 key-order
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ rejected tests/issue-3518-runtime-program-policy-evolution.test.ts:133:18
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:360:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects order-only program activation entry changes
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ rejected tests/issue-3518-runtime-program-policy-evolution.test.ts:133:18
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:380:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 8 id
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 8 status
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 8 required
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 8 roots
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 8 minModules
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 9 id
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 9 status
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 9 required
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 9 roots
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects layer 9 minModules
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ rejected tests/issue-3518-runtime-program-policy-evolution.test.ts:133:18
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:384:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original files prefix delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original files prefix duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original files prefix replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original files prefix reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original files prefix unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original activationHistory prefix delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original activationHistory prefix duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original activationHistory prefix replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original activationHistory prefix reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original activationHistory prefix unknown-addition
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original layers prefix delete
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original layers prefix duplicate
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original layers prefix replace
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original layers prefix reorder
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects original layers prefix unknown-addition
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ rejected tests/issue-3518-runtime-program-policy-evolution.test.ts:133:18
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:396:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects old classification change src/ir/analysis/dominance.ts
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects old classification change src/ir/verify.ts
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects old classification change src/ir/verify-alloc.ts
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects old classification change src/ir/program-allocations.ts
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects old classification change src/ir/program-class-layouts.ts
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ rejected tests/issue-3518-runtime-program-policy-evolution.test.ts:133:18
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:415:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects preserved analysis floor
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects preserved core floor
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects preserved native floor
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ rejected tests/issue-3518-runtime-program-policy-evolution.test.ts:133:18
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:427:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects allowed edge replacement at fixed count
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ rejected tests/issue-3518-runtime-program-policy-evolution.test.ts:133:18
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:507:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field schema
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field description
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field sourceRoot
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field tsconfig
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field requireGitProvenance
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field externalAssets
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field frontendWrapper
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field moduleExtensions
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field externalPackages
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field nonModules
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field moves
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects unrelated field evidence
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ rejected tests/issue-3518-runtime-program-policy-evolution.test.ts:133:18
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:526:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > recaptures previously accepted object after changing old row
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > recaptures previously accepted object after changing new row
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > recaptures previously accepted object after changing layer entry
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > recaptures previously accepted object after changing history tail
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:557:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects root getter without invoking it
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects row getter without invoking it
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects array-index getter without invoking it
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:569:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects root hidden without serialization effects
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects root symbol without serialization effects
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects root toJSON without serialization effects
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects row hidden without serialization effects
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects row symbol without serialization effects
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects row toJSON without serialization effects
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects array hidden without serialization effects
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects array symbol without serialization effects
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects array toJSON without serialization effects
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:588:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects null record prototype
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects foreign record prototype
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects inherited record prototype
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:609:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects foreign array prototype
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:619:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects sparse array
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:624:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects inherited array element
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:632:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects array extra field
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:644:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects cycle
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:650:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON undefined
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON bigint
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON function
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON symbol
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON NaN
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON infinity
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON negative infinity
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects non-JSON negative zero
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:666:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > rejects a literal extra __proto__ key without prototype pollution
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:673:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/171]⎯
+
+ FAIL  tests/issue-3518-runtime-program-policy-evolution.test.ts > C1 exact policy inverse and reciprocal B proof > repeated independently fresh controls remain accepted and detached
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-runtime-program-policy-evolution.test.ts:102:43
+ ❯ tests/issue-3518-runtime-program-policy-evolution.test.ts:720:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/171]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  171 failed | 33 passed (204)
+   Start at  22:27:33
+   Duration  1.85s (transform 449ms, setup 0ms, collect 616ms, tests 825ms, environment 0ms, prepare 77ms)
+

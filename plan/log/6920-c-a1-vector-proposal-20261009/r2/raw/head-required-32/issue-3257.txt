@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3257.test.ts > #3257 stdlib-selfhost Tier-2 — __vec_elem_set_<t> on-demand materialization > builds + lowers a def that calls the element-store helper, materializing it on demand 57ms
+ ✓ tests/issue-3257.test.ts > #3257 stdlib-selfhost Tier-2 — __vec_elem_set_<t> on-demand materialization > rejects a non-vec typeIdx loudly (scope guard, not a miscompile) 8ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  19:40:42
+   Duration  32.42s (transform 22.37s, setup 0ms, collect 31.89s, tests 66ms, environment 0ms, prepare 72ms)
+

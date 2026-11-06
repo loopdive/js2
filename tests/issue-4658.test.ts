@@ -293,7 +293,7 @@ describe("#4658 residuals — measured, NOT fixed here", () => {
   // surfaces disagreeing, which is worse than the current coherent miss. The
   // real fix is the `[[ParameterMap]]`/descriptor-sidecar representation
   // #3251 / #4622 defer.
-  it.fails("RESIDUAL: a STRING write to arguments.length does not stick", async () => {
+  it("a STRING write to arguments.length sticks (was an it.fails residual, #7014)", async () => {
     expect(
       await runModule(
         fn(`      arguments.length = "abc";
@@ -324,7 +324,7 @@ describe("#4658 residuals — measured, NOT fixed here", () => {
   // that branch is the only reason `10.6-6-2`'s `writable` check passes today.
   // Fixing `Array.isArray` sends that check down the `"unlikelyValue"` STRING
   // path, where it will need RESIDUAL 1 first.
-  it.fails("RESIDUAL: Array.isArray(arguments) answers true", async () => {
+  it("Array.isArray(arguments) answers false (was an it.fails residual, #7014)", async () => {
     expect(await runModule(fn(`      return Array.isArray(arguments) ? 1 : 0;`))).toBe(0);
   });
 
@@ -350,7 +350,7 @@ describe("#4658 residuals — measured, NOT fixed here", () => {
   // `a["length"]`, a generic `get(o, n)` helper, and an inline
   // `(function (o) { return o["length"]; })(a)`. The DOT form `a.length` is
   // correct (2) — it folds to the vec length field — which is why this hides.
-  it.fails('RESIDUAL: arr["length"] answers arr[0] instead of the length', async () => {
+  it('arr["length"] answers the length (was an it.fails residual, #7014)', async () => {
     expect(
       await runModule(`
         var a = [1, 2];
@@ -379,7 +379,7 @@ describe("#4658 residuals — measured, NOT fixed here", () => {
   // (the strict delete THREW, fold 2), this branch returns 102 (delete
   // succeeded, fold still 2) — so the fold is unchanged by this work, and only
   // the delete's own answer moved.
-  it.fails("RESIDUAL: the compile-time .length fold survives the delete", async () => {
+  it("the compile-time .length fold does not survive the delete (was an it.fails residual, #7014)", async () => {
     expect(
       await runModule(`
         function del(o, n) { return delete o[n]; }

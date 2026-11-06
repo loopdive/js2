@@ -1,0 +1,315 @@
+{
+  "schema": 1,
+  "kind": "allocation-provenance-lookup-successor",
+  "predecessor": "8452732f0b88c14c5c7634ece58f83240970ea4c",
+  "provenance": "uncommitted reviewed J1 source; no commit or delivery asserted",
+  "oldReceipt": {
+    "path": "tests/helpers/ir-validation-analysis-relocation.json",
+    "bytes": 327660,
+    "sha256": "9a52664fbba6044d168f428f9398e5d2bff923cf7cac1adc6aae04827431e969",
+    "gitBlob": "6a60f93474b57e87ad18acaab8ce85b232dd4128"
+  },
+  "before": [
+    {
+      "path": "src/ir/analysis/contracts/allocations.ts",
+      "bytes": 1508,
+      "sha256": "65a55b5e766280af62d728b8c54a6ead6f39e2c5c74d7eee6cb9c0aab697a813",
+      "gitBlob": "6ed031aadf99206b9aed79a4334f35fe0b5beb17"
+    },
+    {
+      "path": "src/ir/analysis/alloc-verification.ts",
+      "bytes": 6498,
+      "sha256": "93b78752e411016cc490655c0fc981ec3beaadc227682ae35c0599fcc5c6e2a4",
+      "gitBlob": "a79a8dad7bbbc760206d4bf953c6522a00e98cb3"
+    },
+    {
+      "path": "src/ir/program/allocations.ts",
+      "bytes": 6602,
+      "sha256": "e2da59c2bf90e2a833c35206d014e6745f79a94bade7f04c882cdb6495eb7e5f",
+      "gitBlob": "b04a7b22bba6a98d5265dcfd9c8fcebf5f50fe5f"
+    }
+  ],
+  "current": [
+    {
+      "path": "src/ir/analysis/contracts/allocations.ts",
+      "bytes": 1715,
+      "sha256": "8f72c7cf5563171d02522fc7b1581db8cb68d67574fa97d17098e3594565b9e4",
+      "gitBlob": "544300c3319bc52d3f93c5289adad2a117eadea7"
+    },
+    {
+      "path": "src/ir/analysis/alloc-verification.ts",
+      "bytes": 6525,
+      "sha256": "5a0e389a0694ed087154974b17be8e3edbd14c9781f01a97acb18b0dc2260238",
+      "gitBlob": "c24ba307c38da67f75ec8df5b271afcdb054dcb9"
+    },
+    {
+      "path": "src/ir/program/allocations.ts",
+      "bytes": 5638,
+      "sha256": "aec062632da95addb294e203514e8218284177bfccd7154f3cbb1d8bdd412c33",
+      "gitBlob": "722430a6adb09e2e4b74802650b29c8207431a25"
+    },
+    {
+      "path": "src/ir/program/allocation-body-validation.ts",
+      "bytes": 1864,
+      "sha256": "d48bf8cec3edbdb89759df63dbb5a8e3f455b7d739b1e990d669a1eceb69430a",
+      "gitBlob": "1b7c3e14c934cc118d4c6a85da9adb77204df284"
+    }
+  ],
+  "verifier": [
+    {
+      "role": "lookup-import",
+      "before": {
+        "start": 1276,
+        "end": 1338,
+        "bytes": 62,
+        "sha256": "32872231bd83612901ccb6970efe82ba8f97eb8fd7917d519a0a8f85468a1c76",
+        "gitBlob": "6448af3ed164f414ca3ecbd00ede611ec959b074"
+      },
+      "current": {
+        "start": 1276,
+        "end": 1349,
+        "bytes": 73,
+        "sha256": "19bd2311164657177decd7f698733f9a8e36adb3094e7c8ce5196be89344ab1d",
+        "gitBlob": "908d27bbbd5d2825caa4f28ce2625205856a0587"
+      },
+      "beforeText": "import type { AllocSiteRegistry } from \"./alloc-registry.js\";\n",
+      "currentText": "import type { AllocProvenanceLookup } from \"./contracts/allocations.js\";\n"
+    },
+    {
+      "role": "registry-type:verifyAllocProvenance",
+      "before": {
+        "start": 2471,
+        "end": 2488,
+        "bytes": 17,
+        "sha256": "66083d5f4ae9ebffc03be068aac22b8ac1d91a7ce4d982ed8eb940c6d5bb4f35",
+        "gitBlob": "42c5e06e2e115d7885da22349c53b05b29123e82"
+      },
+      "current": {
+        "start": 2482,
+        "end": 2503,
+        "bytes": 21,
+        "sha256": "07fd89821f8b1fd1a00ebec9538c9c8b1578dc0bdd91b0131f77e2775cc2c180",
+        "gitBlob": "5a179c3746b2b296344a95ade3fd6295af05e417"
+      },
+      "beforeText": "AllocSiteRegistry",
+      "currentText": "AllocProvenanceLookup"
+    },
+    {
+      "role": "registry-type:checkId",
+      "before": {
+        "start": 3615,
+        "end": 3632,
+        "bytes": 17,
+        "sha256": "66083d5f4ae9ebffc03be068aac22b8ac1d91a7ce4d982ed8eb940c6d5bb4f35",
+        "gitBlob": "42c5e06e2e115d7885da22349c53b05b29123e82"
+      },
+      "current": {
+        "start": 3630,
+        "end": 3651,
+        "bytes": 21,
+        "sha256": "07fd89821f8b1fd1a00ebec9538c9c8b1578dc0bdd91b0131f77e2775cc2c180",
+        "gitBlob": "5a179c3746b2b296344a95ade3fd6295af05e417"
+      },
+      "beforeText": "AllocSiteRegistry",
+      "currentText": "AllocProvenanceLookup"
+    },
+    {
+      "role": "registry-type:assertFinalAllocProvenance",
+      "before": {
+        "start": 4706,
+        "end": 4723,
+        "bytes": 17,
+        "sha256": "66083d5f4ae9ebffc03be068aac22b8ac1d91a7ce4d982ed8eb940c6d5bb4f35",
+        "gitBlob": "42c5e06e2e115d7885da22349c53b05b29123e82"
+      },
+      "current": {
+        "start": 4725,
+        "end": 4746,
+        "bytes": 21,
+        "sha256": "07fd89821f8b1fd1a00ebec9538c9c8b1578dc0bdd91b0131f77e2775cc2c180",
+        "gitBlob": "5a179c3746b2b296344a95ade3fd6295af05e417"
+      },
+      "beforeText": "AllocSiteRegistry",
+      "currentText": "AllocProvenanceLookup"
+    },
+    {
+      "role": "registry-type:assertVerifiedAllocProvenance",
+      "before": {
+        "start": 4852,
+        "end": 4869,
+        "bytes": 17,
+        "sha256": "66083d5f4ae9ebffc03be068aac22b8ac1d91a7ce4d982ed8eb940c6d5bb4f35",
+        "gitBlob": "42c5e06e2e115d7885da22349c53b05b29123e82"
+      },
+      "current": {
+        "start": 4875,
+        "end": 4896,
+        "bytes": 21,
+        "sha256": "07fd89821f8b1fd1a00ebec9538c9c8b1578dc0bdd91b0131f77e2775cc2c180",
+        "gitBlob": "5a179c3746b2b296344a95ade3fd6295af05e417"
+      },
+      "beforeText": "AllocSiteRegistry",
+      "currentText": "AllocProvenanceLookup"
+    }
+  ],
+  "contract": {
+    "beforeOffset": 611,
+    "current": {
+      "start": 611,
+      "end": 818,
+      "bytes": 207,
+      "sha256": "7c5bf1db36bbf53fe3c92be4604f97a9685747b7a04bf5ae9a63616177782ec8",
+      "gitBlob": "efe12ab620bb7c5ae950ce5646d2289c71e06987"
+    },
+    "text": "\n/** Read authority required by the canonical allocation-provenance verifier. */\nexport interface AllocProvenanceLookup {\n  isKnown(id: AllocSiteId): boolean;\n  resolve(id: AllocSiteId): AllocSite | null;\n}\n"
+  },
+  "programImports": [
+    {
+      "role": "core-import",
+      "before": {
+        "start": 345,
+        "end": 430,
+        "bytes": 85,
+        "sha256": "ba4088992744915fec97e395148ebbddb0a90bdb4ba87df63bc9082e351fc83c",
+        "gitBlob": "d2d76586afb32cf123b26507d783ff37b4d864f0"
+      },
+      "current": {
+        "start": 345,
+        "end": 412,
+        "bytes": 67,
+        "sha256": "3f64ece161b90cbe38f0ce2067b66ab6775e3c83d89517076f900881a9470b07",
+        "gitBlob": "63a53ff639f75957cf86066cfff48a6bc80607e5"
+      },
+      "beforeText": "import { asAllocSiteId, forEachInstrDeep, type IrFunction } from \"../core/nodes.js\";\n",
+      "currentText": "import { asAllocSiteId, type IrFunction } from \"../core/nodes.js\";\n"
+    },
+    {
+      "role": "type-key-import",
+      "before": {
+        "start": 430,
+        "end": 506,
+        "bytes": 76,
+        "sha256": "30703321f13c28820f6086d40705a3c92ac29f33396596028be03fa3531b5b5e",
+        "gitBlob": "641eeafdede547392ce7864ffb405332240ddc41"
+      },
+      "current": {
+        "start": 412,
+        "end": 469,
+        "bytes": 57,
+        "sha256": "12ef750d5b8466c25376549c2e40205e420515320b9cf024fdd8ab69afbe521b",
+        "gitBlob": "397823b81ade7283087af2c317adcbc87ee8f638"
+      },
+      "beforeText": "import { preparedIrDataKey, preparedIrTypeKey } from \"./abi-signatures.js\";\n",
+      "currentText": "import { preparedIrDataKey } from \"./abi-signatures.js\";\n"
+    },
+    {
+      "role": "helper-import",
+      "before": {
+        "start": 864,
+        "end": 864,
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "current": {
+        "start": 827,
+        "end": 927,
+        "bytes": 100,
+        "sha256": "cabdddaa143f52519468bbb0388447b0f802094a8c0775ffc8c3410761779982",
+        "gitBlob": "28531614fe20c7a399699a426d01950ae216c779"
+      },
+      "beforeText": "",
+      "currentText": "import { assertPreparedIrFunctionAllocationTypesAndStates } from \"./allocation-body-validation.js\";\n"
+    }
+  ],
+  "call": {
+    "current": {
+      "start": 4866,
+      "end": 4934,
+      "bytes": 68,
+      "sha256": "bd70bb19c6594d98ffac120bc2f6340251479545b2cfc54e921e0768f6490a38",
+      "gitBlob": "11d29dcd913ec0a5844f2e5f0d01d9df4d894c4c"
+    },
+    "text": "    assertPreparedIrFunctionAllocationTypesAndStates(fn, registry);\n"
+  },
+  "transfer": {
+    "before": {
+      "start": 4803,
+      "end": 5898,
+      "bytes": 1095,
+      "sha256": "09ad0a9141b4a0aa8bebcfe865a6b3019629e8bb13ab85b27eff22878c7cdb72",
+      "gitBlob": "5a9874dac4a133fb53b3ed033a1a709ac6b50d2c"
+    },
+    "current": {
+      "start": 809,
+      "end": 1862,
+      "bytes": 1053,
+      "sha256": "81a53069eb59d07317312618f3036835ff87abf2b0d476a6146f709b23def622",
+      "gitBlob": "5de3a6534af40980e8f6d3084575fbdcf04c298c"
+    },
+    "renames": [
+      {
+        "role": "state-provenance-lookup",
+        "before": {
+          "start": 5221,
+          "end": 5229,
+          "bytes": 8,
+          "sha256": "872491a30d60d598962de6e7b834ab76b2aa65fbab102c6ebaaae6acdc238822",
+          "gitBlob": "bfa3c8f5aaa2e88a5dd026f3bb1ca12d5f6cab23"
+        },
+        "current": {
+          "start": 1215,
+          "end": 1221,
+          "bytes": 6,
+          "sha256": "29a1af58c138274076260b2d9c83b8378cc951a68d9b4de13794b853d695e431",
+          "gitBlob": "b3deaea6d4044d3a0cf4cfdb140b5c0026c9e5e3"
+        }
+      },
+      {
+        "role": "resolved-site-lookup",
+        "before": {
+          "start": 5548,
+          "end": 5556,
+          "bytes": 8,
+          "sha256": "872491a30d60d598962de6e7b834ab76b2aa65fbab102c6ebaaae6acdc238822",
+          "gitBlob": "bfa3c8f5aaa2e88a5dd026f3bb1ca12d5f6cab23"
+        },
+        "current": {
+          "start": 1522,
+          "end": 1528,
+          "bytes": 6,
+          "sha256": "29a1af58c138274076260b2d9c83b8378cc951a68d9b4de13794b853d695e431",
+          "gitBlob": "b3deaea6d4044d3a0cf4cfdb140b5c0026c9e5e3"
+        }
+      }
+    ]
+  },
+  "helper": {
+    "prefix": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nimport { assertFinalAllocProvenance } from \"../analysis/alloc-verification.js\";\nimport type { AllocProvenanceLookup } from \"../analysis/contracts/allocations.js\";\nimport { forEachInstrDeep, type IrFunction } from \"../core/nodes.js\";\nimport { preparedIrTypeKey } from \"./abi-signatures.js\";\nimport { PreparedIrProgramInvariantError } from \"./errors.js\";\n\n/** Preserve the final async-state and resolved-result checks after allocation analysis. */\nexport function assertPreparedIrFunctionAllocationTypesAndStates(fn: IrFunction, lookup: AllocProvenanceLookup): void {\n",
+    "invalid": {
+      "start": 651,
+      "end": 809,
+      "bytes": 158,
+      "sha256": "5779b1573032c79c73bd9fbe92a595b76075c4a4d5c841d726e9c30aadc52956",
+      "gitBlob": "a0c0cb4ccb5d1ba9a8ef98a4aad06a86f9504e46"
+    },
+    "programInvalid": {
+      "start": 1792,
+      "end": 1950,
+      "bytes": 158,
+      "sha256": "5779b1573032c79c73bd9fbe92a595b76075c4a4d5c841d726e9c30aadc52956",
+      "gitBlob": "a0c0cb4ccb5d1ba9a8ef98a4aad06a86f9504e46"
+    },
+    "beforeInvalid": {
+      "start": 1729,
+      "end": 1887,
+      "bytes": 158,
+      "sha256": "5779b1573032c79c73bd9fbe92a595b76075c4a4d5c841d726e9c30aadc52956",
+      "gitBlob": "a0c0cb4ccb5d1ba9a8ef98a4aad06a86f9504e46"
+    },
+    "suffix": "}\n",
+    "absentBefore": true
+  },
+  "inverse": ["verifier-types", "remove-interface", "program-imports", "restore-moved-body"],
+  "forward": ["verifier-types", "insert-interface", "program-imports", "replace-moved-body", "build-helper"]
+}

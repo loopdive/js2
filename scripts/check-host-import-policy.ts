@@ -3,21 +3,19 @@
 import { readFileSync } from "node:fs";
 import { compile } from "../src/index.ts";
 
-// (#6686/#5385 S5) The native regime is the compiler's default for a
-// native-first build in a JS environment; this ratchet measures exactly what
-// the compiler ships. Set JS2WASM_NATIVE_REGIME_JS=0 to measure the kill-switch lane.
+// (#6686/#5385 S5, #6708 S6, #6979 S7) native-first is the compiler's only
+// semantic-provider policy and the native regime its lowering in a JS
+// environment; the probes compile with no semanticProviders option, so this
+// ratchet measures exactly what the compiler ships. No profile may emit a
+// `legacy-semantic` or `unknown` import any more, so every probe is held to a
+// hard zero (the S6 host-assisted compatibility control is gone with the
+// profile).
 
 interface HostImportPolicyBaseline {
   schemaVersion: 1;
   nativeFirst: {
     minimumProbes: number;
     maximumImports: number;
-    maximumLegacySemanticImports: number;
-    maximumUnknownImports: number;
-  };
-  compatibility: {
-    minimumLegacySemanticImports: number;
-    maximumLegacySemanticImports: number;
   };
   runtimeSource: {
     maximumRuntimeTsLines: number;
@@ -248,7 +246,6 @@ let nativeUnknownTotal = 0;
 for (const [name, source] of Object.entries(probes)) {
   const result = await compile(source, {
     fileName: `host-import-policy-native-first-${name}.ts`,
-    semanticProviders: "native-first",
   });
   if (!result.success) {
     throw new Error(
@@ -291,12 +288,65 @@ for (const [probe, names] of Object.entries(requiredBoundaryAdapters)) {
   }
 }
 
-const compatibility = await compile(probes.core, { fileName: "host-import-policy-compatibility.ts" });
-const compatibilityDebt = compatibility.hostImportSummary?.byClassification["legacy-semantic"] ?? 0;
-if (!compatibility.success || compatibilityDebt === 0) {
-  throw new Error(
-    "compatibility control must compile and retain at least one legacy semantic import (non-vacuity control)",
+// #6978 — per-family host-accelerator probes: a family's host imports appear
+// only when that accelerator is selected, classify as `host-accelerator`, and
+// never smuggle in legacy/unknown imports. Families whose host path is not
+// implemented yet (js-string) must refuse selection instead of compiling as a no-op.
+const acceleratorProbes = {
+  regexp: probes.stringProtocols,
+  date: `export function run(value: string): number { return Date.parse(value) + new Date(value).getTime(); }`,
+  // #6986: Intl constructors, a locale-sensitive method and a namespace function.
+  intl: `export function run(value: number): string {
+    const fmt = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
+    return fmt.format(value) + value.toLocaleString("en-US") + Intl.getCanonicalLocales("en")[0];
+  }`,
+} as const;
+type ProbedAccelerator = keyof typeof acceleratorProbes;
+const acceleratorImports: Record<string, number> = Object.create(null);
+for (const [family, source] of Object.entries(acceleratorProbes)) {
+  const compileProbe = (hostAccelerators?: readonly ProbedAccelerator[]) =>
+    compile(source, {
+      fileName: `host-import-policy-accelerator-${family}${hostAccelerators ? "-selected" : ""}.ts`,
+      semanticProviders: "native-first",
+      ...(hostAccelerators ? { hostAccelerators } : {}),
+    });
+  const [plain, selected] = await Promise.all([compileProbe(), compileProbe([family as ProbedAccelerator])]);
+  // #6986: there is no native Intl, so without the accelerator the intl probe is a
+  // compile error naming it (no import at all) rather than a native build.
+  const plainRefusedIntl =
+    family === "intl" &&
+    !plain.success &&
+    plain.errors.some((error) => error.message.includes("--host-accelerator intl"));
+  if ((!plain.success && !plainRefusedIntl) || !selected.success) {
+    throw new Error(`host-accelerator ${family} probe did not compile`);
+  }
+  const accelerated = (selected.hostImportInventory ?? []).filter(
+    (entry) => entry.classification === "host-accelerator" && entry.family === family,
   );
+  if (accelerated.length === 0) throw new Error(`host-accelerator ${family} probe selected no ${family} imports`);
+  const debt = (selected.hostImportInventory ?? []).filter(
+    (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
+  );
+  if (debt.length > 0) {
+    throw new Error(`host-accelerator ${family} probe carries ${debt.map((entry) => entry.name).join(", ")}`);
+  }
+  const plainNames = new Set((plain.hostImportInventory ?? []).map((entry) => `${entry.module}::${entry.name}`));
+  const leaked = accelerated.filter((entry) => plainNames.has(`${entry.module}::${entry.name}`));
+  if (leaked.length > 0) {
+    throw new Error(`${family} accelerator imports present without selection: ${leaked.map((e) => e.name).join(", ")}`);
+  }
+  acceleratorImports[family] = accelerated.length;
+}
+for (const family of ["js-string"] as const) {
+  const refused = await compile(probes.core, {
+    fileName: `host-import-policy-accelerator-${family}.ts`,
+    semanticProviders: "native-first",
+    hostAccelerators: [family],
+  }).then(
+    () => false,
+    (error: unknown) => String(error).includes("not available yet"),
+  );
+  if (!refused) throw new Error(`host-accelerator ${family} must refuse selection until its host path exists`);
 }
 
 const runtimeSource = readRepoFile("src/runtime.ts");
@@ -341,26 +391,10 @@ if (probeCount < baseline.nativeFirst.minimumProbes) {
 if (nativeImportTotal > baseline.nativeFirst.maximumImports) {
   budgetViolations.push(`native-first imports ${nativeImportTotal} > maximum ${baseline.nativeFirst.maximumImports}`);
 }
-if (nativeLegacySemanticTotal > baseline.nativeFirst.maximumLegacySemanticImports) {
-  budgetViolations.push(
-    `native-first legacy imports ${nativeLegacySemanticTotal} > maximum ${baseline.nativeFirst.maximumLegacySemanticImports}`,
-  );
-}
-if (nativeUnknownTotal > baseline.nativeFirst.maximumUnknownImports) {
-  budgetViolations.push(
-    `native-first unknown imports ${nativeUnknownTotal} > maximum ${baseline.nativeFirst.maximumUnknownImports}`,
-  );
-}
-if (compatibilityDebt < baseline.compatibility.minimumLegacySemanticImports) {
-  budgetViolations.push(
-    `compatibility legacy imports ${compatibilityDebt} < non-vacuity minimum ${baseline.compatibility.minimumLegacySemanticImports}`,
-  );
-}
-if (compatibilityDebt > baseline.compatibility.maximumLegacySemanticImports) {
-  budgetViolations.push(
-    `compatibility legacy imports ${compatibilityDebt} > maximum ${baseline.compatibility.maximumLegacySemanticImports}`,
-  );
-}
+// (#6979) Hard zero, not a baseline: no profile may publish implicit or
+// unclassified host semantics.
+if (nativeLegacySemanticTotal > 0) budgetViolations.push(`legacy-semantic imports ${nativeLegacySemanticTotal} > 0`);
+if (nativeUnknownTotal > 0) budgetViolations.push(`unknown imports ${nativeUnknownTotal} > 0`);
 for (const [metric, maximum] of [
   ["runtimeTsLines", baseline.runtimeSource.maximumRuntimeTsLines],
   ["resolveImportLines", baseline.runtimeSource.maximumResolveImportLines],
@@ -388,7 +422,7 @@ console.log(
       legacySemanticImports: nativeLegacySemanticTotal,
       unknownImports: nativeUnknownTotal,
     },
-    compatibilityLegacySemanticImports: compatibilityDebt,
+    hostAcceleratorImports: acceleratorImports,
     migrationMetrics,
   }),
 );

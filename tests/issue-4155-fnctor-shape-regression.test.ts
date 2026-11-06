@@ -169,7 +169,9 @@ describe("#4155 Phase 0 — the #1712 shape must keep working", () => {
 // Verified on main @ 61ff9cc7a: returns 0, 0, and NaN respectively.
 // ---------------------------------------------------------------------------
 describe("#4155 Phase 0 — known-broken instance flow positions (pre-existing)", () => {
-  it.fails("instance returned from a plain function, then member-called → 0", async () => {
+  // (#6951) passes since every constructed ordinary fnctor gets the
+  // `__fnctor_proto_start` ladder, not only modules with a gate-approved one.
+  it("instance returned from a plain function, then member-called → 42", async () => {
     expect(
       await runStandalone(`
         function P(n: number) { this.pos = n; }
@@ -183,7 +185,7 @@ describe("#4155 Phase 0 — known-broken instance flow positions (pre-existing)"
     ).toBe(42);
   });
 
-  it.fails("instance round-tripped through an array element → 0", async () => {
+  it("instance round-tripped through an array element → 42", async () => {
     expect(
       await runStandalone(`
         function P(n: number) { this.pos = n; }

@@ -1,0 +1,2 @@
+4a5
+>  FAIL  tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > resolves the real transitive value graph without a wrapper/emitter/facade cycle

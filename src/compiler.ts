@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "./ts-api.js";
+import { createPreparedFrontendBoundary } from "./compiler/prepared-pipeline-boundary.js";
 import {
   analyzeFiles,
   analyzeMultiSource,
@@ -71,13 +72,12 @@ import {
   type FailureTelemetry,
 } from "./compiler/output.js";
 import { stampAllocationOwners } from "./wasm/physical/allocation-owner.js";
+import { releaseOwnedFunctions } from "./wasm/physical/owned-function-data.js";
 import {
-  detectEarlyErrors,
   gateEmittedModule,
   pushSourceAnchoredDiagnostic,
   rewriteEvalSuperCallWithMap,
-  validateHardenedMode,
-  validateSafeMode,
+  withEngineRejectedIrOutcomes,
 } from "./compiler/validation.js";
 import { emitBinary, emitBinaryWithSourceMap, emitSourceMappingURLSection } from "./emit/binary.js";
 import {
@@ -874,6 +874,7 @@ function buildCodegenOptions(
     nativeStrings: options.nativeStrings,
     hostBridge: options.hostBridge,
     semanticProviders: options.semanticProviders,
+    hostAccelerators: options.hostAccelerators,
     utf8Storage: options.utf8Storage,
     testRuntime: options.testRuntime,
     wasi: targetProfile.target === "wasi",
@@ -945,7 +946,7 @@ function buildCodegenOptions(
 }
 
 /** #1927 — the shared pipeline core. See {@link runPipeline}. */
-interface PipelineInput {
+export interface PipelineInput {
   /** Per-file user sources for early-error / safe / hardened passes. */
   userSourceFiles: ts.SourceFile[];
   /** The AST surface codegen + dts/wit consume (single = the file; multi = entry). */
@@ -985,76 +986,10 @@ export type PipelineOutputContext = Pick<
   readonly preparedStartup?: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>["startup"];
 };
 
-/** The existing pre-generation validation, shared by both internal routes. */
-function validatePipelineSource(input: PipelineInput): CompileResult | undefined {
-  const { errors, options, entryAst, userSourceFiles } = input;
-  // Each validation pass below gates on the errors IT produced, NOT on the whole
-  // accumulated `errors` array. This is load-bearing (#1927 regression fix): the
-  // pre-collected `errors` may already hold non-fatal TS diagnostics of severity
-  // "error" — e.g. TS2678 "Type '2' is not comparable to type '1'" on a switch
-  // case — which the single-source path has always TOLERATED (it compiles and
-  // succeeds, leaving the diagnostic in `errors`). The legacy single-source
-  // driver gated each pass only on that pass's fresh output; gating on the whole
-  // array here would turn every tolerated non-hard TS error into a hard failure.
-  const hasNewError = (added: { severity: string }[]) => added.some((e) => e.severity !== "warning");
-
-  // Step 1a: ES early-error detection — catch spec syntax errors TS misses, on
-  // EVERY user source file (#1931). allowJs dependency files are skipped (their
-  // JS may use patterns we cannot control) — same scoping as the diagnostic
-  // loop in the adapters. #1958 — EXCEPT the single-source path
-  // (`runEarlyErrorsOnAllowJs`), whose lone source IS the entry: the legacy
-  // `compileSourceSync` ran this pass unconditionally, and the `eval` host shim
-  // (always `allowJs: true`) depends on it to reject e.g. `export` in eval code.
-  if (!options.allowJs || input.runEarlyErrorsOnAllowJs) {
-    const earlyErrors: CompileError[] = [];
-    // #3419 — module-goal signal for rules where Script vs Module top level
-    // genuinely differ (duplicate top-level function declarations). The test262
-    // runner passes `inferModuleStrictArguments` as an EXPLICIT boolean — `true`
-    // exactly for `flags: [module]` tests (whose sources often carry no
-    // syntactic import/export the checker could infer module-ness from), `false`
-    // for script tests. Product compiles leave it undefined and are covered by
-    // the real `ts.isExternalModule` indicator inside the rule.
-    const moduleGoal = options.inferModuleStrictArguments === true;
-    // (#6491 r3) Script goal is an EXPLICIT opt-in, never `!moduleGoal` — see
-    // the `scriptGoal` doc comment in index.ts for why the negation is unsafe.
-    const scriptGoal = options.scriptGoal === true;
-    for (const sf of userSourceFiles) {
-      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal, scriptGoal }));
-    }
-    errors.push(...earlyErrors);
-    if (hasNewError(earlyErrors)) {
-      return failResult(errors);
-    }
-  }
-
-  // Step 1b: Safe mode validation for all user source files.
-  if (options.safe) {
-    const safeErrors: CompileError[] = [];
-    for (const sf of userSourceFiles) {
-      safeErrors.push(...validateSafeMode(sf, entryAst.checker, options));
-    }
-    errors.push(...safeErrors);
-    if (hasNewError(safeErrors)) {
-      return failResult(errors);
-    }
-  }
-
-  // Step 1c: Hardened mode validation for all user source files. #1927 — moving
-  // this into the shared core gives the multi paths hardened-mode parity (they
-  // previously skipped it entirely).
-  if (options.hardened) {
-    const hardenedErrors: CompileError[] = [];
-    for (const sf of userSourceFiles) {
-      hardenedErrors.push(...validateHardenedMode(sf));
-    }
-    errors.push(...hardenedErrors);
-    if (hasNewError(hardenedErrors)) {
-      return failResult(errors);
-    }
-  }
-
-  return undefined;
-}
+const preparedFrontendBoundary = createPreparedFrontendBoundary();
+export const preparedFrontendRejectionObservation = preparedFrontendBoundary.observe;
+export type { PreparedFrontendRejectionObservation } from "./compiler/prepared-pipeline-boundary.js";
+const validatePipelineSource = preparedFrontendBoundary.validate;
 
 function isWasmException(e: unknown): boolean {
   return (
@@ -1192,11 +1127,23 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
     diagnostics: entryAst.diagnostics,
     syntacticDiagnostics: entryAst.syntacticDiagnostics,
   };
-  if (collectMultiDiagnostics(diagnostics, options, errors))
-    return { kind: "output-failed", errors, artifacts: preparedPipelineArtifacts(failResult(errors)) };
+  const collectedDiagnosticStart = errors.length;
+  if (collectMultiDiagnostics(diagnostics, options, errors)) {
+    const rejected = {
+      kind: "output-failed" as const,
+      errors,
+      artifacts: preparedPipelineArtifacts(failResult(errors)),
+    };
+    preparedFrontendBoundary.syntax(rejected, diagnostics, errors, collectedDiagnosticStart);
+    return rejected;
+  }
   const targetProfile = resolveCompileTargetProfile(options);
   const sourceFailure = validatePipelineSource(snapshot);
-  if (sourceFailure) return { kind: "output-failed", errors, artifacts: preparedPipelineArtifacts(sourceFailure) };
+  if (sourceFailure) {
+    const rejected = { kind: "output-failed" as const, errors, artifacts: preparedPipelineArtifacts(sourceFailure) };
+    preparedFrontendBoundary.early(sourceFailure, rejected);
+    return rejected;
+  }
   const target = options.target === "standalone" ? "standalone" : options.target === "wasi" ? "wasi" : "host";
   const backendOptions: PreparedIrBackendOptions = {
     backend: targetProfile.backend,
@@ -1303,7 +1250,7 @@ interface PreparedWitFinalization {
 /** Shared output contract; generation and its diagnostics finish before entry. */
 function finalizePipelineModule(
   input: PipelineOutputContext,
-  mod: WasmModule,
+  emitted: WasmModule,
   telemetry: Partial<FailureTelemetry> | undefined,
   output: {
     targetProfile: ReturnType<typeof resolveCompileTargetProfile>;
@@ -1316,6 +1263,8 @@ function finalizePipelineModule(
   const { errors, options, entryAst, diagnosticAnchor } = input;
   const { targetProfile, emitWatOutput, emitSourceMap } = output;
   const targetEnvironment = targetProfile.environment;
+  // The steps below rewrite function bodies in place; ledger-owned bodies stay locked.
+  const mod = releaseOwnedFunctions(emitted);
 
   // Step 2b: Apply C ABI transformations if requested (linear target only).
   let cHeader: string | undefined;
@@ -1358,7 +1307,14 @@ function finalizePipelineModule(
   // warning-first compatibility lanes (#2961/#2980/#3164) are not an explicit
   // native-first opt-in, while WASI's strict import gate remains authoritative.
   const imports = buildImportManifest(mod);
-  const hostImportInventory = buildHostImportInventory(mod, imports, input.codegenOptions.link, targetEnvironment);
+  // (#6978) Selected host-accelerator families classify as `host-accelerator`.
+  const hostImportInventory = buildHostImportInventory(
+    mod,
+    imports,
+    input.codegenOptions.link,
+    targetEnvironment,
+    targetProfile.accelerators,
+  );
   if (options.semanticProviders === "native-first") {
     const forbidden = hostImportInventory.filter(
       (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
@@ -1371,7 +1327,7 @@ function finalizePipelineModule(
         errors,
         diagnosticAnchor,
         `Native-first semantic-provider policy rejected implicit or unclassified host imports: ${details}. ` +
-          `Use the host-assisted compatibility profile for this source until its native provider is implemented.`,
+          `Omit the explicit semanticProviders option to publish it anyway; a native provider gap belongs to #5385.`,
         "error",
       );
       return failResult(errors, telemetry);
@@ -1381,7 +1337,7 @@ function finalizePipelineModule(
   // Requested prepared WIT must be complete before any final artifacts are emitted.
   let preparedCapabilities: ReturnType<typeof buildCapabilityRequirements> | undefined;
   if (wit) {
-    const view = preparedPresentationWitView(wit.presentation, mod);
+    const view = preparedPresentationWitView(wit.presentation, emitted);
     preparedCapabilities = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
     const rendered = renderPreparedWit(view, {
       ...(typeof options.wit === "object" ? options.wit : {}),
@@ -1560,7 +1516,7 @@ function finalizePipelineModule(
       capabilityDiagnostics: capabilityProviderDiagnostics,
       exportBoundaries: exportBoundaryPolicies,
     }),
-    ...telemetry,
+    ...withEngineRejectedIrOutcomes(telemetry, emittedBinaryAccepted, errors), // (#7001)
   };
 }
 
@@ -1751,7 +1707,7 @@ export function compileSourceSync(
       ? injectIteratorStaticsPrelude(stdinInjectedSource)
       : { source: stdinInjectedSource, positionMap: PositionMap.identity(), injected: false };
   // Step 0a.46: #6839 — Wasm-native `Intl.ListFormat` prelude (host-free targets only).
-  const listFormatResult = applyIntlListFormatPrelude(targetProfile.environment, iterStaticsResult.source, options);
+  const listFormatResult = applyIntlListFormatPrelude(targetProfile, iterStaticsResult.source, options);
   const iterStaticsSource = listFormatResult.source;
 
   // Step 0a.5: Rewrite CommonJS `const X = require('Y')` patterns to ESM `import`
@@ -1817,13 +1773,17 @@ export function compileSourceSync(
   processedSource = foldGroundCalls(processedSource, effectiveFileName, options.optimize, isJsMode && !forceTsGrammar);
 
   // Step 1a: #3418 — host-free targets elide dead pure top-level bindings before
-  // parsing so unreachable bodies do not register host imports.
+  // parsing so unreachable bodies do not register host imports. (#6898) The
+  // native regime in a JS environment elides too: which bindings are dead is a
+  // question of the implementation (`nativeRegime` ≡ `ctx.standalone`), not of
+  // the embedder. Without it the unused test262 `$262.evalScript` shim kept a
+  // live direct `eval` and put every regime row into runtime-eval mode.
   // Context-owned declarations remain observable from later Scripts even when
   // this source never reads them. Private-program dead-binding proofs do not
   // apply; keep their original source and stable IR inventory intact.
   if (
     !options.standaloneScriptVarBindings &&
-    (targetProfile.environment === "none" || targetProfile.environment === "wasi")
+    (targetProfile.environment === "none" || targetProfile.environment === "wasi" || targetProfile.nativeRegime)
   ) {
     const scriptKind = isJsMode && !forceTsGrammar ? ts.ScriptKind.JS : ts.ScriptKind.TS;
     const elision = irIds.elideWithIrIds(processedSource, effectiveFileName, scriptKind, irInventory);
@@ -2012,7 +1972,7 @@ export async function compileMultiSource(
     ),
   );
   // #6839 — per-file Wasm-native `Intl.ListFormat` prelude (host-free targets only).
-  const listFormatFiles = applyIntlListFormatPreludeToFiles(multiTargetProfile.environment, timerShimmedFiles);
+  const listFormatFiles = applyIntlListFormatPreludeToFiles(multiTargetProfile, timerShimmedFiles);
   const processedFiles = profilePhase("ground-call-fold", () =>
     foldGroundCallsInMulti(listFormatFiles, entryFile, options.optimize),
   );

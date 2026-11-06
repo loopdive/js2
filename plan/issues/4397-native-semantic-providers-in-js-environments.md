@@ -258,3 +258,25 @@ Remaining work includes the remaining Proxy MOP invariant edges (#4402),
 Promise subclass conformance, further family expansion, accelerator
 measurement, and the representative Test262/npm evidence required before a
 default flip.
+
+## 2026-10-18 S6 landing handoff — assignment-rest residual
+
+The S6 landing refresh reverified the object-rest matrix on exact main and on
+the native-first default candidate. Binding rest, loop rest, and rest from an
+admitted caller-owned JavaScript object pass with zero legacy/unknown imports.
+The assignment-pattern form
+
+```ts
+let a = 0;
+let rest: any = {};
+({ a, ...rest } = { a: 1, b: 4 });
+```
+
+still traps `illegal cast` instead of returning `14`. The same failure occurs
+under plain standalone and exact main, so it is a native object-rest provider
+defect rather than a JS-boundary or S6 default-flip regression. The focused
+suite now isolates only that correct-result assertion under `it.fails`; a fix
+will make the pin fail and require promotion to a normal test. Do not route it
+back through `__extern_rest_object` or copy the source into a host-backed
+shadow object. The repair belongs in the native assignment-pattern carrier
+path while preserving the already-green boundary MOP cases.

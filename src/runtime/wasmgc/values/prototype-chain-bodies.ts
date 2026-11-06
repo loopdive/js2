@@ -8,6 +8,55 @@ export interface PrototypeChainSeed {
   readonly targetSlot: number;
   readonly protoSlot: number;
   readonly candidateSlot: number;
+  /** (#6944) `__fnctor_struct_proto_ok`: the first link is a terminating chain of fnctor structs. */
+  readonly structHopOkIdx?: number;
+}
+
+/**
+ * (#6944) `G.prototype = new F()` makes the first link a fnctor STRUCT. The
+ * target is always an `$Object`, so no struct link can match it: step over the
+ * struct links to the first `$Object` (or null). The guard proved the hop chain
+ * terminates, so the loop needs no counter.
+ */
+function hopStructLinks(
+  startIdx: number,
+  okIdx: number | undefined,
+  protoSlot: number,
+  objectTypeIdx: number,
+): Instr[] {
+  if (okIdx === undefined) return [];
+  return [
+    { op: "local.get", index: protoSlot },
+    { op: "call", funcIdx: okIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: protoSlot },
+                { op: "call", funcIdx: startIdx },
+                { op: "local.tee", index: protoSlot },
+                { op: "ref.is_null" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: protoSlot },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objectTypeIdx },
+                { op: "br_if", depth: 1 },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
 }
 
 function buildFnctorPrototypeSeed(d: PrototypeChainSeed): Instr[] {
@@ -25,7 +74,9 @@ function buildFnctorPrototypeSeed(d: PrototypeChainSeed): Instr[] {
   const seedFromLadder: Instr[] = [
     { op: "local.get", index: 1 },
     { op: "call", funcIdx: startIdx },
-    { op: "local.tee", index: protoSlot },
+    { op: "local.set", index: protoSlot },
+    ...hopStructLinks(startIdx, d.structHopOkIdx, protoSlot, objectTypeIdx),
+    { op: "local.get", index: protoSlot },
     { op: "ref.is_null" },
     { op: "i32.eqz" },
     {

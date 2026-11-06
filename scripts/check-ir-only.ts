@@ -130,7 +130,10 @@ export interface IrOnlyGateVerdict {
 export type CompileSeedEntry = (source: string, entry: string) => Promise<CompileResult>;
 
 const defaultCompileSeedEntry: CompileSeedEntry = (source, entry) =>
-  compile(source, { fileName: entry, trackIrOutcomes: true });
+  compile(source, {
+    fileName: entry,
+    trackIrOutcomes: true,
+  });
 
 const standaloneCompileSeedEntry: CompileSeedEntry = (source, entry) =>
   compile(source, { fileName: entry, trackIrOutcomes: true, target: "standalone" });

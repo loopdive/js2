@@ -111,14 +111,11 @@ function fn(
 // ---------------------------------------------------------------------------
 
 function makeGcCtx(): CodegenContext {
-  // fast + host js-string builtins — the playground fast-mode configuration.
-  // (fast + standalone ALSO uses the gc strategy, but a bare test context
-  // there pulls in native-string/object-runtime helper bodies whose validity
-  // depends on later production passes; the js-string configuration keeps
-  // the module minimal while exercising the identical $AnyValue lowering.)
+  // fast — the gc ($AnyValue) dynamic strategy. Structural checks only: a
+  // bare native-strings context is not instantiable without the production
+  // finalize passes.
   const ctx = createCodegenContext(createEmptyModule(), {} as unknown as ts.TypeChecker, {
     fast: true,
-    nativeStrings: false,
   });
   // What preregisterDynamicSupport does for the gc strategy.
   ensureAnyHelpers(ctx);
@@ -353,230 +350,13 @@ describe("#2949 s3 — IrDynamicLowering handle (production factory)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Runtime — gc strategy (fast/standalone): box → unbox/tag.test round-trips
-// ---------------------------------------------------------------------------
+// (#6979) host-strings variant removed with the host-assisted profile.
+// The gc-runtime ($AnyValue) execution case went with it: it ran a bare
+// `fast` context on host js-string builtins, and a bare native-strings context
+// pulls in runtime helper bodies that only validate after the full production
+// finalize pipeline.
 
-describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no imports)", () => {
-  async function gcExports() {
-    const ctx = makeGcCtx();
-    const box = (v: number, toType: IrType = DYN): IrFunction["blocks"][number]["instrs"][number] => ({
-      kind: "box",
-      value: id(v),
-      toType,
-      result: id(v + 1),
-      resultType: toType,
-    });
-    const fns: IrFunction[] = [
-      // box f64 → unbox NumberF64 → identity.
-      fn(
-        "rtF64",
-        [{ type: F64, name: "n" }],
-        [box(0), { kind: "unbox", value: id(1), tagId: JS_TAG_IDS.NumberF64, result: id(2), resultType: F64 }],
-        [id(2)],
-        [F64],
-        3,
-      ),
-      // box i32 (tag 2) → unbox NumberF64: the V2 cross-tag read.
-      fn(
-        "i32AsNumber",
-        [{ type: I32, name: "x" }],
-        [box(0), { kind: "unbox", value: id(1), tagId: JS_TAG_IDS.NumberF64, result: id(2), resultType: F64 }],
-        [id(2)],
-        [F64],
-        3,
-      ),
-      // box f64 (tag 3) → unbox NumberI32: trunc-sat narrowing.
-      fn(
-        "f64AsI32",
-        [{ type: F64, name: "n" }],
-        [box(0), { kind: "unbox", value: id(1), tagId: JS_TAG_IDS.NumberI32, result: id(2), resultType: I32 }],
-        [id(2)],
-        [I32],
-        3,
-      ),
-      // Boolean-REFINED box (tag 4 via the hint channel) → unbox Boolean.
-      fn(
-        "boolRT",
-        [{ type: I32, name: "b" }],
-        [
-          box(0, irDynamic(JS_TAG_IDS.Boolean)),
-          { kind: "unbox", value: id(1), tagId: JS_TAG_IDS.Boolean, result: id(2), resultType: I32 },
-        ],
-        [id(2)],
-        [I32],
-        3,
-      ),
-      // Refined box → tag.test(Boolean): the refinement produced tag 4.
-      fn(
-        "boxedBoolIsBool",
-        [{ type: I32, name: "b" }],
-        [
-          box(0, irDynamic(JS_TAG_IDS.Boolean)),
-          { kind: "tag.test", value: id(1), tagId: JS_TAG_IDS.Boolean, result: id(2), resultType: I32 },
-        ],
-        [id(2)],
-        [I32],
-        3,
-      ),
-      // Unrefined f64 box (tag 3) → numeric-CLASS test via the *I32* partition
-      // tag: MUST be 1 (V2 — either partition means "is a number").
-      fn(
-        "boxedF64IsNumViaI32Tag",
-        [{ type: F64, name: "n" }],
-        [box(0), { kind: "tag.test", value: id(1), tagId: JS_TAG_IDS.NumberI32, result: id(2), resultType: I32 }],
-        [id(2)],
-        [I32],
-        3,
-      ),
-      // Unrefined i32 box (tag 2) → class test via the *F64* partition tag.
-      fn(
-        "boxedI32IsNumViaF64Tag",
-        [{ type: I32, name: "x" }],
-        [box(0), { kind: "tag.test", value: id(1), tagId: JS_TAG_IDS.NumberF64, result: id(2), resultType: I32 }],
-        [id(2)],
-        [I32],
-        3,
-      ),
-      // Negative tags on a number box: String / Null / Undefined / Object.
-      fn(
-        "boxedF64IsStr",
-        [{ type: F64, name: "n" }],
-        [box(0), { kind: "tag.test", value: id(1), tagId: JS_TAG_IDS.String, result: id(2), resultType: I32 }],
-        [id(2)],
-        [I32],
-        3,
-      ),
-      fn(
-        "boxedF64IsNull",
-        [{ type: F64, name: "n" }],
-        [box(0), { kind: "tag.test", value: id(1), tagId: JS_TAG_IDS.Null, result: id(2), resultType: I32 }],
-        [id(2)],
-        [I32],
-        3,
-      ),
-      fn(
-        "boxedBoolIsNum",
-        [{ type: I32, name: "b" }],
-        [
-          box(0, irDynamic(JS_TAG_IDS.Boolean)),
-          { kind: "tag.test", value: id(1), tagId: JS_TAG_IDS.NumberF64, result: id(2), resultType: I32 },
-        ],
-        [id(2)],
-        [I32],
-        3,
-      ),
-    ];
-    // Every hand-built function must satisfy the verifier (R1–R6).
-    for (const f of fns) {
-      expect(verifyIrFunction(f), f.name).toEqual([]);
-    }
-    install(ctx, fns);
-    return instantiateCtx(ctx);
-  }
-
-  it("round-trips and tag tests behave per the JsTag table", async () => {
-    const x = await gcExports();
-    expect(x.rtF64!(3.5)).toBe(3.5);
-    expect(x.rtF64!(-0)).toBe(-0);
-    expect(Number.isNaN(x.rtF64!(NaN) as number)).toBe(true);
-    // V2 cross-tag numeric reads.
-    expect(x.i32AsNumber!(7)).toBe(7);
-    expect(x.i32AsNumber!(-3)).toBe(-3);
-    expect(x.f64AsI32!(3.9)).toBe(3);
-    expect(x.f64AsI32!(-2.5)).toBe(-2);
-    // Boolean refinement produced a REAL tag-4 box.
-    expect(x.boolRT!(1)).toBe(1);
-    expect(x.boolRT!(0)).toBe(0);
-    expect(x.boxedBoolIsBool!(1)).toBe(1);
-    expect(x.boxedBoolIsBool!(0)).toBe(1); // false is still a boolean
-    // Numeric-CLASS tests accept BOTH numeric tags (V2)…
-    expect(x.boxedF64IsNumViaI32Tag!(0.5)).toBe(1);
-    expect(x.boxedI32IsNumViaF64Tag!(42)).toBe(1);
-    // …and reject non-numbers; non-number tags reject numbers.
-    expect(x.boxedBoolIsNum!(1)).toBe(0);
-    expect(x.boxedF64IsStr!(1)).toBe(0);
-    expect(x.boxedF64IsNull!(1)).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Runtime — host strategy (externref carrier, dynamic params from real JS)
-// ---------------------------------------------------------------------------
-
-describe("#2949 s3 — host runtime (externref carrier, __typeof_* classifiers)", () => {
-  async function hostExports() {
-    const ctx = makeHostCtx();
-    const test = (name: string, tag: TagId): IrFunction =>
-      fn(
-        name,
-        [{ type: DYN, name: "x" }],
-        [{ kind: "tag.test", value: id(0), tagId: tag, result: id(1), resultType: I32 }],
-        [id(1)],
-        [I32],
-        2,
-      );
-    const fns: IrFunction[] = [
-      test("isStr", JS_TAG_IDS.String),
-      test("isObj", JS_TAG_IDS.Object),
-      test("isNull", JS_TAG_IDS.Null),
-      test("isUndef", JS_TAG_IDS.Undefined),
-      test("isNum", JS_TAG_IDS.NumberF64),
-      test("isFn", JS_TAG_IDS.Function),
-      // box f64 → unbox NumberF64 through the host import pair.
-      fn(
-        "numRT",
-        [{ type: F64, name: "n" }],
-        [
-          { kind: "box", value: id(0), toType: DYN, result: id(1), resultType: DYN },
-          { kind: "unbox", value: id(1), tagId: JS_TAG_IDS.NumberF64, result: id(2), resultType: F64 },
-        ],
-        [id(2)],
-        [F64],
-        3,
-      ),
-      // unbox Boolean on a dynamic param (host: ToBoolean of a proven bool).
-      fn(
-        "unboxBool",
-        [{ type: DYN, name: "x" }],
-        [{ kind: "unbox", value: id(0), tagId: JS_TAG_IDS.Boolean, result: id(1), resultType: I32 }],
-        [id(1)],
-        [I32],
-        2,
-      ),
-    ];
-    for (const f of fns) {
-      expect(verifyIrFunction(f), f.name).toEqual([]);
-    }
-    install(ctx, fns);
-    return instantiateCtx(ctx, hostEnvFor(ctx));
-  }
-
-  it("classifies real JS values per the JsTag partition table", async () => {
-    const x = await hostExports();
-    expect(x.isStr!("abc")).toBe(1);
-    expect(x.isStr!(42)).toBe(0);
-    expect(x.isNum!(42)).toBe(1);
-    expect(x.isNum!(0.5)).toBe(1);
-    expect(x.isNum!("42")).toBe(0);
-    // Object partition EXCLUDES null (the scratch-local arm).
-    expect(x.isObj!({})).toBe(1);
-    expect(x.isObj!([])).toBe(1);
-    expect(x.isObj!(null)).toBe(0);
-    expect(x.isObj!("s")).toBe(0);
-    // Null vs Undefined are distinct partitions.
-    expect(x.isNull!(null)).toBe(1);
-    expect(x.isNull!(undefined)).toBe(0);
-    expect(x.isUndef!(undefined)).toBe(1);
-    expect(x.isUndef!(null)).toBe(0);
-    expect(x.isFn!(() => 1)).toBe(1);
-    expect(x.isFn!({})).toBe(0);
-    // Box/unbox round-trip through __box_number/__unbox_number.
-    expect(x.numRT!(2.25)).toBe(2.25);
-    expect(x.unboxBool!(true)).toBe(1);
-    expect(x.unboxBool!(false)).toBe(0);
-  });
-});
+// (#6979 S7-a) The host-runtime execution describe tested the retired host-assisted import lane (bare host context + JS-host carrier imports); deleted with it.
 
 // ---------------------------------------------------------------------------
 // Lowering contract — failure modes stay loud

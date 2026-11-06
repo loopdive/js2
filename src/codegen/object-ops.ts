@@ -5,6 +5,7 @@
  *
  * Extracted from expressions.ts (#688 step 6).
  */
+import { introspectionSubclassRoute, ownKeysSubclassRoute } from "./class-arm-tag-guard.js"; // (#7216)
 import { classConstructorIsOwnKey } from "./class-ctor-own-key.js"; // (#6651 C1) §15.7 own `constructor`
 import { classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 F5)
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
@@ -20,6 +21,7 @@ import {
   promoteAccessorCapturesToGlobals,
 } from "./closures.js";
 import { reportError } from "./context/errors.js";
+import { popBody, pushBody } from "./context/bodies.js";
 import { isGlobalObjectExpr } from "./global-environment.js"; // (#4394) host global object, never a struct
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import { recordSidecarPropertyOwner } from "./sidecar-owner-scope.js";
@@ -30,6 +32,7 @@ import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#3177 sl
 import { emitEvolvingNullishReceiverGuard, evolvingVarNullishNarrowed } from "./builtin-prototype-brand.js"; // (#5197 review F1)
 import { emitMappedArgReverseSync } from "./expressions/logical-ops.js";
 import { resolveStructName } from "./expressions/misc.js";
+import { closedReflectiveStructName } from "./fnctor-instance-names.js";
 import { widenedStructNameForUse, integrityVarKey } from "./widened-var-key.js";
 import { addUnionImports, cacheStringLiterals, getOrRegisterTupleType, resolveWasmType } from "./index.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -44,7 +47,6 @@ import {
   buildAccessorClosure,
   ensureStructAccessorGlobal,
 } from "./struct-accessor-closure.js";
-import { emitUndefined } from "./expressions/late-imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { compileNativeStringLiteral, compileStringLiteral } from "./string-ops.js";
 import { getVecInfo } from "./type-coercion.js";
@@ -194,30 +196,6 @@ function markRuntimeDefinedProperty(ctx: CodegenContext, objArg: ts.Expression, 
   recordSidecarPropertyOwner(ctx, sidecarKey, objArg);
 }
 
-function emitDescriptorUndefinedSidecars(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  descLocal: number,
-  fields: readonly string[],
-): void {
-  if (fields.length === 0) return;
-  const setIdx = ensureLateImport(
-    ctx,
-    "__extern_set",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [],
-  );
-  flushLateImportShifts(ctx, fctx);
-  if (setIdx === undefined) return;
-  for (const field of fields) {
-    fctx.body.push({ op: "local.get", index: descLocal });
-    addStringConstantGlobal(ctx, field);
-    for (const instr of stringConstantExternrefInstrs(ctx, field)) fctx.body.push(instr);
-    emitUndefined(ctx, fctx);
-    fctx.body.push({ op: "call", funcIdx: setIdx });
-  }
-}
-
 /**
  * (#2372) Reify a typed WasmGC descriptor struct (already on the stack) into a
  * fresh open-hash `$Object`, so the native `__obj_define_from_desc` applier —
@@ -341,11 +319,7 @@ export function emitDefinePropertyDescRuntime(
   // passed through unchanged: no double-wrap. The native semantic-provider
   // policy uses this same path in JavaScript and host-free environments.
   const descStructTypeIdx =
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    descType &&
-    (descType.kind === "ref" || descType.kind === "ref_null")
-      ? descType.typeIdx
-      : undefined;
+    descType && (descType.kind === "ref" || descType.kind === "ref_null") ? descType.typeIdx : undefined;
   const reifyStructName = descStructTypeIdx !== undefined ? ctx.typeIdxToStructName.get(descStructTypeIdx) : undefined;
   const reifyFields = reifyStructName ? ctx.structFields.get(reifyStructName) : undefined;
   // (#4180) …but ONLY for a struct that is plausibly a descriptor RECORD. Any
@@ -395,30 +369,11 @@ export function emitDefinePropertyDescRuntime(
   // host-side `__descriptor_undefined` presence sidecar is not used standalone
   // (the native helper reads presence directly via `__hasOwnProperty`), so the
   // undefined-fields sidecar emission is host-only.
-  if (ctx.targetProfile.semanticProviders === "native-first") {
-    ensureObjectRuntime(ctx);
-    fctx.body.push({ op: "local.get", index: descLocal });
-    const nativeIdx = ctx.funcMap.get("__obj_define_from_desc");
-    if (nativeIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: nativeIdx });
-    } else {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    return { kind: "externref" };
-  }
-
-  emitDescriptorUndefinedSidecars(ctx, fctx, descLocal, undefinedFields);
+  ensureObjectRuntime(ctx);
   fctx.body.push({ op: "local.get", index: descLocal });
-
-  const dpDescIdx = ensureLateImport(
-    ctx,
-    "__defineProperty_desc",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-  );
-  flushLateImportShifts(ctx, fctx);
-  if (dpDescIdx !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: dpDescIdx });
+  const nativeIdx = ctx.funcMap.get("__obj_define_from_desc");
+  if (nativeIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: nativeIdx });
   } else {
     fctx.body.push({ op: "ref.null.extern" });
   }
@@ -1237,6 +1192,20 @@ export function compileObjectDefineProperty(
       // reads the same value through `__is_truthy` and answered `false`
       // correctly — this makes the OrThrow wrapper agree with it.
       if (r !== null) emitDefinePropertyRejectionThrow(ctx, fctx, { falsyIsRejection: true });
+      return r;
+    }
+    // (#7061) A METHOD-SHORTHAND `value() {…}` in an inline descriptor: the
+    // inline fast paths below read `value` only from a property assignment, so
+    // the define stored `undefined` (axios' `AxiosHeaders.accessor` installs its
+    // `get<Header>` methods exactly this way). The runtime applier reads the
+    // literal's `value` field whatever its spelling — the route an
+    // identifier-bound descriptor already takes.
+    if (
+      ts.isObjectLiteralExpression(descArg) &&
+      descArg.properties.some((p) => ts.isMethodDeclaration(p) && ts.isIdentifier(p.name) && p.name.text === "value")
+    ) {
+      const r = emitDefinePropertyDescRuntime(ctx, fctx, objArg, propArg, descArg, descriptorUndefinedFields(descArg));
+      if (r !== null) emitDefinePropertyRejectionThrow(ctx, fctx);
       return r;
     }
   }
@@ -4451,6 +4420,61 @@ export function compileObjectDefineProperties(
 
 // ── Object.keys / Object.values ───────────────────────────────────────
 
+/** Resolve reflection's closed-shape proof through the existing fnctor owner authority. */
+function resolveClosedReflectiveStructName(ctx: CodegenContext, tsType: ts.Type): string | undefined {
+  return closedReflectiveStructName(ctx, tsType, resolveStructName(ctx, tsType));
+}
+
+/** Does the static type admit `null`/`undefined`? */
+function typeAdmitsNullish(t: ts.Type): boolean {
+  const nullish = ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void;
+  return t.isUnion() ? t.types.some((m) => (m.flags & nullish) !== 0) : (t.flags & nullish) !== 0;
+}
+
+/**
+ * (#7216) `Object.keys` over a non-nullable receiver of a subclassed static
+ * class: the runtime own keys of the live value, or — when the value is null —
+ * the static class's key list, which is what base answered without reading the
+ * receiver at all. A class-typed binding holds null when its value failed the
+ * struct cast (`const p = JSON.parse(s) as A`, an `any` returned into `A`), so
+ * a ToObject throw there would be a new failure where base answered.
+ */
+function compileSubclassedObjectKeys(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  arg: ts.Expression,
+): ValType | null {
+  const externref: ValType = { kind: "externref" };
+  const keysIdx = ensureLateImport(ctx, "__object_keys", [externref], [externref]);
+  flushLateImportShifts(ctx, fctx);
+  const argResult = compileExpression(ctx, fctx, arg);
+  if (!argResult) return null;
+  if (argResult.kind !== "externref") coerceType(ctx, fctx, argResult, externref);
+  const recv = allocLocal(fctx, `__keys_recv_${fctx.locals.length}`, externref);
+  const branch: Instr & { op: "if" } = { op: "if", blockType: { kind: "empty" }, then: [], else: [] };
+  fctx.body.push({ op: "local.tee", index: recv }, { op: "ref.is_null" }, branch);
+  // Both arms are filled in place, so a late import added while compiling one
+  // still finds every emitted instruction through the function body.
+  // The live arm keeps the runtime helper's externref (converting it to the
+  // static vec would copy it on every call); the rare null arm converts.
+  let saved = pushBody(fctx);
+  const foldType = compileObjectKeysOrValues(ctx, fctx, "keys", expr, true);
+  if (foldType) coerceType(ctx, fctx, foldType, externref);
+  branch.then = fctx.body;
+  popBody(fctx, saved);
+  if (!foldType || keysIdx === undefined) return null;
+  saved = pushBody(fctx);
+  fctx.body.push(
+    { op: "local.get", index: recv },
+    { op: "call", funcIdx: ctx.funcMap.get("__object_keys") ?? keysIdx },
+  );
+  branch.else = fctx.body;
+  popBody(fctx, saved);
+  branch.blockType = { kind: "val", type: externref };
+  return externref;
+}
+
 /**
  * Compile Object.keys(obj) or Object.values(obj) by expanding struct fields
  * at compile time. Object.keys returns a string[] of field names,
@@ -4461,6 +4485,7 @@ export function compileObjectKeysOrValues(
   fctx: FunctionContext,
   method: string,
   expr: ts.CallExpression,
+  foldStatic = false, // (#7216) the static-class fold, for `compileSubclassedObjectKeys`
 ): ValType | null {
   const arg = expr.arguments[0]!;
   const argType = ctx.checker.getTypeAtLocation(arg);
@@ -4509,8 +4534,14 @@ export function compileObjectKeysOrValues(
   const argIsHostObjectVar =
     (ts.isIdentifier(arg) && ctx.externrefAccessorVars.has(arg.text)) ||
     typeIsRuntimeKeyedObjectLiteral(ctx, argType, _hasRuntimeComputedKey);
-  // Resolve struct name from the argument type
-  const structName = argIsHostObjectVar ? undefined : resolveStructName(ctx, argType);
+  // Resolve struct name from the argument type (an open fnctor carrier enumerates at runtime)
+  const staticStructName = argIsHostObjectVar ? undefined : resolveClosedReflectiveStructName(ctx, argType);
+  // (#7216) a subclassed static class may hold a longer subclass struct
+  const subclassRoute = !foldStatic && ownKeysSubclassRoute(ctx, method, staticStructName, argType, arg);
+  if (subclassRoute && method === "keys" && !typeAdmitsNullish(argType)) {
+    return compileSubclassedObjectKeys(ctx, fctx, expr, arg);
+  }
+  const structName = subclassRoute ? undefined : staticStructName;
   if (!structName) {
     // Only a FRESH syntactic `{}` proves an empty own-key set. A variable or
     // parameter whose checker type has zero declared properties is not such a
@@ -4556,7 +4587,7 @@ export function compileObjectKeysOrValues(
     if (argResult.kind !== "externref") {
       coerceType(ctx, fctx, argResult, { kind: "externref" });
     }
-    if (evolvingNullishArg) emitToObjectNullishGuard(ctx, fctx); // (#6651 U3)
+    if (evolvingNullishArg || subclassRoute) emitToObjectNullishGuard(ctx, fctx); // (#6651 U3, #7216)
     const importName = `__object_${method}`;
     const funcIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
@@ -5026,7 +5057,10 @@ export function compilePropertyIntrospection(
   // since we can't statically know their properties
   // (#5350 r2) …and an undeclared key a `super` write may have added.
   const superGrownKey = superWriteMayAddKey(ctx, recvExpr, receiverType, expr.arguments[0]);
-  if (receiverWasm.kind === "externref" || runtimeKeyedOwnKeys || evolvingNullishRecv || superGrownKey) {
+  // (#7216) …or a class receiver whose runtime struct may be a longer subclass.
+  const runtimeRecv =
+    superGrownKey || introspectionSubclassRoute(ctx, receiverWasm, receiverType, recvExpr, expr.arguments[0]);
+  if (receiverWasm.kind === "externref" || runtimeKeyedOwnKeys || evolvingNullishRecv || runtimeRecv) {
     const isHOP = propAccess.name.text === "hasOwnProperty";
     const importName = isHOP ? "__hasOwnProperty" : "__propertyIsEnumerable";
     const hopIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);

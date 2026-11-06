@@ -17,6 +17,10 @@ goal: standalone-mode
 requested_by: claude.ai@loopdive.com/fable-architect
 related: [6651, 6766, 6767, 5316, 5268, 5148, 5116, 4777, 4599, 3371, 4010, 1906]
 loc-budget-allow:
+  # 2026-10-20 (#6770 approved relational Symbol boundary): six wiring lines
+  # reserve the existing TypeError guard before operands and check both numeric
+  # temporaries. No new conversion semantics outside this approved value guard.
+  - src/codegen/binary-ops.ts
   # 2026-09-30 (#6770 plan, Fable lane). Eight mechanisms across the object
   # runtime; wiring only in the existing files listed, every helper longer
   # than ~40 lines goes into a NEW leaf (registered in
@@ -944,3 +948,109 @@ New leaves registered in `scripts/compiler-boundaries.json`.
 
 `status` stays `in-progress`: the S6 residual rows and the probe gaps are
 unmet criteria, not recorded-and-accepted ones.
+
+## 2026-10-20 continuation — shared Symbol prototype seeder demand
+
+The human-approved 930-byte patch changes only the shared native-prototype
+seeder demand gate: an actually materialized Symbol prototype may demand its
+normal seeder without the generic reflective-read flag. Dependency parking,
+flush ordering, and descriptors retain their normal paths. No AST predicate,
+provider, corpus, oracle, or policy change is included. Product postimage:
+`src/codegen/native-proto.ts` SHA-256
+`52fade0eb615b40e80e6edebbd34539e2d469b7e1de758178e8244f7a099896e`.
+
+Actual paired qualification at clean-main base
+`5bf8e9ec6c1ebb9b1ffb8fa4435deeb3541961d8` established a narrow result:
+
+- Both authored descriptor-only nullish Symbol numeric cases changed from red
+  to green, including emitted seeder/valueOf/toString name checks. The five
+  targeted cases passed; their helpers, literal sources, assertions, options,
+  and 90s timeouts are preserved in the proposed maintained shipping subset.
+- The unchanged seven-case diagnostic comparison settled **5 PASS / 2 FAIL**.
+  Both TypedArray controls still returned 4 against assertion 7, matching their
+  real baseline failures. Their full fixture and evidence are retained; neither
+  assertion is weakened, claimed repaired, or relabelled green.
+- The four unchanged original Test262 files remained **1 PASS / 3 FAIL** in
+  both BASE and PATCH. Each completeness check covered **4/4**, with **0
+  exclusions** and **6 compiler attempts**. The whole Symbol wrapper original
+  still misses its expected numeric TypeError. Further diagnosis remains open;
+  the authored subset does not establish a canonical flip.
+
+Measurement labels remain separate. Original Test262 requested legacy with
+configured hybrid compilation, standalone target, honest oracle, auto semantic
+providers, and oracle15; the actual execution-route ownership is **UNKNOWN**.
+Authored tests use the DEFAULT direct compile API with standalone, allowJs,
+skipSemanticDiagnostics, and deferTopLevelInit, without an explicit
+experimentalIR/compiler-path selection. Neither result certifies complete IR.
+
+All six required v8 source-contract commands exited 0: LOC, function budget,
+coercion-site guard, oracle ratchet, dead-export preservation-v1, and format
+check. Strict graph closure remains open and is not certified by the
+preservation-v1 result. Final qualification of the exact five-case maintained
+file on `319fc0a667e37710be11d6de0cc1477bdfd3b5bf` settled **5 PASS / 0 FAIL /
+0 SKIP / 0 TODO**; format and the maintained TypeScript 7 typecheck each exited
+0. All three children closed naturally with complete raw capture and unchanged
+source/dependency guards. Normal hooks, CI, and the protected full-suite floor
+remain **PENDING**. This continuation does not close #6770, waive either TA failure,
+claim original oracle14/full11778 success, or provide census conformance credit.
+
+## 2026-10-20 approved relational Symbol numeric-boundary continuation
+
+The separately human-approved 2,890-byte repair reuses the existing semantic
+Symbol-to-number TypeError arm at both relational numeric operands, after both
+ToPrimitive results exist and before numeric unboxing. Required TypeError
+dependencies are prepared before operand compilation; lexicographic comparison,
+raw nonthrowing numeric-index probes and the original operand/conversion order
+remain unchanged. This is the bounded AST exception for this repair only.
+
+The exact Root-owned eight programs provide 24 independent serial flag cases,
+with isolated Node VM references, mandatory module initialization and the stock
+35-second case deadline. Qualification, normal hooks, CI and protected floors
+are PENDING; no canonical Test262 result, TypedArray repair or whole #6770
+closure is claimed. The earlier seeder five-test evidence and both retained
+TypedArray failures remain separate and unchanged.
+
+## 2026-10-30 bounded relational repair qualification and retained residue
+
+The current-main reconciliation preserves operand preparation, the native-first
+numeric shortcut and both primitive reductions. It adds only the approved
+Symbol guards before the numeric unbox calls; the shared nonthrowing numeric-key
+probe and separate accessor emitter remain unchanged.
+
+On the frozen receiving source, all 24 published cases (eight programs across
+three flag configurations) pass, with zero failures or skips. The two unchanged
+whole Test262 originals retain one pass (`prop-desc.js`) and one failure
+(`redefined-symbol-wrapper-ordinary-toprimitive.js`): the latter reports
+`hint: string Expected SameValue(undefined, 1)`. Original source, assertions,
+maintained strict policy and stock deadlines are unchanged. No whole-original
+pass or full-suite gain is claimed.
+
+The unchanged-main whole wrapper stops earlier at its numeric TypeError
+assertion, so that result alone cannot classify the later string failure.
+Separately, the receiving owner measured four string observations on each of
+unchanged-main and candidate source: both template cases pass and both computed
+property-key cases fail with actual undefined versus native 1 on both sources.
+Those eight diagnostic observations establish preexisting behavior for those
+exact probes only; they do not replace either whole original or earn conformance
+floor credit. The separate accessor repair is excluded from this bounded fix.
+
+The old author-written whole-wrapper hold condition requires truthful receiving
+owner reconciliation after normal current-head QA, hooks, CI and review. This
+source-only preparation does not release that hold or waive a required gate.
+
+## 2026-10-30 follow-up: share Symbol TypeError dependency preparation
+
+Published head `9dd0f877` failed the standalone-arm ratchet: the new preparation
+helper duplicated a mode branch already owned by numeric fast-path dependency
+setup. The gate measured one additional standalone arm and one additional
+negative standalone arm. No allowance or baseline change is proposed.
+
+The source-only follow-up consolidates both dependency reservations into one
+function. Relational callers retain mandatory Symbol-carrier validation before
+registration; existing fast paths explicitly retain their minimal-module policy.
+The existing host/non-standalone no-op, constructor/message selection, shift-flush
+order, Symbol throw instructions and both relational operand guards are unchanged.
+Source counting matches current main's existing arm counts; actual gate, runtime
+qualification, normal hooks and refreshed CI remain pending. Existing 24-case
+controls, both complete originals and the retained one-pass/one-fail outcome are
+not rewritten or credited as new results.

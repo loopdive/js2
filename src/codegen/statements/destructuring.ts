@@ -33,7 +33,6 @@ import {
 } from "../destructuring-params.js";
 import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
-import { usesNativeJsErrors } from "../js-errors.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "../registry/types.js";
 import { getVecInfo } from "../type-coercion.js";
 import {
@@ -769,7 +768,11 @@ export function compileObjectDestructuring(
       compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
       return;
     }
-    // No __box_number available — fall through to error
+    // (#6981) No host `__box_number` (native regime): box through the
+    // coercion engine's native arm instead of rejecting a coercible number.
+    coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
+    compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
+    return;
   }
 
   // Determine struct type — prefer the actual Wasm type from compileExpression
@@ -862,7 +865,7 @@ export function compileObjectDestructuring(
       // fields only) so both the named-binding `__extern_get`s and the
       // `__extern_rest_object` collection see every property. Host-assisted
       // compatibility mode keeps its existing host reflection path.
-      if (ctx.targetProfile.semanticProviders === "native-first" && structTypeIdx !== undefined) {
+      if (structTypeIdx !== undefined) {
         // Match the materialize helper's local type (ref_null <structTypeIdx>);
         // an anonymous-literal source may have a different resultType.typeIdx.
         if ((resultType as { typeIdx?: number }).typeIdx !== structTypeIdx) {
@@ -896,12 +899,7 @@ export function compileObjectDestructuring(
   // constructor instead of the `__throw_type_error` host import. Register that
   // constructor now (it lands in funcMap as an internal function, after all
   // current imports, so it introduces no late-import index shift).
-  if (usesNativeJsErrors(ctx)) {
-    emitWasiErrorConstructor(ctx, "TypeError", 1);
-  } else {
-    ensureLateImport(ctx, "__throw_type_error", [{ kind: "externref" }], []);
-    flushLateImportShifts(ctx, fctx);
-  }
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
 
   // Stash RHS in a temp local matching the resolved struct type so the helper
   // can use struct.get directly. Use the resolved structTypeIdx (which may have
@@ -1140,7 +1138,11 @@ export function compileArrayDestructuring(
 
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, typeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
-  const isVecArray = arrDef && arrDef.kind === "array";
+  // (#6980) The native `$Map`/`$Set` struct's field 1 is its entries array, so
+  // the vec probe matched it and destructuring read raw `$MapEntry` slots
+  // (null-deref). A collection is an iterable, not a vec: it takes the
+  // unknown-struct externref path below, whose GetIterator drives it.
+  const isVecArray = arrDef && arrDef.kind === "array" && typeIdx !== ctx.mapTypeIdx;
 
   // (#2169) Array-destructuring a Wasm-native generator (`const [a,b]=g()`).
   // The initializer lowered to a ref to the generator state struct

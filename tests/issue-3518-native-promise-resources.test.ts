@@ -2,6 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { nativePromiseCaptureKernel } from "./helpers/native-promise-capture-kernel.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { prepareIrProgramSources } from "../src/ir/program-source.js";
@@ -173,6 +174,46 @@ function futureReservationProbe(tx: PhysicalModuleReservations) {
 
 describe("native Promise resource requirements, not whole-family materialization", () => {
   it.each([false, true])(
+    "executes shared resolving-pair guards with genuine reserved types, alternate root=%s",
+    async (alternateRoot) => {
+      const a = reserve(
+        alternateRoot
+          ? [
+              {
+                kind: "signature",
+                id: "numeric",
+                params: [{ kind: "f64" }],
+                results: [{ kind: "f64" }],
+                allocationMode: "ordinary",
+              },
+              ...closureRequests(),
+            ]
+          : closureRequests(),
+      );
+      const { compiled, exports: e } = await nativePromiseCaptureKernel(
+        a.module,
+        a.pack,
+        a.dependencies.closures.root.typeIndex,
+        a.dependencies.closures.metadata[0]!.binding.type.typeIndex,
+      );
+      expect(WebAssembly.Module.imports(compiled)).toEqual([]);
+      const first = { first: true },
+        ignored = { ignored: true };
+      const [resolve, reject] = e.pair!();
+      e.resolve!(resolve, first);
+      e.reject!(reject, ignored);
+      e.resolve!(resolve, ignored);
+      expect(e.counts!()).toEqual([1, 0]);
+      expect(e.lastValue!()).toBe(first);
+      const [resolve2, reject2] = e.pair!();
+      e.reject!(reject2, ignored);
+      e.resolve!(resolve2, first);
+      e.reject!(reject2, first);
+      expect(e.counts!()).toEqual([1, 1]);
+      expect(e.lastValue!()).toBe(ignored);
+    },
+  );
+  it.each([false, true])(
     "authenticates source configuration despite equal recipes, decoded=%s",
     (replay) => {
       const prepared = prepare("off", replay);
@@ -278,7 +319,7 @@ describe("native Promise resource requirements, not whole-family materialization
     const capture = a.pack.types.settleCapture.object,
       meta = a.dependencies.closures.metadata[0]!.binding.type.object;
     if (capture.kind !== "struct" || meta.kind !== "struct") throw new Error("expected actual structs");
-    expect(capture.fields).toHaveLength(6);
+    expect(capture.fields).toHaveLength(7);
     meta.fields.forEach((field, index) => {
       expect(capture.fields[index]).not.toBe(field);
       expect(capture.fields[index]!.type).toBe(field.type);
@@ -451,7 +492,7 @@ describe("native Promise resource requirements, not whole-family materialization
           ? others
           : mutation === "duplicate"
             ? [...requirements.providers, row]
-            : [...others, { ...row, id: "foreign.resolve" }];
+            : [...others, { ...row, id: "foreign.resolve" as typeof row.id }];
       expect(() => deriveNativePromiseResourcePlan({ ...requirements, providers, configuration })).toThrow(
         "noncanonical promise.resolve provider",
       );
@@ -550,6 +591,7 @@ describe("reservation-only Promise pack controls; missing native dependencies re
       fields: [
         ...(closures.metadata[0]!.binding.type.object as { fields: unknown[] }).fields,
         { name: "cap_promise", type: { kind: "ref", typeIdx: b.pack.types.promise.typeIndex }, mutable: false },
+        { name: "cap_guard", type: { kind: "ref", typeIdx: b.pack.types.resolvingPair.typeIndex }, mutable: false },
       ],
     });
     expect(b.module.types[b.pack.functions.resolveClosure.object.typeIdx]).toMatchObject({
@@ -728,6 +770,7 @@ describe("reservation-only Promise pack controls; missing native dependencies re
         expect.anything(),
         expect.anything(),
         { name: "cap_promise", mutable: false },
+        { name: "cap_guard", mutable: false },
       ],
     });
   });

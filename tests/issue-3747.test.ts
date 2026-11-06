@@ -66,7 +66,7 @@ describe("#3747 CommonJS callable value linking", () => {
   // The explicit local `{ exports: {} }` carrier is the unresolved core of
   // #3747. Keep it executable as an expected failure; the ambient CommonJS
   // rewrite cases below are separate and now pass.
-  it.fails("preserves a UMD-shaped factory result assigned through module.exports", async () => {
+  it("preserves a UMD-shaped factory result assigned through module.exports", async () => {
     expect(
       await run({
         "./entry.ts": `import value from "./module.js";

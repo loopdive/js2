@@ -49,13 +49,7 @@ export interface StandaloneCalendarPlanning {
 }
 
 function supportsStandaloneCalendarCapabilities(ctx: CodegenContext): boolean {
-  return (
-    ctx.standalone &&
-    !ctx.wasi &&
-    ctx.nativeStrings &&
-    ctx.targetProfile.environment === "none" &&
-    ctx.targetProfile.semanticProviders === "native-first"
-  );
+  return ctx.standalone && !ctx.wasi && ctx.nativeStrings && ctx.targetProfile.environment === "none";
 }
 
 /** Build one exact DOM plan only in the standalone native-provider lane. */

@@ -1298,8 +1298,15 @@ function __js2RequireActual(name) {
   // These entries are internal React-monorepo test dependencies rather than
   // published package graphs. Keep their host carriers explicit so an
   // upstream test reaches its assertion instead of failing at module lookup.
-  if (name === "react/jsx-runtime") return __js2ReactInfra().reactJsxRuntime;
-  if (name === "react/jsx-dev-runtime") return __js2ReactInfra().reactJsxDevRuntime;
+  // (#7025) The standalone lane compiles React's jsx runtimes into the batch.
+  if (name === "react/jsx-runtime")
+    return typeof __REACT_JSX_RUNTIME__ !== "undefined" && __REACT_JSX_RUNTIME__ !== null
+      ? __REACT_JSX_RUNTIME__
+      : __js2ReactInfra().reactJsxRuntime;
+  if (name === "react/jsx-dev-runtime")
+    return typeof __REACT_JSX_DEV_RUNTIME__ !== "undefined" && __REACT_JSX_DEV_RUNTIME__ !== null
+      ? __REACT_JSX_DEV_RUNTIME__
+      : __js2ReactInfra().reactJsxDevRuntime;
   if (name === "scheduler" || name === "scheduler/unstable_mock") return __js2ReactInfra().schedulerMock;
   if (name === "internal-test-utils") return __js2InternalTestUtils;
   if (name === "./utils/ReactDOMServerIntegrationTestUtils") return __js2ReactDOMServerIntegrationTestUtils;
@@ -1323,7 +1330,10 @@ function __js2RequireActual(name) {
     www: false,
     source: false,
   };
-  if (name === "react/package.json") return { version: __js2ReactInfra().react.version };
+  if (name === "react/package.json")
+    return typeof __REACT_PACKAGE_JSON__ !== "undefined" && __REACT_PACKAGE_JSON__ !== null
+      ? __REACT_PACKAGE_JSON__
+      : { version: __js2ReactInfra().react.version };
   if (name === "scripts/jest/patchMessageChannel") return { patchMessageChannel: patchMessageChannel };
   if (name === "react-dom/test-utils") return { act: __js2InternalTestUtils.act };
   return __js2ReactInfra().require(name);

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../../src/index.js";
-import { buildImports as buildRuntimeImports } from "../../src/runtime.js";
+import { buildImports as buildRuntimeImports, wrapCompiledExports } from "../../src/runtime.js";
 import { compileToWasm } from "./helpers.js";
 
 // #1494 — `import.meta.url` is now a host import (`__get_import_meta_url`)
@@ -17,6 +17,11 @@ async function compileWithMetaUrl(source: string, importMetaUrl?: string) {
   const runtimeResult = buildRuntimeImports(result.imports ?? [], { importMetaUrl }, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, runtimeResult);
   runtimeResult.setInstance?.(instance);
+  // (#6982) Under native-first a string result crosses the compiled JS value
+  // adapter, exactly as an embedder sees it (raw exports hold Wasm strings).
+  if (result.targetProfile?.semanticProviders === "native-first") {
+    return wrapCompiledExports(result, instance) as Record<string, Function>;
+  }
   return instance.exports as Record<string, Function>;
 }
 

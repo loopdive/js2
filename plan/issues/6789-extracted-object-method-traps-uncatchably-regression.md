@@ -139,6 +139,18 @@ Tests:
   `__call_fn_1` rejection.
 - `pnpm run test:guard`: 21 files, 261 tests, exit 0.
 
+## 2026-10-18 S6 lane normalization
+
+The resolution table and Test262 A/B above explicitly identify these six
+cases as the JS-host lane. Their old helper called `compileAndInstantiate`
+with the omitted policy and returned raw Wasm exports; after S6 that exposed
+native string carriers rather than the strings used only as observation
+labels. The helper now compiles with `semanticProviders: "host-assisted"`
+and otherwise performs the same instantiation. All six receiver/trampoline
+assertions are unchanged. Native-first export marshaling remains covered by
+the #4397 boundary suite rather than being conflated with this host-trampoline
+guard.
+
 test262 A/B (`scripts/run-test262-paths.mts --isolate`, base vs this branch
 at the same main merge):
 

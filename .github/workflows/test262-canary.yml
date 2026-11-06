@@ -54,6 +54,7 @@ concurrency:
 
 jobs:
   canary-shard:
+    if: false # JS-host Test262 measurement retired; historical chart data remains.
     name: canary run ${{ matrix.run }} chunk ${{ matrix.chunk }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -186,9 +187,9 @@ jobs:
           if-no-files-found: warn
 
   compare:
+    if: false # JS-host Test262 measurement retired; historical chart data remains.
     name: canary compare runs
     needs: canary-shard
-    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

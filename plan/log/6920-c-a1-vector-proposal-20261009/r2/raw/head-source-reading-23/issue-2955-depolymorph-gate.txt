@@ -1,0 +1,10 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-2955-depolymorph-gate.test.ts > #2955 — IR front-end string-mode de-polymorphization gate > src/ir/from-ast.ts has zero functional nativeStrings reads 15ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  19:44:53
+   Duration  430ms (transform 34ms, setup 0ms, collect 33ms, tests 16ms, environment 0ms, prepare 69ms)
+

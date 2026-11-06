@@ -60,7 +60,7 @@ const PRECLAIM_CASES: ReadonlyArray<{
   {
     name: "ambient Array method",
     code: "array-method-unsupported",
-    source: `export function test(): number { const values = [1, 2]; return values.indexOf(2); }`,
+    source: `export function test(): number { const values = [1, 2]; return values.lastIndexOf(2); }`,
   },
   {
     name: "numeric primitive method",

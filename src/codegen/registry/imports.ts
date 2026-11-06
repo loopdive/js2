@@ -2,7 +2,7 @@
 /** Import/global registration and late index-space fixups. */
 import { registerWideBigIntTypes } from "../bigint-wide.js";
 import { buildOpenBigIntType } from "../../runtime/wasmgc/values/bigint-carrier-layouts.js";
-import type { Import, Instr, ValType, WasmFunction } from "../../ir/types.js";
+import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
 import { buildBoxNumberType, buildBoxBooleanType } from "../../runtime/wasmgc/values/primitive-layouts.js";
 import {
   buildBoxNumberBody,
@@ -29,7 +29,6 @@ export { addImport, ensureExnTag } from "./physical-imports.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import { ensureLateImport, flushLateImportShifts } from "../shared.js";
 import { nativeStringLiteralInstrs } from "../native-string-literals.js";
-import { shiftAsyncSideChannelFuncIdxs } from "../async-scheduler.js";
 import { shiftFnShadowSlots } from "../fn-global-shadow.js"; // (#4648)
 import { buildIsUndefinedExternBody, undefinedSingletonActive, ensureAnyValueType } from "../any-helpers.js";
 import {
@@ -38,7 +37,6 @@ import {
   unifiedVisitNode,
 } from "./import-collector-delegates.js";
 import { mapTsTypeToWasm } from "../../checker/type-mapper.js";
-import { inLiveShiftRange } from "../../emit/resolve-layout.js";
 import { UNDEF_F64_BITS } from "../value-tags.js";
 import { STANDALONE_REGEXP_REFLECTION_PROPS } from "../regexp-standalone.js";
 import { reconcileNativeStrFinalizeShift } from "../expressions/late-imports.js";
@@ -780,199 +778,8 @@ export function addStringImports(ctx: CodegenContext): void {
   // path under standalone (e.g. via a missed gate), no-op so the resulting
   // module remains JS-host-free. WASI mode keeps the historical no-op
   // behavior via the same nativeStrings forcing.
-  if (ctx.targetProfile.semanticProviders === "native-first") {
-    ctx.hasStringImports = true;
-    return;
-  }
   ctx.hasStringImports = true;
-
-  // Record import count before adding so we can shift function indices
-  // if this is called after collectDeclarations has run.
-  const importsBefore = ctx.numImportFuncs;
-
-  // concat: (externref, externref) -> (ref extern)
-  const concatType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "ref_extern" }]);
-  addImport(ctx, "wasm:js-string", "concat", {
-    kind: "func",
-    typeIdx: concatType,
-  });
-
-  // length: (externref) -> i32
-  const lengthType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }]);
-  addImport(ctx, "wasm:js-string", "length", {
-    kind: "func",
-    typeIdx: lengthType,
-  });
-
-  // equals: (externref, externref) -> i32
-  const equalsType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
-  addImport(ctx, "wasm:js-string", "equals", {
-    kind: "func",
-    typeIdx: equalsType,
-  });
-
-  // substring: (externref, i32, i32) -> (ref extern)
-  const substringType = addFuncType(
-    ctx,
-    [{ kind: "externref" }, { kind: "i32" }, { kind: "i32" }],
-    [{ kind: "ref_extern" }],
-  );
-  addImport(ctx, "wasm:js-string", "substring", {
-    kind: "func",
-    typeIdx: substringType,
-  });
-
-  // charCodeAt: (externref, i32) -> i32
-  const charCodeAtType = addFuncType(ctx, [{ kind: "externref" }, { kind: "i32" }], [{ kind: "i32" }]);
-  addImport(ctx, "wasm:js-string", "charCodeAt", {
-    kind: "func",
-    typeIdx: charCodeAtType,
-  });
-
-  // Store wasm:js-string import indices separately so user-defined functions
-  // with the same name (e.g. user's "charCodeAt") don't shadow them (#1072).
-  for (const name of ["concat", "length", "equals", "substring", "charCodeAt"]) {
-    const idx = ctx.funcMap.get(name);
-    if (idx !== undefined) ctx.jsStringImports.set(name, idx);
-  }
-
-  // If imports were added after defined functions were registered (late addition),
-  // shift all defined-function indices.
-  const delta = ctx.numImportFuncs - importsBefore;
-  if (delta > 0 && ctx.mod.functions.length > 0) {
-    const newImportNames = new Set(["concat", "length", "equals", "substring", "charCodeAt"]);
-    for (const [name, idx] of ctx.funcMap) {
-      if (!newImportNames.has(name) && inLiveShiftRange(idx, importsBefore)) {
-        ctx.funcMap.set(name, idx + delta);
-      }
-    }
-    for (const exp of ctx.mod.exports) {
-      if (exp.desc.kind === "func" && inLiveShiftRange(exp.desc.index, importsBefore)) {
-        exp.desc.index += delta;
-      }
-    }
-    // Track ALL instruction arrays (top-level AND nested) to prevent
-    // double-shifting when fctx.body is a nested block reachable from savedBodies (#1109).
-    const shifted = new Set<Instr[]>();
-    function shiftFuncIndices(instrs: Instr[]): void {
-      if (shifted.has(instrs)) return;
-      shifted.add(instrs);
-      for (const instr of instrs) {
-        if ((instr.op === "call" || instr.op === "return_call") && inLiveShiftRange(instr.funcIdx, importsBefore)) {
-          instr.funcIdx += delta;
-        }
-        if (instr.op === "ref.func" && inLiveShiftRange(instr.funcIdx, importsBefore)) {
-          instr.funcIdx += delta;
-        }
-        const a = instr as any;
-        if (a.body && Array.isArray(a.body)) shiftFuncIndices(a.body);
-        if (a.then && Array.isArray(a.then)) shiftFuncIndices(a.then);
-        if (a.else && Array.isArray(a.else)) shiftFuncIndices(a.else);
-        if (a.catches && Array.isArray(a.catches)) {
-          for (const c of a.catches) {
-            if (Array.isArray(c.body)) shiftFuncIndices(c.body);
-          }
-        }
-        if (a.catchAll && Array.isArray(a.catchAll)) shiftFuncIndices(a.catchAll);
-      }
-    }
-    for (const func of ctx.mod.functions) {
-      shiftFuncIndices(func.body);
-    }
-    if (ctx.currentFunc) {
-      shiftFuncIndices(ctx.currentFunc.body);
-      for (const sb of ctx.currentFunc.savedBodies) {
-        shiftFuncIndices(sb);
-      }
-    }
-    for (const parentFctx of ctx.funcStack) {
-      shiftFuncIndices(parentFctx.body);
-      for (const sb of parentFctx.savedBodies) {
-        shiftFuncIndices(sb);
-      }
-    }
-    for (const pb of ctx.parentBodiesStack) {
-      shiftFuncIndices(pb);
-    }
-    // (#1384) Walk all live (allocated but not yet attached to mod.functions)
-    // FunctionContext bodies — covers cbFctx.body / liftedFctx.body during
-    // their captures-extraction + param-coercion setup phases.
-    for (const lb of ctx.liveBodies) {
-      shiftFuncIndices(lb);
-    }
-    // (#1839) The module-init body holds `call`/`ref.func` indices too. When
-    // the first string usage occurs inside a function body (not module-init),
-    // this body is NOT reachable via funcStack/liveBodies yet, so it would be
-    // missed and `__module_init` would call the wrong functions after the late
-    // string-import shift. Matches addUnionImports / shiftLateImportIndices.
-    if (ctx.pendingInitBody) {
-      shiftFuncIndices(ctx.pendingInitBody);
-    }
-    for (const elem of ctx.mod.elements) {
-      if (elem.funcIndices) {
-        for (let i = 0; i < elem.funcIndices.length; i++) {
-          if (inLiveShiftRange(elem.funcIndices[i]!, importsBefore)) {
-            elem.funcIndices[i]! += delta;
-          }
-        }
-      }
-    }
-    if (ctx.mod.declaredFuncRefs.length > 0) {
-      ctx.mod.declaredFuncRefs = ctx.mod.declaredFuncRefs.map((idx) =>
-        inLiveShiftRange(idx, importsBefore) ? idx + delta : idx,
-      );
-    }
-    // (#1525b) Shift pendingMethodTrampolines side-channel indices in lockstep
-    // — see the matching block in addUnionImports / shiftLateImportIndices.
-    for (const t of ctx.pendingMethodTrampolines) {
-      if (inLiveShiftRange(t.methodFuncIdx, importsBefore)) t.methodFuncIdx += delta;
-      if (inLiveShiftRange(t.trampolineFuncIdx, importsBefore)) t.trampolineFuncIdx += delta;
-    }
-    // (#1839) `nativeStrHelpers` is read directly by string-lowering call sites
-    // and helper emitters — it is NOT a copy of funcMap, so it must be shifted
-    // on its own. All entries are defined functions (>= numImportFuncs), so
-    // every entry >= importsBefore moves up by `delta`. Omitting this left the
-    // map stale under plain `--nativeStrings` JS-host mode.
-    for (const [name, idx] of ctx.nativeStrHelpers) {
-      if (inLiveShiftRange(idx, importsBefore)) {
-        ctx.nativeStrHelpers.set(name, idx + delta);
-      }
-    }
-    // (#1913) Regex helper map moves in lockstep too — regexp-standalone call
-    // sites bake `call` indices straight from this map.
-    for (const [name, idx] of ctx.nativeRegexHelpers) {
-      if (inLiveShiftRange(idx, importsBefore)) {
-        ctx.nativeRegexHelpers.set(name, idx + delta);
-      }
-    }
-    // (#2162) Map/Set/WeakMap/WeakSet helper map moves in lockstep too —
-    // map-runtime.ts / weak-collections-runtime.ts call sites bake `call`
-    // indices straight from this map (see shiftLateImportIndices for the full
-    // rationale / the WeakMap stale-index validation failure it fixes).
-    for (const [name, idx] of ctx.mapHelpers) {
-      if (inLiveShiftRange(idx, importsBefore)) {
-        ctx.mapHelpers.set(name, idx + delta);
-      }
-    }
-    // (#2918) Async-scheduler + Promise.all/race combinator side-channel funcIdxs
-    // move in lockstep too. The string-import shifter used to miss them entirely
-    // — a native `.then`/combinator baked its `call`/`ref.func` from a stale-low
-    // stored index whenever a string import landed between registration and the
-    // bake site. Same complete key list as the other two shifters.
-    shiftAsyncSideChannelFuncIdxs(ctx, importsBefore, delta);
-    // (#2039 slice 2) Re-base so reconcileNativeStrFinalizeShift doesn't apply
-    // the same `delta` a second time — this inline shift already repaired the
-    // helper bodies and the map. Matches addUnionImports (#1677-fast-path) and
-    // shiftLateImportIndices.
-    if (ctx.nativeStrHelperImportBase >= 0) {
-      ctx.nativeStrHelperImportBase = ctx.numImportFuncs;
-    }
-    // (#1839) The module start function index also moves if it was a defined
-    // function at or above the insertion point. Matches addUnionImports.
-    if (ctx.mod.startFuncIdx !== undefined && inLiveShiftRange(ctx.mod.startFuncIdx, importsBefore)) {
-      ctx.mod.startFuncIdx += delta;
-    }
-  }
+  return;
 }
 
 /** Register union type helper imports (typeof checks, boxing/unboxing) */
@@ -995,282 +802,8 @@ export function addUnionImports(ctx: CodegenContext): void {
   // same name + signature so existing call sites
   // (`ctx.funcMap.get("__unbox_number")` etc.) work unchanged.
   // Same dual-mode pattern as #679 (strings) and #682 (RegExp).
-  if (ctx.targetProfile.semanticProviders === "native-first") {
-    addUnionImportsAsNativeFuncs(ctx);
-    return;
-  }
-
-  // Record the import count before adding, so we can adjust defined-function
-  // indices if imports are added after collectDeclarations has run.
-  const importsBefore = ctx.numImportFuncs;
-
-  // (#4616) A helper of this family may ALREADY be imported individually by
-  // `ensureLateImport` before the union pass runs (e.g. `__box_number` from an
-  // extras-packing/HOF site, then a vec→vec coercion calls addUnionImports).
-  // Blindly re-adding produced a SECOND `env` import entry for the same name —
-  // the binary still linked (old call sites keep the pre-existing index), but
-  // the adapter-manifest validator rejects the module outright ("duplicate
-  // adapter import 'env::__box_number' appears 2 times"). Skip any name that
-  // already resolves to an import; its existing (pre-`importsBefore`) index is
-  // below the shift range, so the delta bookkeeping stays correct.
-  const addUnionImport = (name: string, desc: Import["desc"]): void => {
-    const existing = ctx.funcMap.get(name);
-    if (existing !== undefined && existing < ctx.numImportFuncs) return;
-    addImport(ctx, "env", name, desc);
-  };
-
-  // __typeof_number: (externref) → i32
-  const typeofType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }]);
-  addUnionImport("__typeof_number", {
-    kind: "func",
-    typeIdx: typeofType,
-  });
-  addUnionImport("__typeof_string", {
-    kind: "func",
-    typeIdx: typeofType,
-  });
-  addUnionImport("__typeof_boolean", {
-    kind: "func",
-    typeIdx: typeofType,
-  });
-  addUnionImport("__typeof_bigint", {
-    kind: "func",
-    typeIdx: typeofType,
-  });
-  addUnionImport("__typeof_undefined", {
-    kind: "func",
-    typeIdx: typeofType,
-  });
-  addUnionImport("__typeof_object", {
-    kind: "func",
-    typeIdx: typeofType,
-  });
-  addUnionImport("__typeof_function", {
-    kind: "func",
-    typeIdx: typeofType,
-  });
-
-  // __is_truthy: (externref) → i32
-  addUnionImport("__is_truthy", { kind: "func", typeIdx: typeofType });
-
-  // __unbox_number: (externref) → f64
-  const unboxNumType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "f64" }]);
-  addUnionImport("__unbox_number", {
-    kind: "func",
-    typeIdx: unboxNumType,
-  });
-
-  // __unbox_boolean: (externref) → i32
-  addUnionImport("__unbox_boolean", {
-    kind: "func",
-    typeIdx: typeofType,
-  });
-
-  // __box_number: (f64) → externref
-  const boxNumType = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "externref" }]);
-  addUnionImport("__box_number", { kind: "func", typeIdx: boxNumType });
-
-  // __box_boolean: (i32) → externref
-  const boxBoolType = addFuncType(ctx, [{ kind: "i32" }], [{ kind: "externref" }]);
-  addUnionImport("__box_boolean", {
-    kind: "func",
-    typeIdx: boxBoolType,
-  });
-
-  // __box_symbol: (i32) → externref  (#2792 — boxes a symbol-handle i32 as a JS
-  // Symbol via the identity-stable host symbol cache. The F1 `symbol[]` OOB read
-  // routes here (HOST mode only — standalone defers `symbol[]`; see
-  // `f1ElementBoxType`). Same (i32)→externref signature as __box_boolean. Only
-  // reached on the compatibility-provider path; with native providers
-  // `addUnionImports` returns before this block.)
-  addUnionImport("__box_symbol", {
-    kind: "func",
-    typeIdx: boxBoolType,
-  });
-
-  // __box_bigint: (i64) → externref  (#1644 — boxes a branded-bigint i64 as a
-  // JS bigint; JS-BigInt-integration makes the host body identity)
-  const boxBigType = addFuncType(ctx, [{ kind: "i64" }], [{ kind: "externref" }]);
-  addUnionImport("__box_bigint", { kind: "func", typeIdx: boxBigType });
-
-  // __to_bigint: (externref) → i64  (#1644 — §7.1.13 ToBigInt)
-  const toBigType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i64" }]);
-  addUnionImport("__to_bigint", { kind: "func", typeIdx: toBigType });
-
-  // __bigint_ctor: (externref) → i64  (#1644 Slice B — §21.2.1.1 BigInt(value):
-  // ToPrimitive(number) then NumberToBigInt (RangeError) for Number, else
-  // ToBigInt (SyntaxError on bad string syntax). Distinct from __to_bigint,
-  // which throws TypeError on a Number per §7.1.13.)
-  const ctorBigType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i64" }]);
-  addUnionImport("__bigint_ctor", { kind: "func", typeIdx: ctorBigType });
-
-  // __bigint_ctor_ref: (externref) → externref (#2846 follow-up). The ordinary
-  // i64 constructor above remains the arithmetic carrier; this variant keeps
-  // arbitrary-width host BigInts exact when the surrounding value is already
-  // nullable/dynamic externref (Acorn's `bigint | null` stringToBigInt result).
-  const ctorBigRefType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-  addUnionImport("__bigint_ctor_ref", { kind: "func", typeIdx: ctorBigRefType });
-
-  // __typeof: (externref) → externref (returns type string)
-  const typeofStrType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-  addUnionImport("__typeof", {
-    kind: "func",
-    typeIdx: typeofStrType,
-  });
-
-  // If imports were added after defined functions were registered (late addition),
-  // shift all defined-function indices and fix exports/funcMap/call instructions.
-  // The new imports themselves (at indices importsBefore..numImportFuncs-1) are already
-  // correct, so we only shift indices that were >= importsBefore BEFORE the addition,
-  // i.e., the defined functions that start at index importsBefore in the old scheme.
-  const delta = ctx.numImportFuncs - importsBefore;
-  if (delta > 0 && ctx.mod.functions.length > 0) {
-    // Build a set of the new import names to skip them during funcMap update
-    const newImportNames = new Set([
-      "__typeof_number",
-      "__typeof_string",
-      "__typeof_boolean",
-      "__typeof_bigint",
-      "__typeof_undefined",
-      "__typeof_object",
-      "__typeof_function",
-      "__is_truthy",
-      "__unbox_number",
-      "__unbox_boolean",
-      "__box_number",
-      "__box_boolean",
-      "__box_symbol",
-      "__box_bigint",
-      "__to_bigint",
-      "__bigint_ctor",
-      "__bigint_ctor_ref",
-      "__typeof",
-    ]);
-    // Update funcMap entries for defined functions (not imports)
-    for (const [name, idx] of ctx.funcMap) {
-      if (!newImportNames.has(name) && inLiveShiftRange(idx, importsBefore)) {
-        ctx.funcMap.set(name, idx + delta);
-      }
-    }
-    // (#2162) `mapHelpers` (Map/Set/WeakMap/WeakSet helper funcIdx) is NOT a
-    // copy of funcMap — its entries are read directly by map-runtime.ts /
-    // weak-collections-runtime.ts call sites to bake `call` funcIdx. It must be
-    // shifted UNCONDITIONALLY in lockstep with the defined-function shift (the
-    // nativeStr/nativeRegex shifts below are gated on the string-helper base and
-    // would miss this in plain-Map programs). Leaving it stale let a late import
-    // (e.g. `__box_number` for a numeric key/value) land between helper
-    // registration and the call, so `wm.has` called `__map_get` → invalid Wasm.
-    for (const [name, idx] of ctx.mapHelpers) {
-      if (inLiveShiftRange(idx, importsBefore)) {
-        ctx.mapHelpers.set(name, idx + delta);
-      }
-    }
-    // Update export indices
-    for (const exp of ctx.mod.exports) {
-      if (exp.desc.kind === "func" && inLiveShiftRange(exp.desc.index, importsBefore)) {
-        exp.desc.index += delta;
-      }
-    }
-    // Track ALL instruction arrays (top-level AND nested) to prevent
-    // double-shifting when fctx.body is a nested block reachable from savedBodies (#1109).
-    const shifted = new Set<Instr[]>();
-    function shiftFuncIndices(instrs: Instr[]): void {
-      if (shifted.has(instrs)) return;
-      shifted.add(instrs);
-      for (const instr of instrs) {
-        if ((instr.op === "call" || instr.op === "return_call") && inLiveShiftRange(instr.funcIdx, importsBefore)) {
-          instr.funcIdx += delta;
-        }
-        if (instr.op === "ref.func" && inLiveShiftRange(instr.funcIdx, importsBefore)) {
-          instr.funcIdx += delta;
-        }
-        const a = instr as any;
-        if (a.body && Array.isArray(a.body)) shiftFuncIndices(a.body);
-        if (a.then && Array.isArray(a.then)) shiftFuncIndices(a.then);
-        if (a.else && Array.isArray(a.else)) shiftFuncIndices(a.else);
-        if (a.catches && Array.isArray(a.catches)) {
-          for (const c of a.catches) {
-            if (Array.isArray(c.body)) shiftFuncIndices(c.body);
-          }
-        }
-        if (a.catchAll && Array.isArray(a.catchAll)) shiftFuncIndices(a.catchAll);
-      }
-    }
-    for (const func of ctx.mod.functions) {
-      shiftFuncIndices(func.body);
-    }
-    if (ctx.currentFunc) {
-      shiftFuncIndices(ctx.currentFunc.body);
-      for (const sb of ctx.currentFunc.savedBodies) {
-        shiftFuncIndices(sb);
-      }
-    }
-    for (const parentFctx of ctx.funcStack) {
-      shiftFuncIndices(parentFctx.body);
-      for (const sb of parentFctx.savedBodies) {
-        shiftFuncIndices(sb);
-      }
-    }
-    for (const pb of ctx.parentBodiesStack) {
-      shiftFuncIndices(pb);
-    }
-    // (#1384) Walk all live (allocated but not yet attached to mod.functions)
-    // FunctionContext bodies — covers cbFctx.body / liftedFctx.body during
-    // their captures-extraction + param-coercion setup phases, BEFORE the
-    // savedFunc swap puts them on funcStack/parentBodiesStack.
-    for (const lb of ctx.liveBodies) {
-      shiftFuncIndices(lb);
-    }
-    if (ctx.pendingInitBody) {
-      shiftFuncIndices(ctx.pendingInitBody);
-    }
-    // Update table elements
-    for (const elem of ctx.mod.elements) {
-      if (elem.funcIndices) {
-        for (let i = 0; i < elem.funcIndices.length; i++) {
-          if (inLiveShiftRange(elem.funcIndices[i]!, importsBefore)) {
-            elem.funcIndices[i]! += delta;
-          }
-        }
-      }
-    }
-    // Update declaredFuncRefs
-    if (ctx.mod.declaredFuncRefs.length > 0) {
-      ctx.mod.declaredFuncRefs = ctx.mod.declaredFuncRefs.map((idx) =>
-        inLiveShiftRange(idx, importsBefore) ? idx + delta : idx,
-      );
-    }
-    // Update Wasm start function index (#907) — late-added imports shift the
-    // defined-function index that __module_init lives at.
-    if (ctx.mod.startFuncIdx !== undefined && inLiveShiftRange(ctx.mod.startFuncIdx, importsBefore)) {
-      ctx.mod.startFuncIdx += delta;
-    }
-    // Sync nativeStrHelpers and re-base so reconcileNativeStrFinalizeShift is a no-op
-    // for this import batch — the inline shiftFuncIndices above already corrected all
-    // native-string helper bodies. Without this, reconcile double-shifts them (#1677-fast-path).
-    if (ctx.nativeStrHelperImportBase >= 0) {
-      for (const [name, idx] of ctx.nativeStrHelpers) {
-        if (inLiveShiftRange(idx, importsBefore)) ctx.nativeStrHelpers.set(name, idx + delta);
-      }
-      // (#1913) Regex helper map shares the same lifecycle.
-      for (const [name, idx] of ctx.nativeRegexHelpers) {
-        if (inLiveShiftRange(idx, importsBefore)) ctx.nativeRegexHelpers.set(name, idx + delta);
-      }
-      ctx.nativeStrHelperImportBase = ctx.numImportFuncs;
-    }
-    // (#1525b) Shift pendingMethodTrampolines side-channel indices in lockstep.
-    // The captured methodFuncIdx / trampolineFuncIdx are plain numbers not
-    // reachable from any Instr — without this, finalizeMethodTrampolines later
-    // resolves the wrong (import) signature, producing invalid Wasm.
-    for (const t of ctx.pendingMethodTrampolines) {
-      if (inLiveShiftRange(t.methodFuncIdx, importsBefore)) t.methodFuncIdx += delta;
-      if (inLiveShiftRange(t.trampolineFuncIdx, importsBefore)) t.trampolineFuncIdx += delta;
-    }
-    // (#2918) Async-scheduler + Promise.all/race combinator side-channel funcIdxs
-    // move in lockstep too (addUnionImports missed them). Same complete key list
-    // as shiftLateImportIndices / addStringImports.
-    shiftAsyncSideChannelFuncIdxs(ctx, importsBefore, delta);
-  }
+  addUnionImportsAsNativeFuncs(ctx);
+  return;
 }
 
 /**
@@ -2331,17 +1864,15 @@ export function addArrayIteratorImports(ctx: CodegenContext): void {
  *   - `__gen_result_done`     (externref) → i32
  *   - `__get_caught_exception` () → externref  (for the body's try/catch wrapper)
  */
-export function addGeneratorImports(ctx: CodegenContext, options?: { allowNoJsHost?: boolean }): void {
-  if ((ctx.standalone || ctx.wasi) && !options?.allowNoJsHost) return;
+export function addGeneratorImports(ctx: CodegenContext): void {
+  // (#7010) The eager buffer is host-only; host-free builds refuse instead.
+  if (ctx.standalone || ctx.wasi) return;
   // Guard: only register once
   if (ctx.funcMap.has("__gen_create_buffer")) return;
 
   // (#2689) Batch + immediate flush — see addIteratorImports for the rationale.
   // Can be registered lazily (IR-path generator claim / body compilation) after
-  // other functions baked their funcIdx; raw addImport would desync them. The
-  // `__gen_*` / `__create_*` / `__get_caught_exception` names are not in any
-  // standalone-refusal / native-helper set, so the `allowNoJsHost` fallback
-  // behaves exactly as the previous raw additions did.
+  // other functions baked their funcIdx; raw addImport would desync them.
   const ER: ValType = { kind: "externref" };
   ensureLateImport(ctx, "__gen_create_buffer", [], [ER]);
   ensureLateImport(ctx, "__gen_push_f64", [ER, { kind: "f64" }], []);
@@ -2471,7 +2002,6 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
     forEachChild(node, collectUserClassNames);
   }
   collectUserClassNames(sourceFile);
-  const nativeRegExpProvider = ctx.targetProfile.semanticProviders === "native-first";
 
   function resolveExtern(className: string, memberName: string, kind: "method" | "property"): ExternClassInfo | null {
     // User-defined classes shadow extern classes — never resolve to extern (#1284).
@@ -2509,7 +2039,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
           : undefined);
       if (
         className &&
-        !(nativeRegExpProvider && className === "RegExp") &&
+        !(className === "RegExp") &&
         !userClassNames.has(className) &&
         !isNativeEncodingClass(className)
       ) {
@@ -2519,27 +2049,10 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
     }
 
     // RegExp literal (/pattern/flags) → needs RegExp_new import
-    if (!nativeRegExpProvider && node.kind === ts.SyntaxKind.RegularExpressionLiteral) {
-      const info = ctx.externClasses.get("RegExp");
-      if (info) {
-        register(`${info.importPrefix}_new`, info.constructorParams, [{ kind: "externref" }]);
-      }
-    }
 
     // RegExp(pattern, flags) call without `new` — compileCallExpression
     // emits the RegExp_new host call directly. Register it here so the
     // import exists by the time codegen runs. (#1055)
-    if (
-      !nativeRegExpProvider &&
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === "RegExp"
-    ) {
-      const info = ctx.externClasses.get("RegExp");
-      if (info) {
-        register(`${info.importPrefix}_new`, info.constructorParams, [{ kind: "externref" }]);
-      }
-    }
 
     // obj.prop or obj.method(...)
     if (ts.isPropertyAccessExpression(node)) {
@@ -2557,8 +2070,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
         if (className && !isNativeEncodingClass(className)) {
           const isCall = node.parent && ts.isCallExpression(node.parent) && node.parent.expression === node;
           if (isCall) {
-            const info =
-              nativeRegExpProvider && className === "RegExp" ? null : resolveExtern(className, memberName, "method");
+            const info = className === "RegExp" ? null : resolveExtern(className, memberName, "method");
             if (info) {
               const sig = info.methods.get(memberName)!;
               register(`${info.importPrefix}_${memberName}`, sig.params, sig.results);
@@ -2571,7 +2083,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
             // prop on the (refusing) extern path instead of silently losing
             // its import.
             const isStandaloneNativeRegExpProp =
-              nativeRegExpProvider && className === "RegExp" && STANDALONE_REGEXP_REFLECTION_PROPS.has(memberName);
+              className === "RegExp" && STANDALONE_REGEXP_REFLECTION_PROPS.has(memberName);
             const info = isStandaloneNativeRegExpProp ? null : resolveExtern(className, memberName, "property");
             if (info) {
               const propInfo = info.properties.get(memberName)!;
@@ -2593,7 +2105,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
       const propName = node.left.name.text;
       // #1914 — `re.lastIndex = v` is a native struct.set in standalone; do
       // not pre-register env.RegExp_set_lastIndex.
-      const isStandaloneNativeRegExpWrite = nativeRegExpProvider && className === "RegExp" && propName === "lastIndex";
+      const isStandaloneNativeRegExpWrite = className === "RegExp" && propName === "lastIndex";
       if (className && !isNativeEncodingClass(className) && !isStandaloneNativeRegExpWrite) {
         const info = resolveExtern(className, propName, "property");
         if (info) {
@@ -2608,8 +2120,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
       // Skip when element access is the callee of a call expression (e.g. obj['method']())
       // — the call handler compiles this as a direct method call, not a property read
       const isCallCallee = node.parent && ts.isCallExpression(node.parent) && node.parent.expression === node;
-      const isNativeStandaloneRegExpMatchArray =
-        nativeRegExpProvider && isStandaloneRegExpMatchArrayValue(ctx, node.expression);
+      const isNativeStandaloneRegExpMatchArray = isStandaloneRegExpMatchArrayValue(ctx, node.expression);
       const objType = ctx.checker.getTypeAtLocation(node.expression);
       const sym = objType.getSymbol();
       // Skip Array and tuple types — those use Wasm GC struct/array ops, not host import

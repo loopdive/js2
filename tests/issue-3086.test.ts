@@ -22,9 +22,9 @@ const META = `/*---\ndescription: #3086 general vacuity fixture\n---*/\n`;
 async function score(name: string, body: string): Promise<{ status: string; vacuous: boolean }> {
   const path = `${SCRATCH}/${name}.js`;
   writeFileSync(path, META + body);
-  // Standalone lane: a numeric-typed callback param is NOT a #2939 dispatch
-  // candidate, so `fn(x)` drops it — an isolated, deterministic stand-in for the
-  // dropped-nested-callback class.
+  // Standalone lane. The vacuous fixtures below make their assertions
+  // unreachable in plain JS — a deterministic stand-in for the
+  // dropped-nested-callback class (the scorer sees the same runtime state).
   const r = await runSyntheticTest262File(path, "built-ins", 20000, "standalone");
   return { status: r.status, vacuous: (r as { vacuous?: boolean }).vacuous ?? false };
 }
@@ -33,8 +33,13 @@ describe("#3086 general (non-harness) vacuity gate", () => {
   it("non-harness dropped callback holding the only assertion → fail + vacuous", async () => {
     const { status, vacuous } = await score(
       "nonharness-dropped",
-      `function apply(fn: any, x: any): void { fn(x); }
-       apply(function(v: number) { assert.sameValue(1, 2, "SHOULD FAIL but callback dropped"); }, 5);`,
+      // (#7014 wave 15) The fixture used to rely on the compiler DROPPING a
+      // numeric-param callback (`fn(x)` with `v: number` was not a #2939
+      // dispatch candidate). That bug is fixed — re-measured 2026-10-17 on
+      // upstream main 0727e2985b the callback runs and its false assert is a
+      // genuine fail — so the callback is now never invoked in plain JS instead.
+      `function apply(fn: any, x: any): void { if (x > 10) fn(x); }
+       apply(function(v: number) { assert.sameValue(1, 2, "never runs"); }, 5);`,
     );
     expect(status).toBe("fail");
     expect(vacuous).toBe(true);
@@ -43,8 +48,10 @@ describe("#3086 general (non-harness) vacuity gate", () => {
   it("validators-array (validators[i](v)) dropped closure → fail + vacuous", async () => {
     const { status, vacuous } = await score(
       "validators-dropped",
-      `const validators: any[] = [function(v: number){ assert.sameValue(1, 2, "dropped"); }];
-       for (let i = 0; i < validators.length; i++) { validators[i](7); }`,
+      // (#7014 wave 15) As above: the closure is no longer dropped by the
+      // compiler, so the loop bound now skips it in plain JS.
+      `const validators: any[] = [function(v: number){ assert.sameValue(1, 2, "never runs"); }];
+       for (let i = 0; i < validators.length - 1; i++) { validators[i](7); }`,
     );
     expect(status).toBe("fail");
     expect(vacuous).toBe(true);

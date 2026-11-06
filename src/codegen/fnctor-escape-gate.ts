@@ -57,6 +57,8 @@ import { fnctorFieldNumericWriteViolation, inferFnctorFieldTypeFromCtorParam } f
 import { fnctorDeclFromSymbol, lateAssignedFunctionExpression } from "./fnctor-ctor-decl.js"; // (#4653)
 import { resolveWasmType } from "./index.js";
 import { readEnv } from "../env.js";
+import { callGrownFieldNames } from "./fnctor-call-grown-fields.js"; // (#6973 stage 2)
+import { isSelfGuardedConstructor } from "./helpers/self-guarded-constructor.js"; // (#7106 S3c)
 
 /** Classification of a `new F()` fnctor allocation site. */
 export type FnctorGateClass =
@@ -1588,6 +1590,8 @@ export function analyzeFnctorEscapeGate(
    */
   standalone?: boolean,
   compilePath: FnctorCompilePath = "single",
+  /** (#7106 S3c) Refuse self-guarded constructors (`selfGuardedConstructorsLeaveFnctor`). */
+  refuseSelfGuarded: boolean = standalone === true,
 ): FnctorEscapeGateResult {
   const sites = new Map<ts.NewExpression, FnctorGateClass>();
   const siteCtorName = new Map<ts.NewExpression, string>();
@@ -1670,7 +1674,9 @@ export function analyzeFnctorEscapeGate(
       continue;
     }
     const decl = fnctorDeclFromSymbol(ctorSym, checker);
-    if (decl) ctorDeclByName.set(ctorSym.name, decl);
+    // (#7106 S3c) A self-guarded constructor stays an ordinary function value (`isSelfGuardedConstructor`).
+    if (refuseSelfGuarded && decl && isSelfGuardedConstructor(decl)) refuse(ctorSym.name, "self-guarded-constructor");
+    else if (decl) ctorDeclByName.set(ctorSym.name, decl);
   }
 
   // 2. Build a per-binding-symbol index of identifier uses across the program,
@@ -2220,6 +2226,15 @@ export function deriveFnctorFields(
       fields.push({ name: fieldName, type: { kind: "externref" }, mutable: true });
       onlyConditional.set(fieldName, true);
       flowGrownNames.add(fieldName);
+    }
+    // (#6973 stage 2) …and every field a `Parent.call(this, …)` delegate assigns:
+    // presence-tracked like a conditional constructor write, but NOT flow-grown —
+    // the delegate runs on every construction, so these are the hot base shape,
+    // not candidates for the cold-tail / per-label layout splits.
+    for (const fieldName of callGrownFieldNames(ctx, funcDecl)) {
+      if (fields.some((field) => field.name === fieldName)) continue;
+      fields.push({ name: fieldName, type: { kind: "externref" }, mutable: true });
+      onlyConditional.set(fieldName, true);
     }
   }
 

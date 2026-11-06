@@ -1,0 +1,2 @@
+
+Function budget gate: OK — no unallowed growth in 0 changed src file(s) (base: env:LOC_GATE_BASE).

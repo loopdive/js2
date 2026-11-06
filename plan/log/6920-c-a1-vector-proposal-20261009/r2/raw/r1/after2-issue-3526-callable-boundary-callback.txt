@@ -1,0 +1,13 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts (38 tests) 3516ms
+   ✓ #3526 F3-S1 end-to-end behaviour is unchanged > keeps the maker at its pre-slice import position and spells it from the record  975ms
+   ✓ #3526 F3-S1 end-to-end behaviour is unchanged > imports no maker on a lane the selection gate never admits  1050ms
+   ✓ #3526 F3-S1 the exact standalone-DOM lane > still reserves the dispatcher and imports no maker  1262ms
+
+ Test Files  1 passed (1)
+      Tests  38 passed (38)
+   Start at  23:03:44
+   Duration  28.51s (transform 17.87s, setup 0ms, collect 24.61s, tests 3.52s, environment 0ms, prepare 51ms)
+

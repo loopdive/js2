@@ -10,9 +10,8 @@ import { resolveWidenedVarKey } from "./widened-var-key.js";
 import { typeofOperandIsDeclared } from "./expressions/typeof-import-binding.js"; // (#6417)
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { reportError } from "./context/errors.js";
 import { elementReadOfRebindWidenedArray } from "./declarations/array-rebind-element-widening.js";
-import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { slotIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
 import {
   emitUninitialisedFieldTypeofComparison,
@@ -21,24 +20,18 @@ import {
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 import { overlayRouteActive } from "./typed-lane-overlay-route.js";
 import { allocLocal, allocTempLocal, externrefCompatibleLocal, releaseTempLocal } from "./context/locals.js";
+import { identifierHoldsRawExternref } from "./array-hof-nullable-elem-param.js"; // (#7152)
 import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./expressions/assignment.js";
 import { EVAL_SOURCE_FILENAME } from "./expressions/eval-source.js";
-import {
-  emitUndefined,
-  ensureLateImport,
-  flushLateImportShifts,
-  shiftLateImportIndices,
-} from "./expressions/late-imports.js";
+import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { resolveStructName } from "./expressions/misc.js";
 import { tryEmitArrayProtoIteratorDelete } from "./expressions/proto-override.js";
 import { addUnionImports, parseRegExpLiteral, resolveWasmType } from "./index.js";
 import { emitExternrefDestructureGuard, paramUndefinedTypeIsDefaultArtifact } from "./destructuring-params.js";
 import { buildThrowJsErrorInstrs, type JsErrorKind } from "./js-errors.js";
 import { compileStandaloneRegExpLiteral } from "./regexp-standalone.js";
-import { addImport, localGlobalIdx } from "./registry/imports.js";
-import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import {
   emitArgumentsOrdinaryNamedDelete, // (#4622) `delete arguments.length`
   emitArgumentsTypeofComparison,
@@ -48,6 +41,7 @@ import {
 } from "./arguments-object-mop.js"; // (#4555)
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, isAnyValue, skipTransparentExpressions } from "./shared.js";
+import { externrefOperandAsAnyValue } from "./anyvalue-elem-materialize.js"; // (#7166)
 import { compileStringLiteral } from "./string-ops.js";
 import { emitDynamicWithDelete, findWithBinding, resolveWithBinding } from "./with-scope.js";
 import {
@@ -70,6 +64,7 @@ import { maybeRecordArrayProtoIteratorTombstone } from "./expressions/proto-over
 import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
 import { isReturnOverrideMemberRead } from "./classes/ctor-return-override.js"; // (#6772 S2)
 import { strictThisMayBePrimitive } from "./expressions/bool-to-locale-string.js"; // (#6771 S6)
+import { typeofFoldContradictedBySlot } from "./primitive-absent-property.js"; // (#6976) the slot outranks the checker
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -948,53 +943,7 @@ export function compileRegExpLiteral(ctx: CodegenContext, fctx: FunctionContext,
   // #682 — standalone mode has a reduced native literal-substring backend.
   // Unsupported syntax still reports #1474-compatible diagnostics rather than
   // falling back to a JS-host RegExp import.
-  if (ctx.targetProfile.semanticProviders === "native-first") {
-    return compileStandaloneRegExpLiteral(ctx, fctx, pattern, flags, expr);
-  }
-
-  // Load pattern string
-  const patternResult = compileStringLiteral(ctx, fctx, pattern, expr);
-  if (!patternResult) return null;
-
-  // Load flags string (empty string "" if no flags — ref.null.extern would
-  // become null in JS, causing "Invalid flags 'null'" at runtime)
-  const flagsStr = flags ?? "";
-  const flagsResult = compileStringLiteral(ctx, fctx, flagsStr, expr);
-  if (!flagsResult) return null;
-
-  // (#3301) Ensure a minimal `externClasses` "RegExp" entry BEFORE the import:
-  // the manifest resolver routes `RegExp_new` to the real RegExp constructor
-  // only when "RegExp" is in `ctx.externClasses`, else it falls to the "builtin"
-  // intent — a no-op returning `undefined`. The pre-codegen scan sets this for a
-  // real-AST regex literal, but an eval-spliced regex (`eval("/abc/i")`, #1163)
-  // is a FOREIGN node it never walks. Mirrors the calls.ts eval-concat peephole.
-  if (!ctx.externClasses.has("RegExp")) {
-    ctx.externClasses.set("RegExp", {
-      importPrefix: "RegExp",
-      namespacePath: [],
-      className: "RegExp",
-      constructorParams: [{ kind: "externref" }, { kind: "externref" }],
-      methods: new Map(),
-      properties: new Map(),
-    });
-  }
-
-  // Call RegExp_new(pattern, flags) -> externref
-  let funcIdx = ctx.funcMap.get("RegExp_new");
-  if (funcIdx === undefined) {
-    // Register RegExp_new import on demand: (externref, externref) -> externref
-    const importsBefore = ctx.numImportFuncs;
-    const regexpNewType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "RegExp_new", { kind: "func", typeIdx: regexpNewType });
-    shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-    funcIdx = ctx.funcMap.get("RegExp_new");
-  }
-  if (funcIdx === undefined) {
-    reportError(ctx, expr, "Missing RegExp_new import for regex literal");
-    return null;
-  }
-  fctx.body.push({ op: "call", funcIdx });
-  return { kind: "externref" };
+  return compileStandaloneRegExpLiteral(ctx, fctx, pattern, flags, expr);
 }
 
 // ── instanceof ────────────────────────────────────────────────────────
@@ -1333,6 +1282,12 @@ function isEmptyAnonymousObjectType(tsType: ts.Type): boolean {
   return withIndex.getStringIndexType?.() === undefined && withIndex.getNumberIndexType?.() === undefined;
 }
 
+/** (#6976) `staticTypeofForType`, unless the operand's slot contradicts a "number"/"boolean" fold. */
+function typeofFold(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression, tsType: ts.Type): string | null {
+  const folded = staticTypeofForType(ctx, tsType);
+  return folded !== null && typeofFoldContradictedBySlot(ctx, fctx, expr, folded) ? null : folded;
+}
+
 function staticTypeofForType(ctx: CodegenContext, tsType: ts.Type): string | null {
   // (#4529) The empty anonymous object type `{}` admits EVERY non-nullish
   // value — number, string, function, symbol — not just objects. It is what
@@ -1644,6 +1599,46 @@ function runtimeEvalMayRebindIdentifier(
 }
 
 /**
+ * (#6967) Unsound-fold guard: `typeof NS.m` where `m` exists ONLY through JS
+ * assignment (`NS.m = {}` — a TS "expando" member). The checker types such a
+ * member with its EVENTUAL shape, which says nothing about whether the write
+ * has run at the `typeof` site, so the Prototype-style namespace guard
+ * `if (typeof Flog.RT == "undefined") Flog.RT = {}` folded to `false` and the
+ * init never ran (Octane raytrace). Expando declarations are the assignment's
+ * access/binary expression plus one container `Identifier` per nested
+ * `NS.m.<x> = …` write; any other declaration kind (object-literal property,
+ * class field, interface member, variable, …) means the member exists before
+ * any read and the fold stays sound.
+ */
+function typeofOperandIsAssignmentDeclaredMember(ctx: CodegenContext, operandRaw: ts.Expression): boolean {
+  let op = operandRaw;
+  while (
+    ts.isParenthesizedExpression(op) ||
+    ts.isAsExpression(op) ||
+    ts.isTypeAssertionExpression(op) ||
+    ts.isNonNullExpression(op) ||
+    ts.isSatisfiesExpression(op)
+  ) {
+    op = op.expression;
+  }
+  let nameNode: ts.Node;
+  if (ts.isPropertyAccessExpression(op) && !ts.isPrivateIdentifier(op.name)) nameNode = op.name;
+  else if (ts.isElementAccessExpression(op) && ts.isStringLiteralLike(op.argumentExpression)) {
+    nameNode = op.argumentExpression;
+  } else return false;
+  const decls = ctx.oracle.declarationsOf(nameNode);
+  if (decls.length === 0) return false;
+  return decls.every(
+    (d) =>
+      ts.isPropertyAccessExpression(d) ||
+      ts.isElementAccessExpression(d) ||
+      ts.isBinaryExpression(d) ||
+      ts.isCallExpression(d) ||
+      ts.isIdentifier(d),
+  );
+}
+
+/**
  * (#4394) Unsound-fold guard: a PARAMETER in a JavaScript source file whose
  * type comes only from JSDoc (`@param {Function} testFunc`) has no runtime
  * enforcement whatsoever — `asyncTest(null)` flows null straight into a
@@ -1944,9 +1939,9 @@ export function compileTypeofExpression(
     if (runtimeEvalMayRebindIdentifier(ctx, fctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
-    // (#4204) Slot is externref, checker still says primitive — folding
+    // (#4204/#4495) Slot is externref, checker still says primitive — folding
     // `typeof x` would report the initializer's type forever.
-    if (ts.isIdentifier(bareTdz) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, bareTdz)) {
+    if (ts.isIdentifier(bareTdz) && slotIsDynamicButStaticallyPrimitive(ctx, fctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
     if (isReturnOverrideMemberRead(ctx, bareTdz)) forceRuntimeTypeof = true; // (#6772 S2)
@@ -2060,13 +2055,14 @@ export function compileTypeofExpression(
   if (!forceRuntimeTypeof && paramUndefinedTypeIsDefaultArtifact(ctx, operand)) {
     forceRuntimeTypeof = true;
   }
+  if (!forceRuntimeTypeof && typeofOperandIsAssignmentDeclaredMember(ctx, operand)) forceRuntimeTypeof = true; // #6967
 
   // Try static resolution first via the shared helper
   if (!forceRuntimeTypeof) {
     if (classStaticMethodTypeofOverride(ctx, operand)) {
       return compileStringLiteral(ctx, fctx, "function");
     }
-    const staticResult = staticTypeofForType(ctx, tsType);
+    const staticResult = typeofFold(ctx, fctx, operand, tsType);
     // (#4250) Unsound-fold guard: the checker types a fnctor field from the
     // constructor's write, so the fold ignores every OTHER write reaching the
     // field. Killed on a PROVEN write-kind contradiction only.
@@ -2093,6 +2089,7 @@ export function compileTypeofExpression(
   if (
     (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
     isAnyValue(wasmType, ctx) &&
+    !identifierHoldsRawExternref(fctx, operand) &&
     ctx.nativeStrings &&
     ctx.anyStrTypeIdx >= 0
   ) {
@@ -2101,6 +2098,7 @@ export function compileTypeofExpression(
     if (typeofIdx !== undefined) {
       const operandType = compileExpression(ctx, fctx, operand);
       if (operandType === null) return null;
+      externrefOperandAsAnyValue(ctx, fctx, operandType);
       fctx.body.push({ op: "call", funcIdx: typeofIdx });
       return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
     }
@@ -2330,11 +2328,12 @@ export function compileTypeofComparison(
     // do not let the checker keep folding those members to string/number.
     staticTypeof = "function";
   } else {
-    staticTypeof = tf.staticFunctionPrototypeTypeof(ctx, fctx, operand) ?? staticTypeofForType(ctx, tsType);
+    staticTypeof = tf.staticFunctionPrototypeTypeof(ctx, fctx, operand) ?? typeofFold(ctx, fctx, operand, tsType);
   }
   if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, fctx, operand)) {
     staticTypeof = null;
   }
+  if (staticTypeof !== null && typeofOperandIsAssignmentDeclaredMember(ctx, guardOperand)) staticTypeof = null; // #6967
   if (strictWrapperThisTypeofIsDynamic(ctx, operand, tsType)) staticTypeof = null; // (#6770 S5)
   if (
     staticTypeof !== null &&
@@ -2344,7 +2343,7 @@ export function compileTypeofComparison(
     staticTypeof = null;
   }
   // (#4204) Same unsound-fold guard as compileTypeofExpression.
-  if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
+  if (staticTypeof !== null && ts.isIdentifier(operand) && slotIsDynamicButStaticallyPrimitive(ctx, fctx, operand)) {
     staticTypeof = null;
   }
   // (#6772 S2) the receiver may be a constructor's foreign override object.
@@ -2459,7 +2458,7 @@ export function compileTypeofComparison(
   // Any-typed typeof comparison via tag check
   // Instead of calling __any_typeof + string comparison, we can directly check the tag
   // on the $AnyValue struct. This avoids pulling in the full native string helpers.
-  if (isAnyValue(resolveWasmType(ctx, tsType), ctx)) {
+  if (isAnyValue(resolveWasmType(ctx, tsType), ctx) && !identifierHoldsRawExternref(fctx, operand)) {
     ensureAnyHelpers(ctx);
     // Map the string literal to canonical JsTag (#2104) tag check(s):
     //   0 Null · 1 Undefined · 2 NumberI32 · 3 NumberF64 · 4 Boolean ·
@@ -2483,6 +2482,12 @@ export function compileTypeofComparison(
       // Compile the operand
       const operandType = compileExpression(ctx, fctx, operand);
       if (!operandType) return null;
+      // (#6981) The declared type is `any`, but a usage-specialized slot (an
+      // `any` local only ever written numbers → `f64`) arrives unboxed. Box it
+      // so the tag read sees an `$AnyValue`, never a scalar.
+      if (!isAnyValue(operandType, ctx) && !externrefOperandAsAnyValue(ctx, fctx, operandType)) {
+        coerceType(ctx, fctx, operandType, { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx });
+      }
       // Get the tag field
       fctx.body.push({ op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 0 });
       // Check if tag matches any of the expected values

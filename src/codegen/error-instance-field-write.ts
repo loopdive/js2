@@ -125,7 +125,6 @@ export function tryEmitErrorInstanceFieldWrite(
   target: ts.PropertyAccessExpression,
   value: ts.Expression,
 ): ValType | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   if (ts.isPrivateIdentifier(target.name)) return undefined;
   const fieldIdx = ERROR_STRUCT_FIELD_IDX.get(target.name.text);
   if (fieldIdx === undefined) return undefined;

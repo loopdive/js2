@@ -1,0 +1,71 @@
+p = "tests/issue-3299.test.ts"
+s = open(p).read()
+
+
+def edit(old, new):
+    global s
+    assert s.count(old) == 1, old
+    s = s.replace(old, new)
+
+
+edit(
+    """    const vecScratch = new Set(emitter.getVecScratchLocalIndices());
+    const lowered: WasmFunction = {
+      name: body.name,
+      typeIdx: internFuncType(wasm, { kind: "func", params, results }),
+      locals: body.locals.flatMap((local) =>
+        local.slots.map((type, slot) => {
+          const index =
+            params.length +
+            body.locals.slice(0, body.locals.indexOf(local)).reduce((n, item) => n + item.slots.length, 0) +
+            slot;
+          return {
+            name: slot === 0 ? local.name : `${local.name}$${slot}`,
+            type: vecScratch.has(index) ? ({ kind: "i32" } as const) : type,
+          };
+        }),
+      ),""",
+    """    // #6920: generic lowering declares the vec construction scratch as i32; locals are used verbatim.
+    const lowered: WasmFunction = {
+      name: body.name,
+      typeIdx: internFuncType(wasm, { kind: "func", params, results }),
+      locals: body.locals.flatMap((local) =>
+        local.slots.map((type, slot) => ({ name: slot === 0 ? local.name : `${local.name}$${slot}`, type })),
+      ),""",
+)
+edit(
+    """  const vec = (alloc?: AllocSiteId): IrVecLowering & LinearVecLowering => {
+    const layout = plan.layoutForVector(F64)!;
+    const allocation = allocationFor(layout.id, alloc);
+    return {
+      vecStructTypeIdx: 0,
+      lengthFieldIdx: 0,
+      dataFieldIdx: 0,
+      arrayTypeIdx: 0,
+      elementValType: { kind: "f64" },""",
+    """  const vec = (alloc?: AllocSiteId): LinearVecLowering => {
+    const layout = plan.layoutForVector(F64)!;
+    const allocation = allocationFor(layout.id, alloc);
+    return {
+      valueType: { kind: "i32" },
+      elementValType: { kind: "f64" },""",
+)
+edit(
+    """    resolveVec(valType: ValType): IrVecLowering | null {
+      return valType.kind === "i32" ? vec() : null;
+    },
+    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null {""",
+    """    resolveVec(valType: ValType): LinearVecLowering | null {
+      return valType.kind === "i32" ? vec() : null;
+    },
+    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): LinearVecLowering | null {""",
+)
+edit(
+    """import type {
+  IrVecLowering,
+  LinearMemoryFieldLowering,""",
+    """import type {
+  LinearMemoryFieldLowering,""",
+)
+open(p, "w").write(s)
+print("ok")

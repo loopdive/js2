@@ -5,7 +5,7 @@
 
 import { forEachChild, ts } from "../ts-api.js";
 
-function isVarDeclarationList(list: ts.VariableDeclarationList): boolean {
+export function isVarDeclarationList(list: ts.VariableDeclarationList): boolean {
   return (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) === 0;
 }
 
@@ -111,7 +111,11 @@ export function collectIrSafeVarDeclarationLists(
 
   const safeDeclarations = new Set<ts.VariableDeclaration>();
   for (const declaration of varDeclarations) {
-    if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+    if (!ts.isIdentifier(declaration.name)) continue;
+    // (#7106 Stage 4) An uninitialized `var x;` statement (assert.throws'
+    // `var expectedName, actualName;`) is held to the same reference rules;
+    // a for-head `var` without an initializer stays out.
+    if (!declaration.initializer && !ts.isVariableStatement(declaration.parent.parent)) continue;
     const name = declaration.name.text;
     if (bindingCounts.get(name) !== 1) continue;
 
@@ -154,24 +158,4 @@ export function collectIrSafeVarDeclarationLists(
     }
   }
   return safeLists;
-}
-
-/**
- * Top-level `var` lists are already backed by exact persistent module globals,
- * so the synthetic module initializer can model them without pretending they
- * are lexical locals. The ordinary module selector still rejects duplicate
- * declarations, missing initializers, use-before-declaration, and any binding
- * the module-global resolver cannot represent; this helper only removes the
- * function-local hoisting gate from direct source-file statements.
- */
-export function collectIrSafeModuleVarDeclarationLists(
-  statements: readonly ts.Statement[],
-): ReadonlySet<ts.VariableDeclarationList> {
-  const safe = new Set<ts.VariableDeclarationList>();
-  for (const statement of statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    if (!isVarDeclarationList(statement.declarationList)) continue;
-    safe.add(statement.declarationList);
-  }
-  return safe;
 }

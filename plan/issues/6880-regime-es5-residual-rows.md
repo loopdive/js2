@@ -21,6 +21,10 @@ related: [6750, 6708, 5385]
 loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/index.ts
+# 2026-10-07 (group 3): the filter receiver import + the two-line identity call in
+# setupArrayLoop; the arm itself lives in src/codegen/array/vec-receiver-identity.ts.
+loc-budget-allow:
+  - src/codegen/array-methods.ts
 ---
 
 # #6880 — ES5 on the native regime: 62 rows, nine causes
@@ -109,3 +113,41 @@ elision for the regime (gate on the implementation, not the environment) would
 make the regime see the same module standalone sees for shim-only tests. That
 is a separate, broader change; the per-group fixes repair the eval-live shapes
 on both lanes.
+## Progress — group 3 (filter over a mutated array, 2026-10-07)
+
+Measured with the in-process lane (`scripts/run-test262-paths.mts`, refusal
+eval provider, `TEST262_SEMANTIC_PROVIDERS=native-first`); see the group 1 PR
+for why the sharded lane was not usable on the shared box.
+
+**Root cause.** Like group 1, the rows fail only with the harness shim's
+direct `eval` live. In that mode the regime widens script globals to
+externref, so `srcArr.filter(cb)` reaches `setupArrayLoop` with an externref
+receiver. `buildVecFromExternref` always materializes a FRESH vec, so the
+loop walked a snapshot, and the callback's writes, deletes and truncations
+to `srcArr` were invisible.
+
+**Fix.** `src/codegen/array/vec-receiver-identity.ts`: when the externref
+already is the target vec (`ref.test`), `filter` uses it directly. This
+applies only to `filter` (loop tag `flt`), whose loop reads every element
+through HasProperty/Get on the receiver (`array-filter-spec-access.ts`).
+The other HOF loops read the backing array directly, and for them the copy
+is what makes an index accessor visible. A first cut that also gave
+`reduceRight` identity lost 9 `15.4.4.22-*` accessor rows, so `reduceRight`
+keeps the copy. The arm exists only on the native regime (`ctx.standalone`),
+so default gc is byte-identical (sha256 on four probes unchanged).
+
+| rows | lane | before | after |
+| --- | --- | ---: | ---: |
+| `filter/*` (242) | regime | 210 | 227 |
+| `filter/*` (242) | standalone | 230 | 230 (same 12 non-pass) |
+| `reduceRight/*` (260) | both | — | codegen unchanged (non-`flt` loops return the base materialization) |
+
+The four issue rows `15.4.4.20-9-{1,2,3,4}` all pass. The other 13 rows that
+flipped share the shape (`9-5`, `9-6`, `9-b-*`, `9-c-i-*`).
+
+**Pattern across the remaining groups.** Groups 4, 6 and 7 also reproduce
+only with the shim's `eval` live. A minimal group 4 script prints correct
+values without `eval` and wrong ones with it: `a[4294967295]`, `z["1.1"]`,
+the `length` truncation of index 4294967294, and holes in `toString`
+(printed as `null`). The eval-widened externref global routes every access
+through the dynamic `__extern_get`/`__extern_set` arms.

@@ -89,7 +89,8 @@ function requirementFixture(
     }),
   );
   const stdout = NATIVE_ASYNC_CALLABLE_DECLARATIONS.find((row) => row.feature === "async.native.console-append")!;
-  if (selection.stdout) instructions.push({ kind: "call", target: stdout.ref, args: [values[0]!], result: null });
+  if (selection.stdout)
+    instructions.push({ kind: "call", target: stdout.ref, args: [values[0]!], result: null, resultType: null });
   const functions = base.ir.functions.map((fn, i) =>
     i ? fn : { ...fn, blocks: [{ ...fn.blocks[0]!, instrs: instructions }] },
   );
@@ -110,6 +111,7 @@ function requirementFixture(
       manifest: {
         ...base.runtime[0]!.prepared.manifest,
         policy: {
+          ...base.runtime[0]!.prepared.manifest.policy,
           target: "standalone",
           backend: "wasmgc",
           stringConst: { storage: "native" },
@@ -360,6 +362,9 @@ function issuedModule(emptyIdentity: boolean, utf8Storage: boolean) {
 
 function compileFixture(emptyIdentity: boolean, utf8Storage: boolean) {
   const state = issuedModule(emptyIdentity, utf8Storage);
+  expect(
+    state.module.functions.filter((f) => Object.getOwnPropertyDescriptor(f, "body")?.writable === false),
+  ).toHaveLength(10);
   const binary = Uint8Array.from(emitBinary(state.module));
   const compiled = new WebAssembly.Module(binary);
   const imports = WebAssembly.Module.imports(compiled),
@@ -392,7 +397,7 @@ function compileFixture(emptyIdentity: boolean, utf8Storage: boolean) {
   };
   const parent = resolve(import.meta.dirname, "..", ".tmp");
   mkdirSync(parent, { recursive: true });
-  const directory = mkdtempSync(resolve(parent, "native-string-output-resources-"));
+  const directory = mkdtempSync(resolve(parent, "owned-production-"));
   writeFileSync(resolve(directory, "artifact.json"), JSON.stringify(artifact, null, 2));
   return { ...state, compiled, artifact, directory };
 }
@@ -545,9 +550,9 @@ describe("one symbolic output recipe and allocator trace", () => {
       const trace: unknown[] = [];
       for (const method of ["internFunctionType", "reserveFunction", "reserveGlobal"] as const) {
         const original = s.tx[method].bind(s.tx);
-        vi.spyOn(s.tx, method).mockImplementation((...args: never[]) => {
+        vi.spyOn(s.tx, method).mockImplementation((...args: Parameters<typeof original>) => {
           trace.push([method, ...args]);
-          return (original as (...args: never[]) => never)(...args);
+          return Reflect.apply(original, undefined, args) as ReturnType<typeof original>;
         });
       }
       const earlyIndex = vi.spyOn(s.tx, "physicalIndex");
@@ -732,7 +737,7 @@ describe("before-allocation admission and issued owner checks", () => {
     expect(requireNativeStringOutputReservations(s.tx, output)).toBe(output);
     const literal = s.instructions[0]!;
     if (literal.kind !== "string.const") throw Error("literal premise");
-    literal.value = "changed";
+    expect(Reflect.set(literal, "value", "changed")).toBe(true);
     for (const reader of [
       () => requireNativeStringOutputReservations(s.tx, output),
       () => nativeStringOutputReservationInventory(s.tx, output, s.plan),
@@ -744,7 +749,7 @@ describe("before-allocation admission and issued owner checks", () => {
     const fresh = setup();
     const instr = fresh.instructions[0]!;
     if (instr.kind !== "string.const") throw Error("literal premise");
-    instr.value = "stale-before-reserve";
+    expect(Reflect.set(instr, "value", "stale-before-reserve")).toBe(true);
     const snapshot = structuredClone(fresh.module);
     expect(() => reserve(fresh)).toThrow();
     expect(fresh.module).toEqual(snapshot);
@@ -806,8 +811,8 @@ describe("canonical fill completion and publication", () => {
     s.tx.freezeReservations();
     fillNativeStringLiteralResources(s.tx, s.strings);
     fillNativeStringFlattenResources(s.tx, s.flatten);
-    const original = s.tx.fillFunction.bind(s.tx);
-    vi.spyOn(s.tx, "fillFunction").mockImplementation((token, definition) => {
+    const original = s.tx.fillOwnedFunction.bind(s.tx);
+    vi.spyOn(s.tx, "fillOwnedFunction").mockImplementation((token, definition) => {
       if (token === output.stdout!.prepare) throw Error("injected prepare fill failure");
       original(token, definition);
     });
@@ -851,6 +856,29 @@ describe("canonical fill completion and publication", () => {
           expect(requireCompletedNativeStringOutput(s.tx, output)).toBe(output);
         }
         const stdout = output.stdout!;
+        const protectedMutation =
+          mutation === "concat body"
+            ? () => output.concat.object.body.push({ op: "nop" })
+            : mutation === "batch body"
+              ? () => output.batches[0]!.function.object.body.push({ op: "nop" })
+              : mutation === "append body"
+                ? () => stdout.append.object.body.push({ op: "nop" })
+                : mutation === "prepare body"
+                  ? () => stdout.prepare.object.body.push({ op: "nop" })
+                  : mutation === "char body"
+                    ? () => stdout.char.object.body.push({ op: "nop" })
+                    : mutation === "locals"
+                      ? () => output.concat.object.locals.push({ name: "unexpected", type: { kind: "i32" } })
+                      : undefined;
+        if (protectedMutation) {
+          const binaryBefore = emitBinary(s.module),
+            watBefore = emitWat(s.module);
+          expect(protectedMutation).toThrow(TypeError);
+          expect(requireCompletedNativeStringOutput(s.tx, output)).toBe(output);
+          expect(emitBinary(s.module)).toEqual(binaryBefore);
+          expect(emitWat(s.module)).toBe(watBefore);
+          return;
+        }
         if (mutation === "concat body") output.concat.object.body.push({ op: "nop" });
         if (mutation === "batch body") output.batches[0]!.function.object.body.push({ op: "nop" });
         if (mutation === "append body") stdout.append.object.body.push({ op: "nop" });

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrClassId, IrUnitId, IrUnitInventory } from "./identity.js";
-import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
+import type { IrClassId, IrTerminalUnitRecord, IrUnitId, IrUnitInventory } from "./identity.js";
+import type { ProgramAbiDerivedUnitRecord, ProgramAbiIntent } from "./program-abi.js";
 
 export interface PreparedComponentOwnershipIndex {
   readonly unitTerminalOwner: ReadonlyMap<IrUnitId, IrUnitId | null>;
@@ -56,4 +56,26 @@ export function buildPreparedComponentOwnershipIndex(
   };
   for (const classId of classRecords.keys()) resolveClass(classId);
   return { unitTerminalOwner: unitOwners, classTerminalOwner: classOwners };
+}
+
+export function terminalInventoryUnit(inventory: IrUnitInventory, unitId: IrUnitId): IrTerminalUnitRecord | undefined {
+  // R2 components are keyed by terminal executable ownership, not by syntax
+  // family. Free functions, class members, and module init all carry the same
+  // exact terminal-owner contract in the inventory.
+  return inventory.terminalUnits.find((unit) => unit.id === unitId);
+}
+
+export function terminalOwnerForIntent(
+  intent: ProgramAbiIntent,
+  ownership: PreparedComponentOwnershipIndex,
+): IrUnitId | null {
+  if (intent.kind === "callable") {
+    if (intent.unitId) return ownership.unitTerminalOwner.get(intent.unitId) ?? null;
+    if (intent.classId) return ownership.classTerminalOwner.get(intent.classId) ?? null;
+  }
+  if (intent.kind === "global" && intent.unitId) {
+    return ownership.unitTerminalOwner.get(intent.unitId) ?? null;
+  }
+  if (intent.kind === "class") return ownership.classTerminalOwner.get(intent.classId) ?? null;
+  return null;
 }

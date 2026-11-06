@@ -277,7 +277,7 @@ describe("#4638 measured residuals", () => {
   // #4638 (each half is correct in isolation; only the pair fails). Recorded here
   // because the empty-string-key lockstep above is what makes the pair reachable
   // at all. Owner: the #4616 empty-key / `$Object` presence lane.
-  it.fails("keeps gOPD working for an empty-string key after hasOwnProperty", async () => {
+  it("keeps gOPD working for an empty-string key after hasOwnProperty", async () => {
     await runScript(`
       var obj = { "": 1 };
       if (!obj.hasOwnProperty("")) { throw new Error("presence"); }

@@ -4,13 +4,12 @@
  * FieldDef[] and pushes a struct type. Extracted verbatim from
  * codegen/declarations.ts (#3268).
  */
-import { getNullablePrimitiveInfo, isBigIntType, mapTsTypeToWasm } from "../../checker/type-mapper.js";
+import { mapTsTypeToWasm } from "../../checker/type-mapper.js";
 import { ts } from "../../ts-api.js";
 import { fieldsHashKey, resolveWasmType } from "../index.js";
 import { registerStructType } from "../registry/types.js";
 import type { FieldDef, StructTypeDef } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
-import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { readonlyErasureMappedAliasTarget } from "../readonly-erasure-mapped-type.js";
 import { optionalFieldFlag } from "../object-model/struct-optional-widen.js"; // (#6867)
 import {
@@ -283,14 +282,8 @@ function interfaceDeclarationHasNoRuntimeMembers(ctx: CodegenContext, declaratio
 }
 
 function mapDeclaredFieldType(ctx: CodegenContext, memberType: ts.Type): FieldDef["type"] {
-  // `mapTsTypeToWasm` intentionally models BigInt as the host-free i64
-  // carrier. Interface/object fields are value boundaries too, though: in a
-  // JS-host module a bigint field must remain an externref, otherwise a wide
-  // value is truncated when struct.get/struct.set crosses the field.
-  const nullable = getNullablePrimitiveInfo(memberType);
-  const isBigIntField =
-    usesHostBigIntCarrier(ctx) && (isBigIntType(memberType) || nullable?.primitiveKind === "bigint");
-  return isBigIntField ? resolveWasmType(ctx, memberType) : mapTsTypeToWasm(memberType, ctx.checker);
+  // `mapTsTypeToWasm` models BigInt as the host-free i64 carrier.
+  return mapTsTypeToWasm(memberType, ctx.checker);
 }
 
 export function collectInterface(ctx: CodegenContext, decl: ts.InterfaceDeclaration): void {
@@ -719,13 +712,12 @@ function resolveFieldsFromProperties(
   let changed = false;
   for (let fieldIdx = startIndex; fieldIdx < fields.length; fieldIdx++) {
     const field = fields[fieldIdx]!;
-    const mayBeHostBigInt = usesHostBigIntCarrier(ctx) && field.type.kind === "i64" && field.type.bigint === true;
-    if (field.type.kind !== "externref" && !mayBeHostBigInt) continue;
+    if (field.type.kind !== "externref") continue;
 
     const property = propertiesByName.get(field.name);
     if (!property) continue;
     const resolved = resolveWasmType(ctx, ctx.checker.getTypeOfSymbol(property));
-    if (resolved.kind === "ref" || resolved.kind === "ref_null" || (mayBeHostBigInt && resolved.kind === "externref")) {
+    if (resolved.kind === "ref" || resolved.kind === "ref_null") {
       field.type = resolved;
       changed = true;
     }

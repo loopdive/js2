@@ -25,50 +25,65 @@ function importNames(bin: Uint8Array): string[] {
   return WebAssembly.Module.imports(new WebAssembly.Module(bin)).map((i) => `${i.module}::${i.name}`);
 }
 
-async function hostResult(src: string): Promise<number> {
+// (#6979 S7-a) The meta-circular host shim (`__extern_new_function` under the
+// hostEval policy) was the retired host-assisted profile. On the default
+// profile (the native regime in a JS environment) dynamic `new Function`
+// imports the core-Wasm runtime-eval provider instead; these rows pin that
+// route with the refusal provider linked. Executing the dynamic body needs a
+// real provider and is covered by the QuickJS eval-engine suites.
+let refusalNamespacePromise: Promise<WebAssembly.ModuleExports> | undefined;
+function refusalNamespace(): Promise<WebAssembly.ModuleExports> {
+  refusalNamespacePromise ??= compile(buildRuntimeEvalRefusalProviderSource(), {
+    ...RUNTIME_EVAL_PROVIDER_COMPILE_OPTIONS,
+    fileName: "issue-2960-default-refusal-provider.ts",
+  }).then((refusal) => {
+    expect(refusal.success, JSON.stringify(refusal.errors)).toBe(true);
+    return instantiateRuntimeEvalNamespace(new WebAssembly.Module(refusal.binary));
+  });
+  return refusalNamespacePromise;
+}
+
+async function defaultResult(src: string): Promise<number> {
   const r = await compile(src, { fileName: "t.ts" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
-  // (#6779) The meta-circular shim runs under the hostEval policy; the library
-  // default (`deny`, which `r.importObject` uses) refuses dynamic code.
-  const io = buildImports(r.imports, undefined, r.stringPool, { dynamicCode: "hostEval" });
+  const io = buildImports(r.imports, undefined, r.stringPool) as unknown as Record<string, unknown> & {
+    setExports?: (exports: Record<string, Function>) => void;
+  };
+  if (importNames(r.binary).some((name) => name.startsWith(`${RUNTIME_EVAL_IMPORT_MODULE}::`))) {
+    io[RUNTIME_EVAL_IMPORT_MODULE] = await refusalNamespace();
+  }
   const { instance } = await WebAssembly.instantiate(r.binary, io as unknown as WebAssembly.Imports);
   io.setExports?.(instance.exports as Record<string, Function>);
   return (instance.exports as { test(): number }).test();
 }
 
-describe("#2960 — host-mode dynamic new Function routes to the meta-circular shim", () => {
-  it("dynamic immediate-call: new Function('a','b','return a'+op+'b')(1,2) === 3", async () => {
+const DYNAMIC_NEW_FUNCTION = `let op = "+"; op = op + ""; return new Function("a","b","return a"+op+"b")`;
+
+describe("#2960 — dynamic new Function routes to the runtime-eval provider (default profile)", () => {
+  it("dynamic immediate-call: the provider call is catchable when the provider refuses", async () => {
     // (#1102) `let` + reassignment keeps this genuinely dynamic — a `const`
-    // string binding now const-folds into the Tier-0 compile-away, which
-    // would silently stop exercising the shim this test exists for.
+    // string binding const-folds into the Tier-0 compile-away.
     expect(
-      await hostResult(
-        `export function test(): number { let op = "+"; op = op + ""; return new Function("a","b","return a"+op+"b")(1,2); }`,
+      await defaultResult(
+        `export function test(): number { try { ${DYNAMIC_NEW_FUNCTION}(1,2); } catch (e) { return 42; } }`,
       ),
-    ).toBe(3);
+    ).toBe(42);
   });
 
-  it("constant immediate-call still works (unchanged #2924 path): === 3", async () => {
-    expect(await hostResult(`export function test(): number { return new Function("a","b","return a+b")(1,2); }`)).toBe(
-      3,
-    );
+  it("constant immediate-call still compiles away (unchanged #2924 path): === 3", async () => {
+    const src = `export function test(): number { return new Function("a","b","return a+b")(1,2); }`;
+    const r = await compile(src, { fileName: "t.ts" });
+    expect(r.success, JSON.stringify(r.errors)).toBe(true);
+    expect(importNames(r.binary).some((name) => name.startsWith(`${RUNTIME_EVAL_IMPORT_MODULE}::`))).toBe(false);
+    expect(await defaultResult(src)).toBe(3);
   });
 
-  it("dynamic value consumed host-side (Array.map) invokes the real callable", async () => {
-    expect(
-      await hostResult(
-        `export function test(): number { let op = "*"; op = op + ""; const f: any = new Function("x","return x"+op+"2"); const a = [1,2,3].map(f as any); return a[0] + a[1] + a[2]; }`,
-      ),
-    ).toBe(12);
-  });
-
-  it("emits an __extern_new_function import for the dynamic host path (no silent null stub)", async () => {
-    const r = await compile(
-      `export function test(): any { let op = "+"; op = op + ""; return new Function("a","b","return a"+op+"b"); }`,
-      { fileName: "t.ts" },
-    );
+  it("imports the provider's __runtime_new_function, never the host __extern_new_function shim", async () => {
+    const r = await compile(`export function test(): any { ${DYNAMIC_NEW_FUNCTION}; }`, { fileName: "t.ts" });
     expect(r.success).toBe(true);
-    expect(importNames(r.binary).some((n) => n.includes("__extern_new_function"))).toBe(true);
+    const names = importNames(r.binary);
+    expect(names).toContain(`${RUNTIME_EVAL_IMPORT_MODULE}::__runtime_new_function`);
+    expect(names.some((n) => n.includes("__extern_new_function"))).toBe(false);
   });
 });
 
@@ -128,7 +143,12 @@ describe("#2928 — standalone dynamic indirect eval links the runtime provider"
 });
 
 describe("#4013 — runtime-eval boundary classification", () => {
-  it("does not demote host IR merely because a source observes eval as a value", async () => {
+  // (#6979 S7-a) Re-pinned from the retired host-assisted lane. On the native
+  // regime (default and standalone alike) a module that observes `eval` links
+  // the runtime-eval callable carrier. Until #7106 A1 that withdrew every unit
+  // (an inverted sentinel here); the boundary is now per unit, and `add`
+  // touches no eval-visible binding.
+  it("does not demote IR merely because a source observes eval as a value", async () => {
     const r = await compile(
       `const intrinsic: any = eval;
        export function add(a: number, b: number): number { return a + b; }`,

@@ -70,6 +70,7 @@ import { withSpeculativeCompile } from "./context/speculative.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { isPatchedBuiltinStaticMember } from "./source-scan-predicates.js"; // (#6957)
 
 /**
  * Push the `[[Prototype]]` object of the builtin named `builtinName` — the
@@ -104,7 +105,15 @@ export function tryEmitBuiltinStaticExpandoRead(
   if (!ctx.standalone) return undefined;
   // A real static METHOD that failed to reify keeps the loud refusal — see the
   // "absent-not-wrong" note in the module header.
-  if (BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName] !== undefined) return undefined;
+  // (#6957) …unless the program PATCHES that member: the carrier then holds
+  // the program's value (or the seeded builtin before the write), which is
+  // exactly what an ordinary [[Get]] must answer.
+  if (
+    BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName] !== undefined &&
+    !isPatchedBuiltinStaticMember(ctx, builtinName, propName)
+  ) {
+    return undefined;
+  }
 
   const getIdx = ensureLateImport(
     ctx,

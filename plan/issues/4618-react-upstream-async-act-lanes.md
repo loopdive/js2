@@ -3,7 +3,7 @@ id: 4618
 title: "react upstream suite: async it-body/act() lanes — depth-3 nested-async unwrap, fn-decl capture in suspending bodies, IR nested-fn CE"
 status: ready
 created: 2026-08-22
-updated: 2026-08-24
+updated: 2026-10-07
 priority: high
 horizon: l
 feasibility: hard
@@ -1116,3 +1116,33 @@ quarantined, and a module that compiles and validates. The two-test completion
 filter is **2/2**, and the generic same-layout class regression file is
 **10/10**. No upstream test body was changed and all temporary diagnostics
 were removed.
+
+## 2026-10-07 binding-continuity slice (#6895) and residual clusters
+
+Full-suite measurement on upstream/main e7760d1c2a: **139/180** scored (272
+executed, 92 harness-incompatible, 0 quarantined). #6895 fixes four bindings
+lost across `await act(...)` — a hoist-boxed capture spilled as a null cell
+(defect (b) above, in its `try`-block form), a cell-boxed or captured-global
+receiver whose member read folded to null, the numeric slot a copy of such a
+binding took, and a scoped same-named class local reset after a suspension —
+taking the suite to **150/180** (11 fail→pass, 0 pass→fail).
+
+Remaining 30 failures, grouped by observed symptom (not yet root-caused):
+
+| Cluster | Tests | Symptom |
+| --- | --- | --- |
+| create-react-class integration | 6 | statics / getInitialState / getDerivedStateFromProps / replaceState values `undefined` |
+| ReactElementClone refs | 4 | `ref.current` / cloned ref props `undefined` (`toBe DIV`, `toBe xyz`) |
+| ReactJSXRuntime | 4 | jsx() defaultProps (`Cannot access property on null` 1970:8), NaN prop warning, key-spread warning text |
+| forwardRef | 4 | memo bailout `renderCount` 6 vs 1 (×3), ref switch `undefined` |
+| StrictMode symbol checks | 3 | class with `state = {count}` field + gDSFP renders `''` |
+| StrictMode setState double-invoke | 2 | updater invoked once (`1 toBe 2`) |
+| PureComponent | 2 | `textContent ''` / render count 0 |
+| ContextValidator | 2 | legacy context object identity on update |
+| ReactChildren | 2 | mock call count; iterable child `{@@iterator}` rejected |
+| StrictMode effect double-log | 1 | `0 toBe 1` |
+
+A non-React reduction worth its own slice: `function Base(p){ this.props = p }
+class C extends Base {}` — `new C({…}).props` is `undefined` (fields a
+function-constructor parent writes during `super()` are lost). React's own
+renderer re-assigns `instance.props`, so it is masked in most React tests.

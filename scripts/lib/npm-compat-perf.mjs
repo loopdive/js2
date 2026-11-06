@@ -242,7 +242,7 @@ export async function resolveStandalonePerfLanes({ hostBlocked, selected, inProc
 }
 
 /**
- * (#6851) The native-first JS-host lane as a bounded-child lane. When the
+ * (#6851) The JS-host lane (the native regime) as a bounded-child lane. When the
  * JS-host package-entry gate blocked (it timed out or failed on the package
  * graph), compiling that same graph in the generator's own process has no
  * budget and no memory isolation: for webpack and jsdom it exhausted the
@@ -250,9 +250,9 @@ export async function resolveStandalonePerfLanes({ hostBlocked, selected, inProc
  * the dashboard carried their pre-#6661 rows ("package entry did not produce a
  * runnable Wasm module") forward as stale for weeks.
  */
-export const JS_HOST_NATIVE_PERF_LANE = Object.freeze({
-  lane: "js-host-native",
-  key: "jsHostNative",
+export const JS_HOST_PERF_LANE = Object.freeze({
+  lane: "js-host",
+  key: "jsHost",
   placement: "js-host",
   inputMode: "runtime-dynamic",
 });
@@ -260,7 +260,7 @@ export const JS_HOST_NATIVE_PERF_LANE = Object.freeze({
 /** Every lane a bounded `--perf-only --lane <lane>` child can measure. */
 export const CHILD_PERF_LANES = Object.freeze([
   ...STANDALONE_PERF_LANES.map((entry) => ({ ...entry, placement: "standalone" })),
-  JS_HOST_NATIVE_PERF_LANE,
+  JS_HOST_PERF_LANE,
 ]);
 
 // V8's fatal-OOM banner. The child's last output lines after it are a native
@@ -272,7 +272,7 @@ const HEAP_EXHAUSTED_RE = /JavaScript heap out of memory|Reached heap limit|Allo
  * an overrun is `laneBudgetOverrun`'s) without writing a lane record: a heap
  * exhaustion is named as such, anything else quotes the child's last line.
  *
- * @param {string} lane CLI lane name (`standalone-dynamic`, `js-host-native`, ...)
+ * @param {string} lane CLI lane name (`standalone-dynamic`, `js-host`, ...)
  * @param {{ status?: number | null, signal?: string | null, output?: string }} child
  */
 export function childLaneFailureDiagnostic(lane, child) {
@@ -291,7 +291,7 @@ export function childLaneFailureDiagnostic(lane, child) {
  * whole generator down with it; otherwise in process, as before.
  */
 export async function resolveNativeFirstPerfLane({ hostBlocked, inProcess, inChild }) {
-  return hostBlocked ? await inChild(JS_HOST_NATIVE_PERF_LANE.lane) : await inProcess();
+  return hostBlocked ? await inChild(JS_HOST_PERF_LANE.lane) : await inProcess();
 }
 
 /** The one tolerated O4 deviation (#4586): Flatten cannot read `try_table`. */
@@ -358,7 +358,6 @@ export function npmPerfRows(packages) {
     if (!pkg.perf?.lanes) continue;
     for (const [key, label] of [
       ["jsHost", "JS host · runtime dynamic"],
-      ["jsHostNative", "JS host native-first · runtime dynamic"],
       ["standalone", "standalone · compile-time static"],
       ["standaloneDynamic", "standalone · runtime dynamic"],
     ]) {
@@ -401,25 +400,18 @@ function measuredRatio(lane) {
 export function npmPerfHistoryPoint(packages, generatedAt, sourceRevision = null, optimizationLevels = null) {
   const snapshots = {};
   for (const pkg of packages) {
+    // A carried-forward package was not measured at this snapshot's time.
+    // This shared reducer also serves committed-report backfill.
+    if (pkg?.refresh?.status === "stale") continue;
     const perf = pkg?.perf;
     if (!perf) continue;
     const lanes = perf.lanes ?? { jsHost: perf };
     const jsHostDynamic = measuredRatio(lanes.jsHost);
-    const jsHostNativeDynamic = measuredRatio(lanes.jsHostNative);
     const standaloneStatic = measuredRatio(lanes.standalone);
     const standaloneDynamic = measuredRatio(lanes.standaloneDynamic);
-    if (
-      jsHostDynamic === null &&
-      jsHostNativeDynamic === null &&
-      standaloneStatic === null &&
-      standaloneDynamic === null
-    )
-      continue;
+    if (jsHostDynamic === null && standaloneStatic === null && standaloneDynamic === null) continue;
 
     snapshots[pkg.name] = {
-      ...(lanes.jsHostNative
-        ? { jsHostNative: jsHostNativeDynamic === null ? {} : { dynamic: jsHostNativeDynamic } }
-        : {}),
       jsHost: {
         ...(jsHostDynamic === null ? {} : { dynamic: jsHostDynamic }),
       },
@@ -457,7 +449,11 @@ export function npmPerfHistoryPoint(packages, generatedAt, sourceRevision = null
  * rewritten on every refresh, so the artifact looked alive and the charts
  * showed a two-week hole.
  */
-export function mergeNpmPerfHistory(history, points) {
+export function mergeNpmPerfHistory(history, points, { preserveDistinctMeasurements = false } = {}) {
+  // Matrix lanes can measure the same revision at different times. Their
+  // timestamped points are distinct observations; unioning an older lane
+  // must not replace a newer snapshot or discard the other lane's history.
+  // Keep source-revision dedup as the default for existing direct callers.
   const existing = Array.isArray(history) ? history : (history?.runs ?? []);
   const merged = [];
   for (const point of [...existing, ...points]) {
@@ -465,7 +461,10 @@ export function mergeNpmPerfHistory(history, points) {
     const duplicateIndex = merged.findIndex(
       (candidate) =>
         candidate.generatedAt === point.generatedAt ||
-        (candidate.sourceRevision && point.sourceRevision && candidate.sourceRevision === point.sourceRevision),
+        (!preserveDistinctMeasurements &&
+          candidate.sourceRevision &&
+          point.sourceRevision &&
+          candidate.sourceRevision === point.sourceRevision),
     );
     if (duplicateIndex < 0) {
       merged.push(point);
@@ -476,6 +475,13 @@ export function mergeNpmPerfHistory(history, points) {
     // read out of git) must never erase the one already recorded, and must
     // never invent one of its own.
     const previous = merged[duplicateIndex];
+    // Backfill derives a point from an aggregate report, not a new measured
+    // observation. Preserve an existing point's data at that timestamp even
+    // if the older point predates sourceRevision provenance.
+    if (preserveDistinctMeasurements && point.recordedIn && !point.sourceRevision) {
+      merged[duplicateIndex] = { ...point, ...previous };
+      continue;
+    }
     merged[duplicateIndex] = {
       ...previous,
       ...point,

@@ -80,12 +80,17 @@ export const NO_ARG_STRING_MEMBER_HELPER: Readonly<Record<string, string>> = {
 // #2742 A/B's finding was that a BLANKET removal costs 13 files; `trim`
 // individually is not one of them — re-measured here on the 551-file ES5
 // standalone guard, which stays 551/551.
-export const SUPERSEDED_BY_BORROWED_PATH: ReadonlySet<string> = new Set([
-  "codePointAt",
-  "includes",
-  "startsWith",
-  "endsWith",
-]);
+//
+// (#7072, 2026-10-18) The four remaining members REMOVED. The carve-out's
+// premise — a refused member body makes the caller fall through to #3254's
+// borrowed path — no longer holds for the direct `.call` spelling: the
+// reflective closure now claims `String.prototype.includes.call("abc", "b")`
+// itself, so the refused body threw "String.prototype.includes is not yet
+// implemented in --target standalone" (issue-2875 slice-3/slice-2/slice-B
+// pins, 9 tests). The wired bodies answer correctly; re-measured on the 91
+// `String/prototype/{includes,startsWith,endsWith,codePointAt}` rows (see
+// #7072). The set stays as the documented seam.
+export const SUPERSEDED_BY_BORROWED_PATH: ReadonlySet<string> = new Set<string>([]);
 
 /**
  * Emit `flatten(? ToString(param<paramIdx>))`, leaving the flat `$NativeString`

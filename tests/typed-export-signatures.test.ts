@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 
 /**
  * Verify that exported functions with primitive TypeScript types
@@ -17,7 +18,12 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
     );
   }
-  const { instance } = await WebAssembly.instantiate(result.binary, { env: {} });
+  // Host-lane modules import their string constants (and any runtime helper)
+  // from the JS runtime, so instantiate through `buildImports` — a bare
+  // `{ env: {} }` fails at instantiate with "Import #0 string_constants".
+  const imports = buildImports(result.imports, undefined, result.stringPool);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  imports.setExports?.(instance.exports as Record<string, Function>);
   return (instance.exports as any)[fn](...args);
 }
 
@@ -130,7 +136,11 @@ describe("typed export signatures (#598)", () => {
     ).toBe(17);
   });
 
-  it("number function with optional param uses f64", async () => {
+  it("number function with optional param keeps f64 for the required param", async () => {
+    // An omitted optional parameter is `undefined`, which an f64 slot cannot
+    // tell apart from NaN, so `b?: number` now rides the externref carrier;
+    // the REQUIRED `a` and the result keep their concrete f64 boundary type,
+    // which is what #598 is about.
     const wat = await getWat(`
       export function add(a: number, b?: number): number {
         return a + (b || 0);
@@ -138,9 +148,8 @@ describe("typed export signatures (#598)", () => {
     `);
     const sig = getFuncSignature(wat, "add");
     expect(sig).toBeDefined();
-    expect(sig).toContain("(param f64 f64)");
+    expect(sig).toContain("(param f64 externref)");
     expect(sig).toContain("(result f64)");
-    expect(sig).not.toContain("externref");
   });
 
   it("any-typed params correctly use externref", async () => {

@@ -28,8 +28,9 @@ async function runHost(src: string): Promise<unknown> {
   if (!r.success) throw new Error(`compile error: ${r.errors[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  if (typeof (imports as { setExports?: (e: unknown) => void }).setExports === "function") {
-    (imports as { setExports: (e: unknown) => void }).setExports(instance.exports);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  if (typeof (imports as { setInstance?: (e: WebAssembly.Instance) => void }).setInstance === "function") {
+    (imports as { setInstance: (e: WebAssembly.Instance) => void }).setInstance(instance);
   }
   return (instance.exports as { test?: () => unknown }).test?.();
 }

@@ -2,6 +2,7 @@
 /**
  * Identifier resolution, TDZ analysis, and instanceof handling.
  */
+import { emitHostIntlGlobal } from "../helpers/host-intl-locale.js"; // (#6986)
 import {
   autoBindingNarrowedAcrossFunctionBoundary,
   expressionHasWidenedPropertyType,
@@ -59,7 +60,7 @@ import { emitTdzCheckAtGlobal } from "../statements.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
-import { BUILTIN_TYPE_TAGS, isBuiltinSubtype, isBuiltinTypeName } from "../builtin-tags.js";
+import { collectErrorInstanceOfTags, isBuiltinSubtype, isBuiltinTypeName } from "../builtin-tags.js";
 import { ensureDateStruct } from "./builtins.js"; // (#1325) native $__Date struct for host-free `instanceof Date`
 import { ensureStandaloneRegExpStruct } from "../regexp-standalone.js"; // (#1325) native RegExp struct for host-free `instanceof RegExp`
 import { getOrRegisterPromiseType } from "../async-scheduler.js"; // (#1325) native $Promise struct for host-free `instanceof Promise`
@@ -92,11 +93,7 @@ import {
   isBuiltinConstructorIdentityName,
   isSupportedBuiltinNamespace,
 } from "../builtin-static-globals.js";
-import {
-  emitPromiseSubclassValueRead,
-  resolvePromiseSubclassIdentifier,
-  tryEmitPromiseSubclassValue,
-} from "./promise-subclass.js";
+import { emitPromiseSubclassValueRead, resolvePromiseSubclassIdentifier } from "./promise-subclass.js";
 import {
   emitLiveIdentifierGlobalRead,
   moduleTdzGlobalIndexForIdentifier,
@@ -118,13 +115,13 @@ import { emitHostEvalGlobalBindingSeed } from "./runtime-eval-provider.js";
 import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
 import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
-import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
 } from "../standalone-wrapper-instanceof.js";
 import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-functions.js";
 import { tryEmitStandaloneConsoleValue } from "../standalone-console-object.js";
+import { instanceofRhsShadowsModuleName } from "./instanceof-shadowed-rhs.js"; // (#7121)
 import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js"; // (#4491 T3) §13.10.1 step 3
 import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
@@ -135,37 +132,6 @@ import {
 } from "../module-namespace-value.js";
 
 const switchCaseLexicalDeclarationCache = new WeakMap<ts.SourceFile, Map<string, ts.Node[]>>();
-
-/**
- * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
- * `instanceof <ctorName>` test in no-JS-host mode. For `instanceof Error` this
- * is every Error subtype tag; for `instanceof TypeError` it is TypeError's own
- * tag plus any descendant (none today). Mirrors `isBuiltinSubtype` over the
- * error portion of the BUILTIN_TYPE_TAGS registry.
- */
-function collectErrorInstanceOfTags(ctorName: string): number[] {
-  const errorNames = [
-    "Error",
-    "TypeError",
-    "RangeError",
-    "SyntaxError",
-    "URIError",
-    "EvalError",
-    "ReferenceError",
-    "AggregateError",
-    // (#3234) SuppressedError is an Error subclass (BUILTIN_PARENT). Included so
-    // `instanceof SuppressedError` matches its own tag, and `instanceof Error`
-    // also matches a native SuppressedError (built by the dispose driver).
-    "SuppressedError",
-  ] as const;
-  const tags: number[] = [];
-  for (const n of errorNames) {
-    if (isBuiltinSubtype(n, ctorName)) {
-      tags.push(BUILTIN_TYPE_TAGS[n]);
-    }
-  }
-  return tags;
-}
 
 /**
  * (#2188) Build the set of per-class brand ids (`classTagMap` values) that count
@@ -696,7 +662,7 @@ function emitNullablePrimitiveUnbox(
     // JS-host BigInts stay as arbitrary-width externrefs. Narrowing this value
     // through __to_bigint would collapse it to the compiler's host-free i64
     // carrier and discard every bit above 63.
-    if (usesHostBigIntCarrier(ctx)) return null;
+
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
@@ -1699,6 +1665,10 @@ function compileIdentifierCore(
   // `interface Node` and also declares a local constructible `function Node`;
   // that function must reach the compiled funcref path below rather than read
   // the unrelated DOM `globalThis.Node` constructor.
+  // (#6986) `intl` accelerator: the global `Intl` read as a VALUE.
+  if (emitHostIntlGlobal(ctx, fctx, name, resolvedValueDeclaration === undefined || readsAmbientDeclaration)) {
+    return { kind: "externref" };
+  }
   if (
     !ctx.standalone &&
     !ctx.wasi &&
@@ -1957,9 +1927,6 @@ function compileIdentifierCore(
     !fctx.localMap.has(name) &&
     !(fctx.boxedCaptures?.has(name) ?? false)
   ) {
-    if (tryEmitPromiseSubclassValue(ctx, fctx, name)) {
-      return { kind: "externref" };
-    }
   }
 
   // (#3006) Standalone bare builtin-CONSTRUCTOR identifier read as a VALUE
@@ -2262,7 +2229,6 @@ function compileIdentifierCore(
   ) {
     const valueDecl = identifierValueSymbol(ctx, id)?.valueDeclaration;
     const isOrdinaryFunctionDecl =
-      (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
       valueDecl !== undefined &&
       ts.isFunctionDeclaration(valueDecl) &&
       valueDecl.asteriskToken === undefined &&
@@ -2457,7 +2423,7 @@ function narrowTypeToUnbox(ctx: CodegenContext, fctx: FunctionContext, narrowedT
     // In JS-host mode resolveWasmType deliberately keeps BigInt values as real
     // host BigInts. A checker narrowing changes the logical type, not that
     // physical representation, so leave the externref on the stack.
-    if (usesHostBigIntCarrier(ctx)) return null;
+
     addUnionImports(ctx);
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {
@@ -3094,6 +3060,9 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // name the builtin dispatch below folds statically (to `false`), so the
   // non-callable arm inside `emitDynamicInstanceOf` was never reached
   // (`S11.8.6_A6_T2`, measured fail→pass).
+  // (#7121) a shadowing parameter / local skips the NAME-keyed arms below
+  if (instanceofRhsShadowsModuleName(ctx, expr.right)) return emitDynamicInstanceOf(ctx, fctx, expr);
+
   {
     const namespaceThrow = tryEmitNonCallableRhsThrow(ctx, fctx, expr);
     if (namespaceThrow) return namespaceThrow;
@@ -3180,7 +3149,7 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // single subclass; distinguishing sibling subclasses needs a per-user-class
   // brand (broader $ClassMeta work, #2101). Captured in #1536c's resolution.
   let userErrorParent: string | undefined;
-  if (ctx.targetProfile.semanticProviders === "native-first" && !isBuiltinTypeName(ctorName)) {
+  if (!isBuiltinTypeName(ctorName)) {
     const bp = ctx.classBuiltinParentMap.get(ctorName);
     if (bp && (bp === "Error" || isWasiErrorName(bp))) userErrorParent = bp;
   }
@@ -3217,14 +3186,13 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // (#1536c) `userErrorParent` extends this to externref-backed user Error
   // subclasses.
   if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    (ctorName === "Error" ||
-      isWasiErrorName(ctorName) ||
-      // (#3234) SuppressedError is not in WASI_ERROR_NAMES (its ctor arity/args
-      // differ), but its native `$Error_struct` carries the SuppressedError tag,
-      // so the field-0 tag check answers `instanceof SuppressedError` host-free.
-      ctorName === "SuppressedError" ||
-      userErrorParent !== undefined)
+    ctorName === "Error" ||
+    isWasiErrorName(ctorName) ||
+    // (#3234) SuppressedError is not in WASI_ERROR_NAMES (its ctor arity/args
+    // differ), but its native `$Error_struct` carries the SuppressedError tag,
+    // so the field-0 tag check answers `instanceof SuppressedError` host-free.
+    ctorName === "SuppressedError" ||
+    userErrorParent !== undefined
   ) {
     const structIdx = getOrRegisterErrorStructType(ctx);
     // (#2188) When the RHS is a *user* Error subclass, sibling subclasses share

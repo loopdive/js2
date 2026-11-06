@@ -1,4 +1,5 @@
 import type { CompileError, CompileOptions } from "../index.js";
+import type { IrObservedOutcome } from "../ir/outcomes.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { validateEmittedBinary } from "../optimize.js";
 import { PositionMap, type CompilerSourceOriginSpan, type SourceEdit } from "../position-map.js";
@@ -77,6 +78,44 @@ function gateEmittedModule(
     "invalid-module",
   );
   return false;
+}
+
+/**
+ * (#7001) Telemetry honesty: an IR body the engine rejected is not "emitted".
+ * When validation failed, re-key the `emitted` outcome row of every IR-emitted
+ * unit whose Wasm function the engine names (`Compiling function #N:"name"`)
+ * to an `invariant` / `backend-legality-failure` row, so the ledger and
+ * `check:ir-only` see the broken unit instead of reporting it as a success.
+ * Rows are only present under `trackIrOutcomes`, which gates this naturally.
+ */
+function withEngineRejectedIrOutcomes<T extends { readonly irOutcomes?: readonly IrObservedOutcome[] }>(
+  telemetry: T | undefined,
+  accepted: boolean,
+  errors: readonly CompileError[],
+): T | undefined {
+  if (accepted || !telemetry?.irOutcomes) return telemetry;
+  return { ...telemetry, irOutcomes: irOutcomesAfterEngineRejection(telemetry.irOutcomes, errors) };
+}
+
+function irOutcomesAfterEngineRejection(
+  outcomes: readonly IrObservedOutcome[] | undefined,
+  errors: readonly CompileError[],
+): readonly IrObservedOutcome[] | undefined {
+  if (!outcomes) return outcomes;
+  const invalid = [...errors].reverse().find((error) => error.code === "invalid-module");
+  const failing = invalid && /Compiling function #\d+:"([^"]+)" failed/.exec(invalid.message)?.[1];
+  if (!failing) return outcomes;
+  return outcomes.map((outcome): IrObservedOutcome => {
+    if (outcome.kind !== "emitted" || !outcome.irBodyEmitted) return outcome;
+    if (outcome.displayName !== failing && outcome.displayName.replace(/\./g, "_") !== failing) return outcome;
+    return {
+      ...outcome,
+      kind: "invariant",
+      code: "backend-legality-failure",
+      stage: "backend-legality",
+      detail: `the engine rejected the IR body of ${failing}: ${invalid.message}`,
+    };
+  });
 }
 
 /** Validate source against safe mode restrictions. Returns errors for violations. */
@@ -350,10 +389,12 @@ export {
   detectEarlyErrors,
   gateEmittedModule,
   getApproxSourceLocation,
+  irOutcomesAfterEngineRejection,
   hasExportModifier,
   pushSourceAnchoredDiagnostic,
   rewriteEvalSuperCall,
   rewriteEvalSuperCallWithMap,
   validateHardenedMode,
   validateSafeMode,
+  withEngineRejectedIrOutcomes,
 };

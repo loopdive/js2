@@ -239,7 +239,7 @@ describe("#4515 wave-5 — measured residuals (owners named)", () => {
   // gap: `(function (v, C) { return v instanceof C; })(new U(), U)` is `false`
   // too, for a plain user constructor. The missing piece is the runtime
   // constructor→prototype edge, not this operator's RHS resolution.
-  it.fails("instanceof with a comma-assigned builtin RHS (#2916 Slice B / #2660 M3)", async () => {
+  it("instanceof with a comma-assigned builtin RHS (#2916 Slice B / #2660 M3)", async () => {
     expect(
       await runModule(`var OBJECT4515 = 0; var __r4515 = ((OBJECT4515 = Object, {}) instanceof OBJECT4515) ? 1 : 0;`),
     ).toBe(1);
@@ -285,7 +285,7 @@ describe("#4515 wave-5 — measured residuals (owners named)", () => {
   // does stick — it is the STRING write and the descriptor that fail, which is
   // why the pin uses the census row's own spelling
   // (`language/arguments-object/S10.6_A5_T4`, `10.6-6-2`, `10.6-7-1`).
-  it.fails("arguments.length is a writable own property (#4491)", async () => {
+  it("arguments.length is a writable own property (#4491)", async () => {
     expect(
       await runModule(`var str4515 = "something different";
        function fb4515() { arguments.length = str4515; return arguments; }
@@ -309,14 +309,14 @@ describe("#4515 wave-5 — measured residuals (owners named)", () => {
   // OWNER: #4204 slot widening. A hoisted `var` read before its initializer must
   // be `undefined`; a boolean-typed slot answers `false` (an f64 one answers
   // NaN — same convention). `language/types/boolean/S8.3_A1_T1`.
-  it.fails("a hoisted var read before its initializer is undefined (#4204)", async () => {
+  it("a hoisted var read before its initializer is undefined (#4204)", async () => {
     expect(await runModule(`var __r4515 = (xh4515 !== undefined) ? 0 : 1; var xh4515 = true;`)).toBe(1);
   });
 
   // OWNER: catch-clause scoping. The catch parameter is lowered to a plain
   // function local, so a reference AFTER the catch block resolves instead of
   // throwing a ReferenceError (`language/statements/try/12.14-7.js`).
-  it.fails("the catch binding does not leak past its block", async () => {
+  it("the catch binding does not leak past its block", async () => {
     expect(
       await runModule(`var __r4515 = 0;
        try { throw { foo: 1 }; } catch (eo4515) { }

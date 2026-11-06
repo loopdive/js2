@@ -191,12 +191,13 @@ describe("#4480 — measured residuals (see the issue file's Residuals section)"
     ).toBe(1);
   });
 
-  it.fails("R1: a fnctor that IS constructed but is not escape-gate-approved", async () => {
+  it("R1: a fnctor that IS constructed but is not escape-gate-approved", async () => {
     // `var H = function(){}; new H()` — the `new` site is classified
     // `keep-typed`/`keep-static`, so its instances live in a `__fnctor_H`
     // struct rather than an `$Object`. Admitting H here would make
-    // `H.prototype` an object the instances are NOT linked to. Deliberately
-    // still `undefined`.
+    // `H.prototype` an object the instances are NOT linked to. Was deliberately
+    // still `undefined` here; main answers "object" as of 2026-10-16, so this
+    // `it.fails` pin was promoted (#7014).
     expect(
       await runStandalone(`var H = function(){}; var h = new H(); return typeof H.prototype === "object" ? 1 : 0;`),
     ).toBe(1);

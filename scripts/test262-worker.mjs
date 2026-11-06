@@ -1,4 +1,10 @@
-import { parseTest262SemanticProviders } from "./test262-lane.mjs";
+import {
+  capturePreparedJobRequest,
+  refusePreparedArtifactPaths,
+  observePreparedExecutionJobResult,
+  observePreparedFrontendJobResult,
+} from "./test262-prepared-request.mjs";
+import { requireTest262CompilerPath } from "./test262-compiler-path.mjs";
 /**
  * Unified test262 worker — compiles AND executes a test in one process.
  * Uses child_process.fork for full memory isolation.
@@ -25,7 +31,11 @@ import { compile, compileMulti, createIncrementalCompiler } from "./compiler-bun
 // unlinked, exactly as they did before #5353.
 import * as compilerBundle from "./compiler-bundle.mjs";
 import * as runtimeBundle from "./runtime-bundle.mjs";
-import { buildImports, _resetIteratorRuntimeIntrinsicsForRealmIsolation } from "./runtime-bundle.mjs";
+import {
+  buildImports,
+  _installIteratorHelperPolyfills,
+  _resetIteratorRuntimeIntrinsicsForRealmIsolation,
+} from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./negative-verdict.mjs";
 import { hasPinnedEntryValueSelfImport, hasPinnedNamespaceSelfModuleImport } from "./test262-fixture-graph.mjs";
@@ -33,7 +43,10 @@ import { hasPinnedEntryValueSelfImport, hasPinnedNamespaceSelfModuleImport } fro
 // behaviour is unchanged — these bodies moved here verbatim; it is the LOCAL
 // runner that was missing the tryNativeExnRender step.
 import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
-import { startNativeEvalBoundaryObservation, NATIVE_EVAL_OBSERVATION_FIELD } from "./lib/native-eval-boundary-observation.mjs";
+import {
+  startNativeEvalBoundaryObservation,
+  NATIVE_EVAL_OBSERVATION_FIELD,
+} from "./lib/native-eval-boundary-observation.mjs";
 import { SANDBOX_GLOBAL_NAMES, applySandboxGlobalFunctionAttributes } from "./test262-sandbox-globals.mjs";
 import {
   restoreOwnKeyOrder,
@@ -56,8 +69,15 @@ import {
   temporalProviderCompileOptions,
   temporalProviderDisabled,
   test262TemporalLaneEnabled,
+  withTemporalCompilerFingerprint,
 } from "./test262-temporal.mjs";
-import { test262CompilerBundleHash, test262HarnessProviderCacheDir } from "./test262-harness-cache.mjs";
+import {
+  harnessProviderCompileOptions,
+  harnessProviderMemoKey,
+  test262CompilerBundleHash,
+  test262HarnessProviderCacheDir,
+  test262HarnessProviderLaneCacheDir,
+} from "./test262-harness-cache.mjs";
 
 // ── Bundle hash (#1521) ────────────────────────────────────────────────
 // Each cache entry written below carries a `bundle_hash` field. When the
@@ -142,6 +162,8 @@ function buildOriginalHarnessSandbox(consoleProxy) {
   return sandbox;
 }
 
+requireTest262CompilerPath(process.env.TEST262_COMPILER_PATH);
+
 let compileCount = 0;
 const GC_INTERVAL = 25;
 const WORKER_RECYCLE_INTERVAL = Math.max(0, parseInt(process.env.TEST262_WORKER_RECYCLE_INTERVAL || "0", 10) || 0);
@@ -174,14 +196,29 @@ const HARNESS_HOST_BRIDGE = { hostBridge: "always" };
 
 // #6776: the worker validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
 const WORKER_SELF_VALIDATES = { validate: false };
+// Fallback-free pass metric: every compile records which terminal units the IR
+// emitted and which fell back to a direct (legacy) body, so the report can
+// count passes that ran with zero legacy bodies as a separate percentage and
+// rank the remaining fallback reasons by test count.
+const IR_ROUTE_CENSUS = { trackIrOutcomes: true };
 
 function compileSingleSource(source, options) {
-  const opts = { ...HARNESS_HOST_BRIDGE, ...WORKER_SELF_VALIDATES, ...options };
+  const opts = {
+    ...HARNESS_HOST_BRIDGE,
+    ...(options.wholeProgram === undefined ? WORKER_SELF_VALIDATES : {}),
+    ...IR_ROUTE_CENSUS,
+    ...options,
+  };
   return incrementalCompiler ? incrementalCompiler.compile(source, opts) : compile(source, opts);
 }
 
 function compileMultipleSources(files, entryFile, options) {
-  const opts = { ...HARNESS_HOST_BRIDGE, ...WORKER_SELF_VALIDATES, ...options };
+  const opts = {
+    ...HARNESS_HOST_BRIDGE,
+    ...(options.wholeProgram === undefined ? WORKER_SELF_VALIDATES : {}),
+    ...IR_ROUTE_CENSUS,
+    ...options,
+  };
   return incrementalCompiler?.compileMulti
     ? incrementalCompiler.compileMulti(files, entryFile, opts)
     : compileMulti(files, entryFile, opts);
@@ -213,6 +250,30 @@ process.on("unhandledRejection", () => {});
 // For numeric-index accessors added to Array.prototype (configurable data
 // or accessor properties), we delete.  For tests that add non-configurable
 // poison, we exit for worker-pool restart — recovery is impossible.
+
+// Prime only the host's existing data-property Iterator before restoration
+// snapshots. The synthetic fallback keeps its normal first-use timing because
+// the runtime resets its identity between requests. Promise and RegExp timing
+// remain unchanged; no canary keys are ignored.
+const startupIteratorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Iterator");
+const startupIteratorPrototypeDescriptor =
+  startupIteratorDescriptor &&
+  Object.hasOwn(startupIteratorDescriptor, "value") &&
+  typeof startupIteratorDescriptor.value === "function"
+    ? Object.getOwnPropertyDescriptor(startupIteratorDescriptor.value, "prototype")
+    : undefined;
+// Explicit IR measurement uses the fixed native constructor. Do not mutate
+// captured compiler iterator ancestry merely to prime the unrelated JS-host
+// compatibility surface. Constructor-owned runtime initialization is unchanged.
+if (
+  process.env.TEST262_COMPILER_PATH !== "ir" &&
+  startupIteratorPrototypeDescriptor &&
+  Object.hasOwn(startupIteratorPrototypeDescriptor, "value") &&
+  startupIteratorPrototypeDescriptor.value !== null &&
+  typeof startupIteratorPrototypeDescriptor.value === "object"
+) {
+  _installIteratorHelperPolyfills();
+}
 
 // --- Category 1: numeric Array.prototype keys and Object.prototype keys
 // (must be deleted, not re-assigned — they're properties not on the
@@ -397,16 +458,7 @@ const _METHOD_SNAPSHOTS = [
   [
     "RegExp.prototype",
     RegExp.prototype,
-    [
-      "exec",
-      "test",
-      "toString",
-      Symbol.match,
-      Symbol.matchAll,
-      Symbol.replace,
-      Symbol.search,
-      Symbol.split,
-    ],
+    ["exec", "test", "toString", Symbol.match, Symbol.matchAll, Symbol.replace, Symbol.search, Symbol.split],
   ],
   [
     "Map.prototype",
@@ -631,7 +683,11 @@ const _symbolMetaOrig = _STATIC_SNAPSHOTS.flatMap(([name, obj]) => {
   if (proto != null && (typeof proto === "object" || typeof proto === "function")) {
     targets.push([`${name}.prototype`, proto]);
   }
-  return targets.map(([label, target]) => ({ name: label, obj: target, snapshot: snapshotSymbolAndAccessorMeta(target) }));
+  return targets.map(([label, target]) => ({
+    name: label,
+    obj: target,
+    snapshot: snapshotSymbolAndAccessorMeta(target),
+  }));
 });
 
 const _accessorOrig = _ACCESSOR_SNAPSHOTS.map(([name, obj, keys]) => ({
@@ -1200,7 +1256,9 @@ function summarizeImports(imports) {
 function classifyHostImportLeak(importNames) {
   if (!Array.isArray(importNames) || importNames.length === 0) return undefined;
   const joined = importNames.join(" ");
-  if (/__extern_|__object_|__defineProperty|__get_builtin|__new_plain_object|__register_|__proto_method_call/.test(joined)) {
+  if (
+    /__extern_|__object_|__defineProperty|__get_builtin|__new_plain_object|__register_|__proto_method_call/.test(joined)
+  ) {
     return "dynamic_object_property";
   }
   if (/__iterator|__array_from_iter|__gen_|generator|async_iterator/.test(joined)) return "iterator_protocol";
@@ -1218,7 +1276,46 @@ function buildResultMetadata(result, reachedTest) {
   return {
     ...(imports.length > 0 ? { imports } : {}),
     ...(hostImportLeakClass ? { hostImportLeakClass } : {}),
+    ...summarizeIrRoute(result?.irOutcomes),
     reachedTest,
+  };
+}
+
+/**
+ * Per-compile IR route census from the compiler's `irOutcomes` ledger: how many
+ * terminal units there were, how many were emitted from a direct (legacy)
+ * body, and the fallback reason codes behind those. `{}` when the ledger is
+ * absent (older compiler bundles), so rows stay byte-identical there.
+ */
+function summarizeIrRoute(outcomes) {
+  if (!Array.isArray(outcomes)) return {};
+  let irUnits = 0;
+  let irLegacyUnits = 0;
+  let irDualUnits = 0;
+  const codes = new Map();
+  for (const outcome of outcomes) {
+    if (!outcome || outcome.kind === "non-executable") continue;
+    irUnits++;
+    // A unit whose IR body was emitted ships the IR body even when the direct
+    // dispatcher also ran (stage `patch`: the IR body replaced the legacy
+    // slot; a parity mismatch would have left a failure row instead). Only a
+    // unit with NO IR body is a legacy unit.
+    if (outcome.irBodyEmitted) {
+      if (outcome.legacyBodyEmitted) irDualUnits++;
+      continue;
+    }
+    irLegacyUnits++;
+    const code =
+      outcome.kind === "emitted" ? "withdrawn-after-emit" : `${outcome.kind}:${outcome.stage}:${outcome.code}`;
+    codes.set(code, (codes.get(code) ?? 0) + 1);
+  }
+  return {
+    irUnits,
+    irLegacyUnits,
+    ...(irDualUnits > 0 ? { irDualUnits } : {}),
+    ...(codes.size > 0
+      ? { irFallbackCodes: [...codes].sort((a, b) => b[1] - a[1]).map(([code, count]) => ({ code, count })) }
+      : {}),
   };
 }
 
@@ -1229,11 +1326,7 @@ function makeWorkerRecycleError(reason) {
 }
 
 function isFixtureFileRecord(fixtureFiles) {
-  return (
-    fixtureFiles &&
-    typeof fixtureFiles === "object" &&
-    !Array.isArray(fixtureFiles)
-  );
+  return fixtureFiles && typeof fixtureFiles === "object" && !Array.isArray(fixtureFiles);
 }
 
 function hasFixtureGraph(fixtureFiles) {
@@ -1250,7 +1343,13 @@ function hasValidatedSelfNamespaceGraph({ selfModuleGraph, originalHarness, entr
   );
 }
 
-function hasValidatedEntrySelfImportGraph({ requiresEntrySelfImportGraph, originalHarness, entryFile, fixtureFiles, source }) {
+function hasValidatedEntrySelfImportGraph({
+  requiresEntrySelfImportGraph,
+  originalHarness,
+  entryFile,
+  fixtureFiles,
+  source,
+}) {
   return (
     requiresEntrySelfImportGraph === true &&
     originalHarness === true &&
@@ -1337,13 +1436,12 @@ function temporalWiringAvailable() {
 /**
  * Build (or, in practice, cache-read) the provider once per fork, per target.
  *
- * (#6706) ...and per semantic-provider policy: the native-first lane links a
- * provider compiled under the native regime, certified by its OWN stamp. With
- * no such stamp its rows run unlinked (announced) — never against the
- * host-semantics provider, which would label host results as regime results.
+ * (#6706) The JS-host lane links a provider compiled under the native regime,
+ * certified by its OWN stamp. With no such stamp its rows run unlinked
+ * (announced).
  */
-async function getWorkerTemporalProvider(target, semanticProviders = "auto") {
-  const memoKey = semanticProviders === "native-first" ? `${target ?? "host"}/native-first` : (target ?? "host");
+async function getWorkerTemporalProvider(target) {
+  const memoKey = target ?? "host";
   const memoised = temporalProviderPromises.get(memoKey);
   if (memoised) return memoised;
   const promise = (async () => {
@@ -1358,16 +1456,17 @@ async function getWorkerTemporalProvider(target, semanticProviders = "auto") {
     // The lane question, asked HERE rather than per row: this getter memoises,
     // so the stamp is read once per fork instead of once per Temporal row.
     const cacheDir = temporalCacheDir();
-    if (!test262TemporalLaneEnabled(target, cacheDir, semanticProviders)) {
+    if (!test262TemporalLaneEnabled(target, cacheDir)) {
       announceTemporalUnavailable(`the ${memoKey} lane has no eligible provider`);
       return null;
     }
-    const stamp = readTemporalPrewarmStamp(cacheDir, target, semanticProviders);
+    const stamp = readTemporalPrewarmStamp(cacheDir, target);
     if (!stamp) {
       announceTemporalUnavailable(`no ${memoKey} pre-warm stamp in ${cacheDir}`);
       return null;
     }
-    const compileOptions = temporalProviderCompileOptions(target, semanticProviders);
+    // (#6882) Keyed with the compiler's identity, exactly as the pre-warm did.
+    const compileOptions = withTemporalCompilerFingerprint(temporalProviderCompileOptions(target));
     const { loadTemporalPolyfillSource } = await import("./test262-temporal.mjs");
     const polyfillSource = await loadTemporalPolyfillSource();
     const key = compilerBundle.temporalProviderCacheKey({ polyfillSource, compileOptions });
@@ -1432,32 +1531,16 @@ function harnessProviderWiringAvailable() {
   );
 }
 
-function harnessProviderCompileOptions(target) {
-  // Must match `compileHarnessLinkedBody`'s option set on the consumer side, or
-  // the provider and the body disagree about the ABI they share.
-  // (#6723 D4) Both sides carry the harness's `hostBridge: "always"`, like
-  // every other worker compile site (HARNESS_HOST_BRIDGE): on standalone the
-  // default strips `__stdout_*`, so the provider's `print` (hence `$DONE`'s
-  // completion marker) wrote to a sink nothing could read.
-  return {
-    ...HARNESS_HOST_BRIDGE,
-    allowJs: true,
-    emitWat: false,
-    skipSemanticDiagnostics: true,
-    ...(target ? { target } : {}),
-  };
-}
-
 async function getWorkerHarnessProvider(harnessPrefix, target) {
   if (!harnessProviderWiringAvailable()) {
     announceHarnessProviderUnavailable("bundles do not export the provider wiring — rebuild from the bundle entries");
     return null;
   }
-  const memoKey = `${target ?? "host"}\u0000${harnessPrefix.length}\u0000${harnessPrefix}`;
+  const memoKey = harnessProviderMemoKey(harnessPrefix, target);
   const memoised = harnessProviderPromises.get(memoKey);
   if (memoised) return memoised;
   const promise = (async () => {
-    const cacheDir = test262HarnessProviderCacheDir();
+    const cacheDir = test262HarnessProviderLaneCacheDir();
     const provider = await compilerBundle.buildHarnessProvider({
       harnessPrefix,
       cacheDir,
@@ -1499,12 +1582,12 @@ async function doCompile(
   isNegative,
   negativePhase,
   temporal,
-  semanticProviders,
   linkedHarness,
   // (#6491 r3) Explicit SCRIPT goal, computed from METADATA by `isScriptGoal`
   // in the caller. Threaded to EVERY compile branch below so the honest
   // whole-assembly and the linked body-only unit are given the same goal.
   scriptGoal,
+  preparedRequest,
 ) {
   // Defence-in-depth: restore any poisoned builtins BEFORE each compile.
   // postCompileCleanup runs after the previous test, but under rare worker
@@ -1577,7 +1660,8 @@ async function doCompile(
       allowJs: true,
       strictJsSyntax: isNegative,
       enforceJsEarlyErrors: isNegative && negativePhase !== "resolution",
-      sourceMap: true,
+      // Whole-program presentation currently has no source-map producer.
+      sourceMap: preparedRequest ? false : true,
       sourceMapUrl: sourceMapUrl || "test.wasm.map",
       emitWat: false,
       // Resolution negatives need TypeScript's linked-program diagnostics
@@ -1585,10 +1669,10 @@ async function doCompile(
       // before semantic analysis.
       skipSemanticDiagnostics: negativePhase !== "resolution",
       target,
-      semanticProviders,
       inferModuleStrictArguments,
       scriptGoal,
       ...deferOpt,
+      ...(preparedRequest ?? {}),
     });
   }
   if (temporal && originalHarness && !moduleGraph) {
@@ -1625,15 +1709,16 @@ async function doCompile(
       ...WORKER_SELF_VALIDATES,
       allowJs: true,
       fileName: "test.js",
-      sourceMap: true,
+      // Whole-program presentation currently has no source-map producer.
+      sourceMap: preparedRequest ? false : true,
       sourceMapUrl: sourceMapUrl || "test.wasm.map",
       emitWat: false,
       skipSemanticDiagnostics: true,
       target,
-      semanticProviders,
       inferModuleStrictArguments,
       scriptGoal,
       ...deferOpt,
+      ...(preparedRequest ?? {}),
     });
   }
   if (linkedHarness && originalHarness && !moduleGraph) {
@@ -1653,12 +1738,12 @@ async function doCompile(
       ...WORKER_SELF_VALIDATES,
       allowJs: true,
       fileName: "test.js",
-      sourceMap: true,
+      // Whole-program presentation currently has no source-map producer.
+      sourceMap: preparedRequest ? false : true,
       sourceMapUrl: sourceMapUrl || "test.wasm.map",
       emitWat: false,
       skipSemanticDiagnostics: true,
       target,
-      semanticProviders,
       inferModuleStrictArguments,
       scriptGoal,
       // (#3451) A negative test's verdict IS the diagnostic, so the linked
@@ -1670,6 +1755,7 @@ async function doCompile(
       strictJsSyntax: true,
       enforceJsEarlyErrors: isNegative && negativePhase !== "resolution",
       ...deferOpt,
+      ...(preparedRequest ?? {}),
     };
     const provider = await getWorkerHarnessProvider(linkedHarness.harnessPrefix, target);
     if (provider) {
@@ -1698,28 +1784,30 @@ async function doCompile(
     return compileSingleSource(source, {
       allowJs: true,
       fileName: "test.js",
-      sourceMap: true,
+      // Whole-program presentation currently has no source-map producer.
+      sourceMap: preparedRequest ? false : true,
       sourceMapUrl: sourceMapUrl || "test.wasm.map",
       emitWat: false,
       skipSemanticDiagnostics: true,
       target,
-      semanticProviders,
       inferModuleStrictArguments,
       scriptGoal,
       ...deferOpt,
+      ...(preparedRequest ?? {}),
     });
   }
   return compileSingleSource(source, {
     fileName: "test.ts",
-    sourceMap: true,
+    // Whole-program presentation currently has no source-map producer.
+      sourceMap: preparedRequest ? false : true,
     sourceMapUrl: sourceMapUrl || "test.wasm.map",
     emitWat: false,
     skipSemanticDiagnostics: true,
     target,
-    semanticProviders,
     inferModuleStrictArguments,
     scriptGoal,
     ...deferOpt,
+    ...(preparedRequest ?? {}),
   });
 }
 
@@ -1761,7 +1849,11 @@ async function doCompile(
 
 let currentNativeEvalBoundaryObservation = null;
 
-function extractWasmExceptionMessage(err, instance, observation = currentNativeEvalBoundaryObservation?.reader("negative-match")) {
+function extractWasmExceptionMessage(
+  err,
+  instance,
+  observation = currentNativeEvalBoundaryObservation?.reader("negative-match"),
+) {
   observation?.("consumer-instance", Boolean(instance));
   if (err instanceof WebAssembly.Exception) {
     observation?.("exception-kind", "wasm");
@@ -2078,7 +2170,6 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
     // actual validation error.
     await instantiateTest262Module(result.binary, imports, {
       target,
-      semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
       providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
     });
   } catch (err) {
@@ -2115,6 +2206,79 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
 }
 
 process.on("message", async (msg) => {
+  let preparedRequest;
+  try {
+    preparedRequest = capturePreparedJobRequest(msg);
+  } catch (error) {
+    sendResult({ id: msg.id, status: "compile_error", compileMs: 0, error: error?.message ?? String(error) });
+    return;
+  }
+  let preparedResult, preparedExecution;
+  let preparedCompilationAttempted = false, preparedCompilationSucceeded = false;
+  const sendOwnedResult = (payload, recycle) => {
+    if (!preparedRequest) return sendResult(payload, recycle);
+    try {
+      if (payload.preparedFrontendReport) {
+        // Re-observe the same failed compiler product immediately before send.
+        // This report never certifies a binary, instance or executed IR unit.
+        const preparedFrontendReport = observePreparedFrontendJobResult(
+          compilerBundle, preparedResult, preparedRequest, msg.source, msg.id, process.pid, msg,
+        );
+        return sendResult({ ...payload, preparedFrontendReport }, recycle);
+      }
+      const preparedExecutionReport = observePreparedExecutionJobResult(
+        compilerBundle,
+        preparedResult,
+        preparedExecution,
+        preparedRequest,
+        msg.source,
+        msg.id,
+        process.pid,
+      );
+      return sendResult({ ...payload, preparedExecutionReport }, recycle);
+    } catch (error) {
+      return sendResult(
+        {
+          id: msg.id,
+          status: "compile_error",
+          compileMs: payload.compileMs ?? 0,
+          compilerPathFailureKind: preparedCompilationAttempted
+            ? (preparedCompilationSucceeded ? "execution-unavailable" : "compilation") : "transport",
+          error: `${payload.error ? payload.error + "; " : ""}${error?.message ?? String(error)}`,
+        },
+        recycle,
+      );
+    }
+  };
+  // No legacy cache/provider path may be entered on behalf of a strict request.
+  try {
+    refusePreparedArtifactPaths(preparedRequest, msg.wasmPath, msg.metaPath);
+    if (preparedRequest && (msg.temporal === true || msg.linkedHarness === true || msg.nativeHarness === true))
+      throw new Error("PREPARED_TRANSPORT_INVALID: actual linked/Temporal/native-harness producer is unavailable");
+    if (preparedRequest) {
+      for (const capability of [
+        "instantiatePreparedArtifact",
+        "preparedRuntimeExecutionObservation",
+        "requiredPreparedEmission",
+        "requiredPreparedFinalArtifactObservation",
+        "requiredPreparedFrontendFailure",
+      ]) {
+        if (typeof compilerBundle[capability] !== "function")
+          throw new Error(`PREPARED_TRANSPORT_INVALID: compiler bundle lacks strict capability ${capability}`);
+      }
+    }
+  } catch (error) {
+    sendResult({ id: msg.id, status: "compile_error", compileMs: 0,
+      ...(preparedRequest ? { compilerPathFailureKind: "transport" } : {}),
+      error: error?.message ?? String(error) });
+    return;
+  }
+  const requestedCompilerPath = requireTest262CompilerPath(msg.compilerPath ?? process.env.TEST262_COMPILER_PATH);
+  if (requestedCompilerPath === "ir" && !preparedRequest) {
+    sendResult({ id: msg.id, status: "compile_error", compileMs: 0,
+      compilerPathFailureKind: "transport", error: "PREPARED_TRANSPORT_INVALID: IR requires strict whole-program demand" });
+    return;
+  }
   currentNativeEvalBoundaryObservation = startNativeEvalBoundaryObservation(msg.source);
   runtimeIntrinsicCanarySnapshot = null;
   currentLinkedFallback = false;
@@ -2129,7 +2293,6 @@ process.on("message", async (msg) => {
   const nativeHarness = originalHarness && msg.nativeHarness === true && typeof msg.harnessPrefix === "string";
   const harnessPrefix = nativeHarness ? msg.harnessPrefix : "";
   const target = compileTargetFromMessage(msg.target);
-  const semanticProviders = parseTest262SemanticProviders(msg.semanticProviders ?? process.env.TEST262_SEMANTIC_PROVIDERS);
   const staticFixtureGraph = hasFixtureGraph(msg.fixtureFiles);
   const selfNamespaceGraph = hasValidatedSelfNamespaceGraph({
     selfModuleGraph: msg.selfModuleGraph,
@@ -2165,10 +2328,10 @@ process.on("message", async (msg) => {
   // so a fork without a matching pre-warm stamp asks once and then costs
   // nothing per row.
   let temporal = null;
-  // (#6706) native-first rows link only the regime-compiled provider (their
-  // own stamp); the getter answers null — rows unlinked — without one.
+  // (#6706) rows link only the regime-compiled provider (its own stamp); the
+  // getter answers null — rows unlinked — without one.
   if (msg.temporal === true && originalHarness) {
-    temporal = await getWorkerTemporalProvider(target, semanticProviders);
+    temporal = await getWorkerTemporalProvider(target);
   }
 
   // (#3451) Linked shadow lane. The parent owns the split (it is the side that
@@ -2203,6 +2366,7 @@ process.on("message", async (msg) => {
 
   let result;
   try {
+    preparedCompilationAttempted = true;
     result = await doCompile(
       source,
       msg.sourceMapUrl,
@@ -2215,10 +2379,12 @@ process.on("message", async (msg) => {
       isNegative,
       msg.negativePhase,
       temporal,
-      semanticProviders,
       linkedHarness,
       msg.scriptGoal === true,
+      preparedRequest,
     );
+    preparedResult = result;
+    preparedCompilationSucceeded = result.success === true && result.errors.length === 0;
     if (linkedHarness?.fellBack) noteLinkedFallback(linkedHarness.fallbackReason);
   } catch (err) {
     if (linkedHarness?.fellBack) noteLinkedFallback(linkedHarness.fallbackReason);
@@ -2236,7 +2402,7 @@ process.on("message", async (msg) => {
       // Poisoned String.prototype (or similar built-in) — Wasm throw escaped
       // from the TS compiler internals. Send fail (not compile_error) and
       // restart the fork so subsequent tests get a clean environment.
-      sendResult(
+      sendOwnedResult(
         {
           id,
           status: "fail",
@@ -2253,15 +2419,21 @@ process.on("message", async (msg) => {
     // infrastructure/compiler failure, never proof of Test262's requested
     // SyntaxError. In particular, do not turn an absent/malformed dependency
     // graph into a false resolution-negative pass.
-    if (execute && isNegative && !fixtureGraph && negativeCompileErrorMatches(expectedErrorType, [], errMsg)) {
-      sendResult({
+    if (
+      !preparedRequest &&
+      execute &&
+      isNegative &&
+      !fixtureGraph &&
+      negativeCompileErrorMatches(expectedErrorType, [], errMsg)
+    ) {
+      sendOwnedResult({
         id,
         status: "pass",
         compileMs: performance.now() - compileStart,
       });
       return;
     }
-    sendResult(
+    sendOwnedResult(
       {
         id,
         status: "compile_error",
@@ -2277,6 +2449,37 @@ process.on("message", async (msg) => {
 
   const hasErrors = !result.success || result.errors.some((e) => e.severity === "error");
 
+  // oracle-version-exempt: explicit IR was previously unavailable and has its own result namespace;
+  // the added strict refusal cannot reclassify any existing legacy verdict.
+  if (preparedRequest && (hasErrors || result.errors.length !== 0)) {
+    const ownedFrontendFailure = compilerBundle.requiredPreparedFrontendFailure(result);
+    if (execute && isNegative && !isRuntimeNegative && ownedFrontendFailure) {
+      try {
+        const preparedFrontendReport = observePreparedFrontendJobResult(
+          compilerBundle, result, preparedRequest, source, id, process.pid, msg,
+        );
+        sendOwnedResult({
+          id, status: "pass", compileMs,
+          errorCodes: ownedFrontendFailure.diagnostics.filter((row) => row.code).map((row) => row.code),
+          preparedFrontendReport,
+        });
+        return;
+      } catch (error) {
+        sendOwnedResult({
+          id, status: "compile_error", compileMs,
+          error: `${result.errors.map((row) => row.message).join("; ")}; ${error?.message ?? String(error)}`,
+        });
+        return;
+      }
+    }
+    sendOwnedResult({
+      id,
+      status: "compile_error",
+      compileMs,
+      error: `${result.errors.map((row) => `L${row.line}:${row.column} ${row.message}`).join("; ") || "unsuccessful compiler result"}; no matching owned static SyntaxError negative verdict is available`,
+    });
+    return;
+  }
   if (hasErrors) {
     const errMsg = result.errors
       .filter((e) => e.severity === "error")
@@ -2303,7 +2506,7 @@ process.on("message", async (msg) => {
     }
 
     if (recycleReason) {
-      sendResult(
+      sendOwnedResult(
         {
           id,
           status: "compile_error",
@@ -2341,9 +2544,9 @@ process.on("message", async (msg) => {
         expectedFixtureResolutionDiagnostic &&
         negativeCompileErrorMatches(expectedErrorType, errorCodes, errMsg);
       if (matched) {
-        sendResult({ id, status: "pass", compileMs, errorCodes, ...compileMetadata });
+        sendOwnedResult({ id, status: "pass", compileMs, errorCodes, ...compileMetadata });
       } else {
-        sendResult({
+        sendOwnedResult({
           id,
           status: "compile_error",
           error: `expected ${expectedErrorType} but compiler rejected for an unrelated reason: ${errMsg || "unknown"}`,
@@ -2353,7 +2556,7 @@ process.on("message", async (msg) => {
         });
       }
     } else {
-      sendResult({
+      sendOwnedResult({
         id,
         status: "compile_error",
         error: errMsg || "unknown",
@@ -2376,7 +2579,7 @@ process.on("message", async (msg) => {
     const warnMsg = result.errors.map((e) => e.message).join("; ");
     const matched = negativeCompileErrorMatches(expectedErrorType, warnCodes, warnMsg);
     if (matched) {
-      sendResult({ id, status: "pass", compileMs, errorCodes: warnCodes, ...compileMetadata });
+      sendOwnedResult({ id, status: "pass", compileMs, errorCodes: warnCodes, ...compileMetadata });
       return;
     }
     // wrong-type warning — fall through to the compile/instantiate arms below
@@ -2384,14 +2587,18 @@ process.on("message", async (msg) => {
 
   // Validate Wasm binary before proceeding
   if (!WebAssembly.validate(result.binary)) {
-    const errMsg = await buildInvalidBinaryError(source, msg.sourceMapUrl, result, target);
+    // The legacy diagnostic helper recompiles through the direct frontend.
+    // Strict requests retain the actual validation failure without entering it.
+    const errMsg = preparedRequest
+      ? "invalid prepared Wasm binary: WebAssembly.validate failed"
+      : await buildInvalidBinaryError(source, msg.sourceMapUrl, result, target);
     if (msg.wasmPath && msg.metaPath) {
       try {
         writeFileSync(msg.wasmPath, new Uint8Array(0));
         writeFileSync(msg.metaPath, JSON.stringify({ ok: false, error: errMsg, compileMs, bundle_hash: BUNDLE_HASH }));
       } catch {}
     }
-    sendResult({ id, status: "compile_error", error: errMsg, compileMs, ...compileMetadata });
+    sendOwnedResult({ id, status: "compile_error", error: errMsg, compileMs, ...compileMetadata });
     return;
   }
 
@@ -2415,7 +2622,7 @@ process.on("message", async (msg) => {
 
   // Compile-only mode: done
   if (!execute) {
-    sendResult({ id, status: "compiled", compileMs, ...compileMetadata });
+    sendOwnedResult({ id, status: "compiled", compileMs, ...compileMetadata });
     return;
   }
 
@@ -2434,7 +2641,7 @@ process.on("message", async (msg) => {
   // refresh, plan/issues/2920); identical across gc/standalone.
   if (isNegative) {
     const { status, error } = negativeCompileSucceededVerdict(expectedErrorType, undefined);
-    sendResult({ id, status, error, compileMs, ...compileMetadata });
+    sendOwnedResult({ id, status, error, compileMs, ...compileMetadata });
     return;
   }
 
@@ -2442,7 +2649,7 @@ process.on("message", async (msg) => {
   // the JS harness. Do not satisfy leaked imports through buildImports and then
   // report the resulting execution as a pass.
   if (target === "standalone" && compileMetadata.imports?.length > 0) {
-    sendResult({
+    sendOwnedResult({
       id,
       status: "compile_error",
       error: `standalone target emitted host imports: ${compileMetadata.imports.join(", ")} (#2961)`,
@@ -2485,15 +2692,17 @@ process.on("message", async (msg) => {
         runInContext(harnessPrefix, harnessSandbox);
       }
     }
-    const importObj = buildImports(
-      result.imports,
-      originalHarness ? { console: consoleProxy } : undefined,
-      result.stringPool,
-      originalHarness
-        ? { globalSandbox: harnessSandbox, dynamicCode: TEST262_DYNAMIC_CODE_POLICY }
-        : { dynamicCode: TEST262_DYNAMIC_CODE_POLICY },
-    );
-    if (REALM_CANARY_MODE) {
+    const importObj = preparedRequest
+      ? undefined
+      : buildImports(
+          result.imports,
+          originalHarness ? { console: consoleProxy } : undefined,
+          result.stringPool,
+          originalHarness
+            ? { globalSandbox: harnessSandbox, dynamicCode: TEST262_DYNAMIC_CODE_POLICY }
+            : { dynamicCode: TEST262_DYNAMIC_CODE_POLICY },
+        );
+    if (REALM_CANARY_MODE && !preparedRequest) {
       runtimeIntrinsicCanarySnapshot = snapshotRuntimeIntrinsicSurface(importObj);
     }
 
@@ -2504,36 +2713,54 @@ process.on("message", async (msg) => {
       // keeps the binary-form instantiate. A synchronous CompileError from the
       // module-first path lands in the same catch arm as the old binary-form
       // instantiate — classification is unchanged.
-      instance = await instantiateTest262Module(result.binary, importObj, {
-        target,
-        semanticProviders,
-        providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
-        // (#5353) Empty on every non-Temporal row, so the shared finaliser
-        // takes its existing path byte-for-byte. `linkedRuntime` pins the
-        // provider registration to THIS worker's runtime copy — the one
-        // `buildImports` above came from; see the note in
-        // scripts/test262-import-object.mjs.
-        linkedModules: result.linkedModules ?? [],
-        linkedRuntime: runtimeBundle,
-        // (#6475/#6476) Build the PROVIDER's adapter with this row's host
-        // context — the same two values the consumer's `buildImports` above
-        // received. Without them the provider resolves ambient intrinsics
-        // (so `assert.throws(TypeError, …)` sees a different constructor with
-        // the same name) and prints to the real console (so the `$DONE`
-        // completion marker never reaches `harnessOutput`).
-        linkedHost: originalHarness
-          ? { deps: { console: consoleProxy }, options: { globalSandbox: harnessSandbox } }
-          : undefined,
-      });
-      currentLinkedPeers = standaloneLinkedPeers(target, result, importObj);
+      if (preparedRequest) {
+        preparedExecution = compilerBundle.instantiatePreparedArtifact(
+          result,
+          originalHarness ? { console: consoleProxy } : undefined,
+          originalHarness
+            ? { globalSandbox: harnessSandbox, dynamicCode: TEST262_DYNAMIC_CODE_POLICY }
+            : { dynamicCode: TEST262_DYNAMIC_CODE_POLICY },
+        );
+        observePreparedExecutionJobResult(
+          compilerBundle,
+          result,
+          preparedExecution,
+          preparedRequest,
+          source,
+          id,
+          process.pid,
+        );
+        instance = preparedExecution.instance;
+      } else
+        instance = await instantiateTest262Module(result.binary, importObj, {
+          target,
+          providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+          // (#5353) Empty on every non-Temporal row, so the shared finaliser
+          // takes its existing path byte-for-byte. `linkedRuntime` pins the
+          // provider registration to THIS worker's runtime copy — the one
+          // `buildImports` above came from; see the note in
+          // scripts/test262-import-object.mjs.
+          linkedModules: result.linkedModules ?? [],
+          linkedRuntime: runtimeBundle,
+          // (#6475/#6476) Build the PROVIDER's adapter with this row's host
+          // context — the same two values the consumer's `buildImports` above
+          // received. Without them the provider resolves ambient intrinsics
+          // (so `assert.throws(TypeError, …)` sees a different constructor with
+          // the same name) and prints to the real console (so the `$DONE`
+          // completion marker never reaches `harnessOutput`).
+          linkedHost: originalHarness
+            ? { deps: { console: consoleProxy }, options: { globalSandbox: harnessSandbox } }
+            : undefined,
+        });
+      currentLinkedPeers = preparedRequest ? [] : standaloneLinkedPeers(target, result, importObj);
     } catch (err) {
-      currentLinkedPeers = standaloneLinkedPeers(target, result, importObj);
+      currentLinkedPeers = preparedRequest ? [] : standaloneLinkedPeers(target, result, importObj);
       const execMs = performance.now() - execStart;
       // Real Wasm compile/link failures stay as compile_error. A throw from
       // the module's start function — which surfaces as WebAssembly.Exception
       // or a plain Error — is a runtime throw, not a compile failure.
       if (err instanceof WebAssembly.CompileError || err instanceof WebAssembly.LinkError) {
-        sendResult({
+        sendOwnedResult({
           id,
           status: "compile_error",
           error: err.message ?? String(err),
@@ -2546,11 +2773,11 @@ process.on("message", async (msg) => {
       }
 
       if (isRuntimeNegative && (!originalHarness || originalHarnessExceptionMatches(err, null, expectedErrorType))) {
-        sendResult({ id, status: "pass", compileMs, execMs, runtimeNegativePass: true, ...compileMetadata });
+        sendOwnedResult({ id, status: "pass", compileMs, execMs, runtimeNegativePass: true, ...compileMetadata });
         return;
       }
 
-      sendResult({
+      sendOwnedResult({
         id,
         status: "fail",
         error: extractWasmExceptionMessage(err, null, currentNativeEvalBoundaryObservation?.reader("instantiate")),
@@ -2564,7 +2791,7 @@ process.on("message", async (msg) => {
     }
 
     // Wire the branded instance for callback and host-bridge support.
-    importObj.setInstance?.(instance);
+    if (!preparedRequest) importObj.setInstance?.(instance);
 
     // (#3049 C1) Deferred top-level init (host lane): run the exported
     // `__module_init` now that `setInstance` has wired the runtime. A throw
@@ -2589,13 +2816,24 @@ process.on("message", async (msg) => {
           isRuntimeNegative &&
           (!originalHarness || originalHarnessExceptionMatches(initErr, instance, expectedErrorType))
         ) {
-          sendResult({ id, status: "pass", compileMs, execMs, runtimeNegativePass: true, ...buildResultMetadata(result, true) });
+          sendOwnedResult({
+            id,
+            status: "pass",
+            compileMs,
+            execMs,
+            runtimeNegativePass: true,
+            ...buildResultMetadata(result, true),
+          });
           return;
         }
-        sendResult({
+        sendOwnedResult({
           id,
           status: "fail",
-          error: extractWasmExceptionMessage(initErr, instance, currentNativeEvalBoundaryObservation?.reader("deferred-module-init")),
+          error: extractWasmExceptionMessage(
+            initErr,
+            instance,
+            currentNativeEvalBoundaryObservation?.reader("deferred-module-init"),
+          ),
           isException: true,
           compileMs,
           execMs,
@@ -2607,7 +2845,7 @@ process.on("message", async (msg) => {
 
     if (originalHarness) {
       if (isRuntimeNegative) {
-        sendResult({
+        sendOwnedResult({
           id,
           status: "fail",
           error: `expected runtime ${expectedErrorType || "error"} but succeeded`,
@@ -2646,7 +2884,7 @@ process.on("message", async (msg) => {
         }
         const failure = findMarker("Test262:AsyncTestFailure");
         if (failure) {
-          sendResult({
+          sendOwnedResult({
             id,
             status: "fail",
             error: failure,
@@ -2665,7 +2903,7 @@ process.on("message", async (msg) => {
             standaloneDrainError != null
               ? `async continuation threw before completion: ${extractWasmExceptionMessage(standaloneDrainError, instance, currentNativeEvalBoundaryObservation?.reader("async-drain"))}`
               : "async completion marker not observed";
-          sendResult({
+          sendOwnedResult({
             id,
             status: "fail",
             error: noMarkerError,
@@ -2677,7 +2915,7 @@ process.on("message", async (msg) => {
         }
       }
 
-      sendResult({
+      sendOwnedResult({
         id,
         status: "pass",
         ret: 1,
@@ -2690,7 +2928,7 @@ process.on("message", async (msg) => {
 
     const testFn = instance.exports.test;
     if (typeof testFn !== "function") {
-      sendResult({
+      sendOwnedResult({
         id,
         status: "compile_error",
         error: "no test export",
@@ -2745,7 +2983,7 @@ process.on("message", async (msg) => {
             deferredError?.message != null
               ? `${deferredError.constructor?.name ?? "Error"}: ${String(deferredError.message)}`
               : String(deferredError);
-          sendResult({
+          sendOwnedResult({
             id,
             status: "fail",
             error: `${msg.slice(0, 600)} | async continuation threw after test() returned (#3227)`,
@@ -2769,7 +3007,7 @@ process.on("message", async (msg) => {
         isRuntimeNegative &&
         (!originalHarness || originalHarnessExceptionMatches(execErr, instance, expectedErrorType))
       ) {
-        sendResult({
+        sendOwnedResult({
           id,
           status: "fail",
           error: "expected runtime error but succeeded",
@@ -2784,7 +3022,7 @@ process.on("message", async (msg) => {
         // executed (invoked wrapper + zero counted asserts). Scored `fail` with
         // a `vacuous` marker so host_free_pass / the standalone floor exclude it
         // and the report can tally the integrity correction separately.
-        sendResult({
+        sendOwnedResult({
           id,
           status: "fail",
           vacuous: true,
@@ -2795,18 +3033,36 @@ process.on("message", async (msg) => {
           ...buildResultMetadata(result, true),
         });
       } else {
-        sendResult({ id, status: ret === 1 ? "pass" : "fail", ret, compileMs, execMs, ...buildResultMetadata(result, true) });
+        sendOwnedResult({
+          id,
+          status: ret === 1 ? "pass" : "fail",
+          ret,
+          compileMs,
+          execMs,
+          ...buildResultMetadata(result, true),
+        });
       }
       return;
     } catch (execErr) {
       const execMs = performance.now() - execStart;
 
       if (isRuntimeNegative) {
-        sendResult({ id, status: "pass", compileMs, execMs, runtimeNegativePass: true, ...buildResultMetadata(result, true) });
+        sendOwnedResult({
+          id,
+          status: "pass",
+          compileMs,
+          execMs,
+          runtimeNegativePass: true,
+          ...buildResultMetadata(result, true),
+        });
         return;
       }
 
-      let errInfo = extractWasmExceptionMessage(execErr, instance, currentNativeEvalBoundaryObservation?.reader("exported-test"));
+      let errInfo = extractWasmExceptionMessage(
+        execErr,
+        instance,
+        currentNativeEvalBoundaryObservation?.reader("exported-test"),
+      );
 
       // Annotate with source location via source map
       const byteOffset = extractWasmByteOffset(execErr);
@@ -2816,7 +3072,7 @@ process.on("message", async (msg) => {
         errInfo = `L${mapped.line}:${mapped.column} ${errInfo}`;
       }
 
-      sendResult({
+      sendOwnedResult({
         id,
         status: "fail",
         error: errInfo,
@@ -2838,17 +3094,21 @@ process.on("message", async (msg) => {
     // (#1155) — this closes the remaining outer-catch leak that produced up
     // to ~1,176 misclassified rows in the test262 baseline.
     if (outerErr instanceof WebAssembly.Exception) {
-      sendResult({
+      sendOwnedResult({
         id,
         status: "fail",
-        error: extractWasmExceptionMessage(outerErr, instance ?? null, currentNativeEvalBoundaryObservation?.reader("outer-wasm")),
+        error: extractWasmExceptionMessage(
+          outerErr,
+          instance ?? null,
+          currentNativeEvalBoundaryObservation?.reader("outer-wasm"),
+        ),
         isException: true,
         compileMs,
         execMs: performance.now() - execStart,
         ...compileMetadata,
       });
     } else {
-      sendResult({
+      sendOwnedResult({
         id,
         status: "compile_error",
         error: outerErr.message ?? String(outerErr),
@@ -3010,11 +3270,41 @@ function collectIntrinsicSurface() {
     }
   };
   const ctors = [
-    Array, Object, String, Number, Boolean, Function, RegExp, Date, Symbol, Promise,
-    Map, Set, WeakMap, WeakSet, Error, TypeError, RangeError, SyntaxError,
-    ReferenceError, EvalError, URIError, ArrayBuffer, DataView, Int8Array,
-    Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array,
-    Uint32Array, Float32Array, Float64Array, BigInt, BigInt64Array, BigUint64Array,
+    Array,
+    Object,
+    String,
+    Number,
+    Boolean,
+    Function,
+    RegExp,
+    Date,
+    Symbol,
+    Promise,
+    Map,
+    Set,
+    WeakMap,
+    WeakSet,
+    Error,
+    TypeError,
+    RangeError,
+    SyntaxError,
+    ReferenceError,
+    EvalError,
+    URIError,
+    ArrayBuffer,
+    DataView,
+    Int8Array,
+    Uint8Array,
+    Uint8ClampedArray,
+    Int16Array,
+    Uint16Array,
+    Int32Array,
+    Uint32Array,
+    Float32Array,
+    Float64Array,
+    BigInt,
+    BigInt64Array,
+    BigUint64Array,
   ];
   for (const c of ctors) {
     add(c.name, c);
@@ -3127,14 +3417,7 @@ function describeOwnSurface(obj) {
 }
 
 function sameDescriptor(a, b) {
-  return (
-    Object.is(a.v, b.v) &&
-    Object.is(a.g, b.g) &&
-    Object.is(a.s, b.s) &&
-    a.w === b.w &&
-    a.e === b.e &&
-    a.c === b.c
-  );
+  return Object.is(a.v, b.v) && Object.is(a.g, b.g) && Object.is(a.s, b.s) && a.w === b.w && a.e === b.e && a.c === b.c;
 }
 
 function appendFunctionMetadataDrift(drift, label, expected, current) {
@@ -3269,7 +3552,11 @@ function diffRealmSurface(snap) {
 // threw `nextPromise.then is not a function` no matter what `buildImports`
 // passed later. Optional-chained on both arguments: an older bundle without
 // the export simply primes as before.
-runtimeBundle._installPromiseKeyedCombinators?.(Promise, runtimeBundle._mirrorPolyfillThenable);
+// Explicit IR must not prime unrelated legacy host products after the native
+// compiler has captured Promise. Later actual constructor effects stay intact.
+if (process.env.TEST262_COMPILER_PATH !== "ir") {
+  runtimeBundle._installPromiseKeyedCombinators?.(Promise, runtimeBundle._mirrorPolyfillThenable);
+}
 let realmCanarySnapshot = REALM_CANARY_MODE ? snapshotRealmSurface() : null;
 let realmCanaryChecks = 0;
 let realmCanaryCheckMsTotal = 0;
@@ -3341,8 +3628,45 @@ function sendResult(payload, forceRecycleReason) {
   if (observation) payload = { ...payload, [NATIVE_EVAL_OBSERVATION_FIELD]: observation };
   if (currentLinkedFallback && payload && typeof payload === "object")
     payload = { ...payload, linkedFallback: true, linkedFallbackReason: currentLinkedFallbackReason };
-  const cleanup = postCompileCleanup();
-  const driftReason = realmDriftRecycleReason(payload);
+  // Preserve drift before restoration can erase function name/length metadata.
+  const canarySnapshotBefore = realmCanarySnapshot;
+  let driftReason;
+  let cleanup;
+  let canaryInspectionFailed = false;
+  let canaryInspectionError;
+  let canaryRebaseFailed = false;
+  let canaryRebaseError;
+  try {
+    driftReason = realmDriftRecycleReason(payload);
+  } catch (error) {
+    canaryInspectionFailed = true;
+    canaryInspectionError = error;
+  } finally {
+    cleanup = postCompileCleanup();
+  }
+  // The observer re-baselines on drift even in log mode. Compare future rows
+  // with the cleaned surface, without adding a snapshot to every clean row.
+  if (realmCanarySnapshot !== canarySnapshotBefore) {
+    try {
+      realmCanarySnapshot = snapshotRealmSurface();
+    } catch (error) {
+      canaryRebaseFailed = true;
+      canaryRebaseError = error;
+    }
+  }
+  if (canaryInspectionFailed || canaryRebaseFailed) {
+    try {
+      console.error("[realm-canary] observation/rebaseline failed:", {
+        canaryInspectionFailed,
+        canaryInspectionError,
+        canaryRebaseFailed,
+        canaryRebaseError,
+      });
+    } catch {}
+    driftReason = canaryInspectionFailed
+      ? "realm canary pre-cleanup inspection failed (#3426)"
+      : "realm canary cleaned rebaseline failed (#3426)";
+  }
   const recycle = Boolean(forceRecycleReason || driftReason || cleanup.recycle);
   process.send(
     recycle

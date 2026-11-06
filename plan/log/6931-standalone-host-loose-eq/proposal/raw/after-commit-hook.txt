@@ -1,0 +1,34 @@
+[STARTED] Backing up original state...
+[COMPLETED] Backed up original state in git stash (8e2ceebe)
+[STARTED] Running tasks for staged files...
+[STARTED] package.json — 4 files
+[STARTED] *.{ts,js,mjs} — 4 files
+[STARTED] *.json — 0 files
+[SKIPPED] *.json — no files
+[STARTED] prettier --write
+[COMPLETED] prettier --write
+[STARTED] biome lint --diagnostic-level=error --max-diagnostics=none --no-errors-on-unmatched
+[COMPLETED] biome lint --diagnostic-level=error --max-diagnostics=none --no-errors-on-unmatched
+[COMPLETED] *.{ts,js,mjs} — 4 files
+[COMPLETED] package.json — 4 files
+[COMPLETED] Running tasks for staged files...
+[STARTED] Applying modifications from tasks...
+[COMPLETED] Applying modifications from tasks...
+[STARTED] Cleaning up temporary files...
+[COMPLETED] Cleaning up temporary files...
+
+> @loopdive/js2@0.71.0 check:loc-budget /home/user/js2/.claude/worktrees/agent-a4022d934675184ae
+> node scripts/check-loc-budget.mjs
+
+
+LOC budget gate: OK — no unallowed growth in 3 changed src file(s) (base: merge-base(origin), net +112 LOC).
+
+> @loopdive/js2@0.71.0 check:func-budget /home/user/js2/.claude/worktrees/agent-a4022d934675184ae
+> node scripts/check-func-budget.mjs
+
+
+Function budget gate: OK — no unallowed growth in 3 changed src file(s) (base: merge-base(origin)).
+pre-commit: fast gates passed (lint-staged + LOC/function budgets); slow checks skipped (SKIP_SLOW_PRECOMMIT=1) — CI still runs them
+[detached HEAD 0ea339c8] fix(standalone): deliberate TypeError for loose == on a host value (#6931)
+ 4 files changed, 261 insertions(+), 3 deletions(-)
+ create mode 100644 tests/issue-6931-standalone-host-loose-eq.test.ts

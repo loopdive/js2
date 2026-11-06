@@ -146,7 +146,7 @@ export function checkDuplicateLexicalDeclarations(
 ): void {
   const stmts = block.statements;
   const functionsAreLexical = ts.isSourceFile(block)
-    ? moduleGoal || ts.isExternalModule(block)
+    ? moduleGoal || (ts.isExternalModule(block) && !ctx.scriptTopLevel)
     : !isFunctionBodyBlock(block);
   // Annex B §B.3.2.1 applies only to Blocks (never module/script top level).
   const annexBEligible = ts.isBlock(block);

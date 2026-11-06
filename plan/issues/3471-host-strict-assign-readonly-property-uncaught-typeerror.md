@@ -284,3 +284,13 @@ boxed `externref` params, so non-number args survive.
   returns `{ type, sawCallSite }`.
 - `src/codegen/declarations.ts` — gate body fallback on `!sawCallSite`.
 - `tests/issue-3471.test.ts` — regression tests.
+
+## 2026-10-18 S6 lane normalization
+
+This issue and its guard are explicitly host-lane work. When S6 changed the
+omitted provider policy to native-first, the raw-export string assertion began
+observing the native string carrier (`{}`) instead of the host-assisted JS
+string. The guard now names `semanticProviders: "host-assisted"` at every
+compile site. Its inference/signature assertions are unchanged; native-first
+boundary behavior is owned by #4397/#6708 and must not be inferred from this
+legacy-provider regression guard.

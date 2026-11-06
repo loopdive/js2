@@ -1,0 +1,8 @@
+// Usage: npx tsx .tmp/wat-funcs.mts <out.txt>  — function names + sizes in standalone WAT of a strict-only program
+import { writeFileSync } from "fs";
+import { compile } from "../src/index.js";
+const src = process.argv[3] ?? `export function s(o: any): number { return o === 1 ? 1 : 0; }\n`;
+const r = await compile(src, { fileName: "input.ts", target: "standalone", emitWat: true });
+const names = [...r.wat.matchAll(/^  \(func (\$[^\s]+)/gm)].map((m) => m[1]);
+const has = (n: string) => names.includes(n);
+writeFileSync(process.argv[2]!, `size=${r.binary.length}\nfuncs=${names.length}\n__new_TypeError=${has("$__new_TypeError")}\n` + names.join("\n") + "\n");

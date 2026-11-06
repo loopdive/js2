@@ -8,6 +8,11 @@
  * upstream assert.js + sta.js, metadata includes, and the raw test body.
  */
 import fs from "node:fs";
+import {
+  parseTest262CompilerPath,
+  requireTest262CompilerPath,
+  test262RequestedCompilerPathMetadata,
+} from "./test262-compiler-path.mjs";
 import { execFileSync, fork } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +65,7 @@ Options:
   --limit <n>           Stop after n selected test records
   --workers <n>         Parallel source workers, 1-${MAX_WORKERS} (default: ${DEFAULT_WORKERS})
   --target <target>     gc (default), standalone, or wasi
+  --compiler-path <path> legacy (compatibility; default) or ir (currently unavailable)
   --json <path>         Write the complete result document to path
   --non-authoritative-smoke
                         Allow a runtime mismatch and mark the report non-comparable
@@ -80,6 +86,7 @@ export function parseArgs(argv) {
     limit: Infinity,
     workers: configuredWorkerCount(),
     target: "gc",
+    compilerPath: parseTest262CompilerPath(process.env.TEST262_COMPILER_PATH),
     json: undefined,
     list: false,
   };
@@ -119,6 +126,16 @@ export function parseArgs(argv) {
         throw new Error(`--workers must be an integer between 1 and ${MAX_WORKERS}`);
       }
       options.workers = value;
+      continue;
+    }
+    if (arg.startsWith("--compiler-path=")) {
+      options.compilerPath = parseTest262CompilerPath(arg.slice("--compiler-path=".length));
+      continue;
+    }
+    if (arg === "--compiler-path") {
+      const value = argv[++i];
+      if (!value) throw new Error("--compiler-path requires legacy or ir");
+      options.compilerPath = parseTest262CompilerPath(value);
       continue;
     }
     if (arg === "--target") {
@@ -247,6 +264,7 @@ export class FyiSourceExecutor {
   }
 
   async runSource(test, source, target) {
+    requireTest262CompilerPath(process.env.TEST262_COMPILER_PATH);
     const child = await this.startWorker();
     const id = this.nextId++;
     const options = testWorkerOptions(test);
@@ -337,6 +355,7 @@ async function main() {
     return;
   }
 
+  requireTest262CompilerPath(options.compilerPath);
   const runtimeContract = enforceTest262FyiRuntime({ authoritative: !options.nonAuthoritativeSmoke });
   if (!runtimeContract.authoritative) {
     console.warn(
@@ -385,7 +404,11 @@ async function main() {
           if (index >= selected.length) return;
           const test = selected[index];
           const result = await runTest(test, options.target, executor);
-          results[index] = { file: test.file, ...result };
+          results[index] = {
+            file: test.file,
+            ...test262RequestedCompilerPathMetadata(options.compilerPath, options.target),
+            ...result,
+          };
           completed++;
           const label = result.pass ? "PASS" : "FAIL";
           console.log(
@@ -400,6 +423,7 @@ async function main() {
   const passed = results.filter((result) => result.pass).length;
 
   const document = {
+    ...test262RequestedCompilerPathMetadata(options.compilerPath, options.target),
     runner: "test262-fyi-original-harness",
     executor: "project-test262-worker",
     workers: executors.length,

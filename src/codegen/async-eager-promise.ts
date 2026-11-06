@@ -41,7 +41,9 @@ import ts from "typescript";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { emitStandalonePromiseResolve, isStandalonePromiseActive } from "./async-scheduler.js";
+import { emitStandalonePromiseReject, emitStandalonePromiseResolve } from "./async-scheduler.js";
+import { ensureExnTag } from "./registry/imports.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 
 /**
@@ -54,7 +56,7 @@ export function parkedAsyncClosureWrapsPromise(
   ctx: CodegenContext,
   closureReturnType: { kind: string } | null,
 ): boolean {
-  return isStandalonePromiseActive(ctx) && closureReturnType === null;
+  return closureReturnType === null;
 }
 
 /**
@@ -121,7 +123,6 @@ export function parkedAsyncDeclarationWrapsPromise(
   decl: ts.FunctionDeclaration | undefined,
   results: readonly ValType[],
 ): boolean {
-  if (!isStandalonePromiseActive(ctx)) return false;
   // Only the void-result shape — the same scoping as the closure arm.
   if (results.length !== 0) return false;
   if (!decl || decl.body === undefined) return false;
@@ -165,4 +166,21 @@ export function emitEagerAsyncUndefinedPromise(ctx: CodegenContext, fctx: Functi
   emitUndefined(ctx, fctx);
   const valueInstrs = fctx.body.splice(before);
   emitStandalonePromiseResolve(ctx, fctx, valueInstrs);
+}
+
+/** Convert the abrupt completion of a Promise-promoted native closure into
+ * rejection at its own call boundary, including when called through a value.
+ * Only the compiler JS-value exception tag is caught: foreign traps propagate.
+ */
+export function wrapEagerAsyncClosureRejection(ctx: CodegenContext, fctx: FunctionContext): void {
+  if (fctx.eagerAsyncPromiseReturn !== true) return;
+  const tagIdx = ensureExnTag(ctx);
+  const reason = allocLocal(fctx, `__eager_async_reason_${fctx.locals.length}`, { kind: "externref" });
+  const body = fctx.body.splice(0);
+  fctx.body.push({ op: "local.set", index: reason });
+  emitStandalonePromiseReject(ctx, fctx, [{ op: "local.get", index: reason }]);
+  const rejected = fctx.body.splice(0);
+  fctx.body.push(
+    buildTargetTaggedTry(ctx, { kind: "val", type: { kind: "externref" } }, body, [{ tagIdx, body: rejected }]),
+  );
 }

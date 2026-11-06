@@ -3,7 +3,6 @@ import type { ValType } from "../ir/types.js";
 import type { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { flushLateImportShifts } from "./expressions/late-imports.js";
-import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { addUnionImports } from "./registry/imports.js";
 import { compileExpression } from "./shared.js";
 
@@ -14,7 +13,6 @@ export function compileStringConversionArgument(
   argument: ts.Expression,
 ): ValType | null {
   const isBigIntArg = ctx.oracle.staticJsTypeOf(argument) === "bigint";
-  const hostBigIntArg = usesHostBigIntCarrier(ctx) && isBigIntArg;
   const nativeBigIntArg = ctx.standalone && ctx.nativeStrings && isBigIntArg;
   if (nativeBigIntArg) {
     // Wide lowering needs its carrier types before emission. Boxing an i64
@@ -22,5 +20,5 @@ export function compileStringConversionArgument(
     addUnionImports(ctx);
     flushLateImportShifts(ctx, fctx);
   }
-  return compileExpression(ctx, fctx, argument, hostBigIntArg || nativeBigIntArg ? { kind: "externref" } : undefined);
+  return compileExpression(ctx, fctx, argument, nativeBigIntArg ? { kind: "externref" } : undefined);
 }

@@ -1,0 +1,12 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-native-family-source-identity.test.ts (55 tests) 2221ms
+   ✓ checker-bound native family source facts > constructs the exact nonempty per-function vector-map denominator  572ms
+   ✓ checker-bound native family source facts > keeps same-name families in separate sources disjoint under source-order reversal  545ms
+
+ Test Files  1 passed (1)
+      Tests  55 passed (55)
+   Start at  23:00:01
+   Duration  25.02s (transform 15.78s, setup 0ms, collect 22.38s, tests 2.22s, environment 0ms, prepare 89ms)
+

@@ -57,6 +57,10 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { bindingIsSingleAssignment } from "./single-assignment-binding.js";
 import { ts } from "../ts-api.js";
+import {
+  GENERATOR_FUNCTION_PROTOTYPE_GLOBAL,
+  reserveGeneratorFunctionProtoOf,
+} from "./object-model/generator-function-proto-arm.js";
 
 /** `__defineProperty_value` attribute words: bit0 writable, bit1 enumerable, bit2 configurable. */
 const FLAGS_NONE = 0x00;
@@ -95,7 +99,8 @@ export function emitGeneratorFunctionPrototypeSingleton(ctx: CodegenContext, fct
     return null;
   }
 
-  const protoGlobal = lazyGlobal(ctx, "__native_generator_function_prototype");
+  const protoGlobal = lazyGlobal(ctx, GENERATOR_FUNCTION_PROTOTYPE_GLOBAL);
+  reserveGeneratorFunctionProtoOf(ctx); // (#6651 W8) its run-time [[Prototype]] edge
 
   const fpLocal = allocLocal(fctx, `__genfn_fp_${fctx.locals.length}`, { kind: "externref" });
   const protoLocal = allocLocal(fctx, `__genfn_proto_obj_${fctx.locals.length}`, { kind: "externref" });

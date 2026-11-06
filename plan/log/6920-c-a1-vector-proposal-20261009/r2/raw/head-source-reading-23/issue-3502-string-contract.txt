@@ -1,0 +1,16 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3502-string-contract.test.ts > #3502 backend-neutral string contract > claims the untouched landing source with typed append and character IR 797ms
+ ✓ tests/issue-3502-string-contract.test.ts > #3502 backend-neutral string contract > uses semantic checker/producer evidence instead of the linear carrier 2ms
+ ✓ tests/issue-3502-string-contract.test.ts > #3502 backend-neutral string contract > makes UTF-16 indexing, defaults, and bounds match Node 4ms
+ ✓ tests/issue-3502-string-contract.test.ts > #3502 backend-neutral string contract > binds only proven ASCII work to the established LinearMemoryPlan layout 3ms
+ ✓ tests/issue-3502-string-contract.test.ts > #3502 backend-neutral string contract > rejects non-ASCII source at the linear runtime boundary with a stable diagnostic 34ms
+ ✓ tests/issue-3502-string-contract.test.ts > #3502 backend-neutral string contract > keeps concat immutable when a loop observes the previous string value 42ms
+ ✓ tests/issue-3502-string-contract.test.ts > #3502 backend-neutral string contract > kills stale ASCII evidence at statement, expression, and loop-carried joins 144ms
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  19:45:28
+   Duration  32.00s (transform 21.59s, setup 0ms, collect 30.53s, tests 1.03s, environment 0ms, prepare 71ms)
+

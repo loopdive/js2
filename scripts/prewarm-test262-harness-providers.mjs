@@ -27,16 +27,30 @@
  *   JS2WASM_TEST262_HARNESS_CACHE=<dir> node --import tsx scripts/prewarm-test262-harness-providers.mjs
  *   node --import tsx scripts/prewarm-test262-harness-providers.mjs --cache-dir <dir> --target standalone
  *   node --import tsx scripts/prewarm-test262-harness-providers.mjs --limit 8   # smoke
+ *
+ * (#6930, #6708, #6979) It warms the regime providers the JS-host linked lane
+ * asks for (a regime provider is a large cold build, which under load can
+ * exceed a row's compile budget on its own).
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { test262HarnessProviderCacheDir, writeHarnessPrewarmStamp } from "./test262-harness-cache.mjs";
+import {
+  harnessProviderCompileOptions,
+  test262HarnessProviderLaneCacheDir,
+  writeHarnessPrewarmStamp,
+} from "./test262-harness-cache.mjs";
 
 function parseArgs(argv) {
-  const args = { cacheDir: undefined, target: undefined, limit: Infinity, strict: false, root: "test262/test" };
+  const args = {
+    cacheDir: undefined,
+    target: undefined,
+    limit: Infinity,
+    strict: false,
+    root: "test262/test",
+  };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === "--cache-dir") args.cacheDir = argv[++i];
@@ -71,7 +85,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   // `--cache-dir` is a ROOT, like the env override: the compiler-bundle suffix
   // (#6723 P1) is appended here exactly as the worker appends it.
-  const cacheDir = test262HarnessProviderCacheDir({ root: args.cacheDir });
+  const cacheDir = test262HarnessProviderLaneCacheDir({ root: args.cacheDir });
 
   // The runner's own split and metadata parse — imported, never reimplemented.
   // A pre-warm keyed by a DIFFERENT prefix than the worker asks for is not a
@@ -109,12 +123,10 @@ async function main() {
   }
   console.log(`[prewarm-harness] ${scanned} files scanned, ${prefixes.size} distinct harness prefixes`);
 
-  const compileOptions = {
-    allowJs: true,
-    emitWat: false,
-    skipSemanticDiagnostics: true,
-    ...(args.target ? { target: args.target } : {}),
-  };
+  // (#6930) The worker's own option builder, never a copy: the copy that lived
+  // here lacked the worker's `hostBridge: "always"` (#6723 D4), so every key it
+  // warmed was one the worker never asked for.
+  const compileOptions = harnessProviderCompileOptions(args.target);
   const providers = [];
   let failed = 0;
   const started = Date.now();

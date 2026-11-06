@@ -1,0 +1,17 @@
+"""Copy the lowering-cycle test into a gitignored probe that dumps valueClosure()."""
+import sys
+
+out_json = sys.argv[1]
+s = open("tests/issue-3518-lowering-cycle.test.ts").read()
+anchor = '''  it("resolves the real transitive value graph without a wrapper/emitter/facade cycle", () => {
+    const graph = valueClosure();'''
+assert s.count(anchor) == 1
+s = s.replace(
+    anchor,
+    anchor
+    + f'''
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require("node:fs").writeFileSync({out_json!r}, JSON.stringify(graph, null, 2) + "\\n");''',
+)
+open("tests/probe-6920-closure.test.ts", "w").write(s)
+print("probe written")

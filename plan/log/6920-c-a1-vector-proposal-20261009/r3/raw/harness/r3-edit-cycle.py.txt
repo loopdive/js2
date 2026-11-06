@@ -1,0 +1,37 @@
+p = "tests/issue-3518-lowering-cycle.test.ts"
+s = open(p).read()
+
+
+def edit(old, new):
+    global s
+    assert s.count(old) == 1, old
+    s = s.replace(old, new)
+
+
+edit(
+    """    // Compatibility forwards preserve identities; pin every edge occurrence.
+    expect(graph.modules).toEqual([""",
+    """    // Compatibility forwards preserve identities; pin every edge occurrence.
+    // #6920 A-C1 successor of the 33-module / 13-generic-out-edge pin: + type-only leaf vector-representation.ts.
+    expect(graph.modules).toEqual([""",
+)
+edit(
+    """      "src/ir/backend/legality.ts",
+""",
+    """      "src/ir/backend/legality.ts",
+      "src/ir/backend/vector-representation.ts",
+""",
+)
+edit(
+    """      "src/ir/core/types.ts -> src/ir/core/binding-key-primitives.ts",
+""",
+    """      "src/ir/core/types.ts -> src/ir/core/binding-key-primitives.ts",
+      "src/ir/lower-generic.ts -> src/ir/backend/vector-representation.ts",
+""",
+)
+edit(
+    """edge.startsWith(genericPath + " -> "))).toHaveLength(13);""",
+    """edge.startsWith(genericPath + " -> "))).toHaveLength(14);""",
+)
+open(p, "w").write(s)
+print("ok")

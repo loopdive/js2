@@ -6,8 +6,10 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import type { Instr, StructTypeDef, ValType } from "../ir/types.js";
+import type { ts } from "../ts-api.js";
 import { buildAnyValueType, buildUndefinedInitializer } from "../runtime/wasmgc/values/primitive-layouts.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { ensureAnyToStringHelper, ensureNativeStringHelpers, nativeStringType } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -16,6 +18,7 @@ import { addFuncType } from "./registry/types.js";
 import { addStringImportsDelegate, registerEnsureAnyHelpers } from "./shared.js";
 import { registerAnyBoxHelpers, registerAnyUnboxHelpers } from "./any-boxing-helpers.js";
 import { registerAnyEqHelpers } from "./any-eq-helpers.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { buildAnyTag5ExternProjection } from "./any-to-extern-projection.js";
 import { buildFastStrictEqDispatch } from "./extern-eq-fast.js";
 import { bigIntCarrierEqInstrs } from "./bigint-wide.js";
@@ -87,6 +90,18 @@ export function emitUndefinedSingleton(ctx: CodegenContext, fctx: FunctionContex
   }
   fctx.body.push({ op: "global.get", index: ctx.undefinedGlobalIdx });
   return true;
+}
+
+/**
+ * (#7104) The gc `$AnyValue` carrier's `undefined` (tag 1): the reserved
+ * `$undefined` global where `ensureAnyValueType` reserved one, otherwise the
+ * same initializer inline. Used by the IR `dyn.undefined` lowering on the gc
+ * dynamic strategy.
+ */
+export function undefinedAnyValueInstrs(ctx: CodegenContext): Instr[] {
+  ensureAnyValueType(ctx);
+  if (ctx.undefinedGlobalIdx !== undefined) return [{ op: "global.get", index: ctx.undefinedGlobalIdx }];
+  return buildUndefinedInitializer(ctx.anyValueTypeIdx);
 }
 
 /**
@@ -519,7 +534,6 @@ export function isAnyValue(type: ValType, ctx: CodegenContext): boolean {
 }
 
 export function ensureAnyFromExternHelper(ctx: CodegenContext, opts?: { forceHonest?: boolean }): number | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   if (ctx.nativeBoxNumberTypeIdx < 0 || ctx.nativeBoxBooleanTypeIdx < 0) return undefined;
 
   // (#3037 CS1b) The reader-carrier consumers need an ALWAYS-honest classifier
@@ -719,6 +733,64 @@ export function ensureAnyFromExternHelper(ctx: CodegenContext, opts?: { forceHon
   return funcIdx;
 }
 
+const PRIMITIVE_FACT_KINDS: ReadonlySet<string> = new Set(["number", "boolean", "string", "undefined", "null", "void"]);
+
+/** (#5185) Is `expr`'s static type a union whose every member is a primitive? */
+function isPrimitiveOnlyUnionFact(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const fact = ctx.oracle.typeFactOf(expr);
+  if (fact.kind !== "union" || fact.parts.length === 0) return false;
+  return fact.parts.every((p) => PRIMITIVE_FACT_KINDS.has(p.kind));
+}
+
+/**
+ * (#5185 / #6651 W9) Box the externref on the stack into `$AnyValue` for a
+ * slot whose static type is a union of PRIMITIVES only (e.g. the
+ * `string | number | boolean | null` element of a heterogeneous literal row).
+ * The generic boxing default (`__any_box_extern_s1`) keeps the #1888 tag-5
+ * lie for every non-nullish externref, so a boxed NUMBER read off a dynamic
+ * receiver (`item[1]` in a `forEach` callback) landed as a tag-5 "string" and
+ * `typeof`/`===` answered for a string. A primitive-only slot cannot hold an
+ * object, so classifying the payload honestly is exact here: `s1` first keeps
+ * its nullish/UNDEF-sentinel partition, then a residual tag-5 wrap is
+ * re-classified by `__any_from_extern` (`$BoxedNumber`/i31 → tag 3,
+ * `$BoxedBoolean` → tag 4, a genuine string stays tag 5). Same per-site
+ * substitution discipline as #6631 / #3055 — the shared default is untouched.
+ * Returns false (nothing emitted) when the regime or a helper is unavailable.
+ */
+export function emitPrimitiveUnionExternToAny(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Expression,
+): boolean {
+  if (ctx.undefinedSingleton !== true || !(ctx.standalone || ctx.nativeStrings)) return false;
+  if (!isPrimitiveOnlyUnionFact(ctx, expr)) return false;
+  ensureAnyHelpers(ctx);
+  const fromExtern = ensureAnyFromExternHelper(ctx);
+  const s1 = ctx.funcMap.get("__any_box_extern_s1");
+  if (fromExtern === undefined || s1 === undefined || ctx.anyValueTypeIdx < 0) return false;
+  const anyTypeIdx = ctx.anyValueTypeIdx;
+  const tmp = allocTempLocal(fctx, { kind: "ref", typeIdx: anyTypeIdx });
+  fctx.body.push(
+    { op: "call", funcIdx: s1 },
+    { op: "local.tee", index: tmp },
+    { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: 5 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: anyTypeIdx } },
+      then: [
+        { op: "local.get", index: tmp },
+        { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+        { op: "call", funcIdx: fromExtern },
+      ],
+      else: [{ op: "local.get", index: tmp }],
+    },
+  );
+  releaseTempLocal(fctx, tmp);
+  return true;
+}
+
 /**
  * (#1461/#54) Native standalone `(externref, externref) -> i32` strict-equality
  * (`===`, StrictEqualityComparison) over two boxed externref values. The pure-Wasm
@@ -731,7 +803,6 @@ export function ensureAnyFromExternHelper(ctx: CodegenContext, opts?: { forceHon
  * otherwise (caller keeps the host import).
  */
 export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   const existing = ctx.funcMap.get("__extern_strict_eq");
   if (existing !== undefined) return existing;
   const fromExternIdx = ensureAnyFromExternHelper(ctx);
@@ -873,7 +944,6 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
  * existing `__any_eq` body owns the complete IsLooselyEqual dispatch.
  */
 export function ensureExternLooseEqHelper(ctx: CodegenContext): number | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   const existing = ctx.funcMap.get("__extern_loose_eq");
   if (existing !== undefined) return existing;
   const fromExternIdx = ensureAnyFromExternHelper(ctx);
@@ -917,7 +987,6 @@ export function ensureExternLooseEqHelper(ctx: CodegenContext): number | undefin
  * f64 self-inequality (`x !== x`).
  */
 export function ensureExternSameValueZeroHelper(ctx: CodegenContext): number | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   const existing = ctx.funcMap.get("__extern_same_value_zero");
   if (existing !== undefined) return existing;
   const strictEqExternIdx = ensureExternStrictEqHelper(ctx);
@@ -987,7 +1056,7 @@ export function ensureExternSameValueZeroHelper(ctx: CodegenContext): number | u
 
 export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined {
   // Fast JS-host builds also need to project `$AnyValue` at typed boundaries.
-  if (ctx.targetProfile.semanticProviders !== "native-first" && !ctx.fast) return undefined;
+
   if (ctx.anyValueTypeIdx < 0) return undefined;
 
   const existing = ctx.funcMap.get("__any_to_extern");
@@ -1154,7 +1223,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // Mirrors the static-type lowering at binary-ops.ts:881-889; deliberately NOT
   // `parseFloat` (Number("0xff")=255 but parseFloat("0xff")=NaN — §7.1.4.1).
   let strToNumIdx = -1;
-  if (ctx.targetProfile.semanticProviders === "native-first" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     if (!ctx.funcMap.has("__str_to_number")) {
       emitNativeParseNumber(ctx, new Set(["__str_to_number"]));
     }
@@ -1175,7 +1244,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   let externToStringIdx = -1;
   let anyToStringIdx = -1;
   let strConcatIdx = -1;
-  if (ctx.targetProfile.semanticProviders === "native-first" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     ensureNativeStringHelpers(ctx);
     ensureObjectRuntime(ctx); // registers native __extern_toString + __to_primitive
     anyToStringIdx = ensureAnyToStringHelper(ctx); // (anyref AnyValue) → ref $AnyString, tag-dispatched
@@ -1198,7 +1267,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // gate as the concat arm (helpers idempotent).
   let nativeStrFlattenIdx = -1;
   let nativeStrEqualsIdx = -1;
-  if (ctx.targetProfile.semanticProviders === "native-first" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     ensureNativeStringHelpers(ctx);
     nativeStrFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten") ?? -1;
     nativeStrEqualsIdx = ctx.nativeStrHelpers.get("__str_equals") ?? -1;
@@ -1291,7 +1360,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // classifying without a string arm would send equal-content distinct
   // strings into the object `ref.eq` arm (wrong false).
   const tag5ValueEqThen = (): Instr[] => {
-    if (!ctx.tag5ValueEqClassifier || ctx.targetProfile.semanticProviders !== "native-first") {
+    if (!ctx.tag5ValueEqClassifier) {
       return tag5StringEqThen();
     }
     if (!canNativeStrEq && ctx.anyStrTypeIdx >= 0) return tag5StringEqThen();
@@ -2015,7 +2084,17 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // decompose this god-function. Byte-identical: registered in the same order
   // with the same bodies; the tag-5 coercion/equality closures are threaded in
   // so their captured environment is unchanged.
-  registerAnyEqHelpers(ctx, addHelper, anyRefNull, anyTypeIdx, toF64Idx, strToNumIdx, tag5ToNumber, tag5ValueEqThen);
+  registerAnyEqHelpers(
+    ctx,
+    addHelper,
+    anyRefNull,
+    anyTypeIdx,
+    toF64Idx,
+    strToNumIdx,
+    tag5ToNumber,
+    tag5ValueEqThen,
+    buildThrowJsErrorInstrs,
+  );
 
   // __any_neg(a) -> ref $AnyValue
   // Negate numeric value: tag 2 → negate i32, tag 3 → negate f64

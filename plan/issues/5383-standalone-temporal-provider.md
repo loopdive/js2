@@ -12959,3 +12959,22 @@ run's `test262-merged-report` artifact.
 3. Watch for per-row 30 s kills on the largest linked rows (#5407 halved them
    but did not reach the ≤1.3× bar); a `compile_timeout` spike in the standalone
    guard is the signal.
+
+### 2026-10-18 S6 landing handoff — dynamic class-value named static call
+
+The S6 current-main refresh reverified the S2i controls. Runtime-key static
+method reads/calls, static accessors, provider-owned class values, and the real
+linked Temporal smoke remain green. One exact-main residual remains:
+
+```ts
+const K = readDyn({ C }, "C");
+K.mk(7); // returns the non-callable fallback (-1), expected 8
+```
+
+This is the existing named static method call on a dynamic class-value
+receiver, not a native-first default-policy regression. The focused test now
+asserts the correct result under `it.fails`; when the dispatch is repaired the
+pin becomes an unexpected pass and must be promoted. Keep the repair in the
+standalone/native class-value dispatch path. Do not reintroduce JS host
+semantics or copy the provider-owned class into a host-backed wrapper to make
+the test pass.

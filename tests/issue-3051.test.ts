@@ -28,8 +28,9 @@ async function run(source: string, fn = "test"): Promise<unknown> {
   }
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
-  if (typeof imports.setExports === "function") {
-    imports.setExports(instance.exports as Record<string, Function>);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  if (typeof imports.setInstance === "function") {
+    imports.setInstance(instance);
   }
   return (instance.exports as never as Record<string, () => unknown>)[fn]!();
 }
@@ -48,8 +49,8 @@ async function runLoose(source: string, fn = "test"): Promise<unknown> {
   }
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
-  if (typeof imports.setExports === "function") {
-    imports.setExports(instance.exports as Record<string, Function>);
+  if (typeof imports.setInstance === "function") {
+    imports.setInstance(instance);
   }
   return (instance.exports as never as Record<string, () => unknown>)[fn]!();
 }

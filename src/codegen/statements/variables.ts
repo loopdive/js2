@@ -31,6 +31,7 @@ import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // 
 import { filterResultNeedsDynamicCarrier } from "../array-filter-spec-access.js";
 import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
 import { rebindWidenedArrayInit } from "../declarations/array-rebind-element-widening.js"; // (#6651 U4)
+import { moduleVarSlotIsUndefinedSeeded } from "../declarations/module-var-undefined-seed.js";
 import {
   compileArrayLiteral,
   arrayLiteralEscapeWidensToExternref,
@@ -62,9 +63,13 @@ import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-arr
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
 import { compileNestedClassDeclaration, emitUnresolvedComputedAccessorNameEffects } from "./nested-declarations.js";
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
+import { bindingHoldsStandaloneClassProto } from "../class-proto-object.js"; // (#7053)
 import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
 import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
+import { inferArrayVecType } from "./array-vec-inference.js"; // (#7154)
+export { inferArrayVecType };
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js"; // (#6955)
 import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
 import { tryEmitLinearU8New } from "../linear-uint8-codegen.js";
@@ -89,7 +94,7 @@ import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-as
 import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extraction
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
-import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
+import { chunkDeclarationIsFunctionLocal, isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import {
   tryCompileClassExpressionBindingValue,
   tryEmitPromiseSubclassClassExpressionValue,
@@ -100,6 +105,7 @@ import { objectAssignResultNeedsExternref } from "../object-model/object-assign-
 import { integrityLiteralResultNeedsExternref } from "../object-model/object-literal-reflective-escape.js";
 import { reflectiveArrayCallNeedsExternref } from "../array/array-ctor-this.js"; // (#6771)
 import { inferStandaloneRegExpMatchResultType } from "../regexp-standalone.js";
+import { aliasedLocalVecType } from "../declarations/module-global-vec-alias.js";
 
 /**
  * A class-expression binding fast path emits its value before this caller can
@@ -741,111 +747,6 @@ function tryCompileUniformIndexPresenceBinding(
   return true;
 }
 
-export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
-  if (!ts.isIdentifier(decl.name)) return null;
-  if (ctx.holeyArrayDeclarations.has(decl)) {
-    return { kind: "ref_null", typeIdx: getOrRegisterHoleyArrayType(ctx) };
-  }
-  const varName = decl.name.text;
-
-  // Walk up to the enclosing function body or source file
-  let scope: ts.Node = decl;
-  while (
-    scope &&
-    !ts.isFunctionDeclaration(scope) &&
-    !ts.isFunctionExpression(scope) &&
-    !ts.isArrowFunction(scope) &&
-    !ts.isMethodDeclaration(scope) &&
-    !ts.isSourceFile(scope)
-  ) {
-    scope = scope.parent;
-  }
-  if (!scope) return null;
-
-  let inferredElemType: ts.Type | null = null;
-  let inferredElemWasm: ValType | null = null;
-  let mixedElementCarrier = false;
-  let sawDynamicElementWrite = false;
-
-  // (#2806) A write whose value type is purely `undefined` / `void` / `null`
-  // must NOT pin the array's element kind to a numeric (i32) vec. The canonical
-  // source is acorn's `var elt = (void 0); elt = <nodeRef>; elts.push(elt)`:
-  // the binding's DECLARED type is `undefined`, but the runtime value is an AST
-  // node reference. Letting `undefined` resolve the element type to i32 lowers
-  // `elts` to an i32 vec, so every pushed reference coerces to i32 `0` — silently
-  // dropping the node refs (#2801, the compiled-acorn `arguments` bug). Skip such
-  // writes exactly like `any` (let a later concrete write pin the kind; if none,
-  // the caller falls through to `any[]` → externref). Genuine numeric pushes
-  // (`number`/`boolean` literals) still pin f64/i32 and keep the fast path.
-  const isUnpinnableWriteType = (t: ts.Type): boolean =>
-    (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) !== 0 &&
-    (t.flags & ~(ts.TypeFlags.Any | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) === 0;
-
-  const recordWriteType = (value: ts.Expression): void => {
-    const valueType = ctx.checker.getTypeAtLocation(value);
-    if (isUnpinnableWriteType(valueType)) {
-      sawDynamicElementWrite = true;
-      return;
-    }
-    const wasmType = resolveWasmType(ctx, valueType);
-    if (!inferredElemType || !inferredElemWasm) {
-      inferredElemType = valueType;
-      inferredElemWasm = wasmType;
-      return;
-    }
-    const sameType =
-      inferredElemWasm.kind === wasmType.kind &&
-      (wasmType.kind !== "ref" && wasmType.kind !== "ref_null"
-        ? true
-        : (inferredElemWasm as { typeIdx: number }).typeIdx === wasmType.typeIdx);
-    if (!sameType) mixedElementCarrier = true;
-  };
-
-  function visit(node: ts.Node) {
-    // arr[i] = value
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isElementAccessExpression(node.left) &&
-      ts.isIdentifier(node.left.expression) &&
-      node.left.expression.text === varName
-    ) {
-      const writeDecl = ctx.oracle.variableDeclarationOf(node.left.expression);
-      if (writeDecl === decl) recordWriteType(node.right);
-    }
-
-    // arr.push(value)
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      node.expression.name.text === "push" &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === varName &&
-      ctx.oracle.variableDeclarationOf(node.expression.expression) === decl &&
-      node.arguments.length >= 1
-    ) {
-      for (const argument of node.arguments) recordWriteType(argument);
-    }
-
-    forEachChild(node, visit);
-  }
-
-  visit(scope);
-  if (!inferredElemType && !sawDynamicElementWrite) return null;
-
-  // Heterogeneous queue/scratch arrays must preserve every JS value. ReactDOM's
-  // concurrentQueues stores [fiber, queue, update, lane] in one initially-empty
-  // array; committing to the first ref shape coerced the update/lane writes and
-  // later made `update.next = update` operate on boolean false.
-  const elemWasm: ValType = mixedElementCarrier || sawDynamicElementWrite ? { kind: "externref" } : inferredElemWasm!;
-  const elemKey =
-    elemWasm.kind === "ref" || elemWasm.kind === "ref_null"
-      ? `ref_${(elemWasm as { typeIdx: number }).typeIdx}`
-      : elemWasm.kind;
-  const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemWasm);
-  return { kind: "ref_null", typeIdx: vecTypeIdx };
-}
-
 /** String methods that return a host array (externref) rather than a wasm GC array.
  *  Variables initialized from these calls use externref instead of the GC vec struct
  *  that resolveWasmType would produce for the TS return type (e.g. string[]). */
@@ -896,6 +797,9 @@ function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.V
   if (decl?.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer)) {
     return { kind: "externref" };
   }
+  // (#7053) `C.prototype` is typed as the INSTANCE `C`, but standalone it is a
+  // `$Object`; a `$C` slot would guard-cast it to null (#6767's param twin).
+  if (decl && bindingHoldsStandaloneClassProto(ctx, decl)) return { kind: "externref" };
   // (#3673) Explicit native type annotation — `let x: i32` where
   // `type i32 = number`; the annotation node is the only surviving evidence.
   // It is a user assertion and outranks every inference below it.
@@ -1346,7 +1250,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // cannot shadow a module binding in a later source entry: for example, a
     // completed top-level block may have used the same local name before the
     // following source-level `let` must initialize its module global.
-    const hasLocalShadow = !chunkedModuleInit && fctx.localMap.has(name);
+    // (#6877) …unless the declaration is inside an inlined function (IIFE).
+    const hasLocalShadow = fctx.localMap.has(name) && (!chunkedModuleInit || chunkDeclarationIsFunctionLocal(stmt));
     // A lexical declaration nested in a top-level block is still local to that
     // block. `moduleGlobals` is keyed only by name, so an outer Script-level
     // binding with the same name must not make this declaration take the
@@ -1606,6 +1511,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           }
           const tmpVal = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, boxedClosureCell.valType);
           fctx.body.push({ op: "local.set", index: tmpVal });
+          emitConditionalCaptureBoxRepair(fctx, name, boxedCellLocalIdx); // (#6955) mint a skipped-arm cell
           fctx.body.push({ op: "local.get", index: boxedCellLocalIdx });
           fctx.body.push({ op: "ref.is_null" });
           fctx.body.push({
@@ -1734,14 +1640,13 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // No initializer: `let x;` at module level — in JS, uninitialized
         // variables are `undefined`. For externref globals, emit __get_undefined()
         // so `x === undefined` works correctly (#737).
+        // (#6894) A `var` whose slot the prologue already seeded is a no-op here.
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
+        const isVarDecl = (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
         if (
           globalDef?.type.kind === "externref" &&
-          !(
-            ctx.standaloneScriptVarBindings &&
-            !ctx.sourceIsModule &&
-            (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
-          )
+          !(isVarDecl && ctx.standaloneScriptVarBindings && !ctx.sourceIsModule) &&
+          !(isVarDecl && moduleVarSlotIsUndefinedSeeded(ctx, name))
         ) {
           emitUndefined(ctx, fctx);
           fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
@@ -2022,6 +1927,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                                 taViewCallResultType ??
                                 subarraySubviewType ??
                                 inferredVecType ??
+                                aliasedLocalVecType(ctx, fctx, decl) ?? // (#7166)
                                 standaloneRegExpMatchArrayType ??
                                 // (#4655) `var arr = x.concat(y, z)` — the concat
                                 // lowering yields a dynamic `$ObjVec` externref
@@ -2572,6 +2478,9 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         }
         const tmpVal = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, boxedForInit.valType);
         fctx.body.push({ op: "local.set", index: tmpVal });
+        // (#6955) The cell may be unminted: its closure sat in a skipped arm.
+        // Seed it from the pre-box slot first, or this store silently no-ops.
+        emitConditionalCaptureBoxRepair(fctx, name, boxedLocalIdx);
         fctx.body.push({ op: "local.get", index: boxedLocalIdx });
         fctx.body.push({ op: "ref.is_null" });
         fctx.body.push({
@@ -2626,6 +2535,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         if (boxedNoInit && !dropStaleBindingBox(fctx, name, boxedNoInit, localIdx)) {
           const tmpVal = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, boxedNoInit.valType);
           fctx.body.push({ op: "local.set", index: tmpVal });
+          emitConditionalCaptureBoxRepair(fctx, name, localIdx); // (#6955) mint a skipped-arm cell
           fctx.body.push({ op: "local.get", index: localIdx });
           fctx.body.push({ op: "ref.is_null" });
           fctx.body.push({

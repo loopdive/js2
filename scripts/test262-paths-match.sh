@@ -126,6 +126,8 @@ classify_test262_path() {
     # code, so every src change is assumed to affect BOTH lanes. Do not split.
     src/*) echo both ;;
     scripts/build-test262-report.mjs) echo both ;;
+    scripts/test262-concurrency.mjs | scripts/validate-test262-completeness.mjs) echo both ;;
+    scripts/gen-test262-mg-matrix.mjs | scripts/preserve-frozen-host-baseline.mjs) echo standalone ;;
     scripts/compiler-fork-worker.mjs) echo both ;;
     scripts/compiler-pool.ts) echo both ;;
     scripts/diff-test262.ts) echo both ;;

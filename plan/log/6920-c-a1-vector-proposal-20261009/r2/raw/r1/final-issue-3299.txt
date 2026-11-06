@@ -1,0 +1,10 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3299.test.ts (2 tests | 1 skipped) 29ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 1 skipped (2)
+   Start at  23:23:53
+   Duration  24.38s (transform 17.18s, setup 0ms, collect 23.94s, tests 29ms, environment 0ms, prepare 56ms)
+

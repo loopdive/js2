@@ -42,13 +42,10 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js";
-import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { applyClosureAdmitsCall, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { flushLateImportShifts } from "./late-imports.js";
-
-/** `fillApplyClosure` dispatches arities 0..8 and answers undefined above that. */
-const APPLY_CLOSURE_MAX_ARITY = 8;
 
 export function tryEmitRealmGlobalMemberCall(
   ctx: CodegenContext,
@@ -79,8 +76,7 @@ export function tryEmitRealmGlobalMemberCall(
   // `__apply_closure` would be a type error rather than a TypeError.
   if (ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind !== "externref") return undefined;
 
-  if (expr.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
-  if (expr.arguments.length > APPLY_CLOSURE_MAX_ARITY) return undefined;
+  if (!applyClosureAdmitsCall(expr)) return undefined;
 
   // Register the bridge + arg-vector builders BEFORE compiling anything, so any
   // import they pull in shifts function indices while the body is still empty

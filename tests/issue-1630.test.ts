@@ -8,8 +8,9 @@ describe("#1630 — Object.assign writeback into typed wasmGC struct", () => {
     if (!result.success) return { error: result.errors?.[0]?.message ?? "compile failed" };
     const importObj = buildImports(result.imports, undefined, result.stringPool);
     const { instance } = await WebAssembly.instantiate(result.binary, importObj as any);
-    if (typeof (importObj as any).setExports === "function") {
-      (importObj as any).setExports(instance.exports);
+    // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+    if (typeof (importObj as any).setInstance === "function") {
+      (importObj as any).setInstance(instance);
     }
     try {
       const ret = (instance.exports as { test: () => unknown }).test();

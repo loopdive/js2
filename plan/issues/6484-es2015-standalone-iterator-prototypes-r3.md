@@ -1,10 +1,12 @@
 ---
 id: 6484
 title: "ES2015 standalone: iterator prototypes are unreachable from a dynamically-typed iterator — r3"
-status: in-progress
+status: done
 sprint: current
+assignee: ttraenkler/claude-es2015-w9
 created: 2026-09-16
-updated: 2026-09-20
+updated: 2026-10-07
+completed: 2026-10-07
 priority: high
 horizon: l
 feasibility: medium
@@ -826,3 +828,31 @@ it must still run those hooks and use only `fork`, never push to `main`. The
 prepared PR body is
 `/private/tmp/js2-6484-iterator-residual-terra-20260920-pr-body.md`; it uses
 the canonical website issue links and leaves the CLA checkbox unchecked.
+
+## Closure — 2026-10-07 (#6651 slice W9)
+
+Adopted by #6651 W9 for its last open row,
+`TypedArrayConstructors/ctors/object-arg/iterated-array-with-modified-array-iterator.js`:
+a patched `%ArrayIteratorPrototype%.next` was never consulted by `new TA(array)`
+with a dynamic constructor, because the dynamic TA constructor's plain-vec
+arms copy the source storage directly.
+
+Fix: `emitPatchedArrayIterCopy` (`src/codegen/iterator-proto-next.ts`, beside
+S1/S2) splits those arms. When the `%ArrayIteratorPrototype%` singleton is
+materialised AND its `next` is no longer the intrinsic closure (identity
+compare against the builtin-fn singleton), the source is opened as a genuine
+array-iterator record (`__iterator`) wrapped in an OBJ record, and drained by
+`__array_from_iter_n` — the OBJ step re-reads `next` by property (it now admits
+a wrapped `$__IterRec`, `iterator-native.ts`, which resolves through the S2
+`__extern_get` prologue) and calls it with the genuine record as `this`, so a
+patch that delegates to the original still steps the real cursor. The
+unpatched path is the old copy plus one `global.get` + `ref.is_null` (a null
+singleton) or one property read + `ref.eq`.
+
+Row status, measured 2026-10-07 on this branch (`--standalone`, quickjs eval
+engine): the target row passes; all 27 `built-ins/ArrayIteratorPrototype/**`
+rows pass (including `next/detach-typedarray-in-progress.js`, which S4 left
+open); `built-ins/{Map,Set}IteratorPrototype/**` +
+`Iterator/prototype/Symbol.iterator/**` 27/27. The #4622/#3251 post-delete
+`arguments.length` handoff stays with its own owner, as S4 recorded. Pinned by
+`tests/issue-6651-w9-typedarray-singles.test.ts` (cases under "W9 · 2").

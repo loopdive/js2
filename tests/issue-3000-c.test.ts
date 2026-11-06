@@ -108,16 +108,19 @@ describe("#3000-C — IR constructor emission (flat classes) — genuine emissio
 });
 
 describe("#3000-C — construction-effect guards (reject to legacy, stay correct)", () => {
-  // A PropertyDeclaration initialiser runs at construction; the current IR
-  // init path lowers only the explicit ctor body, so this remains direct.
-  it("class with a field initialiser is NOT IR-claimed but still constructs correctly", async () => {
+  // A PropertyDeclaration initialiser runs at construction. (#7014 wave 15)
+  // This used to pin the deferral to legacy; 6ebd204cbe ("feat(ir): prepare
+  // initialized class fields", 2026-08-12) taught the IR init path to run the
+  // initialisers, so the constructor is now IR-claimed — and must still
+  // construct correctly.
+  it("class with a field initialiser is IR-claimed and still constructs correctly", async () => {
     const src = `
       class C { x: number = 5; constructor(y: number) { this.x = this.x + y; } }
       export function test(): number { return new C(10).x; }
     `;
     const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
     expect(r.success).toBe(true);
-    expect(new Set(r.irCompiledFuncs ?? []).has("C_new")).toBe(false); // deferred to legacy
+    expect(new Set(r.irCompiledFuncs ?? []).has("C_new")).toBe(true); // claimed since 6ebd204cbe
     const exports = await compileAndInstantiate(src);
     expect(Number((exports.test as () => unknown)())).toBe(15); // 5 + 10 — initialiser ran
   });

@@ -128,7 +128,7 @@ export function buildRecordFromExternref(
   // `__extern_is_object`; its `__typeof_object` answers 1 for `null`, so the
   // object test below pairs it with an explicit null check.
   const hostFree = ctx.standalone || ctx.wasi;
-  if (hostFree && ctx.targetProfile.semanticProviders !== "native-first") return nullFallback;
+
   const isObjectName = hostFree ? "__typeof_object" : "__extern_is_object";
   ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
   ensureLateImport(ctx, isObjectName, [externref], [{ kind: "i32" }]);

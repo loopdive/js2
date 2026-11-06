@@ -4,13 +4,14 @@ import { AllocSiteRegistry, ALLOC_NAMESPACES } from "../analysis/alloc-registry.
 import { analyzeOwnership } from "../analysis/ownership.js";
 import { analyzeEscape } from "../analysis/escape.js";
 import { analyzeEncoding } from "../analysis/encoding.js";
-import { asAllocSiteId, forEachInstrDeep, type IrFunction } from "../core/nodes.js";
-import { preparedIrDataKey, preparedIrTypeKey } from "./abi-signatures.js";
+import { asAllocSiteId, type IrFunction } from "../core/nodes.js";
+import { preparedIrDataKey } from "./abi-signatures.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import type { PreparedIrProgram } from "./prepared-contracts.js";
 import { assertFinalAllocProvenance } from "../analysis/alloc-verification.js";
 import { irRuntimeSupportFunctions, type IrRuntimeSupport } from "./runtime-support.js";
 import type { IrPreparationControls } from "./controls.js";
+import { assertPreparedIrFunctionAllocationTypesAndStates } from "./allocation-body-validation.js";
 
 /** Support has already received its inherited self-host hygiene, not source GVN. */
 export function analyzeIrRuntimeSupportAllocations(
@@ -105,25 +106,7 @@ export function assertPreparedIrProgramAllocations(
   };
   for (const fn of [...program.ir.functions, ...irRuntimeSupportFunctions(program.runtimeSupport)]) {
     analyze(fn);
-    // State buffers are executable semantic bodies too. The existing provenance
-    // verifier accepts a function carrier, so reuse it over each exact buffer.
-    for (const state of fn.asyncPlan?.states ?? []) {
-      const block = fn.blocks[0];
-      if (!block) invalid(`async owner ${fn.unitId} lacks a typed entry block`);
-      assertFinalAllocProvenance({ ...fn, blocks: [{ ...block, instrs: state.body }] }, registry);
-    }
-    for (const buffer of [
-      ...fn.blocks.map((block) => block.instrs),
-      ...(fn.asyncPlan?.states.map((state) => state.body) ?? []),
-    ])
-      for (const root of buffer)
-        forEachInstrDeep(root, (instruction) => {
-          if (instruction.alloc === undefined) return;
-          const site = registry.resolve(instruction.alloc);
-          if (!site) return invalid(`body ${fn.unitId} references stale site ${instruction.alloc}`);
-          if (instruction.resultType && preparedIrTypeKey(site.type) !== preparedIrTypeKey(instruction.resultType))
-            invalid(`site ${site.id} contradicts body ${fn.unitId}'s result type`);
-        });
+    assertPreparedIrFunctionAllocationTypesAndStates(fn, registry);
   }
   const expected = new Map(registry.snapshot().metadata.map((row) => [row.id, new Map(row.entries)]));
   const actual = new Map(snapshot.metadata.map((row) => [row.id, new Map(row.entries)]));

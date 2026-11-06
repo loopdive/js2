@@ -42,6 +42,8 @@ const ensureExternStrictEqHelper = bound("ensureExternStrictEqHelper");
 const nextModuleGlobalIdx = bound("nextModuleGlobalIdx");
 
 const GLOBAL_NAME = "__define_rejection";
+/** WasmGC abstract `eq` heap type (signed LEB -19). */
+const EQ_HEAP = -19;
 
 /**
  * The global's CURRENT absolute index, resolved by name at every call — never
@@ -132,5 +134,59 @@ function catchDefineRejectionAsFalse(ctx: CodegenContext, fctx: FunctionContext,
       ],
     ),
     { op: "local.get", index: result },
+  ];
+}
+
+/**
+ * (#6651 W1a) The NATIVE-body form of {@link catchDefineRejectionAsFalse}:
+ * `call` leaves an i32 (the define's truthiness); a parked define rejection
+ * answers `0`, any other exception is rethrown. `payloadLocal` is an externref
+ * scratch local of the enclosing native, clobbered. Returns `call` unchanged
+ * when the channel is unavailable.
+ *
+ * The identity test is a bare `ref.eq` (both sides internalized GC refs), not
+ * `__extern_strict_eq`: that helper exists only under the native-first
+ * provider profile, and the parked value is always a TypeError object, so
+ * reference identity is the whole question.
+ */
+export function nativeDefineRejectionAsFalse(ctx: CodegenContext, call: Instr[], payloadLocal: number): Instr[] {
+  const globalIdx = ensureDefineRejectionGlobal(ctx);
+  if (globalIdx === undefined) return call;
+  const tagIdx = ensureExnTag(ctx);
+  const asEq = (load: Instr): Instr[] => [load, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: EQ_HEAP }];
+  const isEq = (load: Instr): Instr[] => [load, { op: "any.convert_extern" }, { op: "ref.test", typeIdx: EQ_HEAP }];
+  const payload = (): Instr => ({ op: "local.get", index: payloadLocal });
+  const parked = (): Instr => ({ op: "global.get", index: globalIdx });
+  return [
+    { op: "ref.null.extern" },
+    { op: "global.set", index: globalIdx },
+    buildStandardTryTable({ kind: "val", type: { kind: "i32" } }, call, [
+      {
+        kind: "catch",
+        tagIdx,
+        payloadType: { kind: "externref" },
+        body: [
+          { op: "local.set", index: payloadLocal },
+          ...isEq(payload()),
+          ...isEq(parked()),
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [...asEq(payload()), ...asEq(parked()), { op: "ref.eq" }],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: 0 }],
+            else: [
+              { op: "local.get", index: payloadLocal },
+              { op: "throw", tagIdx },
+            ],
+          },
+        ],
+      },
+    ]),
   ];
 }

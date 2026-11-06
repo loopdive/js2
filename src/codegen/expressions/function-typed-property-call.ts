@@ -26,13 +26,11 @@ import type { ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { noJsHost } from "../js-errors.js";
-import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { applyClosureAdmitsCall, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { flushLateImportShifts } from "./late-imports.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
-/** `fillApplyClosure` dispatches arities 0..8. */
-const APPLY_CLOSURE_MAX_ARITY = 8;
 
 export interface FunctionTypedPropertyReceiver {
   /** Compile the receiver expression once; leaves its value on the stack. */
@@ -50,8 +48,7 @@ export function tryEmitFunctionTypedPropertyCall(
   receiver: FunctionTypedPropertyReceiver,
 ): ValType | undefined {
   if (!noJsHost(ctx) || fieldType.kind !== "externref") return undefined;
-  if (expr.arguments.some((argument) => ts.isSpreadElement(argument))) return undefined;
-  if (expr.arguments.length > APPLY_CLOSURE_MAX_ARITY) return undefined;
+  if (!applyClosureAdmitsCall(expr)) return undefined;
   const fact = ctx.oracle.typeFactOf(propAccess);
   if (fact.kind !== "builtin" || fact.name !== "Function") return undefined;
 

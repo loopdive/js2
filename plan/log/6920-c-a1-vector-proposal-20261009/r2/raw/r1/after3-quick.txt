@@ -1,0 +1,71 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-6920-vector-representation.test.ts (13 tests) 42ms
+ ✓ tests/ir-vec-new-fixed.test.ts (10 tests) 1471ms
+   ✓ #1804 — IR vec.new_fixed array-literal construction > (1) number literal — element type inferred from elements  889ms
+ ❯ tests/issue-3518-lowering-cycle.test.ts (25 tests | 1 failed) 2150ms
+   ✓ lowering cycle separation > retains all eight public function objects, with no facade implementations 15ms
+   ✓ lowering cycle separation > keeps generic emitter/converter arguments required and the public Wasm default optional 184ms
+   × lowering cycle separation > resolves the real transitive value graph without a wrapper/emitter/facade cycle 231ms
+     → expected [ …(34) ] to deeply equal [ …(33) ]
+   ✓ lowering cycle separation > rejects an injected reverse edge through a barrel to src/ir/lower.ts 108ms
+   ✓ lowering cycle separation > rejects an injected reverse edge through a barrel to src/ir/backend/wasm-lowering.ts 97ms
+   ✓ lowering cycle separation > rejects an injected reverse edge through a barrel to src/ir/backend/wasmgc-emitter.ts 77ms
+   ✓ lowering cycle separation > rejects an injected reverse edge through a barrel to src/ir/backend/linear-emitter.ts 71ms
+   ✓ lowering cycle separation > refuses unsupported graph input import(pathFromCaller); 78ms
+   ✓ lowering cycle separation > refuses unsupported graph input import("node:fs"); 82ms
+   ✓ lowering cycle separation > refuses unsupported graph input import("./missing-lowering-module.js"); 62ms
+   ✓ lowering cycle separation > refuses unsupported graph input export { 18ms
+   ✓ lowering cycle separation > lowers a nonempty body in a fresh process that refuses every concrete/wrapper import  408ms
+   ✓ lowering cycle separation > preserves scalar constant case 0 1ms
+   ✓ lowering cycle separation > preserves scalar constant case 1 0ms
+   ✓ lowering cycle separation > preserves scalar constant case 2 0ms
+   ✓ lowering cycle separation > preserves scalar constant case 3 0ms
+   ✓ lowering cycle separation > preserves scalar constant case 4 0ms
+   ✓ lowering cycle separation > preserves scalar constant case 5 0ms
+   ✓ lowering cycle separation > preserves scalar constant case 6 0ms
+   ✓ lowering cycle separation > preserves scalar constant case 7 0ms
+   ✓ lowering cycle separation > preserves exact constant failures and the emitter's separate typed-null path 2ms
+   ✓ lowering cycle separation > keeps default/explicit Wasm wrappers equivalent and signature projection body-free 10ms
+   ✓ lowering cycle separation > retains foreign sinks, slot grouping and loud contract mismatch/empty-slot failures 3ms
+   ✓ lowering cycle separation > assembles multi-slot Wasm names and preserves the sink object at the wrapper seam 2ms
+   ✓ lowering cycle separation > executes standalone scalar branches and loops through the unchanged public compiler  699ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > resolves the real transitive value graph without a wrapper/emitter/facade cycle
+AssertionError: expected [ …(34) ] to deeply equal [ …(33) ]
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[33m@@ -4,10 +4,11 @@[39m
+[2m    "src/backend/wasmgc/lowering/wasm-math-minmax.ts",[22m
+[2m    "src/ir/analysis/backend-legality.ts",[22m
+[2m    "src/ir/analysis/effects.ts",[22m
+[2m    "src/ir/analysis/nested-stackification.ts",[22m
+[2m    "src/ir/backend/legality.ts",[22m
+[31m+   "src/ir/backend/vector-representation.ts",[39m
+[2m    "src/ir/backend/wasm-int32-coercion.ts",[22m
+[2m    "src/ir/backend/wasm-math-minmax.ts",[22m
+[2m    "src/ir/callable-bindings.ts",[22m
+[2m    "src/ir/core/binding-key-primitives.ts",[22m
+[2m    "src/ir/core/callable-bindings.ts",[22m
+
+ ❯ tests/issue-3518-lowering-cycle.test.ts:199:27
+    197|     // Exact 549b value graph plus the frozen D1 legality analysis own…
+    198|     // Compatibility forwards preserve identities; pin every edge occu…
+    199|     expect(graph.modules).toEqual([
+       |                           ^
+    200|       "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+    201|       "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 47 passed (48)
+   Start at  23:19:34
+   Duration  27.37s (transform 19.87s, setup 0ms, collect 71.44s, tests 3.66s, environment 1ms, prepare 303ms)
+

@@ -385,6 +385,14 @@ const BUCKETS = {
     "#1370/#3000 B-C-E — corpus bucket **0** (#3000-E); NOT yet strict (still covers computed/generator/abstract names, static super, subclass-of-builtin)",
   ],
   "destructuring-param-complex": ["unintended", "Complex destructuring params lowered (subset of param-shape)"],
+  "class-method-virtual": [
+    "unintended",
+    "`class.call` on a base-typed receiver lowers through a `__tag` virtual-dispatch intent instead of a static call to the declared class's member (#7000 step a; legacy has it, #1299)",
+  ],
+  "closure-signature-mismatch": [
+    "unintended",
+    "A function-typed parameter a caller may fill with a function of another Wasm signature: IR `closure.call` casts to the annotation's exact func type. Retires with an arity-adapting IR closure call or adapter thunks at the call site (#7003 step 2; legacy uses a `ref.test` arity cascade)",
+  ],
   "string-builder-candidate": [
     "deferred",
     "Kill-switch only (`JS2WASM_IR_STRING_BUILDER=0`): builder loops are IR-claimed by default via the owned-append fast path (#3740/#3744)",
@@ -464,6 +472,17 @@ per-file deletable (gate G3 in \`plan/log/3090-phase0-legacy-delete-list.md\`).
 The current corpus floor is **0** (#3517): Calendar's nine-statement initializer
 and Algorithms' top-level generic Map initializer are both IR-owned.`;
 
+// (#7002) The bucket counts are a playground-corpus measurement; say so under
+// the table and point at the wide-corpus ledger.
+const BUCKETS_CORPUS_NOTE = `**Which corpus these counts describe (#7002).** \`scripts/ir-fallback-baseline.json\`
+and \`check:ir-only\` measure the playground corpus only
+(\`website/playground/examples/\`, five entries for \`check:ir-only\`), so a
+bucket at **0** here says nothing about test262-scale code. The wide number is
+the IR claim ledger — \`npx tsx scripts/ir-claim-ledger.mts --stride 40\`
+(playground + every 40th test262 file, \`trackIrOutcomes\` on), committed as
+[\`benchmarks/results/ir-claim-ledger-standalone.json\`](../../benchmarks/results/ir-claim-ledger-standalone.json)
+and refreshed nightly by the advisory \`IR claim ledger\` workflow.`;
+
 // --- post-claim codes (#3341 Slice C; cross-checked against src/codegen/index.ts)
 //
 // Every `IrUnsupportedCode` with a LIVE throw site at a post-claim stage
@@ -521,6 +540,10 @@ const POSTCLAIM = {
   "body-shape-rejected": [
     "capability gap",
     "One post-claim arm fires when `dynamicForInPlan` is absent — real on the LINEAR backend, whose resolver does not supply it.",
+  ],
+  "class-method-virtual": [
+    "capability gap",
+    "#7000 builder backstop: an overridden member on a class-typed receiver the selector could not attribute; needs IR virtual dispatch.",
   ],
   "compound-assign-unsupported": ["capability gap", "#3565 restored demote-to-legacy contract."],
   "constructor-arity-unsupported": [
@@ -605,6 +628,7 @@ function build() {
   }
   const bucketRows = Object.entries(BUCKETS).map(([reason, [cat, promotes]]) => [`\`${reason}\``, cat, promotes]);
   parts.push(BUCKETS_INTRO + "\n\n" + renderTable(["Bucket reason", "Category", "What promotes a row"], bucketRows));
+  parts.push(BUCKETS_CORPUS_NOTE);
   crossCheckPostClaim();
   const postClaimRows = Object.entries(POSTCLAIM)
     .sort(([a], [b]) => a.localeCompare(b))

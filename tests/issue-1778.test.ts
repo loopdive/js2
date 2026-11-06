@@ -33,14 +33,19 @@ describe("#1778 landing standalone test262 pass rate", () => {
     const publicReport = readRepo("public/benchmarks/results/test262-standalone-report.json");
     const report = JSON.parse(websiteReport);
 
+    // This pinned the hand-published 2026-06-01 summary-only snapshot (4,368 /
+    // 43,106). The report is now the full standalone report that
+    // `test262-sharded.yml` promote-baseline rewrites on every merge to main,
+    // so exact counts are a moving target by design. Pin what the host-off
+    // toggle relies on: both deployed twins agree, the report is the
+    // standalone lane's, and its headline summary is a coherent measurement.
     expect(JSON.parse(publicReport)).toEqual(report);
     expect(report.mode.target).toBe("standalone");
-    expect(report.mode.summary_only).toBe(true);
-    expect(report.summary.pass).toBe(4368);
-    expect(report.summary.total).toBe(43106);
-    expect(report.summary.fail).toBe(report.summary.total - report.summary.pass);
-    expect(((report.summary.pass / report.summary.total) * 100).toFixed(1)).toBe("10.1");
-    expect(report.source.artifacts).toContain("benchmarks/results/test262-standalone-report-20260601-213702.json");
+    const { pass, total } = report.summary;
+    expect(Number.isInteger(pass) && Number.isInteger(total)).toBe(true);
+    expect(total).toBeGreaterThan(0);
+    expect(pass).toBeGreaterThan(0);
+    expect(pass).toBeLessThanOrEqual(total);
   });
 
   it("landing page fetches real standalone data and exposes unavailable or stale states", () => {
@@ -68,8 +73,12 @@ describe("#1778 landing standalone test262 pass rate", () => {
     expect(hostOffBranch).toContain("renderDonut(standalone.summary, captionMain, options.captionSub)");
     expect(hostOffBranch).not.toContain("hostSummary");
     expect(hostOffBranch).not.toContain("applySummaryRatios");
-    expect(html).toContain("updateHeadlineStat({ pass, fail, ce, skip, total }, captionMain, captionSub)");
-    expect(html).toContain("updateHeadlineUnavailable(captionMain, captionSub, detail)");
+    // Since the IR website view (fa1e5df779) both calls tag the caption with
+    // `IR_SELECTED ? \`IR ${captionSub}\` : captionSub`, so the first call is
+    // wrapped over several lines; match the arguments that keep the headline in
+    // sync with the donut rather than one exact spelling.
+    expect(html).toMatch(/updateHeadlineStat\(\s*\{ pass, fail, ce, skip, total \},\s*captionMain,/);
+    expect(html).toMatch(/updateHeadlineUnavailable\(captionMain, [^)]*captionSub[^)]*, detail\)/);
     expect(html).toContain("window.__conformanceHeadlineHydrated");
   });
 

@@ -28,13 +28,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, HoistedCharRead } from "./context/types.js";
-import {
-  buildThrowJsErrorInstrs,
-  emitThrowTypeError,
-  getFuncParamTypes,
-  noJsHost,
-  usesNativeJsErrors,
-} from "./expressions/helpers.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError, getFuncParamTypes, noJsHost } from "./expressions/helpers.js";
 import { addStringImports, flatStringType, nativeStringType, resolveIdentifierType, resolveWasmType } from "./index.js";
 import {
   ensureAnyToStringHelper,
@@ -69,7 +63,7 @@ import {
 } from "./regexp-standalone.js";
 import { tryCompileStandaloneSplitSeparator, tryCompileStandaloneStringValueReplace } from "./string-search-value.js";
 import { tryCompileStandaloneDynamicStringRegExpCall } from "./string-regexp-dynamic.js";
-import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { addStringConstantGlobal, nextModuleGlobalIdx } from "./registry/imports.js";
 import { resolveStrictConstant, staticStringLength } from "./analysis/static-string-constants.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
@@ -111,6 +105,7 @@ import {
   tryStructToString,
 } from "./type-coercion.js";
 import { STRING_ARRAY_SHARED_METHODS } from "./array-slice-native.js"; // (#6683)
+import { nestedCapturesForCallee } from "./nested-function-name-scope.js"; // (#6877)
 import { readEnv } from "../env.js";
 
 /**
@@ -123,7 +118,7 @@ import { readEnv } from "../env.js";
  * identifier, route through `resolveIdentifierType`; everything else is
  * unchanged.
  */
-function valueExprTsType(ctx: CodegenContext, node: ts.Expression): ts.Type {
+export function valueExprTsType(ctx: CodegenContext, node: ts.Expression): ts.Type {
   return ts.isIdentifier(node) ? resolveIdentifierType(ctx, node) : ctx.checker.getTypeAtLocation(node);
 }
 
@@ -298,11 +293,12 @@ export function emitHostExternrefToNativeString(ctx: CodegenContext, fctx: Funct
  */
 
 // (#6651 H1) `specToString`: an argument's §7.1.17 ToString, not the lenient `+` one.
-function compileNativeConcatOperand(
+export function compileNativeConcatOperand(
   ctx: CodegenContext,
   fctx: FunctionContext,
   operand: ts.Expression,
   specToString = false,
+  onStack?: ValType, // (#7214) `operand`'s value, of this type, is already on the stack
 ): boolean {
   // Precondition: caller has established `noJsHost(ctx)` (WASI / --target
   // standalone). There, `number_toString` is the pure-Wasm helper whose
@@ -310,7 +306,7 @@ function compileNativeConcatOperand(
   // `ref.cast $AnyString` is valid), and dynamic refs route through the
   // in-module `$__any_to_string` dispatcher. No JS-host bridge is involved.
   const tsType = valueExprTsType(ctx, operand); // #2176 ambient-shadow safe
-  const opType = compileExpression(ctx, fctx, operand);
+  const opType = onStack ?? compileExpression(ctx, fctx, operand);
   if (!opType) {
     // void result → "undefined"
     compileStringLiteral(ctx, fctx, "undefined", operand);
@@ -1447,7 +1443,7 @@ export function compileTaggedTemplateExpression(
       // captures AND the TDZ-flag boxes are real leading params, so the capture
       // count that offsets `strings`/substitutions below is value + tdz-flag
       // count — not just the value count (#3576).
-      const nestedCaptures = ctx.nestedFuncCaptures.get(tagName);
+      const nestedCaptures = nestedCapturesForCallee(ctx, tagName, funcIdx); // (#6877) this callee's plan only
       const tdzFlaggedNested = nestedCaptures ? nestedCaptures.filter((c) => c.hasTdzFlag) : [];
       if (nestedCaptures) {
         for (const cap of nestedCaptures) {
@@ -2491,40 +2487,9 @@ function emitTypeErrorThrow(ctx: CodegenContext, fctx: FunctionContext, msg: str
   addStringConstantGlobal(ctx, msg);
   // #1473 — no JS host: throw a TypeError INSTANCE via the in-module
   // constructor (no `__throw_type_error` host import).
-  if (usesNativeJsErrors(ctx)) {
-    emitThrowTypeError(ctx, fctx, msg);
-    fctx.body.push({ op: "unreachable" });
-    return;
-  }
-  const throwIdx = ensureLateImport(ctx, "__throw_type_error", [{ kind: "externref" }], []);
-  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
-    compileNativeStringLiteral(ctx, fctx, msg);
-    if (throwIdx !== undefined) {
-      flushLateImportShifts(ctx, fctx);
-      // GC-ref → externref bridge so the host import receives a JS string.
-      fctx.body.push({ op: "extern.convert_any" });
-      const funcIdx = ctx.funcMap.get("__throw_type_error")!;
-      fctx.body.push({ op: "call", funcIdx });
-      fctx.body.push({ op: "unreachable" });
-    } else {
-      const tagIdx = ensureExnTag(ctx);
-      fctx.body.push({ op: "extern.convert_any" });
-      fctx.body.push({ op: "throw", tagIdx });
-    }
-    return;
-  }
-  const strIdx = ctx.stringGlobalMap.get(msg)!;
-  if (throwIdx !== undefined) {
-    flushLateImportShifts(ctx, fctx);
-    const funcIdx = ctx.funcMap.get("__throw_type_error")!;
-    fctx.body.push({ op: "global.get", index: strIdx });
-    fctx.body.push({ op: "call", funcIdx });
-    fctx.body.push({ op: "unreachable" });
-  } else {
-    const tagIdx = ensureExnTag(ctx);
-    fctx.body.push({ op: "global.get", index: strIdx });
-    fctx.body.push({ op: "throw", tagIdx });
-  }
+  emitThrowTypeError(ctx, fctx, msg);
+  fctx.body.push({ op: "unreachable" });
+  return;
 }
 
 /**
@@ -2534,7 +2499,11 @@ function emitTypeErrorThrow(ctx: CodegenContext, fctx: FunctionContext, msg: str
  * stringify the internal symbol id. Returns true when a throw was emitted (the
  * caller must NOT compile the operand — the throw replaces it).
  */
-function tryThrowOnSymbolStringCoercion(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): boolean {
+export function tryThrowOnSymbolStringCoercion(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg: ts.Expression,
+): boolean {
   let argTsType: ts.Type | undefined;
   try {
     argTsType = ctx.checker.getTypeAtLocation(arg);
@@ -2619,6 +2588,16 @@ export function compileStringIntegerArg(
       // an i32 is already integral and within range for the helper.
       return;
     }
+    // (#7083) A DYNAMIC `undefined` bound (`s.slice(a, end)` with `end` an
+    // `any` that holds undefined) means "omitted" for the optional end/count
+    // positions, exactly like the static `undefined` the call sites already
+    // special-case — not ToIntegerOrInfinity(NaN) = 0. ToNumber(undefined) has
+    // no side effect, so compute the ordinary integer and pick the fallback.
+    const dynUndefLocal =
+      argType.kind === "externref" && undefinedFallback !== nanFallback
+        ? allocLocal(fctx, `__strint_x_${fctx.locals.length}`, { kind: "externref" })
+        : undefined;
+    if (dynUndefLocal !== undefined) fctx.body.push({ op: "local.tee", index: dynUndefLocal });
     // Coerce ToNumber → f64 via the engine, then ToIntegerOrInfinity.
     coerceType(ctx, fctx, argType, { kind: "f64" }, "number");
     const fTmpType: ValType =
@@ -2652,6 +2631,21 @@ export function compileStringIntegerArg(
       });
     } else {
       fctx.body.push(...toIntegerInstrs);
+    }
+    if (dynUndefLocal !== undefined) {
+      const isUndef = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+      flushLateImportShifts(ctx, fctx);
+      if (isUndef !== undefined) {
+        const intLocal = allocLocal(fctx, `__strint_i_${fctx.locals.length}`, { kind: "i32" });
+        fctx.body.push(
+          { op: "local.set", index: intLocal },
+          { op: "i32.const", value: undefinedFallback },
+          { op: "local.get", index: intLocal },
+          { op: "local.get", index: dynUndefLocal },
+          { op: "call", funcIdx: isUndef },
+          { op: "select" },
+        );
+      }
     }
     return;
   }
@@ -4034,7 +4028,7 @@ export function compileNativeStringMethodCall(
   // #1539 Phase 2c — `String.prototype.split(/re/)` against a backend-created
   // static, non-capturing, non-nullable RegExp routes through the pure-WasmGC
   // matcher and returns the same native string vec shape as string split.
-  if ((ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first") && method === "split") {
+  if (method === "split") {
     const splitResult = tryCompileStandaloneStringSplit(ctx, fctx, expr, propAccess, receiverOverride);
     if (splitResult !== undefined) return splitResult;
   }

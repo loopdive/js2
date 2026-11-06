@@ -53,6 +53,7 @@ import {
   registerNativeGenerator,
   type NativeGeneratorCaptureParam,
 } from "../generators-native.js";
+import { refuseEagerGeneratorBuffer } from "../generator-eager-refusal.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
 import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
 import { emitLazyProtoGet, emitRegisterDynamicClassParent } from "../expressions/extern.js";
@@ -2007,6 +2008,8 @@ function compileNestedFunctionDeclarationInScope(
       // driver on the async-frame CFG machine. No captures in this branch, so
       // the frame captures the declared params only.
       emitAsyncGenerator(ctx, liftedFctx, stmt);
+    } else if (isGenerator && refuseEagerGeneratorBuffer(ctx, liftedFctx, stmt)) {
+      // (#7010) No host-free lowering for this nested generator — refused.
     } else if (isGenerator) {
       // Generator function: eagerly evaluate body, collect yields into a JS array,
       // then wrap it with __create_generator to return a Generator-like object.
@@ -2523,6 +2526,8 @@ function compileNestedFunctionDeclarationInScope(
       // deref the cells. TDZ-flagged captures store PARAM indices in
       // `boxedTdzFlags` (wrong in the resume fn's local layout) → legacy.
       emitAsyncGenerator(ctx, liftedFctx, stmt);
+    } else if (isGenerator && refuseEagerGeneratorBuffer(ctx, liftedFctx, stmt)) {
+      // (#7010) No host-free lowering for this nested generator — refused.
     } else if (isGenerator) {
       // Generator function: eagerly evaluate body, collect yields into a JS array,
       // then wrap it with __create_generator to return a Generator-like object.

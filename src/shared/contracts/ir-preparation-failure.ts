@@ -60,6 +60,17 @@ export type IrFallbackReason =
   // body-shape rejections that apply to top-level FunctionDeclarations too.
   | "class-method"
   | "string-builder-candidate" // (#3740/#3744) kill-switch-forced legacy — see ./string-builder-shape.ts
+  // (#7000) An instance method/accessor reached through a base-typed receiver
+  // that a subclass overrides. The IR binds `class.call` statically to the
+  // declared class's member and has no `__tag` virtual dispatch yet (#1299 is
+  // legacy-only), so the unit keeps its legacy body until it does.
+  | "class-method-virtual"
+  // (#7003) A function-typed parameter that a caller may fill with a function
+  // of a different Wasm signature (extra default/optional params, fewer
+  // params, a value result in a `void` slot, or an untraceable value). IR
+  // `closure.call` casts to the annotation's exact func type and would trap;
+  // legacy's arity cascade handles it, so the unit keeps its legacy body.
+  | "closure-signature-mismatch"
   // (#4457) The unit references an ambient HOST surface (`document`, `console`,
   // `window`, …) in a target whose capability policy has no ambient JS host:
   // standalone / wasi / strictNoHostImports, i.e. `hostExternCapability` →

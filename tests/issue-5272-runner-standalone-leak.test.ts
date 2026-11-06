@@ -9,10 +9,11 @@
 // `scripts/run-test262-paths.mts --standalone` was not the number the
 // merge_group would see.
 //
-// FIXTURE CHOICE — `new SharedArrayBuffer(...)` still emits
-// `env::SharedArrayBuffer_new` on `--target standalone` (verified 2026-09-02
-// against the committed standalone baseline: 296 rows carry exactly that leak).
-// `Promise.all` / `Set` / `WeakMap` used to leak too and no longer do, so if
+// FIXTURE CHOICE — `new FinalizationRegistry(...)` still emits
+// `env::FinalizationRegistry_new` on `--target standalone` (re-verified
+// 2026-10-19). `new SharedArrayBuffer(...)` was the fixture until #7011 gave it
+// a Wasm-native provider; `Promise.all` / `Set` / `WeakMap` used to leak too
+// and no longer do, so if
 // this construct ever gains a Wasm-native lowering, the `leaks on standalone
 // today` guard below fails FIRST and tells you to move the fixture rather than
 // silently vacuating the assertion.
@@ -26,8 +27,8 @@ import { runTest262File, standaloneHostImportError } from "./test262-runner.js";
 
 /** Rows the sharded baseline scores `compile_error` / `host_import_leak`. */
 const LEAKY_ROWS = [
-  "built-ins/SharedArrayBuffer/prototype/slice/nonconstructor.js",
-  "built-ins/Atomics/notify/bad-range.js",
+  "built-ins/FinalizationRegistry/instance-extensible.js",
+  "built-ins/FinalizationRegistry/prototype/register/holdings-any-value-type.js",
 ] as const;
 
 /** Control: a standalone row that needs no host import and passes. */
@@ -37,7 +38,7 @@ const category = (relativePath: string) => relativePath.split("/").slice(0, 2).j
 
 describe("#5272 — runTest262File applies the standalone host-import leak check", () => {
   it("still emits a host import for the fixture construct (guards the rows below)", async () => {
-    const result = await compile("const b = new SharedArrayBuffer(8);\n", {
+    const result = await compile("const r = new FinalizationRegistry(() => {});\n", {
       allowJs: true,
       fileName: "test.js",
       target: "standalone",
@@ -45,8 +46,8 @@ describe("#5272 — runTest262File applies the standalone host-import leak check
     const names = (result.imports ?? []).map((entry) => `${entry.module}::${entry.name}`);
     expect(
       names,
-      "SharedArrayBuffer no longer leaks on standalone — pick a construct that does, or stub result.imports",
-    ).toContain("env::SharedArrayBuffer_new");
+      "FinalizationRegistry no longer leaks on standalone — pick a construct that does, or stub result.imports",
+    ).toContain("env::FinalizationRegistry_new");
   });
 
   it.each(LEAKY_ROWS)("scores %s as a host_import_leak compile_error on standalone", async (relativePath) => {
@@ -58,7 +59,7 @@ describe("#5272 — runTest262File applies the standalone host-import leak check
     );
     expect(result.status, result.error ?? result.reason).toBe("compile_error");
     expect(result.error).toMatch(/standalone target emitted host imports/);
-    expect(result.error).toContain("env::SharedArrayBuffer_new");
+    expect(result.error).toContain("env::FinalizationRegistry_new");
   });
 
   it.each(LEAKY_ROWS)("leaves %s alone on the JS-host lane", async (relativePath) => {

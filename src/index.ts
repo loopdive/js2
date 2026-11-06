@@ -158,6 +158,14 @@ export interface ImportDescriptor {
    * drop arguments.
    */
   paramCount?: number;
+  /**
+   * (#7095) Set on a `builtin` func import the host-import policy cannot
+   * classify (a user `declare function`) when its single wasm result is a
+   * reference. The compiled caller then reads a native carrier, so the runtime
+   * adapts a JS primitive the embedder returns; a numeric result is left to the
+   * JS-API's ToNumber/ToInt32. Absent everywhere else.
+   */
+  refResult?: true;
 }
 
 /** A separately compiled core-Wasm provider used by a project link plan. */
@@ -637,14 +645,17 @@ export interface CompileOptions {
    * Semantic implementation policy, independent of the execution environment,
    * platform capabilities, and the JS value bridge (#4397).
    *
-   * `"auto"` (default) preserves the current target-specific providers.
-   * `"native-first"` selects each migrated Wasm-native provider family even
-   * when JavaScript instantiates the module. Today this includes the complete
-   * native-string family; additional families join this policy as they pass
-   * their differential gates. JS boundary wrappers remain enabled according
-   * to `hostBridge`, and explicit platform APIs remain available.
+   * `"native-first"` — the default and, since #6979, the only accepted
+   * spelling — lowers with the Wasm-native semantic core even when
+   * JavaScript instantiates the module; JS boundary wrappers remain enabled
+   * according to `hostBridge`, and explicit platform APIs remain available.
+   * The removed `"host-assisted"` / `"auto"` spellings, and `nativeStrings:
+   * false` on the JS target, are compile errors; host semantics for a single
+   * family are the named `hostAccelerators`.
    */
   semanticProviders?: import("./target-profile.js").SemanticProviderSelection;
+  /** (#6978) Families that use the JS host's provider instead of the native one (JS target only). */
+  hostAccelerators?: readonly import("./target-profile.js").HostAcceleratorFamily[];
   /**
    * (#86) NOT a real option — declared `never` so `compile(src, { standalone:
    * true })` is a TypeScript excess-property error. The standalone codegen
@@ -676,6 +687,14 @@ export interface CompileOptions {
    * leaves it `true` (default) for genuine module tests, so the compiler sees
    * the source's *true* strictness rather than the wrapper artifact. An explicit
    * `"use strict"` prologue and class context still force strict regardless.
+   *
+   * (#6937) `false` is the Script-goal switch for a single-file source whose
+   * top-level `export` is a synthetic entry point: function code is sloppy and
+   * top-level `this` is the global object. On the standalone and WASI targets,
+   * top-level `var`/function declarations are also published as global-object
+   * properties; the JS-host (gc) target does not publish them onto the host
+   * global object yet (known limitation). Use it for benchmark drivers and
+   * test wrappers; never for real module input.
    */
   inferModuleStrictArguments?: boolean;
   /**

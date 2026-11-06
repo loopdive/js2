@@ -1,0 +1,98 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > compatibility exports the identical prepareSequentialCountedLoopIrFunction function object 1ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > compatibility exports the identical prepareFinalMainIrFunction function object 0ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > compatibility exports the identical prepareSuspendingIrFunction function object 0ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > compatibility exports the identical prepareSingleAwaitIrFunction function object 0ms
+ × tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains src/ir/async-prepare-ir.ts's 18 exact declarations and docs 92ms
+   → expected [ …(20) ] to have a length of 18 but got 20
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains src/ir/async-prepare.ts's 1 exact declarations and docs 4ms
+ × tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains src/ir/async-linear-prepare.ts's 16 exact declarations and docs 23ms
+   → expected [ …(17) ] to have a length of 16 but got 17
+ × tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains src/ir/passes/monomorphize.ts's 22 exact declarations and docs 29ms
+   → expected [ …(24) ] to have a length of 22 but got 24
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > src/ir/async-prepare-ir.ts constructs derived IDs only through canonical F0 values 21ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > src/ir/runtime-program-producers.ts constructs derived IDs only through canonical F0 values 4ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > src/ir/async-linear-prepare.ts constructs derived IDs only through canonical F0 values 18ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > src/ir/passes/monomorphize.ts constructs derived IDs only through canonical F0 values 11ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > prepares a real single await without changing its owner or inventing runtime attachments 8ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > preserves generic sequential fallback and both live awaits 4ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > preserves intrinsic unbox continuation under host policy 1ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > preserves intrinsic unbox continuation under native policy 1ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > preserves intrinsic unbox continuation under disabled policy 1ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > preserves intrinsic unbox continuation under omitted policy 1ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > whole-program async production retains every ordinary owner and exact derived ownership 3ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > keeps a located refusal for an ordinary owner carrying await 1ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains the AST-only predicate for async function f(p: Promise<number>) { const n = await p; return n; } 1ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains the AST-only predicate for function f(p: number) { const n = p; return n; } 0ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains the AST-only predicate for async function f(p: Promise<number>) { const n = await p; return p; } 0ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains the AST-only predicate for async function f(p: Promise<number>) { const n = await p; n; return n; } 0ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains the AST-only predicate for async function* f(p: Promise<number>) { const n = await p; return n; } 0ms
+ ✓ tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > runs nonempty async production with frontend/legacy identity loads actively forbidden 473ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains src/ir/async-prepare-ir.ts's 18 exact declarations and docs
+AssertionError: expected [ …(20) ] to have a length of 18 but got 20
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 18[39m
+[31m+ 20[39m
+
+ ❯ tests/issue-3518-typed-async-preparation.test.ts:59:26
+     57|       (node) => !ts.isImportDeclaration(node) && !ts.isExportDeclarati…
+     58|     );
+     59|     expect(declarations).toHaveLength(count);
+       |                          ^
+     60|     expect(
+     61|       createHash("sha256")
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains src/ir/async-linear-prepare.ts's 16 exact declarations and docs
+AssertionError: expected [ …(17) ] to have a length of 16 but got 17
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 16[39m
+[31m+ 17[39m
+
+ ❯ tests/issue-3518-typed-async-preparation.test.ts:59:26
+     57|       (node) => !ts.isImportDeclaration(node) && !ts.isExportDeclarati…
+     58|     );
+     59|     expect(declarations).toHaveLength(count);
+       |                          ^
+     60|     expect(
+     61|       createHash("sha256")
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains src/ir/passes/monomorphize.ts's 22 exact declarations and docs
+AssertionError: expected [ …(24) ] to have a length of 22 but got 24
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 22[39m
+[31m+ 24[39m
+
+ ❯ tests/issue-3518-typed-async-preparation.test.ts:59:26
+     57|       (node) => !ts.isImportDeclaration(node) && !ts.isExportDeclarati…
+     58|     );
+     59|     expect(declarations).toHaveLength(count);
+       |                          ^
+     60|     expect(
+     61|       createHash("sha256")
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 23 passed (26)
+   Start at  20:20:10
+   Duration  2.88s (transform 884ms, setup 0ms, collect 1.77s, tests 702ms, environment 0ms, prepare 68ms)
+

@@ -111,7 +111,7 @@ const ALLOW_KEY = "known-failures-allow";
 // Root files owned by another gate: linear-*/c-abi/simd* run in `linear-tests`;
 // the test262 chunk / local-shard / vitest entry points run the conformance
 // corpus itself (test262-sharded.yml), not a unit suite.
-const ROOT_EXCLUDE = /^(linear-|c-abi\.|simd|test262-(chunk|local-shard|vitest\.))/;
+export const ROOT_EXCLUDE = /^(linear-|c-abi\.|simd|test262-(chunk|local-shard|vitest\.))/;
 
 function listTestFiles(root, dir, rel) {
   const abs = join(root, dir);
@@ -375,6 +375,8 @@ function vitestOnce(root, toRel, files, { serial, heapMb, timeoutMs }) {
       } catch {}
       const ended = new Map();
       const started = new Set();
+      let runEnd;
+      const runErrors = [];
       for (const line of readFileSync(progress, "utf8").split("\n")) {
         if (!line.trim()) continue;
         let rec;
@@ -383,12 +385,17 @@ function vitestOnce(root, toRel, files, { serial, heapMb, timeoutMs }) {
         } catch {
           continue; // a line torn by a kill mid-write
         }
+        if (rec.event === "run-end") {
+          runEnd = rec.reason;
+          runErrors.push(...(rec.errors || []));
+          continue;
+        }
         const rel = toRel(rec.file);
         if (rec.event === "start") started.add(rel);
         else if (rec.event === "end" && rec.entry) ended.set(rel, rec.entry);
       }
       rmSync(dir, { recursive: true, force: true });
-      resolve({ ended, started, timedOut, code });
+      resolve({ ended, started, timedOut, code, runEnd, runErrors });
     };
     child.on("exit", (code) => finish(code));
     child.on("error", () => finish(-1));
@@ -402,7 +409,29 @@ function vitestOnce(root, toRel, files, { serial, heapMb, timeoutMs }) {
  * with the reason. `serial: true` skips the parallel pass (confirmation
  * re-runs). Returns Map<rel, {entry} | {crash}>.
  */
-async function runFiles(root, toRel, files, { label, serial = false }) {
+/**
+ * Unassociated errors cannot be banked as known test failures. An incomplete
+ * crashed batch still follows the existing per-file recovery route; an exit
+ * after EVERY selected file finished needs an attributable file failure.
+ */
+export function unaccountedRunErrors(run, files) {
+  const errors = [...(run.runErrors || [])];
+  const complete = files.every((file) => run.ended.has(file));
+  const fileFailed = [...run.ended.values()].some((entry) => entry.status === "failed");
+  if (complete) {
+    if (run.code !== 0 && !(run.code === 1 && fileFailed)) {
+      errors.push(`vitest exited ${run.code} after all selected files finished without an attributable exit`);
+    }
+    if (run.timedOut) errors.push("vitest timed out after all selected files finished");
+    if (!run.runEnd) errors.push("vitest ended without its run-completion record");
+    else if (run.runEnd === "interrupted" || (run.runEnd === "failed" && !fileFailed)) {
+      errors.push(`vitest run ended ${run.runEnd} without an attributable file verdict`);
+    }
+  }
+  return errors;
+}
+
+export async function runFiles(root, toRel, files, { label, serial = false, onRunIntegrity }) {
   const batch = envInt("KNOWN_FAILURES_BATCH", 150);
   const heap = envInt("KNOWN_FAILURES_FORK_HEAP_MB", 2048);
   const rerunHeap = envInt("KNOWN_FAILURES_RERUN_HEAP_MB", 4096);
@@ -422,6 +451,7 @@ async function runFiles(root, toRel, files, { label, serial = false }) {
       heapMb: heap,
       timeoutMs: envInt("KNOWN_FAILURES_BATCH_TIMEOUT_MIN", 30) * 60_000,
     });
+    if (onRunIntegrity) for (const error of unaccountedRunErrors(r, chunk)) onRunIntegrity(error);
     for (const [rel, entry] of r.ended) if (want.has(rel)) results.set(rel, { entry });
     const inflight = chunk.filter((f) => !results.has(f) && r.started.has(f));
     const unstarted = chunk.filter((f) => !results.has(f) && !r.started.has(f));
@@ -453,6 +483,7 @@ async function runFiles(root, toRel, files, { label, serial = false }) {
       heapMb: rerunHeap,
       timeoutMs: (8 * 60 + 90 * queue.length) * 1000,
     });
+    if (onRunIntegrity) for (const error of unaccountedRunErrors(r, queue)) onRunIntegrity(error);
     for (const [rel, entry] of r.ended) if (want.has(rel)) results.set(rel, { entry });
     const died = queue.filter((f) => !results.has(f) && r.started.has(f));
     for (const f of died) {

@@ -150,14 +150,14 @@ describe("#1042 host drive — rejection routing", () => {
 });
 
 describe("#1042 host drive — unclaimed shapes keep the legacy fallback (no regression)", () => {
-  it("await inside a loop still compiles via the legacy path", async () => {
-    // planLinearAwaits rejects awaits in control flow — must compile and keep
-    // today's behavior (sync-settled operands thread synchronously).
+  it("await inside a loop the loop CFG declines still compiles via the legacy path", async () => {
+    // A `break` in the body is outside the async loop CFG's shape — must compile
+    // and keep today's behavior (sync-settled operands thread synchronously).
     const exports = await compileToWasm(`
       async function g(): Promise<number> { return 1; }
       async function f(): Promise<number> {
         let s: number = 0;
-        for (let i = 0; i < 3; i++) { s = s + (await g()); }
+        for (let i = 0; i < 3; i++) { s = s + (await g()); if (s > 100) break; }
         return s;
       }
       export function main(): number { return f() as any as number; }
@@ -165,19 +165,34 @@ describe("#1042 host drive — unclaimed shapes keep the legacy fallback (no reg
     expect(exports.main()).toBe(3);
   });
 
-  it("await-elidable bodies stay on the legacy synchronous path", async () => {
-    // Both awaits are statically resolved (literals) → no genuine suspension →
-    // neither the CPS lane nor the host drive claims the fn; the legacy
-    // "compile away" idiom (#1313/#1727) keeps returning the raw value.
+  it("a plain `for` body with an await is driven by the loop CFG (#7096)", async () => {
+    // Until #7096 this shape took the legacy path above; it is now a real
+    // suspension, so `f()` is a Promise that settles to the sum.
+    const exports = await compileToWasm(`
+      async function g(): Promise<number> { return 1; }
+      async function f(): Promise<number> {
+        let s: number = 0;
+        for (let i = 0; i < 3; i++) { s = s + (await g()); }
+        return s;
+      }
+      export async function main(): Promise<number> { return await f(); }
+    `);
+    await expect(settled(exports.main())).resolves.toBe(3);
+  });
+
+  it("statically resolved awaits still yield in a JS environment and settle the right value", async () => {
+    // #6982: in a JS environment even `await 20` yields a microtask turn (the
+    // #1313/#1727 elision now applies only host-free), so `f()` is a real
+    // Promise — surfaced on #7096's touch of this file.
     const exports = await compileToWasm(`
       async function f(): Promise<number> {
         const x = await 20;
         const y = await 22;
         return x + y;
       }
-      export function main(): number { return f() as any as number; }
+      export async function main(): Promise<number> { return await f(); }
     `);
-    expect(exports.main()).toBe(42);
+    await expect(settled(exports.main())).resolves.toBe(42);
   });
 
   it("single-tail-await stays on the CPS lane (control)", async () => {

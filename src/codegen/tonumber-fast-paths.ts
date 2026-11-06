@@ -127,13 +127,18 @@ function note(bucket: "fusedSites" | "smiSites" | "declines"): void {
  * — as an instruction array, so both fast paths can use it verbatim as their
  * slow arm. Byte-for-byte what `coerceType` emits inline today.
  */
-function slowChainInstrs(ctx: CodegenContext, toPrimIdx: FuncHandle, unboxIdx: FuncHandle): Instr[] {
+function slowChainInstrs(ctx: CodegenContext, toPrimIdx: FuncHandle, unboxIdx: FuncHandle, primLocal: number): Instr[] {
   return [
     ...stringConstantExternrefInstrs(ctx, "number"),
     { op: "call", funcIdx: toPrimIdx },
-    ...symbolThrowArm(ctx),
+    ...symbolThrowArm(ctx, primLocal),
     { op: "call", funcIdx: unboxIdx },
   ];
+}
+
+/** Does `symbolThrowArm` emit anything (and so need its scratch local)? */
+function needsSymbolThrowArm(ctx: CodegenContext): boolean {
+  return ctx.standalone === true && ctx.symbolTypeIdx >= 0;
 }
 
 /**
@@ -161,7 +166,7 @@ function slowChainInstrs(ctx: CodegenContext, toPrimIdx: FuncHandle, unboxIdx: F
  *
  * A module that never registered the `$Symbol` carrier emits nothing.
  */
-function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
+export function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
   const symTypeIdx = ctx.symbolTypeIdx;
   if (!ctx.standalone || symTypeIdx < 0) return [];
   return [
@@ -180,6 +185,28 @@ function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
     },
     { op: "local.get", index: primLocal },
   ];
+}
+
+/**
+ * Reserve the Symbol TypeError dependencies under the existing numeric-provider
+ * policy, before operand compilation or helper-index capture. Relational
+ * callers require the native Symbol carrier; existing fast paths also support
+ * minimal modules without that carrier and retain their preparation policy.
+ */
+export function prepareSymbolToNumberGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  requireSymbolCarrier = true,
+): void {
+  if (ctx.standalone) {
+    if (requireSymbolCarrier && ctx.symbolTypeIdx < 0) {
+      throw new Error("Missing native Symbol carrier for numeric value conversion");
+    }
+    void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
+      forceInModuleCtor: true,
+      flush: fctx,
+    });
+  }
 }
 
 /**
@@ -214,12 +241,7 @@ function ensureDeps(
   // every registration below is idempotent, so that rebuild adds nothing.
   // Doing it the other way round (registering at finalize) would add an
   // imported global after the shift pass had already run.
-  if (ctx.standalone) {
-    void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
-      forceInModuleCtor: true,
-      flush: fctx,
-    });
-  }
+  prepareSymbolToNumberGuard(ctx, fctx, false);
   flushLateImportShifts(ctx, fctx);
   const unboxIdx = ctx.funcMap.get("__unbox_number");
   if (unboxIdx === undefined) return undefined;
@@ -351,7 +373,8 @@ function buildFusedToNumberBody(ctx: CodegenContext, toPrimIdx: FuncHandle, unbo
       : []),
     // Everything ToPrimitive can OBSERVE goes down the original chain.
     { op: "local.get", index: 0 },
-    ...slowChainInstrs(ctx, toPrimIdx, unboxIdx),
+    // Local 2 is the helper's own `$prim` (see `reserveFusedToNumber`).
+    ...slowChainInstrs(ctx, toPrimIdx, unboxIdx, 2),
   ];
 }
 
@@ -473,6 +496,7 @@ export function tryEmitFastToNumber(
 
   // Slow arm: the fused call when Slice A is on, else the original chain.
   let slow: Instr[];
+  let primLocal: number | undefined;
   if (fused) {
     const fusedIdx = reserveFusedToNumber(ctx, fctx);
     if (fusedIdx === undefined) {
@@ -481,11 +505,25 @@ export function tryEmitFastToNumber(
     }
     slow = [{ op: "call", funcIdx: fusedIdx }];
   } else {
-    slow = slowChainInstrs(ctx, toPrimIdx, unboxIdx);
+    // (#7014) The INLINE slow chain (Slice B without Slice A) runs in the
+    // caller's own frame, so the Symbol arm's scratch must be a local of THIS
+    // function. It used to inherit the fused helper's hard-coded local 2, and
+    // any caller with fewer locals failed the "references out-of-range
+    // local(s)" invariant — `JS2WASM_SMI_FASTPATH=1 JS2WASM_FUSED_TONUMBER=0`
+    // on `({ valueOf() { … } }) - 1`, since 776aac3cb6 (#5213).
+    if (needsSymbolThrowArm(ctx)) {
+      if (!canAllocateLocals(fctx)) {
+        note("declines");
+        return false;
+      }
+      primLocal = allocTempLocal(fctx, { kind: "externref" });
+    }
+    slow = slowChainInstrs(ctx, toPrimIdx, unboxIdx, primLocal ?? -1);
   }
 
   if (!smi) {
     fctx.body.push(...slow);
+    if (primLocal !== undefined) releaseTempLocal(fctx, primLocal);
     note("fusedSites");
     return true;
   }
@@ -511,6 +549,7 @@ export function tryEmitFastToNumber(
     else: [{ op: "local.get", index: tmp }, ...slow],
   });
   if (!allocScratch) releaseTempLocal(fctx, tmp);
+  if (primLocal !== undefined) releaseTempLocal(fctx, primLocal);
   note("smiSites");
   return true;
 }

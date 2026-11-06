@@ -178,13 +178,17 @@ describe("#2984 phase 3: absent members and preserved refusals", () => {
     expect(ret).toBe(3);
   });
 
-  it("GUARD: Symbol well-knowns and RegExp legacy statics keep the loud refusal (no phantom undefined)", async () => {
-    const sym = await compileStandalone(`
+  it("GUARD: Symbol well-knowns answer a real descriptor, RegExp legacy statics keep the loud refusal (no phantom undefined)", async () => {
+    // (#7014 wave 15) The Symbol half used to pin a compile refusal. Standalone
+    // now answers gOPD(Symbol, "iterator") natively, and it is not a phantom
+    // undefined: the descriptor exists, as in JS (re-measured 2026-10-17 on
+    // upstream main 0727e2985b). The RegExp annex-B statics still refuse.
+    expect(
+      await runStandalone(`
       var d: any = Object.getOwnPropertyDescriptor(Symbol, "iterator");
       return d === undefined ? 1 : 0;
-    `);
-    expect(sym.success).toBe(false);
-    expect(sym.message).toContain("__get_builtin");
+    `),
+    ).toBe(0);
     const re = await compileStandalone(`
       var d: any = Object.getOwnPropertyDescriptor(RegExp, "$1");
       return d === undefined ? 1 : 0;

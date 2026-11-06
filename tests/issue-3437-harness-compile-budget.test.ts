@@ -137,6 +137,10 @@ describe("#3437 buildRepresentativeAssembly — deterministic fixture", () => {
 
 describe("#3437 committed budget holds on current main", () => {
   async function measure(callSites: number): Promise<number> {
+    // Native-first performs one-time provider initialization on the first
+    // compile in a process. Keep the meter on the repeated per-file path that
+    // #3437 gates, matching the production check.
+    await compile(buildRepresentativeAssembly(callSites), { fileName: "harness-budget-warmup.ts" });
     enableForEachChildMeter();
     await compile(buildRepresentativeAssembly(callSites), { fileName: "harness-budget-fixture.ts" });
     const n = readForEachChildCalls();

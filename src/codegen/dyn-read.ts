@@ -1020,6 +1020,42 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
 }
 
 /**
+ * (#7106 S3c) The sloppy twin `__dyn_member_set_sloppy(recv,key,value) -> ()`
+ * on the externref carrier: the same receiver peel and key canonicalisation as
+ * `__dyn_member_set`, then legacy's sloppy `__extern_set`, which ignores a
+ * failed `[[Set]]` (§6.2.5.6 step 6.d) where the strict helper throws. Returns
+ * false when the lane has no such store (the fast `$AnyValue` carrier).
+ */
+export function ensureDynMemberSetSloppy(ctx: CodegenContext): boolean {
+  if (ctx.funcMap.has("__dyn_member_set_sloppy")) return true;
+  if (ctx.fast) return false;
+  ensureDynMemberSet(ctx);
+  const peelIdx = ctx.funcMap.get("__carrier_recv_to_extern");
+  const sloppySetIdx = ctx.funcMap.get("__extern_set");
+  if (peelIdx === undefined || sloppySetIdx === undefined) return false;
+  const toPropertyKeyIdx = ctx.standalone || ctx.wasi ? ctx.funcMap.get("__to_property_key") : undefined;
+  const externref: ValType = { kind: "externref" };
+  const typeIdx = addFuncType(ctx, [externref, externref, externref], [], "__dyn_member_set_sloppy");
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__dyn_member_set_sloppy",
+    typeIdx,
+    locals: [],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: peelIdx },
+      { op: "local.get", index: 1 },
+      ...(toPropertyKeyIdx === undefined ? [] : [{ op: "call", funcIdx: toPropertyKeyIdx } satisfies Instr]),
+      { op: "local.get", index: 2 },
+      { op: "call", funcIdx: sloppySetIdx },
+    ],
+    exported: false,
+  } as never);
+  ctx.funcMap.set("__dyn_member_set_sloppy", funcIdx);
+  return true;
+}
+
+/**
  * (#3053 U0) Register an EXPORTED self-test driver (FORCE mode only). Uses a
  * stable handle so a dead-elim import shift can't desync the exported index.
  */

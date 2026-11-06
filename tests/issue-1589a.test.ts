@@ -32,7 +32,8 @@ async function compileAndRun(src: string): Promise<unknown> {
   if (!r.success) throw new Error("compile failed: " + r.errors?.[0]?.message);
   const imports = buildImports((r as any).imports ?? [], undefined, (r as any).stringPool ?? []);
   const { instance } = await WebAssembly.instantiate(r.binary!, imports);
-  (imports as any).setExports?.(instance.exports);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  (imports as any).setInstance?.(instance);
   return (instance.exports as any).test?.();
 }
 

@@ -460,8 +460,20 @@ export function buildMultiPreparedModuleInitCensus(
             terminal.terminalOwnerId === terminal.id,
         )
       : undefined;
+    // (#7014) A source whose only executable top-level semantics are LIVE
+    // SEEDS — a top-level function declaration reassigned somewhere
+    // (`function value() {…}; … value = function () {…}`) — has no
+    // statement-anchored module-init terminal in the identity inventory, and
+    // `buildIrModuleInitPlan` records exactly that as its typed
+    // `missing-module-init-unit` gap with a null `unitId`. That is a declared
+    // gap (the direct path keeps the live seeds; `executable` below already
+    // excludes a null-unit plan), not a lost terminal. Hard-failing it here made
+    // the whole compile fail since 944643dcde (#5598).
+    const declaredMissingUnit =
+      plan.unitId === null && plan.gaps.some((gap) => gap.code === "missing-module-init-unit");
     if (
       plan.executable &&
+      !declaredMissingUnit &&
       (!moduleTerminal || identityContext.moduleInitUnitIdBySourceFile.get(sourceFile) !== plan.unitId)
     ) {
       return censusInvariant("terminal-join", `executable source ${source.id} lost its exact module-init terminal`);

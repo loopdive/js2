@@ -28,10 +28,21 @@ describe("#3994 — bounded object-assignment type queries", () => {
       },
     } as unknown as ts.TypeChecker;
     const objectLiteralAssignedPropertyNames = new Set<string>();
+    // The pre-pass has since grown oracle-routed union/indexed-write tracking
+    // (it reads `ctx.oracle` and `objectLiteralIndexedAssignedPropertyTypes`),
+    // so the hand-built context supplies an inert oracle: no union receivers,
+    // no declarations. The bounded checker query under test is unchanged.
+    const oracle = {
+      unionPartsOf: () => undefined,
+      declarationsOf: () => [],
+      typeFactOf: () => ({ kind: "unknown" }),
+    };
     const context = {
       checker,
+      oracle,
       objectLiteralAssignedPropertyNames,
       objectLiteralAssignedPropertyTypes: new Map<string, ts.Type[]>(),
+      objectLiteralIndexedAssignedPropertyTypes: new Map<ts.Declaration, ts.Type[]>(),
     } as never;
 
     expect(() => collectObjectLiteralAssignedPropertyNames(context, sourceFile)).not.toThrow();

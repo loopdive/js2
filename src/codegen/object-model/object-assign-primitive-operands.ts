@@ -35,6 +35,7 @@ import type { Instr } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { STRING_EXOTIC_PUSH_KEYS_FN } from "./native-names.js";
+import { objectAssignArraySourceLies } from "./object-assign-array-source.js";
 
 const PRIMITIVE_TAGS = new Set(["number", "string", "boolean", "bigint", "symbol"]);
 
@@ -84,9 +85,11 @@ export function objectAssignPrimitiveTargetOf(ctx: CodegenContext, expr: ts.Expr
  * object and its bindings are already dynamic.
  */
 export function objectAssignResultNeedsExternref(ctx: CodegenContext, initializer: ts.Expression | undefined): boolean {
-  if (!ctx.standalone || initializer === undefined) return false;
+  if (!(ctx.standalone || ctx.wasi) || initializer === undefined) return false;
   const call = ambientObjectAssignCall(ctx, initializer);
   if (call === undefined) return false;
+  if (objectAssignArraySourceLies(ctx, call)) return true; // (#7155) `T & U[]` is the target, not an array
+  if (!ctx.standalone) return false;
   // A `new String(…)` operand lies the same way: `{} & String` is `String`.
   return call.arguments.some(
     (arg) => !ts.isSpreadElement(arg) && (isStaticPrimitive(ctx, arg) || isPrimitiveWrapperOperand(ctx, arg)),

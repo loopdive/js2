@@ -274,19 +274,6 @@ export function ensureSuperInitializedFlagLocal(
 }
 
 /**
- * (#5350 r3 review, S1) `this` is initialised from here on — store 1 into the
- * flag, immediately after a `super(...)` call's lowering returns. A no-op
- * unless this constructor allocated the flag, which is why a NESTED class's
- * `super()` (a different FunctionContext) can never set the outer one.
- */
-export function emitSuperInitializedFlagStore(fctx: FunctionContext): void {
-  const idx = fctx.superInitializedFlagLocal;
-  if (idx === undefined) return;
-  fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "local.set", index: idx });
-}
-
-/**
  * (#6772 S1b) §13.3.7.1 steps 6-8 at a `super(...)` whose lowering just
  * returned (the parent constructor HAS run): BindThisValue on an
  * already-initialised binding is a ReferenceError; otherwise `this` is

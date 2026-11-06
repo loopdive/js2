@@ -1,7 +1,18 @@
 import { expect } from "vitest";
 import { compile, type CompileResult } from "../../src/index.js";
 import { isWasiErrorName } from "../../src/codegen/registry/error-types.js";
-import { buildStringConstants, buildImports as buildRuntimeImports } from "../../src/runtime.js";
+import { buildStringConstants, buildImports as buildRuntimeImports, wrapCompiledExports } from "../../src/runtime.js";
+
+/**
+ * (#6708) Since S6 the default policy is native-first: string (and other
+ * boundary) results cross through the compiled JS value adapter, exactly as a
+ * real embedder sees them. The host-assisted profile keeps the raw exports.
+ */
+function jsFacingExports(result: CompileResult, instance: WebAssembly.Instance): Record<string, Function> {
+  return result.targetProfile?.semanticProviders === "native-first"
+    ? (wrapCompiledExports(result, instance) as Record<string, Function>)
+    : (instance.exports as Record<string, Function>);
+}
 import ts from "typescript";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -19,7 +30,9 @@ const jsStringPolyfill = {
  * including env stubs, Math host imports, string constants,
  * and wasm:js-string polyfill.
  */
-export function buildImports(result: CompileResult): WebAssembly.Imports {
+export function buildImports(
+  result: CompileResult,
+): WebAssembly.Imports & { setInstance?: (instance: WebAssembly.Instance) => void } {
   const env: Record<string, Function> = {
     console_log_number: () => {},
     console_log_string: () => {},
@@ -315,11 +328,25 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
     Object.assign(env, buildRuntimeImports(classRegistryImports, undefined, result.stringPool).env);
   }
 
-  return {
+  // (#6708) Under native-first in a JS environment the module also imports the
+  // boundary-object hooks (#4399) and the native-string bridge
+  // (`__str_from_mem` / `__str_to_mem` / `__str_extern_len`), which this stub
+  // list does not carry. Fill every missing import from the real runtime; the
+  // caller wires the runtime instance with `imports.setInstance?.(instance)`.
+  const runtime =
+    result.imports.length > 0 ? buildRuntimeImports(result.imports, undefined, result.stringPool) : undefined;
+  if (runtime) {
+    for (const [name, value] of Object.entries(runtime.env as Record<string, Function>)) {
+      if (!(name in env)) env[name] = value;
+    }
+  }
+  const imports = {
     env,
     "wasm:js-string": jsStringPolyfill,
     string_constants: buildStringConstants(result.stringPool),
-  } as WebAssembly.Imports;
+  } as WebAssembly.Imports & { setInstance?: (instance: WebAssembly.Instance) => void };
+  if (runtime?.setInstance) Object.defineProperty(imports, "setInstance", { value: runtime.setInstance });
+  return imports;
 }
 
 /**
@@ -344,7 +371,8 @@ export async function instantiateWithRuntime(result: CompileResult) {
   }
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   setInstanceFn?.(instance);
-  return instance;
+  if (result.targetProfile?.semanticProviders !== "native-first") return instance;
+  return { exports: jsFacingExports(result, instance) } as unknown as WebAssembly.Instance;
 }
 
 /**
@@ -378,7 +406,7 @@ export async function compileToWasm(source: string) {
   const { instance } = await WebAssembly.instantiate(result.binary, manualImports);
   // Set exports so runtime callbacks (iterator protocol, struct field getters) can access them
   setInstanceFn?.(instance);
-  return instance.exports as Record<string, Function>;
+  return jsFacingExports(result, instance);
 }
 
 /**

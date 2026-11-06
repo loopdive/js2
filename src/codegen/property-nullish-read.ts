@@ -7,6 +7,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { ensureExternIsUndefinedImport, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { reserveMemberGetDispatch } from "./member-get-dispatch.js";
+import { notePromiseDynamicMemberRead } from "./promise-dynamic-member-read.js"; // (#7099)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { realmGlobalModuleGlobalReadApplies } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A); (#5342)
 import { compilePropertyAccess, typeErrorThrowInstrs } from "./property-access.js";
@@ -30,6 +31,13 @@ export function compilePropertyAccessForNullishObservation(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | null {
+  // (#7099) This route reads `p.then` without passing through
+  // `compileExpression`, whose member arm demands the `$Promise` arm of
+  // `__extern_get` for a `%Promise.prototype%` member name. Without the demand
+  // `p.then === undefined` read `undefined` while `typeof p.then` two lines away
+  // read the closure. Demand only — emits nothing, and declines off the
+  // standalone/native-first promise lanes and in files that never name `Promise`.
+  notePromiseDynamicMemberRead(ctx, fctx, expr);
   if (expr.questionDotToken) return compilePropertyAccess(ctx, fctx, expr);
   // Private fields cannot be deleted, inherited, or supplied by a host object.
   // Keep their typed struct read so an uninitialized optional numeric field's

@@ -163,8 +163,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    * consumer's `catch` never matches, and the payload is lost in `catch_all`.
    */
   sharedExceptionTag?: boolean;
-  /** (#5247) Provider build — exports are wasm→wasm call targets, so the
-   *  export-boundary throw unwrapping stays off (export-throw-boundary.ts). */
+  /** (#5247) Provider build — exports are wasm→wasm call targets that no
+   *  JS host consumes directly. */
   exportsConsumedByWasm?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
@@ -194,6 +194,7 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   hostBridge?: "auto" | "always" | "off";
   /** Select migrated Wasm-native semantic providers independently of JS interop. */
   semanticProviders?: import("../../target-profile.js").SemanticProviderSelection;
+  hostAccelerators?: readonly string[]; // (#6978) see CompileOptions.hostAccelerators
   /**
    * (#2141 S1) Honest generic `any` boxing — the Stage-B regime flag. When ON,
    * `boxToAny`'s externref arm routes through `__any_box_extern` (runtime
@@ -458,6 +459,8 @@ export interface NativeGeneratorInfo {
   nativeDelegates?: boolean;
   /** Generic protocol callbacks must reject reentrant next/return/throw. */
   executingFieldIdx?: number;
+  /** (#6980) Numeric-carrier `.return(v)` provenance — see `frame-core.ts` RETURN_ORIGIN_*. */
+  returnOriginFieldIdx?: number;
   /** Source-level generator function name. */
   functionName: string;
   /**
@@ -4249,6 +4252,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  later reads. Mirrors `methodClosureGlobals` (#1394) for the function-decl
    *  case where the same JS identifier is read as a value at multiple sites. */
   funcClosureGlobals: Map<string, number>;
+  /** (#6987) Latest memoized VALUE of a capturing nested constructor, keyed by
+   *  name — the `__closure_proto_of` identity key such a function lacks. */
+  nestedFnValueGlobals?: Map<string, number>;
   /** (#4530) Canonical singleton KEY per target function index. An import
    *  alias (`import cx from 'clsx'` → funcMap "cx" → clsx's funcIdx) reads the
    *  same function value under a different name; keying the singleton pair by

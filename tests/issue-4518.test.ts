@@ -179,7 +179,7 @@ describe("#4518 residuals — measured, deliberately not fixed here", () => {
   // argument is dropped instead of appended. The real fix is unifying the
   // omitted-arg pad onto the #2106 singleton, which changes every
   // `ref.is_null`-means-absent member body and is its own blast radius.
-  it.fails('concat(null) appends "null"', async () => {
+  it('concat(null) appends "null"', async () => {
     expect(await runStandalone(prog(`return String.prototype.concat.call("x", null) === "xnull" ? 1 : 0;`))).toBe(1);
   });
 

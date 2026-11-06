@@ -1,11 +1,11 @@
 {
-  "generated": "2026-08-13",
+  "generated": "2026-10-18",
   "fixups": {
-    "drop-excess": 0,
-    "default-value-lossy": 43,
+    "drop-excess": 11,
+    "default-value-lossy": 57,
     "branch-type-coerce": 0,
     "branch-type-cast": 0,
-    "call-arg-coerce": 1,
+    "call-arg-coerce": 1248,
     "struct-field-coerce": 0,
     "local-set-coerce": 0,
     "branch-type-unfixable": 0

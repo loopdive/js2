@@ -61,6 +61,7 @@ export function emitStringExoticIndexGet(
   fctx: FunctionContext,
   recvExpr: ts.Expression,
   indexExpr: ts.Expression,
+  wrapperReceiver = false,
 ): ValType | null {
   ensureObjectRuntime(ctx);
   ensureNativeStringHelpers(ctx);
@@ -81,7 +82,15 @@ export function emitStringExoticIndexGet(
   // reads the String exotic's [[StringData]], which a `w.toString = …` cannot
   // move, so the bare slot probe is what this site always meant.
   const strLocal = allocLocal(fctx, `__sxi_s_${fctx.locals.length}`, { kind: "ref_null", typeIdx: anyStr });
+  // (#6651 W1a) A String WRAPPER is an ordinary `$Object` beyond its
+  // [[StringData]] (§10.4.3.1 [[GetOwnProperty]] falls back to
+  // OrdinaryGetOwnProperty), so a miss reads its own table / prototype chain:
+  // `s[4] = 1; s[4]` must answer 1. A primitive receiver keeps `undefined`.
+  const getIdxIdx = wrapperReceiver ? ctx.funcMap.get("__extern_get_idx") : undefined;
+  const recvLocal =
+    getIdxIdx === undefined ? undefined : allocLocal(fctx, `__sxi_o_${fctx.locals.length}`, { kind: "externref" });
   compileExpression(ctx, fctx, recvExpr, { kind: "externref" });
+  if (recvLocal !== undefined) fctx.body.push({ op: "local.tee", index: recvLocal });
   fctx.body.push({ op: "call", funcIdx: slotIdx });
   fctx.body.push({ op: "local.set", index: strLocal });
 
@@ -105,7 +114,13 @@ export function emitStringExoticIndexGet(
     { op: "local.set", index: resultLocal },
   ];
   const outOfRange: Instr[] = [
-    ...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } as Instr]),
+    ...(recvLocal !== undefined && getIdxIdx !== undefined
+      ? ([
+          { op: "local.get", index: recvLocal },
+          { op: "local.get", index: idxF64 },
+          { op: "call", funcIdx: getIdxIdx },
+        ] satisfies Instr[])
+      : (undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } as Instr])),
     { op: "local.set", index: resultLocal },
   ];
 

@@ -27,7 +27,8 @@ async function runReturning(src: string): Promise<unknown> {
   // Wire up exports for __sget_* / callback fallbacks — required when the
   // catch destructuring helper reads struct externref fields via the
   // __extern_get → __sget_* fallback path.
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  imports.setInstance?.(instance);
   return (instance.exports as { run: () => unknown }).run();
 }
 

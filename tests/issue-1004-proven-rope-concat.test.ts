@@ -6,7 +6,8 @@
  * threshold whose outcome is already proven.
  */
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/index.js";
+import { compile, type CompileResult } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 
 const FLAG = "JS2WASM_NATIVE_PROVEN_ROPE_CONCAT";
 
@@ -30,9 +31,14 @@ async function compileNative(source: string, enabled = true) {
   }
 }
 
-async function instantiate(binary: Uint8Array): Promise<WebAssembly.Exports> {
-  const module = await WebAssembly.compile(binary);
-  return (await WebAssembly.instantiate(module, {})).exports;
+// (9a98f21236) `"x".repeat(n)` now throws a real RangeError INSTANCE for an
+// invalid count, which on the gc/JS-host lane imports `env.__new_RangeError`.
+// Instantiate with the production import resolver instead of `{}` so the
+// module links; the rope-concat behaviour under test is unchanged.
+async function instantiate(result: CompileResult): Promise<WebAssembly.Exports> {
+  const module = await WebAssembly.compile(result.binary);
+  const imports = buildImports(result.imports, undefined, result.stringPool);
+  return (await WebAssembly.instantiate(module, imports as WebAssembly.Imports)).exports;
 }
 
 function hasDirectRopeLocals(wat: string | undefined): boolean {
@@ -54,8 +60,8 @@ describe("#1004 proven native rope concat", () => {
     expect(hasDirectRopeLocals(specialized.wat)).toBe(true);
     expect(hasDirectRopeLocals(generic.wat)).toBe(false);
 
-    const specializedExports = await instantiate(specialized.binary);
-    const genericExports = await instantiate(generic.binary);
+    const specializedExports = await instantiate(specialized);
+    const genericExports = await instantiate(generic);
     expect((specializedExports.run as () => number)()).toBe(1_024_000 + 120);
     expect((genericExports.run as () => number)()).toBe(1_024_000 + 120);
   });
@@ -75,8 +81,8 @@ describe("#1004 proven native rope concat", () => {
     `);
     expect(hasDirectRopeLocals(atThreshold.wat)).toBe(true);
     expect(hasDirectRopeLocals(belowThreshold.wat)).toBe(false);
-    expect(((await instantiate(atThreshold.binary)).run as () => number)()).toBe(70);
-    expect(((await instantiate(belowThreshold.binary)).run as () => number)()).toBe(69);
+    expect(((await instantiate(atThreshold)).run as () => number)()).toBe(70);
+    expect(((await instantiate(belowThreshold)).run as () => number)()).toBe(69);
   });
 
   it("does not specialize a mutable alias or an invalid repeat count", async () => {
@@ -102,6 +108,6 @@ describe("#1004 proven native rope concat", () => {
     expect(hasDirectRopeLocals(mutable.wat)).toBe(false);
     expect(hasDirectRopeLocals(invalid.wat)).toBe(false);
     expect(hasDirectRopeLocals(dynamicReceiver.wat)).toBe(false);
-    expect(((await instantiate(mutable.binary)).run as () => number)()).toBe(7);
+    expect(((await instantiate(mutable)).run as () => number)()).toBe(7);
   });
 });

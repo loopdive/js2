@@ -34,7 +34,8 @@ async function runHost(source: string): Promise<unknown> {
   if (!WebAssembly.validate(result.binary)) throw new Error("invalid wasm");
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports as { setExports?: (e: WebAssembly.Exports) => void }).setExports?.(instance.exports);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  (imports as { setInstance?: (e: WebAssembly.Instance) => void }).setInstance?.(instance);
   return (instance.exports as { run: () => unknown }).run();
 }
 
@@ -138,7 +139,10 @@ describe("#739 S2 — known residuals (documented, not fixed here)", () => {
     expect(await runHost(src)).toBe("no");
   });
 
-  it("defineProperties map MEMBER descriptor is still missed", async () => {
+  it("defineProperties map MEMBER descriptor accessor is observed (residual resolved)", async () => {
+    // (#7014 wave 15) This used to pin the residual 'no'. With the instance
+    // wiring the harness now uses, ToPropertyDescriptor reads the member
+    // descriptor's `configurable` getter exactly as JS does (node: 'yes').
     const src = `export function run(): string {
       let accessed = 'no';
       const d: any = { value: 1 };
@@ -149,6 +153,6 @@ describe("#739 S2 — known residuals (documented, not fixed here)", () => {
       Object.defineProperties(o, { p: d });
       return accessed;
     }`;
-    expect(await runHost(src)).toBe("no");
+    expect(await runHost(src)).toBe("yes");
   });
 });

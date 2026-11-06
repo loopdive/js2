@@ -1,0 +1,40 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 string-len contract > adds ONE feature row and REUSES an existing ABI, minting no new signature 3ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 string-len contract > is TWO-armed at the provider level, like both family-2 predecessors 0ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 string-len contract > carries NO intrinsic instruction — the demand is requested at freeze 8ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 string-len contract > names the F2-S2 wasm:js-string record, and the async projection excludes it BY ID 2ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 provider policy > selects the host arm through the central capability record, MODULE included 3ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 provider policy > selects the native carrier-field arm, requesting NO host capability 2ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 provider policy > refuses the arm its caller resolved to unsupported, naming the feature and the policy 3ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 provider policy > defaults an omitted policy closed and publishes the resolved decision 2ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 provider policy > resolves independently of the eq, the compare, and every family-1 arm 2ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 provider policy > adds no row when nothing reads .length 2ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 end-to-end behaviour is unchanged > binds the host lane's existing wasm:js-string.length builtin, in the same position 871ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 end-to-end behaviour is unchanged > keeps length at its registered position when concat precedes it 56ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 end-to-end behaviour is unchanged > reads the carrier field on every native-strings lane, with no wasm:js-string import 409ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 end-to-end behaviour is unchanged > answers .length exactly as JavaScript does 99ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 end-to-end behaviour is unchanged > answers .length identically on a native-strings lane 146ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 end-to-end behaviour is unchanged > still lowers .length on the linear backend, which ignores the provider 52ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 the attachment reads the frozen manifest > consults the prepared string-len provider 2ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 the attachment reads the frozen manifest > attaches through the LENGTH-only pass, not the omnibus one 2ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 the attachment reads the frozen manifest > reads NO lane discriminator and no physical carrier index 4ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 the attachment reads the frozen manifest > fails closed on a missing host import rather than registering a new one 3ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 the attachment reads the frozen manifest > has left prepareStrings — that pass decides no length provider at all 3ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 the attachment reads the frozen manifest > partitions an unsupported length policy owner-locally, naming the policy 2ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 string.len has ONE emit authority > attaches whichever provider the caller supplies, and only when unattached 2ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 string.len has ONE emit authority > touches ONLY string.len — the omnibus pass would re-decide five other seams 1ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 string.len has ONE emit authority > refuses to lower an unattached string.len instead of re-deciding the lane 1ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 string.len has ONE emit authority > accepts an already-attached provider of EITHER kind, so the guard is not a blanket refusal 1ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 string.len has ONE emit authority > keeps the retired fallback's lane read out of the emitter 3ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 carrier-field validation > refuses a carrier-field provider that requests a host capability 2ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 carrier-field validation > refuses an unknown carrier role 2ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 carrier-field validation > refuses a negative or non-integral field index 4ms
+ ✓ tests/issue-3526-string-boundary-len.test.ts > #3526 F2-S4 carrier-field validation > keeps the carrier role closed at the TYPE level too 0ms
+
+ Test Files  1 passed (1)
+      Tests  31 passed (31)
+   Start at  19:55:12
+   Duration  34.12s (transform 22.98s, setup 0ms, collect 31.83s, tests 1.69s, environment 0ms, prepare 106ms)
+

@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { compile } from "../src/index.js";
-import { buildImports } from "./equivalence/helpers.js";
+import { compile, type CompileResult } from "../src/index.js";
+import { buildImports as buildHostImports } from "../src/runtime.js";
+
+// (#7029) The equivalence helper's hand-rolled `env` does not serve
+// `__bigint_ctor_ref`, which the JS-host lane now imports for these BigInt
+// programs, so every instantiate failed with a LinkError. Link against the
+// production resolver, the import contract the compiler emits against.
+function buildImports(result: CompileResult): WebAssembly.Imports {
+  return buildHostImports(result.imports, undefined, result.stringPool) as WebAssembly.Imports;
+}
 
 describe("Issue #237: BigInt i64 vs externref type mismatch", () => {
   it("should compile BigInt literals without type mismatch errors", async () => {

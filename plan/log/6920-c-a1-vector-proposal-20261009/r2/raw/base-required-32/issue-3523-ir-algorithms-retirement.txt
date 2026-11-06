@@ -1,0 +1,15 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3523-ir-algorithms-retirement.test.ts > #3523 Algorithms legacy-body retirement > seals all seven terminals as one prepared IR component and retires the exact final six bodies 1693ms
+ ✓ tests/issue-3523-ir-algorithms-retirement.test.ts > #3523 Algorithms legacy-body retirement > runs the exact 20-line trace twice while initializing and retaining one shared Map 21ms
+ ✓ tests/issue-3523-ir-algorithms-retirement.test.ts > #3523 Algorithms legacy-body retirement > never enters the direct function-body emitter for the five newly retired functions 561ms
+ ✓ tests/issue-3523-ir-algorithms-retirement.test.ts > #3523 Algorithms legacy-body retirement > never enters the direct module-init emitter and proves the poison with unsupported Map shapes 463ms
+ ✓ tests/issue-3523-ir-algorithms-retirement.test.ts > #3523 Algorithms legacy-body retirement > preserves the optimized call shapes for string building, integer search, recursion, and vector mutation 5ms
+ ✓ tests/issue-3523-ir-algorithms-retirement.test.ts > #3523 Algorithms legacy-body retirement > batches only maximal concat trees and preserves shared intermediates and two-part calls 45ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  20:13:33
+   Duration  35.53s (transform 23.07s, setup 0ms, collect 32.25s, tests 2.79s, environment 0ms, prepare 72ms)
+

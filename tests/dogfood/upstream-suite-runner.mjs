@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import * as ts from "typescript";
 import { readWorkerCompileDuration, stripWorkerProtocol } from "./upstream-suite-worker-protocol.mjs";
+import { isStandaloneUpstreamLane, standaloneTestModuleSource } from "./upstream-standalone-lane.mjs";
 import {
   attributeRejections,
   createUnhandledRejectionSink,
@@ -1250,7 +1251,10 @@ export async function compileAndRunUpstreamModule({
   workerEnv,
 }) {
   mkdirSync(dirname(generatedPath), { recursive: true });
-  writeFileSync(generatedPath, source);
+  // (#7013) The standalone lane compiles the same module plus a numeric
+  // test-only export boundary; the native oracle always runs the unmodified
+  // source, and the JS-host lane writes exactly the bytes it always wrote.
+  writeFileSync(generatedPath, isStandaloneUpstreamLane() ? standaloneTestModuleSource(source, generatedPath) : source);
 
   let native;
   try {
@@ -1475,8 +1479,11 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
     nativeError: run.result.native.fatal ?? moduleRejectionText(run.result.native.unhandledRejections) ?? null,
     runtimeError: run.result.wasm?.fatal ?? moduleRejectionText(run.result.wasm?.unhandledRejections) ?? null,
   }));
+  const standalone = isStandaloneUpstreamLane();
+  // (#7013) Only the opt-in lane stamps its target; JS-host reports keep their shape.
+  if (standalone) report.target = "standalone";
   report.summary = {
-    headline: `${report.results.passed}/${report.results.scored} admitted original tests pass in Wasm`,
+    headline: `${report.results.passed}/${report.results.scored} admitted original tests pass in ${standalone ? "standalone " : ""}Wasm`,
     exactDenominator: report.results.scored,
     upstreamFiles: report.extraction.filesSeen,
     deferredFiles: report.extraction.filesDeferred,
@@ -1493,9 +1500,15 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
   return report;
 }
 
+/** (#7013) The standalone lane writes beside, never over, the JS-host report. */
+function upstreamReportPath(reportPath) {
+  return isStandaloneUpstreamLane() ? reportPath.replace(/\.json$/, ".standalone.json") : reportPath;
+}
+
 export function writeUpstreamReport(reportPath, report) {
-  mkdirSync(dirname(reportPath), { recursive: true });
-  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  const target = upstreamReportPath(reportPath);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, `${JSON.stringify(report, null, 2)}\n`);
 }
 
 export function cliUpstreamHarness(runHarness, { reportSucceeded } = {}) {

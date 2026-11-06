@@ -25,6 +25,19 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { ensureDefineRejectionGlobal } from "./object-model/define-rejection-channel.js"; // (#6651 W1a)
+
+/**
+ * (#6651 W1a) Park the TypeError in the #6770 S4 rejection global before the
+ * `throw`, so `Reflect.defineProperty` (and a Proxy [[Set]] forward's
+ * CreateDataProperty) answer `false` instead of propagating it.
+ */
+function parkedThrow(ctx: CodegenContext, instrs: Instr[]): Instr[] {
+  const g = ensureDefineRejectionGlobal(ctx);
+  const last = instrs[instrs.length - 1];
+  if (g === undefined || last === undefined || last.op !== "throw") return instrs;
+  return [...instrs.slice(0, -1), { op: "global.set", index: g }, { op: "global.get", index: g }, last];
+}
 
 /** `$PropEntry.$flags` bit 0 — mirrors the object-runtime flag ABI (#1888). */
 const FLAG_WRITABLE = 0x01;
@@ -129,12 +142,50 @@ export function nonWritableLengthIndexGuard(
 export function nonExtensibleFreshIndexGuard(
   ctx: CodegenContext,
   deps: VecRejectionDeps,
-  l: { recvLocalIdx: number; i: number; len: number },
+  l: { recvLocalIdx: number; keyLocalIdx: number; i: number; len: number },
 ): Instr[] {
   const isExtIdx = ctx.funcMap.get("__object_isExtensible_obj");
+  const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
   const { throwTypeMsg } = deps;
   if (throwTypeMsg === null || isExtIdx === undefined) return [];
+  // (#6651 W1a) A NAMED key is equally a new own property when the vec does
+  // not already own it (companion or expando bag): `Object.preventExtensions(a);
+  // Reflect.defineProperty(a, "foo", …)` must be refused, which is what a
+  // trapless Proxy's [[Set]] forward reaches through CreateDataProperty.
+  const namedArm: Instr[] =
+    hasOwnIdx === undefined
+      ? []
+      : [
+          { op: "local.get", index: l.i },
+          { op: "i32.const", value: 0 },
+          { op: "i32.lt_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: l.recvLocalIdx },
+              { op: "call", funcIdx: isExtIdx },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: l.recvLocalIdx },
+                  { op: "local.get", index: l.keyLocalIdx },
+                  { op: "call", funcIdx: hasOwnIdx },
+                  { op: "i32.eqz" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: parkedThrow(ctx, throwTypeMsg("TypeError: Cannot define property, object is not extensible")),
+                  },
+                ],
+              },
+            ],
+          },
+        ];
   return [
+    ...namedArm,
     { op: "local.get", index: l.i },
     { op: "i32.const", value: 0 },
     { op: "i32.ge_s" },

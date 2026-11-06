@@ -32,6 +32,16 @@ function terminal(result: Awaited<ReturnType<typeof compile>>): readonly IrObser
   return (result.irOutcomes ?? []).filter((outcome) => outcome.kind !== "non-executable");
 }
 
+/** (#7002) An invariant is surfaced as a non-fatal diagnostic; the compile result matches telemetry-off. */
+function expectInvariantWarning(result: Awaited<ReturnType<typeof compile>>, code: string): void {
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(
+    result.errors.some(
+      (error) => error.severity === "warning" && error.message.startsWith(`IR outcome invariant [${code}]`),
+    ),
+  ).toBe(true);
+}
+
 function nonExecutable(result: Awaited<ReturnType<typeof compile>>): readonly IrObservedOutcome[] {
   return (result.irOutcomes ?? []).filter((outcome) => outcome.kind === "non-executable");
 }
@@ -141,7 +151,7 @@ describe("#3519 typed IR terminal outcomes", () => {
     const result = await compile(
       `export function find(): number {
         const values = [10, 20, 30];
-        return values.indexOf(20);
+        return values.lastIndexOf(20);
       }`,
       { fileName: "array-method-selector.ts", trackIrOutcomes: true },
     );
@@ -342,9 +352,16 @@ export function answer(): number { return 42; }
   });
 
   it("records the compiler-injected timer wrapper as an exact IR terminal", async () => {
+    // (#7108) Pinned to the profile this fixture was written for. #6708 S6
+    // (612cea9864) flipped the DEFAULT `semanticProviders` to native-first,
+    // where the unannotated `() => {}` callback is refused `closure-return-type`,
+    // `delayed` stays legacy and the injected `setTimeout` follows it
+    // (`call-graph-closure`) — so the default profile has no IR timer terminal
+    // to record. The ledger contract under test is profile-independent.
     const result = await compile(`export function delayed(): void { setTimeout(() => {}, 1); }`, {
       fileName: "timer.ts",
       trackIrOutcomes: true,
+      semanticProviders: "host-assisted",
     });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(terminal(result)).toHaveLength(2);
@@ -491,7 +508,10 @@ export function second(x: number): number { return x + 2; }`,
       }`,
       { fileName: "promise-registration.ts", trackIrOutcomes: true },
     );
-    expect(result.success).toBe(false);
+    // (#7002) Telemetry is observation-only: "not demoted" is the invariant
+    // ROW below plus a surfaced diagnostic. `success` matches the telemetry-off
+    // compile, which keeps the legacy body.
+    expectInvariantWarning(result, "unexpected-internal-throw");
     expect(terminal(result).find((outcome) => outcome.displayName === "delay")).toMatchObject({
       kind: "invariant",
       code: "unexpected-internal-throw",
@@ -499,6 +519,10 @@ export function second(x: number): number { return x + 2; }`,
   });
 
   it("does not demote unexpected imported-call planning throws", async () => {
+    // (#7108) Pinned to host-assisted for the same #6708 default flip: under
+    // native-first this cross-module call is planned through the program
+    // callable graph (`planProgramCallableCall`), so the injection inside the
+    // module-import certification arm is never reached and nothing throws.
     process.env.JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW = "run";
     const result = await compileMulti(
       {
@@ -507,9 +531,9 @@ export function second(x: number): number { return x + 2; }`,
 export function run(value: number): number { return imported(value); }`,
       },
       "main.ts",
-      { trackIrOutcomes: true },
+      { trackIrOutcomes: true, semanticProviders: "host-assisted" },
     );
-    expect(result.success).toBe(false);
+    expectInvariantWarning(result, "unexpected-internal-throw"); // (#7002) see the Promise case above
     expect(terminal(result).find((outcome) => outcome.displayName === "run")).toMatchObject({
       kind: "invariant",
       code: "unexpected-internal-throw",

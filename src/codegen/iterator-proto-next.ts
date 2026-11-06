@@ -26,7 +26,9 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { emitThrowTypeError } from "./js-errors.js";
 import {
+  ensureNativeArrayFromIterN,
   ensureNativeIteratorRuntime,
+  userIterRecordDirectInstrs,
   ITER_FAMILY_ARRAY,
   ITER_FAMILY_MAP,
   ITER_FAMILY_SET,
@@ -42,6 +44,10 @@ import {
 } from "./array-object-proto.js";
 import { ensureStandaloneNativeMethodClosure } from "./native-proto.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
+import { allocLocal } from "./context/locals.js";
+import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -326,4 +332,189 @@ export function unshiftExternGetIterRecArm(ctx: CodegenContext): void {
       else: [],
     },
   );
+}
+
+// ── (#6484 / #6651 W9) `new TA(array)` must honour a patched
+// `%ArrayIteratorPrototype%.next`.
+//
+// §23.2.5.1 step 6.b.iv: an Object source is read through
+// `GetMethod(O, @@iterator)` → `IteratorToList(GetIteratorFromMethod(…))`. For a
+// plain array that is `Array.prototype.values`, i.e. a genuine ArrayIterator
+// whose `next` is looked up on `%ArrayIteratorPrototype%` at EVERY step. The
+// dynamic TA constructor's plain-vec arms copy the vec's storage directly,
+// which is only observably equivalent while that `next` is the intrinsic one
+// (`TypedArrayConstructors/ctors/object-arg/iterated-array-with-modified-array-iterator.js`).
+//
+// `emitPatchedArrayIteratorOpen` emits the guard and, only when the intrinsic
+// was replaced, opens the iterator the spec way: a genuine array iterator
+// record over the source (`__iterator`), wrapped in an OBJ record so the native
+// ladder re-reads `next` by PROPERTY (an `$__IterRec` resolves property reads
+// through its family prototype, S2 above) and calls it with the genuine
+// iterator as `this`. A patched `next` that delegates to the original therefore
+// still steps the real record.
+//
+// Fast path untouched: the prototype singleton is lazily materialised, so a
+// module that never reached `%ArrayIteratorPrototype%` reads a null global and
+// takes the copy arm with one `global.get` + `ref.is_null`; a materialised but
+// unpatched prototype adds one property read and an identity compare.
+
+const EQ_HEAP_TYPE = -19;
+/** Same global `emitIteratorPrototypeSingleton(ctx, fctx, "Array")` caches into. */
+const ARRAY_ITER_PROTO_GLOBAL = "__native_array_iterator_prototype";
+
+function arrayIterProtoGlobal(ctx: CodegenContext): number {
+  let globalIdx = ctx.builtinObjectGlobals.get(ARRAY_ITER_PROTO_GLOBAL);
+  if (globalIdx === undefined) {
+    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+    ctx.mod.globals.push({
+      name: ARRAY_ITER_PROTO_GLOBAL,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.builtinObjectGlobals.set(ARRAY_ITER_PROTO_GLOBAL, globalIdx);
+  }
+  return globalIdx;
+}
+
+/**
+ * Emit into `fctx.body`: set a fresh externref local to `null` when the
+ * intrinsic `%ArrayIteratorPrototype%.next` is in place, else to an OBJ
+ * iterator record over the source held in anyref local `srcAnyLocal`. Returns
+ * that local, or `undefined` (nothing emitted) when a piece is unavailable.
+ */
+function emitPatchedArrayIteratorOpen(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  srcAnyLocal: number,
+): number | undefined {
+  const brand = ensureArrayIteratorNativeProtoGlue(ctx);
+  const closure =
+    brand === undefined
+      ? null
+      : ensureStandaloneNativeMethodClosure(ctx, brand, "next", "method", { refusalBodyFallback: true });
+  if (!closure) return undefined;
+  ensureNativeIteratorRuntime(ctx);
+  // Arms `__extern_get`'s `$__IterRec` prologue, so the OBJ step's
+  // `Get(rec, "next")` reaches the family prototype (#6484 S2).
+  ensureIterRecPrototypeHelper(ctx);
+  const externGet = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  const iteratorIdx = ctx.funcMap.get("__iterator");
+  if (externGet === undefined || iteratorIdx === undefined) return undefined;
+  addStringConstantGlobal(ctx, "next");
+  const protoGlobal = arrayIterProtoGlobal(ctx);
+
+  const out = allocLocal(fctx, `__ta_pai_w_${fctx.locals.length}`, { kind: "externref" });
+  const nextAny = allocLocal(fctx, `__ta_pai_n_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  const rec = allocLocal(fctx, `__ta_pai_r_${fctx.locals.length}`, { kind: "externref" });
+  const intact: Instr[] = [
+    { op: "local.get", index: nextAny },
+    { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: nextAny },
+        { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+        ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+        { op: "ref.eq" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+  ];
+  const open: Instr[] = [
+    { op: "local.get", index: srcAnyLocal },
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: iteratorIdx },
+    { op: "local.set", index: rec },
+    ...userIterRecordDirectInstrs(ctx, rec, true),
+    { op: "local.set", index: out },
+  ];
+  fctx.body.push(
+    { op: "ref.null.extern" },
+    { op: "local.set", index: out },
+    { op: "global.get", index: protoGlobal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [],
+      else: [
+        { op: "global.get", index: protoGlobal },
+        ...stringConstantExternrefInstrs(ctx, "next"),
+        { op: "call", funcIdx: externGet },
+        { op: "any.convert_extern" },
+        { op: "local.set", index: nextAny },
+        ...intact,
+        { op: "if", blockType: { kind: "empty" }, then: [], else: open },
+      ],
+    },
+  );
+  return out;
+}
+
+/**
+ * Split the current arm on {@link emitPatchedArrayIteratorOpen}: the open code
+ * is emitted into `fctx.body`, followed by `w == null ? restArm : patchedArm`.
+ * The caller emits its unchanged copy into `restArm`; `emitCopy` fills
+ * `patchedArm` with IteratorToList (`__array_from_iter_n(w, -1)`) followed by
+ * the caller's allocate + element-copy loop over the materialised list.
+ */
+export function emitPatchedArrayIterCopy(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  srcAnyLocal: number,
+  track: (arm: Instr[]) => Instr[],
+):
+  | {
+      restArm: Instr[];
+      emitCopy(dstNLocal: number, emitAlloc: () => void, emitCopyLoop: (push: (iLocal: number) => void) => void): void;
+    }
+  | undefined {
+  const afin = ensureNativeArrayFromIterN(ctx);
+  const lenIdx = ctx.funcMap.get("__extern_length");
+  const getIdx = ctx.funcMap.get("__extern_get_idx");
+  if (lenIdx === undefined || getIdx === undefined) return undefined;
+  const w = emitPatchedArrayIteratorOpen(ctx, fctx, srcAnyLocal);
+  if (w === undefined) return undefined;
+  const restArm = track([]);
+  const patchedArm = track([]);
+  fctx.body.push(
+    { op: "local.get", index: w },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: restArm, else: patchedArm },
+  );
+  return {
+    restArm,
+    emitCopy(dstNLocal, emitAlloc, emitCopyLoop) {
+      const saved = fctx.body;
+      fctx.body = patchedArm;
+      const mat = allocLocal(fctx, `__ta_pai_m_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push(
+        { op: "local.get", index: w },
+        { op: "f64.const", value: -1 },
+        { op: "call", funcIdx: afin },
+        { op: "local.tee", index: mat },
+        { op: "call", funcIdx: lenIdx },
+        { op: "i32.trunc_sat_f64_s" },
+        { op: "local.set", index: dstNLocal },
+      );
+      emitAlloc();
+      emitCopyLoop((iLocal) => {
+        fctx.body.push(
+          { op: "local.get", index: mat },
+          { op: "local.get", index: iLocal },
+          { op: "f64.convert_i32_s" },
+          { op: "call", funcIdx: getIdx },
+        );
+      });
+      fctx.body = saved;
+    },
+  };
 }

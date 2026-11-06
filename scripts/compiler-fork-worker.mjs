@@ -1,4 +1,4 @@
-import { parseTest262SemanticProviders } from "./test262-lane.mjs";
+import { requireTest262CompilerPath } from "./test262-compiler-path.mjs";
 /**
  * Compiler fork worker — runs as a child process (not worker thread).
  * Uses process.send/process.on('message') for IPC.
@@ -10,6 +10,8 @@ import { parseTest262SemanticProviders } from "./test262-lane.mjs";
 import { writeFileSync } from "node:fs";
 import { compile, createIncrementalCompiler } from "./compiler-bundle.mjs";
 import { isPoisonCompileError } from "./test262-poison-error.mjs";
+
+requireTest262CompilerPath(process.env.TEST262_COMPILER_PATH);
 
 let compileCount = 0;
 const GC_INTERVAL = 25;
@@ -57,6 +59,7 @@ function createFreshCompiler() {
 createFreshCompiler();
 
 process.on("message", async (msg) => {
+  requireTest262CompilerPath(msg.compilerPath ?? process.env.TEST262_COMPILER_PATH);
   const start = performance.now();
   try {
     try {
@@ -65,12 +68,10 @@ process.on("message", async (msg) => {
       // so the synthetic `export function test()` wrapper does not unmap sloppy
       // `arguments`. Undefined ⇒ default true (module input is strict).
       const inferModuleStrictArguments = msg.inferModuleStrictArguments;
-      const semanticProviders = parseTest262SemanticProviders(msg.semanticProviders ?? process.env.TEST262_SEMANTIC_PROVIDERS);
       const result = incrementalCompiler
         ? await compileFn(msg.source, {
             sourceMapUrl: msg.sourceMapUrl || "test.wasm.map",
             inferModuleStrictArguments,
-            semanticProviders,
           })
         : await compile(msg.source, {
             fileName: "test.ts",
@@ -81,21 +82,18 @@ process.on("message", async (msg) => {
             // #6776: see createFreshCompiler — the worker validates itself.
             validate: false,
             inferModuleStrictArguments,
-            semanticProviders,
             // (#3049 C1) See createFreshCompiler — host lane defers top-level
             // init; wasm-exec-worker calls __module_init() after setExports.
             deferTopLevelInit: true,
           });
       const compileMs = performance.now() - start;
 
-      if (!result.success || result.errors.some(e => e.severity === "error")) {
+      if (!result.success || result.errors.some((e) => e.severity === "error")) {
         const errMsg = result.errors
-          .filter(e => e.severity === "error")
-          .map(e => `L${e.line}:${e.column} ${e.message}`)
+          .filter((e) => e.severity === "error")
+          .map((e) => `L${e.line}:${e.column} ${e.message}`)
           .join("; ");
-        const errorCodes = result.errors
-          .filter(e => e.severity === "error" && e.code)
-          .map(e => e.code);
+        const errorCodes = result.errors.filter((e) => e.severity === "error" && e.code).map((e) => e.code);
 
         // #1808: an emit-class error result means the compiler/heap may be in a
         // degraded state — schedule an immediate recreate so it cannot poison
@@ -105,13 +103,16 @@ process.on("message", async (msg) => {
         // Write error to disk if cachePath provided
         if (msg.wasmPath && msg.metaPath) {
           writeFileSync(msg.wasmPath, new Uint8Array(0));
-          writeFileSync(msg.metaPath, JSON.stringify({
-            ok: false,
-            timeout: false,
-            error: errMsg || "unknown",
-            errorCodes,
-            compileMs,
-          }));
+          writeFileSync(
+            msg.metaPath,
+            JSON.stringify({
+              ok: false,
+              timeout: false,
+              error: errMsg || "unknown",
+              errorCodes,
+              compileMs,
+            }),
+          );
         }
 
         process.send({ id: msg.id, ok: false, error: errMsg || "unknown", errorCodes, compileMs });
@@ -121,13 +122,16 @@ process.on("message", async (msg) => {
       // Write binary + metadata directly to disk (no base64 over IPC)
       if (msg.wasmPath && msg.metaPath) {
         writeFileSync(msg.wasmPath, result.binary);
-        writeFileSync(msg.metaPath, JSON.stringify({
-          ok: true,
-          stringPool: result.stringPool,
-          imports: result.imports,
-          sourceMap: result.sourceMap || null,
-          compileMs,
-        }));
+        writeFileSync(
+          msg.metaPath,
+          JSON.stringify({
+            ok: true,
+            stringPool: result.stringPool,
+            imports: result.imports,
+            sourceMap: result.sourceMap || null,
+            compileMs,
+          }),
+        );
         process.send({
           id: msg.id,
           ok: true,

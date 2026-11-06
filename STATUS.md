@@ -16,17 +16,25 @@ prose anywhere in the repo.
 
 ## Test262 conformance
 
-<!-- AUTO:conformance-start -->
-
-**test262 conformance**: 39,376 / 48,232 (81.6 %)
-
-<!-- AUTO:conformance-end -->
-
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 41,969 / 48,232 (87.0 %)
+**standalone (host-free) test262 conformance**: 42,460 / 48,232 (88.0 %)
 
 <!-- AUTO:conformance-standalone-end -->
+
+The standalone line is the live figure, re-measured on every merge. Every
+environment compiles with the same native semantic core; a JavaScript
+environment adds only the value adapter, explicit capabilities and named
+accelerators (`--host-accelerator`). The line below is the **retired JS-host
+lane**, frozen when its CI lane was retired on 2026-10-12 (#6979) and kept for
+history only — it is not re-measured. The per-area table further down is read
+from that same frozen snapshot.
+
+<!-- AUTO:conformance-start -->
+
+**test262 conformance**: 39,379 / 48,232 (81.6 %)
+
+<!-- AUTO:conformance-end -->
 
 <!-- AUTO:conformance-scope-start -->
 
@@ -36,22 +44,22 @@ Both figures are scored against the same **48,232** official tests (47,146 ECMAS
 
 <!-- AUTO:conformance-areas-start -->
 
-Per-area pass rates, JS-host (`gc`) lane. The area rows cover all 48,735 test files the runner scores — 503 more than the headline total, because they include proposal-stage files that the headline figures exclude.
+Per-area pass rates, retired JS-host (`gc`) lane — frozen 2026-10-12 snapshot. The area rows cover all 48,735 test files the runner scores — 503 more than the headline total, because they include proposal-stage files that the headline figures exclude.
 
 | Area          |   Pass |  Total |   Rate |
 | ------------- | -----: | -----: | -----: |
-| `language/`   | 19,846 | 23,724 | 83.7 % |
-| `built-ins/`  | 18,895 | 23,809 | 79.4 % |
+| `language/`   | 19,848 | 23,724 | 83.7 % |
+| `built-ins/`  | 18,896 | 23,809 | 79.4 % |
 | `annexB/`     |    855 |  1,086 | 78.7 % |
 | `harness/`    |    104 |    116 | 89.7 % |
-| **All areas** | 39,700 | 48,735 | 81.5 % |
+| **All areas** | 39,703 | 48,735 | 81.5 % |
 
 Selected built-ins:
 
 | Feature              | Test262 path                            |  Pass | Total |   Rate |
 | -------------------- | --------------------------------------- | ----: | ----: | -----: |
 | eval                 | `built-ins/eval` + `language/eval-code` |   320 |   357 | 89.6 % |
-| Proxy                | `built-ins/Proxy`                       |   244 |   311 | 78.5 % |
+| Proxy                | `built-ins/Proxy`                       |   245 |   311 | 78.8 % |
 | Reflect              | `built-ins/Reflect`                     |   129 |   153 | 84.3 % |
 | Temporal             | `built-ins/Temporal`                    | 3,457 | 4,603 | 75.1 % |
 | SharedArrayBuffer    | `built-ins/SharedArrayBuffer`           |    80 |   104 | 76.9 % |
@@ -112,8 +120,6 @@ table above, and the per-feature detail is in the sources linked above.
 
 - standard-library built-ins — many implemented, but not the full surface
 - `Map`, `Set`, `RegExp`, `JSON` — present but not fully spec-complete
-- standalone (no-JS-host) mode — scored separately (see the generated figures
-  above)
 - getters/setters and other highly dynamic patterns — limited
 
 **Gaps (implemented to a degree, not spec-complete — measured per area in the

@@ -1,0 +1,90 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — same intent through both genuine backends > linear memory: genuine i32 handles, i32 scratch declared before assembly, correct results 45ms
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — same intent through both genuine backends > WasmGC: genuine GC handle, ref_null $array scratch shared by both literals, correct results 9ms
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — same intent through both genuine backends > WasmGC: distinct element arrays get distinct scratch; empty reserved capacity keeps array.new_default 2ms
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — converter coherence > projects vector parameters and results to each backend's carrier 4ms
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — converter coherence > lowerIrTypeToValType threads the backend through nested element conversion 2ms
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — carrier-only vs operation resolution > carrier resolution performs exactly one carrier lookup and no data-array lookup 2ms
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — carrier-only vs operation resolution > operation resolution preserves the historical carrier, carrier, data order 0ms
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — mismatches fail at the resolution boundary > positive controls: genuine handles resolve for their own backend 2ms
+ × tests/issue-6920-vector-representation.test.ts > #6920 vector representation — mismatches fail at the resolution boundary > linear rejects a GC handle, an intersection handle and a GC layout before symbolic lookup 17ms
+   → expected [Function] to throw error matching /carries WasmGC field 'vecStructTypeId…/ but got 'ir/lower: vec representation mismatch…'
+ × tests/issue-6920-vector-representation.test.ts > #6920 vector representation — mismatches fail at the resolution boundary > linear rejects each single GC-only field grafted onto the genuine handle 1ms
+   → expected [Function] to throw an error
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — mismatches fail at the resolution boundary > WasmGC rejects a linear handle 1ms
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — mismatches fail at the resolution boundary > linear rejects a wrong carrier, element, layout geometry and allocation row 2ms
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — mismatches fail at the resolution boundary > missing capability stays an unsupported (null) result for the caller's established failure 0ms
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — mismatches fail at the resolution boundary > generic lowering fails before emitting any vector primitive on a mismatched handle 2ms
+ × tests/issue-6920-vector-representation.test.ts > #6920 vector representation — outer preflight precedes element conversion > public converter: lowerIrTypeToValType / wasmValueTypeConverter reject with zero resolver calls 1ms
+   → expected [Function] to throw error matching /linear backend received a WasmGC-prep…/ but got 'unexpected resolveType'
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — outer preflight precedes element conversion > generic body route: an f64 vec with an outer GC layout is rejected by the shared preflight, zero calls 1ms
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — outer preflight precedes element conversion > generic body route: the support-ref-element GC-layout vec never reaches a resolver call 1ms
+ ✓ tests/issue-6920-vector-representation.test.ts > #6920 vector representation — outer preflight precedes element conversion > GC positives keep the carrier-only and operation lookup order 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-6920-vector-representation.test.ts > #6920 vector representation — mismatches fail at the resolution boundary > linear rejects a GC handle, an intersection handle and a GC layout before symbolic lookup
+AssertionError: expected [Function] to throw error matching /carries WasmGC field 'vecStructTypeId…/ but got 'ir/lower: vec representation mismatch…'
+
+[32m- Expected:[39m 
+/carries WasmGC field 'vecStructTypeIdx'/
+
+[31m+ Received:[39m 
+"ir/lower: vec representation mismatch: linear-memory vector handle carries WasmGC type indices (f)"
+
+ ❯ tests/issue-6920-vector-representation.test.ts:608:53
+    606|     expect(() => operation("linear", gcHandle, VEC_F64, undefined, loo…
+    607|     const intersection = { ...gcHandle, ...genuineLinear() } as IrVecB…
+    608|     expect(() => operation("linear", intersection)).toThrow(/carries W…
+       |                                                     ^
+    609|     const sourceId = createIrSourceId({ kind: "entry", order: 0, sourc…
+    610|     const layoutVec: IrType = {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/issue-6920-vector-representation.test.ts > #6920 vector representation — mismatches fail at the resolution boundary > linear rejects each single GC-only field grafted onto the genuine handle
+AssertionError: expected [Function] to throw an error
+
+[32m- Expected:[39m 
+null
+
+[31m+ Received:[39m 
+undefined
+
+ ❯ tests/issue-6920-vector-representation.test.ts:629:51
+    627|     expect(operation("linear", genuineLinear())?.kind).toBe("linear-me…
+    628|     const lengthOnly = { ...genuineLinear(), lengthFieldIdx: 0 } as un…
+    629|     expect(() => operation("linear", lengthOnly)).toThrow(/carries Was…
+       |                                                   ^
+    630|     const dataOnly = { ...genuineLinear(), dataFieldIdx: 1 } as unknow…
+    631|     expect(() => operation("linear", dataOnly)).toThrow(/carries WasmG…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/issue-6920-vector-representation.test.ts > #6920 vector representation — outer preflight precedes element conversion > public converter: lowerIrTypeToValType / wasmValueTypeConverter reject with zero resolver calls
+AssertionError: expected [Function] to throw error matching /linear backend received a WasmGC-prep…/ but got 'unexpected resolveType'
+
+[32m- Expected:[39m 
+/linear backend received a WasmGC-prepared vector layout/
+
+[31m+ Received:[39m 
+"unexpected resolveType"
+
+ ❯ tests/issue-6920-vector-representation.test.ts:735:85
+    733|   it("public converter: lowerIrTypeToValType / wasmValueTypeConverter …
+    734|     const direct = counting();
+    735|     expect(() => lowerIrTypeToValType(gcLayoutVec, direct.resolver, "f…
+       |                                                                                     ^
+    736|       /linear backend received a WasmGC-prepared vector layout/,
+    737|     );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 15 passed (18)
+   Start at  19:23:50
+   Duration  28.51s (transform 20.08s, setup 0ms, collect 27.91s, tests 96ms, environment 0ms, prepare 78ms)
+

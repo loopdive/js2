@@ -78,7 +78,8 @@ async function runHost(source: string, arg: number, opts: Record<string, unknown
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  imports.setInstance?.(instance);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[fn](arg);
 }
 
@@ -107,7 +108,7 @@ describe("#2937 JS-mode host poison coherence (compiled-acorn getOptions null-de
     expect(result.success).toBe(true);
     const imports = buildImports(result.imports, undefined, result.stringPool);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    imports.setExports?.(instance.exports as Record<string, Function>);
+    imports.setInstance?.(instance);
     const exp = instance.exports as Record<string, (...a: unknown[]) => unknown>;
     expect(() => exp.runDefault()).not.toThrow();
     expect(typeof exp.runDefault()).toBe("number");

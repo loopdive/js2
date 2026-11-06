@@ -22,7 +22,7 @@ import type { FieldDef, FuncHandle, FuncTypeDef, StructTypeDef, ValType, WasmFun
 import { definedFuncAt } from "./func-space.js";
 import { PROGRAM_ABI_CALLABLE_ROLE, planProgramAbiSupportCallable } from "./program-abi-planning.js";
 import { canonicalProgramAbiTypeDef, canonicalProgramAbiValType } from "./program-abi-signatures.js";
-import { fnctorConstructorField } from "./fnctor-identity-fields.js";
+import { fnctorConstructorField, fnctorProtoField } from "./fnctor-identity-fields.js";
 import { closureBagField } from "./closures/closure-header-layout.js";
 
 export interface ProgramAbiFnctorObservation {
@@ -192,9 +192,14 @@ function requireExactStandaloneParserLayout(ctx: CodegenContext, observation: Pr
   if (!ctx.standalone || ctx.wasi) return;
   const input = observation.fields[0];
   const constructorField = observation.fields[1];
-  const bag = observation.fields[2];
+  // (#6951 G3) the construction-time [[Prototype]] snapshot sits between the
+  // constructor identity and the carrier bag.
+  const protoField = observation.fields[2];
+  const bag = observation.fields[3];
   if (
-    observation.fields.length !== 3 ||
+    observation.fields.length !== 4 ||
+    !protoField ||
+    !exactFieldDefinition(protoField, fnctorProtoField()) ||
     !input ||
     input.name !== "input" ||
     input.mutable !== true ||
@@ -206,7 +211,7 @@ function requireExactStandaloneParserLayout(ctx: CodegenContext, observation: Pr
     !bag ||
     !exactFieldDefinition(bag, closureBagField())
   ) {
-    throw new Error("fnctor standalone observation is not the exact input/$constructor/$bag layout");
+    throw new Error("fnctor standalone observation is not the exact input/$constructor/$__fnctorProto/$bag layout");
   }
   if (
     observation.supportsConstruction ||

@@ -60,7 +60,7 @@ import {
   skipTransparentExpressions,
 } from "./shared.js";
 import { resolveConstantExpression } from "./literals.js";
-import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
+import { isRangeProvenArrayIndex, tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { highArrayIndexLiteralI32 } from "./vec-sparse-index.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 import { VEC_PROP_GET, VEC_PROP_SET } from "./vec-props.js";
@@ -122,7 +122,14 @@ export function isDynamicPropertyKeyExpression(
   // Constant numeric expressions and simple variable indices stay on their
   // existing dense path.
   if (keyFact.kind === "number") {
-    return ts.isBinaryExpression(inner) && typeof resolveConstantExpression(ctx, inner) !== "number";
+    if (!ts.isBinaryExpression(inner) || typeof resolveConstantExpression(ctx, inner) === "number") return false;
+    // (#7014) A range-proven index (`arr[i % 2]`, `arr[i + 1]` over a counted
+    // loop) cannot leave i32 or be non-integral, so the exactness concern above
+    // does not apply. Routing it to the runtime property-key lane (11bbf2a791)
+    // crossed the JS boundary on the host lane for a plain element read, and
+    // without wired exports returned `undefined` ("illegal cast" in the
+    // `string-derived-length-fast-path` host-string pin).
+    return !isRangeProvenArrayIndex(ctx, inner);
   }
   // A literal ordinary name (for example `"[object Object]"`) is also a
   // property key, not a numeric index. Numeric spellings and the historical
@@ -491,12 +498,17 @@ export function emitDynamicVecElementGet(
   recvType: ValType,
   key: ts.Expression,
   compile: (expr: ts.Expression, hint?: ValType) => ValType | null,
+  numberAtRuntime = false,
 ): ValType | null {
   const recvLocal = allocLocal(fctx, `__dynkey_recv_${fctx.locals.length}`, recvType);
   fctx.body.push({ op: "local.set", index: recvLocal });
   fctx.body.push({ op: "local.get", index: recvLocal });
   fctx.body.push({ op: "extern.convert_any" });
   const keyFact = ctx.oracle.typeFactOf(key);
+  if (numberAtRuntime && ctx.standalone && (keyFact.kind === "any" || keyFact.kind === "unknown")) {
+    const branched = emitNumberOrKeyVecGet(ctx, fctx, key, compile);
+    if (branched !== undefined) return branched;
+  }
   // Numeric expressions can use the indexed helper directly. It formats the
   // f64 key canonically for the overlay read, avoiding a string round-trip
   // that would otherwise lose the sparse-tail distinction at i32.max.
@@ -519,6 +531,75 @@ export function emitDynamicVecElementGet(
     return EXTERNREF;
   }
   fctx.body.push({ op: "call", funcIdx: getIdx });
+  return EXTERNREF;
+}
+
+/**
+ * (#6973 stage 2) `vec[key]` with an untyped key: a key that is a Number at
+ * runtime takes `__extern_get_idx` (which formats the f64 canonically itself),
+ * anything else the ToPropertyKey + `__extern_get` route. Deltablue's
+ * `OrderedCollection.at(index)` otherwise stringified every index and
+ * `__extern_get` parsed it back. ToPropertyKey of a Number is ToString, so the
+ * two arms agree by construction. Receiver (externref) is on the stack.
+ */
+function emitNumberOrKeyVecGet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  key: ts.Expression,
+  compile: (expr: ts.Expression, hint?: ValType) => ValType | null,
+): ValType | null | undefined {
+  const getIdx = ensureLateImport(ctx, "__extern_get_idx", [EXTERNREF, { kind: "f64" }], [EXTERNREF]);
+  const getKey = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
+  flushLateImportShifts(ctx, fctx);
+  const isNum = ctx.funcMap.get("__typeof_number");
+  const unbox = ctx.funcMap.get("__unbox_number");
+  const tpk = ctx.funcMap.get("__to_property_key");
+  if ([getIdx, getKey, isNum, unbox, tpk].includes(undefined)) return undefined;
+  const recv = allocLocal(fctx, `__dynkey_r_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: recv });
+  const keyResult = compile(key, EXTERNREF);
+  if (!keyResult) return null;
+  if (keyResult.kind !== "externref") coerceType(ctx, fctx, keyResult, EXTERNREF);
+  const k = allocLocal(fctx, `__dynkey_k_${fctx.locals.length}`, EXTERNREF);
+  const n = allocLocal(fctx, `__dynkey_n_${fctx.locals.length}`, { kind: "f64" });
+  fctx.body.push(
+    { op: "local.set", index: k },
+    { op: "local.get", index: k },
+    { op: "call", funcIdx: isNum! },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      // …and a non-negative integer value: anything else keeps the key route.
+      then: [
+        { op: "local.get", index: k },
+        { op: "call", funcIdx: unbox! },
+        { op: "local.tee", index: n },
+        { op: "local.get", index: n },
+        { op: "f64.trunc" },
+        { op: "f64.eq" },
+        { op: "local.get", index: n },
+        { op: "f64.const", value: 0 },
+        { op: "f64.ge" },
+        { op: "i32.and" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+    {
+      op: "if",
+      blockType: { kind: "val", type: EXTERNREF },
+      then: [
+        { op: "local.get", index: recv },
+        { op: "local.get", index: n },
+        { op: "call", funcIdx: getIdx! },
+      ],
+      else: [
+        { op: "local.get", index: recv },
+        { op: "local.get", index: k },
+        { op: "call", funcIdx: tpk! },
+        { op: "call", funcIdx: getKey! },
+      ],
+    },
+  );
   return EXTERNREF;
 }
 

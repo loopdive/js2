@@ -47,9 +47,11 @@ describe("#3549 JS mirror VM — long linear matches fit, runaway still trips", 
   });
 
   it("catastrophic backtracking still throws the RangeError guard", () => {
-    // (a+)+b over a long 'a' run with no 'b' — exponential backtracking. The
-    // subject is small, so the budget stays near the base cap.
-    const compiled = compilePattern("(a+)+b", 0);
+    // (a+)+\1b over a long 'a' run with no 'b' — exponential backtracking. The
+    // subject is small, so the budget stays near the base cap. (The
+    // backreference keeps it on the backtracking VM: since #2723 a
+    // backreference-free program finishes on the linear PikeVM instead.)
+    const compiled = compilePattern("(a+)+\\1b", 0);
     expect(() =>
       search(compiled.prog, compiled.classTable, compiled.nGroups, "a".repeat(64), 0, true, compiled.nScratch ?? 0),
     ).toThrow(/step limit exceeded/);

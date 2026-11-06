@@ -1,0 +1,82 @@
+files=657 tests=2866 passed=2707 failed=81 pending=77 failedSuites=68
+failed	tests/issue-2059-any-relational.test.ts	#2059 any/any relational comparisons (standalone / pure WasmGC) any string/numeric relationals match §7.2.13 at runtime (native strings)
+failed	tests/issue-2175-null-proto-toprimitive.test.ts	#2175 D5 null-prototype OrdinaryToPrimitive clears a marked null terminal for an accepted non-null new C() proto that cannot cast to $Object
+failed	tests/issue-2507-anyarray-find.test.ts	#2507 — standalone any[] find/findLast return the externref element any[].find returns undefined when nothing matches
+failed	tests/issue-2520-host-import-gate.test.ts	#2520 — lib-scan ambient-global referenced-names gate registers the builtin constructor object for a property-access RECEIVER (regression)
+failed	tests/issue-2520-host-import-gate.test.ts	#2520 — lib-scan ambient-global referenced-names gate still registers the builtin constructor object for an identity/value use
+failed	tests/issue-2652.test.ts	#2652 parseInt/parseFloat ToString of primitive args standalone mode: all cases pass (was: illegal cast)
+failed	tests/issue-2652.test.ts	#2652 parseInt/parseFloat ToString of primitive args wasi mode: all cases pass
+failed	tests/issue-2713-ir-legacy-parity.test.ts	#2713 IR↔legacy parity correctness twins B2 — string null-compare not folded s !== null  with s = null  → 0 (was folded to 1 on the IR path)
+failed	tests/issue-2713-ir-legacy-parity.test.ts	#2713 IR↔legacy parity correctness twins B2 — string null-compare not folded s === null  with s = null  → 1 (was folded to 0 on the IR path)
+failed	tests/issue-2742-native-string-equality.test.ts	#2742 — standalone native String value equality passes the exact ES5 Test262 row built-ins/String/prototype/charAt/S15.5.4.4_A1_T1.js
+failed	tests/issue-2742-native-string-equality.test.ts	#2742 — standalone native String value equality passes the exact ES5 Test262 row built-ins/String/prototype/charAt/S15.5.4.4_A1_T2.js
+failed	tests/issue-2742-native-string-equality.test.ts	#2742 — standalone native String value equality passes the exact ES5 Test262 row built-ins/String/prototype/slice/S15.5.4.13_A3_T3.js
+failed	tests/issue-2742-native-string-equality.test.ts	#2742 — standalone native String value equality passes the exact ES5 Test262 row built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T3.js
+failed	tests/issue-2742-native-string-equality.test.ts	#2742 — standalone native String value equality passes the exact ES5 Test262 row built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T3.js
+failed	tests/issue-2856-module-bindings.test.ts	#2856 Capability C — shared module-global storage accepts only string-producing scalar module consumers
+failed	tests/issue-2856-module-bindings.test.ts	#2856 Capability C — shared module-global storage admits boolean module consumers while pre-claim rejecting numeric truthiness and aliases
+failed	tests/issue-2856-module-bindings.test.ts	#2856 Capability C — shared module-global storage does not treat source declarations named like extern constructors as builtins
+failed	tests/issue-2856-module-bindings.test.ts	#2856 Capability C — shared module-global storage keeps module-number toString on legacy with native strings
+failed	tests/issue-2856-module-bindings.test.ts	#2856 Capability C — shared module-global storage keeps module-number toString on legacy with standalone
+failed	tests/issue-2856-module-bindings.test.ts	#2856 Capability C — shared module-global storage keeps module-number toString on legacy with strict no-host
+failed	tests/issue-2856-module-bindings.test.ts	#2856 Capability C — shared module-global storage keeps module-number toString on legacy with wasi
+failed	tests/issue-2856-module-bindings.test.ts	#2856 Capability C — shared module-global storage shares one slot from a legacy writer to an IR reader
+failed	tests/issue-2856-module-bindings.test.ts	#2856 Capability C — storage representation matrix keeps builtin Map module storage on legacy with native strings
+failed	tests/issue-2856-module-bindings.test.ts	#2856 calendar residual prework rejects unproven same-file factory returns before claiming the writer
+failed	tests/issue-3037-cs1c-getprototypeof-carrier.test.ts	#3037 CS1c — KNOWN-GAPs beyond the operand carrier (CS3 / non-any-operand) [KNOWN-GAP: non-any operand] getPrototypeOf(instance) === Foo.prototype [0 today]
+failed	tests/issue-3061-host-buffer-bytelength.test.ts	#3061 host-mode ArrayBuffer byteLength/byteOffset ArrayBuffer.prototype.slice result has correct byteLength
+failed	tests/issue-3135.test.ts	#3135 open-any dispatch `undefined + number` is NaN, not '[object Object]…' any-closure undefined RESULT + 1 is NaN (blocked on #2106 S1; #2966's red twin)
+failed	tests/issue-3135.test.ts	#3135 open-any dispatch `undefined + number` is NaN, not '[object Object]…' direct closure call: undefined + 5 is NaN (blocked on #2106 S1)
+failed	tests/issue-3214-void-host-callback.test.ts	#3214 B2 — ambient void host callbacks rejects non-void before the IR claim
+failed	tests/issue-3395-extern-boxing.test.ts	#3395 shape 2 — Weak-collection null key → valid Wasm WeakMap.has / .get / .set with a null key compile to valid Wasm
+failed	tests/issue-3395-extern-boxing.test.ts	#3395 shape 2 — Weak-collection null key → valid Wasm WeakSet.has / .add / .delete with a null/undefined key compile to valid Wasm
+failed	tests/issue-3395-extern-boxing.test.ts	#3395 shape 2 — Weak-collection null key → valid Wasm WeakSet.has(null) returns false (CanBeHeldWeakly is false)
+failed	tests/issue-3505-host-compilemulti-harness-callable-init.test.ts	#3505 — host compileMulti harness callable initialization leaves the exact standalone verdict unchanged
+failed	tests/issue-3505-host-compilemulti-harness-callable-init.test.ts	#3505 — host compileMulti harness callable initialization passes the exact unmodified FYI GC fixture graph
+failed	tests/issue-3518-native-number-format-requirements.test.ts	complete prepared formatter demand joins borrows both primary views and separate support with fast path false
+failed	tests/issue-3518-native-number-format-requirements.test.ts	complete prepared formatter demand joins borrows both primary views and separate support with fast path true
+failed	tests/issue-3518-native-number-format-requirements.test.ts	complete prepared formatter demand joins whole support manifest authentication preserves the actual family async gap after joining output resources
+failed	tests/issue-3520-date-host-bridge-export-provenance.test.ts	#3520 C39 Date carrier host-bridge export provenance keeps provider-created Date publication policy, descriptors, import census, binary parity, and runtime independent of source order
+failed	tests/issue-3520-date-host-bridge-export-provenance.test.ts	#3520 C39 Date carrier host-bridge export provenance retains all exact Date descriptors for standalone hostBridge always with tracked parity
+failed	tests/issue-3520-date-host-bridge-export-provenance.test.ts	#3520 C39 Date carrier host-bridge export provenance strips Date bridge exports for standalone auto/off with exact tracked parity
+failed	tests/issue-3526-string-boundary-concat-many.test.ts	#3526 F2-S6 end-to-end behaviour is unchanged keeps the async five-part arm on the host lane, in its measured position
+failed	tests/issue-4034-standalone-prelude-size.test.ts	#4034 standalone prelude does not fabricate array usage keeps an arith-only module small instead of pulling the whole runtime
+failed	tests/issue-4362-landing-host-standalone-toggle.test.ts	#4362 landing feature list follows the JS-host toggle hydrates the host catalog when the toggle is on
+failed	tests/issue-4397-native-semantic-js-host.test.ts	#4397 native semantics in a JavaScript environment runs dynamic operators in Wasm without losing JS primitive interop
+failed	tests/issue-4397-native-semantic-js-host.test.ts	#4397 native semantics in a JavaScript environment runs object-rest CopyDataProperties natively while retaining JS-owned boundary objects
+failed	tests/issue-4492-wave5.test.ts	#4492 wave-5 — residual R1: an Array.prototype.toString override and the INLINE receiver CONTROL — a NAMED array receiver DOES honour the override
+failed	tests/issue-4492-wave5.test.ts	#4492 wave-5 — residual R1: an Array.prototype.toString override and the INLINE receiver `String(new Array)` — INLINE receiver ignores it (test262 S15.5.1.1_A1_T8)
+failed	tests/issue-4492-wave5.test.ts	#4492 wave-5 — residual R2: `F.prototype.toString` is unreachable FROM the instance a RUNTIME lookup from the instance misses it — `"toString" in inst`
+failed	tests/issue-4492-wave5.test.ts	#4492 wave-5 — residual R2: `F.prototype.toString` is unreachable FROM the instance …so `String(new F())` cannot see it either
+failed	tests/issue-4492-wave5.test.ts	#4492 wave-5 — residual R3: no §20.1.3.6 brand classifier on the RUNTIME ToString terminal …but the SAME object obtained via `Object.getPrototypeOf` is not (test262 Number/15.7.4-1)
+failed	tests/issue-5166.test.ts	#5166 A — nested-vec positions resolve and emit boolean[][] (i32 leaf) emits an IR body
+failed	tests/issue-5166.test.ts	#5166 D — array-pattern for-of heads (#4470) a SHORT row: the missing leaf is the element zero, exactly as legacy
+failed	tests/issue-5166.test.ts	#5166 D — array-pattern for-of heads (#4470) boolean[][] leaves
+failed	tests/issue-5208-compiled-date-host-bridge.test.ts	#5208 — compiled Date crosses to the host as a real Date a NON-gregorian calendar reads the carrier (the #5249 capability)
+failed	tests/issue-6651-rs1-cross-bucket-residuals.test.ts	#6651 RS1 — residuals PINNED at today's spec-wrong answer species-constructor `this` is not an instance of the species function
+failed	tests/issue-6651-sc1-param-scope-eval-var.test.ts	#6651 SC1 — pinned residual: a REST PARAMETER on a generator bails native lowering a bare generator rest parameter does not compile for standalone
+failed	tests/issue-6651-sc1-param-scope-eval-var.test.ts	#6651 SC1 — pinned residual: a REST PARAMETER on a generator bails native lowering the row's own shape does not compile for standalone
+failed	tests/issue-6651-sn1-reflective-singletons.test.ts	#6651 SN1 cause 2 — Object.prototype.__proto__ getter on an ordinary object literal the setter half is byte-identical to base
+failed	tests/issue-6651-sn1-reflective-singletons.test.ts	#6651 SN1 residual pins — TODAY'S answers, several of them spec-WRONG §22.1.3 — String.prototype.indexOf OrdinaryToPrimitive residuals do not throw
+failed	tests/issue-6651-sn1-reflective-singletons.test.ts	#6651 SN1 residual pins — TODAY'S answers, several of them spec-WRONG §7.1.18 — a patched primitive-wrapper prototype method is not observed
+failed	tests/issue-6651-sn1-reflective-singletons.test.ts	#6651 SN1 residual pins — TODAY'S answers, several of them spec-WRONG §7.3 — a builtin symbol-keyed getter read through a PARAMETER answers name 'get'
+failed	tests/issue-6651-sy1-symbol.test.ts	#6651 SY1 — Object.assign performs ToObject on a Symbol target NEGATIVE CONTROL — Object.entries loses a symbol VALUE's identity once the object is descriptor-backed
+failed	tests/issue-6651-sy1-symbol.test.ts	#6651 SY1 — Object.assign performs ToObject on a Symbol target NEGATIVE CONTROL — ToPrimitive on a Symbol wrapper does not unbox to its [[SymbolData]]
+failed	tests/issue-6651-sy1-symbol.test.ts	#6651 SY1 — Object.assign performs ToObject on a Symbol target NEGATIVE CONTROL — a Symbol primitive is not callable, but `new <symbol wrapper>()` still is
+failed	tests/issue-6651-sy1-symbol.test.ts	#6651 SY1 — Object.assign performs ToObject on a Symbol target NEGATIVE CONTROL — a primitive wrapper's [[Prototype]] is Object.prototype, for EVERY wrapper
+failed	tests/issue-6689-extern-set-decide-fnctor-proto.test.ts	#6689 __extern_set_decide tests a fnctor prototype before casting it regime build validates and runs the assembled repro
+failed	tests/issue-6689-extern-set-decide-fnctor-proto.test.ts	#6689 __extern_set_decide tests a fnctor prototype before casting it standalone and default builds of the repro still validate
+failed	tests/issue-6689-extern-set-decide-fnctor-proto.test.ts	#6689 __extern_set_decide tests a fnctor prototype before casting it standalone with live dynamic code runs the repro without a trap
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — a completed edition allows no pass -> fail on the js-host lane, whatever the net FAILS on a count-neutral swap inside the completed edition
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — a completed edition allows no pass -> fail on the js-host lane, whatever the net FAILS on one ES5 pass -> fail at net +10, a diff the host net gate passes
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — a completed edition allows no pass -> fail on the js-host lane, whatever the net FAILS on the acceptance case: +5 / -4 inside the completed edition's run
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — a completed edition allows no pass -> fail on the js-host lane, whatever the net PASSES the same diff when the edition is NOT completed — that is the net gate's business
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — a completed edition allows no pass -> fail on the js-host lane, whatever the net PASSES when the same flip is in a non-completed edition
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — a completed edition allows no pass -> fail on the js-host lane, whatever the net does NOT read the baseline's standalone target or counts on the host lane
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — flake classes and exceptions on the js-host lane REFUSES a host_exceptions entry without a reason
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — flake classes and exceptions on the js-host lane does NOT honour the standalone `exceptions` list on the host lane
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — flake classes and exceptions on the js-host lane honours host_exceptions, and only that row
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — flake classes and exceptions on the js-host lane lists a quarantined row's flip but does not gate it
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — flake classes and exceptions on the js-host lane lists pass -> compile_timeout but does not gate it
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — the js-host lane refuses (exit 2) rather than compare nothing when the run holds no row of any completed edition
+failed	tests/test262-edition-ratchet-host-lane.test.ts	#6786 — the js-host lane refuses (exit 2) rather than compare nothing without --compare

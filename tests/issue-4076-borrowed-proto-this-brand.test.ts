@@ -94,8 +94,11 @@ describe("#4076 the gate must NOT fire — positive controls", () => {
     ["toString.call(undefined)", "Object.prototype.toString.call(undefined);"],
     ["toString.call(null)", "Object.prototype.toString.call(null);"],
     // §20.1.3.3 step 1 ("If V is not an Object, return false") runs BEFORE
-    // ToObject(this), so the receiver alone cannot decide this one.
-    ["isPrototypeOf.call(undefined, {})", "Object.prototype.isPrototypeOf.call(undefined, {});"],
+    // ToObject(this), so the receiver alone cannot decide this one. It needs a
+    // PRIMITIVE V to return early: with `V = {}` step 1 passes and step 2's
+    // ToObject(undefined) throws (node agrees) — the old `{}` spelling pinned a
+    // missing throw, and went red once the compiler threw as the spec says.
+    ["isPrototypeOf.call(undefined, 1)", "Object.prototype.isPrototypeOf.call(undefined, 1);"],
     ["Function.prototype.toString on a function", "Function.prototype.toString.call(function f(){});"],
     ["Function.prototype.call on a function", "Function.prototype.call.call(function f(){}, {});"],
     // #3254 already handles RequireObjectCoercible for the String family; the

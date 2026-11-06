@@ -1,4 +1,3 @@
-import { parseTest262SemanticProviders } from "../scripts/test262-lane.mjs";
 /**
  * Test262 runner — compiles a filtered subset of the official ECMAScript
  * conformance suite through js2wasm and validates the results.
@@ -3889,7 +3888,6 @@ export async function handleNegativeTest(
       fileName: "test.ts",
       emitWat: false,
       ...(target ? { target } : {}),
-      semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
       // #6776: the runner validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
       validate: false,
     };
@@ -4430,6 +4428,42 @@ async function getTest262TemporalProvider(target?: "standalone"): Promise<Tempor
   return promise;
 }
 
+/**
+ * The compile options {@link runTest262File} uses for an original-harness
+ * variant (#7240: exported so `scripts/ir-claim-ledger.mts --wrapped` measures
+ * the SAME compile instead of a copy). Pure: depends only on `meta` + `target`.
+ */
+export function originalHarnessCompileOptions(meta: Test262Meta, target?: "standalone") {
+  return {
+    allowJs: true,
+    sourceMap: true,
+    emitWat: false,
+    skipSemanticDiagnostics: true,
+    // #6776: the runner validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
+    validate: false,
+    inferModuleStrictArguments: meta.flags?.includes("module") === true,
+    // (#2860 F3) Standalone joins the host lane's deferTopLevelInit rule
+    // (mirrors scripts/test262-worker.mjs doCompile): under the `(start)`
+    // model every top-level throw — i.e. every runtime failure in
+    // original-harness mode — surfaced from WebAssembly.instantiate with
+    // instance === null, making the #2962 native exception render
+    // unreachable and collapsing ~8,600 standalone failures onto the
+    // opaque "wasm exception during module init" label. The exec path
+    // below already calls the exported __module_init after setInstance.
+    ...(target ? { target } : {}),
+    ...(target === undefined || target === "standalone" ? { deferTopLevelInit: true } : {}),
+    // (#4035) The harness INSPECTS the module from JS — it renders native
+    // exception payloads via `__exn_render_*` (#2962) and drains the
+    // host-free print sink via `__stdout_*` (#3469). Standalone/WASI now
+    // default to `hostBridge: "off"` (a deployed pure-Wasm module needs
+    // only its own exports), so the runner must ask for the bridge
+    // explicitly or those two channels vanish and the conformance numbers
+    // collapse onto opaque labels. This is the harness opt-in the flag was
+    // designed around; do not drop it to "shrink the test binaries".
+    hostBridge: "always",
+  } as const;
+}
+
 async function runOriginalHarnessVariant(
   variant: OriginalHarnessVariant,
   originalSource: string,
@@ -4463,35 +4497,7 @@ async function runOriginalHarnessVariant(
       // `variant.source` is left untouched here on purpose: every reporting path
       // below (`appendOriginalHarnessFailureContext`, the negative matchers)
       // reads the ORIGINAL assembly, so its line numbers never shift.
-      const compileOptions = {
-        allowJs: true,
-        sourceMap: true,
-        emitWat: false,
-        skipSemanticDiagnostics: true,
-        // #6776: the runner validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
-        validate: false,
-        inferModuleStrictArguments: meta.flags?.includes("module") === true,
-        // (#2860 F3) Standalone joins the host lane's deferTopLevelInit rule
-        // (mirrors scripts/test262-worker.mjs doCompile): under the `(start)`
-        // model every top-level throw — i.e. every runtime failure in
-        // original-harness mode — surfaced from WebAssembly.instantiate with
-        // instance === null, making the #2962 native exception render
-        // unreachable and collapsing ~8,600 standalone failures onto the
-        // opaque "wasm exception during module init" label. The exec path
-        // below already calls the exported __module_init after setInstance.
-        ...(target ? { target } : {}),
-        semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
-        ...(target === undefined || target === "standalone" ? { deferTopLevelInit: true } : {}),
-        // (#4035) The harness INSPECTS the module from JS — it renders native
-        // exception payloads via `__exn_render_*` (#2962) and drains the
-        // host-free print sink via `__stdout_*` (#3469). Standalone/WASI now
-        // default to `hostBridge: "off"` (a deployed pure-Wasm module needs
-        // only its own exports), so the runner must ask for the bridge
-        // explicitly or those two channels vanish and the conformance numbers
-        // collapse onto opaque labels. This is the harness opt-in the flag was
-        // designed around; do not drop it to "shrink the test binaries".
-        hostBridge: "always",
-      } as const;
+      const compileOptions = originalHarnessCompileOptions(meta, target);
       // Test262's module-namespace cases intentionally self-import the entry
       // (`import * as ns from './<own-file>.js'`) to obtain that module's
       // namespace object. The ordinary single-source compiler has no module
@@ -4631,7 +4637,6 @@ async function runOriginalHarnessVariant(
       const instantiateStarted = performance.now();
       instance = await instantiateTest262Module(result.binary, imports, {
         target,
-        semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
         providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
         // (#5248) Empty on every non-Temporal row, so the shared finaliser takes
         // its existing path byte-for-byte.
@@ -4776,11 +4781,8 @@ export async function runTest262File(
   // (#5248) Resolved BEFORE the primary variant so the strict rerun links the
   // identical artifact — two provider instances for one test would give the
   // rerun a different `Temporal` object identity than the sloppy run saw.
-  // The precompiled Temporal provider borrows host semantics; it cannot certify a native-first row.
   const temporal =
-    parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS) === "auto" &&
-    test262TemporalLaneEnabled(target) &&
-    test262NeedsTemporalGlobal(filePath, meta)
+    test262TemporalLaneEnabled(target, temporalCacheDir()) && test262NeedsTemporalGlobal(filePath, meta)
       ? await getTest262TemporalProvider(target)
       : null;
   const primary = await runOriginalHarnessVariant(
@@ -4989,7 +4991,6 @@ export async function runSyntheticTest262File(
       // which is exactly the 6-file `language/module-code/*` regression that
       // parked the stack PR #2835/#2839 in the merge queue.
       ...(target ? { target } : {}),
-      semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
       ...(moduleGoal || (target !== undefined && target !== "standalone") ? {} : { deferTopLevelInit: true }),
       // #1251: align with the sharded runner — both `scripts/compiler-fork-worker.mjs`
       // (the production path that records the committed JSONL) and `tests/test262-vitest.test.ts`

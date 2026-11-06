@@ -45,8 +45,14 @@ files:
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/codegen/ir-prepared-free-functions.ts
+  # 2026-10-29 (#3527 owned-fill finalization): +3 / +1 wiring lines (import and
+  # one releaseOwnedFunctions call); the logic lives in wasm/physical/owned-function-data.ts.
+  - src/compiler.ts
+  - src/compiler/ir-program-presentation.ts
 func-budget-allow:
   - src/ir/from-ast.ts::lowerExpr
+import-cycles-allow:
+  - backend->ir: 118 # 2026-10-24 (#3527): native frame materializer adds planner, plan comparison and attachment authentication; SCC counts do not grow.
 oracle-ratchet-allow:
   - src/codegen/async-linear-planning.ts
   - src/codegen/async-ir-planning.ts
@@ -2242,3 +2248,448 @@ is retained as `integration-commit.log`. Inventory is valid but the architecture
 graph remains open; reachability certifies preservation (6/6 full and cut), not
 retirement. Exact-base checker/coercion/verdict gates pass, and the post-projection
 TypeScript 7 check exits zero.
+
+## Native Promise composition repair — 2026-10-24
+
+Implementation plan: keep inherited metadata type identity in
+`src/backend/wasmgc/resources/native-promises.ts`, while preserving the entire
+declared capture suffix during physical reservation. Reuse the existing
+settle-closure value/body builders in a test kernel using the actual reserved
+type table. No new production helper or alternate Promise layout is needed.
+
+Acceptance: emitted Wasm validates with the reserved seven-field capture;
+resolve/reject share one guard, only the first callback runs even while the
+Promise remains pending, and separate pairs remain independent. Exercise both
+the settlement signature as the first closure root and an unrelated first
+signature. This type/kernel regression does not certify complete native
+Promise inventory composition or public source admission.
+
+Validation: the prior 47 resource tests passed before the repair, while the
+two added executable cases failed with `unresolved struct field index 6`.
+After preserving the suffix, all 49 resource tests pass, including both
+zero-import Wasm kernels. The staged-closure suite passes 20/20. Fresh-context adversarial review found no actionable
+quality or correctness defect. Source and focused test TypeScript checks pass.
+The legacy reachability check remains preservation-only: its strict graph is
+open, so this repair does not certify retirement.
+
+## Native prepared-frame carrier repair — 2026-10-24
+
+A no-import module using the real queue and Promise settlement builders exposed
+invalid Wasm in the native prepared-frame engine: entry supplied four constructor
+operands for the canonical five-field Promise, and resume read a non-defaultable
+Promise scratch local outside the branch that initialized it.
+
+Implementation: share the existing carrier schema between native declarations,
+frame preflight and construction. Reject missing, mistyped or immutable fields
+before publishing frame bodies. Initialize the scratch reference before dispatch;
+classification replaces it before installing any pending reaction. Reuse the
+existing default-value, queue, settlement and reservation builders. No new host
+imports or size-budget allowances.
+
+Validation on isolated main ff27bb4de9c8162535dc663043facc1b7d3c3b12 plus this
+repair: 77/77 tests across native frame execution (9), existing prepared-frame
+runtime (21), and native Promise reservations (47). The six execution cases use
+zero-import Wasm: plain-value identity, queue growth with twelve independent
+frames, fulfilled/rejected native inputs, and pending fulfillment/rejection.
+Three negative cases reject malformed carrier layouts before entry publication.
+The previous engine fails Wasm validation (five constructor operands required,
+four supplied); all twelve emitted host fixtures are byte-identical between base
+and candidate. Source/focused-test typechecks and targeted lint pass.
+
+This repairs the runtime kernel. Whole-program standalone frame admission,
+thenable assimilation, true Linear/WASI integration and the original R7 retirement
+requirements remain open; these kernel tests do not claim source-level coverage.
+
+## Native frame planning design — 2026-10-24
+
+Move scalar/layout checks, state-operation validation and supplementary ABI
+machinery into shared planning modules. Keep the existing host entry point and
+its exact imports/callback publication. Add a native entry point using the same
+state validator, with symbolic native Promise storage and explicit native bridge
+requirements derived from canonical selected providers. Native helpers are
+requirements, not fabricated callable ABI entries or physical function indices.
+
+Acceptance: original and decoded source-produced native async plans produce
+identical layouts, call demands and conversion requirements without host imports
+or callback exports; missing or mismatched providers/owners/signatures reject.
+Existing host plans and emitted binaries must remain identical. No new resource
+admission exception, guessed bindings, duplicate state parser or budget grant.
+This producer is a prerequisite for checked resource materialization; the complete
+native Promise composition and source-execution obligations remain required.
+
+Native planning validation: 12/12 source-plan tests cover two awaits, live spills,
+bare returns, original/decoded equality, exact selected provider ownership and
+rejection of foreign target/runtime/callback requests. Together with existing
+host planning, frame runtime, whole-program async consumer and dynamic async
+regressions, 76/76 tests pass. A separate base/candidate checkout comparison
+observes 28 identical host planning outcomes and 11 byte-identical host binaries.
+Source/focused-test TS7, lint, formatting, layering and size checks pass.
+
+The native plan is descriptive and has no imports, callback exports or physical
+function indices. It requests native number box/unbox and canonical undefined
+bridges from authenticated provider selection, with symbolic native Promise
+result storage. The next required join is resource materialization plus complete
+carrier/dispatch/construction inventory; this change does not enable whole-program
+native async admission or claim source execution, Linear/WASI completion or
+retirement. The full original acceptance scope remains unchanged.
+
+### Native frame materialization implementation plan (2026-10-24)
+
+Bind the native frame recipe in backend/wasmgc/resources to actual same-ledger
+Promise, reaction, queue, settlement and value bridge reservations. Reuse a shared
+layout/machinery allocator with the host resource path; preserve host publication.
+Native filling must validate the retained source/runtime, physical ownership and
+complete parent acceptance before detached body construction and publication.
+No public whole-program admission is enabled by a resource recipe alone.
+
+Correctness: execute genuine original and decoded source-owned async functions
+with two awaits and live spill values, using shared native number, settlement and
+queue builders without host imports or substitute helper bodies. Reject foreign
+ledger dependencies, wrong bridge signatures and changed layouts before filling.
+Quality: share allocation logic, keep native adaptation separate from scheduling
+semantics, and retain complete-program inventory/retirement obligations.
+
+Materialization validation: 96/96 tests across seven native/host async suites;
+after final association-check extraction, 20/20 native execution/runtime tests
+pass. Genuine original and decoded source functions execute two awaits and a
+live spill through native frame materialization, preserving -0, NaN, infinities,
+fractional values and queue growth. The source-frame integration emits no host
+imports; original/decoded live-spill binaries are identical. Eleven host binaries
+are byte-identical to the parent commit. Source and focused-test TS7, lint,
+layering and size checks pass.
+
+This is kernel integration using the real shared queue, settlement and number
+builders, not public whole-program admission. Complete native resource inventory,
+thenable/return-resolution composition, broader source coverage, true Linear/WASI,
+full conformance/performance and reviewed retirement remain open. The reservation
+adapter requires the parent's complete acceptance callback; tests explicitly use
+a narrower kernel assertion and do not issue whole-program authority.
+
+### Native frame PromiseResolve integration plan (2026-10-24)
+
+Prepared native frames currently fulfill terminal values directly and omit the
+native await classifier's thenable-adoption binding. Wire the existing native
+Promise resolver through the frame contract and ledger-checked materializer as
+a required dependency. Native return resolves through this function; non-Promise
+await operands use a fresh handled pending Promise and the same resolver. Keep
+host code generation byte-identical, and retain pre/post-emission dependency
+identity/signature checks. Do not add an optional silent plain-value fallback.
+
+Reuse existing resolution, thenable lookup/job, resolving-pair, settlement,
+argument-vector and microtask builders in a bounded executable test kernel.
+Exercise native Promise adoption, thenable job ordering, rejection and nested
+adoption, plus missing/foreign/wrong-signature resolver rejection before frame
+publication. The test kernel is not whole-program source admission. Real public
+inventory composition, Linear/WASI and retirement remain required separately.
+
+Resolution validation: 87/87 tests across seven native/host async suites, followed
+by 22/22 resolver tests after adding two queue-interleaving cases. The observer
+runs in the real native queue: a thenable-return result is fulfilled before the
+observer, while an await result remains pending until its later continuation.
+Coverage includes nested thenables, throwing getters (exactly one read), abrupt
+then methods, first-call-wins before pending adoption, rejection identity,
+indirect self-resolution TypeError, and missing/foreign/wrong-signature resolver
+rejection before publication. All emitted kernel modules have zero imports.
+Eleven host binaries are byte-identical between parent e9dd538daf94dcb6997f46f113210a9d069ffef5
+and the candidate using the existing whole-program host async test harness.
+Source/focused-test TS7, targeted lint and formatting pass. Fresh-context
+adversarial review found no actionable defects; its ordering coverage limitation
+was closed by the two observer cases and re-reviewed without findings.
+
+This binds the production resolver at the prepared-frame seam and tests it using
+real resolution/job/vector/settlement builders with a finite explicit carrier
+inventory. It does not establish full public native inventory composition,
+source admission, successful captured-accessor then dispatch, own-Promise then
+shadowing, Linear/WASI support or legacy retirement. Those original obligations
+remain open.
+### Async representation scope repair plan (2026-10-24)
+
+The full native async example currently crashes during ordinary consumer planning
+with ambiguous prepared SSA definition: the retained semantic async plan and its
+lowered executable states reuse value IDs, but native access/result/prototype
+analysis indexes both in one definition table. The physical dependency census
+also visits semantic clock requests that execution replaced with constants.
+
+Extract the existing representation-aware definition/alias helper and migrate
+all three native value consumers to it. Preserve separate semantic and executable
+operation comparison against source; duplicates within either representation,
+missing/foreign attachments and changed property regions must still reject.
+Use one authenticated executable-instruction traversal for consumer references
+and physical resource demand. Preserve semantic traversal for semantic callers.
+
+Acceptance: original/decoded genuine async example reaches located inventory
+refusal rather than an internal SSA crash, with lowered-away clock requirements
+absent. Getter operations after await remain accounted for. Existing ordinary
+object/prototype and host async behavior must pass without exceptions or weakened
+gates. Keep units bounded and remove duplicated definition/alias loops. This is
+an independent port of prior local work; class changes and frozen index remain
+untouched. Public native async admission and full migration remain incomplete.
+
+The isolated implementation shares representation selection and alias indexing
+across access/result/prototype analysis, and authenticates executable traversal
+before reference or resource collection. The full example and codec replay now
+reach the existing structured native-inventory refusal; semantic-only clock
+requests no longer appear as missing executable providers. Genuine property
+operations, duplicate definitions within one representation and invalid runtime
+attachments remain checked.
+
+The focused regressions pass 14/14; source and focused-test TypeScript 7 checks
+pass. An isolated archive of base `ff27bb4de9` and the candidate emit 11/11
+byte-identical host async binaries. Formatting, lint, layering and source budgets
+pass without allowances. Fresh-context adversarial review of the diff, plan and
+validation callers found an unused occurrence array; it was removed and the
+reviewer confirmed no outstanding findings. The reviewer did not run tests.
+
+The reachability command exits zero under its preservation contract: core nodes
+12/12 observed (dispatch-cut unknown), core types 10/10 full and cut, preservation
+6/6 full and cut. The strict graph remains open at the nonliteral imports in
+`src/optimize.ts` and `src/runtime/platform-capability-adapter.ts`; retirement is
+not certified. This change does not close the native Promise inventory,
+whole-program native async execution, Linear/WASI or the overall IR migration.
+
+The expanded regression run exposed a previously unreachable stale inventory
+expectation. On an isolated unchanged `ff27bb4de9` archive, the inventory-planning
+suite fails 8/12 cases, including the ambiguous-SSA crash. Direct source-census
+probes on that same base, with GVN both off and on, identify the actual
+`__sh_num_toString_radix` support as 43 buffers / 222 occurrences, not the old
+31 / 157. Update the planning test's exact counts and named owner accordingly;
+retain its source hash, all owner/carrier counts, all six unresolved obligations
+and the prohibition on acceptance/emission.
+
+Final regression result: 122/122 cases in the other seven suites, plus 12/12 in
+the corrected inventory-planning suite (134/134 across eight suites). The final
+focused scope suite separately passes 14/14 after review cleanup; both changed
+test files pass TypeScript 7. The reviewer also verified 1,985 archived
+source/fixture/helper blobs against the base with zero mismatches and accepted
+the inventory test correction. No new production allowances or acceptance
+exceptions were introduced.
+
+
+### Integrated native async delivery and boundary inventory (2026-10-24)
+
+Combine the carrier repair, shared planner, source-owned materializer, required
+PromiseResolve binding and semantic/execution scope repair on one unpublished
+integration branch. Existing PR heads and holds remain unchanged. CI on the
+scope-only PR exposed two unclassified new modules; the combined branch exposed
+nine more from the preceding frame changes. Classify all eleven exact modules
+in their existing active layers after inspecting their imports. Do not change
+allowed edges, weaken cleanliness rules, lower floors or claim architectural
+completion. Run the boundary inventory against current main, combined runtime
+regressions and a fresh base/candidate host binary comparison before publishing
+this complete integration diff ready for review.
+
+The first classified inventory then exposed a real forbidden type-only edge:
+native-value-definitions imported IrUnitId through the legacy mixed identity
+facade. Point that import directly at the canonical shared identity contract.
+No exemption or allowed-edge change is introduced.
+
+The import-cycle ratchet separately measures directory-edge counts, not just
+actual strongly connected components. The native materializer adds three
+backend-to-IR dependencies: its planner, canonical data comparison and runtime
+attachment authentication. All three are permitted by the layer policy and
+needed to retain rejection before publication. Largest SCC and SCC count do not
+grow. Record the exact 115-to-118 directory-edge allowance on this owning issue;
+leave the global baseline and architecture edge rules unchanged.
+
+Integrated verification: 219 distinct tests across 14 suites pass (103 across
+8 frame/scope suites, 38 across 3 plan/inventory/scope suites, 92 across 4 object
+planning suites; the 14 scope tests occur in both first groups). Source TS7 and
+all six changed test files typecheck; full repository lint/format checks pass.
+All eleven host fixture binaries remain byte-identical to upstream main
+7371eb505b365e49815f1ddc09afed6c52372540 after overlaying the complete production
+diff. The boundary inventory validates all 1,991 modules and explicitly reports
+architecture incomplete. Fresh read-only review found no remaining integration
+or policy-classification defect; the issue-scoped directory-edge grant is
+recognized by the actual gate. LOC/function, dialect/kind, host-import, layering,
+fallback, stack, boxing and rollback checks pass. Tests and gates do not establish
+whole-program retirement: the reachability command exits successfully only under
+the preservation contract (12/12 core-node observations, 10/10 full/cut core types,
+6/6 full/cut witnesses); two unknown dynamic import targets leave the strict graph
+OPEN and deletion NOT CERTIFIED.
+
+Local gate execution notes: the initial tsx CLI invocations were denied IPC
+socket creation; the same scripts pass through node --import tsx. Two unchanged
+gates misdecode spaces in this checkout path; exact source/script copies under a
+space-free temporary directory pass. Initial failure logs are retained locally.
+No baseline, test expectation, CI workflow or global architecture rule was
+weakened for these environment failures.
+
+
+
+### 2026-10-26 — readable physical-validation review boundary
+
+Implementation plan: extract the existing filled-function snapshot traversal from
+`src/wasm/physical/module-reservations.ts` into the physical-layer module
+`src/wasm/physical/data-snapshot.ts`. Reuse the pinned historical textual oracle
+through `tests/helpers/physical-snapshot-oracle.ts`; remove its duplicate from
+the filled-function comparison tests. Preserve every ledger observation and
+keep the other descriptor/global/publication/recgroup domains on their original
+textual algorithm. Quality acceptance: one function snapshot implementation,
+one shared test oracle, no validation cache or new ownership layer.
+
+The initial isolated candidate broadened structural matching to the remaining
+domains. Public global-initializer controls disproved equivalent behavior when
+a getter replaces map, freeze, stringify, numeric toString, padStart, or join.
+All six fail on the rejected candidate. The extraction-only candidate and the
+exact upstream ledger pass those controls. The broader optimization is rejected;
+its patch and raw failures are retained in
+`plan/log/3527-physical-snapshot-review-20261026/` for C's review.
+
+The 316-case baseline and candidate runs each pass 315 and fail the same existing
+canonical module-record declaration hash assertion. Neither arm changes that
+file; the failure is preserved, not rebaselined, at this stage (the receipt
+repair below later corrects the stale pin). The first isolation run
+also exposed test fixtures calling integration-only batch methods; those tests
+now use the upstream scalar authentication boundary. No native integration
+speedup, complete producer population, both-backend qualification, or frontend
+retirement is claimed. Recursive owner validation still requires architectural
+work after this independently readable observation contract is reviewed.
+
+
+Final extraction-only run after shared-oracle cleanup, before the receipt
+repair: 315/316, with the same baseline declaration-hash failure. The three default-compiler binary/WAT
+controls pass 3/3 in both arms with exact equality. Fresh-context read-only
+review (`snapshot_extraction_review`) reports no actionable findings in the
+final production extraction; it independently confirms unchanged traversal and
+oracle literal. C's broader recursive-validation architecture review remains open.
+
+### 2026-10-26 — repair the canonical declaration receipt with provenance
+
+Read-only history audit identifies commit
+`2d0610751954975e0ec634ab83b181a28530454f` as the sole cause of the preserved
+canonical declaration pin failure: it adds `FieldDef.optional?: true` plus its
+five-line documentation. The current module-records file is byte-identical to
+that commit, and removing exactly those six added lines restores its entire
+parent file and the old receipt. Refresh the pinned receipt to that authorized
+schema, retaining all existing declaration/order/type/documentation controls
+and adding negative controls for the optional field type and its documentation.
+This repairs the known baseline test; it does not broaden the snapshot matcher
+or grant an exemption from live mutation observation.
+
+The repaired eight-file selection passes 316/316. Follow-up read-only review
+confirms all previous assertions remain intact and both new mutations have
+unique target checks; no actionable findings. Historical 315/316 failures
+remain preserved alongside the final log in the review evidence directory.
+
+### 2026-10-26 — refresh the physical snapshot review head
+
+Merge upstream main `3b6489436318e8f863ef474e41797b48911eac59` into the
+physical snapshot extraction branch. The sole conflict was the independent
+append-only evidence sections in this issue; preserve both, including the
+realm comparison closing audit that has now landed. No source conflict or
+additional algorithm change was needed. The refreshed tree passes 316/316
+snapshot controls and 38/38 realm layout/completion controls. All five source
+ratchets pass against this exact main base; the dead-export gate proves only
+preservation, not full closure or retirement. PR 6925 retains `hold` pending
+C's independent review of the refreshed head.
+
+### 2026-10-29 — replacement PR on loopdive/js2
+
+The fork-only head of PR 6925 is replaced by a PR from `claude/takeover-6925`,
+merged with main `cb3ff519ad`. It removes the review `.log` files, which
+were committed as raw blobs although `.gitattributes` routes `*.log` through
+LFS (they stay reachable from review head `746d2fcaec`; see the evidence
+README), and documents the snapshot observation limits in the
+`data-snapshot.ts` header.
+No behaviour or sha256 pin changes.
+
+## Implementation Plan — close realm completion comparison mutation window (2026-10-26)
+
+Canonical initializer comparison may invoke Proxy traps after an earlier realm anchor has been compared. Reaudit the completed source initializer through the existing physical ledger before returning the layout owner; this checks every completed resource, including both anchors. Keep the existing checks, layout and emitted bodies unchanged. Add genuine filling/sealed controls using the existing realm fixture: healthy transparent Proxy, late realm-anchor mutation and late function-prototype-anchor mutation. Prove the defect against unchanged main, then run the layout regression and targeted type/lint checks. Quality criterion: one existing audit call, no new validator, cache, ABI or producer. This is a bounded integrity correction, not complete runtime or IR migration qualification.
+
+Validation: unchanged main `61b1b07d2b5666b6ebb84fbbe93ee8a07655d090` fails the four late-mutation cases and passes both healthy controls; the corrected source passes all 38 cases (six new controls plus 32 existing layout regressions). Targeted TS7, Biome lint, Prettier and all five source ratchets pass. A fresh-context review found no actionable defect in the bounded post-comparison physical-ledger check. Three default-compiler programs (numeric loop, string slice/concat, captured object) have byte-identical Wasm and exact matching WAT before/after; this is scoped output preservation, not full backend equivalence. The first baseline probe armed too early and passed all six cases; its log is retained, and only the corrected trigger establishes the defect. Full IR migration and the separate integration candidate remain open.
+
+### Implementation Plan — isolated owned-function publication (2026-10-26)
+
+Add the explicit detached-copy path in wasm/physical/owned-function-data.ts and
+PhysicalModuleReservations.fillOwnedFunction. Reuse the existing function snapshot
+algorithm at this main baseline; do not import unrelated ledger changes from the
+integration worktree. Preserve caller-owned legacy fillFunction behavior and all
+layout/closing audits. Freeze copied plain records and dense private-prototype
+arrays, lock publication fields and retain full recursive audits for mutable byte
+payloads. Immutable payloads can use the existing shell comparison after capture.
+
+Adopt in the four producers present on main: native string output, BigInt number,
+number classifier, and Boolean. Numeric validators require private-copy provenance
+in addition to their existing recursive descriptor/canonical checks. The ToBoolean
+producer is integration-only and remains a subsequent adoption, not bundled here.
+Quality: one copy implementation, explicit opt-in, no generic prototype exemption,
+no new validation cache, no changes to legacy textual descriptor observations.
+Validate original and adapted owner controls, actual binary/WAT and Wasm execution,
+callback/intrinsic mutation witnesses, TS7 and five ratchets. Fresh adversarial
+review precedes any hold release. The broader source/realm adoption and dynamic
+ToNumber owner/resolver remain required for complete IR migration.
+
+Isolation preflight: unchanged main producer tests pass 485/485. The old ledger
+declaration receipt fails identically on exact main and candidate (148/149 each);
+carry the already provenance-backed FieldDef.optional receipt repair from PR6925,
+including type and documentation mutation witnesses. Its baseline failure remains
+in the evidence. One copied owned test called an integration-only batch method;
+use two existing single-token checks while retaining detection of legacy function
+corruption through the owned sibling. No batch API is added by this publication.
+
+Fresh-review correction: copied byte views remained extensible. Hidden own length
+and iterator callbacks could alter real output while restoring indexed bytes
+before the next full audit. Lock the copied view's shape/prototype, publish a fixed
+non-enumerable length and captured iterator, and retain mutable indexed bytes plus
+full content audits. Cover both concrete emitters and prototype substitution. This
+is an owned-path correction; legacy caller-owned bytes remain unchanged.
+
+### 2026-10-29 — replacement PR: release owned payloads to output finalization
+
+The fork-only head of PR 6928 is replaced by a PR from `claude/takeover-6928`,
+stacked on the PR 6925 replacement (`FunctionSnapshot` is now
+`PhysicalDataSnapshot`) and merged with main.
+
+Review blocker: frozen owned bodies crashed the in-place output finalizers —
+`widenNonDefaultableTypes` assigns `local.type` and `blockType.type`;
+`stampAllocationOwners` assigns `fn.body` and pushes locals — and
+`copyModuleData` rejects the private array prototype. Fix at the consumer
+boundary, not in the ledger: `releaseOwnedFunctions(module)`
+(`owned-function-data.ts`) returns a view in which each owned function is a
+plain mutable clone (`Array.prototype` arrays, `Object.prototype` records,
+fresh `Uint8Array` bytes, shared references preserved) and every other function
+object is shared unchanged; it never mutates its input. `finalizePipelineModule`
+runs on that view, and `beginPreparedPresentationFinalization` copies it.
+Releasing at `seal()` was rejected: the ledger and producers keep auditing after
+seal (`assertCompletedReservation` in the `requireCompleted*` receipts and
+`emittedSupportFunctionReceipts`), the producer tests pin that owned
+`locals`/`body` stay non-writable and non-configurable for the ledger's whole
+life, and making them writable would trade that lock for a weaker
+identity-only audit. Legacy functions keep their in-place finalization.
+`tests/issue-3527-owned-function-finalization.test.ts` drives the real
+`runPreparedIrPipelinePresentation` with every ledger fill routed through
+`fillOwnedFunction`, and requires binary, WAT and WIT equal to the legacy fill
+in three cases: standalone allocation-owner stamp plus widening, prepared WIT,
+and the detached mixed finalization (`copyModuleData`). Each production call
+site is load-bearing: removing the release in `finalizePipelineModule` fails
+the first two cases ("Cannot assign to read only property"), removing it before
+`copyModuleData` fails the third (`unsupported-prototype`).
+
+Follow-up review of `c63605e2` (REQUEST CHANGES) found the prepared WIT path
+broken by the released view: `preparedPresentationWitView` checks module
+identity, so it now receives the emitted module (`foreign module` before; the
+WIT case above covers it). Owned bodies are now marked in a dedicated
+`ownedBodies` set at publication instead of reusing the copy-provenance
+predicate, and the release is a single indexed pass. The separate `thaw`
+traversal stays: it copies already-validated ledger data to plain objects,
+while `copyOwnedFunctionDefinition` validates hostile input and hardens it, so
+sharing one walker would put both contracts behind flags.
+
+Also fixed: the doubled "physical module reservations:" error prefix (with a
+test); the duplicated fill preconditions, now one private helper shared with
+`fillFunction`; and the review directory's raw `.log` blobs plus `base-inputs/`
+source copies, removed from the tree. LFS upload is not reachable from the
+session, so they were not renormalized; they stay reachable from `11ad93a464`.
+
+Documented residuals (review nits 2–4, not addressed here):
+
+- **Non-plain data inside the ledger.** Owned payloads are frozen,
+  private-prototype arrays and null-prototype records, so `instanceof Array`,
+  `hasOwnProperty` and the `getPrototypeOf(x) === Array.prototype` validators
+  do not hold for them; only `releaseOwnedFunctions` output is plain.
+- **Two fill mechanisms.** `fillOwnedFunction` (4 producers) and `fillFunction`
+  (~85 sites) coexist with no stated end state; `native-bigint-number.ts` still
+  deep-captures and re-compares its own bodies.
+- **Audit cost.** An owned fill runs five layout audits against one for a legacy
+  fill, which contradicts the "cheaper audits" motivation.

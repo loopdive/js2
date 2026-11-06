@@ -61,6 +61,29 @@ export function __sh_num_toString_radix(value: number, radix: number): string {
   let intPart: number = Math.floor(abs);
   let frac: number = abs - intPart;
   if (intPart > 9007199254740991) { __num_fmt_trap(); }
+  if (frac === 0) {
+    let len: number = 0;
+    let t: number = intPart;
+    while (t > 0) {
+      t = Math.floor(t / r);
+      len = len + 1;
+    }
+    if (neg) { len = len + 1; }
+    let ibuf = __nfd_new(len);
+    let p: number = len - 1;
+    let m: number = intPart;
+    while (m > 0) {
+      let iq: number = Math.floor(m / r);
+      let idigit: number = m - iq * r;
+      let icode: number = 48 + idigit;
+      if (idigit >= 10) { icode = 87 + idigit; }
+      __nfd_set(ibuf, p, icode);
+      p = p - 1;
+      m = iq;
+    }
+    if (neg) { __nfd_set(ibuf, 0, 45); }
+    return __nfd_fin(ibuf, len);
+  }
   let buf = __nfd_new(256);
   let pos: number = 0;
   let n: number = intPart;

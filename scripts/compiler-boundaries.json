@@ -28,9 +28,10 @@
         "src/shared/contracts/ir-unit-inventory.ts",
         "src/shared/contracts/ir-preparation-errors.ts",
         "src/shared/contracts/ir-counted-string-site-id.ts",
-        "src/shared/contracts/string-surrogate.ts"
+        "src/shared/contracts/string-surrogate.ts",
+        "src/shared/contracts/linear-memory-layout.ts"
       ],
-      "minModules": 9
+      "minModules": 10
     },
     {
       "id": "wasm-model",
@@ -116,15 +117,17 @@
         "src/ir/core/tag-domain.ts",
         "src/ir/core/string-runtime.ts",
         "src/ir/core/runtime-symbols.ts",
-        "src/ir/core/date-callables.ts"
+        "src/ir/core/date-callables.ts",
+        "src/ir/core/builtin-method-names.ts"
       ],
-      "minModules": 29
+      "minModules": 30
     },
     {
       "id": "ir-analysis",
       "status": "active",
       "roots": [
         "src/ir/analysis/contracts",
+        "src/ir/analysis/allocation-evidence",
         "src/ir/analysis/alloc-registry.ts",
         "src/ir/analysis/effects.ts",
         "src/ir/analysis/intrinsics.ts",
@@ -153,9 +156,14 @@
         "src/ir/analysis/alloc-verification.ts",
         "src/ir/analysis/nested-stackification.ts",
         "src/ir/analysis/contracts/linear-memory-layout.ts",
-        "src/ir/analysis/backend-legality.ts"
+        "src/ir/analysis/backend-legality.ts",
+        "src/ir/analysis/allocation-evidence/contracts.ts",
+        "src/ir/analysis/allocation-evidence/effect-rules.ts",
+        "src/ir/analysis/allocation-evidence/census.ts",
+        "src/ir/analysis/allocation-evidence/metadata.ts",
+        "src/ir/analysis/allocation-evidence/verify.ts"
       ],
-      "minModules": 14
+      "minModules": 19
     },
     {
       "id": "ir-passes",
@@ -247,9 +255,10 @@
         "src/ir/program/runtime-abi.ts",
         "src/ir/program/runtime-manifest.ts",
         "src/ir/program/runtime-validation.ts",
-        "src/ir/program/validation.ts"
+        "src/ir/program/validation.ts",
+        "src/ir/program/allocation-body-validation.ts"
       ],
-      "minModules": 48
+      "minModules": 49
     },
     {
       "id": "runtime-contracts",
@@ -1865,6 +1874,10 @@
     {
       "path": "src/ir/dialect/README.md",
       "reason": "Dialect documentation; not implementation or type code."
+    },
+    {
+      "path": "src/codegen-linear/runtime/arrays/README.md",
+      "reason": "Linear array runtime body documentation; not implementation or type code."
     }
   ],
   "moves": [
@@ -1969,6 +1982,19 @@
     }
   ],
   "files": [
+    {
+      "path": "src/ir/function-object-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-stage2-function-objects",
+      "nextBoundary": "Frontend source-node/callback-driven lowering into symbolic IR; separate source admission from representation-neutral call construction."
+    },
+    {
+      "path": "src/ir/program/function-value-dependency.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
     {
       "path": "src/backend/wasmgc/resources/native-string-own-keys.ts",
       "state": "clean",
@@ -2159,6 +2185,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/native-value-definitions.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/native-string-value-demands.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -2254,6 +2285,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/console-output.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-unit-inventory.ts",
       "state": "clean",
       "layer": "foundation"
@@ -2340,6 +2376,11 @@
     },
     {
       "path": "src/ir/runtime/vector-callables.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/prepared-instructions.ts",
       "state": "clean",
       "layer": "ir-runtime"
     },
@@ -2823,6 +2864,21 @@
       "layer": "legacy-linear"
     },
     {
+      "path": "src/codegen-linear/runtime/array-allocation.ts",
+      "state": "unmigrated",
+      "layer": "legacy-linear"
+    },
+    {
+      "path": "src/codegen-linear/runtime/arrays/forwarding-resolver.ts",
+      "state": "unmigrated",
+      "layer": "legacy-linear"
+    },
+    {
+      "path": "src/codegen-linear/runtime/string-slice.ts",
+      "state": "unmigrated",
+      "layer": "legacy-linear"
+    },
+    {
       "path": "src/codegen-linear/simd.ts",
       "state": "unmigrated",
       "layer": "legacy-linear"
@@ -2995,6 +3051,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/object-model/anon-expando-bag-slot.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/any-boxing-helpers.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -3147,6 +3211,54 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/array/array-search-core.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure instruction builders for the array-like search scan; move to the backend once the late-import funcIdx resolution is a backend service."
+    },
+    {
+      "path": "src/codegen/array/array-search-proto-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound argument-vector unpacking and late-import registration from the shared array-like search core."
+    },
+    {
+      "path": "src/codegen/array/array-generic-value-bodies.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound late-import registration from the reusable array-like pop/shift/toString body construction."
+    },
+    {
+      "path": "src/codegen/array/array-copy-methods-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound argument coercion and late-import registration from the reusable change-array-by-copy body construction."
+    },
+    {
+      "path": "src/codegen/array/array-sort-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound late-import registration and comparator coercion from the reusable array-like sort body construction."
+    },
+    {
+      "path": "src/codegen/array/array-sort-declared-slots.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the context-bound struct-table scan from the reusable declared-slot write-back construction of the array-like sort body."
+    },
+    {
       "path": "src/codegen/array/array-fill-proto-value.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -3220,6 +3332,14 @@
     },
     {
       "path": "src/codegen/array-indexof-scan.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/array/array-join-cycle.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -3460,6 +3580,14 @@
     },
     {
       "path": "src/codegen/async-await-hoist.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/async-frame-binding-continuity.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -4219,6 +4347,14 @@
       "nextBoundary": "Separate codegen-context prototype edge registration and physical function/global allocation from native prototype bodies."
     },
     {
+      "path": "src/codegen/object-model/generator-function-proto-arm.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate codegen-context generator-function identity registration and physical function/global allocation from the native [[Prototype]] arm bodies."
+    },
+    {
       "path": "src/codegen/closed-struct-extern-set.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -4291,6 +4427,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/closures/apply-extras-tail.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/closures/arrow-phases.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -4332,6 +4476,22 @@
     },
     {
       "path": "src/codegen/closures/closure-header-layout.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/closures/outer-write-index.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/closures/closure-type-sources.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -4404,6 +4564,14 @@
     },
     {
       "path": "src/codegen/closures/method-trampolines.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/closures/module-scope-binding.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -4635,6 +4803,22 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/classes/ir-class-member-projection.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "The JS best-effort class-shape rule of buildIrClassShapes (#7233); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
+    },
+    {
+      "path": "src/codegen/classes/ir-root-struct-heritage.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "The root-struct heritage read-back of buildIrClassShapes (#7241 lib interface, #7244 compiled function); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
+    },
+    {
       "path": "src/codegen/classes/missing-super-return.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -4763,6 +4947,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/cjs-module-exports.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/declarations/declared-nested-write.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -4843,12 +5035,36 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/module-init-prologue.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/declarations/module-global-vec-alias.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/declarations/module-var-undefined-seed.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/declarations/object-property-write-target.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6878-object-property-write-target",
+      "nextBoundary": "Replace AST/oracle-dependent literal write-target discovery with a prepared binding/property identity contract."
     },
     {
       "path": "src/codegen/declarations/object-shape-widening.ts",
@@ -4873,6 +5089,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/declarations/ir-native-numeric-field.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7137",
+      "nextBoundary": "Source-qualified native numeric field projection and member-signature ABI deferral; move with exact class-layout preparation."
     },
     {
       "path": "src/codegen/declarations/reassigned-function-binding-widening.ts",
@@ -5003,6 +5227,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/expressions/destructuring-source-literal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/direct-eval-environment.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -5068,6 +5300,14 @@
     },
     {
       "path": "src/codegen/dynamic-proto.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/identifier-receiver-slot.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -5187,14 +5427,6 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/export-throw-boundary.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
       "path": "src/codegen/expressions.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -5244,6 +5476,14 @@
     },
     {
       "path": "src/codegen/expressions/builtin-class-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/builtin-static-patched-call.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -5603,6 +5843,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/expressions/instanceof-shadowed-rhs.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/expressions/internal-call-argument.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -5753,6 +6001,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/string-field-append.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the AST/context-driven operand coercion from the reusable slot read-concat-store construction of a string field append."
     },
     {
       "path": "src/codegen/expressions/own-property-method-shadow.ts",
@@ -6147,6 +6403,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/fnctor-call-grown-fields.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/fnctor-cold-tail.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -6196,6 +6460,14 @@
     },
     {
       "path": "src/codegen/fnctor-escape-gate.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/fnctor-fast-get.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -6260,6 +6532,14 @@
     },
     {
       "path": "src/codegen/fnctor-presence-bits.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/fnctor-struct-proto-hop.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -6579,6 +6859,22 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/helpers/ir-number-from-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "The IR's host-free Number(v) provider (#7106): legacy's conversion emitter over a detached template; moves with the coercion-engine backend split."
+    },
+    {
+      "path": "src/codegen/helpers/template-wrapper.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Shared mechanics of the template-built IR wrappers (#7106): the detached template parse and a template expression compiled as the wrapper's carrier."
+    },
+    {
       "path": "src/codegen/helpers/arguments-registration.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -6611,7 +6907,47 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/helpers/self-guarded-constructor.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/helpers/is-strict-function.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/host-date-parse.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/host-regexp-search.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/host-intl-classes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/host-intl-locale.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -6915,6 +7251,30 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/ir-dynamic-delete.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "IR dynamic delete support (#7106 propertyHelper): the per-strictness wrapper over legacy's generic externref delete arm; moves with the delete lowering's backend split."
+    },
+    {
+      "path": "src/codegen/helpers/ir-helper-function.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "The one home for a compiler-built helper function (#7106): fresh FunctionContext over fixed parameters + publication as a defined function; used by the dyn.construct / dyn.instanceof / dyn.delete / realm-global wrappers."
+    },
+    {
+      "path": "src/codegen/ir-dynamic-instanceof.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "IR generic dynamic instanceof support (#7106): the wrapper over legacy's generic runtime operator plus the legacy-routing predicate; moves with the instanceof lowering's backend split."
+    },
+    {
       "path": "src/codegen/ir-first-gate.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -6963,6 +7323,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/ir-dynamic-parameter-abi.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7135",
+      "nextBoundary": "Physical parameter-slot proof reads the shared codegen context; migrate with Program ABI preparation."
+    },
+    {
       "path": "src/codegen/ir-legacy-caller-abi.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -6977,6 +7345,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/ir-native-console.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7136",
+      "nextBoundary": "Move native console provider materialization with Program ABI preparation; formatting and output kernels remain shared."
     },
     {
       "path": "src/codegen/ir-native-map.ts",
@@ -7292,6 +7668,14 @@
     },
     {
       "path": "src/codegen/literals.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/array/in-array-carrier.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -7739,7 +8123,23 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/array/tuple-array-carrier.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/void-undefined-operand.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/regex-runtime/linear-search.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -8035,6 +8435,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/object-model/object-assign-array-source.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/object-model/object-assign-primitive-operands.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8225,6 +8633,46 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/ir-arguments-length.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "IR dyn.arguments_length support (#7106 S1e): the wrapper over legacy's __argc/__extras_argv count protocol; moves with the arguments-object split."
+    },
+    {
+      "path": "src/codegen/ir-string-carrier.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "IR dyn.string_carrier support (#7106 S1c): the wrapper over legacy's externref→$AnyString coercion ladder; moves with the coercion-engine split."
+    },
+    {
+      "path": "src/codegen/ir-dynamic-construct.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "IR dyn.construct support (#7106 S3a): the per-arity wrapper over the legacy native-construct driver and the selector's plain-callee predicate; moves with the construct-driver backend split."
+    },
+    {
+      "path": "src/codegen/declarations/ir-open-object-binding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7128",
+      "nextBoundary": "IR open-object carrier support (#7128 S1): legacy's open-$Object binding query the selector asks; moves with the object-shape widening pre-pass."
+    },
+    {
+      "path": "src/codegen/array/ir-array-prototype-borrow.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "IR Array.prototype borrow wrapper (#7106): legacy's borrow compiler over a detached template; moves with the array-prototype-borrow backend split."
     },
     {
       "path": "src/codegen/object-proto-tostring.ts",
@@ -8659,6 +9107,22 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/promise/receiver-capability.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the AST receiver classification and argument compilation from the NewPromiseCapability / Promise.try instruction sequences."
+    },
+    {
+      "path": "src/codegen/promise/with-resolvers.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the call-site routing from the context-owned registration of the native withResolvers runtime function."
+    },
+    {
       "path": "src/codegen/registry/promise-handler-boundary.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8843,12 +9307,52 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/object-model/struct-proto-link.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/closures/promoted-capture-value.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate context-bound promoted capture lookup and ref-cell type selection from native capture-value instructions."
+    },
+    {
+      "path": "src/codegen/closures/function-intrinsic-construct.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the AST callee-shape admission from the injected %Function% identity-arm instruction assembly."
+    },
+    {
+      "path": "src/codegen/expressions/primitive-newtarget-default.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the AST construct-target classification from the [[SetPrototypeOf]] instruction assembly."
+    },
+    {
+      "path": "src/codegen/expressions/uncalled-shim-eval.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Move the AST-only reachability query into a frontend analysis module."
+    },
+    {
+      "path": "src/codegen/object-model/construct-default-proto.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
       "path": "src/codegen/closures/proxy-trap-closure-return.ts",
@@ -9028,6 +9532,22 @@
     },
     {
       "path": "src/codegen/regex/unicode.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/regex/linear.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/regex/match-units.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -9579,6 +10099,22 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/statements/array-share-group.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/statements/array-vec-inference.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/statements/control-flow.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -9995,6 +10531,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/object-model/object-spread-extern-source.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure AST + function-local slot predicate for the object-literal spread lowering (#7051); move with the object-literal struct assembly."
+    },
+    {
       "path": "src/codegen/struct-carrier-growth.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -10131,6 +10675,30 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/atomics/atomics-native.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/buffers/shared-array-buffer.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/buffers/shared-array-buffer-mop.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/ta-dyn-proto-methods.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -10180,6 +10748,62 @@
     },
     {
       "path": "src/codegen/temporal-native.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/temporal/native-arith.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/temporal/native-format.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/temporal/native-helpers.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/temporal/native-parse-duration.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/temporal/native-parse-iso.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/temporal/native-parse-kit.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/temporal/wasm-kit.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -10460,6 +11084,14 @@
     },
     {
       "path": "src/codegen/array/vec-elem-fidelity.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/array/vec-receiver-identity.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -10764,6 +11396,22 @@
     },
     {
       "path": "src/codegen/zero-arg-method-pad.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/object-model/closed-dispatch-rest-arm.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/array/ta-int-elem-coercion.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -11195,6 +11843,11 @@
       "nextBoundary": "Four validation primitives and source-global key grammar now live in the clean core leaf; remaining binding-reference factories and node/type/runtime contracts still need separation."
     },
     {
+      "path": "src/ir/core/builtin-method-names.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
       "path": "src/ir/alloc-registry.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -11212,6 +11865,22 @@
     },
     {
       "path": "src/ir/analysis/binding-info.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/shared/module-init-chunk-plan.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure source-entry planner; becomes clean once src/ts-api.ts leaves migration debt."
+    },
+    {
+      "path": "src/shared/binding-writes.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -11324,6 +11993,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/analysis/operand-admissibility.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7144-ir-shared-operand-admissibility-predicate",
+      "nextBoundary": "Key the shared operand / write admissibility predicates on an IR operator enum instead of the TS SyntaxKind so the module leaves the frontend wrapper."
+    },
+    {
       "path": "src/ir/analysis/string-evidence.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -11338,6 +12015,46 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/array-methods/selection.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7108-ir-array-search-join",
+      "nextBoundary": "Checker-backed element-family proof plus syntactic selector admission; move the checker query behind the frontend oracle and keep the pure admission rules in ir-core."
+    },
+    {
+      "path": "src/ir/array-methods/vec-search-join.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7108-ir-array-search-join",
+      "nextBoundary": "Source-node driven lowering into symbolic IR (vec/slot/loop/string ops); separate the AST argument walk from the representation-neutral scan builder."
+    },
+    {
+      "path": "src/ir/static-predicates/lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-ir-test262-harness-units",
+      "nextBoundary": "Source-node driven lowering of the ambient boolean statics into symbolic IR ops; separate the AST operand walk from the representation-neutral predicate builder."
+    },
+    {
+      "path": "src/ir/static-predicates/selection.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-ir-test262-harness-units",
+      "nextBoundary": "Syntactic selector admission over the shared operand-admissibility predicates; it leaves the frontend wrapper with them once they key on an IR operator enum."
+    },
+    {
+      "path": "src/ir/f64-undefined-marker.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-ir-test262-harness-units",
+      "nextBoundary": "Builds the test for legacy's f64 `undefined` / hole marker bits from IR ops; it joins the value-representation contract once the marker is a named representation fact rather than raw bit patterns."
     },
     {
       "path": "src/ir/array-element-lowering.ts",
@@ -11636,6 +12353,30 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/ambient-typeof.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure TypeScript-AST fold shared by the selector and from-ast (#7106 S1b); moves with the frontend inventory split."
+    },
+    {
+      "path": "src/ir/ambient-global-function-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "TypeScript-AST shape plus builder lowering of the ambient parse/escape/isNaN calls shared by the selector and from-ast (#7253); moves with the frontend inventory split."
+    },
+    {
+      "path": "src/ir/numeric-slot-coercion.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7137",
+      "nextBoundary": "Producer numeric slot/domain conversions reuse canonical bitwise IR; move with source-language lowering."
+    },
+    {
       "path": "src/ir/boolean-brand.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -11717,6 +12458,14 @@
     },
     {
       "path": "src/ir/class-instance-initializers.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/class-instance-storage.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -11818,6 +12567,22 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/dynamic-method-call-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Naming and routing contract for the per-(method, arity) dynamic method-call wrappers; move with the other IR runtime-symbol contracts when ir-core is split from frontend inventory."
+    },
+    {
+      "path": "src/ir/array-prototype-borrow-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Shape and naming contract for the per-(method, arity) Array.prototype borrow wrappers (`Array.prototype.<m>.call(recv, …)`); moves with the dynamic method-call naming contract."
     },
     {
       "path": "src/ir/dynamic-number-lowering.ts",
@@ -12012,6 +12777,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/shared/ambient-intrinsics.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
       "path": "src/ir/generator-support.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12042,6 +12815,22 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/console-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7136",
+      "nextBoundary": "Native console producer emits logical strings and symbolic provider calls; keep physical provider selection outside the IR."
+    },
+    {
+      "path": "src/ir/primitive-to-string.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7066",
+      "nextBoundary": "ToString producer emits logical strings and the symbolic number-to-string provider call; keep physical provider selection outside the IR."
     },
     {
       "path": "src/ir/host-free-runtime.ts",
@@ -12196,6 +12985,14 @@
       "nextBoundary": "Generic implementation no longer selects a concrete emitter, but Wasm-shaped branches, resolver callbacks and mixed IR dependencies remain; this cycle removal is not pure-IR or whole-compiler closure."
     },
     {
+      "path": "src/ir/lowering/string-operations.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Generic string operation orchestration uses an injected emitter and only type-imports the clean semantic IR nodes and the still-unmigrated string emitter contract; establish a complete generic lowering contract closure before activation."
+    },
+    {
       "path": "src/ir/lower.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12213,6 +13010,14 @@
     },
     {
       "path": "src/ir/math-runtime-providers.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/module-binding-class-instance.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -12242,6 +13047,22 @@
       "destination": "frontend-ts",
       "owner": "3518-coordinator",
       "nextBoundary": "Pure startup data lives in ir/program/startup.ts. Separate the remaining AST/checker builder and source verifier from the legacy parity observer before frontend placement; preserve algorithms and old type exports."
+    },
+    {
+      "path": "src/ir/module-init-prologue-patch.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/module-init-chunk-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
       "path": "src/ir/module-init.ts",
@@ -12282,6 +13103,102 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/native-in.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7135",
+      "nextBoundary": "JavaScript producer emits canonical boxing and runtime callable bindings; separate runtime-provider preparation from pure IR contracts."
+    },
+    {
+      "path": "src/ir/empty-object-literal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7128",
+      "nextBoundary": "Frontend source-shape certifier for the empty-object-literal arms (#4471 inert, #7128 S1 open carrier); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/binding-pattern-plan.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape planner for destructuring declarations (#7106): the plan types and the typed-source reads the selector and builder share; move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/literal-pattern-plan.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape planner for destructuring over a fresh literal (#7106); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/module-init-vars.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape classifier for the top-level `var` lists the module initializer models and the bindings they declare (#7106 S5); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/string-method-surface.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "The one `String.prototype` method plan read by the selector, the builder and both backend resolvers (#7106); its static-argument classifier is source shape, so it moves with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/binding-pattern-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106",
+      "nextBoundary": "The one walker that lowers a destructuring plan into IR values (#7106); takes its AST-facing operations from the builder host, so it splits with from-ast's lowering seams."
+    },
+    {
+      "path": "src/shared/named-evaluation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106",
+      "nextBoundary": "Pure-AST IsAnonymousFunctionDefinition shared by codegen naming and the IR destructuring planner; becomes a frontend fact when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/shared/intrinsic-prototype-writes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106",
+      "nextBoundary": "Pure-AST scan for Array.prototype / Object.prototype patches shared by the #1719 iteration brand and the IR destructuring readers; becomes a frontend fact when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/realm-keys.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106",
+      "nextBoundary": "Reads intrinsic property keys from the native realm catalog for selector key-absence proofs; becomes a pure IR contract once the realm catalog is a shared contract."
+    },
+    {
+      "path": "src/ir/open-object-carrier.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7128",
+      "nextBoundary": "JavaScript producer for the open-object carrier (#7128 S1): emits the canonical runtime callable bindings; separate runtime-provider preparation from pure IR contracts."
+    },
+    {
+      "path": "src/ir/throw-type-error.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7128",
+      "nextBoundary": "JavaScript producer helper for `if (cond) throw new TypeError(msg)` (native-in, open-object carrier): emits the canonical runtime callable binding; separate runtime-provider preparation from pure IR contracts."
     },
     {
       "path": "src/ir/outcomes.ts",
@@ -12964,6 +13881,14 @@
       "nextBoundary": "N1 moved the closed instruction declarations into wasm/model/instructions.ts. Split remaining Wasm module/type records from compiler metadata before completing the originally planned wasm/model/types.ts boundary; old imports and compiler metadata remain debt."
     },
     {
+      "path": "src/ir/uncurried-object-alias.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Frontend source-shape certifier for the uncurried Object.prototype predicate aliases; move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/ir/update-retyped-bindings.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13093,6 +14018,14 @@
     },
     {
       "path": "src/linked-provider-runtime.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Review the frontend, orchestration, runtime and shared-contract split before migration."
+    },
+    {
+      "path": "src/optimize-try-table-shape.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "compiler",
@@ -13377,6 +14310,16 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/native-regime-view.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
+      "path": "src/runtime/process-capability.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/object-create-class-instance.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -13393,6 +14336,11 @@
     },
     {
       "path": "src/runtime/raw-exports-struct-authority.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
+      "path": "src/runtime/promise-try-polyfill.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
     },
@@ -13502,6 +14450,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/promise/with-resolvers-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/web-host-constructors.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -13516,6 +14469,11 @@
     },
     {
       "path": "src/shared/contracts/identity-values.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/linear-memory-layout.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -13664,6 +14622,11 @@
       "layer": "wasm-physical"
     },
     {
+      "path": "src/wasm/physical/data-snapshot.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
       "path": "src/wasm/physical/function-handles.ts",
       "state": "clean",
       "layer": "wasm-physical"
@@ -13675,6 +14638,11 @@
     },
     {
       "path": "src/wasm/physical/module-reservations.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/owned-function-data.ts",
       "state": "clean",
       "layer": "wasm-physical"
     },
@@ -14387,6 +15355,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/object-model/ir-dynamic-method-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "IR runtime wrapper built from legacy's any-receiver emitters over a fixed template; replace with a native brand-dispatch runtime when the backend owns method dispatch."
+    },
+    {
       "path": "src/codegen/builtin-subclass-receiver.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -14481,6 +15457,14 @@
       "destination": "backend-wasmgc",
       "owner": "6650-spread-literal-return-carrier",
       "nextBoundary": "Separate AST-based host-path evidence from physical carrier selection."
+    },
+    {
+      "path": "src/codegen/declarations/string-replacement-callbacks.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
       "path": "src/codegen/error-subclass-proto-chain.ts",
@@ -15040,6 +16024,21 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/platform-arg-marshal.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
+      "path": "src/runtime/regexp-host-accelerator.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
+      "path": "src/runtime/intl-host-accelerator.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/codegen/expressions/declaration-bound-callee.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -15065,6 +16064,14 @@
     },
     {
       "path": "src/codegen/analysis/async-for-of-region.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/analysis/async-loop-head.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -15341,6 +16348,54 @@
     },
     {
       "path": "src/codegen/expressions/callable-property-omittable-param.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/array/array-shift-native.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/classes/runtime-proto-install-demand.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/callable-result-unbox.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/disposable-any-receiver-two-arm.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/element-compound-any-add.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/base64-native.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -15667,12 +16722,42 @@
       "layer": "ir-analysis"
     },
     {
+      "path": "src/ir/analysis/allocation-evidence/contracts.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/census.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/metadata.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/verify.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
       "path": "src/ir/runtime/verify.ts",
       "state": "clean",
       "layer": "ir-runtime"
     },
     {
       "path": "src/ir/program/allocations.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/allocation-body-validation.ts",
       "state": "clean",
       "layer": "ir-program"
     },
@@ -15787,6 +16872,30 @@
       "layer": "ir-analysis"
     },
     {
+      "path": "src/compiler/prepared-pipeline-boundary.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Separate TypeScript/safe-mode frontend validation and diagnostic capture from source-free prepared output-profile association before compiler-layer activation."
+    },
+    {
+      "path": "src/test262/test262-prepared-entry.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Separate strict Test262 request capture and frontend analysis from prepared-program orchestration and optional legacy API delegation before compiler-layer activation."
+    },
+    {
+      "path": "src/test262/test262-prepared-runtime.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Separate Test262 engine/import lifecycle integration from source-free final-artifact evidence; retain the existing JavaScript adapter dependency as explicit migration debt."
+    },
+    {
       "path": "src/compiler/ir-program-presentation.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -15803,6 +16912,176 @@
       "path": "src/wasm/physical/number-remainder.ts",
       "state": "clean",
       "layer": "wasm-physical"
+    },
+    {
+      "path": "src/shared/intl-locale-canonicalization.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Keep this pure, data-injected locale parser as unactivated migration debt until a separately-owned backend/wasmgc integration supplies a pinned generated source table, observable generic locale-list semantics, %Intl% identity, and native error exposure."
+    },
+    {
+      "path": "src/codegen/helpers/return-tail-funnel.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/classes/class-symbol-to-primitive-operand.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/loose-eq-object-identity.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/anyvalue-to-number.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/import-meta-url-native.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/runtime/native-microtask-checkpoint.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
+      "path": "src/ir/class-overrides.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure TS-AST class-override scan feeding the IR selector and builder (#7000); retire with the IR virtual-dispatch intent or move behind the frontend-ts boundary."
+    },
+    {
+      "path": "src/ir/private-member-syntax.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure TS-AST private-member predicates shared by the IR selector and from-ast (#7227); move behind the frontend-ts boundary with the class-member selector."
+    },
+    {
+      "path": "src/ir/closure-signature-flow.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure TS-AST callable-slot flow scan feeding the IR selector (#7003); retire with an arity-adapting IR closure call or move behind the frontend-ts boundary."
+    },
+    {
+      "path": "src/ir/const-binding-writes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure TS-AST write-to-const scan feeding the IR lowerer's legacy demotion (#7014 wave 15); move behind the frontend-ts boundary with the mutation pre-pass."
+    },
+    {
+      "path": "src/ir/logical-assignment-name-targets.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure TS-AST scan of logical-assignment NamedEvaluation targets feeding the IR lowerer's legacy demotion (#7040); move behind the frontend-ts boundary with the mutation pre-pass."
+    },
+    {
+      "path": "src/ir/function-member-closure-plan.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106-stage2-function-objects",
+      "nextBoundary": "Compiler-local exact AST/checker/physical-ABI sidecar and final allocation observer; separate frontend source identity from core contracts before certification."
+    },
+    {
+      "path": "src/codegen/function-member-closure-planning.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106-stage2-function-objects",
+      "nextBoundary": "Source checker/physical closure ABI/prepared allocator metadata boundary; separate source proof from canonical backend allocation."
+    },
+    {
+      "path": "src/ir/select-closure-literal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106-stage2-function-objects",
+      "nextBoundary": "Source closure shape/body selection through required canonical selector operations; isolate frontend AST admission from core IR."
+    },
+    {
+      "path": "src/ir/select-planned-closure-operands.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7144-ir-shared-operand-admissibility-predicate",
+      "nextBoundary": "Source planned-closure operand family proof over the shared admissibility predicates; isolate frontend AST admission from core IR."
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-frame-bindings.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/prepared-frame-layout.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/prepared-native-async-frame.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-contracts.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-declarations.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-layout.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-operations.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-native-async-frame-plan.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/promise-layout.ts",
+      "state": "clean",
+      "layer": "native-runtime"
     }
   ]
 }

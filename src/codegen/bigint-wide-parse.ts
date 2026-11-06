@@ -32,7 +32,6 @@ import {
 } from "../runtime/wasmgc/values/string-number-grammar.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { addFuncType } from "./registry/types.js";
 
 /**
@@ -42,7 +41,7 @@ import { addFuncType } from "./registry/types.js";
  */
 export function emitBigIntCtorCarrier(ctx: CodegenContext, fctx: FunctionContext, expectedType?: ValType): boolean {
   if (expectedType?.kind !== "externref" && expectedType?.kind !== "anyref") return false;
-  if (usesHostBigIntCarrier(ctx)) return false;
+
   const idx = ensureBigIntCtorCarrier(ctx);
   if (idx === undefined) return false;
   fctx.body.push({ op: "call", funcIdx: idx });

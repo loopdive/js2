@@ -1,0 +1,332 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > independently reconstructs and replays the complete semantic1813 predecessor 283ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > independently proves UTF8 raw reciprocity and exact canonical owner source inverse 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses a stale1813 semantic parent as current input 10ms
+   → expected [Function] to throw error including 'nested stackification policy evolutio…' but got 'Deno post-position main successor: co…'
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses a stale1813 raw parent as current input 4ms
+   → expected [Function] to throw error including 'nested stackification policy evolutio…' but got 'Deno post-position main successor: co…'
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses boxed raw before a missing receipt and proves the paired physicalENOENT 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses null before a missing receipt and proves the paired physicalENOENT 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses array before a missing receipt and proves the paired physicalENOENT 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses accessor before a missing receipt and proves the paired physicalENOENT 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses symbol before a missing receipt and proves the paired physicalENOENT 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses cycle before a missing receipt and proves the paired physicalENOENT 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses foreign prototype before a missing receipt and proves the paired physicalENOENT 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses throwing proxy before a missing receipt and proves the paired physicalENOENT 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic analysis roots mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic analysis entries mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic analysis minimum mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic activation mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic move mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic new owner row mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic old adapter row mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic unrelated retained field mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group0 omission 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group0 duplication 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group0 valid reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group1 omission 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group1 duplication 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group1 valid reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group2 omission 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group2 duplication 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group2 valid reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group3 omission 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group3 duplication 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group3 valid reorder 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group4 omission 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group4 duplication 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group4 valid reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses missing authority tests/helpers/ir-runtime-program-policy-nested-stackification.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses missing authority tests/helpers/ir-runtime-program-policy-nested-stackification.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses mutation authority tests/helpers/ir-runtime-program-policy-nested-stackification.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses mutation authority tests/helpers/ir-runtime-program-policy-nested-stackification.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses missing authority tests/helpers/ir-runtime-program-policy-evolution.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses missing authority tests/helpers/ir-runtime-program-policy-evolution.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses mutation authority tests/helpers/ir-runtime-program-policy-evolution.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses mutation authority tests/helpers/ir-runtime-program-policy-evolution.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses missing authority src/ir/nested-stackification.ts after success 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses missing authority src/ir/nested-stackification.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses mutation authority src/ir/nested-stackification.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses mutation authority src/ir/nested-stackification.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses missing authority src/ir/analysis/nested-stackification.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses missing authority src/ir/analysis/nested-stackification.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses mutation authority src/ir/analysis/nested-stackification.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses mutation authority src/ir/analysis/nested-stackification.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > recaptures a mutable semantic caller and refuses after-success retained mutations 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw whitespace then independently succeeds with fresh canonical bytes 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 53 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > independently reconstructs and replays the complete semantic1813 predecessor
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-nested-stackification-policy-evolution.test.ts:350:21
+ ❯ policy tests/issue-3518-nested-stackification-policy-evolution.test.ts:364:41
+ ❯ tests/issue-3518-nested-stackification-policy-evolution.test.ts:591:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/53]⎯
+
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > independently proves UTF8 raw reciprocity and exact canonical owner source inverse
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-nested-stackification-policy-evolution.test.ts:350:21
+ ❯ tests/issue-3518-nested-stackification-policy-evolution.test.ts:614:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/53]⎯
+
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses a stale1813 semantic parent as current input
+AssertionError: expected [Function] to throw error including 'nested stackification policy evolutio…' but got 'Deno post-position main successor: co…'
+
+Expected: [32m"[7mnested stackification policy evolution[27m: complete [7mpolicy[27m profile mismatch"[39m
+Received: [31m"[7mDeno post-position main successor[27m: complete [7mraw source[27m profile mismatch"[39m
+
+ ❯ tests/issue-3518-nested-stackification-policy-evolution.test.ts:634:95
+    632|   });
+    633|   it("refuses a stale1813 semantic parent as current input", () => {
+    634|     expect(() => captureNestedStackificationPredecessorPolicy(independ…
+       |                                                                                               ^
+    635|       "nested stackification policy evolution: complete policy profile…
+    636|     );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/53]⎯
+
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses a stale1813 raw parent as current input
+AssertionError: expected [Function] to throw error including 'nested stackification policy evolutio…' but got 'Deno post-position main successor: co…'
+
+Expected: [32m"[7mnested stackification policy evolution[27m: complete raw source profile mismatch"[39m
+Received: [31m"[7mDeno post-position main successor[27m: complete raw source profile mismatch"[39m
+
+ ❯ tests/issue-3518-nested-stackification-policy-evolution.test.ts:639:100
+    637|   });
+    638|   it("refuses a stale1813 raw parent as current input", () => {
+    639|     expect(() => captureNestedStackificationPredecessorPolicySource(in…
+       |                                                                                                    ^
+    640|       "nested stackification policy evolution: complete raw source pro…
+    641|     );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/53]⎯
+
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses boxed raw before a missing receipt and proves the paired physicalENOENT
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses null before a missing receipt and proves the paired physicalENOENT
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses array before a missing receipt and proves the paired physicalENOENT
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses accessor before a missing receipt and proves the paired physicalENOENT
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses symbol before a missing receipt and proves the paired physicalENOENT
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses cycle before a missing receipt and proves the paired physicalENOENT
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses foreign prototype before a missing receipt and proves the paired physicalENOENT
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses throwing proxy before a missing receipt and proves the paired physicalENOENT
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-nested-stackification-policy-evolution.test.ts:350:21
+ ❯ tests/issue-3518-nested-stackification-policy-evolution.test.ts:688:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/53]⎯
+
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic analysis roots mutation
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic analysis entries mutation
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic analysis minimum mutation
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic activation mutation
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic move mutation
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic new owner row mutation
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic old adapter row mutation
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses semantic unrelated retained field mutation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-nested-stackification-policy-evolution.test.ts:350:21
+ ❯ policy tests/issue-3518-nested-stackification-policy-evolution.test.ts:364:41
+ ❯ tests/issue-3518-nested-stackification-policy-evolution.test.ts:756:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/53]⎯
+
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group0 omission
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group0 duplication
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group0 valid reorder
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group1 omission
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group1 duplication
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group1 valid reorder
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group2 omission
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group2 duplication
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group2 valid reorder
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group3 omission
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group3 duplication
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group3 valid reorder
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group4 omission
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group4 duplication
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw group4 valid reorder
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-nested-stackification-policy-evolution.test.ts:350:21
+ ❯ tests/issue-3518-nested-stackification-policy-evolution.test.ts:766:35
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/53]⎯
+
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses missing authority tests/helpers/ir-runtime-program-policy-nested-stackification.json after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses missing authority tests/helpers/ir-runtime-program-policy-nested-stackification.json after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses mutation authority tests/helpers/ir-runtime-program-policy-nested-stackification.json after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses mutation authority tests/helpers/ir-runtime-program-policy-nested-stackification.json after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses missing authority tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses missing authority tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses mutation authority tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses mutation authority tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses missing authority src/ir/nested-stackification.ts after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses missing authority src/ir/nested-stackification.ts after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses mutation authority src/ir/nested-stackification.ts after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses mutation authority src/ir/nested-stackification.ts after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses missing authority src/ir/analysis/nested-stackification.ts after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses missing authority src/ir/analysis/nested-stackification.ts after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh semantic refuses mutation authority src/ir/analysis/nested-stackification.ts after success
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > fresh raw refuses mutation authority src/ir/analysis/nested-stackification.ts after success
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-nested-stackification-policy-evolution.test.ts:350:21
+ ❯ tests/issue-3518-nested-stackification-policy-evolution.test.ts:811:24
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/53]⎯
+
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > recaptures a mutable semantic caller and refuses after-success retained mutations
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-nested-stackification-policy-evolution.test.ts:350:21
+ ❯ policy tests/issue-3518-nested-stackification-policy-evolution.test.ts:364:41
+ ❯ tests/issue-3518-nested-stackification-policy-evolution.test.ts:833:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/53]⎯
+
+ FAIL  tests/issue-3518-nested-stackification-policy-evolution.test.ts > fixed nested stackification policy relocation > refuses raw whitespace then independently succeeds with fresh canonical bytes
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-nested-stackification-policy-evolution.test.ts:350:21
+ ❯ tests/issue-3518-nested-stackification-policy-evolution.test.ts:842:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/53]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  53 failed (53)
+   Start at  22:24:36
+   Duration  1.44s (transform 482ms, setup 0ms, collect 591ms, tests 451ms, environment 0ms, prepare 76ms)
+

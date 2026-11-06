@@ -17,6 +17,7 @@ import { JSDOM, VirtualConsole } from "jsdom";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const INDEX_HTML = resolve(import.meta.dirname, "..", "website", "index.html");
+const VIEW_STATE_JS = resolve(import.meta.dirname, "..", "website", "components", "t262-view-state.js");
 
 const MANY_PATHS = [
   "language/expressions/addition",
@@ -58,6 +59,11 @@ beforeAll(async () => {
         removeListener() {},
       });
       w.scrollTo = () => {};
+      // (fa1e5df779) The page's inline scripts now call `window.t262ViewState`
+      // synchronously; it comes from an external classic script jsdom does not
+      // fetch here, so without it the whole hydration block throws on load.
+      // Evaluate the real file rather than a stub.
+      w.eval(readFileSync(VIEW_STATE_JS, "utf8"));
       w.IntersectionObserver = class {
         observe() {}
         unobserve() {}

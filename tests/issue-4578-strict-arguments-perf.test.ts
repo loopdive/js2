@@ -14,6 +14,9 @@ import { ts } from "../src/ts-api.js";
 
 const EAGER_CONTROL_ENV = "JS2WASM_ELIDE_PRIVATE_ARGUMENTS_REGISTRATION";
 const DEFINE_ACCESSOR = "__defineProperty_accessor";
+// (#6964) The seed site calls the fresh-arguments define native, which calls
+// the generic accessor define on the companion; reachability still proves it.
+const SEED_ACCESSOR = "__args_own_define_accessor";
 
 const CLSX_SHAPED_SOURCE = `
   export function clsxShape(): number {
@@ -124,7 +127,7 @@ describe("#4578 private strict arguments poison-accessor elision", () => {
     const result = await compileStandalone(CLSX_SHAPED_SOURCE);
     const clsx = watFunction(result.wat, "clsxShape");
     expect(clsx.body, "the optimized function must still build/read its arguments vec").toMatch(/struct\.get/);
-    expect(watCallTargets(result.wat, clsx.body)).not.toContain(DEFINE_ACCESSOR);
+    expect(watCallTargets(result.wat, clsx.body)).not.toContain(SEED_ACCESSOR);
     expect(reachableFunctions(result.wat, "clsxShape")).not.toContain(DEFINE_ACCESSOR);
 
     const { instance } = await WebAssembly.instantiate(result.binary, {});
@@ -134,7 +137,7 @@ describe("#4578 private strict arguments poison-accessor elision", () => {
   it("has a non-vacuous eager A/B control on the same clsx-shaped source", async () => {
     const result = await compileStandalone(CLSX_SHAPED_SOURCE, true);
     const clsx = watFunction(result.wat, "clsxShape");
-    expect(watCallTargets(result.wat, clsx.body)).toContain(DEFINE_ACCESSOR);
+    expect(watCallTargets(result.wat, clsx.body)).toContain(SEED_ACCESSOR);
     expect(reachableFunctions(result.wat, "clsxShape")).toContain(DEFINE_ACCESSOR);
   });
 
@@ -159,7 +162,7 @@ describe("#4578 private strict arguments poison-accessor elision", () => {
         export function test(): number { inspect(); return 1; }
       `);
       const inspect = watFunction(result.wat, "inspect");
-      expect(watCallTargets(result.wat, inspect.body)).toContain(DEFINE_ACCESSOR);
+      expect(watCallTargets(result.wat, inspect.body)).toContain(SEED_ACCESSOR);
       expect(reachableFunctions(result.wat, "inspect")).toContain(DEFINE_ACCESSOR);
     });
   }

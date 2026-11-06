@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../../src/index.js";
-import { buildImports } from "../../src/runtime.js";
+import { buildImports, wrapCompiledExports } from "../../src/runtime.js";
 
 /**
  * Compile TS source, instantiate with the full runtime imports (needed for
@@ -14,7 +14,9 @@ async function run(source: string, fn: string = "main"): Promise<unknown> {
   }
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
-  return (instance.exports as any)[fn]();
+  imports.setInstance?.(instance);
+  // (#6708) read results through the compiled JS value adapter, as an embedder does
+  return (wrapCompiledExports(result, instance) as any)[fn]();
 }
 
 describe("RegExp methods equivalence", () => {

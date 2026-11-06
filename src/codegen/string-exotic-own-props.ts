@@ -47,6 +47,8 @@ import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
+import { ensureExnTag } from "./registry/physical-imports.js";
+import { ensureDefineRejectionGlobal } from "./object-model/define-rejection-channel.js"; // (#6651 W1a)
 import { STRING_EXOTIC_PUSH_KEYS_FN } from "./object-model/native-names.js"; // (#6770) leaf-shared name
 
 /** MUST equal `WRAPPER_PRIMITIVE_KEY` in object-runtime.ts (ESM-cycle-free). */
@@ -530,4 +532,167 @@ export function stringExoticHasOwnPrologue(funcIdx: number | undefined): Instr[]
       then: [{ op: "i32.const", value: 1 }, { op: "return" }],
     },
   ];
+}
+
+/** `__defineProperty_value` host flag bits (object-runtime-descriptors.ts). */
+const DP_W = 1 << 0;
+const DP_E = 1 << 1;
+const DP_C = 1 << 2;
+const DP_W_SPEC = 1 << 3;
+const DP_E_SPEC = 1 << 4;
+const DP_C_SPEC = 1 << 5;
+const DP_HAS_VALUE = 1 << 7;
+
+/**
+ * (#6651 W1a) The MUTATION half of §10.4.3 for a String WRAPPER, spliced at
+ * finalize (after every other `__reflect_set` / `__extern_set_strict` /
+ * `__defineProperty_*` arm) by `unshiftRegExpAccessorSetGuard`, keyed on the
+ * same {@link registerStringExoticHasOwn} predicate that already answers
+ * presence, gOPD and the sloppy `__extern_set` no-op — so presence and
+ * mutability cannot disagree.
+ *
+ * Every String-exotic own property (`length`, the in-range indices) is a
+ * non-writable, non-configurable data property (§10.4.3.5 / §22.1.4.1):
+ *
+ * - **[[Set]]** (§10.1.9.2 step 2.a): OrdinarySet answers `false` —
+ *   `Reflect.set` returns it, a strict assignment throws.
+ * - **[[DefineOwnProperty]]** (§10.4.3.2 → §10.1.6.3
+ *   ValidateAndApplyPropertyDescriptor against the immutable current
+ *   descriptor): `{configurable: true}`, a changed `enumerable`,
+ *   `{writable: true}`, a different `value` (SameValue) or ANY accessor
+ *   descriptor is rejected; a compatible descriptor changes nothing. A
+ *   rejection parks its TypeError in the #6770 S4 rejection global before the
+ *   throw, so `Reflect.defineProperty` answers `false` and
+ *   `Object.defineProperty` throws.
+ *
+ * Any other key (an expando such as `s[4]`) falls through to the ordinary
+ * `$Object` table, which is where a String wrapper keeps its own expandos.
+ */
+export function installStringExoticMutationGuards(ctx: CodegenContext): void {
+  const predIdx = ctx.funcMap.get(STRING_EXOTIC_HASOWN_FN);
+  const ctorIdx = ctx.funcMap.get("__new_TypeError");
+  if (predIdx === undefined || ctorIdx === undefined) return;
+  const tagIdx = ensureExnTag(ctx);
+  const rejectionGlobal = ensureDefineRejectionGlobal(ctx);
+  const throwTypeError = (msg: string, park: boolean): Instr[] => [
+    ...nativeStringLiteralInstrs(ctx, msg),
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: ctorIdx },
+    ...(park && rejectionGlobal !== undefined
+      ? ([
+          { op: "global.set", index: rejectionGlobal },
+          { op: "global.get", index: rejectionGlobal },
+        ] satisfies Instr[])
+      : []),
+    { op: "throw", tagIdx },
+  ];
+  const unshift = (fnName: string, then: Instr[]): void => {
+    const fn = ctx.mod.functions.find((candidate) => candidate.name === fnName);
+    if (!fn) return;
+    fn.body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: predIdx },
+      { op: "if", blockType: { kind: "empty" }, then },
+    );
+  };
+  unshift("__reflect_set", [{ op: "i32.const", value: 0 }, { op: "return" }]);
+  unshift("__extern_set_strict", throwTypeError("Cannot assign to read only property of a String object", false));
+  const redefine = "Cannot redefine property of a String object";
+  unshift("__defineProperty_accessor", throwTypeError(redefine, true));
+  const defineIdx = registerStringExoticDefine(ctx, () => throwTypeError(redefine, true));
+  if (defineIdx === undefined) return;
+  unshift("__defineProperty_value", [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 2 },
+    { op: "local.get", index: 3 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: defineIdx },
+    { op: "return" },
+  ]);
+}
+
+/**
+ * `__strexo_define(obj, value, flagsF64, key) -> obj`: ValidateAndApplyPropertyDescriptor
+ * for a data descriptor over a String-exotic own property (current descriptor
+ * `{value, writable: false, enumerable: <is index>, configurable: false}`).
+ * Throws through `reject` on an incompatible descriptor; otherwise a no-op.
+ */
+function registerStringExoticDefine(ctx: CodegenContext, reject: () => Instr[]): number | undefined {
+  const gopdIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
+  const getIdx = ctx.funcMap.get("__extern_get");
+  const objectIsIdx = ctx.funcMap.get("__object_is");
+  if (gopdIdx === undefined || getIdx === undefined || objectIsIdx === undefined || ctx.anyStrTypeIdx < 0) {
+    return undefined;
+  }
+  const HF = 4;
+  const CUR = 5;
+  const hf = (bit: number): Instr[] => [
+    { op: "local.get", index: HF },
+    { op: "i32.const", value: bit },
+    { op: "i32.and" },
+    { op: "i32.const", value: 0 },
+    { op: "i32.ne" },
+  ];
+  const rejectIf = (): Instr => ({ op: "if", blockType: { kind: "empty" }, then: reject() });
+  const body: Instr[] = [
+    { op: "local.get", index: 2 },
+    { op: "i32.trunc_sat_f64_s" },
+    { op: "local.set", index: HF },
+    // Current [[Value]]: the 1-char string at an index, the length number otherwise.
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 3 },
+    { op: "call", funcIdx: gopdIdx },
+    ...nativeStringLiteralInstrs(ctx, "value"),
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: getIdx },
+    { op: "local.set", index: CUR },
+    // §10.1.6.3 step 4.a — {configurable: true} on a non-configurable property.
+    ...hf(DP_C_SPEC),
+    ...hf(DP_C),
+    { op: "i32.and" },
+    rejectIf(),
+    // step 4.b — a changed enumerable (indices are enumerable, `length` is not).
+    ...hf(DP_E_SPEC),
+    ...hf(DP_E),
+    { op: "local.get", index: CUR },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+    { op: "i32.ne" },
+    { op: "i32.and" },
+    rejectIf(),
+    // step 7.a — non-writable, non-configurable: no {writable: true}, no new value.
+    ...hf(DP_W_SPEC),
+    ...hf(DP_W),
+    { op: "i32.and" },
+    rejectIf(),
+    ...hf(DP_HAS_VALUE),
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: CUR },
+        { op: "call", funcIdx: objectIsIdx },
+        { op: "i32.eqz" },
+        rejectIf(),
+      ],
+    },
+    { op: "local.get", index: 0 },
+  ];
+  const EXT: ValType = { kind: "externref" };
+  const typeIdx = addFuncType(ctx, [EXT, EXT, { kind: "f64" }, EXT], [EXT]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set("__strexo_define", funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__strexo_define",
+    typeIdx,
+    locals: [
+      { name: "hf", type: { kind: "i32" } },
+      { name: "cur", type: EXT },
+    ],
+    body,
+    exported: false,
+  });
+  return funcIdx;
 }

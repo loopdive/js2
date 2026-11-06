@@ -20,9 +20,9 @@
 // On failure, returns a list of `IrVerifyError`s rather than throwing, so
 // callers can decide whether to bail or fall back to the legacy path.
 
-import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from "../core/nodes.js";
+import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from "../core/nodes.js";
 import type { PreparedIrFunction as IrFunction } from "./contracts/prepared.js";
-import type { IrType } from "../core/types.js";
+import type { IrClassShape, IrType } from "../core/types.js";
 import { forEachInstrDeep, forEachNestedBuffer } from "../core/nodes.js";
 import { asVal, irTypeEquals } from "../core/types.js";
 import { irSupportRef, closureSignatureEquals } from "../core/types.js";
@@ -346,6 +346,13 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
 
 export interface IrVerificationOptions {
   readonly verifyDominanceNaive: boolean;
+  /**
+   * (#7001) Lane fact: does the `string` IrType lower to externref (host
+   * strings)? `false` makes a dynamic/externref value returned into a declared
+   * `string` result non-assignable (native strings lower to
+   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.
+   */
+  readonly stringIsExternref?: boolean;
 }
 
 /**
@@ -517,7 +524,7 @@ export function verifyIrFunction(
       const declared = func.resultTypes[i]!;
       const actual = operandIrType(func, block, t.values[i]!, new Set());
       if (!actual) continue; // not locally visible — SSA-scope check reports it
-      if (!returnTypeAssignable(actual, declared)) {
+      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {
         errors.push({
           message:
             `return[${i}] type ${describeKind(actual)} not assignable to declared ` +
@@ -551,7 +558,7 @@ export function verifyIrFunction(
         if (i.value === null) return;
         const actual = operandIrType(func, block, i.value, new Set());
         if (!actual) return; // not locally visible — SSA-scope check reports it
-        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {
+        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {
           errors.push({
             message:
               `early.return value type ${describeKind(actual)} not assignable to declared ` +
@@ -578,7 +585,7 @@ export function verifyIrFunction(
  * silently demote working IR functions to legacy, so the check only fires on
  * an unambiguous mismatch.
  */
-function returnTypeAssignable(actual: IrType, declared: IrType): boolean {
+function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {
   if (actual.kind === "support-ref" || declared.kind === "support-ref") return irTypeEquals(actual, declared);
   // Fnctor values are nominal source-qualified instances, never arbitrary
   // reference-shaped carriers. An exact shape match is required in either
@@ -617,6 +624,16 @@ function returnTypeAssignable(actual: IrType, declared: IrType): boolean {
   // needs a box the IR doesn't emit; this is the #1798 numeric-`any` case the
   // from-ast layer defers to legacy. Flag it so a future regression demotes.
   if (isScalar(a)) {
+    return false;
+  }
+  // (#7001) A dynamic/externref value into a native-string result: string
+  // lowers to `(ref null $AnyString)` there, so the flow needs a checked
+  // conversion the IR does not emit. Only the host lane has string ≡ externref.
+  if (
+    declared.kind === "string" &&
+    stringIsExternref === false &&
+    (actual.kind === "dynamic" || a?.kind === "externref")
+  ) {
     return false;
   }
   // Both reference-shaped (or externref): treat as assignable. The lowerer's
@@ -924,6 +941,213 @@ function verifyInstrStructure(
   // operand MUST be dynamic (a concrete scalar has an inline ToBoolean
   // and must not route through the carrier helper). Result is i32,
   // already enforced structurally by the loop/if condValue rules.
+  // #7104 — dyn.undefined is the carrier's `undefined` value: no operands,
+  // and its result MUST be dynamic (a concrete slot has no undefined).
+  if (instr.kind === "dyn.undefined" && instr.resultType?.kind !== "dynamic") {
+    errors.push({
+      message: `dyn.undefined result must be a dynamic IrType, got ${instr.resultType?.kind ?? "none"} (#7104)`,
+      func: func.name,
+      block: block.id as number,
+    });
+  }
+  // #7104 — dyn.typeof is typeof over the boxed-any carrier: operand dynamic.
+  if (instr.kind === "dyn.typeof") {
+    const operandIr = operandIrType(func, block, instr.value, localDefs);
+    if (operandIr && operandIr.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.typeof operand must be a dynamic IrType, got ${operandIr.kind} (#7104)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #7106 S1c — dyn.object_tag classifies the boxed-any carrier: operand dynamic.
+  if (instr.kind === "dyn.object_tag") {
+    const operandIr = operandIrType(func, block, instr.value, localDefs);
+    if (operandIr && operandIr.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.object_tag operand must be a dynamic IrType, got ${operandIr.kind} (#7106)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #7106 S1g — dyn.own_property: receiver and key dynamic, result bool.
+  if (instr.kind === "dyn.own_property") {
+    for (const [label, operand] of [
+      ["receiver", instr.receiver],
+      ["key", instr.key],
+    ] as const) {
+      const operandIr = operandIrType(func, block, operand, localDefs);
+      if (operandIr && operandIr.kind !== "dynamic") {
+        errors.push({
+          message: `dyn.own_property ${label} must be a dynamic IrType, got ${operandIr.kind} (#7106 S1g)`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+    if (instr.resultType === null || asVal(instr.resultType)?.kind !== "i32") {
+      errors.push({
+        message: `dyn.own_property result must be an i32 (bool) IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S1g)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #7106 S1i — dyn.publish_argc: no operands, no result, count ≥ 0.
+  if (instr.kind === "dyn.publish_argc") {
+    if (!Number.isInteger(instr.count) || instr.count < 0) {
+      errors.push({
+        message: `dyn.publish_argc count must be a non-negative integer, got ${instr.count} (#7106 S1i)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.result !== null || instr.resultType !== null) {
+      errors.push({
+        message: `dyn.publish_argc must not produce a value (#7106 S1i)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #7106 S1e — dyn.arguments_length: no operands, result f64, formals ≥ 0.
+  if (instr.kind === "dyn.arguments_length") {
+    if (!Number.isInteger(instr.formals) || instr.formals < 0) {
+      errors.push({
+        message: `dyn.arguments_length formals must be a non-negative integer, got ${instr.formals} (#7106 S1e)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.resultType === null || asVal(instr.resultType)?.kind !== "f64") {
+      errors.push({
+        message: `dyn.arguments_length result must be an f64 IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S1e)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #7106 S3c — dyn.current_this / dyn.global_object: no operands, result dynamic.
+  if (
+    (instr.kind === "dyn.current_this" || instr.kind === "dyn.global_object") &&
+    (instr.resultType === null || instr.resultType.kind !== "dynamic")
+  ) {
+    errors.push({
+      message: `${instr.kind} result must be a dynamic IrType, got ${instr.resultType?.kind ?? "null"} (#7106)`,
+      func: func.name,
+      block: block.id as number,
+    });
+  }
+  // #7106 S3c — dyn.instanceof_fn: operand dynamic, unit-bound target, result i32.
+  if (instr.kind === "dyn.instanceof_fn") {
+    const operandIr = operandIrType(func, block, instr.value, localDefs);
+    if (operandIr && operandIr.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.instanceof_fn operand must be a dynamic IrType, got ${operandIr.kind} (#7106 S3c)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.target.binding.kind !== "unit") {
+      errors.push({
+        message: `dyn.instanceof_fn target must be an exact source unit, got ${instr.target.binding.kind} (#7106 S3c)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.resultType === null || asVal(instr.resultType)?.kind !== "i32") {
+      errors.push({
+        message: `dyn.instanceof_fn result must be an i32 IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S3c)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #7106 — dyn.instanceof: both operands dynamic, result i32.
+  if (instr.kind === "dyn.instanceof") {
+    for (const operand of [instr.value, instr.target]) {
+      const operandIr = operandIrType(func, block, operand, localDefs);
+      if (operandIr && operandIr.kind !== "dynamic") {
+        errors.push({
+          message: `dyn.instanceof operand must be a dynamic IrType, got ${operandIr.kind} (#7106)`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+    if (instr.resultType === null || asVal(instr.resultType)?.kind !== "i32") {
+      errors.push({
+        message: `dyn.instanceof result must be an i32 IrType, got ${instr.resultType?.kind ?? "null"} (#7106)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #7106 S1c — dyn.string_carrier: operand dynamic, result string.
+  if (instr.kind === "dyn.string_carrier") {
+    const operandIr = operandIrType(func, block, instr.value, localDefs);
+    if (operandIr && operandIr.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.string_carrier operand must be a dynamic IrType, got ${operandIr.kind} (#7106 S1c)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.resultType === null || instr.resultType.kind !== "string") {
+      errors.push({
+        message: `dyn.string_carrier result must be a string IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S1c)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #7106 S3a — dyn.construct: callee and every argument dynamic, result dynamic.
+  if (instr.kind === "dyn.construct") {
+    for (const [label, operand] of [
+      ["callee", instr.callee] as const,
+      ...instr.args.map((a, i) => [`arg${i}`, a] as const),
+    ]) {
+      const operandIr = operandIrType(func, block, operand, localDefs);
+      if (operandIr && operandIr.kind !== "dynamic") {
+        errors.push({
+          message: `dyn.construct ${label} must be a dynamic IrType, got ${operandIr.kind} (#7106 S3a)`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+    if (instr.resultType === null || instr.resultType.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.construct result must be a dynamic IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S3a)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #7106 S1b — dyn.json_stringify serialises the boxed-any carrier: operand dynamic.
+  if (instr.kind === "dyn.json_stringify") {
+    const operandIr = operandIrType(func, block, instr.value, localDefs);
+    if (operandIr && operandIr.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.json_stringify operand must be a dynamic IrType, got ${operandIr.kind} (#7106)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #7106 S1 — dyn.to_string is ToString over the boxed-any carrier: operand dynamic.
+  if (instr.kind === "dyn.to_string") {
+    const operandIr = operandIrType(func, block, instr.value, localDefs);
+    if (operandIr && operandIr.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.to_string operand must be a dynamic IrType, got ${operandIr.kind} (#7106)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
   if (instr.kind === "dyn.truthy") {
     const operandIr = operandIrType(func, block, instr.value, localDefs);
     if (operandIr && operandIr.kind !== "dynamic") {
@@ -1250,12 +1474,32 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
       return [instr.cond];
     case "raw.wasm":
       return [];
+    case "dyn.undefined":
+      return [];
     case "box":
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number":
       return [instr.value];
+    case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.global_object":
+    case "dyn.publish_argc":
+      return [];
+    case "dyn.instanceof":
+      return [instr.value, instr.target];
+    case "dyn.instanceof_fn":
+      return [instr.value];
+    case "dyn.own_property":
+      return [instr.receiver, instr.key];
+    case "dyn.construct":
+      return [instr.callee, ...instr.args];
     case "dyn.eq":
       return [instr.lhs, instr.rhs];
     case "dyn.member_get":
@@ -1838,6 +2082,38 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   },
   "tag.test": { skip: "checked-elsewhere: shares unbox's dynamic-operand tagId rules in verifyInstrStructure (#2949)" },
   "dyn.truthy": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#2949 S5.1)" },
+  "dyn.undefined": { skip: "checked-elsewhere: result-must-be-dynamic rule in verifyInstrStructure (#7104)" },
+  "dyn.typeof": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#7104)" },
+  "dyn.to_string": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#7106)" },
+  "dyn.json_stringify": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#7106 S1b)" },
+  "dyn.object_tag": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#7106 S1c)" },
+  "dyn.string_carrier": {
+    skip: "checked-elsewhere: operand-dynamic + result-string rules in verifyInstrStructure (#7106 S1c)",
+  },
+  "dyn.arguments_length": {
+    skip: "checked-elsewhere: no-operand + result-f64 rules in verifyInstrStructure (#7106 S1e)",
+  },
+  "dyn.current_this": {
+    skip: "checked-elsewhere: no-operand + result-dynamic rules in verifyInstrStructure (#7106 S3c)",
+  },
+  "dyn.global_object": {
+    skip: "checked-elsewhere: no-operand + result-dynamic rules in verifyInstrStructure (#7106)",
+  },
+  "dyn.instanceof_fn": {
+    skip: "checked-elsewhere: operand-dynamic + unit-target + result-i32 rules in verifyInstrStructure (#7106 S3c)",
+  },
+  "dyn.instanceof": {
+    skip: "checked-elsewhere: both-operands-dynamic + result-i32 rules in verifyInstrStructure (#7106)",
+  },
+  "dyn.publish_argc": {
+    skip: "checked-elsewhere: no-operand + no-result rules in verifyInstrStructure (#7106 S1i)",
+  },
+  "dyn.own_property": {
+    skip: "checked-elsewhere: receiver/key-dynamic + result-bool rules in verifyInstrStructure (#7106 S1g)",
+  },
+  "dyn.construct": {
+    skip: "checked-elsewhere: callee/args/result all-dynamic rules in verifyInstrStructure (#7106 S3a)",
+  },
   "dyn.to_number": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#2949 S5.3)" },
   "dyn.eq": { skip: "checked-elsewhere: both-operands-dynamic rule in verifyInstrStructure (#2949 S5.2)" },
   "dyn.member_get": { skip: "checked-elsewhere: recv/key/result all-dynamic rules in verifyInstrStructure (#3053 U1)" },
@@ -1883,7 +2159,8 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   "class.super_call": { skip: "resolver-typed: method signature resolved from parentShape + methodName at lowering" },
   "class.get": { skip: "resolver-typed: field type comes from the receiver's class shape at lowering" },
   "class.set": { skip: "resolver-typed: field type comes from the receiver's class shape at lowering" },
-  "class.call": { skip: "resolver-typed: method signature resolved from the receiver's shape at lowering" },
+  // (#7000) Target identity is checked; the signature stays resolver-typed.
+  "class.call": "checked",
   "class.static_call": { skip: "resolver-typed: static method signature resolved from shape + methodName at lowering" },
   "iter.new": { skip: "resolver-typed: iterator carrier chosen by the iteration-protocol lowering" },
   "iter.next": { skip: "resolver-typed: result object carrier chosen by the iteration-protocol lowering" },
@@ -2044,8 +2321,39 @@ function checkRoadmapRule(instr: IrInstr, blockId: number, ctx: RoadmapRuleCtx):
     case "global.set":
       checkSymbolicRefCoherence(instr, blockId, ctx);
       return true;
+    case "class.call":
+      checkClassCallTarget(instr, blockId, ctx);
+      return true;
     default:
       return false;
+  }
+}
+
+/**
+ * (#7000) `class.call` is a STATIC call of the member resolved on the
+ * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`
+ * must be that member's own target: one bound to any other class's member is a
+ * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A
+ * receiver that is not class-shaped, or a member the walk cannot see, stays
+ * resolver-typed and is not judged here.
+ */
+function checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {
+  const receiver = ctx.typeOf.get(instr.receiver);
+  if (!instr.target || receiver?.kind !== "class") return;
+  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {
+    const member = shape.methods.find(
+      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? "method") === instr.memberKind,
+    );
+    if (!member) continue;
+    const want = member.target ? bindingKey(member.target.binding) : null;
+    const got = bindingKey(instr.target.binding);
+    if (want !== null && got !== null && want !== got)
+      roadmapError(
+        ctx,
+        blockId,
+        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,
+      );
+    return;
   }
 }
 

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Usage: bash .tmp/run-heavy.sh <label>  — equivalence gate + related tests, in parallel.
+cd "$(dirname "$0")/.."
+label="$1"
+git rev-parse HEAD > ".tmp/6931-out/raw/${label}-heavy-head.txt"
+git status --short >> ".tmp/6931-out/raw/${label}-heavy-head.txt"
+git diff --stat HEAD -- src >> ".tmp/6931-out/raw/${label}-heavy-head.txt"
+( node scripts/equivalence-gate.mjs > ".tmp/6931-out/raw/${label}-equivalence-gate.txt" 2>&1
+  echo "EXIT $?" >> ".tmp/6931-out/raw/${label}-equivalence-gate.txt" ) &
+bash .tmp/run-related.sh "$label"
+wait
+echo done

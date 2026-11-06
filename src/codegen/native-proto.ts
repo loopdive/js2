@@ -677,7 +677,10 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
   // even when no source-level prototype reflection marks the module member-dirty.
   // Concrete view glues contain only constructor and BYTES_PER_ELEMENT: seed
   // those real properties rather than defaulting an ordinary Get(undefined).
-  if (ctx.protoMemberDirty !== true && taCtorKindOf(glue.name) < 0) return undefined;
+  // A materialized Symbol prototype also serves Object(Symbol())'s explicit
+  // runtime prototype chain. OrdinaryToPrimitive must find its real methods
+  // even when source only writes a descriptor and makes no reflective read.
+  if (ctx.protoMemberDirty !== true && taCtorKindOf(glue.name) < 0 && glue.name !== "Symbol") return undefined;
 
   // ORDERING (measured, not assumed). A proto can be materialized BEFORE the
   // object runtime exists, and then `__defineProperty_value` — which the seeder

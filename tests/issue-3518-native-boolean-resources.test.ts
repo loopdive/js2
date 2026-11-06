@@ -141,9 +141,14 @@ describe("native Boolean issued resource owner", () => {
     type.fields[0]!.mutable = true;
     expect(() => reserveNativeBooleanResources(s.tx, "other", s.values, s.plan, s.dependencies)).toThrow("altered");
   });
-  it("rejects changed emitted Boolean body on completion", () => {
+  it("prevents changes to the owned Boolean body and retains completion", () => {
     const s = fill();
-    s.pack.isBoolean.object.body[0] = { op: "i32.const", value: 1 };
-    expect(() => requireCompletedNativeBooleans(s.tx, s.pack, s.values, s.plan, s.dependencies)).toThrow("altered");
+    const before = emitBinary(s.module);
+    expect(() => {
+      s.pack.isBoolean.object.body[0] = { op: "i32.const", value: 1 };
+    }).toThrow(TypeError);
+    expect(requireCompletedNativeBooleans(s.tx, s.pack, s.values, s.plan, s.dependencies)).toBe(s.pack);
+    expect(emitBinary(s.module)).toEqual(before);
+    expect(Object.isFrozen(s.pack.isBoolean.object.body)).toBe(true);
   });
 });

@@ -36,6 +36,7 @@ import {
   protoLinkSameValueArm,
   registerProtoLinkNatives,
 } from "./object-runtime-proxy-chain.js"; // (#6766)
+import { structProtoLinkOk } from "./object-model/struct-proto-link.js"; // (#7009)
 
 /**
  * (#5270 step 2) Name of the reserve-then-fill helper that answers the
@@ -209,7 +210,9 @@ function fnctorIsPrototypeOfSeed(
   protoSlot: number,
 ): PrototypeChainSeed {
   const startIdx = ctx.funcMap.get(FNCTOR_PROTO_START);
-  return { startIdx, objectTypeIdx, curSlot, targetSlot, protoSlot, candidateSlot: 1 };
+  // (#6944) struct-valued first link: step to the first `$Object` ancestor.
+  const structHopOkIdx = ctx.funcMap.get("__fnctor_struct_proto_ok");
+  return { startIdx, objectTypeIdx, curSlot, targetSlot, protoSlot, candidateSlot: 1, structHopOkIdx };
 }
 
 /**
@@ -468,21 +471,21 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     ];
   }
   // (#6766) A `$Proxy` in [[Prototype]] position is stored as a LINK `$Object`
-  // (trap or no trap) instead of being unwrapped to its target.
-  const protoLink =
-    proxyTypeIdx === undefined
-      ? undefined
-      : registerProtoLinkNatives(ctx, registerNative, {
-          objectTypeIdx,
-          propMapTypeIdx,
-          proxyTypeIdx,
-          initialCapacity: INITIAL_CAP,
-        });
+  // (trap or no trap) instead of being unwrapped to its target. (#7009) So is a
+  // fnctor STRUCT instance (`d.prototype = new __()`, `object-model/struct-proto-link.ts`).
+  const protoLink = registerProtoLinkNatives(ctx, registerNative, {
+    objectTypeIdx,
+    propMapTypeIdx,
+    proxyTypeIdx,
+    initialCapacity: INITIAL_CAP,
+    structOk: structProtoLinkOk(ctx),
+  });
+  const proxyLinks = protoLink?.proxyLinks === true;
   /** Map a callable in a `[[Prototype]]` POSITION to the `$Object` view of it. */
   const canonicalizeProtoArg = (paramIdx: number): Instr[] => {
     const proto: Instr[] = [{ op: "local.get", index: paramIdx }];
+    if (!proxyLinks && proxyGetTargetIdx !== undefined) proto.push({ op: "call", funcIdx: proxyGetTargetIdx });
     if (protoLink !== undefined) proto.push({ op: "call", funcIdx: protoLink.wrapIdx });
-    else if (proxyGetTargetIdx !== undefined) proto.push({ op: "call", funcIdx: proxyGetTargetIdx });
     if (protoFromFunctionIdx !== undefined) proto.push({ op: "call", funcIdx: protoFromFunctionIdx });
     return proto;
   };
@@ -1023,7 +1026,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       objRefNull,
       // (#6766) With links, a Proxy RECEIVER is compared as itself (the loop
       // arm spliced by `fillProtoLinkArms`), never as its target.
-      proxyGetTargetIdx: protoLink === undefined ? proxyGetTargetIdx : undefined,
+      proxyGetTargetIdx: proxyLinks ? undefined : proxyGetTargetIdx,
       protoFromFunctionIdx,
       fnctor: fnctorIsPrototypeOfSeed(ctx, objectTypeIdx, 3, 2, 5),
       classInstance: classInstanceIsPrototypeOfSeed(ctx, objectTypeIdx, 3, 2, 5 + fnctorProtoLocal(ctx).length, 1),

@@ -1,9 +1,9 @@
 ---
 id: 4402
 title: "Complete native Proxy MOP invariants and dynamic trap-result ABI"
-status: in-progress
+status: done
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-10-18
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -84,10 +84,10 @@ legacy semantic imports, and zero unknown imports.
 - [x] Delete fixtures distinguish the module/strict operator from
       `Reflect.deleteProperty`: strict falsy deletes throw, while Reflect returns
       false.
-- [ ] Proxy invariants are enforced for non-configurable/non-extensible targets,
+- [x] Proxy invariants are enforced for non-configurable/non-extensible targets,
       duplicate or missing `ownKeys`, descriptor compatibility, prototype
       consistency, and delete/define success claims.
-- [ ] The standalone, native-first JS, and admitted-JS-boundary lanes agree on
+- [x] The standalone, native-first JS, and admitted-JS-boundary lanes agree on
       values and catchable errors with zero legacy/unknown imports in
       native-first builds.
 
@@ -98,3 +98,44 @@ legacy semantic imports, and zero unknown imports.
   shadow object model.
 - Treating policy-gate rejection of an unrelated unmigrated family as a Proxy
   semantic failure.
+
+## Completion checkpoint — 2026-10-18
+
+Later native-object work completed the invariant machinery that this umbrella
+issue still described as open:
+
+- `src/codegen/object-runtime-proxy-invariants.ts` validates descriptor
+  compatibility for `getOwnPropertyDescriptor`, `defineProperty`, `has`, `get`,
+  `set`, and `deleteProperty`, including non-configurable and non-extensible
+  targets.
+- `src/codegen/object-runtime-proxy.ts` validates prototype consistency,
+  extensibility claims, `ownKeys` element types/duplicates, and exact key sets
+  for non-extensible targets.
+- The later composed Proxy array-like dispatch also closed #6506's deliberately
+  pinned revoked/live array-like gaps without restoring the unsafe competing
+  `body.unshift()` on `__extern_length`; the stale #6494 pins now expect the
+  correct TypeError and live length.
+
+`tests/issue-4402-native-proxy-invariants.test.ts` is the umbrella acceptance
+matrix. It exercises nine invariant lies in both standalone and native-first JS:
+fixed-value `get`, duplicate/missing/extra `ownKeys`, hidden descriptors,
+`getPrototypeOf`/`setPrototypeOf` consistency, and false delete/define success
+claims. A third lane repeats the same nine checks over a caller-owned JS object
+with a non-configurable property, custom prototype, and non-extensible state.
+That proves the native Proxy consults the original object's descriptor and
+integrity state through the value adapter rather than a copy.
+
+Verification on `origin/main` @ `730b984168` plus this test/documentation change:
+
+- focused Proxy cluster: **42/42** assertions across #4402, #4618, #6494,
+  #6651 U3/V1, and #6766;
+- host-import policy ratchet: **33** native-first probes / **452** imports,
+  **0 legacy-semantic**, **0 unknown**; compatibility control remains
+  non-vacuous at **23** legacy imports;
+- standalone acceptance modules import **0** host functions; the native-first
+  and admitted-boundary lanes retain only typed value-adapter imports.
+
+Local Node 24 requires `--experimental-wasm-exnref` for these emitted EH bodies.
+Because the repository's Vitest fork `execArgv` does not inherit that flag, the
+focused verification used the single-thread pool; this is runner plumbing, not
+a semantic waiver.

@@ -27,6 +27,7 @@
 
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { ALLOC_NAMESPACES } from "./alloc-registry.js";
+import { allocationEvidenceRule } from "./allocation-evidence/effect-rules.js";
 import type { IrFunction, IrInstr, IrTerminator, IrValueId } from "../core/nodes.js";
 import { analyzeOwnership, type OwnershipResult } from "./ownership.js";
 
@@ -112,6 +113,14 @@ export function analyzeEscape(
   // Attribute escape edges by walking every instr + terminator.
   const visitInstr = (instr: IrInstr): void => {
     switch (instr.kind) {
+      case "vec.get":
+      case "vec.len":
+      case "vec.set": {
+        const rule = allocationEvidenceRule(instr);
+        if (rule.kind !== "effects" || rule.directEscape.length !== 0)
+          throw new Error("allocation rule mismatch: vector direct escape");
+        break;
+      }
       case "object.set":
       case "class.set":
         raise(instr.newValue, "stored");

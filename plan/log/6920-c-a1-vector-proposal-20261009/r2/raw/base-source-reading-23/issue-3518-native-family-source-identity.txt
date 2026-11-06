@@ -1,0 +1,64 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > constructs the exact nonempty per-function vector-map denominator 641ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > separates nullable declarations, non-null literal reads, await vectors and Promise carriers 52ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > indexes admitted parenthesized vector reads alongside their original inner nodes 49ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > uses checker dependency edges even when every family function is renamed 49ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > keeps same-name families in separate sources disjoint under source-order reversal 701ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > preserves main's zero-result contract with return; 77ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > preserves main's zero-result contract with return undefined; 56ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > preserves main's zero-result contract with return ((undefined)); 61ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > preserves main's zero-result contract with if (seq > 0) { return undefined; } 58ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > does not certify a shadowed undefined read in direct lowering: export function f(): void { const undefined = 42; return undefined; } 10ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > does not certify a shadowed undefined read in direct lowering: export function f(undefined: number): void { return undefined; } 4ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > does not certify a shadowed undefined read in direct lowering: const undefined = 42; export function f(): void { return undefined; } 4ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > retains the unsupported undefined read when the lowerer has no checker 54ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects an unproven zero-result return without discarding expression effects: return void Date.now(); 25ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects an unproven zero-result return without discarding expression effects: return (Date.now(), undefined); 24ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects an unproven zero-result return without discarding expression effects: const undefined: undefined = globalThis.undefined; return undefined; 27ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects valued void return as located source evidence before lowering 35ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects bare numeric return as located source evidence before lowering 20ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects shadowed Date as located source evidence before lowering 31ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects shadowed console as located source evidence before lowering 22ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects aliased Promise.all receiver as located source evidence before lowering 22ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects wrong vector element as located source evidence before lowering 27ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects unknown vector element as located source evidence before lowering 23ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects wrong pending element as located source evidence before lowering 35ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects wrong fulfillment as located source evidence before lowering 24ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects mismatched await operand as located source evidence before lowering 18ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects missing await owner as located source evidence before lowering 26ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects missing five-part concat as located source evidence before lowering 20ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects shadowed Promise constructor as located source evidence before lowering 18ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects removed timer support as located source evidence before lowering 18ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects stale clear owner map without trusting unchanged counts or printed names 21ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects stale remove vector entry without trusting unchanged counts or printed names 26ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects stale replace vector map without trusting unchanged counts or printed names 20ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects stale clear awaits without trusting unchanged counts or printed names 20ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects stale wrong await operand without trusting unchanged counts or printed names 19ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects stale physical vector layout without trusting unchanged counts or printed names 20ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects stale changed source without trusting unchanged counts or printed names 38ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects stale detached site without trusting unchanged counts or printed names 35ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > prevents changing frozen owner spans or replacing immutable identity views 35ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects replacing a resolver with the same original methods 19ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects replacing resolver method preparedAsyncAwaitSite independently 27ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects replacing resolver method preparedAsyncPromiseAllPlan independently 19ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects replacing resolver method preparedAsyncThenableResultType independently 20ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects replacing resolver method preparedAsyncDateNowTarget independently 17ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects replacing resolver method preparedAsyncNumberToStringTarget independently 16ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects replacing resolver method preparedAsyncConsoleTarget independently 29ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects replacing resolver method preparedAsyncConcatFiveTarget independently 21ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects replacing Promise.all's target with another canonical ref __ir_async_promise_all_native 20ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects replacing Promise.all's target with another canonical ref __ir_async_promise_all_foreign 18ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects a same-object call with changed certified callee 24ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects a same-object call with changed certified member 19ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects a same-object call with changed certified argument 19ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects a same-object call with changed certified argument array 20ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > rejects a same-object call with changed certified identifier text 20ms
+ ✓ tests/issue-3518-native-family-source-identity.test.ts > checker-bound native family source facts > will not fabricate logical vector entries for a foreign function's await 34ms
+
+ Test Files  1 passed (1)
+      Tests  55 passed (55)
+   Start at  20:19:09
+   Duration  30.82s (transform 19.56s, setup 0ms, collect 27.49s, tests 2.81s, environment 0ms, prepare 77ms)
+

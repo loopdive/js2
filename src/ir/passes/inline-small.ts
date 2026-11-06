@@ -80,6 +80,7 @@ import {
   type IrInstr,
   type IrModule,
   type IrSiteId,
+  type IrSlotDef,
   type IrTerminator,
   type IrValueId,
 } from "../nodes.js";
@@ -218,6 +219,10 @@ function inlineIntoFunction(
 
   const originalSize = countInstrs(caller);
   let nextValueId = caller.valueCount;
+  // #6921 — the caller's slot table grows by one fresh copy of the callee's
+  // slots per inlined site (see `appendCalleeSlots`). Appending is
+  // index-stable: lowering maps slot N to local `params + ssaLocals + N`.
+  const callerSlots: IrSlotDef[] = [...(caller.slots ?? [])];
   let currentSize = originalSize;
   let anyFuncChange = false;
 
@@ -297,6 +302,14 @@ function inlineIntoFunction(
         newInstrs.push(rewritten);
         continue;
       }
+      // #6921 — callee slot ops address the CALLEE's slot table. Give this
+      // site its own fresh copy of those slots (after every other bailout,
+      // so a rejected site leaves the table untouched).
+      const slotOffset = appendCalleeSlots(callee, callerSlots);
+      if (slotOffset === null) {
+        newInstrs.push(rewritten);
+        continue;
+      }
       for (let i = 0; i < callee.params.length; i++) {
         calleeRename.set(callee.params[i]!.value, rewritten.args[i]!);
       }
@@ -315,7 +328,7 @@ function inlineIntoFunction(
         // allocation, so fork a fresh AllocSiteId off the callee's site rather
         // than sharing it (inlining the same callee twice must not conflate
         // the two allocations — #747 escape analysis depends on this).
-        const renamed = renameAllInInstr(inst, calleeRename);
+        const renamed = offsetSlotIndex(renameAllInInstr(inst, calleeRename), slotOffset);
         const site = inlineSourceSite(renamed.site, rewritten.site, caller.unitId);
         const located = site === renamed.site ? renamed : { ...renamed, site };
         newInstrs.push(forkInlineAllocation(located, registry));
@@ -358,7 +371,45 @@ function inlineIntoFunction(
     ...caller,
     blocks: newBlocks,
     valueCount: nextValueId,
+    ...(callerSlots.length > 0 ? { slots: callerSlots } : {}),
   };
+}
+
+/**
+ * #6921 — append one fresh copy of `callee.slots` to `callerSlots` and return
+ * the offset to add to every spliced slot index, or `null` when the callee's
+ * slot table is not dense (`index === position`, which
+ * `IrFunctionBuilder.declareSlot` guarantees) — the site then stays a call and
+ * nothing is appended. Each inlined copy gets its own slots, mirroring the
+ * fresh SSA ids: two inlined copies must never share mutable state, and
+ * without the remap the callee's slot 0 aliased the caller's slot 0.
+ */
+function appendCalleeSlots(callee: IrFunction, callerSlots: IrSlotDef[]): number | null {
+  const defs = callee.slots ?? [];
+  if (defs.some((def, i) => def.index !== i)) return null;
+  const offset = callerSlots.length;
+  for (const def of defs) {
+    callerSlots.push({ index: offset + def.index, name: `${callee.name}$${def.name}`, type: def.type });
+  }
+  return offset;
+}
+
+/**
+ * #6921 — shift a spliced instruction's slot reference into the caller's
+ * table. Only top-level `slot.read` / `slot.write` can reference a callee
+ * slot here: `canInline` rejects every buffer-bearing kind and every other
+ * slot-indexed kind. The buffer assertion keeps a future `canInline`
+ * relaxation from silently reintroducing unremapped nested slot uses.
+ */
+function offsetSlotIndex(inst: IrInstr, offset: number): IrInstr {
+  forEachNestedBuffer(inst, () => {
+    throw new Error(`inlineSmall: cannot remap slots inside nested buffer of '${inst.kind}'`);
+  });
+  if (offset === 0) return inst;
+  if (inst.kind === "slot.read" || inst.kind === "slot.write") {
+    return { ...inst, slotIndex: inst.slotIndex + offset };
+  }
+  return inst;
 }
 
 // ---------------------------------------------------------------------------
@@ -401,8 +452,23 @@ function canInline(
   // rewriting nested body-buffer SSA — out of scope for this slice.
   // raw.wasm carries function-local backend indices that don't survive a
   // change of enclosing function — conservative skip in the same spirit.
+  // #6921 — callee slots are remapped into the caller, which serves only
+  // top-level `slot.read` / `slot.write`. The pass does not transfer a
+  // captured environment or a suspension protocol, so callees carrying one
+  // are rejected outright (guards composed from #5387 / PR 5748), including a
+  // `PreparedIrFunction.asyncRuntime` backend attachment.
+  if (
+    callee.generatorBufferSlot !== undefined ||
+    callee.closureSubtype !== undefined ||
+    callee.asyncPlan !== undefined ||
+    callee.asyncRuntime !== undefined ||
+    (callee.funcKind ?? "regular") !== "regular"
+  ) {
+    return false;
+  }
   for (const inst of body.instrs) {
-    if (inst.kind === "raw.wasm") return false;
+    if (inst.kind === "raw.wasm" || inst.kind === "closure.cap") return false;
+    if (inst.kind.startsWith("gen.")) return false;
     if (
       inst.kind === "forof.vec" ||
       inst.kind === "forof.iter" ||
@@ -633,16 +699,43 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       if (c === inst.cond && t === inst.thenValue && e === inst.elseValue && !armChanged) return inst;
       return { ...inst, cond: c, thenValue: t, elseValue: e, then: newThen, else: newElse };
     }
+    case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.global_object":
+      return inst; // no operands (#7106 S1e/S3c)
+    case "dyn.instanceof_fn": {
+      const v = mapId(rename, inst.value);
+      return v === inst.value ? inst : { ...inst, value: v };
+    }
+    case "dyn.instanceof": {
+      const value = mapId(rename, inst.value);
+      const target = mapId(rename, inst.target);
+      return value === inst.value && target === inst.target ? inst : { ...inst, value, target };
+    }
+    case "dyn.publish_argc":
+      return inst; // no operands (#7106 S1e/S1i)
+    case "dyn.own_property": {
+      const receiver = mapId(rename, inst.receiver);
+      const key = mapId(rename, inst.key);
+      if (receiver === inst.receiver && key === inst.key) return inst;
+      return { ...inst, receiver, key };
+    }
     case "box":
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number": {
       const v = mapId(rename, inst.value);
       if (v === inst.value) return inst;
       return { ...inst, value: v };
     }
     case "string.const":
+    case "dyn.undefined":
       return inst;
     case "dyn.eq":
     case "string.concat":
@@ -682,6 +775,18 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       const index = mapId(rename, inst.index);
       if (value === inst.value && index === inst.index) return inst;
       return { ...inst, value, index };
+    }
+    case "dyn.construct": {
+      let changed = false;
+      const callee = mapId(rename, inst.callee);
+      changed ||= callee !== inst.callee;
+      const args = inst.args.map((value) => {
+        const next = mapId(rename, value);
+        changed ||= next !== value;
+        return next;
+      });
+      if (!changed) return inst;
+      return { ...inst, callee, args };
     }
     case "fnctor.new": {
       let changed = false;

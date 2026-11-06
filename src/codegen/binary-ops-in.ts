@@ -10,9 +10,11 @@
  * change (prove-emit-identity IDENTICAL across gc/standalone/wasi).
  */
 import { ts } from "../ts-api.js";
-import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
-import { vecStaticIndexPresenceInstrs } from "./array/array-length-holes.js"; // (#6771 S3)
-import { getArrTypeIdxFromVec } from "./registry/types.js"; // (#4491 T11)
+// (#6777) Array-carrier `in`: compiled-type carrier, hole-aware presence, boolean.
+import { compileArrayCarrierIn, emitKeyFirstExternHas, isPlainArrayCarrierType } from "./array/in-array-carrier.js";
+import { vecStaticIndexPresenceInstrs } from "./array/array-length-holes.js";
+import { getArrTypeIdxFromVec, isVecBaseSubtype } from "./registry/types.js";
+import type { ArrayCarrierInDependencies } from "./array/in-array-carrier.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -21,11 +23,13 @@ import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dy
 import { isNumericIndexExpression } from "./property-access.js"; // (#5358)
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
+  collectClassAndDescendants,
   emitPrivateBrandPredicate,
   emitThrowTypeError,
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
+import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js"; // (#7202)
 import { resolveWasmType } from "./index.js";
 // (#3920) Own-presence is a per-instance bit, never a shape property — the `in`
 // answer must come from the same presence machinery the value read uses.
@@ -36,16 +40,29 @@ import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
 import { identifierEscapesToCall } from "./in-escaped-receiver.js";
 import { isDirectProxyBinding } from "./proxy-value-provenance.js"; // (#5316) `in` must ask the has trap
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js"; // (#4484) reassigned-binding guard
-import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 // (#4062 array bag / #4491 T9 Date+RegExp bag) a statically-known key may live in
 // a carrier bag the receiver's field list cannot see — route the folded `false`.
 import { carrierBagKeyNeedsRuntime } from "./builtin-instance-key-presence.js";
+import { subclassedInstanceReceiver } from "./class-arm-tag-guard.js"; // (#7216)
 // (#4491 T4) %Object.prototype%'s own names are `in` every ordinary object.
 import {
   hasExplicitNullObjectPrototype,
   inReceiverIsObjectShaped,
   objectPrototypeInheritsInName,
 } from "./object-proto-name-in.js";
+
+// Keep the owned array helper outside the legacy runtime import cycle.
+const arrayCarrierInDependencies: ArrayCarrierInDependencies = {
+  ensureLateImport,
+  allocTempLocal,
+  releaseTempLocal,
+  getArrTypeIdxFromVec,
+  isVecBaseSubtype,
+  coerceType,
+  compileExpression,
+  flushLateImportShifts,
+  vecStaticIndexPresenceInstrs,
+};
 
 /**
  * (#3714) `emitThrowTypeError` pushes directly onto `fctx.body`; to nest its
@@ -59,6 +76,268 @@ function buildThrowTypeErrorBranch(ctx: CodegenContext, fctx: FunctionContext, m
   const throwInstrs = fctx.body;
   popBody(fctx, saved);
   return throwInstrs;
+}
+
+const EXTERNREF: ValType = { kind: "externref" };
+const PRIVATE_IN_NON_OBJECT = "Cannot use 'in' operator to search for private field in a non-object";
+
+/**
+ * (#7150) §13.10.1 `#x in v` step 1 on the no-host lanes: with the brand i32 on
+ * the stack, throw a TypeError when it is 0 and `v` is not an Object. Object-ness
+ * is the module's own `typeof` pair ("object" | "function"), minus wasm null —
+ * also standalone's `undefined` — and minus the Symbol carrier, which
+ * `__typeof_object` reports as object-like. Leaves the brand i32 on the stack;
+ * the caller releases `copy`.
+ */
+function emitNativePrivateInObjectGuard(ctx: CodegenContext, fctx: FunctionContext, copy: number): void {
+  ensureLateImport(ctx, "__typeof_object", [EXTERNREF], [{ kind: "i32" }]);
+  ensureLateImport(ctx, "__typeof_function", [EXTERNREF], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+  const throwInstrs = buildThrowTypeErrorBranch(ctx, fctx, PRIVATE_IN_NON_OBJECT);
+  const typeofObject = ctx.funcMap.get("__typeof_object");
+  const typeofFunction = ctx.funcMap.get("__typeof_function");
+  if (typeofObject === undefined || typeofFunction === undefined) return;
+  // Fresh instruction objects per use: later passes rewrite local indices in place.
+  const get = (): Instr => ({ op: "local.get", index: copy });
+  const notObject: Instr[] = [
+    get(),
+    { op: "call", funcIdx: typeofObject },
+    get(),
+    { op: "call", funcIdx: typeofFunction },
+  ];
+  notObject.push({ op: "i32.or" }, { op: "i32.eqz" }, get(), { op: "ref.is_null" }, { op: "i32.or" });
+  if (ctx.symbolTypeIdx >= 0) {
+    notObject.push(
+      get(),
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+      { op: "i32.or" },
+    );
+  }
+  notObject.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
+  const brand = allocTempLocal(fctx, { kind: "i32" });
+  fctx.body.push({ op: "local.tee", index: brand }, { op: "i32.eqz" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: notObject, else: [] });
+  fctx.body.push({ op: "local.get", index: brand });
+  releaseTempLocal(fctx, brand);
+}
+
+const EQ_HEAP_TYPE = -19; // abstract `eq` heap type
+
+/**
+ * (#7160) A private brand is an OWN brand of an instance (§7.3.31
+ * PrivateElementFind). A class VALUE and its `.prototype` are lazily built
+ * singletons of the same struct type and `__tag` as an instance, so they pass
+ * the struct/tag brand predicate. Emit that predicate, then clear its i32 when
+ * the receiver is identical (`ref.eq`) to the class-object or prototype
+ * singleton of the declaring class or one of its subclasses; the i32 stays on
+ * the stack. A global not yet materialised holds null, which is not
+ * eq-castable, so its arm answers false.
+ *
+ * (#7202) With subclasses that chain is one arm per descendant at every site,
+ * so a class with descendants instead calls one shared helper that dispatches
+ * on the receiver's `__tag` (see {@link ensureOwnPrivateBrandHelper}).
+ */
+function emitOwnPrivateBrandPredicate(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: number,
+  cls: string,
+  structTypeIdx: number,
+): void {
+  const classes = collectClassAndDescendants(ctx, cls);
+  const helper = classes.length > 1 ? ensureOwnPrivateBrandHelper(ctx, cls, classes, structTypeIdx) : undefined;
+  if (helper !== undefined) {
+    fctx.body.push({ op: "local.get", index: receiver }, { op: "call", funcIdx: helper });
+    return;
+  }
+  emitPrivateBrandPredicate(ctx, fctx, receiver, cls, structTypeIdx);
+  const globals = classes.flatMap((name) => singletonGlobals(ctx, name));
+  if (globals.length === 0) return;
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [...singletonTest(receiver, globals), { op: "i32.eqz" }],
+    else: [{ op: "i32.const", value: 0 }],
+  });
+}
+
+/** The class-object then prototype singleton globals registered for `name`. */
+function singletonGlobals(ctx: CodegenContext, name: string): number[] {
+  const globals: number[] = [];
+  for (const map of [ctx.classObjectGlobals, ctx.protoGlobals]) {
+    const idx = map.get(name);
+    if (idx !== undefined) globals.push(idx);
+  }
+  return globals;
+}
+
+/** i32: the anyref in `receiver` is `ref.eq` to one of `globals` (null arms answer 0). */
+function singletonTest(receiver: number, globals: number[]): Instr[] {
+  const test: Instr[] = [];
+  globals.forEach((globalIdx, i) => {
+    test.push(
+      { op: "global.get", index: globalIdx },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: receiver },
+          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+          { op: "global.get", index: globalIdx },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+          { op: "ref.eq" },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+    );
+    if (i > 0) test.push({ op: "i32.or" });
+  });
+  return test;
+}
+
+/** Arms past this stay inline: a `br_table` ladder nests one block per arm (#6698). */
+const OWN_BRAND_MAX_ARMS = 256;
+
+/**
+ * (#7202) `__private_in_own_brand_<C>_<struct>_<n>(anyref) -> i32`: the #7160 own-brand
+ * answer for `C` and its `n - 1` descendants, built once and shared by every
+ * site. A receiver of `C`'s struct type is switched on its `__tag` with a
+ * `br_table`; the arm of class `K` answers "not one of `K`'s two singletons"
+ * (every singleton of `K` is built with `K`'s tag, so no other class's globals
+ * can match), and any tag outside the set answers 0 — the brand predicate's
+ * tag list. Constant work per check, constant bytes per site. Declines
+ * (undefined, the caller emits the inline chain) when the struct has no
+ * `__tag` or the ladder would be too deep. Descendant sets only grow, so `n`
+ * names the set the helper was built for.
+ */
+function ensureOwnPrivateBrandHelper(
+  ctx: CodegenContext,
+  cls: string,
+  classes: string[],
+  structTypeIdx: number,
+): number | undefined {
+  const tagFieldIdx = ctx.structFields.get(cls)?.findIndex((f) => f.name === "__tag") ?? -1;
+  const arms: [tag: number, globals: number[]][] = [];
+  for (const name of classes) {
+    const tag = ctx.classTagMap.get(name);
+    if (tag !== undefined) arms.push([tag, singletonGlobals(ctx, name)]);
+  }
+  if (tagFieldIdx < 0 || arms.length === 0 || arms.length > OWN_BRAND_MAX_ARMS) return undefined;
+  const name = `__private_in_own_brand_${cls}_${structTypeIdx}_${classes.length}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+
+  const helper = helperFunctionContext(name, [{ name: "v", type: { kind: "anyref" } }], { kind: "i32" });
+  const minTag = Math.min(...arms.map(([tag]) => tag));
+  const span = Math.max(...arms.map(([tag]) => tag)) - minTag + 1;
+  const targets = new Array<number>(span).fill(arms.length);
+  arms.forEach(([tag], ordinal) => (targets[tag - minTag] = ordinal));
+  let ladder: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "ref.cast", typeIdx: structTypeIdx },
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: tagFieldIdx },
+    { op: "i32.const", value: minTag },
+    { op: "i32.sub" },
+    { op: "br_table", targets, defaultDepth: arms.length },
+  ];
+  for (const [, globals] of arms) {
+    const answer: Instr[] =
+      globals.length === 0 ? [{ op: "i32.const", value: 1 }] : [...singletonTest(0, globals), { op: "i32.eqz" }];
+    ladder = [{ op: "block", blockType: { kind: "empty" }, body: ladder }, ...answer, { op: "return" }];
+  }
+  helper.body.push(
+    { op: "local.get", index: 0 },
+    { op: "ref.test", typeIdx: structTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "block", blockType: { kind: "empty" }, body: ladder }],
+      else: [],
+    },
+    { op: "i32.const", value: 0 },
+  );
+  return publishHelperFunction(ctx, helper);
+}
+
+/**
+ * (#7162) The class a `#name in v` brand-checks against. An instance private
+ * field keeps the shared resolver. A private method or accessor has no field
+ * slot but lives on the same instance brand, so it gets the declaring class's
+ * struct. A static private name (field, method or accessor) is on the class
+ * constructor alone, so `structTypeIdx` is left undefined: identity test.
+ */
+function resolvePrivateInTarget(
+  ctx: CodegenContext,
+  node: ts.PrivateIdentifier,
+): { className: string; structTypeIdx?: number } | undefined {
+  for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
+    if (!ts.isClassDeclaration(cur) && !ts.isClassExpression(cur)) continue;
+    const member = cur.members.find(
+      (m) => m.name !== undefined && ts.isPrivateIdentifier(m.name) && m.name.text === node.text,
+    );
+    if (member === undefined) continue;
+    const isStatic = ts.getCombinedModifierFlags(member) & ts.ModifierFlags.Static;
+    if (!isStatic && ts.isPropertyDeclaration(member)) return resolveDeclaringClassForPrivateName(ctx, node);
+    const className = ts.isClassExpression(cur) ? (ctx.anonClassExprNames.get(cur) ?? cur.name?.text) : cur.name?.text;
+    if (className === undefined) return undefined;
+    if (isStatic) return ctx.classObjectGlobals.has(className) ? { className } : undefined;
+    const structTypeIdx = ctx.structMap.get(className);
+    return structTypeIdx === undefined ? undefined : { className, structTypeIdx };
+  }
+  return undefined;
+}
+
+/** (#7162) Leave `#name in v`'s answer, before the non-object guard, as an i32. */
+function emitPrivateInPredicate(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: number,
+  target: { className: string; structTypeIdx?: number },
+): void {
+  if (target.structTypeIdx === undefined) emitStaticPrivateNamePredicate(ctx, fctx, receiver, target.className);
+  else emitOwnPrivateBrandPredicate(ctx, fctx, receiver, target.className, target.structTypeIdx);
+}
+
+/**
+ * (#7162) `#s in v` for a static private name: true exactly when `v` IS the
+ * declaring class constructor (`ref.eq` with its `__class_<C>` singleton; a
+ * subclass constructor has its own singleton and answers false). A null or
+ * non-eq receiver, or a singleton not yet materialised, answers false.
+ */
+function emitStaticPrivateNamePredicate(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: number,
+  cls: string,
+): void {
+  const globalIdx = ctx.classObjectGlobals.get(cls)!;
+  const classEq = (): Instr[] => [{ op: "global.get", index: globalIdx }, { op: "any.convert_extern" }];
+  fctx.body.push({ op: "local.get", index: receiver }, { op: "ref.test", typeIdx: EQ_HEAP_TYPE });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [
+      ...classEq(),
+      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: receiver },
+          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+          ...classEq(),
+          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+          { op: "ref.eq" },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+    ],
+    else: [{ op: "i32.const", value: 0 }],
+  });
 }
 
 /**
@@ -234,7 +513,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
   // Falls through to the legacy path if the resolver can't find the
   // declaring class (defensive — well-formed source always finds it).
   if (ts.isPrivateIdentifier(expr.left)) {
-    const declared = resolveDeclaringClassForPrivateName(ctx, expr.left);
+    const declared = resolvePrivateInTarget(ctx, expr.left);
     if (declared) {
       // Compile the receiver. Coerce externref → anyref and save it so
       // the brand predicate can combine structural ref.test with class-tag
@@ -246,23 +525,23 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       // cannot distinguish "a real object of the wrong class" (should stay
       // `false`) from "not an object at all" (should throw). Stash a raw
       // copy of the externref BEFORE `any.convert_extern` so the JS-host
-      // fast-path check below can ask the host directly — Wasm has no
-      // visibility into what an opaque externref wraps. A statically-typed
+      // check below can ask the host directly, and (#7150) the no-host lanes
+      // ask the module's own `typeof` classifiers. A statically-typed
       // receiver (already known to be a struct/array/etc.) skips this
       // entirely: it's always an Object, no runtime ambiguity to resolve.
+      const hostFree = ctx.standalone || ctx.wasi;
       let externCopy: number | undefined;
-      if (receiverIsExternref && !ctx.standalone && !ctx.wasi) {
+      if (receiverIsExternref) {
         externCopy = allocTempLocal(fctx, { kind: "externref" });
         fctx.body.push({ op: "local.tee", index: externCopy });
-      }
-      if (receiverIsExternref) {
         fctx.body.push({ op: "any.convert_extern" });
       }
       const tmpAny = allocTempLocal(fctx, { kind: "anyref" });
       fctx.body.push({ op: "local.set", index: tmpAny });
-      emitPrivateBrandPredicate(ctx, fctx, tmpAny, declared.className, declared.structTypeIdx);
+      emitPrivateInPredicate(ctx, fctx, tmpAny, declared);
+      if (externCopy !== undefined && hostFree) emitNativePrivateInObjectGuard(ctx, fctx, externCopy);
       const isObjectIdx =
-        externCopy !== undefined
+        externCopy !== undefined && !hostFree
           ? ensureLateImport(ctx, "__extern_is_object", [{ kind: "externref" }], [{ kind: "i32" }])
           : undefined;
       if (externCopy !== undefined && isObjectIdx !== undefined) {
@@ -295,10 +574,10 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         releaseTempLocal(fctx, brandLocal);
         releaseTempLocal(fctx, externCopyLocal);
       } else if (externCopy !== undefined) {
-        // Defensive: `ensureLateImport` failed (should not happen for a
-        // brand-new import name). The brand predicate's i32 is already on
+        // The no-host lanes (their #7150 guard ran above), or defensive:
+        // `ensureLateImport` failed. The brand predicate's i32 is already on
         // the stack from `emitPrivateBrandPredicate` above — just release
-        // the unused externref copy and fall back to the pre-existing
+        // the externref copy and, defensively, fall back to the pre-existing
         // false-no-throw behavior rather than failing the compile.
         releaseTempLocal(fctx, externCopy);
       }
@@ -381,18 +660,18 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     }
   }
 
-  // Get struct field names if available; detect vec (array) types
+  // Get struct field names if available; detect array carriers (#6777:
+  // structurally — the struct index the `in` reads is taken from the COMPILED
+  // receiver inside `compileArrayCarrierIn`, never from this TS-derived type).
   let structFieldNames: string[] | null = null;
-  let isVecType = false;
-  let vecTypeIdx = -1;
+  let isArrayCarrier = false;
   let structWasm: ValType | undefined; // (#3920) receiver's closed-struct type
   if (rightWasm.kind === "ref" || rightWasm.kind === "ref_null") {
     const typeIdx = (rightWasm as { typeIdx: number }).typeIdx;
     const structDef = ctx.mod.types[typeIdx];
     if (structDef?.kind === "struct") {
-      if (structDef.name?.startsWith("__vec_")) {
-        isVecType = true;
-        vecTypeIdx = typeIdx;
+      if (isPlainArrayCarrierType(ctx, typeIdx, arrayCarrierInDependencies)) {
+        isArrayCarrier = true;
       } else {
         structFieldNames = publicPhysicalFieldNames(rightType, structDef.fields);
         structWasm = rightWasm;
@@ -480,77 +759,20 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     }
   }
 
-  // Array (vec) index bounds check: `index in arr` → 0 <= index < arr.length
-  if (isVecType && staticKey !== null) {
-    const numIdx = Number(staticKey);
-    if (Number.isFinite(numIdx) && numIdx >= 0 && Number.isInteger(numIdx)) {
-      // Evaluate left for side effects, drop result
-      const leftResult = compileExpression(ctx, fctx, expr.left);
-      if (leftResult) {
-        fctx.body.push({ op: "drop" });
-      }
-      // (#4222) Under the overlay route the dense `numIdx < length` compare is
-      // NOT the HasProperty answer: `delete arr[numIdx]` leaves `length`
-      // untouched and records the absence as a `FLAG_DELETED_INDEX` companion
-      // entry, and an accessor index may sit beyond the physical backing. Defer
-      // to `__extern_has_idx`, the chokepoint whose overlay presence prologue
-      // knows about both — the same typed→dynamic hand-off #4159 made for
-      // element reads/writes. Route-inactive modules keep the inline compare
-      // byte-for-byte.
-      // (#4491 T11) An f64 carrier can hold the ABSENCE marker at an in-bounds
-      // index, so `numIdx < length` is not the HasProperty answer there either.
-      // Same hand-off, restricted to the carrier that can actually hold one, so
-      // every other vec keeps the inline compare byte-for-byte.
-      const f64HoleRoute = f64HolesActive(ctx) && vecCarrierElementIsF64(ctx, vecTypeIdx);
-      if (overlayRouteActive(ctx) || f64HoleRoute) {
-        const hasIdxFn = ensureLateImport(
-          ctx,
-          "__extern_has_idx",
-          [{ kind: "externref" }, { kind: "f64" }],
-          [{ kind: "i32" }],
-        );
-        flushLateImportShifts(ctx, fctx);
-        if (hasIdxFn !== undefined) {
-          const recvResult = compileExpression(ctx, fctx, expr.right);
-          if (recvResult) {
-            fctx.body.push({ op: "extern.convert_any" });
-            fctx.body.push({ op: "f64.const", value: numIdx });
-            fctx.body.push({ op: "call", funcIdx: hasIdxFn });
-          } else {
-            fctx.body.push({ op: "i32.const", value: 0 });
-          }
-          return { kind: "i32" };
-        }
-      }
-      // Compile the array expression to get the vec struct
-      const rightResult = compileExpression(ctx, fctx, expr.right);
-      const holePresence = rightResult ? vecStaticIndexPresenceInstrs(ctx, fctx, vecTypeIdx, numIdx) : undefined;
-      if (holePresence) {
-        fctx.body.push(...holePresence); // (#6771 S3) an `Array(n)` slot may be `$Hole`
-      } else if (rightResult) {
-        // Read length field (field 0 of vec struct)
-        fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-        // Compare: numIdx < length
-        fctx.body.push({ op: "i32.const", value: numIdx });
-        fctx.body.push({ op: "i32.gt_s" }); // length > index  <==>  index < length
-      } else {
-        fctx.body.push({ op: "i32.const", value: 0 });
-      }
-      return { kind: "i32" };
-    }
-    // Non-numeric key like "length" on array — check TS type
-    if (staticKey === "length") {
-      const leftResult = compileExpression(ctx, fctx, expr.left);
-      if (leftResult) {
-        fctx.body.push({ op: "drop" });
-      }
-      const rightResult = compileExpression(ctx, fctx, expr.right);
-      if (rightResult) {
-        fctx.body.push({ op: "drop" });
-      }
-      fctx.body.push({ op: "i32.const", value: 1 });
-      return { kind: "i32" };
-    }
+  // (#6777) An array-carrier receiver: an index / `length` / dynamic key is
+  // answered by `compileArrayCarrierIn` (hole-aware, typed by the compiled
+  // receiver, boolean result). A constant named key (`"push" in arr`) is
+  // declined and continues through the named-property fold below. The key's
+  // literal TS type counts as constant (`const k = "push"; k in arr`).
+  const leftType = ctx.checker.getTypeAtLocation(expr.left);
+  if (isArrayCarrier) {
+    const literalKey = leftType.isStringLiteral()
+      ? leftType.value
+      : leftType.isNumberLiteral()
+        ? String(leftType.value)
+        : null;
+    const carrierIn = compileArrayCarrierIn(ctx, fctx, expr, staticKey ?? literalKey, arrayCarrierInDependencies);
+    if (carrierIn !== undefined) return carrierIn;
   }
 
   // (#3920) BEFORE the fold below: a conditionally-assigned field is a
@@ -653,6 +875,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // only a folded `false` is routed, so no affirmative answer moves.
     const vecNamedKeyRoute = !has && carrierBagKeyNeedsRuntime(ctx, rightWasm, staticKey, 0);
     const fnctorProtoRoute = !has && ctx.standalone && isFnctorInstanceWasm(ctx, rightWasm);
+    const subclassedReceiverRoute = !has && subclassedInstanceReceiver(ctx, rightWasm, rightType, expr.right); // (#7216)
     // (#4515 wave-5) The SECOND half of the #4484 D guard above. That one
     // stopped a reassigned binding's stale static type from producing a wrong
     // THROW; the same staleness also produces a wrong ANSWER here, because
@@ -690,6 +913,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         reassignedReceiverRoute ||
         escapedReceiverRoute ||
         fnctorProtoRoute ||
+        subclassedReceiverRoute ||
         proxyReceiverRoute ||
         terminalAwareObjectPrototypeRoute)
     ) {
@@ -747,7 +971,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
   // module ("call expected externref, found f64"). Such keys (now reachable
   // because the §13.10.1 ToPropertyKey 2322 is downgraded) fall through to the
   // defined fallback below instead of crashing wasm validation.
-  const leftKeyWasm = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(expr.left));
+  const leftKeyWasm = resolveWasmType(ctx, leftType);
   const keyIsRefLike =
     leftKeyWasm.kind === "externref" ||
     leftKeyWasm.kind === "anyref" ||
@@ -842,7 +1066,6 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     }
 
     // Try to resolve key from the TS type of the left expression
-    const leftType = ctx.checker.getTypeAtLocation(expr.left);
     if (leftType.isStringLiteral()) {
       const key = leftType.value;
       const prop = rightType.getProperty(key);
@@ -876,45 +1099,6 @@ function emitRuntimeExternHas(
     // `__extern_has` delegates through the same `__class_proto_lookup`.
     recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
   }
-  const hasIdx = ensureLateImport(
-    ctx,
-    "__extern_has",
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "i32" }],
-  );
-  if (hasIdx === undefined) return undefined;
-  flushLateImportShifts(ctx, fctx);
-  // (#2741) §13.10.1 evaluates the LHS (key, steps 1-2) BEFORE the RHS
-  // (object, steps 3-4) — e.g. `x() in y()` must throw from `x()` first,
-  // and an unresolvable LHS reference (`undef in obj`) must throw before
-  // the object is evaluated. Evaluate the key first into a temp, then the
-  // object, then re-push the key so the call args stay `(obj, key)`.
-  // coerceType (not a bare extern.convert_any) boxes a non-ref key.
-  const leftResult = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
-  if (leftResult === null) {
-    fctx.body.push({ op: "ref.null.extern" });
-  } else if (leftResult.kind !== "externref") {
-    coerceType(ctx, fctx, leftResult, { kind: "externref" });
-  }
-  const keyTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: keyTmp });
-  const rightResult = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
-  if (rightResult === null) {
-    fctx.body.push({ op: "ref.null.extern" });
-  } else if (rightResult.kind !== "externref") {
-    coerceType(ctx, fctx, rightResult, { kind: "externref" });
-  }
-  fctx.body.push({ op: "local.get", index: keyTmp });
-  releaseTempLocal(fctx, keyTmp);
-  fctx.body.push({ op: "call", funcIdx: hasIdx });
-  return { kind: "i32" };
-}
-
-/** (#4491 T11) True iff the `__vec_*` struct at `vecTypeIdx` stores f64 elements. */
-function vecCarrierElementIsF64(ctx: CodegenContext, vecTypeIdx: number): boolean {
-  if (vecTypeIdx < 0) return false;
-  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-  if (arrTypeIdx < 0) return false;
-  const arrDef = ctx.mod.types[arrTypeIdx];
-  return arrDef?.kind === "array" && (arrDef.element as ValType).kind === "f64";
+  // (#2741) Key-first evaluation order — see `emitKeyFirstExternHas`.
+  return emitKeyFirstExternHas(ctx, fctx, expr.left, expr.right, arrayCarrierInDependencies);
 }

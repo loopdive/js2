@@ -1,4 +1,5 @@
 import { ensureNativeDelegatedResultHelpers } from "./generators-delegation-runtime.js";
+import { isAnonymousFunctionDefinition } from "../shared/named-evaluation.js";
 import { NATIVE_GENERATOR_FACTORY_PROTO } from "./generators-native-protocol.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
@@ -26,7 +27,7 @@ import { NATIVE_GENERATOR_FACTORY_PROTO } from "./generators-native-protocol.js"
 
 import { ts } from "../ts-api.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, hostFreeEnvironment, jsValueBoundary } from "./context/types.js";
 import {
   isExternalDeclaredClass,
   isIteratorResultType,
@@ -38,9 +39,10 @@ import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-
 import { dynamicReadCrossesStandaloneLink, isAdmissibleDynamicReadNarrowing } from "./dynamic-read-narrowing.js"; // (#5345) i32 cannot represent `undefined`
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
+import { arrayLibMethodSpecLength } from "./array-method-value.js"; // (#4765)
 import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
 import { promiseProtoMemberSpecLength } from "./promise-dynamic-member-read.js"; // (#6651 D5)
-import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge, usesNativeSymbolProvider } from "./symbol-native.js";
+import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge } from "./symbol-native.js";
 import { ensureObjectRuntime, ensureWrapperStringValueHelper } from "./object-runtime.js";
 import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
 import {
@@ -67,6 +69,7 @@ import {
 } from "./expressions/helpers.js";
 import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
 import { emitUndefined } from "./expressions/late-imports.js"; // (#5269 B-d) the canonical `undefined` carrier
+import { emitNativeImportMetaUrl } from "./expressions/import-meta-url-native.js"; // (#6982)
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import { tracesToTypedArrayIntrinsicProto } from "./expressions/calls.js"; // (#6769 S7a) `%TypedArray%.prototype` receiver
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
@@ -87,6 +90,10 @@ import { moduleExtendsSymbolProto } from "./primitive-absent-property.js"; // (#
 import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js";
 import { emitErrorMessageReadWithProtoFallback } from "./error-message-proto-read.js"; // (#6651 C2) absent-message prototype walk // (#4394) catch-binding non-$Error read
 import { addStringConstantGlobal, localGlobalIdx, registerLateReadStringConstant } from "./registry/imports.js";
+import {
+  identifierLocalSlotIsExternref,
+  undefinedTypedIdentifierGlobalIsExternref,
+} from "./expressions/identifier-receiver-slot.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
@@ -131,7 +138,6 @@ import {
   emitTaViewDynamicByteLength,
   getOrRegisterDvWindowType,
   pushTaViewEffectiveLen,
-  usesNativeDataViewProvider,
 } from "./dataview-native.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticUniformDerivedLength, tryEmitNativeTrimLength } from "./native-strings-derived-length.js";
@@ -205,7 +211,6 @@ import {
   emitThisReceiverGuardConvert,
   findAlternateStructsForField,
   getIteratorResultValueType,
-  isAnonymousFunctionDefinition,
   isBindResultExpr,
   isGeneratorIteratorResultLike,
   isGetProtoOfWiredViewProtoCall,
@@ -235,11 +240,12 @@ import {
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
-import { linkBrandRoleOf } from "./shape-brand.js";
 import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
 import { emitLinkedStaticMemberRead, linkedStaticParentHeritage } from "./standalone-linked-static-inheritance.js"; // (#6644) §15.7.14 step 6 across the link
 import { tryEmitPromiseSubclassCellRead } from "./promise-subclass-cell-read.js";
 import { tryEmitGuardedArrayConstructorRead } from "./array/array-ctor-this.js"; // (#6771 S7)
+import { recordRuntimeProtoInstallDemand } from "./classes/runtime-proto-install-demand.js"; // (#7061)
+import { emitSabGetter } from "./buffers/shared-array-buffer.js"; // (#7011)
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -907,6 +913,16 @@ export function tryBufferViewAttributeReads(
   //                      §25.1.5.4 (a fixed buffer reports its byteLength).
   // Only reached for a static ArrayBuffer receiver in the host-free lane; native
   // TAs / plain arrays / non-buffer programs never take this arm (byte-inert).
+  // (#7011) SharedArrayBuffer `maxByteLength` / `growable` → the native provider.
+  if (
+    (propName === "maxByteLength" || propName === "growable") &&
+    noJsHost(ctx) &&
+    objType.getSymbol()?.name === "SharedArrayBuffer" &&
+    !(ts.isPropertyAccessExpression(expr.expression) && expr.expression.name.text === "prototype")
+  ) {
+    const r = emitSabGetter(ctx, fctx, propName, expr.expression, (e) => compileExpression(ctx, fctx, e));
+    if (r !== undefined) return r;
+  }
   if (
     (ctx.wasi || ctx.standalone || ctx.strictNoHostImports) &&
     (propName === "maxByteLength" || propName === "resizable")
@@ -1031,7 +1047,7 @@ export function tryBufferViewAttributeReads(
     // a bare `$__vec_i32_byte` (offset-0 default-length view). For the wrapper,
     // read its byteOffset / byteLength fields; for the bare vec, byteOffset = 0
     // and byteLength = vec.length (one i32 per byte ⇒ length IS the byte count).
-    if (isDataView && usesNativeDataViewProvider(ctx) && propName !== "BYTES_PER_ELEMENT") {
+    if (isDataView && propName !== "BYTES_PER_ELEMENT") {
       const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" });
       const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
       const fieldIdx = propName === "byteOffset" ? 1 : 2;
@@ -1087,28 +1103,7 @@ export function tryBufferViewAttributeReads(
     // through to `__extern_get(struct, "byteLength")` → undefined → NaN. Recover
     // the window via the `__dv_view_byte_attr(view, sel)` host helper:
     //   sel 0 → byteOffset, sel 1 → byteLength (windowed; sentinel handled host-side).
-    if (isDataView && !usesNativeDataViewProvider(ctx) && propName !== "BYTES_PER_ELEMENT") {
-      const attrIdx = ensureLateImport(
-        ctx,
-        "__dv_view_byte_attr",
-        [{ kind: "externref" }, { kind: "i32" }],
-        [{ kind: "i32" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      if (attrIdx !== undefined) {
-        const recvType = compileExpression(ctx, fctx, expr.expression);
-        // The helper takes an externref. DataView locals are already externref;
-        // an inline `new DataView(...)` receiver may hand back a GC ref
-        // (`ref`/`ref_null`) — recover it to externref before the call.
-        if (recvType && recvType.kind !== "externref") {
-          fctx.body.push({ op: "extern.convert_any" });
-        }
-        fctx.body.push({ op: "i32.const", value: propName === "byteOffset" ? 0 : 1 });
-        fctx.body.push({ op: "call", funcIdx: attrIdx });
-        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
-        return ctx.fast ? { kind: "i32" } : { kind: "f64" };
-      }
-    }
+
     if (isBuffer || isTypedArr) {
       // byteOffset on a fresh-backing view is always 0.
       if (propName === "byteOffset") {
@@ -1213,9 +1208,7 @@ export function tryBufferViewAttributeReads(
   // is the non-trapping floor. Host/gc mode keeps its host-import `.buffer`.
   if (
     propName === "buffer" &&
-    (noJsHost(ctx) ||
-      (usesNativeDataViewProvider(ctx) &&
-        ctx.checker.getTypeAtLocation(expr.expression).getSymbol()?.name === "DataView"))
+    (noJsHost(ctx) || ctx.checker.getTypeAtLocation(expr.expression).getSymbol()?.name === "DataView")
   ) {
     const bufRecvName =
       objType.getSymbol()?.name ??
@@ -1435,10 +1428,7 @@ export function tryNativeErrorMemberRead(
   // $Error_struct) + struct.get`. If the receiver is already null at
   // runtime, `ref.cast` traps — but native JS has the same behaviour
   // (`null.message` throws), so the trap is acceptable Phase 1/2 semantics.
-  if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    (propName === "message" || propName === "name" || propName === "stack")
-  ) {
+  if (propName === "message" || propName === "name" || propName === "stack") {
     const lhsTsName = objType.getSymbol()?.name;
     // (#1536c) A user subclass of a built-in Error (`class MyError extends
     // Error {}`) is externref-backed; its instance is the parent's
@@ -1787,6 +1777,8 @@ export function trySuperAndImportMetaRead(
     expr.expression.name.text === "meta"
   ) {
     if (propName === "url") {
+      const nativeUrl = emitNativeImportMetaUrl(ctx, fctx); // (#6982) native strings + JS embedder
+      if (nativeUrl !== null) return nativeUrl;
       // #1494 — Bind to the host's `import.meta.url` (passed by the generated
       // loader via deps.importMetaUrl). Falls back to undefined when no
       // loader is present.
@@ -1919,17 +1911,23 @@ export function tryGlobalThisAndProcessRead(
       // the standard EventEmitter surface (`stdout.on`/`removeListener`) too.
       else if (procProp === "stdout") hostImport = "__get_process_stdout";
       else if (procProp === "stderr") hostImport = "__get_process_stderr";
-      // Standalone has no process to read: `process.env` is the host-free
-      // empty object the JS-host import also answers when no `process` exists
-      // (react's / redux's `process.env.NODE_ENV === "production"` gate kept a
-      // `__get_process_env` import and failed the standalone npm-compat lane).
-      if (ctx.standalone && procProp === "env") {
+      // A host-free build has no process to read: `process.env` is the empty
+      // object the JS-host import answers when no `process` exists (react's
+      // NODE_ENV gate). (#6910) The process is a PLATFORM capability: a JS
+      // environment reads the host's, admitted at the value boundary.
+      const noHostProcess = ctx.standalone && (hostFreeEnvironment(ctx) || !jsValueBoundary(ctx));
+      if (noHostProcess && procProp === "env") {
         const idx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
         if (idx !== undefined) fctx.body.push({ op: "call", funcIdx: idx });
         else fctx.body.push({ op: "ref.null.extern" });
         return { kind: "externref" };
       }
+      // (#6987) Every other `process.*` getter is a JS-host import a host-free
+      // build may not carry. Fall through to the ordinary unresolvable-global
+      // lowering (`process` is undeclared there: ReferenceError on read,
+      // `typeof process === "undefined"`), exactly like `process.exit`.
+      if (noHostProcess) return PA_FALLTHROUGH;
       if (hostImport !== undefined) {
         const idx = ensureLateImport(ctx, hostImport, [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
@@ -2186,6 +2184,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       // produces `undefined` and makes class bootstrap code such as Axios'
       // static accessor installer dereference a null prototype.
       if (propName === "prototype" && emitLazyProtoGet(ctx, fctx, enclosingClass)) {
+        recordRuntimeProtoInstallDemand(ctx, expr, enclosingClass);
         return { kind: "externref" };
       }
       const fullName = `${enclosingClass}_${propName}`;
@@ -2368,6 +2367,7 @@ function emitClassStaticMemberRead(
   // so that Object.getPrototypeOf(instance) === ClassName.prototype holds.
   if (propName === "prototype") {
     if (emitLazyProtoGet(ctx, fctx, resolvedClass)) {
+      recordRuntimeProtoInstallDemand(ctx, receiver?.parent, resolvedClass);
       return { kind: "externref" };
     }
     // Fallback: return null externref
@@ -3111,7 +3111,7 @@ export function tryLengthAndNameReads(
         // accepts: `function f(x = 42, y) {}` has `length === 0`, not 1. See
         // function-expected-argument-count.ts for the measured divergence table.
         const sig = lengthSigs[0]!;
-        const paramCount = expectedArgumentCountOfSignature(sig);
+        const paramCount = arrayLibMethodSpecLength(sig) ?? expectedArgumentCountOfSignature(sig); // (#4765)
         fctx.body.push({ op: "f64.const", value: paramCount });
         return { kind: "f64" };
       }
@@ -3803,8 +3803,8 @@ export function tryNamespaceConstantAndSymbolReads(
       // `__box_number`, so `new WeakSet([Symbol.hasInstance])` stores the
       // symbol rather than the NUMBER 2 (its well-known id). The js-host lane
       // stays unbranded for the #4626 index-shift reason recorded there.
-      const branded = usesNativeSymbolProvider(ctx) || linkBrandRoleOf(ctx) !== undefined; // (#6482 r2)
-      return branded ? { kind: "i32", symbol: true } : { kind: "i32" };
+      // (#6482 r2)
+      return { kind: "i32", symbol: true };
     }
   }
 
@@ -3822,28 +3822,16 @@ export function tryNamespaceConstantAndSymbolReads(
     // accessor — read the description from the native id→string side table
     // (populated by `compileSymbolCall`). A null slot / out-of-range id reads as
     // `undefined`, matching `Symbol().description === undefined`.
-    if (usesNativeSymbolProvider(ctx)) {
-      ensureNativeSymbolBoundaryBridge(ctx);
-      // A narrowed any receiver still occupies the boxed symbol plane.
-      const symbolId: ValType = { kind: "i32", symbol: true };
-      const recvType = compileExpression(ctx, fctx, expr.expression, symbolId);
-      if (recvType && recvType.kind !== "i32") {
-        coerceType(ctx, fctx, recvType, symbolId);
-      }
-      emitSymbolDescLoad(ctx, fctx);
-      // Result is `ref_null $AnyString` — a native string (or null⇒undefined).
-      return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+    ensureNativeSymbolBoundaryBridge(ctx);
+    // A narrowed any receiver still occupies the boxed symbol plane.
+    const symbolId: ValType = { kind: "i32", symbol: true };
+    const recvType = compileExpression(ctx, fctx, expr.expression, symbolId);
+    if (recvType && recvType.kind !== "i32") {
+      coerceType(ctx, fctx, recvType, symbolId);
     }
-    const symDescIdx = ensureLateImport(ctx, "__symbol_description", [{ kind: "externref" }], [{ kind: "externref" }]);
-    if (symDescIdx !== undefined) {
-      const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
-      if (recvType && recvType.kind !== "externref") {
-        coerceType(ctx, fctx, recvType, { kind: "externref" });
-      }
-      flushLateImportShifts(ctx, fctx);
-      fctx.body.push({ op: "call", funcIdx: symDescIdx });
-      return { kind: "externref" };
-    }
+    emitSymbolDescLoad(ctx, fctx);
+    // Result is `ref_null $AnyString` — a native string (or null⇒undefined).
+    return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
   }
 
   // (#5269 B-d) Any OTHER property read on a symbol PRIMITIVE. §6.2.5.5
@@ -4157,6 +4145,32 @@ function emitExternGetReceiverGuard(
     fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
     fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: typeErrorThrowInstrs(ctx, expr), else: [] });
   }
+}
+
+/**
+ * (#6970) A `this.<m>` VALUE read inside a JS constructor function whose `m` is
+ * never declared by a `this`-rooted write (`this.m = …`) names a PROTOTYPE
+ * member (`F.prototype.m = function () {…}`), not an own slot. The TS instance
+ * type of a constructor function lists prototype members among its properties,
+ * so the field auto-register arm would mint an own struct field for `m` and the
+ * read would become a `struct.get` of a slot nothing ever writes — shadowing
+ * `F.prototype.m` (box2dweb's `this.b2X.apply(this, arguments)` ctor idiom).
+ * Declining lets the read take the dynamic `__extern_get` route, which walks
+ * the prototype chain. A member with ANY `this.m = …` declaration keeps the
+ * field route: that is the ctor-write derivation the struct layout is built
+ * from (`deriveFnctorFields`).
+ */
+function isThisReadOfFnctorPrototypeMember(
+  typeName: string,
+  expr: ts.PropertyAccessExpression,
+  tsProp: ts.Symbol,
+): boolean {
+  if (!typeName.startsWith("__fnctor_") || expr.expression.kind !== ts.SyntaxKind.ThisKeyword) return false;
+  const decls = tsProp.declarations ?? [];
+  const isThisRooted = (node: ts.Node): boolean =>
+    (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+    node.expression.kind === ts.SyntaxKind.ThisKeyword;
+  return decls.length > 0 && !decls.some((d) => isThisRooted(d) || (ts.isBinaryExpression(d) && isThisRooted(d.left)));
 }
 
 export function finalizeStructAndDynamicMemberGet(
@@ -4698,13 +4712,17 @@ export function finalizeStructAndDynamicMemberGet(
   // but NEVER for class struct types — their fields are fixed at collection time
   // — and never for a foreign-return fnctor instance (#2071): its checker shape
   // may not describe the runtime value at all, so no field auto-registration.
-  if (typeName && !ctx.classSet.has(typeName) && !foreignReturnReceiver) {
+  // (#6938) Nor for a non-`this` fnctor receiver named by resolveStructName's
+  // lockstep answer: a prototype member is not a field — read it dynamically.
+  const fnctorProtoMemberRead =
+    typeName?.startsWith("__fnctor_") === true && expr.expression.kind !== ts.SyntaxKind.ThisKeyword;
+  if (typeName && !ctx.classSet.has(typeName) && !foreignReturnReceiver && !fnctorProtoMemberRead) {
     // typeName was already resolved above but field was not found;
     // try auto-registering the property from the TS type
     const props = objType.getProperties?.();
     if (props) {
       const tsProp = props.find((p) => p.name === propName);
-      if (tsProp) {
+      if (tsProp && !isThisReadOfFnctorPrototypeMember(typeName, expr, tsProp)) {
         const propTsType = ctx.checker.getTypeOfSymbolAtLocation(tsProp, expr);
         const propWasmType = resolveWasmType(ctx, propTsType);
         // Try to add the field to the struct dynamically
@@ -4831,37 +4849,11 @@ export function finalizeStructAndDynamicMemberGet(
       // arm), so admit it here. Shared predicate with Bug 2a's var-slot typing
       // (`varBindingNeedsExternrefForUndefined`) — single source of truth.
       undefinedTypedMemberReadProducesExternref(ctx, expr.expression) ||
+      (ts.isIdentifier(expr.expression) && identifierLocalSlotIsExternref(fctx, expr.expression.text)) ||
+      // (#5195 Step 3.2) Same rule one scope up, ONLY where the read would
+      // otherwise fall to the terminal `ref.null.extern` — see the helper.
       (ts.isIdentifier(expr.expression) &&
-        (() => {
-          const localIdx = fctx.localMap.get(expr.expression.text);
-          if (localIdx === undefined) return false;
-          const localType =
-            localIdx < fctx.params.length
-              ? fctx.params[localIdx]!.type
-              : fctx.locals[localIdx - fctx.params.length]?.type;
-          return localType?.kind === "externref";
-        })()) ||
-      // (#5195 Step 3.2) Same rule one scope up, and ONLY where the read would
-      // otherwise fall to the terminal `ref.null.extern`: a MODULE-level
-      // binding whose static type is purely `undefined`/`void` but whose wasm
-      // global slot is externref. The local-slot clause above only sees
-      // function locals, so `var caught; function f(){ …catch(e){ caught = e } }`
-      // — the idiom every `expressions/super/*` error test uses — read
-      // `caught.constructor` as a constant null, even though the write had
-      // physically stored an externref in the global. The slot's representation
-      // is the honest source of truth about the runtime value, exactly as it is
-      // for locals; the checker's flow type (`undefined`, because the only
-      // write is inside a nested closure) is not. Restricted to the
-      // purely-undefined static type so every resolvable receiver keeps its
-      // existing (often struct/fast) lane byte-for-byte.
-      (ts.isIdentifier(expr.expression) &&
-        (objType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0 &&
-        fctx.localMap.get(expr.expression.text) === undefined &&
-        (() => {
-          const globalIdx = ctx.moduleGlobals.get(expr.expression!.text);
-          if (globalIdx === undefined) return false;
-          return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind === "externref";
-        })());
+        undefinedTypedIdentifierGlobalIsExternref(ctx, fctx, expr.expression, objType));
     if (isExternObj) {
       // These bindings were deliberately placed on the dynamic object carrier
       // because their shape can change (growable objects, Proxy targets, and

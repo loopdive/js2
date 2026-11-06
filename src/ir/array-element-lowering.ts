@@ -16,12 +16,13 @@ import { IrFunctionBuilder } from "./builder.js";
 import { irIntrinsicFuncRef } from "./callable-bindings.js";
 import type { I32PureNames } from "./i32-pure-bitwise.js";
 import type { IrVecLowering } from "./lower.js";
-import { asVal, irTypeEquals, irVal, type IrConst, type IrType, type IrValueId } from "./nodes.js";
+import { asVal, irTypeEquals, irVal, irVec, type IrConst, type IrType, type IrValueId } from "./nodes.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import type { ValType } from "./types.js";
 import { irVecElemSetSymbol } from "./vector-runtime.js";
 
 interface ArrayElementResolver {
+  resolveString?(): ValType;
   resolveVec?(valType: ValType): IrVecLowering | null;
   resolveVecForElement?(elementValType: ValType): IrVecLowering | null;
   resolveVecOutOfBoundsConst?(elementValType: ValType): IrConst | null;
@@ -49,6 +50,7 @@ export interface ArrayElementLoweringHost {
 }
 
 const IR_F64: IrType = irVal({ kind: "f64" });
+const IR_STRING: IrType = { kind: "string" };
 const PURE_PUSH_BINARY_OPERATORS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.LessThanToken,
   ts.SyntaxKind.LessThanEqualsToken,
@@ -307,6 +309,30 @@ export function emptyLiteralElementValType(initializer: ts.Expression, host: Arr
   return host.resolver?.resolveVecForElement?.(i32) ? i32 : f64;
 }
 
+/**
+ * Vec hint for an empty literal the inference resolved: `number[]` as f64 (or
+ * i32 when narrowed, #3734); (#7122) `string[]` as a vec of the backend string
+ * carrier, the same representation a dense string literal gets (the
+ * empty-literal allocation resolves a `string` element to that carrier). A
+ * backend that cannot register the vec demotes.
+ */
+export function inferredEmptyArrayVecHint(
+  initializer: ts.ArrayLiteralExpression,
+  name: string,
+  host: ArrayElementLoweringHost,
+): IrType {
+  const inference = host.emptyArrayInference.resultForLiteral(initializer);
+  const isString = inference?.kind === "resolved" && inference.elementKind === "string";
+  const elementValType = isString ? host.resolver?.resolveString?.() : emptyLiteralElementValType(initializer, host);
+  if (!elementValType || !host.resolver?.resolveVecForElement?.(elementValType)) {
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: resolver cannot register inferred ${isString ? "string" : "number"}[] vec for '${name}' (${host.funcName})`,
+    );
+  }
+  return isString ? irVec(IR_STRING, true) : irVec(irVal(elementValType), true);
+}
+
 /** Resolve an explicitly annotated empty-array representation. */
 export function annotatedArrayElementValType(
   declaration: ts.VariableDeclaration,
@@ -395,13 +421,20 @@ export function tryLowerVecPush(
   }
   const vecRecvVal = asVal(recvType);
   const logicalElement = recvType.kind === "vec" ? asVal(recvType.elementType) : null;
+  // (#7122) A `vec<string>` stores the backend string carrier.
+  const stringCarrier =
+    !logical && recvType.kind === "vec" && recvType.elementType.kind === "string"
+      ? host.resolver?.resolveString?.()
+      : undefined;
   const vec = logical
     ? null
-    : logicalElement
-      ? host.resolver?.resolveVecForElement?.(logicalElement)
-      : vecRecvVal
-        ? host.resolver?.resolveVec?.(vecRecvVal)
-        : null;
+    : stringCarrier
+      ? host.resolver?.resolveVecForElement?.(stringCarrier)
+      : logicalElement
+        ? host.resolver?.resolveVecForElement?.(logicalElement)
+        : vecRecvVal
+          ? host.resolver?.resolveVec?.(vecRecvVal)
+          : null;
   if (!vec && !logical) return undefined;
   const scalarVecReceiver =
     (vec?.valueType?.kind === "i32" || vecRecvVal?.kind === "i32") &&
@@ -419,7 +452,7 @@ export function tryLowerVecPush(
 
   const elem = logical ? logicalElement! : vec!.elementValType;
   const narrowedI32 = vec !== null && vec !== undefined && isNarrowedI32Vec(vec, receiverExpression, host);
-  if (!narrowedI32 && elem.kind !== "f64" && elem.kind !== "externref") {
+  if (!stringCarrier && !narrowedI32 && elem.kind !== "f64" && elem.kind !== "externref") {
     demoteToLegacy(
       "method-call-unsupported",
       `ir/from-ast: .push into '${elem.kind}' vec not in IR scope (${host.funcName})`,
@@ -427,7 +460,18 @@ export function tryLowerVecPush(
   }
   const countedPush = canonicalCountedPushPlanForCall(expr, host.checker);
   let value: IrValueId;
-  if (narrowedI32) {
+  if (stringCarrier) {
+    // No coercion: a pushed value that is not already a string keeps the
+    // whole unit on legacy rather than storing a converted element.
+    value = ops.lowerExpr(expr.arguments[0]!, IR_STRING);
+    if (host.builder.typeOf(value).kind !== "string") {
+      demoteToLegacy(
+        "method-call-unsupported",
+        `ir/from-ast: .push value ${ops.describeType(host.builder.typeOf(value))} into string vec ` +
+          `not in IR scope (${host.funcName})`,
+      );
+    }
+  } else if (narrowedI32) {
     value = ops.lowerNarrowedElement(expr.arguments[0]!);
   } else {
     const raw = ops.lowerExpr(expr.arguments[0]!, irVal(elem));
@@ -469,7 +513,9 @@ export function tryLowerVecPush(
     host.builder.emitVecSetLength(recv, nextLength);
   } else {
     const symbol =
-      recvType.kind === "vec" ? irVecElemSetSymbol(recvType.elementType) : `__vec_elem_set_${vec!.vecStructTypeIdx}`;
+      recvType.kind === "vec" && !stringCarrier
+        ? irVecElemSetSymbol(recvType.elementType)
+        : `__vec_elem_set_${vec!.vecStructTypeIdx}`;
     host.builder.emitCall(irIntrinsicFuncRef(symbol), [recv, lenI32, value], null);
   }
   if (statementPosition) return null;

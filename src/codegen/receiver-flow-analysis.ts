@@ -589,15 +589,21 @@ export function analyzeReceiverFlow(
     if (decl && ts.isVariableDeclaration(decl) && decl.initializer) {
       if (ts.isFunctionExpression(decl.initializer)) return decl.initializer;
     }
-    // A top-level `function F(...) {}` declaration.
-    let found: ts.Node | undefined;
+    // A top-level `function F(...) {}` declaration (the first in source order).
+    return firstFunctionDeclarationByName().get(callee.text);
+  };
+  // (#6988) Indexed once per analysis: the per-call-site whole-file scan this
+  // replaces was quadratic on the 5 MB Octane mandreel driver.
+  let functionDeclarationIndex: Map<string, ts.FunctionDeclaration> | undefined;
+  const firstFunctionDeclarationByName = (): Map<string, ts.FunctionDeclaration> => {
+    if (functionDeclarationIndex) return functionDeclarationIndex;
+    const index = new Map<string, ts.FunctionDeclaration>();
     const scan = (node: ts.Node): void => {
-      if (found) return;
-      if (ts.isFunctionDeclaration(node) && node.name?.text === callee.text) found = node;
+      if (ts.isFunctionDeclaration(node) && node.name && !index.has(node.name.text)) index.set(node.name.text, node);
       ts.forEachChild(node, scan);
     };
     scan(sourceFile);
-    return found;
+    return (functionDeclarationIndex = index);
   };
 
   // (#4405 Phase 1) Poison methods whose slot escapes callee position.

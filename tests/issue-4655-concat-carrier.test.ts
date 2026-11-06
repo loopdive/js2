@@ -109,13 +109,6 @@ function pinSource(name: string, source: string, note: string): void {
   });
 }
 
-/** An `it.fails` residual: the shape STILL fails, and the suite says so. */
-function failSource(name: string, source: string, note: string): void {
-  it.skipIf(!TEST262).fails(`RESIDUAL ${name} — ${note}`, { timeout: 60_000 }, async () => {
-    expect(await runSource(name, source)).toBe("pass: ");
-  });
-}
-
 describe("#4655 — Array.prototype.concat result carrier", () => {
   pinRow(
     "built-ins/Array/prototype/concat/S15.4.4.4_A1_T2.js",
@@ -245,14 +238,18 @@ describe("#4655 — Array.prototype.concat and the prototype chain", () => {
   // Not taken here: that brand is a value-rep decision reaching every f64 vec
   // element read boxed to `any`, and this issue has no measurement for it.
   // Owner: value-rep (with #4491 T11 / #4638).
-  failSource(
+  //
+  // (#7014) This was an `it.fails` residual; it passes on main as of
+  // 2026-10-16 (the issue-tests detector reported it as UNEXPECTED PASS), so it
+  // is an ordinary pin now.
+  pinSource(
     "absent-concat-tail-observed-through-a-boxing-boundary",
     `${LOOP_CARRIED}
      var a = [__n - 3, __n - 2, __n - 1];
      a.length = 5;
      var b = a.concat();
      assert.sameValue(b[3], undefined, "b[3] boxed into a call argument");`,
-    "the #4638 absent marker reads absent inline and NaN once boxed",
+    "FIXED (#7014; was an it.fails residual): the #4638 absent marker reads absent inline and once boxed",
   );
 });
 

@@ -20,18 +20,31 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const SRC = readFileSync(fileURLToPath(new URL("../src/codegen/array-object-proto.ts", import.meta.url)), "utf-8");
+// The member set itself moved to string-proto-tostring.ts (exported, typed
+// `ReadonlySet<string>`) with a047a5f029; the refusal arm stays in
+// array-object-proto.ts.
+const SET_SRC = readFileSync(
+  fileURLToPath(new URL("../src/codegen/string-proto-tostring.ts", import.meta.url)),
+  "utf-8",
+);
 
 function carveOutSet(): Set<string> {
-  const m = /SUPERSEDED_BY_BORROWED_PATH\s*=\s*new Set\(\[([^\]]*)\]\)/.exec(SRC);
-  if (!m?.[1]) throw new Error("SUPERSEDED_BY_BORROWED_PATH not found — did the carve-out move?");
+  const m = /SUPERSEDED_BY_BORROWED_PATH(?::[^=]*)?\s*=\s*new Set(?:<string>)?\(\[([^\]]*)\]\)/.exec(SET_SRC);
+  if (m?.[1] === undefined) throw new Error("SUPERSEDED_BY_BORROWED_PATH not found — did the carve-out move?");
   return new Set([...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1] as string));
 }
 
 describe("#2742 standalone String.prototype superseded-wiring carve-out", () => {
-  it("carves out exactly the five members the A/B measured as +18/-0", () => {
-    // Measured over 450 String/prototype files, same box/run/list, both arms
-    // from one tree: +18 fail->pass, 0 pass->fail, 0 off-target moves.
-    expect([...carveOutSet()].sort()).toEqual(["codePointAt", "endsWith", "includes", "startsWith", "trim"].sort());
+  it("carves out no member any more (the borrowed-path premise no longer holds)", () => {
+    // Originally five members, measured over 450 String/prototype files: +18
+    // fail->pass, 0 pass->fail. `trim` left the set with a047a5f029 (it got its
+    // real reflective body). The other four left with #7072: the reflective
+    // closure now claims the direct `.call` spelling itself, so a refused body
+    // no longer falls through to #3254's borrowed path — it threw "not yet
+    // implemented" (issue-2875 slice pins). Re-measured: the 91
+    // `String/prototype/{includes,startsWith,endsWith,codePointAt}` test262
+    // rows stay 91/91 with the set empty.
+    expect([...carveOutSet()]).toEqual([]);
   });
 
   it("keeps every member whose wired body is still load-bearing", () => {
@@ -52,6 +65,11 @@ describe("#2742 standalone String.prototype superseded-wiring carve-out", () => 
       "at",
       "substring",
       "charAt",
+      "trim",
+      "codePointAt",
+      "includes",
+      "startsWith",
+      "endsWith",
     ]) {
       expect(set.has(member), `${member} must stay wired — see the #2742 A/B ledger`).toBe(false);
     }

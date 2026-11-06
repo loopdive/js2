@@ -88,18 +88,24 @@ describe("#1387 with statement static literal lowering", () => {
     ).toBe(8);
   });
 
-  it("keeps Object.freeze literal writes on the residual diagnostic path", async () => {
-    const result = await compileSloppy(`
-      module.exports.run = function () {
-        with (Object.freeze({ a: 1 })) {
-          a = 2;
-        }
-        return 0;
-      };
-    `);
-
-    const msg = result.errors.map((e) => e.message).join("\n");
-    expect(msg).toContain('cannot assign through with binding "a" because the field is immutable');
+  // (#7032) This and the opaque-target case below used to pin the static
+  // lowering's REFUSAL diagnostics ("field is immutable" / "requires a proven
+  // closed object-literal shape"). Measured on upstream/main 0727e2985b, those
+  // refusals are no longer reached: the dynamic `with` lowering (#2663) claims
+  // both shapes and runs them with the correct sloppy-mode semantics, so the
+  // tests assert that behaviour (node prints the same 1 and 9) instead.
+  it("a write through a frozen with-object binding is a silent sloppy no-op", async () => {
+    expect(
+      await run(`
+        module.exports.run = function () {
+          var o = Object.freeze({ a: 1 });
+          with (o) {
+            a = 2;
+          }
+          return o.a;
+        };
+      `),
+    ).toBe(1);
   });
 
   it("resolves nested literal with scopes innermost first", async () => {
@@ -133,21 +139,19 @@ describe("#1387 with statement static literal lowering", () => {
     ).toBe(5);
   });
 
-  it("keeps opaque targets on the dynamic fallback diagnostic path", async () => {
-    const result = await compileSloppy(`
-      module.exports.run = function (obj) {
-        var result = 0;
-        with (obj) {
-          result = value;
-        }
-        return result;
-      };
-    `);
-
-    const msg = result.errors.map((e) => e.message).join("\n");
-    expect(msg).toMatch(ISSUE_1387);
-    expect(msg).toContain("not a closed object literal");
-    expect(msg).not.toContain("Unsupported statement: WithStatement");
+  it("resolves names through an opaque (non-literal) with target", async () => {
+    expect(
+      await run(`
+        module.exports.run = function () {
+          var obj = JSON.parse('{"value": 9}');
+          var result = 0;
+          with (obj) {
+            result = value;
+          }
+          return result;
+        };
+      `),
+    ).toBe(9);
   });
 
   it("refuses inherited Object.prototype names that are not own fields", async () => {

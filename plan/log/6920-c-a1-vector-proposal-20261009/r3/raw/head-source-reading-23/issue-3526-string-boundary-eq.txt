@@ -1,0 +1,33 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 string-eq contract > adds ONE feature row and REUSES the compare's ABI, minting no new signature 3ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 string-eq contract > is TWO-armed at the provider level, like the compare 0ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 string-eq contract > carries NO intrinsic instruction — the demand is requested at freeze 7ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 string-eq contract > names the F2-S2 wasm:js-string record, and the async projection excludes it BY ID 2ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 provider policy > selects the host arm through the central capability record, MODULE included 2ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 provider policy > selects the native arm on the runtime symbol, requesting NO host capability 2ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 provider policy > refuses the arm its caller resolved to unsupported, naming the feature and the policy 3ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 provider policy > defaults an omitted policy closed and publishes the resolved decision 2ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 provider policy > resolves independently of the compare and of every family-1 arm 1ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 provider policy > has no manifest row at all when nothing in the module compares strings for equality 0ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 end-to-end behaviour is unchanged > binds the host lane's existing wasm:js-string.equals builtin, in the same position 768ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 end-to-end behaviour is unchanged > keeps the ordered import list intact when the compare and concat share the module 90ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 end-to-end behaviour is unchanged > uses the host-free helper on every native-strings lane, with no wasm:js-string import 445ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 end-to-end behaviour is unchanged > answers === and !== exactly as JavaScript does 55ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 end-to-end behaviour is unchanged > answers === and !== identically on a native-strings lane 109ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 end-to-end behaviour is unchanged > still lowers string equality on the linear backend, which ignores the provider 41ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 the resolve arm reads the frozen manifest > consults the prepared string-eq provider 3ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 the resolve arm reads the frozen manifest > reads NO lane discriminator 3ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 the resolve arm reads the frozen manifest > fails closed rather than falling back to a locally decided symbol 3ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 the resolve arm reads the frozen manifest > is its OWN branch — the eq symbol has left the concat pair 3ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 string.eq has ONE emit authority > attaches the equality provider unconditionally, both polarities 1ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 string.eq has ONE emit authority > refuses to lower an unattached string.eq instead of re-deciding the lane 1ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 string.eq has ONE emit authority > accepts an already-attached provider, so the guard is not a blanket refusal 1ms
+ ✓ tests/issue-3526-string-boundary-eq.test.ts > #3526 F2-S3 string.eq has ONE emit authority > keeps the retired fallback's lane read out of the emitter 3ms
+
+ Test Files  1 passed (1)
+      Tests  24 passed (24)
+   Start at  22:17:39
+   Duration  34.78s (transform 23.00s, setup 0ms, collect 32.68s, tests 1.55s, environment 0ms, prepare 78ms)
+

@@ -73,6 +73,7 @@ export function normalizeOrdinaryFunctionConstructibility(
   ctx: CodegenContext,
   funcName: string,
   constructible: boolean,
+  owner: ts.Declaration | undefined = compiledFunctionOwnerDeclaration(ctx, funcName),
 ): boolean {
   // The synthetic indirect-eval adapter is callable but deliberately has no
   // [[Construct]]. It is FunctionDeclaration-shaped only so the existing
@@ -83,7 +84,6 @@ export function normalizeOrdinaryFunctionConstructibility(
   // (#4661) Lane-INDEPENDENT (was gated to `noJsHost || native-first`). The
   // js-host lane needs the same nominal constructible subtype so
   // `__is_ctor_closure` can answer §26.1.2's IsConstructor(newTarget).
-  const owner = compiledFunctionOwnerDeclaration(ctx, funcName);
   return (
     owner !== undefined &&
     ts.isFunctionDeclaration(owner) &&

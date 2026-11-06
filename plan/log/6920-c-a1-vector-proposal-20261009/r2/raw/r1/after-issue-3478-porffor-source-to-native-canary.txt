@@ -1,0 +1,10 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3478-porffor-source-to-native-canary.test.ts (2 tests | 1 skipped) 647ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 1 skipped (2)
+   Start at  22:46:54
+   Duration  25.84s (transform 17.48s, setup 0ms, collect 24.75s, tests 647ms, environment 0ms, prepare 91ms)
+

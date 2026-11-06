@@ -1,0 +1,29 @@
+"""Diff the lowering-cycle pinned module/edge lists against an actual valueClosure() dump."""
+import json
+import re
+import sys
+
+test_path, graph_path = sys.argv[1], sys.argv[2]
+src = open(test_path).read()
+start = src.index('it("resolves the real transitive value graph')
+body = src[start:]
+mods_block = body[body.index("expect(graph.modules).toEqual([") :]
+mods_block = mods_block[: mods_block.index("]);")]
+edges_block = body[body.index("expect(graph.edges).toEqual([") :]
+edges_block = edges_block[: edges_block.index("]);")]
+pinned_mods = re.findall(r'"([^"]+)"', mods_block)
+pinned_edges = re.findall(r'"([^"]+ -> [^"]+)"', edges_block)
+count = re.search(r'startsWith\(genericPath \+ " -> "\)\)\)\.toHaveLength\((\d+)\)', body).group(1)
+graph = json.load(open(graph_path))
+actual_generic = [e for e in graph["edges"] if e.startswith("src/ir/lower-generic.ts -> ")]
+print(f"pinned modules={len(pinned_mods)} actual={len(graph['modules'])} equal={pinned_mods == graph['modules']}")
+print(f"pinned edges={len(pinned_edges)} actual={len(graph['edges'])} equal={pinned_edges == graph['edges']}")
+print(f"pinned generic out-edge count={count} actual={len(actual_generic)}")
+print("modules only in actual:", [m for m in graph["modules"] if m not in pinned_mods])
+print("modules only in pin:", [m for m in pinned_mods if m not in graph["modules"]])
+print("edges only in actual:", [e for e in graph["edges"] if e not in pinned_edges])
+print("edges only in pin:", [e for e in pinned_edges if e not in graph["edges"]])
+print("actual modules sorted:", graph["modules"] == sorted(graph["modules"]))
+for i, e in enumerate(graph["edges"]):
+    if "vector-representation" in e:
+        print(f"actual edge index {i}: {e}; previous: {graph['edges'][i - 1]}; next: {graph['edges'][i + 1]}")

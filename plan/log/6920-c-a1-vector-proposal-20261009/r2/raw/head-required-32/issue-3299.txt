@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3299.test.ts > #3299 shared heap/layout plan > binds Porffor Alloc/Load/Store exclusively to planned arena layouts 37ms
+ ↓ tests/issue-3299.test.ts > #3299 shared heap/layout plan > executes the same typed SSA through linear-Wasm and Porffor-C with JS semantics
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 1 skipped (2)
+   Start at  19:31:12
+   Duration  29.01s (transform 19.94s, setup 0ms, collect 28.51s, tests 39ms, environment 0ms, prepare 76ms)
+

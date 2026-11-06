@@ -89,26 +89,16 @@ describe("#6494 standalone Proxy/Reflect — the six paths that must throw", () 
     ).toBe(1111);
   });
 
-  it("KNOWN GAP (#6506): a revoked proxy reached via Array.prototype.map does NOT yet throw", async () => {
-    // This DID throw on the first cut of #6494, via a revoked-bit front guard
-    // prepended to `__extern_length`. That guard was reverted because it
-    // regressed 444 rows in the merge_group: `ta-dyn-mop.ts` ALSO
-    // `body.unshift`es a TypedArray-dyn-view arm onto `__extern_length` — an
-    // arm its own comment requires to sit ahead of the vec-base arm — and two
-    // competing unshifts onto one function body collide, so
-    // `%TypedArray%.prototype.set` misread its length ("offset is out of
-    // bounds"). The same hazard had already been found and fixed for
-    // `__extern_get_idx` in this PR; `__extern_length` was missed.
-    //
-    // Asserting the CURRENT (wrong) behaviour deliberately, per this repo's
-    // known-residual convention (see #6506): it fails loudly the moment someone lands the
-    // guard correctly, which is the point. 0 = did not throw.
+  it("a revoked proxy reached via Array.prototype.map throws", async () => {
+    // #6506's later composed Proxy array-like dispatch closed this deliberately
+    // pinned gap without reintroducing the competing `body.unshift()` that had
+    // regressed TypedArray.prototype.set.
     expect(
       await runStandalone(`
       const r: any = Proxy.revocable([1, 2, 3], {});
       r.revoke();
       return tryIt(() => { Array.prototype.map.call(r.proxy, function (x: any) { return x; }); });`),
-    ).toBe(0);
+    ).toBe(1);
   });
 
   it("a revoked proxy throws through Object.defineProperty (Proxy.revocable(...).proxy receiver)", async () => {
@@ -249,14 +239,9 @@ describe("#6494 — the shapes a widened check would break", () => {
     // The revoked-bit guard on `__extern_length` / `__extern_get_idx` must not
     // disturb a live proxy — it has no `return` on that path.
     //
-    // The pinned value records a PRE-EXISTING gap measured on `c698c755bb` and
-    // unchanged by this slice: neither terminal routes a LIVE proxy into
-    // `__proxy_get_dispatch`, so a generic `Array.prototype.*` over a proxy sees
-    // length 0 and maps to an empty array. Node answers 3. Closing that needs the
-    // array-like terminals to run the `get` trap, which changes what every live
-    // proxy answers for `length`/index reads and is deliberately out of scope
-    // here. The load-bearing assertion is the absence of `-1`: the guard does not
-    // turn a live proxy into a throw.
+    // The composed array-like dispatch also routes live length/index reads
+    // through the Proxy's [[Get]] path. The load-bearing assertion remains the
+    // absence of `-1`: the revoked guard must not turn a live proxy into a throw.
     expect(
       await runStandalone(`
       const r: any = Proxy.revocable([1, 2, 3], {});
@@ -264,6 +249,6 @@ describe("#6494 — the shapes a widened check would break", () => {
       try { n = (Array.prototype.map.call(r.proxy, function (x: any) { return x; }) as any).length; }
       catch (e) { return -1; }
       return n;`),
-    ).toBe(0);
+    ).toBe(3);
   });
 });

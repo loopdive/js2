@@ -223,9 +223,74 @@ function bodyHasNestedYield(body: ts.Node): boolean {
   return found;
 }
 
-/** A6's nested-operand / return gate or A10's member-target gate (above). */
+/**
+ * (#6984) A `yield*` in a position one of the planner's direct delegation arms
+ * owns — the statement root, `x = yield* E;`, `const x = yield* E;` and
+ * `return yield* E;` each bind the completion themselves.
+ */
+function isDirectDelegation(node: ts.YieldExpression): boolean {
+  const parent = node.parent;
+  if (ts.isExpressionStatement(parent) || ts.isReturnStatement(parent)) return true;
+  if (ts.isBinaryExpression(parent)) {
+    return (
+      parent.right === node &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(parent.left) &&
+      ts.isExpressionStatement(parent.parent)
+    );
+  }
+  return (
+    ts.isVariableDeclaration(parent) &&
+    parent.initializer === node &&
+    ts.isIdentifier(parent.name) &&
+    ts.isVariableDeclarationList(parent.parent) &&
+    parent.parent.declarations.length === 1 &&
+    ts.isVariableStatement(parent.parent.parent)
+  );
+}
+
+/** The innermost statement enclosing `node`, or undefined at the source file. */
+function enclosingStatement(node: ts.Node): ts.Statement | undefined {
+  for (let cur = node.parent; cur !== undefined && !ts.isSourceFile(cur); cur = cur.parent) {
+    if (
+      ts.isClassDeclaration(cur) ||
+      (cur.kind >= ts.SyntaxKind.FirstStatement && cur.kind <= ts.SyntaxKind.LastStatement)
+    ) {
+      return cur as ts.Statement;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * (#6984) The fourth generator-level gate: a `yield*` whose COMPLETION VALUE an
+ * enclosing expression consumes (`yield (yield* g())`, `"o:" + (yield* g())`,
+ * `id(yield* g())`, a template substitution) in a statement the evaluation-order
+ * walk models. §15.5.5 step 9: `yield*` evaluates to the delegate's return value;
+ * the planner delegates into a spill and the deferred statement reads it. Each
+ * such generator was a #680 refusal before (the walk refused every `yield*`).
+ */
+function bodyHasNestedDelegation(body: ts.Node): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found || isFunctionLikeScope(node)) return;
+    if (ts.isYieldExpression(node) && node.asteriskToken && !isDirectDelegation(node)) {
+      const stmt = enclosingStatement(node);
+      const walk = stmt === undefined ? null : walkStatement(stmt);
+      if (walk !== null && !walk.failed) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(body, visit);
+  return found;
+}
+
+/** A6's nested-operand / return gate, A10's member-target gate, or #6984's nested `yield*`. */
 export function bodyHasNestedYieldShape(body: ts.Node): boolean {
-  return bodyHasNestedYield(body) || bodyHasMemberTargetYield(body);
+  return bodyHasNestedYield(body) || bodyHasMemberTargetYield(body) || bodyHasNestedDelegation(body);
 }
 
 /**
@@ -271,7 +336,10 @@ class EvaluationOrderWalk {
     }
     const e = skipOuterExpressions(expr);
     if (ts.isYieldExpression(e)) {
-      if (e.asteriskToken) {
+      // (#6984) A `yield*` with a yield-free operand is one suspension EVENT whose
+      // resumed value is the delegate's completion (the planner delegates into a
+      // spill); the delegation state evaluates its operand, in order.
+      if (e.asteriskToken && (e.expression === undefined || holdsYield(e.expression))) {
         this.failed = true;
         return;
       }
@@ -728,6 +796,28 @@ class ReplayFacts {
   }
 }
 
+/** Walk one statement's evaluation order; null = a statement kind the planner does not defer. */
+function walkStatement(stmt: ts.Statement): EvaluationOrderWalk | null {
+  const walk = new EvaluationOrderWalk();
+  if (ts.isExpressionStatement(stmt)) {
+    walk.expression(stmt.expression);
+  } else if (ts.isVariableStatement(stmt)) {
+    if (stmt.declarationList.declarations.length !== 1) return null;
+    const declarator = stmt.declarationList.declarations[0]!;
+    if (!ts.isIdentifier(declarator.name) || !declarator.initializer) return null;
+    walk.expression(declarator.initializer);
+  } else if (ts.isClassDeclaration(stmt)) {
+    walk.classLike(stmt);
+  } else if (ts.isReturnStatement(stmt) && stmt.expression) {
+    // (#6651 A6) `return <expr holding a yield>`: the value is computed in the
+    // state after the last suspension, which completes the generator.
+    walk.expression(stmt.expression);
+  } else {
+    return null;
+  }
+  return walk;
+}
+
 /**
  * Plan one statement holding nested yields: suspend at each yield in spec
  * order, capture what must be evaluated before a later yield, and defer the
@@ -740,24 +830,8 @@ export function lowerNestedYieldStatement<U>(
   stmt: ts.Statement,
   unwind: readonly U[],
 ): NestedYieldAttempt {
-  const walk = new EvaluationOrderWalk();
-  if (ts.isExpressionStatement(stmt)) {
-    walk.expression(stmt.expression);
-  } else if (ts.isVariableStatement(stmt)) {
-    if (stmt.declarationList.declarations.length !== 1) return "not-applicable";
-    const declarator = stmt.declarationList.declarations[0]!;
-    if (!ts.isIdentifier(declarator.name) || !declarator.initializer) return "not-applicable";
-    walk.expression(declarator.initializer);
-  } else if (ts.isClassDeclaration(stmt)) {
-    walk.classLike(stmt);
-  } else if (ts.isReturnStatement(stmt) && stmt.expression) {
-    // (#6651 A6) `return <expr holding a yield>`: the value is computed in the
-    // state after the last suspension, which completes the generator.
-    walk.expression(stmt.expression);
-  } else {
-    return "not-applicable";
-  }
-  if (walk.failed) return "not-applicable";
+  const walk = walkStatement(stmt);
+  if (walk === null || walk.failed) return "not-applicable";
 
   const yields = walk.events.filter((e): e is Extract<NestedEvent, { kind: "yield" }> => e.kind === "yield");
   // Every yield of the statement must be one the walk ordered — none hidden in a

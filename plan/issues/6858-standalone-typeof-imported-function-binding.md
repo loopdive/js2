@@ -1,10 +1,11 @@
 ---
 id: 6858
 title: "standalone: typeof of an imported function binding is not \"function\""
-status: ready
+status: done
+completed: 2026-10-16
 sprint: current
 created: 2026-10-05
-updated: 2026-10-05
+updated: 2026-10-16
 priority: medium
 horizon: s
 feasibility: medium
@@ -53,3 +54,17 @@ uses `typeof __pkgNs.css` and is not affected.
 3. Regression test: the fixture above plus a re-exported (`export { f as g }`)
    and a default-exported function; anti-vacuity control with an imported
    non-function (`export const n = 1` → `"number"`).
+
+## Resolution (2026-10-16)
+
+No longer reproduces on upstream/main `ee58c1aa26`: the issue's fixture,
+compiled exactly as described (`compileProject(main.js, { allowJs: true,
+skipSemanticDiagnostics: true, target: "standalone" })`, instantiated with
+`{}`), answers `direct() === 1` and `viaObj() === 1`, and the re-exported and
+default-exported rows answer `"function"` too. It was not the same root as
+[#6855](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6855-standalone-styled-components-module-init-typeerror)
+(that one was bare-package resolution picking a UMD build). Which commit fixed
+it was not bisected. The acceptance rows are pinned in
+`tests/issue-6858-standalone-typeof-imported-function.test.ts` (passes on the
+parent as well — a lock-in, not a red/green test), with an imported
+`const n = 1` → `"number"` anti-vacuity control.

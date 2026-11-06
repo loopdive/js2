@@ -67,8 +67,13 @@ import type { ClosureReadBinding } from "../runtime/wasmgc/values/object-get-arm
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
-import { closurePrototypeEdgeGetArm } from "./closure-prototype-edge.js"; // (#2660 M3)
-import type { CodegenContext } from "./context/types.js";
+import {
+  CLOSURE_PROTO_SET,
+  closurePrototypeEdgeGetArm,
+  closurePrototypeOwnDescriptorGuard,
+  hasClosurePrototypeEdges,
+} from "./closure-prototype-edge.js"; // (#2660 M3; #6951 G2 write twin + own-descriptor gate)
+import { type CodegenContext, jsValueBoundary } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { captureProtoIndexReadBinding, protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
@@ -79,6 +84,8 @@ import { INSTANCE_BAG_FIELD } from "./closures/closure-header-layout.js"; // (#4
 // the fold-routing predicates so the two cannot drift apart.
 import { BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES } from "./builtin-instance-key-presence.js";
 import { addFuncType } from "./registry/types.js";
+import { bagOwnDataHitInstrs } from "./fnctor-fast-get.js"; // (#6973 stage 2)
+import { commitAnonExpandoBagRoots } from "./object-model/anon-expando-bag-slot.js"; // (#7020)
 
 /** WasmGC `eq` abstract heap type (used for `ref.cast`/`ref.null` to eqref). */
 const EQ_HEAP_TYPE = -19;
@@ -362,6 +369,32 @@ function buildFnctorPrototypeWriteArm(
 
   if (sharedSetAvailable && (setOwnIdx === undefined || setResultGlobalIdx === undefined)) return [];
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+  // (#6951 G2) A fnctor with a prototype EDGE owns its `prototype` in the
+  // per-fnctor global that `new F()` links instances through; the bag would be
+  // a split brain the constructor never reads. `__closure_proto_set` stores it
+  // there (identity-matched, canonical form) and answers 1; 0 ⇒ bag write.
+  const protoSetIdx = hasClosurePrototypeEdges(ctx) ? ctx.funcMap.get(CLOSURE_PROTO_SET) : undefined;
+  const writeEdge = (): Instr[] =>
+    protoSetIdx === undefined
+      ? []
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: protoSetIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...(sharedSetAvailable
+                ? ([
+                    { op: "i32.const", value: 1 }, // SET_RESULT_SUCCESS
+                    { op: "global.set", index: setResultGlobalIdx! },
+                  ] satisfies Instr[])
+                : []),
+              { op: "return" },
+            ],
+          },
+        ];
   const writeOwn = (): Instr[] =>
     defineValueIdx !== undefined
       ? [
@@ -421,6 +454,9 @@ function buildFnctorPrototypeWriteArm(
           op: "if",
           blockType: { kind: "empty" },
           then: [
+            // (#6951 G2 review) an own re-described `prototype` decides first.
+            ...(sharedSetAvailable ? closurePrototypeOwnDescriptorGuard(ctx, setResultGlobalIdx) : []),
+            ...writeEdge(),
             ...constructibleTypeIdxs.flatMap((typeIdx): Instr[] => [
               { op: "local.get", index: 0 },
               { op: "any.convert_extern" },
@@ -632,6 +668,23 @@ function fnctorInstanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
 }
 
 /**
+ * (#6983) With the JS value bridge, a HOST object reaches the lookup — e.g. the
+ * `__extern_get` prototype-cache own-key guard consults every receiver's bag.
+ * Its anyref is not `eq`, so the registry walk's `ref.cast eq` trapped
+ * ("illegal cast", acorn's second `parse`). It has no carrier bag: answer the
+ * miss. A host-free module never holds one, so it emits nothing there.
+ */
+function hostReceiverMiss(ctx: CodegenContext): Instr[] {
+  if (!jsValueBoundary(ctx)) return [];
+  return [
+    { op: "local.get", index: 3 }, // recvAny
+    { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
+  ];
+}
+
+/**
  * (#4241) Fill the two carrier-bag natives — `__closure_bag_lookup` and
  * `__closure_bag_ensure`.
  *
@@ -749,6 +802,7 @@ function fillCarrierBagHelpers(
       { op: "any.convert_extern" },
       { op: "local.set", index: 3 },
       ...slottedLookupArms(),
+      ...hostReceiverMiss(ctx),
       ...narrowRecvToEq,
       walkLoop(onHit),
       { op: "ref.null.extern" },
@@ -904,6 +958,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
     // cold-tailed fnctor, any class hierarchy) is automatically routed to the
     // registry instead of being mis-read at a wrong index.
     ...slottedInstanceCarrierRoots(ctx),
+    ...commitAnonExpandoBagRoots(ctx), // (#7020) literal expando receivers; `$bag` appended post-emission
   ];
 
   // ── __is_closure_prop_carrier(externref value) -> i32 ──
@@ -989,10 +1044,17 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
     // Without the predicate the emitted body is byte-identical to the pre-#4563
     // one, so a module that cannot resolve it keeps today's answer.
     const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+    // (#6973 stage 2) A live DATA entry in the bag IS the own property: answer
+    // it from the entry before the generic `__hasOwnProperty` + receiver-bound
+    // `__extern_get` pair (~1.9 k-instruction predicate, then a full ladder).
+    // Accessors, tombstones and the deleted-field sentinel keep that path.
+    const entryLocal = protoEdgeArm.length === 0 ? 3 : 4;
+    const bagDataHit = bagOwnDataHitInstrs(ctx, { bag: 2, key: 1, entry: entryLocal });
     const bagOwnGuardedRead: Instr[] =
       hasOwnIdx === undefined
         ? [...bagRead, { op: "return" }]
         : [
+            ...bagDataHit,
             { op: "local.get", index: 2 }, // bag
             { op: "local.get", index: 1 }, // key
             { op: "call", funcIdx: hasOwnIdx },
@@ -1027,16 +1089,20 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
       },
       ...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()),
     ];
-    setBody(
-      CLOSURE_PROP_GET,
+    const propGetLocals: { name: string; type: ValType }[] =
       protoEdgeArm.length === 0
         ? [{ name: "__bag", type: { kind: "externref" } }]
         : [
             { name: "__bag", type: { kind: "externref" } },
             { name: "__protoEdge", type: { kind: "externref" } },
-          ],
-      body,
-    );
+          ];
+    if (bagDataHit.length > 0) {
+      propGetLocals.push({
+        name: "__bagEntry",
+        type: { kind: "ref_null", typeIdx: ctx.objectRuntimeTypes!.propEntryTypeIdx },
+      });
+    }
+    setBody(CLOSURE_PROP_GET, propGetLocals, body);
   } else {
     // Deps absent — keep a valid body: always return the undefined sentinel.
     setBody(CLOSURE_PROP_GET, [], [...getMiss()]);

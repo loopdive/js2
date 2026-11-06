@@ -30,11 +30,6 @@ export function noJsHost(ctx: CodegenContext): boolean {
   return ctx.wasi || ctx.standalone;
 }
 
-/** Select the in-module ECMAScript Error provider even when JavaScript supplies capabilities. */
-export function usesNativeJsErrors(ctx: CodegenContext): boolean {
-  return noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first";
-}
-
 /** The real-instance JS error kinds that have an `__new_<Kind>` constructor. */
 export type JsErrorKind = "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError" | "EvalError" | "Error";
 
@@ -74,8 +69,7 @@ export function buildThrowJsErrorInstrs(
   message: string,
   opts?: { flush?: FunctionContext; forceInModuleCtor?: boolean },
 ): Instr[] {
-  const inModule = opts?.forceInModuleCtor === true || usesNativeJsErrors(ctx);
-  if (inModule) emitWasiErrorConstructor(ctx, kind, 1);
+  emitWasiErrorConstructor(ctx, kind, 1);
   const deferredMessage = deferrableStringConstantGlobalGet(ctx, message);
   if (!deferredMessage) addStringConstantGlobal(ctx, message);
   const ctorIdx = opts?.forceInModuleCtor
@@ -153,23 +147,7 @@ export function emitThrowRangeError(ctx: CodegenContext, fctx: FunctionContext, 
  */
 export function emitAnnexBUnboundReferenceError(ctx: CodegenContext, fctx: FunctionContext, name: string): ValType {
   const msg = `${name} is not defined`;
-  if (usesNativeJsErrors(ctx)) {
-    emitThrowReferenceError(ctx, fctx, msg);
-    fctx.body.push({ op: "unreachable" });
-    return { kind: "externref" };
-  }
-  const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
-  flushLateImportShifts(ctx, fctx);
-  if (throwRefErrIdx !== undefined) {
-    addStringConstantGlobal(ctx, msg);
-    const strIdx = ctx.stringGlobalMap.get(msg)!;
-    fctx.body.push({ op: "global.get", index: strIdx });
-    fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
-    fctx.body.push({ op: "unreachable" });
-  } else {
-    const tagIdx = ensureExnTag(ctx);
-    fctx.body.push({ op: "ref.null.extern" });
-    fctx.body.push({ op: "throw", tagIdx });
-  }
+  emitThrowReferenceError(ctx, fctx, msg);
+  fctx.body.push({ op: "unreachable" });
   return { kind: "externref" };
 }
