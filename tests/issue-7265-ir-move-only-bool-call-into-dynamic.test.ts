@@ -76,11 +76,16 @@ async function irOutcomes(path: string) {
 }
 
 describe("#7265 boolean call result into a dynamic var, dynamic computed key", () => {
-  for (const flag of ["noStrict", "onlyStrict"]) {
-    it(`IR-emits isWritable and passes the ${flag} fixture`, async () => {
+  // Strict function code keeps #7260's store on legacy (#7270), so the strict
+  // fixture stays legacy and still passes.
+  for (const [flag, claimed] of [
+    ["noStrict", true],
+    ["onlyStrict", false],
+  ] as const) {
+    it(`${claimed ? "IR-emits" : "keeps legacy"} isWritable and passes the ${flag} fixture`, async () => {
       const path = fixture(flag);
       const outcome = (await irOutcomes(path)).find((o) => o.displayName === "isWritable");
-      expect(outcome).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+      expect(outcome?.irBodyEmitted).toBe(claimed);
       expect(await runTest262File(path, "issue-7265", undefined, "standalone")).toMatchObject({ status: "pass" });
     });
   }
