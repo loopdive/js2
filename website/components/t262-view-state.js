@@ -195,7 +195,7 @@
   };
 
   const historicalHostLabel = (data) =>
-    "Historical JS Host · frozen results · source " +
+    "Historical JS Host · retired 2026-10-12 · frozen results · source " +
     (data?.baseline_sha || "unknown") +
     " · " +
     (data?.baseline_generated_at || data?.timestamp || "date unknown");

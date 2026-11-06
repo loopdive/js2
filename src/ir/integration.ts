@@ -56,11 +56,7 @@ import {
 } from "../codegen/standalone-clock-capability.js";
 import { makeCalendarIrSelectionSupport } from "./calendar-selection-support.js";
 import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "./dom-capability.js";
-import {
-  projectIrBackendTargetProfile,
-  supportsIrBackendTargetCapability,
-  type IrBackendTargetCapability,
-} from "./backend/legality.js";
+import { irBackendCapabilityQuery, projectIrBackendTargetProfile } from "./backend/legality.js";
 
 import {
   ensureAnyHelpers,
@@ -132,6 +128,7 @@ import {
   IR_GLOBAL_OBJECT_HELPER,
   irDynamicConstructCalleeIsPlain,
   irDynamicConstructHelperName,
+  irFunctionCodeStrictness,
   irFunctionThisStrictness,
   irInstanceOfFunctionHelperName,
   irSelfGuardedConstructorValue,
@@ -182,7 +179,11 @@ import {
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
 import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
-import { ensureNativeStringHelpers, STANDALONE_STDOUT_APPEND_FN } from "../codegen/native-strings.js";
+import {
+  ambientGlobalFunctionProviderSymbol,
+  ensureNativeStringHelpers,
+  STANDALONE_STDOUT_APPEND_FN,
+} from "../codegen/native-strings.js";
 import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
 import {
   nativeStringLiteralMaterialization,
@@ -293,6 +294,7 @@ import {
   type IrClassId,
   type IrUnitInventory,
   type IrUnitId,
+  privateMemberMangledName,
 } from "./identity.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
 import {
@@ -327,6 +329,7 @@ import {
   type IrLegacyModuleBindingIdentity,
   type IrLegacyModuleBindingResolver,
   type IrFnctorArrayMethodPlan,
+  type IrModuleBindingDeclaration,
   type IrModuleBindingIdentity,
   type IrModuleBindingInspection,
   type IrModuleBindingRefusal,
@@ -335,6 +338,8 @@ import {
   type IrStaticNumericArrayPlan,
   type IrStaticRegExpTestPlan,
 } from "./module-bindings.js";
+import { collectPatternBindingNames } from "./analysis/ast-scope.js";
+import { moduleInitBindings } from "./module-init-vars.js";
 import {
   lowerIrFunctionToWasm,
   lowerIrTypeToValType,
@@ -472,6 +477,7 @@ import {
   IR_NUMBER_TO_FIXED_FN,
   IR_NUMBER_TO_STRING_FN,
 } from "./number-to-string-provider.js";
+import { classInstanceBindingStorage, exactClassStructTypeIdx } from "./class-instance-storage.js";
 import {
   classifyIrFailure,
   IrInvariantError,
@@ -2395,8 +2401,7 @@ export function compileIrPathFunctions(
     ctx.targetProfile.environment === "none"
       ? makeIrStandaloneDomCapabilityPlan(ctx.checker, sourceFile)
       : undefined;
-  const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
-    supportsIrBackendTargetCapability(irTargetProfile, capability);
+  const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   const { supportsDateSnapshots, resolveHostVoidCallback, backendCapabilitySelectionOptions } =
     makeCalendarIrSelectionSupport(ctx, jsHostExterns, standaloneDomCapability, supportsBackendCapability);
   const moduleBindingOptions = {
@@ -2410,7 +2415,7 @@ export function compileIrPathFunctions(
     stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
     // (#7105) Must agree with the selector-side option: a script `var` the
     // selector admitted is written here through the same slot classifier.
-    scriptVarHome: (declaration: ts.VariableDeclaration) => scriptVarHome(ctx, declaration),
+    scriptVarHome: (declaration: IrModuleBindingDeclaration) => scriptVarHome(ctx, declaration),
   };
   // Direct compatibility callers share this context; structural globals never fall back to declaration names.
   const compatibilityInventory = loweringPlans
@@ -2581,6 +2586,7 @@ export function compileIrPathFunctions(
       preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
+      functionCodeStrictness: (fn) => irFunctionCodeStrictness(ctx, fn), // (#7260)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
       // (#7106 compareArray.format)
       arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
@@ -3203,6 +3209,7 @@ export function compileIrPathFunctions(
   // -------------------------------------------------------------------------
   const fromAstResolver = makeFromAstResolver(
     ctx,
+    classShapes,
     moduleBindingResolver,
     loweringPlans?.postWasmStartTdzSafeBindingsByOwnerUnitId,
     standaloneDomCapability,
@@ -3283,6 +3290,7 @@ export function compileIrPathFunctions(
           funcName: name,
           ownerUnitId,
           ...(ambientThisStrict === undefined ? {} : { ambientThisStrict }),
+          functionCodeStrict: irFunctionCodeStrictness(ctx, stmt), // (#7260)
           directCalls: directCallsFor(stmt, ownerUnitId),
           fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
           fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
@@ -3907,7 +3915,8 @@ export function compileIrPathFunctions(
           }
         }
       }
-      const moduleBindings = buildModuleBindingsMap(ctx, population, moduleBindingResolver);
+      const moduleInitClassShapes = moduleInitInput.classShapes ?? classShapes;
+      const moduleBindings = buildModuleBindingsMap(ctx, population, moduleBindingResolver, moduleInitClassShapes);
       const synthetic = makeModuleInitSynthetic(population);
       for (const statement of population) directCallsFor(statement, moduleInitUnitId);
       const sourceLoweringPlans = moduleInitInput.loweringPlans ?? loweringPlans;
@@ -3927,7 +3936,7 @@ export function compileIrPathFunctions(
         hostDateSnapshots: sourceLoweringPlans?.hostDateSnapshots,
         hostDateGetters: sourceLoweringPlans?.hostDateGetters,
         identityContext: moduleBindingIdentityContext,
-        classShapes: moduleInitInput.classShapes ?? classShapes,
+        classShapes: moduleInitClassShapes,
         resolver: fromAstResolver,
         allocRegistry,
         checker: ctx.checker,
@@ -6083,6 +6092,7 @@ function withoutVoidReturn(ctx: CodegenContext, body: Instr[], typeIdx: number):
 function resolveModuleBindingGlobal(
   ctx: CodegenContext,
   identity: IrModuleBindingIdentity,
+  classShapes: ReadonlyMap<string, IrClassShape> | undefined,
   postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
 ): ModuleBindingGlobal {
   const declaration = identity.declaration;
@@ -6219,19 +6229,22 @@ function resolveModuleBindingGlobal(
       type = { kind: "string" };
       break;
     }
+    case "class-instance":
+      ({ type, storageType } = classInstanceBindingStorage(ctx, name, identity.valueKind, classShapes));
+      break;
   }
   const storageMatches =
     global.type.kind === storageType.kind &&
     ((global.type.kind !== "ref" && global.type.kind !== "ref_null") ||
       (storageType.kind === global.type.kind && storageType.typeIdx === global.type.typeIdx));
-  if (!storageMatches && identity.valueKind.kind === "dynamic") {
+  if (!storageMatches && (identity.valueKind.kind === "dynamic" || identity.valueKind.kind === "class-instance")) {
     // (#7014) `const a: any = x` (x a number const) is NARROWED to f64 by the
     // #4178 const-chain trace; #5289 (163eb5bc5c) assumed the dynamic carrier.
     // A contradicted admission, not a corrupt ABI: demote the module-init.
     throw new IrUnsupportedError(
       "module-init-legacy-coupling",
       "build",
-      `module-init: dynamic binding ${globalName} uses narrowed legacy ${global.type.kind} storage`,
+      `module-init: ${identity.valueKind.kind} binding ${globalName} uses narrowed legacy ${global.type.kind} storage`,
     );
   }
   if (!storageMatches) {
@@ -6310,20 +6323,20 @@ function buildModuleBindingsMap(
   ctx: CodegenContext,
   population: readonly ts.Statement[],
   resolveModuleBinding: IrModuleBindingResolver,
+  classShapes: ReadonlyMap<string, IrClassShape> | undefined,
 ): Map<string, ModuleBindingGlobal> {
   const map = new Map<string, ModuleBindingGlobal>();
   for (const stmt of population) {
-    if (!ts.isVariableStatement(stmt)) continue;
-    for (const d of stmt.declarationList.declarations) {
-      if (!ts.isIdentifier(d.name)) {
+    for (const entry of moduleInitBindings(stmt)) {
+      if ("unmapped" in entry) {
         throw new IrUnsupportedError(
           "module-init-legacy-coupling",
           "build",
           "module-init: top-level destructuring has no one-to-one legacy global mapping",
         );
       }
-      const name = d.name.text;
-      const inspected = resolveModuleBinding.inspectDirectBinding(d.name);
+      const name = entry.name.text;
+      const inspected = resolveModuleBinding.inspectDirectBinding(entry.name);
       if (inspected.kind === "unsupported") {
         throw new IrUnsupportedError(
           "module-init-legacy-coupling",
@@ -6338,8 +6351,8 @@ function buildModuleBindingsMap(
           `module-init: declaration '${name}' no longer resolves to the direct top-level binding selected for this unit`,
         );
       }
-      const observed = ctx.programAbiGlobals?.moduleBinding(d);
-      const binding = resolveModuleBindingGlobal(ctx, inspected.identity);
+      const observed = ctx.programAbiGlobals?.moduleBinding(entry.declaration);
+      const binding = resolveModuleBindingGlobal(ctx, inspected.identity, classShapes);
       // The lowering map must consume the allocator object authenticated for
       // this exact declaration.  A name-compatible global, or a global already
       // owned by another binding, would let a rebuilt/foreign storage census
@@ -6428,7 +6441,7 @@ function surveyModuleBindingRefusals(
   checker: ts.TypeChecker,
 ): readonly IrModuleBindingRefusal[] {
   const refusals: IrModuleBindingRefusal[] = [];
-  const record = (name: string, declaration: ts.VariableDeclaration, arm: IrModuleBindingRefusal["arm"]): void => {
+  const record = (name: string, declaration: IrModuleBindingDeclaration, arm: IrModuleBindingRefusal["arm"]): void => {
     let declaredType = "<unresolved>";
     try {
       declaredType = checker.typeToString(checker.getTypeAtLocation(declaration.name));
@@ -6443,43 +6456,27 @@ function surveyModuleBindingRefusals(
     });
   };
   for (const stmt of population) {
-    if (!ts.isVariableStatement(stmt)) continue;
-    for (const d of stmt.declarationList.declarations) {
-      if (!ts.isIdentifier(d.name)) {
+    for (const entry of moduleInitBindings(stmt)) {
+      if ("unmapped" in entry) {
         // Same refusal `buildModuleBindingsMap` throws for, kept as a category
         // rather than a stop: a destructured top-level binding has no
         // one-to-one legacy global. Leaf `.text` names, never a source slice.
-        record(moduleBindingPatternLabel(d.name), d, "destructuring-pattern");
+        const pattern = entry.unmapped;
+        record([...collectPatternBindingNames(pattern.name)].join(","), pattern, "destructuring-pattern");
         continue;
       }
       let inspected: IrModuleBindingInspection;
       try {
-        inspected = resolveModuleBinding.inspectDirectBinding(d.name);
+        inspected = resolveModuleBinding.inspectDirectBinding(entry.name);
       } catch {
-        record(d.name.text, d, "inspection-threw");
+        record(entry.name.text, entry.declaration, "inspection-threw");
         continue;
       }
       if (inspected.kind !== "unsupported") continue;
-      record(d.name.text, d, inspected.arm);
+      record(entry.name.text, entry.declaration, inspected.arm);
     }
   }
   return refusals;
-}
-
-/** Leaf binding names of a top-level destructuring pattern, in source order. */
-function moduleBindingPatternLabel(pattern: ts.BindingPattern): string {
-  const names: string[] = [];
-  const visit = (node: ts.BindingName): void => {
-    if (ts.isIdentifier(node)) {
-      names.push(node.text);
-      return;
-    }
-    for (const element of node.elements) {
-      if (ts.isBindingElement(element)) visit(element.name);
-    }
-  };
-  visit(pattern);
-  return names.join(",");
 }
 
 /**
@@ -6951,8 +6948,116 @@ function resolveStaticNumericArrayGlobal(
   return { globalRef, type: expected };
 }
 
+/**
+ * (#7233) The legacy storage of a static private field, as an IR global.
+ *
+ * Legacy registers every `static #x` of class `C` as one mutable module global,
+ * `__static_C___priv_x` (`class-bodies.ts`, keyed `C___priv_x` in
+ * `ctx.staticProps`), and lowers `this.#x` / `C.#x` inside `C`'s static methods
+ * to `global.get` / `global.set` of it. A private name is never reflected onto
+ * the class object, so that global is the field's only store: an IR static
+ * body may read and write it directly and stay observably identical.
+ *
+ * The global is planned as a support binding of its source, ordered by its
+ * legacy allocation index (role `classStaticField`), exactly once per global;
+ * every referrer receives the same reference. Only representations the IR has
+ * a type for are answered: `f64`, `i32`, the active lane's dynamic carrier for
+ * an untyped field, and the active string carrier for a `string` field.
+ * Anything else answers `undefined`, and the caller demotes to legacy.
+ */
+interface IrClassStaticFieldStorage {
+  readonly globalRef: IrGlobalRef;
+  readonly type: IrType;
+}
+
+function resolveIrClassStaticFieldStorage(
+  ctx: CodegenContext,
+  owner: ts.ClassDeclaration,
+  field: ts.PrivateIdentifier,
+): IrClassStaticFieldStorage | undefined {
+  const className = owner.name?.text;
+  if (className === undefined || !ctx.classSet.has(className)) return undefined;
+  const globalIdx = ctx.staticProps.get(`${className}_${privateMemberMangledName(field)}`);
+  if (globalIdx === undefined) return undefined;
+  const localIdx = localGlobalIdx(ctx, globalIdx);
+  const global = ctx.mod.globals[localIdx];
+  if (!global || !global.mutable || global.name !== `__static_${className}_${privateMemberMangledName(field)}`) {
+    return undefined;
+  }
+  const sourceId = ctx.irPlanningIdentityContext?.sourceIdBySourceFile.get(owner.getSourceFile());
+  if (sourceId === undefined) return undefined;
+  const declaration = owner.members.find(
+    (member) =>
+      ts.isPropertyDeclaration(member) && ts.isPrivateIdentifier(member.name) && member.name.text === field.text,
+  );
+  if (!declaration) return undefined;
+  const type = staticFieldIrType(ctx, declaration, global.type);
+  if (type === undefined) return undefined;
+  const globalRef = irSupportGlobalRef(sourceId, "class-static-field", global.name, localIdx);
+  planProgramAbiGlobal(ctx, {
+    ref: globalRef,
+    anchor: { kind: "source", sourceId },
+    roleOrdinal: PROGRAM_ABI_GLOBAL_ROLE.classStaticField,
+    derivedOrdinal: localIdx,
+    global,
+  });
+  return { globalRef, type };
+}
+
+function staticFieldIrType(ctx: CodegenContext, declaration: ts.ClassElement, storage: ValType): IrType | undefined {
+  if (storage.kind === "f64" || storage.kind === "i32") return irVal({ kind: storage.kind });
+  const fact = ctx.oracle.typeFactOf(declaration).kind;
+  if (fact === "any" || fact === "unknown") {
+    return sameValType(storage, resolveIrDynamicCarrierType(ctx)) ? irDynamic() : undefined;
+  }
+  // A string global starts as null and the IR's `string` is non-null: admit it
+  // only when it can never be read null (#7233 review).
+  if (fact === "string" && staticStringFieldIsInitialisedBeforeUse(declaration)) {
+    const carrier = ctx.nativeStrings
+      ? ctx.anyStrTypeIdx < 0
+        ? undefined
+        : ({ kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } as const)
+      : ({ kind: "externref" } as const);
+    return carrier && sameValType(storage, carrier) ? { kind: "string" } : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * (#7233) A `string` static private field whose legacy global can never be
+ * observed null: its initialiser is a string literal, and no static
+ * initialiser or `static {}` block precedes it in the class body (the only
+ * code that can call the owner's static methods before the field is set).
+ * An uninitialised field (`static #s: string;`) keeps the legacy body.
+ */
+function staticStringFieldIsInitialisedBeforeUse(declaration: ts.ClassElement): boolean {
+  if (!ts.isPropertyDeclaration(declaration) || !declaration.initializer) return false;
+  if (!ts.isStringLiteral(declaration.initializer) && !ts.isNoSubstitutionTemplateLiteral(declaration.initializer))
+    return false;
+  for (const member of declaration.parent.members) {
+    if (member === declaration) return true;
+    if (ts.isClassStaticBlockDeclaration(member)) return false;
+    if (
+      ts.isPropertyDeclaration(member) &&
+      member.initializer &&
+      ts.getModifiers(member)?.some((m) => m.kind === ts.SyntaxKind.StaticKeyword)
+    )
+      return false;
+  }
+  return false;
+}
+
+function sameValType(a: ValType, b: ValType): boolean {
+  if (a.kind !== b.kind) return false;
+  if ((a.kind === "ref" || a.kind === "ref_null") && (b.kind === "ref" || b.kind === "ref_null")) {
+    return a.typeIdx === b.typeIdx;
+  }
+  return true;
+}
+
 function makeFromAstResolver(
   ctx: CodegenContext,
+  classShapes: ReadonlyMap<string, IrClassShape> | undefined,
   moduleBindingResolver?: IrModuleBindingResolver,
   postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
   standaloneDomCapability?: IrStandaloneDomCapabilityPlan,
@@ -6961,14 +7066,14 @@ function makeFromAstResolver(
   preparedNumberCall?: (call: ts.CallExpression) => boolean, // (#7106 module-init lever B)
 ): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
-  const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
-    supportsIrBackendTargetCapability(projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }), capability);
+  const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   // (#3526 F3-S3) Resolved once, pre-freeze: the arm below projects this value.
   const functionPrototypeCall = integrationFunctionPrototypeCallPolicy(ctx);
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
     // (#7106) A reserved chunk name also keeps the late user-function inliner off it.
     moduleInitChunkName: (preferred) => reserveModuleInitChunkHelperName(ctx, preferred),
+    supportsBackendCapability,
     hostIndirectEvalTarget() {
       if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings) return null;
       const functionIndex = ctx.funcMap.get("__extern_eval");
@@ -7036,6 +7141,7 @@ function makeFromAstResolver(
         funcName: STANDALONE_REGEXP_CARRIER_TEST_HELPER,
       };
     },
+    classStaticFieldStorage: (owner, field) => resolveIrClassStaticFieldStorage(ctx, owner, field), // (#7233)
     staticNumericArrayRead(expression: ts.Expression, expected: IrType) {
       if (
         !supportsBackendCapability("legacy-numeric-array-global") ||
@@ -7062,6 +7168,10 @@ function makeFromAstResolver(
     },
     dynamicCarrierIsExternref() {
       return !ctx.fast;
+    },
+    ambientGlobalFunctionTarget(name) {
+      const symbol = ambientGlobalFunctionProviderSymbol(ctx, name); // (#7253)
+      return symbol === null ? null : irRuntimeFuncRef(symbol);
     },
     dynamicMethodCallWrapper(method: string, arity: number) {
       return irTemplateWrapperLane(ctx) && irWrapperSymbolIsNameable(method, arity);
@@ -7388,7 +7498,7 @@ function makeFromAstResolver(
     resolveModuleBinding(node: ts.Identifier, writeValue?: ts.Expression) {
       const identity = moduleBindingResolver?.(node, writeValue);
       return identity
-        ? resolveModuleBindingGlobal(ctx, identity, postWasmStartTdzSafeBindingsByOwnerUnitId)
+        ? resolveModuleBindingGlobal(ctx, identity, classShapes, postWasmStartTdzSafeBindingsByOwnerUnitId)
         : undefined;
     },
     isDirectModuleBinding(node: ts.Identifier): boolean {
@@ -10755,8 +10865,7 @@ class ClassRegistry {
     if (this.ctx.classExternrefBackedSet.has(shape.className)) return null;
 
     const classLayout = this.ctx.programAbiTypes?.layoutForClass(classId);
-    const structTypeIdx =
-      classLayout?.typeIdx ?? (this.ctx.programAbiTypes ? undefined : this.ctx.structMap.get(shape.className));
+    const structTypeIdx = exactClassStructTypeIdx(this.ctx, classId, shape.className);
     if (structTypeIdx === undefined) return null;
     const layoutFields =
       classLayout?.type.fields ?? (this.ctx.programAbiTypes ? undefined : this.ctx.structFields.get(shape.className));

@@ -50,6 +50,7 @@ import { recordDescriptorArrayReceiver } from "./declarations/descriptor-array-c
 import { armExhaustiveForNonCallableMemberLiteral } from "./class-to-primitive.js"; // (#6771 S2d)
 import { isArrayLengthConstructor } from "./array/array-length-holes.js"; // (#6771 S3)
 import { noteArrayCtorThisCall } from "./array/array-ctor-this.js"; // (#6771 S7)
+import { armForLengthUpdate, noteLengthUpdateRoot } from "./statements/array-share-group.js"; // (#7164)
 import { readEnv } from "../env.js";
 import { isBuiltinProtoReparentNode } from "./object-model/native-proto-reparent.js"; // (#6651 V11)
 
@@ -66,6 +67,7 @@ import { isBuiltinProtoReparentNode } from "./object-model/native-proto-reparent
  * lazy flag would desync reads against stores.
  */
 export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
+  noteLengthUpdateRoot(ctx, root); // (#7164)
   const pendingBagIdents = new Set<string>();
   const visit = (node: ts.Node): void => {
     // (#6771 S2d) Not a flag of this pass, so it must not be cut off by the
@@ -108,6 +110,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     // read the raw marker back as NaN instead of `undefined`. Reads and stores
     // have to be armed by the SAME pre-pass — function compilation order is not
     // source order, so a lazy per-site flag desyncs them (see the header).
+    armForLengthUpdate(ctx, node); // (#7164) `x.length++` / `--` / `+=` / `-=` share that store
     if (
       !ctx.usesArrayHoles &&
       ts.isBinaryExpression(node) &&

@@ -305,6 +305,11 @@ export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionNa
   return publishHelperFunction(ctx, helper);
 }
 
+/** (#7260) The strictness of a top-level function's code: the rule a dynamic PutValue follows. */
+export function irFunctionCodeStrictness(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
+  return isStrictFunction(fn, ctx.inferModuleStrictArguments);
+}
+
 /**
  * Selector/lowering predicate: may the IR read `this` inside `fn`, and with
  * which strictness? `undefined` = not on this lane / not this shape.
@@ -312,17 +317,41 @@ export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionNa
 export function irFunctionThisStrictness(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean | undefined {
   if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return undefined;
   if (!isSelfGuardedConstructor(fn)) return undefined;
-  return isStrictFunction(fn, ctx.inferModuleStrictArguments);
+  return irFunctionCodeStrictness(ctx, fn);
 }
 
 /**
  * Is `ident` (a `new` callee or an `instanceof` right operand) a self-guarded
  * constructor the IR may use as a value — the declaration legacy keeps out of
  * the fnctor machinery, never reassigned, never a generator?
+ *
+ * (#7243) Also inside a class method: the planner mints the value plan for a
+ * selected class-method owner too, and such a member stays on the unsealed
+ * post-direct overlay (`planIrFirstBodyRouting`), exactly as the R2
+ * `function-value-reference` withdrawal keeps a free function there. A member
+ * the planner does not visit (an accessor, a constructor, a field
+ * initializer) keeps #7242's refusal, so the selector never claims a use the
+ * builder has no plan for.
  */
 export function irSelfGuardedConstructorValue(ctx: CodegenContext, ident: ts.Identifier): boolean {
   if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return false;
+  const classLike = ts.findAncestor(ident.parent, ts.isClassLike);
+  if (classLike !== undefined && irSelfGuardedValueClassMethod(ident) === undefined) return false;
   const decl = ctx.oracle.valueDeclarationOf(ident);
   if (decl === undefined || !isSelfGuardedConstructor(decl) || decl.asteriskToken !== undefined) return false;
   return !identifierIsWrittenTo(ident.getSourceFile(), ident.text);
+}
+
+/**
+ * (#7243) The class method whose own body (not a nested function, class or
+ * accessor) holds `ident`, when that method is a direct member of a top-level
+ * class declaration. That is the only class-body owner whose S3c value use
+ * `planIrImportedCalls` plans.
+ */
+export function irSelfGuardedValueClassMethod(ident: ts.Identifier): ts.MethodDeclaration | undefined {
+  const owner = ts.findAncestor(ident.parent, (node) => ts.isFunctionLike(node) || ts.isClassLike(node));
+  if (owner === undefined || !ts.isMethodDeclaration(owner) || owner.body === undefined) return undefined;
+  if (ident.pos < owner.body.pos || ident.end > owner.body.end) return undefined; // a parameter or computed name
+  const cls = owner.parent;
+  return ts.isClassDeclaration(cls) && ts.isSourceFile(cls.parent) ? owner : undefined;
 }

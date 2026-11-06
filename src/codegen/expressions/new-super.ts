@@ -6870,7 +6870,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     return { kind: "externref" };
   }
 
-  if (ctx.nativeStrings && ts.isIdentifier(expr.expression) && expr.expression.text === "Map") {
+  if (ctx.nativeStrings && resolvesToNamedAmbientGlobal(ctx, expr.expression, "Map")) {
     const args = expr.arguments ?? ([] as readonly ts.Expression[]);
     // `new Map([[k,v],...])` — an array literal of 2-element array-literal pairs
     // (the dominant iterable form). Each pair seeds the map via `__map_set`. Any

@@ -841,11 +841,11 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
   if (functionObjectValues && ctx.runtimeEvalGlobalFunctionBindings !== true) {
     const identity = options.identityPlan;
     const source = identity.identityContext.sourceFileBySourceId;
-    const addOwner = (ownerName: string, ownerUnitId: IrUnitId, root: ts.Node): void => {
+    const addOwner = (ownerName: string, ownerUnitId: IrUnitId, root: ts.Node, selfGuardedOnly = false): void => {
       const visit = (node: ts.Node): void => {
         if (ts.isIdentifier(node)) {
           const access = node.parent;
-          const isReceiver = isFunctionObjectReceiverUse(node, { chainedWrite: true });
+          const isReceiver = !selfGuardedOnly && isFunctionObjectReceiverUse(node, { chainedWrite: true });
           // (#7106 S3c) A self-guarded constructor used as a value: the `new F(…)`
           // callee (`dyn.construct`) or the `x instanceof F` operand
           // (`dyn.instanceof_fn`, which reads the plan's exact unit target).
@@ -859,7 +859,7 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
           // object (`F.x = G`): its value is boxed into the dynamic carrier and
           // written through the receiver's dynamic member write, exactly like
           // a receiver-only use — the signature is never read.
-          const isStoredValue = isFunctionObjectStoredValue(node, functionObjectValues);
+          const isStoredValue = !selfGuardedOnly && isFunctionObjectStoredValue(node, functionObjectValues);
           const target =
             (isReceiver || isSelfGuardedValue || isStoredValue) && options.sourceOwnerUnitId(node) === ownerUnitId
               ? functionObjectValues.resolveTopLevelFunctionValueTarget(node)
@@ -873,13 +873,17 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
                   effectiveIrParamTypeNode(parameter) === undefined && claim?.typeEntry.params[index] === undefined,
               ) ||
               (returnNode === undefined && claim?.typeEntry.returnType === undefined);
-            // Missing flow evidence is not a dynamic signature, so a VALUE use
-            // (the S3c self-guarded constructor) stays on the compatibility
-            // route. A receiver-only use never reads the signature: the
-            // accessor's externref is boxed straight into the dynamic carrier
-            // and every member call/write dispatches dynamically, so it gets
-            // the opaque all-dynamic signature (#7106 census arm 4).
-            if (missingEvidence && !isReceiver && !isStoredValue) return;
+            // Missing flow evidence gets the opaque all-dynamic signature. No
+            // use of an `objectReceiver` plan reads it: the accessor's
+            // externref is boxed straight into the dynamic carrier (#7106
+            // census arm 4). That holds for a receiver-only use (member
+            // calls/writes dispatch dynamically) and, since #7242, for the S3c
+            // self-guarded constructor VALUE use too: `new F(…)` is
+            // `dyn.construct` on that carrier (legacy's own standalone
+            // construct-from-value driver) and `x instanceof F` reads only the
+            // plan's exact unit target. The selector admits both without
+            // evidence, so refusing the plan demoted the claimed owner at build
+            // (`unknown class "Test262Error"` whenever `Test262Error` is legacy).
             const resolvedSignature = (): IrClosureSignature | undefined => {
               try {
                 return {
@@ -896,10 +900,10 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
                       : resolvePositionType(returnNode, claim?.typeEntry.returnType, classShapeSidecar),
                 };
               } catch (error) {
-                // (#7106 Stage 4) Evidence that does not resolve (a JSDoc
-                // `{object}` parameter) is no signature either: a receiver-only
-                // or stored use never reads it, so it takes the opaque one.
-                if (error instanceof IrUnsupportedError && (isReceiver || isStoredValue)) return undefined;
+                // (#7106 Stage 4, #7251) Evidence that does not resolve (a JSDoc
+                // `{object}` parameter, a `union` lattice) is no signature
+                // either; no use of an `objectReceiver` plan reads it (above).
+                if (error instanceof IrUnsupportedError) return undefined;
                 throw error;
               }
             };
@@ -961,6 +965,16 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
         }
       }
     }
+    // (#7243) A selected class method: S3c self-guarded constructor value uses
+    // only. Receiver and stored uses keep their base route. Such a member stays
+    // on the post-direct overlay (`planIrFirstBodyRouting`).
+    const selectedMembers = new Set(safeSelection.classMembers ?? []);
+    for (const [ownerUnitId, owner] of identity.identitySelection.classMembers ?? []) {
+      if (!selectedMembers.has(owner.legacyMatchName)) continue;
+      const declaration = identity.identityContext.declarationByUnitId.get(ownerUnitId);
+      if (declaration && ts.isMethodDeclaration(declaration) && declaration.body)
+        addOwner(owner.legacyMatchName, ownerUnitId, declaration.body, true);
+    }
   }
   if (resolveAmbientClassCall) {
     appendAmbientClassCalls(
@@ -974,6 +988,30 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
     );
   }
   return plans;
+}
+
+/**
+ * (#7243) Owners that hold a function-value plan. A selected class member in
+ * this set (only S3c self-guarded constructor value uses are planned for
+ * members) stays out of the sealed prepared class population, on the
+ * post-direct overlay, as the R2 `function-value-reference` withdrawal keeps a
+ * free function there: no sealed component may execute a legacy target's
+ * value accessor.
+ */
+export function functionValueOwnerUnitIds(plan: {
+  readonly topLevelFunctionValues: ReadonlyMap<ts.Identifier, { readonly ownerUnitId: IrUnitId }>;
+}): ReadonlySet<IrUnitId> {
+  return new Set([...plan.topLevelFunctionValues.values()].map((value) => value.ownerUnitId));
+}
+
+/** (#7243) The multi-source lane selects no class member: its member value plans are inert. */
+export function dropClassMemberFunctionValuePlans(plan: {
+  readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
+  readonly topLevelFunctionValues: Map<ts.Identifier, { readonly ownerUnitId: IrUnitId }>;
+}): void {
+  const members = plan.identityPlan.identitySelection.classMembers;
+  for (const [identifier, value] of plan.topLevelFunctionValues)
+    if (members?.has(value.ownerUnitId)) plan.topLevelFunctionValues.delete(identifier);
 }
 
 /** One current source resolver bundle, with the existing dormant class proof. */

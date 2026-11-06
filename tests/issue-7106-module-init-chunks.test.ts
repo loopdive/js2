@@ -116,9 +116,10 @@ describe("#7106 chunked <module-init> lowered by the IR", () => {
     expect(exports.probe()).toBe(FILLER_SUM);
   });
 
-  it("emits legacy's held chunks, and no IR chunk, when a claimed initializer demotes", async () => {
-    // A mixed string/number `+` is claimed at selection and demoted while
-    // lowering, so the legacy initializer stays and needs its bounded chunks.
+  it("emits legacy chunks, and no IR chunk, when selection refuses the initializer", async () => {
+    // This original mixed string/number `+` guest now refuses during selection,
+    // before IR chunk names are reserved. The legacy initializer must still
+    // retain its bounded helpers; a collision suffix is not an ownership proof.
     const result = await compileHarnessBody(
       [
         "var tick = 0;",
@@ -128,12 +129,27 @@ describe("#7106 chunked <module-init> lowered by the IR", () => {
     );
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(moduleInit(result)?.code).toBe("operand-coercion-unsupported");
-    // The IR reserved the plain chunk names before it demoted, so legacy's take a suffix.
-    const chunks = watFunctionNames(result.wat).filter((name) => /^__module_init_chunk_\d+_\d+$/.test(name));
+    expect(moduleInit(result)).toMatchObject({
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+      irBodyEmissions: 0,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    // Both lanes share the preferred prefix; only real name collisions add a
+    // numeric suffix. Join declared helpers to the dispatcher's actual calls.
+    const chunks = watFunctionNames(result.wat).filter((name) => /^__module_init_chunk_\d+(?:_\d+)?$/.test(name));
     expect(chunks.length).toBeGreaterThan(1);
     expect(watCallTargets(result.wat, watFunction(result.wat, "__module_init"))).toEqual(
       expect.arrayContaining(chunks),
     );
+    const dispatchedChunks = watCallTargets(result.wat, watFunction(result.wat, "__module_init")).filter((name) =>
+      chunks.includes(name),
+    );
+    expect(dispatchedChunks).toEqual(chunks);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const mod = await WebAssembly.compile(result.binary);
+    expect(WebAssembly.Module.imports(mod)).toEqual([]);
     const { instance } = await WebAssembly.instantiate(result.binary, {});
     (instance.exports.__module_init as () => void)();
   });
@@ -225,4 +241,49 @@ describe("#7106 chunked <module-init> lowered by the IR", () => {
       }
     }
   });
+  it("keeps bounded legacy chunks when a real callee ABI withdrawal cascades after the claim", async () => {
+    // Preserve the real, non-injected post-claim witness from
+    // issue-7106-module-init-orphaned-closure-slots.test.ts. Filler makes chunk
+    // release observable; the original foo/assert pair remains unchanged.
+    const result = await compileHarnessBody(
+      [
+        "var tick = 0;",
+        ...FILLER,
+        "function foo(a) { return a; }",
+        "assert.sameValue(foo(1), 1);",
+        `assert.sameValue(tick, ${FILLER_SUM});`,
+      ].join("\n"),
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const outcome = moduleInit(result);
+    expect(outcome).toMatchObject({
+      kind: "unsupported",
+      code: "abi-signature-parity",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+      irBodyEmissions: 0,
+    });
+    expect(outcome?.stage).not.toBe("select");
+    expect((result.irPostClaimErrors ?? []).map((error) => error.func)).toEqual(
+      expect.arrayContaining(["foo", "<module-init>"]),
+    );
+    // Demotion may leave allocated-but-uncommitted IR helper names behind.
+    // Ownership comes from the outcome and actual dispatched bodies, not from
+    // requiring every allocated name to be one of legacy's callees.
+    const declaredFunctions = new Set(watFunctionNames(result.wat));
+    const chunks = watCallTargets(result.wat, watFunction(result.wat, "__module_init")).filter((name) =>
+      /^__module_init_chunk_\d+(?:_\d+)?$/.test(name),
+    );
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(new Set(chunks).size).toBe(chunks.length);
+    for (const name of chunks) expect(declaredFunctions.has(name)).toBe(true);
+    expect(chunks.map((name) => Number(/^__module_init_chunk_(\d+)/.exec(name)![1]))).toEqual(
+      Array.from({ length: chunks.length }, (_, ordinal) => ordinal),
+    );
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const mod = await WebAssembly.compile(result.binary);
+    expect(WebAssembly.Module.imports(mod)).toEqual([]);
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect(() => (instance.exports.__module_init as () => void)()).not.toThrow();
+  }, 60_000);
 });

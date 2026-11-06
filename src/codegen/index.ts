@@ -11,7 +11,11 @@ import {
   ensureGlobalEnvironmentOperation,
 } from "./global-environment.js";
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
-import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
+import {
+  irFunctionCodeStrictness,
+  irFunctionThisStrictness,
+  irSelfGuardedConstructorValue,
+} from "./ir-dynamic-construct.js"; // (#7106 S3c, #7260)
 import { irDynamicInstanceOfAtLegacyParity } from "./ir-dynamic-instanceof.js"; // (#7106) generic dynamic instanceof
 import { irOpenObjectSelectionOption } from "./declarations/ir-open-object-binding.js"; // (#7128 S1)
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
@@ -148,7 +152,7 @@ import {
 } from "../ir/host-extern.js"; // (#2856/#3214/#3657/#7091)
 import {
   projectIrBackendTargetProfile,
-  supportsIrBackendTargetCapability,
+  irBackendCapabilityQuery,
   type IrBackendTargetCapability,
 } from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
@@ -196,6 +200,7 @@ import {
   makeIrModuleBindingResolver,
   makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
+  type IrModuleBindingDeclaration,
   type IrModuleBindingResolver,
   type IrScriptVarHome,
 } from "../ir/module-bindings.js"; // (#2856 Capability C)
@@ -235,6 +240,8 @@ import {
 import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-sweep.js"; // (#6768)
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
+import { irJsInstanceMethodMaySkip } from "./classes/ir-class-member-projection.js"; // (#7233)
+import { irClassHeritageIsRootStruct } from "./classes/ir-root-struct-heritage.js"; // (#7241 / #7244)
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import {
   planIrImportedCalls,
@@ -243,6 +250,8 @@ import {
   recordIrOverlayPreparationFailure,
   planIrFunctionValueResolverState,
   prepareTopLevelFunctionValueTargetSupport,
+  dropClassMemberFunctionValuePlans,
+  functionValueOwnerUnitIds,
 } from "./ir-imported-call-planning.js";
 import { parameterHasDynamicExternrefAbi } from "./declarations/ir-dynamic-parameter-abi.js";
 import { hasFullyAnnotatedScalarAbi } from "./ir-legacy-caller-abi.js";
@@ -281,6 +290,7 @@ import {
   type IrClassShapeEntry,
   type IrClassShapeLookup,
   type IrClassShapeSidecar,
+  irDynamicCarrierMatchesSlot,
 } from "./ir-class-shapes.js";
 import {
   buildIrExactFunctionClaimIndex,
@@ -1792,7 +1802,10 @@ function buildIrClassShapes(
     // (`src/ir/select.ts`) so a claimed subclass member always finds a shape here.
     let parentShape: import("../ir/nodes.js").IrClassShape | undefined;
     const parentClassId = resolveIrParentClassId(ctx.checker, stmt, identityContext);
-    if (parentClassId !== null) {
+    // (#7241 / #7244) `extends <lib interface | compiled function>` that legacy
+    // lays out as a root struct projects flat, like an `implements`-only class.
+    const rootStructHeritage = parentClassId === undefined && irClassHeritageIsRootStruct(ctx, stmt, className);
+    if (parentClassId !== null && !rootStructHeritage) {
       const parentPosition = parentClassId === undefined ? undefined : collectionPosition.get(parentClassId);
       const currentPosition = collectionPosition.get(classId)!;
       // Dependency ordering may move a later type-position dependency before
@@ -1960,7 +1973,7 @@ function buildIrClassShapes(
     // Methods — instance methods only, re-derived from the AST.
     const methods: IrClassMethodDescriptor[] = [];
     let methodsOk = true;
-    for (const member of stmt.members) {
+    instanceMethods: for (const member of stmt.members) {
       if (!ts.isMethodDeclaration(member) || !member.name) continue;
       if (hasStaticModifier(member)) continue; // slice 4 defers static methods
       if (hasAbstractModifier(member)) continue;
@@ -1979,15 +1992,20 @@ function buildIrClassShapes(
         : ts.isComputedPropertyName(member.name)
           ? computedMethodName!
           : member.name.text;
+      // (#7233) JS sources skip an unprojectable method (it keeps its legacy
+      // body and slot) instead of dropping the whole class; TS keeps all-or-nothing.
+      const maySkip = irJsInstanceMethodMaySkip(sourceFile, parentShape, methodName);
       const params: IrType[] = [];
       for (const p of member.parameters) {
         if (!ts.isIdentifier(p.name) || p.dotDotDotToken || p.questionToken || p.initializer) {
+          if (maySkip) continue instanceMethods;
           methodsOk = false;
           break;
         }
         const tsType = ctx.checker.getTypeAtLocation(p);
         const ir = tsTypeToClassPositionIr(ctx, tsType, lookup);
         if (!ir) {
+          if (maySkip) continue instanceMethods;
           methodsOk = false;
           break;
         }
@@ -2000,8 +2018,9 @@ function buildIrClassShapes(
       if (sig) {
         const retTs = ctx.checker.getReturnTypeOfSignature(sig);
         if (!isVoidType(retTs)) {
-          const ir = tsTypeToClassPositionIr(ctx, retTs, lookup);
+          const ir = tsTypeToClassReturnIr(ctx, retTs, lookup);
           if (!ir) {
+            if (maySkip) continue; // unlabelled: biome noUselessLabel (same loop as instanceMethods)
             methodsOk = false;
             break;
           }
@@ -2099,7 +2118,7 @@ function buildIrClassShapes(
         });
       } else if (
         ts.isMethodDeclaration(member) &&
-        ts.isIdentifier(member.name) &&
+        (ts.isIdentifier(member.name) || ts.isPrivateIdentifier(member.name)) && // (#7227) `__priv_m`
         hasStaticModifier(member) &&
         !hasAbstractModifier(member) &&
         !member.asteriskToken
@@ -2124,7 +2143,7 @@ function buildIrClassShapes(
         if (sig) {
           const retTs = ctx.checker.getReturnTypeOfSignature(sig);
           if (!isVoidType(retTs)) {
-            const ir = tsTypeToClassPositionIr(ctx, retTs, lookup);
+            const ir = tsTypeToClassReturnIr(ctx, retTs, lookup);
             if (!ir) continue;
             returnType = ir;
           }
@@ -2157,6 +2176,7 @@ function buildIrClassShapes(
       ...(constructorInitTarget ? { constructorInitTarget } : {}),
       // #3000-E: present only for a single-level subclass of a local user class.
       ...(parentShape ? { parent: parentShape } : {}),
+      ...(rootStructHeritage ? { rootStructHeritage: true as const } : {}),
     };
     const provisional = provisionalEntries.get(classId);
     if (provisional) {
@@ -2250,6 +2270,8 @@ function tsTypeToClassPositionIr(ctx: CodegenContext, t: ts.Type, classShapes: I
   if (t.flags & ts.TypeFlags.NumberLike) return irVal({ kind: "f64" });
   if (t.flags & ts.TypeFlags.BooleanLike) return irVal({ kind: "i32" });
   if (t.flags & ts.TypeFlags.StringLike) return { kind: "string" };
+  // (#7223) untyped positions: same `Any | Unknown` carrier as legacy `resolveWasmType`.
+  if (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return irDynamic();
   const entry = resolveIrClassShapeFromType(ctx.checker, t, classShapes);
   if (entry) return { kind: "class", shape: entry.shape };
   if (t.flags & ts.TypeFlags.Object) {
@@ -2257,6 +2279,31 @@ function tsTypeToClassPositionIr(ctx: CodegenContext, t: ts.Type, classShapes: I
     if (ir) return ir;
   }
   return null;
+}
+
+/**
+ * (#7241) A method result position. Adds one arm to the class-position
+ * projection: a lib `any[]` (`const out = new Array(); …; return out;`), whose
+ * legacy result slot (`resolveWasmType`, class-bodies.ts) is the pre-registered
+ * `$__vec_externref`. Exactly that slot projects — the same carrier an
+ * `any[]`-annotated function position resolves to — and nothing else.
+ */
+function tsTypeToClassReturnIr(ctx: CodegenContext, t: ts.Type, classShapes: IrClassShapeLookup): IrType | null {
+  const ir = tsTypeToClassPositionIr(ctx, t, classShapes);
+  if (ir) return ir;
+  const vecExternref = ctx.vecTypeMap.get("externref");
+  const symbol = t.getSymbol();
+  if (
+    vecExternref === undefined ||
+    !(t.flags & ts.TypeFlags.Object) ||
+    symbol?.name !== "Array" ||
+    !symbol.declarations?.every((d) => d.getSourceFile().hasNoDefaultLib) ||
+    !((t.getNumberIndexType()?.flags ?? 0) & ts.TypeFlags.Any)
+  ) {
+    return null;
+  }
+  const legacy = resolveWasmType(ctx, t);
+  return legacy.kind === "ref_null" && legacy.typeIdx === vecExternref ? irVal(legacy) : null;
 }
 
 /**
@@ -2322,6 +2369,7 @@ function irFieldTypeMatchesLegacyValType(
     if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) return isAnyStringSlot(ctx, vt);
     return vt.kind === "externref";
   }
+  if (ir.kind === "dynamic") return irDynamicCarrierMatchesSlot(ctx, vt); // (#7223)
   if (ir.kind === "class") {
     const structTypeIdx = ctx.structMap.get(ir.shape.className);
     return structTypeIdx !== undefined && (vt.kind === "ref" || vt.kind === "ref_null") && vt.typeIdx === structTypeIdx;
@@ -2745,7 +2793,13 @@ function collectIrImplicitParamProjectionCandidates(
     }
     if (ts.isElementAccessExpression(parent) && parent.expression === child) return true;
     if (ts.isConditionalExpression(parent) && parent.condition === child) return true;
-    return false;
+    // (#7251) A `||` / `&&` left operand is a ToBoolean test, like a conditional's.
+    return (
+      ts.isBinaryExpression(parent) &&
+      (parent.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) &&
+      parent.left === child
+    );
   };
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {
@@ -3005,8 +3059,7 @@ function planIrOverlay(
   const platformExternClass = irPlatformExternClassPredicate(ctx);
   const hostExternSurface = jsHostExterns || platformExternClass !== undefined;
   const standaloneDomCapability = planStandaloneDomCapability(ctx, ast.checker, ast.sourceFile);
-  const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
-    supportsIrBackendTargetCapability(irTargetProfile, capability);
+  const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   const calendarResolvers = planIrCalendarResolvers(
     ast.checker,
     hostExternSurface,
@@ -3247,6 +3300,7 @@ function planIrOverlay(
       preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
+      functionCodeStrictness: (fn) => irFunctionCodeStrictness(ctx, fn), // (#7260)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
       // (#7106 compareArray.format)
       arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
@@ -3841,6 +3895,7 @@ function makeMultiIrSafeSelection(
   const moduleInitUnitId = plan.identityPlan.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
   if (moduleInitUnitId) blocked.add(moduleInitUnitId);
   const conservativeCrossFileCallers = ctx.standalone || ctx.wasi || ctx.strictNoHostImports;
+  dropClassMemberFunctionValuePlans(plan); // (#7243) this lane selects no class member
 
   for (const [call, callPlan] of plan.importedCalls) {
     requireMultiIrOwnerClaim(plan, callPlan.ownerUnitId, callPlan.ownerName);
@@ -4191,13 +4246,18 @@ function compileMultiIrOverlaySource(
  *     `this.p = v`) resolves bare reads through the global-environment object;
  *   - a slot the declaration collector has not placed is not a home at all.
  */
-export function scriptVarHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): IrScriptVarHome | undefined {
+export function scriptVarHome(
+  ctx: CodegenContext,
+  declaration: IrModuleBindingDeclaration,
+): IrScriptVarHome | undefined {
   const type = scriptVarHomeSlot(ctx, declaration)?.type;
   switch (type?.kind) {
     case "externref":
       return ctx.fast ? undefined : "dynamic";
     case "ref_null":
-      return type.typeIdx === ctx.anyStrTypeIdx ? "string" : undefined;
+      if (type.typeIdx === ctx.anyStrTypeIdx) return "string";
+      // (#7252) The struct legacy allocated for a user class.
+      return [...ctx.classSet].some((n) => ctx.structMap.get(n) === type.typeIdx) ? "class-instance" : undefined;
     case "f64":
     case "i32":
       return "typed";
@@ -4206,7 +4266,7 @@ export function scriptVarHome(ctx: CodegenContext, declaration: ts.VariableDecla
   }
 }
 
-function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclaration) {
+function scriptVarHomeSlot(ctx: CodegenContext, declaration: IrModuleBindingDeclaration) {
   if (!ts.isIdentifier(declaration.name)) return undefined;
   const name = declaration.name.text;
   const plan = ctx.runtimeEvalBoundaryPlan;
@@ -4702,10 +4762,7 @@ function preparedLexicalComponentPreflightFailure(
     return "the exact host callback maker ABI is unavailable in the final module context";
   }
   const supportsHostDateSnapshots =
-    supportsIrBackendTargetCapability(
-      projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }),
-      "host-date-snapshot",
-    ) || ctx.requiresStandaloneClockCapability === true;
+    irBackendCapabilityQuery(ctx)("host-date-snapshot") || ctx.requiresStandaloneClockCapability === true;
   if (
     !canPrepareHostDateSnapshotLoweringByIdentity(
       ctx,
@@ -4839,6 +4896,7 @@ function planIrFirstBodyRouting(
       ...plan.suspendingAsyncUnitIds,
     ]),
     generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
+    numberToString: irBackendCapabilityQuery(ctx)("number-to-string"),
     fast: ctx.fast,
   };
   const timerRouting = irTimerShim.inspectIrCompilerTimerShimRouting(plan);
@@ -4855,8 +4913,10 @@ function planIrFirstBodyRouting(
   // constructors. Only exact selected accessor UnitIds are an
   // independently sealed component that may prepare beside host/import/date/
   // promise work in the surrounding Test262 harness.
+  const overlayMemberUnitIds = functionValueOwnerUnitIds(plan);
   const classIds = new Set(
     [...selectedClassIds].filter((unitId) => {
+      if (overlayMemberUnitIds.has(unitId)) return false; // (#7243) stays on the overlay
       if (!hasLateFeaturePreparation) return true;
       const terminal = plan.identityPlan.identityContext.terminalByUnitId.get(unitId);
       return (
@@ -14474,7 +14534,7 @@ function walkStmtForVars(
     walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
-  if (ts.isLabeledStatement(stmt)) {
+  if (ts.isLabeledStatement(stmt) || ts.isWithStatement(stmt)) {
     walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }

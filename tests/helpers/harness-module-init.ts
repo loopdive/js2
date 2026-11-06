@@ -32,16 +32,36 @@ export async function compileHarnessBody(body: string): Promise<HarnessCompileRe
 }
 
 /** `body` behind the harness on `target` (`undefined` is the gc lane); a claim is never withdrawn after the fact. */
-export async function compileHarnessOn(target: Target, body: string): Promise<HarnessCompileResult> {
-  const result = await compile(assembleHarnessBody(body), { ...HARNESS_OPTIONS, ...(target ? { target } : {}) });
+export async function compileHarnessOn(
+  target: Target,
+  body: string,
+  fileName: string = HARNESS_OPTIONS.fileName,
+): Promise<HarnessCompileResult> {
+  const result = await compile(assembleHarnessBody(body), {
+    ...HARNESS_OPTIONS,
+    fileName,
+    ...(target ? { target } : {}),
+  });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(result.irPostClaimErrors ?? []).toEqual([]);
   return result;
 }
 
-/** Run `<module-init>` on `target` (an assert failure throws) and report whether the IR claimed it. */
-export async function runHarnessOn(target: Target, body: string): Promise<boolean> {
-  const result = await compileHarnessOn(target, body);
+/**
+ * Run `<module-init>` on `target` (an assert failure throws) and report whether
+ * the IR claimed it; each of `emittedUnits` must have been emitted by the IR.
+ */
+export async function runHarnessOn(
+  target: Target,
+  body: string,
+  fileName?: string,
+  emittedUnits: readonly string[] = [],
+): Promise<boolean> {
+  const result = await compileHarnessOn(target, body, fileName);
+  for (const name of emittedUnits) {
+    const outcome = result.irOutcomes?.find((unit) => unit.displayName === name);
+    expect(outcome, `${name}: ${JSON.stringify(outcome)}`).toMatchObject({ irBodyEmitted: true, kind: "emitted" });
+  }
   const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
   (instance.exports.__module_init as () => void)();

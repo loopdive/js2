@@ -62,3 +62,36 @@ describe("#7106 boolean module slot", () => {
     });
   }
 });
+
+describe("#7106 Boolean module-slot receiving boundaries", () => {
+  for (const target of TARGETS) {
+    describe(lane(target), () => {
+      it("preserves Boolean template spelling", async () => {
+        await runHarness(target, 'var flag = true; assert.sameValue(`${flag}`, "true");');
+      });
+
+      it("preserves Boolean Number conversion", async () => {
+        await runHarness(target, "var flag = true; assert.sameValue(Number(flag), 1); assert.sameValue(flag + 2, 3);");
+      });
+
+      it("keeps native i32 values distinct from Boolean slots", async () => {
+        await runHarness(
+          target,
+          'type i32 = number; var word: i32 = 1; assert.sameValue(typeof word, "number"); assert.sameValue(word, 1);',
+          "test.ts",
+        );
+      });
+
+      it("matches the existing declared numeric-return ABI without withdrawing IR", async () => {
+        // Intentionally invalid TS, compiled with the unchanged diagnostic-skip
+        // option: this checks the existing ABI conversion, not TS conformance.
+        await runHarness(
+          target,
+          "var flag = true; function bad(): number { return flag; } assert.sameValue(bad(), 1);",
+          "test.ts",
+          ["bad"],
+        );
+      });
+    });
+  }
+});

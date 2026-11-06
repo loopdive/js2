@@ -30,6 +30,8 @@ const CLAIMED: Record<string, string> = {
     "assert.sameValue(x, 1); assert.sameValue(y, 2); assert.sameValue(z, 3);",
   ),
   objectKeys: loop("let { x, y: w, } = { x: 23, y: 7 }", "assert.sameValue(x, 23); assert.sameValue(w, 7);"),
+  // A leaf's family reaches the operator check (review round 2), and #7066 lowers a mixed `+`.
+  mixedPlus: loop("const [a, b] = [1, 'x']", "assert.sameValue(a + b, '1x');"),
   pastTheEnd: loop("const [_, x] = []", "assert.sameValue(_, undefined); assert.sameValue(x, undefined);"),
   exhaustedDefault: loop("const [x = 23] = []", "assert.sameValue(x, 23);"),
   holeDefault: loop("let [x = 23] = [,]", "assert.sameValue(x, 23);"),
@@ -74,8 +76,8 @@ const REFUSED: Record<string, string> = {
   spreadSource: "var more = [2];\n" + loop("const [a, b] = [1, ...more]", "assert.sameValue(b, 2);"),
   leafInDefault: loop("const [a = 1, b = a] = []", "assert.sameValue(b, 1);"),
   nullLeaf: loop("const [x = 1] = [null]", "assert.sameValue(x, null);"),
-  // Follow-ups: a script-level pattern (S5), and the call-graph scan still
-  // sees a default IIFE the plan never runs.
+  // Follow-ups: a script-level lexical pattern (S5 admits `var` lists only),
+  // and the call-graph scan still sees a default IIFE the plan never runs.
   scriptLevel: "const [a, b = 2] = [1];\nassert.sameValue(a + b, 3);",
   unusedDefaultCall: loop("const [[] = function () { throw 1; }()] = [[23]]", "assert.sameValue(n, 0);"),
   // Review round 1: an index past the end reads `Array.prototype`, and a
@@ -92,8 +94,6 @@ const LEGACY: Record<string, string> = {
   // A written `let` leaf has no storage analysis behind it.
   reassignedLet:
     "var count = 0;\nfor (let [i, j] = [0, 6]; i < j; i++, j--) { count += 1; }\nassert.sameValue(count, 3);",
-  // Review round 2: a leaf's family reaches the operator check.
-  mixedPlus: loop("const [a, b] = [1, 'x']", "assert.sameValue(a + b, '1x');"),
   // A leaf never binds a literal whole: that would build it.
   wholeArray: loop("const [a] = [[1, 2]]", "assert.sameValue(a.length, 2); assert.sameValue(a[1], 2);"),
   wholeObjectWithNull: loop("const { a } = { a: { b: null } }", "assert.sameValue(a.b, null);"),
@@ -134,6 +134,12 @@ describe("#7106 for-head destructuring over a fresh literal", () => {
       "export function f() { let s = 0; for (const [i, j] = [0, 6]; s < 12; ) { s = s + j - i; } return s; }",
       12,
     ],
+    // A leaf has its source value's family (review round 2), and #7066 lowers the mixed `+` it reaches.
+    mixedPlus: ["export function f() { const [a, b] = [1, 'x']; return (a + b).length; }", 2],
+    mixedPlusForHead: [
+      "export function f() { let n = 0; let s = ''; for (const [a, b] = [1, 'x']; n < 1; n++) { s = a + b; } return s.length; }",
+      2,
+    ],
   };
   // Review round 1: refused at selection (main claimed several, then demoted or
   // failed the compile), and legacy gives the right answer.
@@ -150,12 +156,6 @@ describe("#7106 for-head destructuring over a fresh literal", () => {
       6,
     ],
     indexPastTheEnd: ["export function f() { const { 3: a } = [1]; return a === undefined ? 7 : 0; }", 7],
-    // Review round 2: a leaf has its source value's family, so a mixed `+` is refused like `lowerBinary` refuses it.
-    mixedPlus: ["export function f() { const [a, b] = [1, 'x']; return (a + b).length; }", 2],
-    mixedPlusForHead: [
-      "export function f() { let n = 0; let s = ''; for (const [a, b] = [1, 'x']; n < 1; n++) { s = a + b; } return s.length; }",
-      2,
-    ],
   };
   const compileFunction = (source: string, target: Target) =>
     compile(source, {

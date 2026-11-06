@@ -38,7 +38,8 @@ export type IrBackendTargetCapability =
   | "native-dynamic-member-read"
   | "planned-closure-direct-call"
   | "native-dynamic-loose-equality"
-  | "dynamic-method-call-wrapper";
+  | "dynamic-method-call-wrapper"
+  | "native-global-function-call";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -75,6 +76,19 @@ export function projectIrBackendTargetProfile(
       profile.environment === "javascript" && profile.capabilityPolicy === "ambient-js" && !nativeRegimeInJs,
     fast: options.fast,
   });
+}
+
+/**
+ * A compile's {@link supportsIrBackendTargetCapability}, over its projected
+ * target profile: the one question selection, lowering and the IR-first gate
+ * ask of a compile.
+ */
+export function irBackendCapabilityQuery(compile: {
+  readonly targetProfile: CompileTargetProfile;
+  readonly fast?: boolean;
+}): (capability: IrBackendTargetCapability) => boolean {
+  const profile = projectIrBackendTargetProfile(compile.targetProfile, { fast: compile.fast });
+  return (capability) => supportsIrBackendTargetCapability(profile, capability);
 }
 
 /**
@@ -178,6 +192,11 @@ export function supportsIrBackendTargetCapability(
     // per-(method, arity) `__ir_dyn_mcall_<m>_<n>` wrapper: the call's
     // [[Get]], then legacy's own any-receiver brand dispatch (host-free
     // lanes; the native `__extern_method_call` serves open `$Object` only).
+    case "native-global-function-call":
+    // (#7253) `parseInt` / `parseFloat` / `escape` / `unescape` / `isNaN` of
+    // typed operands through legacy's own host-free providers (the native
+    // parse scanners, `__escape` / `__unescape`); the escape result recovers
+    // its native string through `native-string-carrier-coercion`'s ladder.
     case "native-number-conversion":
       // (#7106 module-init lever B) `Number(v)` through the host-free
       // `js.number.from-value` provider (legacy's emitter over a template).

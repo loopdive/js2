@@ -200,7 +200,7 @@ test("IR provenance separates request, measurement, proof, source and date", () 
 test("historical Host caption keeps the actual frozen date and revision", () => {
   assert.equal(
     view("?mode=host").historicalHostLabel({ baseline_sha: "old-revision", baseline_generated_at: "2026-09-01" }),
-    "Historical JS Host · frozen results · source old-revision · 2026-09-01",
+    "Historical JS Host · retired 2026-10-12 · frozen results · source old-revision · 2026-09-01",
   );
 });
 
