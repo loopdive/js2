@@ -13755,9 +13755,8 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     cx.builder.emitSlotWrite(storage.slotIndex, added);
     return;
   }
-  // f64 arithmetic: the slot and the operator decide before the RHS is
-  // lowered (no value family makes them admissible otherwise).
-  if (!compoundWriteAdmissible(compoundOp, slotFamily, "number")) {
+  // Dynamic captured cells need a separately proven storage contract.
+  if (capturedCellType?.inner.kind === "dynamic" || !compoundWriteAdmissible(compoundOp, slotFamily, "number")) {
     demoteToLegacy(
       "compound-assign-unsupported",
       `ir/from-ast: compound assign ${ts.tokenToString(compoundOp)} to "${id.text}" (${describeIrType(logicalType)}) not in slice 6 (${cx.funcName})`,
@@ -13770,22 +13769,17 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     storage.kind === "moduleGlobal"
       ? cx.builder.emitGlobalGet(storage.globalRef, storage.type)
       : storage.kind === "slot"
-        ? cx.builder.emitSlotRead(storage.slotIndex)
+        ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
         : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
   const rhsValue = lowerExpr(rhs, cx, logicalType);
   const rhsType = cx.builder.typeOf(rhsValue);
   if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs))) {
-    // (#3565) DESIGNED demote: the f64 slot is fine, but the RHS lowered to a
-    // non-f64 (e.g. an externref value yielded by a generator in `s += v`). The
-    // numeric coercion is legacy-only, so this is a not-yet-adopted construct,
-    // NOT a builder↔finalize desync. Typed UNSUPPORTED so it demotes to the
-    // legacy body instead of the untyped `unexpected-internal-throw` invariant
-    // #3341/#3519 hard-error (measured casualty: tests/issue-2079 — legacy
-    // compiles+runs =3). The f64-slot/string-append arms above are unaffected.
+    // An unsupported RHS is a typed refusal, not a producer contradiction.
+    // Dynamic operands use the existing binary-arithmetic ToNumber path below.
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
-      `ir/from-ast: compound assign RHS must be f64 (got ${describeIrType(rhsType)}) in ${cx.funcName}`,
+      `ir/from-ast: compound assign RHS has no numeric carrier (got ${describeIrType(rhsType)}) in ${cx.funcName}`,
     );
   }
 
@@ -13793,7 +13787,13 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
   // invariant (producer-promise): `compoundWriteAdmissible` admits exactly the numeric compound operators — #7144.
   if (binaryOp === undefined)
     throw new Error(`ir/from-ast: admitted compound operator has no binary form in ${cx.funcName}`);
-  const result = emitNumberBinary(binaryOp, lhs, rhsValue, id, rhs, cx);
+  const numericLhs = relOperandToF64(lhs, logicalType, cx);
+  const numericRhs = relOperandToF64(rhsValue, rhsType, cx);
+  if (numericLhs === null || numericRhs === null)
+    throw new Error(`ir/from-ast: admitted numeric compound has no numeric operands in ${cx.funcName}`);
+  const numericResult = emitNumberBinary(binaryOp, numericLhs, numericRhs, id, rhs, cx);
+  const result =
+    slotFamily === "dynamic" ? cx.builder.emitBox(numericResult, irDynamic(JS_TAG_IDS.NumberF64)) : numericResult;
   if (storage.kind === "moduleGlobal") {
     cx.builder.emitGlobalSet(storage.globalRef, result);
     return;

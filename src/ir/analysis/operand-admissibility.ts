@@ -453,14 +453,20 @@ export function nullValueAdmissible(consumer: OperandFamily): boolean {
  * its own lowering): `+=` concatenates into a string slot only with a string
  * value (string-evidence then also requires an encoding), and is the dynamic
  * `+` into a dynamic slot with a boxable value; every numeric compound is
- * number arithmetic on an f64 slot with an f64 value (or `void x`, whose NaN is
- * ToNumber(undefined)). Nothing else lowers.
+ * number arithmetic on an f64 or dynamic slot. Dynamic operands use ToNumber;
+ * a value `void x` already supplies its numeric NaN.
  */
 export function compoundWriteAdmissible(op: ts.SyntaxKind, slot: OperandFamily, value: OperandFamily): boolean {
   if (op === ts.SyntaxKind.PlusEqualsToken) {
     if (slot === "string") return value === "string";
     if (slot === "dynamic") return boxableIntoDynamic(value);
   }
+  // Dynamic numeric compounds use the same ToNumber path as binary arithmetic.
+  if (slot === "dynamic" && isNumberCompoundAssignOperator(op))
+    return (
+      op !== ts.SyntaxKind.AsteriskAsteriskEqualsToken &&
+      (value === "dynamic" || value === "number" || value === "undefined")
+    );
   // ToNumber(undefined) is the NaN sentinel the number arithmetic reads.
   return isNumberCompoundAssignOperator(op) && slot === "number" && (value === "number" || value === "undefined");
 }
