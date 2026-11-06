@@ -89,6 +89,31 @@ export function stripParens(expr: ts.Expression): ts.Expression {
   return expr;
 }
 
+/** The outermost parenthesized expression wrapping `expr` (itself when unwrapped). */
+export function outermostParenthesized(expr: ts.Expression): ts.Expression {
+  let node: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  return node;
+}
+
+const dynamicScopeCache = new WeakMap<ts.Node, boolean>();
+
+/** `with` anywhere, or a direct `eval(...)` identifier call, in the subtree: names resolve outside checker identity. */
+export function hasDynamicScope(root: ts.Node): boolean {
+  const cached = dynamicScopeCache.get(root);
+  if (cached !== undefined) return cached;
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (ts.isWithStatement(n)) found = true;
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "eval") found = true;
+    ts.forEachChild(n, visit);
+  };
+  visit(root);
+  dynamicScopeCache.set(root, found);
+  return found;
+}
+
 /** Parentheses and TS type wrappers (`as`, `!`, `satisfies`, `<T>x`) — transparent around a target or a source. */
 export function skipOuterExpressions(expr: ts.Expression): ts.Expression {
   while (

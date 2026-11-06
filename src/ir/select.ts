@@ -149,7 +149,12 @@ import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
-import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
+import {
+  isIrModuleClassInstanceValueKind,
+  isIrModuleMapValueKind,
+  isIrModuleReferenceValueKind,
+} from "./module-bindings.js";
+import { outermostParenthesized } from "../shared/binding-writes.js";
 import { firstConstBindingWrite } from "./const-binding-writes.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
@@ -6861,12 +6866,6 @@ function assignmentWrite(parent: ts.Node, value: ts.Node): { readonly target: ts
   return parent.operatorToken.kind === ts.SyntaxKind.EqualsToken ? { target: parent.left } : undefined;
 }
 
-function outermostParenthesized(expr: ts.Expression): ts.Expression {
-  let node: ts.Expression = expr;
-  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
-  return node;
-}
-
 /**
  * An identifier declaration with no type annotation. A JSDoc `@type` on the
  * statement is deliberately not read: `ts.getJSDocType` on the declaration
@@ -7828,7 +7827,10 @@ function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
     if (touched) return;
     if (ts.isIdentifier(node)) {
       const binding = moduleBinding(node);
-      const scalarBinding = binding && !isIrModuleReferenceValueKind(binding.valueKind);
+      const scalarBinding =
+        binding &&
+        !isIrModuleReferenceValueKind(binding.valueKind) &&
+        !isIrModuleClassInstanceValueKind(binding.valueKind);
       if (scalarBinding || moduleScalarAliasFamily(node) !== undefined) {
         touched = true;
         return;
