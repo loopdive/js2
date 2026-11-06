@@ -16,6 +16,7 @@ import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import { runtimeEvalPushPublishesCachedFunctionValues } from "./expressions/runtime-eval-provider.js";
 import {
   applyIrFinalContextFunctionRetention,
+  closeIrBlockedComponentByIdentity,
   prepareHostDateSnapshotLoweringByIdentity,
   prepareHostVoidCallbackLoweringByIdentity,
   preparePromiseDelayLoweringByIdentity,
@@ -48,7 +49,7 @@ export function synchronizeIrSafeFunctionSelection(
 
 /**
  * (#7106 A1) Withdraw each safe function that crosses a runtime-eval boundary;
- * the rest stay prepared. Each withdrawal records `failure` with the reason:
+ * the rest stay prepared. Each withdrawal records its reason:
  *
  *  - `eval-site`: the declaration contains an inventoried site. A direct eval
  *    reads and writes its caller's activation, which only the direct frontend
@@ -62,13 +63,16 @@ export function synchronizeIrSafeFunctionSelection(
  *    planned before the component seals, so every function stays direct.
  *
  * Site spans ignore `sourceId`, so that test over-approximates; it can only
- * keep a function direct, never admit one.
+ * keep a function direct, never admit one. Selection's call-graph closure has
+ * already run, so the withdrawn functions re-close it here (`boundary-closure`):
+ * a claimed caller or callee of a direct function would otherwise reach build
+ * with no exact call-site plan.
  */
-export function withdrawRuntimeEvalBoundaryFunctions(
+export function withdrawEvalBoundaryFunctions(
   ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
   identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
   funcs: Set<string>,
-  failure: IrPreparationFailure,
   record: (legacyName: string, failure: IrPreparationFailure) => void,
 ): void {
   const sites = ctx.runtimeEvalBoundaryPlan?.sites ?? [];
@@ -78,15 +82,39 @@ export function withdrawRuntimeEvalBoundaryFunctions(
     ...(ctx.globalLexicalBindings ?? []),
   ]);
   const wholeProgram = !runtimeEvalPushPublishesCachedFunctionValues(ctx);
-  for (const name of [...funcs]) {
+  const reasons = new Map<IrUnitId, string>();
+  for (const name of funcs) {
     const why = wholeProgram
       ? "uncached-push"
       : runtimeEvalBoundaryCrossing(ctx, sites, identityPlan.declarationByLegacyName.get(name)!, evalVisible);
-    if (why === undefined) continue;
-    record(name, { ...failure, detail: `${failure.detail} (${why})` });
-    funcs.delete(name);
-    identityPlan.safeFunctionUnitIds.delete(irOverlayIdentity.requireIrOverlayFunctionUnitId(identityPlan, name));
+    if (why !== undefined) reasons.set(irOverlayIdentity.requireIrOverlayFunctionUnitId(identityPlan, name), why);
   }
+  if (reasons.size === 0) return;
+  const blocked = new Set(reasons.keys());
+  const retained = closeIrBlockedComponentByIdentity(
+    sourceFile,
+    identityPlan.identityContext,
+    identityPlan.safeFunctionUnitIds,
+    blocked,
+  );
+  for (const name of [...funcs]) {
+    const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(identityPlan, name);
+    if (retained.has(unitId)) continue;
+    record(name, runtimeEvalBoundaryFailure(reasons.get(unitId) ?? "boundary-closure"));
+    funcs.delete(name);
+    irOverlayIdentity.dropIrSafeFunctionByLegacyName(identityPlan, name);
+  }
+}
+
+/** (#2928) Why an owner of a runtime-eval program stays direct; `why` is the per-function reason. */
+export function runtimeEvalBoundaryFailure(why?: string): IrPreparationFailure {
+  const detail = "the linked runtime-eval callable carrier is still owned by the direct frontend";
+  return {
+    kind: "unsupported",
+    code: "late-preparation-unsupported",
+    stage: "resolve",
+    detail: why === undefined ? detail : `${detail} (${why})`,
+  };
 }
 
 function runtimeEvalBoundaryCrossing(
@@ -110,7 +138,7 @@ function runtimeEvalBoundaryCrossing(
       crosses = reachesScriptBinding(node);
     } else forEachChild(node, visit);
   };
-  if (declaration.body && evalVisible.size !== 0) visit(declaration.body);
+  if (evalVisible.size !== 0) forEachChild(declaration, visit);
   return crosses ? "eval-visible-binding" : undefined;
 }
 

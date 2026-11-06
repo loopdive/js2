@@ -269,7 +269,8 @@ import {
   finalizePreparedIrSelection,
   prepareHostDateSnapshotPreflight,
   synchronizeIrSafeFunctionSelection,
-  withdrawRuntimeEvalBoundaryFunctions,
+  runtimeEvalBoundaryFailure,
+  withdrawEvalBoundaryFunctions,
 } from "./ir-overlay-preparation.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import {
@@ -3538,19 +3539,14 @@ function planIrOverlay(
     moduleInit: selection.moduleInit,
   };
   // (#2928, #7106 A1) Runtime eval is a per-unit boundary: only a function that
-  // crosses it stays direct (`withdrawRuntimeEvalBoundaryFunctions`), and the
+  // crosses it stays direct (`withdrawEvalBoundaryFunctions`), and the
   // value the global push publishes for every other one is planned before its
   // component seals (`collectPreparedTopLevelFunctionValueTargetUnitIds`).
   // Module init and class members share the push/pull seam with the direct
   // carrier, so they stay direct as a whole.
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
-    const failure: IrPreparationFailure = {
-      kind: "unsupported",
-      code: "late-preparation-unsupported",
-      stage: "resolve",
-      detail: "the linked runtime-eval callable carrier is still owned by the direct frontend",
-    };
-    withdrawRuntimeEvalBoundaryFunctions(ctx, identityPlan, safeSelection.funcs, failure, recordPreparationFailure);
+    const failure = runtimeEvalBoundaryFailure();
+    withdrawEvalBoundaryFunctions(ctx, ast.sourceFile, identityPlan, safeSelection.funcs, recordPreparationFailure);
     for (const name of safeSelection.classMembers ?? []) recordPreparationFailure(name, failure);
     if (safeSelection.moduleInit?.reason === null && safeSelection.moduleInit.stmtCount > 0) {
       recordPreparationFailure(MODULE_INIT_UNIT_NAME, failure);

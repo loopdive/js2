@@ -321,7 +321,7 @@ const IMMUTABLE_GLOBAL_PROPERTY_NAMES: ReadonlySet<string> = new Set(["undefined
  * cached singleton? Preparation plans that singleton before a component seals
  * (`collectPreparedTopLevelFunctionValueTargetUnitIds`); the per-site closure
  * of the other route cannot be planned, so its lane keeps the whole-program
- * runtime-eval withdrawal (`withdrawRuntimeEvalBoundaryFunctions`).
+ * runtime-eval withdrawal (`withdrawEvalBoundaryFunctions`).
  */
 export function runtimeEvalPushPublishesCachedFunctionValues(ctx: CodegenContext): boolean {
   return ctx.standalone;

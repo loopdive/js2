@@ -5518,7 +5518,7 @@ What the withdrawal still protects, and what replaces it:
 ### Minimal correct boundary (A1, as built)
 
 - **Selection.** The old withdrawal site in `planIrOverlay` keeps its shape,
-  except that functions go through `withdrawRuntimeEvalBoundaryFunctions`
+  except that functions go through `withdrawEvalBoundaryFunctions`
   (`codegen/ir-overlay-preparation.ts`, beside the other preparation-time
   selection edits). A withdrawn function records the same
   `late-preparation-unsupported` failure plus its reason:
@@ -5535,7 +5535,16 @@ What the withdrawal still protects, and what replaces it:
   and the value-target collector all read it, so A1 adds no `ctx.standalone`
   or `ctx.wasi` arm (standalone-arms gate, #7143).
 
-  The rest prepare.
+  - `boundary-closure` (review round 1): selection's call-graph closure has
+    already run, so the withdrawn set re-closes it through the existing
+    `closeIrBlockedComponentByIdentity`. Without that, a claimed caller of a
+    withdrawn function failed at build with "direct call … has no exact
+    AST-site plan". Example: `g1 ← callsG1 ← run` with
+    `Function("g1 = …")()`.
+
+  The rest prepare. The test walks the whole declaration, so parameter
+  defaults count too, and the shared failure record is
+  `runtimeEvalBoundaryFailure(why)`.
 - **Pre-seal publication**
   (`ir-prepared-free-functions.ts`,
   `collectPreparedTopLevelFunctionValueTargetUnitIds`).
