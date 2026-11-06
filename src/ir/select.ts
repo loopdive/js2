@@ -3180,6 +3180,8 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
       isComparisonResultOperator(op) || op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken
     );
   }
+  // (#7283) boxed like a comparison.
+  if (isModuleBooleanAliasCall(candidate)) return true;
   return (
     ts.isConditionalExpression(candidate) &&
     concreteDynamicAssignmentOperandIsBuildable(candidate.whenTrue) &&
@@ -3374,6 +3376,11 @@ function dynamicUsesAreMoveOnly(
     return access.expression;
   };
 
+  /** (#7265) A local direct call whose result is an exact boolean: boxes onto the carrier like a comparison. */
+  const isLocalBoolCall = (concrete: ts.Expression): boolean =>
+    ts.isCallExpression(concrete) &&
+    ts.isIdentifier(concrete.expression) &&
+    calleeReturnKind(concrete.expression.text, typeMap) === "bool";
   const isDynShaped = (e: ts.Expression): boolean => {
     e = unwrap(e);
     if (e.kind === ts.SyntaxKind.ThisKeyword) return subjectHasAmbientThis();
@@ -3822,12 +3829,10 @@ function dynamicUsesAreMoveOnly(
         if (!dynNames.has(e.left.text)) return scanExpr(e.right, false);
         if (isDynShaped(e.right)) return scanExpr(e.right, true);
         const concrete = unwrap(e.right);
-        // (#7265) A local call's boolean result boxes onto the carrier like a comparison.
-        const boolCall =
-          ts.isCallExpression(concrete) &&
-          ts.isIdentifier(concrete.expression) &&
-          calleeReturnKind(concrete.expression.text, typeMap) === "bool";
-        return (boolCall || concreteDynamicAssignmentOperandIsBuildable(concrete)) && scanExpr(concrete, false);
+        return (
+          (isLocalBoolCall(concrete) || concreteDynamicAssignmentOperandIsBuildable(concrete)) &&
+          scanExpr(concrete, false)
+        );
       }
       if (op === ts.SyntaxKind.PlusToken && (leftIsDyn || rightIsDyn)) {
         if (!currentDynamicRuntimeBuildable) return false;
@@ -3873,9 +3878,12 @@ function dynamicUsesAreMoveOnly(
             const concrete = unwrap(operand);
             // A scalar parameter projected from the direct declaration ABI is
             // just as boxable as a literal: from-ast has its exact f64/bool/
-            // string IrType and emits the canonical box before dyn.eq.
+            // string IrType and emits the canonical box before dyn.eq. So is
+            // (#7283) a local call's boolean result under strict equality
+            // (`desc.writable !== isWritable(obj, name)`).
             return (
-              concreteDynamicEqualityOperandIsBuildable(concrete, isStrictEqualityOperator(op)) &&
+              (concreteDynamicEqualityOperandIsBuildable(concrete, isStrictEqualityOperator(op)) ||
+                (isStrictEqualityOperator(op) && isLocalBoolCall(concrete))) &&
               scanExpr(concrete, false)
             );
           };
@@ -4107,6 +4115,9 @@ function dynamicUsesAreMoveOnly(
       if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
         return scanDirectCallArgs(e, e.expression.text);
       }
+      // (#7283) Likewise a member call on a stable function object
+      // (`assert.sameValue(desc, undefined, msg)`): its dynamic result is dropped.
+      if (ts.isCallExpression(e) && functionObjectMemberCallee(e) !== null) return scanExpr(e, true);
       return scanExpr(s.expression, false);
     }
     if (ts.isIfStatement(s)) {
@@ -8197,11 +8208,27 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
   if (ts.isConditionalExpression(candidate)) {
     return trackedModuleInfluenceIsBoolean(candidate.whenTrue) && trackedModuleInfluenceIsBoolean(candidate.whenFalse);
   }
+  if (isModuleBooleanAliasCall(candidate)) return true;
   if (ts.isCallExpression(candidate)) {
     if (expressionIsModuleBindingRootedCall(candidate)) return false;
     return currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "boolean";
   }
   return false;
+}
+
+/**
+ * (#7283) A certified boolean alias call through the module binding itself
+ * (`__hasOwnProperty(obj, name)`, not a local that shadows it), whose
+ * arguments read no module value: its result is the provider's exact
+ * boolean, never the module slot.
+ */
+function isModuleBooleanAliasCall(candidate: ts.Expression): boolean {
+  return (
+    ts.isCallExpression(candidate) &&
+    moduleBinding(candidate.expression) !== undefined &&
+    certifiedAliasCall(candidate, () => false)?.result === "boolean" &&
+    !candidate.arguments.some(expressionTouchesTrackedModuleValue)
+  );
 }
 
 /**

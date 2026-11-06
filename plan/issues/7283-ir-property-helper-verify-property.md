@@ -1,7 +1,8 @@
 ---
 id: 7283
 title: "IR: propertyHelper verifyProperty (and the other 130-file harness units) on the IR path"
-status: blocked
+status: done
+completed: 2026-11-06
 sprint: current
 created: 2026-11-06
 updated: 2026-11-06
@@ -13,7 +14,8 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 parent: 7250
-related: [7269, 7272, 7266, 2949, 7106]
+related: [7269, 7272, 7266, 2949, 7106, 7127]
+depends_on: [7127]
 assignee: "ttraenkler/c-r11"
 ---
 
@@ -58,105 +60,50 @@ inline copy of propertyHelper (`.tmp/vp.py`), stubbing each refusal in turn.
 | 6 | `if (__hasOwnProperty(desc, 'value'))` | `condition-module-value-nonbool` | **admission (i):** a certified boolean alias call through the module binding (not a shadowing local, no module-value argument) is exactly boolean in `trackedModuleInfluenceIsBoolean`. This is the call-result arm only; #7266's value arms are untouched. Measured. |
 | 7 | `__hasOwnProperty(desc, 'enumerable') && desc.enumerable !== undefined` | `move-only[concrete]` on `desc.enumerable !== undefined` | **contract: stop.** `dynamicMemberEqualityOperandIsBuildable` refuses a dynamic member read as an equality operand in any value-used function (the callback-boundary carrier seam: legacy array HOFs pass the direct array carrier). verifyProperty is value-used (`var verifyPrimordialProperty = verifyProperty`; `options && options.verifyProperty \|\| verifyProperty`). Narrowing that rule changes the seam's safety contract. |
 
-Admissions (g), (h) and (i) are written and measured: they clear refusals
-2, 3 and 6. The diff is ~45 lines in `src/ir/select.ts`. It is not shipped:
-on its own it frees 0 units, because 1, 4, 5 and 7 remain. With all of them
-applied, `Boolean/prop-desc.js` stays at 7/25 legacy units.
+## What this PR ships (lead decision, 2026-11-06)
 
-### Zero-legacy files
+Every measured slice that stays under the existing contract ships, even
+though Boolean/prop-desc stays at 7/25. Each peeled step shortens the chain
+the next lane inherits.
 
-**0** in this issue's reach. All seven units above are legacy in every
-propertyHelper includer. Units 4 and 7 of verifyProperty's chain need
-contract decisions, and so do the `param-dynamic-carrier-diverges-from-legacy`
-units (their legacy parameter carrier differs by call site).
+- **(1) `__getOwnPropertyNames`:** `Object.getOwnPropertyNames` joins
+  `STORED_STATICS` (arity 1, dynamic result, provider `__getOwnPropertyNames`,
+  exactly legacy's `emitStoredObjectIntrospectionCall`). `names.length` and
+  `names[i]` in a counted loop then go through the existing dynamic
+  member-read and relational arms.
+- **(g)** A statement-position member call on a stable function object
+  (`assert.sameValue(desc, undefined, msg)`): the move-only scan already
+  admits it in dyn position, and a statement drops the result. This mirrors
+  the statement-position direct-call rule.
+- **(h)** A certified boolean alias call through the module binding
+  (`isModuleBooleanAliasCall`) is a concrete operand that
+  `boxConcreteToDynamic` boxes like a comparison: `assert(__hasOwnProperty(o, k), …)`.
+- **(i)** The same call is exactly boolean in `trackedModuleInfluenceIsBoolean`:
+  `if (__hasOwnProperty(desc, 'value'))`. This is the call-result arm only;
+  #7266's value arms are untouched.
+- **(j)** A local call's boolean result as a strict-equality operand
+  (`desc.writable !== isWritable(obj, name)`). This reuses #7265's
+  local-bool-call test, now one helper (`isLocalBoolCall`) shared by both
+  sites.
 
-## Decisions needed (rules owner, #2949 / #7106)
+With the stubs for the remaining blockers below, verifyProperty becomes a
+whole IR unit. The inline harness copy passes on gc and standalone, and so do
+mutated-failure copies (wrong value or writable, a missing property), which
+each throw Test262Error.
 
-1. **A dynamic `null` producer:** a `dyn.null` op with a per-lane
-   `emitNull` on `IrDynamicLowering`, or boxing an externref null through
-   the call-argument ABI. Which representation matches legacy's on each
-   lane?
-2. **The callback-boundary carrier seam for value-used functions:** may a
-   function whose only value uses are module-var aliases and `||` fallbacks,
-   never passed to an array HOF, count as "direct-only" for dynamic member
-   equality operands?
+## What still blocks verifyProperty
 
-Once both are decided, the order is: (g) (h) (i), then 1 (the
-`getOwnPropertyNames` loop), then 5 (`__push` / `__join`), then re-peel.
+| # | construct | owner |
+| --- | --- | --- |
+| 4 | `assert.notSameValue(desc, null, …)`: a `null` argument into a dynamic carrier | depends on **#7127** (dynamic-null lowering, another lane) |
+| 5 | `__push(failures, …)` / `__join(failures, '; ')`: uncurried `Array.prototype` aliases on a local array | next slice |
+| 7 | `desc.enumerable !== undefined` and `names[i] === "value"`: dynamic member reads as equality operands in a value-used function | **#2949** contract question (the lead's proposal on #6583: module-var aliases that are only read, never called through the carrier, should not make the function value-used) |
+| 8 | `__defineProperty(obj, name, originalDesc)` (`options.restore`): the stored `Object.defineProperty` alias | next slice |
 
-## Appendix: the measured (g)(h)(i) diff (not shipped)
+## Decisions (recorded)
 
-<details><summary>src/ir/select.ts</summary>
-
-```diff
-diff --git a/src/ir/select.ts b/src/ir/select.ts
-index 9ceb08aa..33c0078b 100644
---- a/src/ir/select.ts
-+++ b/src/ir/select.ts
-@@ -3165,6 +3165,8 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression):
-       isComparisonResultOperator(op) || op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken
-     );
-   }
-+  // (#7283) boxed like a comparison.
-+  if (isModuleBooleanAliasCall(candidate)) return true;
-   return (
-     ts.isConditionalExpression(candidate) &&
-     concreteDynamicAssignmentOperandIsBuildable(candidate.whenTrue) &&
-@@ -4092,6 +4094,9 @@ function dynamicUsesAreMoveOnly(
-       if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
-         return scanDirectCallArgs(e, e.expression.text);
-       }
-+      // (#7283) Likewise a member call on a stable function object
-+      // (`assert.sameValue(desc, undefined, msg)`): its dynamic result is dropped.
-+      if (ts.isCallExpression(e) && functionObjectMemberCallee(e) !== null) return scanExpr(e, true);
-       return scanExpr(s.expression, false);
-     }
-     if (ts.isIfStatement(s)) {
-@@ -8180,6 +8185,7 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
-   if (ts.isConditionalExpression(candidate)) {
-     return trackedModuleInfluenceIsBoolean(candidate.whenTrue) && trackedModuleInfluenceIsBoolean(candidate.whenFalse);
-   }
-+  if (isModuleBooleanAliasCall(candidate)) return true;
-   if (ts.isCallExpression(candidate)) {
-     if (expressionIsModuleBindingRootedCall(candidate)) return false;
-     return currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "boolean";
-@@ -8187,6 +8193,21 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
-   return false;
- }
- 
-+/**
-+ * (#7283) A certified boolean alias call through the module binding itself
-+ * (`__hasOwnProperty(obj, name)`, not a local that shadows it), whose
-+ * arguments read no module value: its result is the provider's exact
-+ * boolean, never the module slot.
-+ */
-+function isModuleBooleanAliasCall(candidate: ts.Expression): boolean {
-+  return (
-+    ts.isCallExpression(candidate) &&
-+    moduleBinding(candidate.expression) !== undefined &&
-+    certifiedAliasCall(candidate, () => false)?.result === "boolean" &&
-+    !candidate.arguments.some(expressionTouchesTrackedModuleValue)
-+  );
-+}
-+
- /**
-  * A `!` / `&&` / `||` operand whose module influence cannot be misread: every
-  * module-derived value in it is boolean, or the whole operand is exactly
-diff --git a/test262 b/test262
-deleted file mode 160000
-index b363f29d..00000000
---- a/test262
-+++ /dev/null
-@@ -1 +0,0 @@
--Subproject commit b363f29d3c43c626dc852744ad64a0b48a003693
-diff --git a/test262 b/test262
-new file mode 120000
-index 00000000..c5c40262
---- /dev/null
-+++ b/test262
-@@ -0,0 +1 @@
-+/home/user/js2/test262
-\ No newline at end of file
-```
-
-</details>
+1. **Dynamic `null`:** not re-implemented here. It depends on #7127 (null
+   literals use the existing null reference, boxed only for proven externref
+   dynamic consumers).
+2. **The value-used seam:** a #2949 contract question. The lead posted the
+   proposal on #6583.

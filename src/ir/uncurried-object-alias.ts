@@ -37,10 +37,10 @@ export type UncurriedObjectAliasMethod = "hasOwnProperty" | "propertyIsEnumerabl
  * uses for an erased operand (`__extern_is_array`), so both answer from the
  * same runtime predicate.
  */
-export type StoredStaticAliasMethod = "getOwnPropertyDescriptor" | "isArray";
+export type StoredStaticAliasMethod = "getOwnPropertyDescriptor" | "getOwnPropertyNames" | "isArray";
 
 /** The object-runtime provider a stored static lowers to. */
-export type StoredStaticAliasProvider = "__getOwnPropertyDescriptor" | "__extern_is_array";
+export type StoredStaticAliasProvider = "__getOwnPropertyDescriptor" | "__getOwnPropertyNames" | "__extern_is_array";
 
 type CertifiedAliasCapability = Extract<
   IrBackendTargetCapability,
@@ -70,6 +70,16 @@ const STORED_STATICS: Readonly<
     result: "dynamic",
     capability: "native-own-property-descriptor",
     provider: "__getOwnPropertyDescriptor",
+  },
+  // (#7283) `var __getOwnPropertyNames = Object.getOwnPropertyNames;`: the
+  // object runtime's own-key list, exactly legacy's
+  // `emitStoredObjectIntrospectionCall`. The result is a dynamic array value.
+  getOwnPropertyNames: {
+    receiver: "Object",
+    arity: 1,
+    result: "dynamic",
+    capability: "native-own-property-descriptor",
+    provider: "__getOwnPropertyNames",
   },
   isArray: {
     receiver: "Array",

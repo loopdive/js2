@@ -19,6 +19,7 @@ const PROVIDER_IMPORTS: Readonly<
     params: [{ kind: "externref" }, { kind: "externref" }],
     results: [{ kind: "externref" }],
   },
+  __getOwnPropertyNames: { params: [{ kind: "externref" }], results: [{ kind: "externref" }] },
   __extern_is_array: { params: [{ kind: "externref" }], results: [{ kind: "i32" }] },
 };
 
