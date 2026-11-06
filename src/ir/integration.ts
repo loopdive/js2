@@ -42,6 +42,7 @@ import {
 } from "./program-runtime-demands.js";
 import { ts } from "../ts-api.js";
 import type { IrIntegrationOptions } from "./integration-options.js";
+import { NATIVE_IN_HAS_SYMBOLS } from "./native-in.js";
 export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
@@ -9005,7 +9006,7 @@ function preregisterInOperatorSupport(ctx: CodegenContext, fns: readonly BuiltFn
           if (
             instr.kind === "call" &&
             instr.target.binding.kind === "runtime" &&
-            instr.target.binding.symbol === "__extern_has"
+            NATIVE_IN_HAS_SYMBOLS.has(instr.target.binding.symbol)
           ) {
             used = true;
           }

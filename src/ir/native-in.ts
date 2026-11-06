@@ -46,8 +46,26 @@ export function boxNativeInKey(
   );
 }
 
+/**
+ * The HasProperty probe for a key `%Object.prototype%` owns (a string literal
+ * on `OBJECT_PROTOTYPE_KEYS`), legacy's fixed-name `in` route
+ * (`binary-ops-in.ts`). `__extern_has` does not walk past an open `$Object`'s
+ * implicit `%Object.prototype%` terminal, so `"toString" in Object.create({})`
+ * answered false; the helper keeps a real hit and then asks the terminal,
+ * which still answers false for an explicit null prototype.
+ */
+const OBJECT_PROTOTYPE_NAME_HAS = "__extern_has_with_implicit_object_proto";
+
+/** The `in` operator's HasProperty runtime callables, for the IR's pre-registration. */
+export const NATIVE_IN_HAS_SYMBOLS: ReadonlySet<string> = new Set(["__extern_has", OBJECT_PROTOTYPE_NAME_HAS]);
+
 /** §13.10.1: validate the evaluated RHS before observable ToPropertyKey. */
-export function lowerNativeIn(builder: IrFunctionBuilder, key: IrValueId, receiver: IrValueId): IrValueId {
+export function lowerNativeIn(
+  builder: IrFunctionBuilder,
+  key: IrValueId,
+  receiver: IrValueId,
+  keyIsObjectPrototypeName: boolean,
+): IrValueId {
   const object = builder.emitTagTest(receiver, JS_TAG_IDS.Object);
   const callable = builder.emitTagTest(receiver, JS_TAG_IDS.Function);
   const valid = builder.emitBinary("i32.or", object, callable, irBool());
@@ -55,7 +73,8 @@ export function lowerNativeIn(builder: IrFunctionBuilder, key: IrValueId, receiv
   emitThrowTypeErrorIf(builder, invalid, "Cannot use 'in' operator to search for property in a non-object");
   const propertyKey = builder.emitCall(irRuntimeFuncRef("__to_property_key"), [key], irDynamic());
   if (propertyKey === null) throw new Error("ToPropertyKey returned no value for native in");
-  const result = builder.emitCall(irRuntimeFuncRef("__extern_has"), [receiver, propertyKey], irBool());
+  const has = keyIsObjectPrototypeName ? OBJECT_PROTOTYPE_NAME_HAS : "__extern_has";
+  const result = builder.emitCall(irRuntimeFuncRef(has), [receiver, propertyKey], irBool());
   if (result === null) throw new Error("HasProperty returned no value for native in");
   return result;
 }

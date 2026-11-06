@@ -189,24 +189,36 @@ export function openCarrierDefinePlan(call: ts.CallExpression): OpenCarrierDefin
 }
 
 /**
- * An inline literal of distinct data-descriptor fields whose values are
- * number, string or boolean literals, or null. Source order is then
- * unobservable, as no getter runs. Shared with the #7276 `Object.create`
- * descriptor map (`ir/object-create-call.ts`).
+ * The properties of an object literal whose every member is a
+ * `name: initializer` assignment with a distinct identifier or string-literal
+ * name, in source order; else null. Shared by the descriptor parser below and
+ * the #7276 `Object.create` descriptor map (`ir/object-create-call.ts`).
  */
-export function literalDataDescriptorFields(descriptor: ts.Expression): readonly DataDescriptorField[] | null {
-  if (!ts.isObjectLiteralExpression(descriptor)) return null;
-  const fields: DataDescriptorField[] = [];
-  for (const property of descriptor.properties) {
+export function staticNamedProperties(literal: ts.Expression): readonly DataDescriptorField[] | null {
+  if (!ts.isObjectLiteralExpression(literal)) return null;
+  const properties: DataDescriptorField[] = [];
+  for (const property of literal.properties) {
     if (!ts.isPropertyAssignment(property) || !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
       return null;
     }
     const name = property.name.text;
-    if (!DATA_DESCRIPTOR_FIELDS.has(name) || fields.some((field) => field.name === name)) return null;
-    if (!isPrimitiveLiteral(property.initializer)) return null;
-    fields.push({ name, initializer: property.initializer });
+    if (properties.some((field) => field.name === name)) return null;
+    properties.push({ name, initializer: property.initializer });
   }
-  return fields;
+  return properties;
+}
+
+/**
+ * The fields of an inline data descriptor whose values are number, string or
+ * boolean literals; null for any other descriptor. Source order is then
+ * unobservable, as no getter runs.
+ */
+export function literalDataDescriptorFields(descriptor: ts.Expression): readonly DataDescriptorField[] | null {
+  const fields = staticNamedProperties(descriptor);
+  const literal = fields?.every(
+    ({ name, initializer }) => DATA_DESCRIPTOR_FIELDS.has(name) && isPrimitiveLiteral(initializer),
+  );
+  return literal === true ? fields : null;
 }
 
 function isPrimitiveLiteral(expr: ts.Expression): boolean {

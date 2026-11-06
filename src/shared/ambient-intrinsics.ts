@@ -79,8 +79,8 @@ export function isAmbientIntrinsicValueUse(
  * `node` names the realm's global of that name: every declaration of its
  * symbol is a lib one, and nothing in its file declares the name (a SCRIPT's
  * top-level `function JSON() {}` is reported with the lib declarations alone,
- * so the checker's answer is not enough). Shared with the #7253 / #7267
- * ambient-call admission (`ir/ambient-global-function-call.ts`).
+ * so the checker's answer is not enough). Shared with the #7276
+ * `Object.create` admission (`ir/object-create-call.ts`).
  */
 export function isUnshadowedLibGlobal(
   node: ts.Identifier,

@@ -5,12 +5,18 @@
  *
  * Legacy expands the descriptor map at compile time (`call-builtin-static.ts`,
  * the `Object.create` arm): `__object_create(<proto $Object>)`, then one
- * per-key define. The IR emits the same sequence from the same runtime
- * family. The proto is a fresh open `$Object`, and each key goes through the
- * #7128 open-carrier define (`__obj_define_from_desc` over a descriptor
- * `$Object`, the applier legacy's standalone arm calls for a descriptor it
- * cannot fold). The object crosses onto the dynamic carrier, whose existing
- * member-read / `typeof` / `for-in` machinery serves the result.
+ * define per key. For the literal descriptors admitted here, legacy folds the
+ * flags (`__defineProperty_value(obj, key, value, flags)`). The IR instead
+ * takes legacy's other arm, the one for descriptors it cannot fold: the #7128
+ * open-carrier define, `__obj_define_from_desc` over a descriptor `$Object`.
+ * That runs ToPropertyDescriptor at runtime over the same literal fields, so
+ * no flag encoding is duplicated. The object crosses onto the dynamic
+ * carrier, whose member-read / `typeof` / `for-in` / `in` arms serve the
+ * result.
+ *
+ * Lanes: `native-dynamic-member-read`, i.e. standalone and the native-first
+ * gc lane, which projects as standalone (`legality.ts`). WASI keeps legacy:
+ * its IR member read does not answer for an open `$Object`.
  *
  * Admitted, so that the definition order and every descriptor are fixed at
  * compile time:
@@ -33,7 +39,11 @@ import ts from "typescript";
 import { isUnshadowedLibGlobal } from "../shared/ambient-intrinsics.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
-import { literalDataDescriptorFields, type DataDescriptorField } from "./empty-object-literal.js";
+import {
+  literalDataDescriptorFields,
+  staticNamedProperties,
+  type DataDescriptorField,
+} from "./empty-object-literal.js";
 import { irDynamic, irVal, type IrValueId } from "./nodes.js";
 import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
 
@@ -46,7 +56,7 @@ interface ObjectCreateProperty {
 /** What both sides ask of their lane and binding resolver. */
 export interface IrObjectCreateAdmission {
   /** The result is read through the carrier's member read (standalone only; see `legality.ts`). */
-  readonly supportsBackendCapability: ((capability: "native-dynamic-member-read") => boolean) | undefined;
+  readonly supportsBackendCapability: (capability: "native-dynamic-member-read") => boolean;
   /** The lib-only binding test — a script `function Object() {}` merges with the lib's. */
   readonly isLibOnlyBinding: (node: ts.Identifier) => boolean;
 }
@@ -55,15 +65,12 @@ const CANONICAL_ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;
 
 /** The descriptor map's keys in source order, or null when one is not admitted. */
 function descriptorMapProperties(map: ts.Expression): readonly ObjectCreateProperty[] | null {
-  if (!ts.isObjectLiteralExpression(map)) return null;
+  const entries = staticNamedProperties(map);
+  if (entries === null) return null;
   const properties: ObjectCreateProperty[] = [];
-  for (const property of map.properties) {
-    if (!ts.isPropertyAssignment(property) || !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
-      return null;
-    }
-    const key = property.name.text;
-    if (key === "__proto__" || CANONICAL_ARRAY_INDEX.test(key) || properties.some((p) => p.key === key)) return null;
-    const fields = literalDataDescriptorFields(property.initializer);
+  for (const { name: key, initializer } of entries) {
+    if (key === "__proto__" || CANONICAL_ARRAY_INDEX.test(key)) return null;
+    const fields = literalDataDescriptorFields(initializer);
     if (fields === null) return null;
     properties.push({ key, fields });
   }
@@ -88,10 +95,10 @@ export function objectCreateDescriptorMap(
   ) {
     return null;
   }
-  const [proto, map] = expr.arguments as unknown as [ts.Expression, ts.Expression];
+  const proto = expr.arguments[0]!;
   if (!ts.isObjectLiteralExpression(proto) || proto.properties.length > 0) return null;
-  if (admission.supportsBackendCapability?.("native-dynamic-member-read") !== true) return null;
-  const properties = descriptorMapProperties(map);
+  if (!admission.supportsBackendCapability("native-dynamic-member-read")) return null;
+  const properties = descriptorMapProperties(expr.arguments[1]!);
   if (properties === null || !isUnshadowedLibGlobal(callee.expression, admission.isLibOnlyBinding)) return null;
   return properties;
 }

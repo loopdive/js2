@@ -61,6 +61,8 @@ interface Case {
   readonly source: string;
   /** Units that take the IR body where the lane claims, and keep legacy's elsewhere. */
   readonly irUnits?: readonly string[];
+  /** The lanes whose arm claims `irUnits`, when that is not this admission's lane set; others are unchecked. */
+  readonly irRouteOn?: readonly string[];
   /** Units that must keep the legacy body on every lane. */
   readonly legacyUnits?: readonly string[];
   /**
@@ -69,6 +71,8 @@ interface Case {
    * from JS (identical on main; not this admission's to fix).
    */
   readonly againstLegacy?: boolean;
+  /** The lanes where legacy itself answers differently from JS (identical on main). */
+  readonly againstLegacyOn?: readonly string[];
   /** The flag types are deliberately outside the lib's `PropertyDescriptor`. */
   readonly skipSemanticDiagnostics?: boolean;
 }
@@ -135,12 +139,31 @@ var q = Object.create({}, { p: { value: 1, configurable: true } });
 delete q.p;
 if (q.p !== undefined) throw "deleted";`,
   },
-  // Legacy answers `typeof o.hasOwnProperty` wrongly here; the IR route reads the same object.
-  "the prototype chain reaches Object.prototype": {
+  // Known divergence, identical on main: legacy and the IR route both answer
+  // `typeof o.hasOwnProperty` wrongly here (JS: "function").
+  "known divergence: an inherited method read through the carrier": {
     againstLegacy: true,
     source: `var o = Object.create({}, { p: { value: 1 } });
 if (typeof o.hasOwnProperty !== "function") throw "inherited";
 if (!o.hasOwnProperty("p")) throw "own";`,
+  },
+  // `in` over the carrier reaches the implicit %Object.prototype% terminal.
+  // gc lowers `in` through its own (host) arm; legacy WASI answers it wrongly on main.
+  "in: own, inherited Object.prototype and absent keys": {
+    irRouteOn: ["standalone"],
+    againstLegacyOn: ["wasi"],
+    source: `var o = Object.create({}, { p: { value: 1 } });
+if (!("p" in o)) throw "own";
+if (!("toString" in o) || !("valueOf" in o) || !("hasOwnProperty" in o)) throw "inherited";
+if ("q" in o) throw "absent";`,
+    irUnits: ["<module-init>"],
+  },
+  // A dynamic parameter is the native `in` arm's own claim (standalone and WASI), not this admission's.
+  "in: an Object.prototype key on a dynamic parameter": {
+    irRouteOn: ["standalone", "wasi"],
+    source: `function f(o) { if (!("toString" in o)) throw "in"; if ("nope" in o) throw "absent"; return 1; }
+f({ p: 1 });`,
+    irUnits: ["f"],
   },
   // Shapes the admission refuses keep the legacy call.
   "an accessor descriptor": {
@@ -226,12 +249,16 @@ describe("#7276 Object.create with a literal descriptor map on the IR path", () 
         const options = testCase.skipSemanticDiagnostics
           ? { ...lane.options, skipSemanticDiagnostics: true }
           : lane.options;
-        const expected = testCase.againstLegacy
-          ? await legacyVerdict(testCase.source, options)
-          : scriptVerdict(testCase.source);
+        const expected =
+          testCase.againstLegacy || testCase.againstLegacyOn?.includes(lane.name)
+            ? await legacyVerdict(testCase.source, options)
+            : scriptVerdict(testCase.source);
         const { result, value } = await compileAndRun(testCase.source, options);
         expect(value).toBe(expected);
-        for (const unit of testCase.irUnits ?? []) expect(route(result, unit), unit).toBe(lane.irRoute);
+        const irRoute = testCase.irRouteOn ? testCase.irRouteOn.includes(lane.name) : lane.irRoute;
+        if (!testCase.irRouteOn || irRoute) {
+          for (const unit of testCase.irUnits ?? []) expect(route(result, unit), unit).toBe(irRoute);
+        }
         for (const unit of testCase.legacyUnits ?? []) expect(route(result, unit), unit).toBe(false);
       });
     }

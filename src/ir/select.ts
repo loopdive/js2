@@ -8637,7 +8637,8 @@ function isAmbientIntrinsicValue(expr: ts.Identifier): boolean {
 function selectorObjectCreateDescriptorMap(expr: ts.CallExpression) {
   const resolver = currentModuleBindingResolver;
   return objectCreateDescriptorMap(expr, {
-    supportsBackendCapability: currentSelectionOptions?.supportsBackendCapability,
+    supportsBackendCapability: (capability) =>
+      currentSelectionOptions?.supportsBackendCapability?.(capability) === true,
     isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding(node) === true,
   });
 }
@@ -12221,12 +12222,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           (arg) => !ts.isSpreadElement(arg) && expressionIsProvenNumber(arg) && isPhase1Expr(arg, scope, localClasses),
         );
       }
+      // (#7276) `Object.create({}, { <literal data descriptors> })`: literal operands only.
+      if (selectorObjectCreateDescriptorMap(expr) !== null) return true;
       // ES5 Object.defineProperty — an exact ambient static call is a
       // symbolic host-helper operation, not an instance method on a value
       // named `Object`. Reject shadowed bindings and host-free targets before
       // walking the three ordinary Phase-1 arguments.
-      // (#7276) `Object.create({}, { <literal data descriptors> })`: literal operands only.
-      if (selectorObjectCreateDescriptorMap(expr) !== null) return true;
       if (isAmbientObjectDefineProperty(expr) && !scope.has("Object")) {
         if (isOpenCarrierDefine(expr)) return true;
         if (currentSelectionOptions?.supportsBackendCapability?.("host-object-define-property") === false) {
