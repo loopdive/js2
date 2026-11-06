@@ -7,10 +7,10 @@
 // the IR call-site lattice for `message` to `string`, while legacy's own
 // call-site inference sees an opaque caller and registers `externref`. The
 // IR's implicit-parameter projection — the shared selector/resolver mirror of
-// legacy's ABI — did not consider a `||` operand, so both IR sides fell back
+// legacy's ABI — did not consider a `||` left operand, so both IR sides fell back
 // to the lattice's `string`, and `message || ""` was refused
-// (`expr-logical-value-family`). The projection now covers `||`/`&&`
-// operands, answers legacy's `externref`, and the unit lowers like the
+// (`expr-logical-value-family`). The projection now covers a `||`/`&&`
+// left operand (a ToBoolean test, like a conditional's), answers legacy's `externref`, and the unit lowers like the
 // default (dynamic-param) harness case.
 //
 // Each case asserts the route on standalone and the default gc target and
@@ -125,20 +125,20 @@ function inner() { return throws(Test262Error, fail) + "|" + throws(TypeError, f
     irUnits: ["Test262Error"],
     wasiValue: "throws",
   },
-  "string || on a plain function (call sites agree: string ABI, unchanged)": {
+  "string || on a plain function (value only)": {
     source: `function pick(s) { return s || "none"; }
 function g() { return pick("x") + pick(""); }
 function inner() { return g(); }`,
     irUnits: [],
     wasiValue: NaN,
   },
-  "string && on a plain function (call sites agree: string ABI, unchanged)": {
+  "string && on a plain function (value only)": {
     source: `function both(s) { return s && "yes"; }
 function g() { return both("x") + "|" + both(""); }
 function inner() { return g(); }`,
     irUnits: [],
   },
-  "|| on a plain function with mixed callers": {
+  "|| on a plain function with mixed callers (value only)": {
     source: `function pick(s) { return s || "none"; }
 function g() { return pick("x") + pick(0) + pick(5); }
 function inner() { return g(); }`,

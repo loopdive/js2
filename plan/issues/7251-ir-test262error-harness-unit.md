@@ -17,7 +17,7 @@ parent: 7106
 related: [7242, 7243, 2949, 7240]
 assignee: "ttraenkler/c-lead"
 loc-budget-allow:
-  # 2026-11-05 (#7251): +2 lines, the `||`/`&&` entries in the existing IR_IMPLICIT_PARAM_PROJECTION_BINARY_OPS table (prettier puts one element per line)
+  # 2026-11-06 (#7251): +6 lines, the `||`/`&&` left-operand arm beside the conditional-test arm of `collectIrImplicitParamProjectionCandidates`
   - src/codegen/index.ts
 ---
 
@@ -127,12 +127,19 @@ or `asyncHelpers.js`.
    (`requires bool operands`), because the resolver still says `string` —
    proof that the selector and resolver must change together, through the
    shared projection.
-5. Peeled with the projection taught `||`/`&&` (the change below): the
+5. Peeled with the projection taught the `||`/`&&` left operand (the change
+   below): the
    projection runs legacy's call-site inference, finds the opaque argument,
    answers `dynamic` on both sides, and the unit lowers exactly like the
    default case (`emitted`, `r2Withdrawal: function-value-reference`).
 
-No further refusal: `this` as a receiver (`dyn.current_this`), `this
+6. With `||` admitted, a self-guarded constructor whose callers disagree
+   (`MyErr(7)` and `make("hi")`, a `union` lattice) is now claimed too, and
+   the S3c value-use planner hit its raw lattice signature: a hard compile
+   error `no concrete type (mapped=union)` (caught by the #7242 test, 10
+   cases). See the second change below.
+
+No further refusal inside `Test262Error`: `this` as a receiver (`dyn.current_this`), `this
 instanceof Test262Error` (`dyn.instanceof_fn`), `return new
 Test262Error(message)` (`dyn.construct`), `this.message = …` (sloppy
 `dyn.member_set`) and the dynamic return are all #7106 S3c arms that already
@@ -147,10 +154,13 @@ with a dynamic param and dynamic return is that signature; the
 
 ## Implementation Plan
 
-- **Module:** `src/codegen/index.ts`, the implicit-parameter projection
-  candidates (`IR_IMPLICIT_PARAM_PROJECTION_BINARY_OPS`). Add `||` and `&&`.
-  The selector and the IR resolver already share this projection, so they
-  keep agreeing by construction; no new predicate, no new ABI.
+- **Module:** `src/codegen/index.ts`,
+  `collectIrImplicitParamProjectionCandidates`: a parameter that is the LEFT
+  operand of `||` / `&&` becomes a projection candidate, as a conditional's
+  test already is (both are ToBoolean tests). The right operand is a value
+  position, like a ternary branch, and stays out. The selector and the IR
+  resolver already share this projection, so they keep agreeing by
+  construction; no new predicate, no new ABI.
 - **Reuses:** legacy's own `inferParamTypeFromCallSites` /
   `inferImplicitAnyParamType` verdict (the projection's existing body).
 - **Second change, found by the #7242 test:** once a self-guarded
@@ -158,15 +168,17 @@ with a dynamic param and dynamic return is that signature; the
   `make("hi")` callers), the S3c value-use planner
   (`planIrImportedCalls`, `src/codegen/ir-imported-call-planning.ts`) resolved
   the claim's raw lattice signature and rethrew the `IrUnsupportedError` as a
-  hard compile error (`no concrete type (mapped=union)`). A self-guarded value
-  use never reads that signature (`dyn.construct` takes the carrier,
-  `dyn.instanceof_fn` the unit target), so it now takes the opaque signature,
-  exactly as receiver and stored uses already did in the same `catch`.
+  hard compile error (`no concrete type (mapped=union)`). No use of an
+  `objectReceiver` plan reads that signature (`dyn.construct` takes the
+  carrier, `dyn.instanceof_fn` the unit target; the accessor call boxes
+  straight to dynamic), so an unresolvable one now always takes the opaque
+  signature. The `catch` used to list receiver and stored uses; every plan
+  reaching it is one of the three, so the condition is dropped.
 - **Not touched:** `dynamicUsesAreMoveOnly`, the Shepherd's getter-callable
   files, the runtime-eval callable carrier, the lattice core
   (`src/ir/propagate.ts`).
-- **Code-quality criterion:** a two-token change to an existing table; no new
-  arm, helper or branch.
+- **Code-quality criterion:** one arm beside its sibling (the conditional
+  test) and one simplified `catch`; no new helper, predicate or ABI.
 - **Correctness:** never worse than base on gc, standalone, wasi
   (probes below); typed corpus byte-identical or explained; wrapped ledger
   A/B; raw ledger identical; standalone test262 A/B with no pass→fail.
