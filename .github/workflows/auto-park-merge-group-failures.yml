@@ -57,8 +57,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ github.workflow_sha }}
           sparse-checkout: |
             scripts/auto-park-merge-group-failure.mjs
+            scripts/enforce-pr-queue-hold.mjs
           sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v6
         with:
