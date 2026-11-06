@@ -298,6 +298,22 @@ function numberIfNullOrUndefined(family: OperandFamily): OperandFamily {
   return family === "undefined" || family === "nullish" ? "number" : family;
 }
 
+/**
+ * (#7282) ToNumber(boolean) is 0 / 1. A numeric reader reads a boolean as an
+ * f64 beside an operand it ToNumbers too: a number, the `null` / `undefined`
+ * it reads as one, or the dynamic carrier (`undefined` is one on the native
+ * lanes); `- * / %` read a boolean pair as two f64s (bitwise and relational
+ * operators take that pair as i32s). from-ast's `lowerBinaryOperands`
+ * converts each boolean operand.
+ */
+export function booleanReadAsNumber(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
+  if (!isNumericReaderOperator(op)) return false;
+  if (left === "boolean" && right === "boolean") return isNumericArithmeticOperator(op);
+  const partnerIsNumeric = (family: OperandFamily) =>
+    numberIfNullOrUndefined(family) === "number" || family === "dynamic";
+  return (left === "boolean" && partnerIsNumeric(right)) || (right === "boolean" && partnerIsNumeric(left));
+}
+
 function isI32Carrier(family: OperandFamily): boolean {
   return family === "boolean" || family === "int32";
 }
@@ -316,10 +332,13 @@ function isI32Carrier(family: OperandFamily): boolean {
  * - a string operand: `+` converts each side as its `+` proof names, so the
  *   `+` rule decides which sides it takes (#7066); the equalities and the
  *   relationals need a string on both sides.
+ * - a numeric reader ToNumbers a boolean beside a number, `null`, `undefined`
+ *   or the carrier ({@link booleanReadAsNumber});
  * - otherwise one carrier on both sides: `+ - * / %` need f64; relational,
  *   equality and bitwise take f64 or i32.
  */
 export function binaryOperandsAdmissible(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
+  if (booleanReadAsNumber(op, left, right)) return true;
   if (left === "nullish" || right === "nullish") {
     if (!isNumericReaderOperator(op)) return false;
     return binaryOperandsAdmissible(op, numberIfNullOrUndefined(left), numberIfNullOrUndefined(right));
