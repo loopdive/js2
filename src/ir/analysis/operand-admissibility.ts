@@ -80,6 +80,19 @@ export function isUndefinedCompareOperand(expr: ts.Expression, isShadowed: (name
 }
 
 /**
+ * The identifier `undefined` reads the global value: no local of that name
+ * (`locals`) and no script binding (`isModuleBinding`). The selector and the
+ * builder ask this one rule over their own scopes.
+ */
+export function isGlobalUndefinedIdentifier(
+  id: ts.Identifier,
+  locals: { has(name: string): boolean },
+  isModuleBinding: (id: ts.Identifier) => boolean,
+): boolean {
+  return id.text === "undefined" && !locals.has("undefined") && !isModuleBinding(id);
+}
+
+/**
  * How a lane judges a `+`: whether it formats a number as a string (the
  * `number-to-string` capability), and which identifiers are destructured
  * leaves that read an array element (`patternLeafReadsElement`).
