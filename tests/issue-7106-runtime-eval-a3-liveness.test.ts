@@ -36,9 +36,24 @@ describe("#7106 A3 — write-precise runtime-eval liveness", () => {
     ["an Annex B block function", '(0, eval)("{ function f() { return 2; } }");'],
     ["a string-keyed global write", "(0, eval)(\"this['f'] = function () { return 2; }\");"],
     ["a property-defining call", "(0, eval)(\"Object.defineProperty(this, 'f', { value: 2 })\");"],
-    ["nested dynamic code", "(0, eval)(\"eval('1')\");"],
+    ["nested dynamic code that writes", "(0, eval)(\"eval('f = function () { return 2; }')\");"],
+    ["nested computed code", '(0, eval)("eval(x)");'],
     ["a computed source", 'var src = "1"; (0, eval)(src);'],
     ["an escaped eval value", 'var e = eval; e("1");'],
+    // (#7146 review) a fragment that reaches eval / Function without naming them
+    ["a function's constructor", "(0, eval)(\"(function () {}).constructor('f = function () { return 2; }')()\");"],
+    ["a constructor chain", "(0, eval)(\"[].constructor.constructor('f = function () { return 2; }')()\");"],
+    [
+      "the generator constructor",
+      "(0, eval)(\"Object.getPrototypeOf(function* () {}).constructor('f = function () { return 2; }')().next()\");",
+    ],
+    ["a string-keyed eval", "(0, eval)(\"this['eval']('f = function () { return 2; }')\");"],
+    ["a computed eval key", "(0, eval)(\"this['ev' + 'al']('f = function () { return 2; }')\");"],
+    ["a string-keyed Function", "(0, eval)(\"this['Function']('f = function () { return 2; }')()\");"],
+    // the same reaches in the program itself
+    ["globalThis.eval", 'globalThis.eval("f = function () { return 2; }");'],
+    ['globalThis["eval"]', 'globalThis["eval"]("f = function () { return 2; }");'],
+    ["a program-level function constructor", '(function () {}).constructor("f = function () { return 2; }")();'],
   ])("makes the function live for %s", async (_, evalCall) => {
     const byName = await outcomes(program(evalCall));
     expect(byName.get("g")?.irBodyEmitted).toBe(false);
