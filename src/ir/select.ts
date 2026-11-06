@@ -774,6 +774,12 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly functionThisStrictness?: (fn: ts.FunctionDeclaration) => boolean | undefined;
   /**
+   * (#7260) The lowering is told each top-level function's code strictness
+   * (`functionCodeStrict`), so a dynamic element store keeps its PutValue
+   * failure rule.
+   */
+  readonly lowersFunctionCodeStrictness?: boolean;
+  /**
    * (#7106 S3c) May the IR use `ident` as a self-guarded constructor VALUE —
    * `new F(…)` through `dyn.construct`, `x instanceof F` through
    * `dyn.instanceof_fn`? Absent → never.
@@ -3664,12 +3670,12 @@ function dynamicUsesAreMoveOnly(
       if (
         op === ts.SyntaxKind.EqualsToken &&
         !expectDyn &&
-        subjectHasAmbientThis() &&
         ts.isExpressionStatement(e.parent) &&
         e.parent.expression === e &&
         (ts.isPropertyAccessExpression(e.left) || ts.isElementAccessExpression(e.left)) &&
         e.left.questionDotToken === undefined &&
-        stableDynamicStoreReceiverHasAdmittedRoot(e.left.expression) &&
+        ((subjectHasAmbientThis() && stableDynamicStoreReceiverHasAdmittedRoot(e.left.expression)) ||
+          (ts.isElementAccessExpression(e.left) && dynamicLocalElementStoreIsLowerable(fn, e.left))) &&
         isDynShaped(e.left.expression)
       ) {
         if (!currentDynamicRuntimeBuildable || !scanExpr(e.left.expression, true)) return false;
@@ -4374,6 +4380,21 @@ function identifierUpdateRefusal(
 function constBindingWriteRefused(root: ts.Node): boolean {
   const write = firstConstBindingWrite(root);
   return write !== undefined && !shapeNo("const-write", write);
+}
+
+/**
+ * (#7260) `<dynamic local>[k] = v` in a top-level function whose code
+ * strictness the lowering knows: the receiver is a moved carrier, and
+ * `dyn.member_set` takes the PutValue failure rule from that strictness
+ * (legacy's `__extern_set` / `__extern_set_strict`).
+ */
+function dynamicLocalElementStoreIsLowerable(fn: IrClaimableSubject, target: ts.ElementAccessExpression): boolean {
+  return (
+    ts.isIdentifier(unwrapPhase1Parens(target.expression)) &&
+    ts.isFunctionDeclaration(fn) &&
+    ts.isSourceFile(fn.parent) &&
+    currentSelectionOptions?.lowersFunctionCodeStrictness === true
+  );
 }
 
 function stableDynamicStoreReceiverHasAdmittedRoot(receiver: ts.Expression): boolean {
