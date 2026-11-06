@@ -5614,6 +5614,113 @@ the eval rows fail locally with "quickjs provider is not built".
   base. The other failures there match base (353 failing tests, mostly
   `issue-3518` receipt history and the missing QuickJS provider).
 
+### A3 implementation — write-precise eval liveness (2026-11-06)
+
+Branch `claude/7106-eval-a3`, stacked on A1 (#7136, da9e4611b0), because A3
+relies on A1's per-unit boundary and pre-seal value targets. It follows the
+plan on `claude/7106-eval-a2-plan` (bcfdb27dbb).
+
+#### Changes
+
+- **One literal-source write scan.** `literalSourceWrites`
+  (`src/ir/runtime-eval-boundary-plan.ts`) parses each literal fragment
+  once. The plan exposes the result as `dynamicSourceWrites`, and folds an
+  unnameable fragment into `unknownDynamicSource`.
+  - A name counts as written when it is an assignment, `++`/`--` or
+    `for-in`/`of` target, a declared name, an object-literal key or a string
+    literal.
+  - A fragment is unnameable when it has a computed assignment target, a
+    `defineProperty`/`defineProperties`/`assign`/`set` call, or a nested
+    `eval`/`Function`.
+  - `registerReassignedFunctionGlobals` drops its inline
+    `mentionedByDynamicSource` substring search and reads
+    `dynamicSourceWrites`. `dynamicSourceFragments` leaves the plan, since it
+    had no other reader.
+- **`(0, eval)`.** `isDirectCalleeIntrinsicValue` now walks through the
+  parentheses, so the comma callee is the indirect eval's callee, not an
+  escaped `eval` value. A bare `eval` read anywhere else still escapes.
+- **Function-object values under the push.**
+  - The blanket `runtimeEvalGlobalFunctionBindings` checks in
+    `ir-imported-call-planning.ts` go:
+    - `makeIrFunctionObjectValueResolver`;
+    - `hasPreparedFunctionObjectReference`;
+    - the receiver planner;
+    - `planIrFunctionValueResolverState`.
+  - Their per-declaration `reassignedFunctionDeclarations` checks already
+    refuse every live function.
+  - A fifth copy sat in `planMemberClosure`
+    (`function-member-closure-planning.ts`). It becomes
+    `runtimeEvalMayRebindClosureSite`: refused only when a source is computed
+    or a literal one writes the member or var name.
+  - That fifth copy was the "closure-return-type on
+    `assert._isSameValue = function (a, b) {…}`" blocker the plan asked to
+    diagnose: the member closure had no plan under the push. It is part of
+    this lever, not a separate one.
+- **S3c self-guarded constructor.**
+  - `selfGuardedConstructorsLeaveFnctor(ctx)` (whole-program) becomes
+    `selfGuardedConstructorLeavesFnctor(ctx, decl)`.
+  - It stands down only when a computed source exists, or a literal source
+    writes that constructor's name. The pr-6844 identity split needs a live
+    binding, so this keeps the guard exact.
+  - Its users all pass the declaration: the escape gate's `leavesFnctor`
+    parameter, `calleeIsStandaloneSelfGuardedConstructor`,
+    `irFunctionThisStrictness` and `irSelfGuardedConstructorValue`.
+- **Shared-wrapper identity: not needed.** The focused identity probes
+  (below) pass with the push unchanged, so neither the shared wrapper nor
+  the mention-based fallback was implemented.
+  - I did not trace why the published carrier compares equal to the IR
+    value. The probes are the evidence, not a proof of the mechanism.
+  - If a later shape breaks identity, add the shared wrapper then.
+- **Left for A2.** One more blanket check stays:
+  `preparedModuleInitMemberEvidence` in `ir-imported-call-planning.ts`. It
+  is module-init only, and A1 still withdraws module init in eval programs.
+
+#### Measurement
+
+Setup: niced, one process, standalone unless stated. The verdicts use the
+interpreter provider (`JS2WASM_EVAL_ENGINE=interpreter
+TEST262_FULL_RUNTIME_EVAL=1`), built per tree.
+
+| check | result |
+| --- | --- |
+| 141 eval files, standalone verdicts | 0 pass→fail (101 pass / 40 fail, same as base) |
+| 141 eval files, JS host verdicts | 0 pass→fail (98 pass / 43 fail, same as base) |
+| 141 eval files, compile (standalone and JS host) | 141 / 141 each, 0 post-claim errors |
+| IR units on the 141 | 513 → 830. `assert` IR in 89 files, `compareArray` 90, `Test262Error` 90, `isNegativeZero` back to 91 |
+| IR-only files on the 141 | 0 (expected: module init is still withdrawn wholesale until A2) |
+| 40-file non-eval control | 40 / 40 byte-identical to the A1 head da9e4611b0 |
+
+13 focused probes, run on standalone and the JS host against the A1 head:
+
+- identical verdicts on both lanes;
+- passing: `assert === (0,eval)("assert")`, `e.constructor === Test262Error`
+  on both the IR side and the eval side, an eval-written `assert.extraProp`
+  visible to IR, a read-only mention, and a computed source;
+- failing on base as well:
+  - eval rebinding of a top-level function (`f = …`, `defineProperty`,
+    an Annex B block function, `Function(...)`, `this['f']`);
+  - `assert.throws` called from inside eval code.
+
+  These are legacy provider gaps, not A3.
+
+60-file census (`JS2WASM_IR_SHAPE_DIAG=1`):
+
+- `assert`, `compareArray` and `Test262Error` are IR in 36 / 60 files.
+- In the other 24, every function stays live (a computed source, or an
+  unnameable fragment).
+- `<module-init>` is the sole blocker in 32 files. What is left is A2's
+  ground: eval-visible slots, sites, and direct eval inside functions.
+
+#### Tests
+
+- New: `tests/issue-7106-runtime-eval-a3-liveness.test.ts`. It pins:
+  - a read-only mention leaves `f`, `g` and `run` on the IR;
+  - each write form, plus computed, nested and escaped sources, keeps them
+    live;
+  - the harness function objects stay on the IR under the push;
+  - an eval-written `Test262Error` keeps the constructor off the
+    self-guarded route.
+
 ### A2 and A3 (outline; each gets its own measured plan before code)
 
 - **A2.**
