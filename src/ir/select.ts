@@ -797,6 +797,12 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly functionThisStrictness?: (fn: ts.FunctionDeclaration) => boolean | undefined;
   /**
+   * (#7260) The lowering is told each top-level function's code strictness
+   * (`functionCodeStrict`), so a dynamic element store keeps its PutValue
+   * failure rule.
+   */
+  readonly lowersFunctionCodeStrictness?: boolean;
+  /**
    * (#7106 S3c) May the IR use `ident` as a self-guarded constructor VALUE —
    * `new F(…)` through `dyn.construct`, `x instanceof F` through
    * `dyn.instanceof_fn`? Absent → never.
@@ -1792,9 +1798,9 @@ let currentDynamicRuntimeBuildable = true;
 // (#7106 S3a) The current subject's dynamic-typed PARAMETER names: the only
 // callees `new <name>(…)` may construct through `dyn.construct`.
 let currentDynamicParamNames = new Set<string>();
-// (#7106 S1c) The current subject resolves a STRING return: a dynamic value in
-// return position recovers its carrier through `dyn.string_carrier`.
-let currentFnReturnsString = false;
+// The current subject's resolved return kind: `concreteResultRecoversDynamic`
+// reads it to recover a dynamic `return` operand into a concrete result.
+let currentFnReturnKind: ResolvedKind = null;
 // (#7106 S1c) Catch bindings of the current subject: a thrown payload is ALWAYS
 // the boxed-any carrier, never a callback-boundary parameter carrier, so a
 // member read off one is safe in equality even in a value-used function.
@@ -2137,7 +2143,7 @@ function whyNotIrClaimable(
   // #2949 slice 2 — true when the return position resolved `dynamic`
   // (unannotated + lattice unknown/dynamic). Feeds the move-only scan below.
   let isDynamicReturn = false;
-  currentFnReturnsString = false; // (#7106 S1c) set below when the return resolves string
+  currentFnReturnKind = null; // set below from the resolved return
   if (!isGenerator) {
     if (ts.isConstructorDeclaration(fn)) {
       // Constructors have no source-level return type — they always return
@@ -2176,7 +2182,7 @@ function whyNotIrClaimable(
       }
       isVoidReturn = returnResolved === "void";
       isDynamicReturn = returnResolved === "dynamic";
-      currentFnReturnsString = returnResolved === "string";
+      currentFnReturnKind = returnResolved;
     }
   }
 
@@ -3042,9 +3048,14 @@ function calleeHasAnyDynamicParam(calleeName: string, typeMap: TypeMap | undefin
 
 /** Resolve whether local function `calleeName`'s return is dynamic. */
 function calleeReturnIsDynamic(calleeName: string, typeMap: TypeMap | undefined): boolean {
+  return calleeReturnKind(calleeName, typeMap) === "dynamic";
+}
+
+/** The resolved return of a local function declaration the scan may call directly. */
+function calleeReturnKind(calleeName: string, typeMap: TypeMap | undefined): ResolvedKind {
   const decl = currentDynScanDecls?.get(calleeName);
-  if (!decl || decl.asteriskToken) return false;
-  return resolveReturnType(decl, typeMap?.get(calleeName)?.returnType) === "dynamic";
+  if (!decl || decl.asteriskToken) return null;
+  return resolveReturnType(decl, typeMap?.get(calleeName)?.returnType);
 }
 
 /**
@@ -3213,11 +3224,67 @@ function containsCarrierAbiCall(body: ts.Block): boolean {
 }
 
 /**
+ * (#7261) Does `body` call through a member access (`a.f()`, `a[k]()`)
+ * outside its nested functions? This is a syntactic superset of the dynamic
+ * method calls that trap in IR bodies. The scan's newer admissions stay off
+ * such bodies whichever scan arm, or conservative fallback, visits the call.
+ */
+function bodyCallsThroughMemberAccess(body: ts.Block): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found || ts.isFunctionLike(node)) return;
+    const callee = ts.isCallExpression(node) ? unwrapPhase1Parens(node.expression) : undefined;
+    found = callee !== undefined && (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee));
+    if (!found) forEachChild(node, visit);
+  };
+  forEachChild(body, visit);
+  return found;
+}
+
+/**
+ * Can `return <dynamic>` land in the subject's CONCRETE result? Each arm names
+ * the canonical recovery from-ast's `coerceReturnValue` emits:
+ *
+ *   - string (#7106 S1c): legacy recovers the carrier
+ *     (`coerceType(externref → $AnyString)`); the IR mirrors it with
+ *     `dyn.string_carrier` — assert.js's `formatSimpleValue` returning `basic`.
+ *   - bool (#7258): a `var x;` local (#7106 Stage 4) in an INFERRED boolean
+ *     result. TypeScript's evolving type for `x` is then boolean (one `any`
+ *     write would make the result `any`), so the carrier holds a boolean or
+ *     its initial undefined and `dyn.truthy` returns it. The exception is a
+ *     write through an unsound type assertion (`/** @type {boolean} *\/ (v)`):
+ *     the result is then `v`'s ToBoolean, while legacy reads its slot.
+ */
+function concreteResultRecoversDynamic(
+  fn: IrClaimableSubject,
+  returned: ts.Expression,
+  dynamicUndefinedVars: ReadonlySet<string>,
+): boolean {
+  switch (currentFnReturnKind) {
+    case "string":
+      return (
+        currentDynamicRuntimeBuildable &&
+        currentSelectionOptions?.supportsBackendCapability?.("native-string-carrier-coercion") === true
+      );
+    case "bool":
+      return (
+        ts.isIdentifier(returned) &&
+        dynamicUndefinedVars.has(returned.text) &&
+        fn.type === undefined &&
+        ts.getJSDocReturnType(fn) === undefined
+      );
+    default:
+      return false;
+  }
+}
+
+/**
  * #2949 slice 2 — verify every use of a dynamic value in `fn`'s body is a
  * MOVE the from-ast builder can lower withOUT box/unbox/tag.test (which land
  * in slice 3). Allowed sinks for a dynamic value:
  *
- *   - `return <dyn>` when the function's return resolved dynamic;
+ *   - `return <dyn>` when the function's return resolved dynamic, or into a
+ *     concrete result `concreteResultRecoversDynamic` recovers it into;
  *   - argument position of a DIRECT call to a local function whose
  *     corresponding param also resolved dynamic (`irTypeEquals` at the
  *     from-ast call site then holds by construction);
@@ -3243,6 +3310,10 @@ function dynamicUsesAreMoveOnly(
 ): boolean {
   const body = fn.body;
   if (!body) return false;
+  const dynamicUndefinedVars = new Set<string>(); // the `var x;` names (#7106 Stage 4)
+  // (#7261) The #7258 bool return and the #7260 local store stay off a body
+  // that calls through a member access: see the final check.
+  let needsNoDynamicMethodCall = false;
 
   const unwrap = (e: ts.Expression): ts.Expression => {
     while (ts.isParenthesizedExpression(e)) e = e.expression;
@@ -3651,14 +3722,17 @@ function dynamicUsesAreMoveOnly(
       if (
         op === ts.SyntaxKind.EqualsToken &&
         !expectDyn &&
-        subjectHasAmbientThis() &&
         ts.isExpressionStatement(e.parent) &&
         e.parent.expression === e &&
         (ts.isPropertyAccessExpression(e.left) || ts.isElementAccessExpression(e.left)) &&
         e.left.questionDotToken === undefined &&
-        stableDynamicStoreReceiverHasAdmittedRoot(e.left.expression) &&
+        ((subjectHasAmbientThis() && stableDynamicStoreReceiverHasAdmittedRoot(e.left.expression)) ||
+          (ts.isElementAccessExpression(e.left) && dynamicLocalElementStoreIsLowerable(fn, e.left))) &&
         isDynShaped(e.left.expression)
       ) {
+        needsNoDynamicMethodCall ||= !(
+          subjectHasAmbientThis() && stableDynamicStoreReceiverHasAdmittedRoot(e.left.expression)
+        );
         if (!currentDynamicRuntimeBuildable || !scanExpr(e.left.expression, true)) return false;
         if (ts.isElementAccessExpression(e.left)) {
           const key = unwrap(e.left.argumentExpression);
@@ -3719,7 +3793,12 @@ function dynamicUsesAreMoveOnly(
         if (!dynNames.has(e.left.text)) return scanExpr(e.right, false);
         if (isDynShaped(e.right)) return scanExpr(e.right, true);
         const concrete = unwrap(e.right);
-        return concreteDynamicAssignmentOperandIsBuildable(concrete) && scanExpr(concrete, false);
+        // (#7265) A local call's boolean result boxes onto the carrier like a comparison.
+        const boolCall =
+          ts.isCallExpression(concrete) &&
+          ts.isIdentifier(concrete.expression) &&
+          calleeReturnKind(concrete.expression.text, typeMap) === "bool";
+        return (boolCall || concreteDynamicAssignmentOperandIsBuildable(concrete)) && scanExpr(concrete, false);
       }
       if (op === ts.SyntaxKind.PlusToken && (leftIsDyn || rightIsDyn)) {
         if (!currentDynamicRuntimeBuildable) return false;
@@ -3897,6 +3976,10 @@ function dynamicUsesAreMoveOnly(
         const key = unwrap(e.argumentExpression);
         if (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)) return true;
         if (ts.isIdentifier(key) && dynNames.has(key.text)) return true; // dynamic index → used as-is
+        // (#7265) Any other dynamic key (`verifyProp || name`); kept off a body with
+        // a member call (#7261).
+        needsNoDynamicMethodCall ||= isDynShaped(key);
+        if (isDynShaped(key)) return scanExpr(key, true);
         // (#7106 item 1) a PROVEN-number index (`b[i]` in a counted loop):
         // the producer lowers it f64 and boxes it tag-3 (`boxConcreteToDynamic`),
         // so the key is never null.
@@ -3925,6 +4008,7 @@ function dynamicUsesAreMoveOnly(
         // (#7106 Stage 4) `var x;` holds the dynamic carrier's undefined.
         if (ts.isIdentifier(d.name) && !d.initializer && uninitializedVarIsDynamicUndefined(d, lexical)) {
           dynNames.add(d.name.text);
+          dynamicUndefinedVars.add(d.name.text);
           continue;
         }
         if (!ts.isIdentifier(d.name) || !d.initializer) {
@@ -3939,18 +4023,14 @@ function dynamicUsesAreMoveOnly(
     }
     if (ts.isReturnStatement(s)) {
       if (!s.expression) return true;
-      // (#7106 S1c) `return <dynamic>` into a string-registered result: legacy
-      // recovers the carrier (`coerceType(externref → $AnyString)`); the IR
-      // mirrors it with `dyn.string_carrier` — assert.js's `formatSimpleValue`
-      // returning its `basic` local.
+      const returned = unwrap(s.expression);
       if (
         !returnIsDynamic &&
-        currentFnReturnsString &&
-        currentDynamicRuntimeBuildable &&
-        isDynShaped(s.expression) &&
-        currentSelectionOptions?.supportsBackendCapability?.("native-string-carrier-coercion") === true
+        isDynShaped(returned) &&
+        concreteResultRecoversDynamic(fn, returned, dynamicUndefinedVars)
       ) {
-        return scanExpr(s.expression, true);
+        needsNoDynamicMethodCall ||= currentFnReturnKind === "bool";
+        return scanExpr(returned, true);
       }
       if (!returnIsDynamic) return scanExpr(s.expression, false);
       if (isDynShaped(s.expression)) return scanExpr(s.expression, true);
@@ -4094,7 +4174,9 @@ function dynamicUsesAreMoveOnly(
   for (const s of body.statements) {
     if (!scanStmt(s)) return false;
   }
-  return true;
+  return (
+    !(needsNoDynamicMethodCall && bodyCallsThroughMemberAccess(body)) || shapeNo("move-only[dynamic-method-call]", body)
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -4365,6 +4447,21 @@ function identifierUpdateRefusal(
 function constBindingWriteRefused(root: ts.Node): boolean {
   const write = firstConstBindingWrite(root);
   return write !== undefined && !shapeNo("const-write", write);
+}
+
+/**
+ * (#7260) `<dynamic local>[k] = v` in a top-level function whose code
+ * strictness the lowering knows: the receiver is a moved carrier, and
+ * `dyn.member_set` takes the PutValue failure rule from that strictness
+ * (legacy's `__extern_set` / `__extern_set_strict`).
+ */
+function dynamicLocalElementStoreIsLowerable(fn: IrClaimableSubject, target: ts.ElementAccessExpression): boolean {
+  return (
+    ts.isIdentifier(unwrapPhase1Parens(target.expression)) &&
+    ts.isFunctionDeclaration(fn) &&
+    ts.isSourceFile(fn.parent) &&
+    currentSelectionOptions?.lowersFunctionCodeStrictness === true
+  );
 }
 
 function stableDynamicStoreReceiverHasAdmittedRoot(receiver: ts.Expression): boolean {
