@@ -45,7 +45,17 @@ These variants trap the same way on main:
 - `return o.f();` and `var r = o.f(); return r;` (dynamic result);
 - `var ws; ws = !!o.f(); if (ws) return true; return false;`;
 - `var ws; if (o.k) { return ws; } ws = !!o.f(); return ws;` (traps at `t(0)`);
-- the receiver as a fresh local literal, `var o = { f: function () { … } }`.
+- the receiver built as a local literal in the CALLER and passed in:
+  `export function t(k) { var o = { f: function () { return k; } }; return g3(o) ? 1 : 0; }`.
+
+Two related observations:
+- A literal called in the SAME function, as in
+  `function g6(k) { var o = { f: function () { return k; } }; return o.f() ? true : false; }`,
+  stays on the old compiler and returns the right values. It does not
+  reproduce (#7104 delta review).
+- `o["f"]()` on the same receiver throws on the OLD compiler too, IR or not
+  (base and head alike, review row `a13`). That is a separate legacy failure,
+  not this IR bug.
 
 A plain member read (`if (o.g) …`) on the same receiver is correct.
 

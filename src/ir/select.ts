@@ -3198,7 +3198,9 @@ function containsCarrierAbiCall(body: ts.Block): boolean {
  *   - bool (#7258): a `var x;` local (#7106 Stage 4) in an INFERRED boolean
  *     result. TypeScript's evolving type for `x` is then boolean (one `any`
  *     write would make the result `any`), so the carrier holds a boolean or
- *     its initial undefined and `dyn.truthy` reads exactly legacy's slot.
+ *     its initial undefined and `dyn.truthy` returns it. The exception is a
+ *     write through an unsound type assertion (`/** @type {boolean} *\/ (v)`):
+ *     the result is then `v`'s ToBoolean, while legacy reads its slot.
  */
 function concreteResultRecoversDynamic(
   fn: IrClaimableSubject,
