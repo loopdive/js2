@@ -141,3 +141,5 @@ units in those files already take the IR body (7 `both` + 1 `ir`).
 - Equivalence gate: 0 new regressions.
 - Adversarial review: FAIL → the from-ast/selector admission mismatch fixed
   (one shared admission); the rest fixed or rebutted in the PR body.
+
+- Script-shadow regression found after merge (fresh-context review of PR #7103): fixed forward in #7264.
