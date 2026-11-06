@@ -51,6 +51,7 @@ import {
   type StringArgumentDefault,
   type StringMethodParameter,
   type StringMethodPlan,
+  type StringMethodResult,
 } from "./string-method-surface.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -10317,7 +10318,7 @@ function lowerStringMethodCall(
       lowerExpr(args[0]!, cx, { kind: "string" });
       const answer = plan.fold(receiverValue, searchValue);
       return typeof answer === "boolean"
-        ? cx.builder.emitConst({ kind: "bool", value: answer }, irVal({ kind: "i32" }))
+        ? cx.builder.emitConst({ kind: "bool", value: answer }, IR_BOOL)
         : cx.builder.emitConst({ kind: "f64", value: answer }, irVal({ kind: "f64" }));
     }
   }
@@ -10330,15 +10331,21 @@ function lowerStringMethodCall(
   for (const parameter of plan.parameters.slice(args.length)) {
     operands.push(omittedStringMethodArgument(parameter.omitted!, recv, receiverExpr, cx));
   }
-  const resultType: IrType =
-    plan.result === "string" ? { kind: "string" } : irVal({ kind: plan.result === "number" ? "f64" : "i32" });
-  const r = cx.builder.emitCall(irIntrinsicFuncRef(plan.helper), operands, resultType);
+  const r = cx.builder.emitCall(irIntrinsicFuncRef(plan.helper), operands, STRING_METHOD_RESULT_TYPES[plan.result]);
   if (r === null) {
     // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: String.${methodName} produced void result (${cx.funcName})`);
   }
   return plan.result === "index" ? cx.builder.emitUnary("f64.convert_i32_s", r, irVal({ kind: "f64" })) : r;
 }
+
+/** A boolean result carries the #4503 brand, so a carrier consumer boxes it as a boolean. */
+const STRING_METHOD_RESULT_TYPES: Readonly<Record<StringMethodResult, IrType>> = {
+  string: { kind: "string" },
+  number: irVal({ kind: "f64" }),
+  index: irVal({ kind: "i32" }),
+  boolean: IR_BOOL,
+};
 
 interface LoweredStringMethodArgument {
   readonly value: IrValueId;

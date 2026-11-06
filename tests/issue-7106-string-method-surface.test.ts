@@ -13,6 +13,7 @@ import { compile } from "../src/index.js";
 import { getLastLinearIrReport } from "../src/ir/backend/linear-integration.js";
 import { buildImports } from "../src/runtime.js";
 import { lane, TARGETS, type Target } from "./helpers/ambient-intrinsic-probe.js";
+import { compileHarnessBody, moduleInit, runModuleInit } from "./helpers/harness-module-init.js";
 
 const PARAMETERS = "p: string, q: string, u: string, v: string, w: string, z: string";
 const ARGUMENTS = '"ab", "cd", " a", "b ", "ab", "AB"';
@@ -120,6 +121,14 @@ export function run(): number { return check("ab", "cd") === "c" ? 1 : 0; }`;
       });
     });
   }
+
+  it("a boolean result reaches a carrier consumer as a boolean", async () => {
+    const result = await compileHarnessBody(
+      "assert.sameValue('word'.endsWith('d'), true);\nassert.sameValue('word'.includes('o', 3), false);",
+    );
+    await runModuleInit(result);
+    expect(moduleInit(result)?.irBodyEmitted).toBe(true);
+  });
 
   it("the linear backend refuses at selection what its plan does not lower", async () => {
     const source = `export function upper(s: string): string { return s.toUpperCase(); }
