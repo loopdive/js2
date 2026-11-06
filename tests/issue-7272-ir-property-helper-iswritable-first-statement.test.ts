@@ -118,10 +118,16 @@ async function outcomeOf(path: string, unit: string) {
 }
 
 describe("#7272 isWritable's first statement on the IR path", () => {
-  for (const flag of ["noStrict", "onlyStrict"]) {
-    it(`IR-emits propertyHelper's isWritable and passes (${flag})`, async () => {
+  // Strict function code keeps isWritable legacy: the #7260 element store
+  // (`obj[name] = newValue`) is admitted in sloppy code only, until the strict
+  // `__dyn_member_set` exotic-receiver defect (#7270) is fixed.
+  for (const [flag, emitted] of [
+    ["noStrict", true],
+    ["onlyStrict", false],
+  ] as const) {
+    it(`${emitted ? "IR-emits" : "keeps legacy"} propertyHelper's isWritable and passes (${flag})`, async () => {
       const path = fixture("is-writable", PRELUDE + IS_WRITABLE + CHECKS, flag);
-      expect(await outcomeOf(path, "isWritable")).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+      expect((await outcomeOf(path, "isWritable"))?.irBodyEmitted).toBe(emitted);
       expect(await runTest262File(path, "issue-7272", undefined, "standalone")).toMatchObject({ status: "pass" });
     });
   }

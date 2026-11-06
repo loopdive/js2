@@ -22,6 +22,7 @@
 // `shiftLateImportIndices` pass is a no-op for every body produced here.
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
+import { isStoredStaticAliasProvider, storedStaticAliasProviderImport } from "./stored-static-alias-providers.js";
 import type { StoredStaticAliasProvider } from "./uncurried-object-alias.js";
 import {
   nativeConsoleOutputAvailable,
@@ -9297,17 +9298,6 @@ function buildTemplateWrapperFamily(
   flushLateImportShifts(ctx, null);
 }
 
-/** Legacy's import signature of each stored-static alias provider (#7106 propertyHelper, #7272). */
-const STORED_STATIC_PROVIDER_IMPORTS: Readonly<
-  Record<StoredStaticAliasProvider, { params: ValType[]; results: ValType[] }>
-> = {
-  __getOwnPropertyDescriptor: {
-    params: [{ kind: "externref" }, { kind: "externref" }],
-    results: [{ kind: "externref" }],
-  },
-  __extern_is_array: { params: [{ kind: "externref" }], results: [{ kind: "i32" }] },
-};
-
 function preregisterDynamicSupport(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
@@ -9391,7 +9381,7 @@ function preregisterDynamicSupport(
   // (#7106 propertyHelper) a dynamic delete calls its strictness's wrapper.
   const dynDeleteStrictness = new Set<boolean>();
   // (#7106 propertyHelper, #7272) the stored-static aliases' object-runtime providers.
-  const storedStaticProviders = new Set<keyof typeof STORED_STATIC_PROVIDER_IMPORTS>();
+  const storedStaticProviders = new Set<StoredStaticAliasProvider>();
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9475,6 +9465,7 @@ function preregisterDynamicSupport(
             if (methodWrapper !== undefined) dynamicMethodCallWrappers.set(symbol, methodWrapper);
             const borrowWrapper = parseIrArrayPrototypeBorrowHelperName(symbol);
             if (borrowWrapper !== undefined) arrayPrototypeBorrowWrappers.set(symbol, borrowWrapper);
+            if (isStoredStaticAliasProvider(symbol)) storedStaticProviders.add(symbol);
             switch (symbol) {
               case "__extern_set_strict":
                 usesFunctionMemberStrictSet = true;
@@ -9486,10 +9477,6 @@ function preregisterDynamicSupport(
                 break;
               case "__unbox_number":
                 usesRuntimeUnboxNumber = true;
-                break;
-              case "__getOwnPropertyDescriptor":
-              case "__extern_is_array":
-                storedStaticProviders.add(symbol);
                 break;
               // (#4461) native `$Map` module-binding storage.
               case IR_DYN_DELETE_STRICT_HELPER:
@@ -9635,10 +9622,8 @@ function preregisterDynamicSupport(
     flushLateImportShifts(ctx, null);
   }
   if (storedStaticProviders.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
-    // (#7106 propertyHelper, #7272) exactly legacy's registration of each
-    // provider (`call-object-builtins.ts`, `emitArrayIsArrayExternrefPredicate`).
     for (const symbol of storedStaticProviders) {
-      const { params, results } = STORED_STATIC_PROVIDER_IMPORTS[symbol];
+      const { params, results } = storedStaticAliasProviderImport(symbol);
       ensureLateImport(ctx, symbol, [...params], [...results]);
     }
     flushLateImportShifts(ctx, null);

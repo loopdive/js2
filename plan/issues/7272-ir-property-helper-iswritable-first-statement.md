@@ -117,6 +117,14 @@ goes through `certifiedAliasCall`, and every mixed-conditional site through
 `mixedPrimitiveConditionalArms`, or through the verdict that function
 recorded.
 
+## Strict code
+
+Strict function code keeps isWritable legacy. Since #7265@418467f9, the
+#7260 element store (`obj[name] = newValue`) is admitted in sloppy code
+only, until the strict `__dyn_member_set` exotic-receiver defect (#7270) is
+fixed. The wrapped ledger compiles each file's primary variant, which is
+sloppy unless the file is `onlyStrict`.
+
 ## Review (fresh context, 2026-11-06)
 
 The verdict on the first push was **"not met"**. Every finding:
