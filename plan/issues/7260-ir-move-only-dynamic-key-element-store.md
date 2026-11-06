@@ -14,7 +14,7 @@ area: ir
 goal: ir-full-coverage
 parent: 7250
 depends_on: [7258]
-related: [2949, 3795, 3797, 7106, 7261]
+related: [2949, 3795, 3797, 7106, 7261, 7270]
 assignee: "ttraenkler/c-r7"
 loc-budget-allow:
   # 2026-11-06 (#7258, restated so the grant does not strand once #7104 lands):
@@ -173,8 +173,13 @@ legacy's computed strict store succeeds:
   Map.
 
 The defect predates this PR (it is the #3795 strict helper), but this PR is
-the first to route arbitrary dynamic receivers into it. Filed separately
-(issue id pending from the lead).
+the first to route arbitrary dynamic receivers into it. Filed as
+[#7270](7270-ir-strict-dyn-member-set-exotic-receivers.md).
+
+Effect on the harness lever: none in practice. propertyHelper.js has no
+`"use strict"`, and only an `onlyStrict` test prepends one to the assembled
+script. That is 5 of the 5246 propertyHelper includers (measured
+2026-11-06).
 
 The fix narrows the admission: `dynamicLocalElementStoreIsLowerable` now
 requires `functionCodeStrictness(fn) === false`, i.e. sloppy function code.

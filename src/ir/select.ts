@@ -777,7 +777,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * (#7260) A top-level function's code strictness, the same answer the
    * lowering is told (`functionCodeStrict`). The local-receiver element store
    * is admitted in sloppy code only, because the strict `__dyn_member_set`
-   * throws for exotic receivers (#7260 review).
+   * throws for exotic receivers (#7270).
    */
   readonly functionCodeStrictness?: (fn: ts.FunctionDeclaration) => boolean;
   /**
