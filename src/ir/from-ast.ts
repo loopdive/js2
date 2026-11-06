@@ -5112,22 +5112,14 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     return lowerTypeOf(expr, cx);
   }
   if (expr.kind === ts.SyntaxKind.NullKeyword) {
-    // Bare `null` composes only when the consuming context is reference-
-    // shaped (externref / ref_null), because IR Phase 1 has no nullable
-    // union: a `null` flowing into an f64/i32 hint would mismatch the
-    // consumer's Wasm type at validation. The optional-chaining null arm
-    // and the `??` lowering both pass a reference-shaped hint here.
-    //
-    // `=== null` / `!== null` never reach this branch — `tryFoldNullCompare`
-    // intercepts them before operand recursion (the fold is purely static
-    // because there's no runtime null value to compare against).
-    // The null const's `ty` must be a `val`-kind externref/ref_null so the
-    // lowerer emits `ref.null.extern` / `ref.null T` (see lower.ts "null").
-    // An `extern` className hint is null-compatible at the Wasm level
-    // (opaque externref), so we materialize a plain `externref` null for it.
-    if (nullValueAdmissible(irOperandFamily(hint, expr))) {
-      const ty = hint.kind === "extern" ? irVal({ kind: "externref" }) : hint;
-      return cx.builder.emitConst({ kind: "null", ty }, ty);
+    // Null needs a reference-shaped constant; scalar f64/i32 contexts remain
+    // refused. Externref dynamic carriers use that same null reference, distinct
+    // from undefined's singleton. The box preserves its known Null partition.
+    const dynamicNull = hint.kind === "dynamic" && cx.resolver?.dynamicCarrierIsExternref?.() === true;
+    if (dynamicNull || nullValueAdmissible(irOperandFamily(hint, expr))) {
+      const ty = dynamicNull || hint.kind === "extern" ? irVal({ kind: "externref" }) : hint;
+      const value = cx.builder.emitConst({ kind: "null", ty }, ty);
+      return dynamicNull ? cx.builder.emitBox(value, irDynamic(JS_TAG_IDS.Null)) : value;
     }
     throw new IrUnsupportedError(
       "nullish-value-unsupported",
