@@ -9,7 +9,8 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { runHarnessOn as runHarness } from "./helpers/harness-module-init.js";
+import { buildImports } from "../src/runtime.js";
+import { assembleHarnessBody, runHarnessOn as runHarness } from "./helpers/harness-module-init.js";
 import { lane, TARGETS } from "./helpers/ambient-intrinsic-probe.js";
 
 const CLAIMED: Record<string, string> = {
@@ -66,6 +67,34 @@ describe("#7106 boolean module slot", () => {
 describe("#7106 Boolean module-slot receiving boundaries", () => {
   for (const target of TARGETS) {
     describe(lane(target), () => {
+      // A plain write stores the value itself; only ToNumber consumers convert it.
+      it("keeps a boolean written to a number field", async () => {
+        // Main withdraws `k` after its claim ("assignment to .n (f64) got
+        // i32"), so this pins the answer and that `k` is not emitted by the IR.
+        const body = "function k(b: boolean): any { var o = { n: 1 }; o.n = b as any; return o.n; }\n";
+        const result = await compile(assembleHarnessBody(`${body}assert.sameValue(k(true), true);`), {
+          fileName: "test.ts",
+          allowJs: true,
+          skipSemanticDiagnostics: true,
+          trackIrOutcomes: true,
+          deferTopLevelInit: true,
+          ...(target ? { target } : {}),
+        });
+        expect(result.irOutcomes?.find((unit) => unit.displayName === "k")?.irBodyEmitted).toBe(false);
+        const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
+        const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+        (instance.exports.__module_init as () => void)();
+      });
+
+      it("converts a boolean compound operand on both lanes", async () => {
+        await runHarness(
+          target,
+          "var flag = true;\nfunction k() { var o = { n: 1 }; o.n += flag; return o.n; }\nassert.sameValue(k(), 2);",
+          "test.js",
+          ["k"],
+        );
+      });
+
       it("preserves Boolean template spelling", async () => {
         await runHarness(target, 'var flag = true; assert.sameValue(`${flag}`, "true");');
       });

@@ -37,9 +37,9 @@
 
 import {
   coerceIrNumeric,
+  coerceIrToNumber,
   numericFieldSourceValue,
   isNumericIrSlot,
-  isNumericIrSource,
   numericFieldUpdate,
 } from "./numeric-slot-coercion.js";
 import { lowerNativeConsoleLine } from "./console-lowering.js";
@@ -4764,9 +4764,9 @@ function isPrimitiveTypeNode(node: ts.TypeNode): boolean {
 }
 
 const nativeNumericDomains = (cx: LowerCtx): boolean => cx.resolver?.nativeNumericDomains?.() === true;
-/** Compound field updates take native i32/u32 slots, and boolean values, only where the lane recovers their domains. */
-const laneNumeric = (type: IrType, cx: LowerCtx, native: (type: IrType) => boolean): boolean =>
-  nativeNumericDomains(cx) ? native(type) : asVal(type)?.kind === "f64";
+/** Compound field updates take native i32/u32 slots only where the lane recovers their domains. */
+const laneNumericSlot = (type: IrType, cx: LowerCtx): boolean =>
+  nativeNumericDomains(cx) ? isNumericIrSlot(type) : asVal(type)?.kind === "f64";
 
 /** Short debug string for IrType, used in error messages. */
 function describeIrType(t: IrType): string {
@@ -10917,7 +10917,7 @@ function lowerPropertyCompound(
     );
   }
   const fieldType = field.type;
-  if (!laneNumeric(fieldType, cx, isNumericIrSlot)) {
+  if (!laneNumericSlot(fieldType, cx)) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
@@ -10931,11 +10931,13 @@ function lowerPropertyCompound(
       : cx.builder.emitObjectGet(recv, fieldName, fieldType);
   // (3) RHS — a synthetic `1` for `++`/`--`.
   const rhsValue = rhs === null ? cx.builder.emitConst({ kind: "f64", value: 1 }, IR_F64) : lowerExpr(rhs, cx, IR_F64);
-  if (!laneNumeric(cx.builder.typeOf(rhsValue), cx, isNumericIrSource)) {
+  // A boolean RHS converts on either lane: its ToNumber needs no recovered domain.
+  const rhsType = cx.builder.typeOf(rhsValue);
+  if (!laneNumericSlot(rhsType, cx) && !irTypeIsBoolean(rhsType)) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
-      `ir/from-ast: compound property write RHS must be numeric (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
+      `ir/from-ast: compound property write RHS must be numeric (got ${describeIrType(rhsType)}) in ${cx.funcName}`,
     );
   }
   // (4) binop in source Number space — `++`/`--` has no RHS node — then (5) the write tail.
@@ -11486,7 +11488,7 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
         return cx.builder.emitIntrinsic("js.number.unbox", [value]);
       }
     }
-    return (nativeNumericDomains(cx) ? coerceIrNumeric(cx.builder, value, declared, true) : null) ?? value;
+    return (nativeNumericDomains(cx) ? coerceIrToNumber(cx.builder, value, declared, true) : null) ?? value;
   }
   // Only the externref (TS `any`) declared-result case can mismatch here;
   // native scalar / matching-ref returns already line up via the hint.

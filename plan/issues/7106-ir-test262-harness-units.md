@@ -5412,9 +5412,16 @@ the `i32` kind reads as `irBool()`.
   (`let flag = true; function t(): number { return flag; }`) and into a
   numeric compound field write. Standalone withdrew both after the claim,
   where main converts the bare `i32`.
-  - `isNumericIrSource` (`numeric-slot-coercion.ts`) now names the source
-    side: a numeric slot's value, or a boolean, whose ToNumber is its 0 or 1.
-  - `coerceIrNumeric` and the compound field write's right-side gate take it.
+  - `coerceIrToNumber` (`numeric-slot-coercion.ts`) is ToNumber into a
+    numeric slot: a numeric slot's value, or a boolean, whose ToNumber is its
+    0 or 1. Only its real ToNumber consumers take it: a compound field
+    update's operands (`numericFieldUpdate`) and a declared number result.
+  - `coerceIrNumeric` stays slot to slot, so a plain field write keeps the
+    boolean itself (`o.n = true` stores `true`; review round 2 found that
+    widening it stored 1).
+  - The compound write's right-side gate accepts a boolean on both lanes,
+    since its ToNumber needs no recovered domain. The field slot check is
+    main's `laneNumericSlot`.
   - A boolean is still no numeric target. So a branded read converts exactly
     where main's bare one did.
 - The selector's `provenIrFamily` names the slot `boolean`, not `int32`, as
@@ -5453,15 +5460,17 @@ depends on it, not for its own gain.
 - **Tests:** `tests/issue-7106-module-bool-slot.test.ts`:
   - on both lanes, seven claimed shapes, and the S5 boolean-leaf shape, which
     withdraws nothing;
-  - on standalone, two numeric consumers that keep main's claim.
+  - on standalone, two numeric consumers that keep main's claim;
+  - on both lanes, a boolean written to an object's number field keeps
+    `true`, and a boolean compound operand (`o.n += flag`) converts, claimed.
 
   It and `issue-7106-for-head-destructuring.test.ts` share
   `compileHarnessOn` / `runHarnessOn`
   (`tests/helpers/harness-module-init.ts`), which take the lane.
 - **Code quality:**
   - one arm changed;
-  - one predicate added, `isNumericIrSource`: the source side of the
-    existing numeric coercion, used by its two consumers;
+  - one conversion added, `coerceIrToNumber`, sharing
+    `coerceIrNumeric`'s body and used by its two ToNumber consumers;
   - no second boolean rule (the existing brand and value kind are reused).
 
 **Follow-ups.**
