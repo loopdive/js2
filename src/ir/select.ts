@@ -3024,9 +3024,14 @@ function calleeHasAnyDynamicParam(calleeName: string, typeMap: TypeMap | undefin
 
 /** Resolve whether local function `calleeName`'s return is dynamic. */
 function calleeReturnIsDynamic(calleeName: string, typeMap: TypeMap | undefined): boolean {
+  return calleeReturnKind(calleeName, typeMap) === "dynamic";
+}
+
+/** The resolved return of a local function declaration the scan may call directly. */
+function calleeReturnKind(calleeName: string, typeMap: TypeMap | undefined): ResolvedKind {
   const decl = currentDynScanDecls?.get(calleeName);
-  if (!decl || decl.asteriskToken) return false;
-  return resolveReturnType(decl, typeMap?.get(calleeName)?.returnType) === "dynamic";
+  if (!decl || decl.asteriskToken) return null;
+  return resolveReturnType(decl, typeMap?.get(calleeName)?.returnType);
 }
 
 /**
@@ -3764,7 +3769,12 @@ function dynamicUsesAreMoveOnly(
         if (!dynNames.has(e.left.text)) return scanExpr(e.right, false);
         if (isDynShaped(e.right)) return scanExpr(e.right, true);
         const concrete = unwrap(e.right);
-        return concreteDynamicAssignmentOperandIsBuildable(concrete) && scanExpr(concrete, false);
+        // (#7265) A local call's boolean result boxes onto the carrier like a comparison.
+        const boolCall =
+          ts.isCallExpression(concrete) &&
+          ts.isIdentifier(concrete.expression) &&
+          calleeReturnKind(concrete.expression.text, typeMap) === "bool";
+        return (boolCall || concreteDynamicAssignmentOperandIsBuildable(concrete)) && scanExpr(concrete, false);
       }
       if (op === ts.SyntaxKind.PlusToken && (leftIsDyn || rightIsDyn)) {
         if (!currentDynamicRuntimeBuildable) return false;
@@ -3942,6 +3952,10 @@ function dynamicUsesAreMoveOnly(
         const key = unwrap(e.argumentExpression);
         if (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)) return true;
         if (ts.isIdentifier(key) && dynNames.has(key.text)) return true; // dynamic index → used as-is
+        // (#7265) Any other dynamic key (`verifyProp || name`); kept off a body with
+        // a member call (#7261).
+        needsNoDynamicMethodCall ||= isDynShaped(key);
+        if (isDynShaped(key)) return scanExpr(key, true);
         // (#7106 item 1) a PROVEN-number index (`b[i]` in a counted loop):
         // the producer lowers it f64 and boxes it tag-3 (`boxConcreteToDynamic`),
         // so the key is never null.
