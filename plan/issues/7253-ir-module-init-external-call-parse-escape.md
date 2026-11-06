@@ -1,10 +1,11 @@
 ---
 id: 7253
 title: "IR: admit ambient parseInt / parseFloat / escape / unescape / isNaN calls (module-init `external-call`)"
-status: in-progress
+status: done
+completed: 2026-11-06
 sprint: current
 created: 2026-11-05
-updated: 2026-11-05
+updated: 2026-11-06
 priority: high
 horizon: s
 feasibility: medium
@@ -127,3 +128,16 @@ units in those files already take the IR body (7 `both` + 1 `ir`).
   read it (no second predicate); the capability arm sits with its siblings in
   `legality.ts`; adversarial review with fresh context finds no unrebutted
   must-fix.
+
+## Result (2026-11-06, base `origin/main` b4306ca851, PR #7103)
+
+- Wrapped ledger (stride 40, standalone): `select:external-call` 8 → 1
+  (`Boolean`), legacy units 4781 → 4774, `<module-init>` IR bodies 27 → 34,
+  0 invariants, compileOk 1118 = 1118. Zero-legacy files +7 (the 7 target
+  files). Raw ledger byte-identical apart from timing.
+- Typed corpus (3 lanes): identical except 4 `global-type-checks` `isNaN(<literal>)`
+  snippets, now IR-claimed (IR folds `c != c`; values unchanged).
+- Standalone test262 over the five directories: 156/159 pass on both, 0 flips.
+- Equivalence gate: 0 new regressions.
+- Adversarial review: FAIL → the from-ast/selector admission mismatch fixed
+  (one shared admission); the rest fixed or rebutted in the PR body.
