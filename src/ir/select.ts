@@ -7758,6 +7758,27 @@ function isDirectBooleanModuleBinding(expr: ts.Expression): boolean {
 }
 
 /**
+ * (#7266) A direct module binding whose ToBoolean from-ast's
+ * `lowerToBooleanForCondition` lowers host-free by read type: boolean i32,
+ * f64, and `dyn.truthy` where the lane builds the dynamic runtime. String,
+ * class-instance and extern slots are nullable and stay refused.
+ */
+function isTruthinessTestableModuleBinding(expr: ts.Expression): boolean {
+  const kind = moduleBinding(expr)?.valueKind.kind;
+  return isDirectBooleanModuleBinding(expr) || kind === "f64" || (kind === "dynamic" && currentDynamicRuntimeBuildable);
+}
+
+/** A condition operand whose module influence is only ever ToBoolean'd. */
+function moduleInfluenceIsTruthinessTestable(operand: ts.Expression): boolean {
+  return trackedModuleInfluenceIsBoolean(operand) || isTruthinessTestableModuleBinding(operand);
+}
+
+/** A `!` operand: exactly boolean, or a module binding `!` ToBoolean's host-free. */
+function moduleInfluenceIsNegatable(operand: ts.Expression, scope: ReadonlySet<string>): boolean {
+  return moduleInfluenceIsExactBoolean(operand, scope) || isTruthinessTestableModuleBinding(operand);
+}
+
+/**
  * Value-preserving module-binding expressions. Conditional/nullish wrappers
  * deliberately remain classified here even though they are not proven IR
  * consumers: this lets alias and truthiness gates reject them conservatively.
@@ -8183,9 +8204,10 @@ function isUnrepresentableModuleBinding(node: ts.Identifier): boolean {
 
 /**
  * Module values may enter an IR condition only when their representation is
- * semantically boolean. Numeric i32/f64 values still need JS ToBoolean, and
- * externrefs need host truthiness. Calls rooted in module externs are likewise
- * deferred because this selector has no result-type proof for the method.
+ * semantically boolean or (#7266) a direct binding whose ToBoolean the IR
+ * lowers host-free (`isTruthinessTestableModuleBinding`). Externrefs need host
+ * truthiness. Calls rooted in module externs are likewise deferred because
+ * this selector has no result-type proof for the method.
  */
 function isPhase1ConditionExpr(
   expr: ts.Expression,
@@ -8201,10 +8223,10 @@ function isPhase1ConditionExpr(
   }
   // A bare `null` lowers only into a reference (`nullValueAdmissible`), never the i32 a condition reads.
   if (truthinessOperand.kind === ts.SyntaxKind.NullKeyword) return shapeNo("condition-null", expr);
-  if (!trackedModuleInfluenceIsBoolean(truthinessOperand)) {
+  if (!moduleInfluenceIsTruthinessTestable(truthinessOperand)) {
     return shapeNo("condition-module-value-nonbool", expr);
   }
-  if (expressionMayBeModuleBinding(truthinessOperand) && !isDirectBooleanModuleBinding(truthinessOperand)) {
+  if (expressionMayBeModuleBinding(truthinessOperand) && !isTruthinessTestableModuleBinding(truthinessOperand)) {
     return shapeNo("condition-module-value-truthiness", expr);
   }
   if (expressionIsModuleExternAccessChain(truthinessOperand)) {
@@ -11557,7 +11579,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // (`dyn.truthy`), not a module slot; uncertified operands stay refused.
     if (
       expr.operator === ts.SyntaxKind.ExclamationToken &&
-      !moduleInfluenceIsExactBoolean(expr.operand, scope) &&
+      !moduleInfluenceIsNegatable(expr.operand, scope) &&
       !isStoredObjectDescriptorMemberRead(unwrapPhase1Parens(expr.operand), (name) => scope.has(name))
     ) {
       return shapeNo("expr-module-value-not", expr);
