@@ -34,18 +34,31 @@ export type IrAmbientGlobalFunctionCapability = Extract<
   "native-global-function-call" | "native-json-codec" | "native-dynamic-member-read"
 >;
 
+/**
+ * Where a row's call may be lowered (the unit the call's nearest function-like
+ * ancestor names; none for top-level code):
+ *   - `any`;
+ *   - `es-module-top-level-function` (#7114): in an ES module, only a top-level
+ *     function declaration. Every other unit there (`<module-init>`, class
+ *     members, closures) lowers as a prepared component, whose Program ABI has
+ *     no identity for the `__escape` / `__unescape` runtime callables nor for
+ *     `dyn.string_carrier` (measured: `late-preparation-unsupported`). Scripts —
+ *     every test262 body — are unaffected;
+ *   - `plain-unit` (#7267): that, and in a script never a class member (also a
+ *     prepared component: "has no resolvable Program ABI binding") nor a
+ *     closure nested in another function (a capturing closure whose body reads
+ *     the dynamic result loses its captured-struct type from the published
+ *     module once the dynamic runtime is registered: "… closure-support:
+ *     captured-subtype … no longer has its allocator object", a hard compile
+ *     error).
+ */
+type UnitScope = "any" | "es-module-top-level-function" | "plain-unit";
+
 interface AmbientGlobalFunctionPlan {
   readonly operands: readonly OperandFamily[];
   /** The lane capabilities that name the provider's host-free lanes (all must hold). */
   readonly capabilities: readonly IrAmbientGlobalFunctionCapability[];
-  /**
-   * The provider is a module-local helper (`funcMap`), which an ES module's
-   * `<module-init>` cannot name: that unit lowers as a prepared component
-   * whose Program ABI has no identity for it (measured for `__escape`:
-   * `late-preparation-unsupported`). The parse scanners are ambient builtins
-   * (`ambientBuiltinFuncMap`), which it can.
-   */
-  readonly refusedInEsModuleInit: boolean;
+  readonly scope: UnitScope;
   /** What the call answers: a concrete scalar / string, or (`JSON.parse`) the dynamic carrier. */
   readonly result: "number" | "boolean" | "string" | "dynamic";
 }
@@ -53,17 +66,17 @@ interface AmbientGlobalFunctionPlan {
 const GLOBAL_FUNCTION: readonly IrAmbientGlobalFunctionCapability[] = ["native-global-function-call"];
 
 const PLANS: ReadonlyMap<IrAmbientGlobalFunctionName, AmbientGlobalFunctionPlan> = new Map([
+  ["parseInt", { operands: ["string", "number"], capabilities: GLOBAL_FUNCTION, scope: "any", result: "number" }],
+  ["parseFloat", { operands: ["string"], capabilities: GLOBAL_FUNCTION, scope: "any", result: "number" }],
   [
-    "parseInt",
-    { operands: ["string", "number"], capabilities: GLOBAL_FUNCTION, refusedInEsModuleInit: false, result: "number" },
+    "escape",
+    { operands: ["string"], capabilities: GLOBAL_FUNCTION, scope: "es-module-top-level-function", result: "string" },
   ],
   [
-    "parseFloat",
-    { operands: ["string"], capabilities: GLOBAL_FUNCTION, refusedInEsModuleInit: false, result: "number" },
+    "unescape",
+    { operands: ["string"], capabilities: GLOBAL_FUNCTION, scope: "es-module-top-level-function", result: "string" },
   ],
-  ["escape", { operands: ["string"], capabilities: GLOBAL_FUNCTION, refusedInEsModuleInit: true, result: "string" }],
-  ["unescape", { operands: ["string"], capabilities: GLOBAL_FUNCTION, refusedInEsModuleInit: true, result: "string" }],
-  ["isNaN", { operands: ["number"], capabilities: GLOBAL_FUNCTION, refusedInEsModuleInit: false, result: "boolean" }],
+  ["isNaN", { operands: ["number"], capabilities: GLOBAL_FUNCTION, scope: "any", result: "boolean" }],
   // No reviver: a second argument keeps legacy's reviver codec. The value graph
   // is read back through the carrier's member read, which WASI's IR read does
   // not answer for it (measured: `JSON.parse('{"a":3}').a` is NaN on WASI).
@@ -72,11 +85,21 @@ const PLANS: ReadonlyMap<IrAmbientGlobalFunctionName, AmbientGlobalFunctionPlan>
     {
       operands: ["string"],
       capabilities: ["native-json-codec", "native-dynamic-member-read"],
-      refusedInEsModuleInit: true,
+      scope: "plain-unit",
       result: "dynamic",
     },
   ],
 ]);
+
+/** Does `scope` admit a call at `expr`? See {@link UnitScope}. */
+function unitScopeAdmits(scope: UnitScope, expr: ts.CallExpression): boolean {
+  if (scope === "any") return true;
+  const unit = ts.findAncestor(expr.parent, ts.isFunctionLike);
+  const topLevelFunction = unit !== undefined && ts.isFunctionDeclaration(unit) && ts.isSourceFile(unit.parent);
+  if (ts.isExternalModule(expr.getSourceFile())) return topLevelFunction;
+  if (scope === "es-module-top-level-function" || unit === undefined || topLevelFunction) return true;
+  return !ts.isClassElement(unit) && ts.findAncestor(unit.parent, ts.isFunctionLike) === undefined;
+}
 
 interface IrAmbientGlobalFunctionCall {
   readonly name: IrAmbientGlobalFunctionName;
@@ -130,20 +153,13 @@ export interface IrAdmittedAmbientGlobalFunctionCall {
   readonly result: AmbientGlobalFunctionPlan["result"];
 }
 
-/**
- * The selector's admission: the shared one, refused in an ES module's
- * `<module-init>` where the provider is a runtime callable (see
- * {@link AmbientGlobalFunctionPlan.refusedInEsModuleInit}). Scripts — every test262
- * body — and ordinary functions are unaffected.
- */
+/** The selector's admission: the shared one, and the row's {@link UnitScope}. */
 export function admitAmbientGlobalFunctionCall(
   expr: ts.CallExpression,
-  callerIsModuleInit: boolean,
   admission: IrAmbientGlobalFunctionAdmission,
 ): IrAdmittedAmbientGlobalFunctionCall | null {
   const call = ambientGlobalFunctionCall(expr, admission);
-  if (call === null) return null;
-  if (call.plan.refusedInEsModuleInit && callerIsModuleInit && ts.isExternalModule(expr.getSourceFile())) return null;
+  if (call === null || !unitScopeAdmits(call.plan.scope, expr)) return null;
   return { arguments: expr.arguments, result: call.plan.result };
 }
 

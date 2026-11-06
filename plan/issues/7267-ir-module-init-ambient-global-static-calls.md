@@ -104,18 +104,19 @@ not have as a callable. Those stay out of this slice (see Left).
 - **Module.** `src/ir/ambient-global-function-call.ts` (#7253's), extended:
   - the callee is `parseInt` (identifier) or `JSON.parse` (`<global>.<name>`);
     the table row names the global it resolves through;
-  - each row carries its lane capabilities, whether its provider is a runtime
-    callable (an ES module's `<module-init>` refuses those), and its result
-    family; `JSON.parse` is `["string"]` → `dynamic`, on
-    `native-json-codec` ∧ `native-dynamic-member-read`;
+  - each row carries its lane capabilities, its unit scope (where the call may
+    be lowered — see Reconciliation below) and its result family;
+    `JSON.parse` is `["string"]` → `dynamic`, on `native-json-codec` ∧
+    `native-dynamic-member-read`, scope `plain-unit`;
   - ONE admission (shape, operand families, capabilities, binding) read by the
     selector and by from-ast — the capability and binding checks that #7253
     repeated on each side move into it;
   - the binding test is the lib-only quantifier plus the same-file declaration
     check, shared with #7118 as `isUnshadowedLibGlobal`
     (`src/shared/ambient-intrinsics.ts`, extracted from
-    `isAmbientIntrinsicValueUse`). This also moves #7253's rows from the
-    "some" quantifier to lib-only (#7264).
+    `isAmbientIntrinsicValueUse`); it replaces #7264's module-local
+    `scriptDeclaresName` (one declared-names walk instead of two; it now also
+    collects named function / class expressions, as #7264's did).
 - **Lowering.** `JSON.parse(s)` → the string operand to externref → `call
   __json_parse_text` (anyref) → `coerce.to_externref` → box onto the dynamic
   carrier (identity on the externref carrier) — legacy's exact
@@ -139,7 +140,7 @@ not have as a callable. Those stay out of this slice (see Left).
   stay `expr-ident-not-in-scope` — not admitted here (see the shape table).
 - **Out.** A reviver (second argument), an untyped / non-string text, WASI
   (its IR member read answers NaN for the codec's graph — measured
-  `JSON.parse('{"a":3}').a`), an ES module's `<module-init>`, any source
+  `JSON.parse('{"a":3}').a`), the units its scope refuses, any source
   binding named `JSON`.
 - **Acceptance.**
   - Correctness: `tests/issue-7267-ambient-json-parse.test.ts` (standalone /
@@ -153,6 +154,38 @@ not have as a callable. Those stay out of this slice (see Left).
     never traps or differs where base does not.
   - Code quality: no second admission; the new row is one table entry in the
     #7253 module; the binding test is shared with #7118, not copied.
+
+## Reconciliation with #7114 / #7264 (2026-11-06, base `origin/main` 8b349439)
+
+Review (composition, at `8984da4c`): keep #7114's ES-module guard for the
+escape family exactly, and do not blanket-refuse `JSON.parse` in closures
+without measurement. #7264 (merged as #7114) had made the module lib-only, added
+`scriptDeclaresName`, and replaced the `<module-init>` rule with "in an ES
+module, only a top-level function declaration". The merged module keeps that
+rule as the escape rows' scope and measures `JSON.parse`'s own:
+
+| unit (standalone, typed operand) | before (branch `8984da4c`) | measured | scope now |
+| --- | --- | --- | --- |
+| script top level / `assert.throws` callback | IR | IR, correct | admitted |
+| script top-level function | IR | IR, correct | admitted |
+| script class method | claimed | claimed, then the prepared component fails: "has no resolvable Program ABI binding" (legacy body, correct value) | refused |
+| script closure nested in a function, reading the result | claimed | **hard compile error**: "… closure-support:captured-subtype … no longer has its allocator object in the published module" | refused |
+| ES module `<module-init>` | refused | — | refused |
+| ES module class method | claimed | as the script class method | refused |
+| ES module top-level function | IR | IR, correct | admitted |
+| ES module closure nested in a top-level function | claimed | hard compile error, as above | refused |
+
+The nested-closure error is not `JSON.parse`-specific: a capturing closure
+whose body does any dynamic op loses its captured-struct type from the published
+module once the dynamic runtime is registered (non-capturing closures and
+capturing ones without a dynamic read compile). `JSON.parse` was the first
+admission that lets a dynamic value originate inside a capturing closure.
+Follow-up: the Program ABI captured-subtype locator (`program-abi-session.ts`
+`resolveLocator`) under late dynamic-runtime registration.
+
+So the row scope is `plain-unit`: the escape rule in ES modules, and in a script
+neither a class member nor a closure nested in a function. Regression tests for
+each row of the table are in the vitest file.
 
 ## Left (follow-ups)
 

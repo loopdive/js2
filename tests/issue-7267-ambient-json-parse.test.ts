@@ -73,11 +73,12 @@ interface Case {
   /** The operand types are deliberately outside the lib signatures. */
   readonly skipSemanticDiagnostics?: boolean;
   /**
-   * A source binding named `JSON`: compared with the IR-off compile, not with
-   * node — legacy already mis-answers several of these on standalone and gc
-   * (identical on main), which is not this admission's to fix.
+   * Compared with the IR-off compile, not with node: a source binding named
+   * `JSON` (legacy already mis-answers several of these on standalone and gc,
+   * identical on main — not this admission's to fix), or a typed script node
+   * cannot run.
    */
-  readonly shadow?: boolean;
+  readonly againstIrOff?: boolean;
 }
 
 const CASES: Record<string, Case> = {
@@ -116,6 +117,39 @@ JSON.parse("{");`,
 export function test(): number { return f('{"n":7}').n === 7 ? 1 : 0; }`,
     irUnits: ["f"],
   },
+  // (#7114 / review) An ES module admits the call only from a top-level function declaration.
+  "ES module: a top-level function takes the IR body": {
+    fileName: "issue-7267-esm.ts",
+    source: `function top(s: string): boolean { return JSON.parse(s).k === 3; }
+export function test(): number { return top('{"k":3}') ? 1 : 0; }`,
+    irUnits: ["top"],
+  },
+  "ES module: a class member keeps the legacy body": {
+    fileName: "issue-7267-esm.ts",
+    source: `class C { m(s: string): boolean { return JSON.parse(s).k === 2; } }
+export function test(): number { return new C().m('{"k":2}') ? 1 : 0; }`,
+    legacyUnits: ["C_m"],
+  },
+  "ES module: a closure nested in a top-level function compiles": {
+    fileName: "issue-7267-esm.ts",
+    source: `function outer(s: string): boolean { const g = (): boolean => JSON.parse(s).k === 4; return g(); }
+export function test(): number { return outer('{"k":4}') ? 1 : 0; }`,
+  },
+  // A script's class members and closures nested in a function are prepared /
+  // capturing units the call is refused in (a hard compile error otherwise).
+  "script: a class member keeps the legacy body": {
+    againstIrOff: true,
+    fileName: "issue-7267.ts",
+    source: `class C { m(s: string): boolean { return JSON.parse(s).k === 2; } }
+if (!new C().m('{"k":2}')) throw "m";`,
+    legacyUnits: ["C_m"],
+  },
+  "script: a capturing closure nested in a function compiles": {
+    againstIrOff: true,
+    fileName: "issue-7267.ts",
+    source: `function outer(s: string): boolean { const g = (): boolean => typeof JSON.parse(s).k === "number"; return g(); }
+if (!outer('{"k":4}')) throw "outer";`,
+  },
   "an ES module's module-init keeps the legacy unit": {
     source: `const o = JSON.parse('{"a":3}');
 export function test() { return o.a === 3 ? 1 : 0; }`,
@@ -134,18 +168,18 @@ if (o !== 12) throw 0;`,
   },
   // Every source binding of the name keeps its own call.
   "a script var JSON": {
-    shadow: true,
+    againstIrOff: true,
     source: `var JSON = { parse: function (s) { return 7; } };
 if (JSON.parse("1") !== 7) throw 0;`,
   },
   "a script function JSON": {
-    shadow: true,
+    againstIrOff: true,
     source: `function JSON() {}
 JSON.parse = function (s) { return 7; };
 if (JSON.parse("1") !== 7) throw 0;`,
   },
   "a let JSON declared after use in a function": {
-    shadow: true,
+    againstIrOff: true,
     source: `function f() { return JSON.parse("1"); }
 let JSON = { parse: function (s) { return 7; } };
 if (f() !== 7) throw 0;`,
@@ -155,18 +189,18 @@ if (f() !== 7) throw 0;`,
 if (f({ parse: function (s) { return 7; } }) !== 7) throw 0;`,
   },
   "an inner-scope JSON": {
-    shadow: true,
+    againstIrOff: true,
     source: `function f() { var JSON = { parse: function (s) { return 7; } }; return JSON.parse("1"); }
 if (f() !== 7) throw 0;`,
   },
   // The #7253 rows share the lib-only + same-file binding test since #7267.
   "a script function parseInt": {
-    shadow: true,
+    againstIrOff: true,
     source: `function parseInt(s) { return 7; }
 if (parseInt("5") !== 7) throw "parseInt";`,
   },
   "an inner-scope escape": {
-    shadow: true,
+    againstIrOff: true,
     source: `function f() { var escape = function (s) { return "e"; }; return escape("<"); }
 if (f() !== "e") throw "escape";`,
   },
@@ -180,7 +214,7 @@ describe("#7267 ambient JSON.parse on the IR path", () => {
         const options = testCase.skipSemanticDiagnostics
           ? { ...lane.options, skipSemanticDiagnostics: true }
           : lane.options;
-        const expected = testCase.shadow
+        const expected = testCase.againstIrOff
           ? await legacyVerdict(testCase.source, options, fileName)
           : /\bexport\b/.test(testCase.source)
             ? evaluateAsJs(testCase.source).test!()

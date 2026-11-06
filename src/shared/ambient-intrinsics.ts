@@ -99,7 +99,9 @@ function declaredNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
   const visit = (node: ts.Node): void => {
     if (
       (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
         ts.isClassDeclaration(node) ||
+        ts.isClassExpression(node) ||
         ts.isVariableDeclaration(node) ||
         ts.isParameter(node) ||
         ts.isBindingElement(node)) &&
