@@ -296,7 +296,8 @@ import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "
 import { isModuleInitVarList, moduleInitVarList } from "./module-init-vars.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
-  boundedMixedConditionalPrimitiveFamily,
+  mixedPrimitiveConditionalArms,
+  type MixedPrimitiveConditionalArms as MixedPrimitiveConditionalProof,
   effectiveIrParamTypeNode,
   jsDocParamIsExternrefCandidate,
   functionBodyReferencesArguments,
@@ -326,7 +327,7 @@ import {
 // `JsTag` enum import this file used to carry is gone: the producer names its
 // partitions through `JS_TAG_IDS` throughout.
 import { JS_TAG_IDS } from "./js-tag-domain.js";
-import { certifiedAliasCall, type StoredStaticAliasMethod } from "./uncurried-object-alias.js";
+import { certifiedAliasCall } from "./uncurried-object-alias.js";
 import {
   exactClosureLiftedName,
   tryLowerPromiseDelayCall,
@@ -7830,11 +7831,11 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (alias !== undefined && cx.resolver?.stringIsExternref?.() !== true) {
     const carriers = lowerAliasCarrierOperands(expr.arguments, alias.method, cx);
     if (alias.form === "uncurried") return cx.builder.emitDynOwnProperty(carriers[0]!, carriers[1]!, alias.method);
-    const provider = STORED_STATIC_PROVIDERS[alias.method];
-    const value = cx.builder.emitCall(irRuntimeFuncRef(provider.symbol), carriers, provider.result);
+    const result = alias.result === "boolean" ? irBool() : irDynamic();
+    const value = cx.builder.emitCall(irRuntimeFuncRef(alias.provider), carriers, result);
     if (value === null) {
       // invariant (producer-promise): a runtime helper declared non-void returned no SSA value — #4502.
-      throw new Error(`ir/from-ast: ${provider.symbol} produced no value in ${cx.funcName}`);
+      throw new Error(`ir/from-ast: ${alias.provider} produced no value in ${cx.funcName}`);
     }
     return value;
   }
@@ -8198,14 +8199,6 @@ function lowerDroppedDelete(expression: ts.Expression, cx: LowerCtx): boolean {
  * call as dynamic carriers, boxing a concrete operand; demotes (pre-claim
  * parity: the selector admits only boxable operands) when one cannot box.
  */
-/** The object-runtime provider each stored-static alias calls, and its result. */
-const STORED_STATIC_PROVIDERS: Readonly<
-  Record<StoredStaticAliasMethod, { readonly symbol: string; readonly result: IrType }>
-> = {
-  getOwnPropertyDescriptor: { symbol: "__getOwnPropertyDescriptor", result: irDynamic() },
-  isArray: { symbol: "__extern_is_array", result: irBool() },
-};
-
 function lowerAliasCarrierOperands(args: readonly ts.Expression[], aliasName: string, cx: LowerCtx): IrValueId[] {
   const carriers: IrValueId[] = [];
   for (const argument of args) {
@@ -13903,11 +13896,6 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   cx.builder.emitRefCellSet(storage.value, result);
 }
 
-interface MixedPrimitiveConditionalProof {
-  readonly whenTrue: IrPrimitiveExpressionFamily;
-  readonly whenFalse: IrPrimitiveExpressionFamily;
-}
-
 interface ExactMixedPrimitiveWrapperProof {
   readonly kind: "Number" | "String";
   readonly conditional: ts.ConditionalExpression;
@@ -14110,15 +14098,8 @@ function mixedPrimitiveConditionalClaim(
   if (!cx.checker) return null;
   const classifyPrimitive = makeIrPrimitiveExpressionClassifier(cx.checker);
   const classifyDeclared = makeIrDeclaredPrimitiveExpressionClassifier(cx.checker);
-  const lane = additiveLaneOf(cx);
-  const familyOf = (e: ts.Expression) =>
-    boundedMixedConditionalPrimitiveFamily(e, classifyPrimitive, classifyDeclared, lane);
-  const whenTrue = familyOf(expr.whenTrue);
-  const whenFalse = familyOf(expr.whenFalse);
-  if (whenTrue === undefined || whenFalse === undefined || whenTrue === whenFalse) {
-    return null;
-  }
-  return { whenTrue, whenFalse };
+  const shadowed = (name: string) => cx.scope.has(name);
+  return mixedPrimitiveConditionalArms(expr, classifyPrimitive, classifyDeclared, additiveLaneOf(cx), shadowed) ?? null;
 }
 
 /**
@@ -14347,7 +14328,7 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: I
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "build",
-          `ir/from-ast: #5092 condition lost its selector-proven primitive truthiness in ${cx.funcName}`,
+          `ir/from-ast: #5092 condition lost its selector-proven boolean truthiness in ${cx.funcName}`,
         );
       }
 

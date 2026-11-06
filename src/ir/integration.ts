@@ -22,6 +22,7 @@
 // `shiftLateImportIndices` pass is a no-op for every body produced here.
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
+import type { StoredStaticAliasProvider } from "./uncurried-object-alias.js";
 import {
   nativeConsoleOutputAvailable,
   ensureIrNativeConsoleProvider,
@@ -9298,7 +9299,7 @@ function buildTemplateWrapperFamily(
 
 /** Legacy's import signature of each stored-static alias provider (#7106 propertyHelper, #7272). */
 const STORED_STATIC_PROVIDER_IMPORTS: Readonly<
-  Record<"__getOwnPropertyDescriptor" | "__extern_is_array", { params: ValType[]; results: ValType[] }>
+  Record<StoredStaticAliasProvider, { params: ValType[]; results: ValType[] }>
 > = {
   __getOwnPropertyDescriptor: {
     params: [{ kind: "externref" }, { kind: "externref" }],

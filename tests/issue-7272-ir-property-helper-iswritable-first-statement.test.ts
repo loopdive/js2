@@ -126,15 +126,15 @@ describe("#7272 isWritable's first statement on the IR path", () => {
     });
   }
 
-  it("boxes a mixed conditional over a dynamic condition and reads it as a logical operand", async () => {
+  it("boxes a mixed conditional over a comparison of dynamic operands and reads it as a logical operand", async () => {
     const body = `function pick(flag, value) {
-  var fallback = flag ? 1.5 : "fallback";
+  var fallback = flag === 1 || flag === "one" ? 1.5 : "fallback";
   return value || fallback;
 }
 assert.sameValue(pick(1, 0), 1.5, "number arm");
 assert.sameValue(pick("", undefined), "fallback", "string arm");
 assert.sameValue(pick(null, "v"), "v", "left operand");
-assert.sameValue(pick({}, ""), 1.5, "object condition");
+assert.sameValue(pick("one", ""), 1.5, "second comparison");
 `;
     const path = fixture("mixed-carrier", body);
     expect(await outcomeOf(path, "pick")).toMatchObject({ kind: "emitted", irBodyEmitted: true });
@@ -161,7 +161,21 @@ assert.sameValue(isArr(new Proxy([], {})), true, "proxy of array");
   const uncertified: ReadonlyArray<readonly [string, string]> = [
     ["reassigned", "var __isArray = Array.isArray;\n__isArray = function () { return true; };\n"],
     ["shadowed namespace", "var __isArray = Array.isArray;\nfunction Array() {}\n"],
+    ["member-rewritten", 'Array.isArray = function () { return "yes"; };\nvar __isArray = Array.isArray;\n'],
+    ["redefined", 'var __isArray = Array.isArray;\nObject.defineProperty(Array, "isArray", { value: 0 });\n'],
   ];
+  // A condition the claim cannot prove boolean keeps the conditional off the
+  // mixed route, so the function compiles (legacy) instead of failing after
+  // the claim.
+  it("leaves a mixed conditional over an unproven condition to legacy", async () => {
+    const body = `function f(v) { var fb = [] ? 1.5 : "a"; return fb; }
+assert.sameValue(f(0), 1.5);
+`;
+    const path = fixture("unproven-condition", body);
+    expect((await outcomeOf(path, "f"))?.irBodyEmitted).toBe(false);
+    expect(await runTest262File(path, "issue-7272", undefined, "standalone")).toMatchObject({ status: "pass" });
+  });
+
   for (const [name, prelude] of uncertified) {
     it(`does not certify a ${name} __isArray`, async () => {
       const body = prelude + "function isArr(x) { var r = __isArray(x); return r; }\nisArr([]);\n";

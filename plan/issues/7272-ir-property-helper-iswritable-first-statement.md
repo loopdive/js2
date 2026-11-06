@@ -51,21 +51,26 @@ Measured slice by slice on `issue-7269-ir-property-helper-alias-calls`
 three slices changes the resolver contract.
 
 - **(d) `__isArray`** (`src/ir/uncurried-object-alias.ts`):
-  - The stored-static form becomes a table, `STORED_STATICS`, with each
-    method's namespace and arity. `Array.isArray` joins
-    `Object.getOwnPropertyDescriptor`. A top-level binding of the namespace
-    (var, function or class) withdraws its aliases.
-  - One classifier, `certifiedAliasCall(call, shadowed)`, returns `{ form,
-    method, result }` with the native arity applied. It replaces the five
+  - The stored-static form becomes one table, `STORED_STATICS`. Each row
+    holds the method's namespace, arity, result kind, backend capability and
+    object-runtime provider. `Array.isArray` joins
+    `Object.getOwnPropertyDescriptor`.
+  - A stored static's aliases are withdrawn by a top-level binding of the
+    namespace (var, function or class), or by any write to the namespace's
+    member in the file: `Array.isArray = …`, `delete`, or a reflective
+    `Object.defineProperty(Array, …)` / `Reflect.*`.
+  - One classifier, `certifiedAliasCall(call, shadowed)`, returns the alias
+    plus its lowering (`result`, `capability`, and `provider` for a stored
+    static), with the native arity applied. It replaces the five
     hand-written copies of the 2-argument uncurried test (move-only scan,
     exact-family proof, call graph, from-ast lowering, from-ast unboxed-local
     proof) and the descriptor-specific predicates.
-  - Selector: one alias arm, with a per-alias capability
-    (`certifiedAliasLane`). The new capability `native-array-is-array` is on
-    standalone only: WASI keeps legacy's inline `ref.test` chain.
-  - from-ast: the stored statics call their provider from the
-    `STORED_STATIC_PROVIDERS` table (`__getOwnPropertyDescriptor` → dynamic,
-    `__extern_is_array` → bool).
+  - Selector: one alias arm, gated on `alias.capability`. The new capability
+    `native-array-is-array` is on standalone only: WASI keeps legacy's inline
+    `ref.test` chain. The capability names are typed as an `Extract` of the
+    canonical `IrBackendTargetCapability`.
+  - from-ast: a stored static calls `alias.provider`. The result is a bool
+    for `isArray` and dynamic for the descriptor.
   - integration: `STORED_STATIC_PROVIDER_IMPORTS` registers legacy's import
     signature for each one used. The one-off `usesOwnPropertyDescriptor` flag
     is folded into that table.
@@ -76,17 +81,30 @@ three slices changes the resolver contract.
     refused, so it was reverted.
   - Deferred: the direct `Array.isArray(dyn)` form, which propertyHelper does
     not use.
-- **(e) the mixed conditional** (#5092, `select.ts` plus from-ast's claim):
-  - The condition no longer needs a checker-primitive family. Any Phase-1
-    condition lowers through `lowerToBooleanForCondition`.
-  - The proof is one function, `mixedPrimitiveConditionalArmsProven`, shared
-    by the conditional arm, the vardecl alias rule and the move-only scan.
+- **(e) the mixed conditional** (#5092):
+  - The selector and from-ast's `mixedPrimitiveConditionalClaim` share one
+    exported proof, `mixedPrimitiveConditionalArms` in `select.ts`. Before,
+    each restated it.
+  - The condition is still a bounded primitive, OR now a boolean result that
+    is an i32 however its operands lower:
+    - a comparison (`===`, `<`, `in`, `instanceof`, …);
+    - `!`, `&&` or `||` of such;
+    - a certified boolean alias call.
+  - An unproven condition (`[] ? 1.5 : "a"`) keeps the conditional off the
+    route, so it falls back to legacy. A first cut accepted any Phase-1
+    condition, and the fresh review showed that turns such a conditional into
+    a post-claim compile error.
+  - The conditional arm records each conditional it admits in the
+    per-subject `currentProvenMixedConditionals`. The move-only scan and the
+    carrier-local test run after the shape walk and read that verdict. They
+    do not re-derive it, so they need no scope and are confined to the
+    current subject.
   - A local initialised from such a conditional holds a fresh box, so it is
     exempt from `vardecl-module-binding-alias`.
 - **(f) the dynamic logical operand:**
   - `dynamicLogicalValueCarrier` also accepts `mixedConditionalCarrierLocal`:
-    a never-written, unannotated local of the current function whose
-    initializer is a proven mixed conditional.
+    a never-written, unannotated local whose initializer the current subject
+    admitted as a mixed conditional.
   - The move-only scan treats such a conditional as dyn-shaped, and in a dyn
     position it scans the condition and both concrete arms.
   - The result is a move of one of the two carriers through `dyn.truthy`,
@@ -96,4 +114,22 @@ three slices changes the resolver contract.
 
 Code-quality criterion: no new copy of an alias predicate. Every alias site
 goes through `certifiedAliasCall`, and every mixed-conditional site through
-`mixedPrimitiveConditionalArmsProven`.
+`mixedPrimitiveConditionalArms`, or through the verdict that function
+recorded.
+
+## Review (fresh context, 2026-11-06)
+
+The verdict on the first push was **"not met"**. Every finding:
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 | blocker: an unproven condition (`[] ? 1.5 : "a"`) became a post-claim compile error | fixed: boolean-result condition rule; test |
+| 2 | `Array.isArray = …` before the alias was a miscompile | fixed: member and reflective writes withdraw; tests |
+| 3 | selector and from-ast mixed proofs duplicated | fixed: one exported `mixedPrimitiveConditionalArms` |
+| 4 | per-alias facts spread over five tables | fixed: `STORED_STATICS` rows carry result, capability and provider; `certifiedAliasLane` and `STORED_STATIC_PROVIDERS` removed |
+| 5 | capability names written three times | partly fixed: the alias module types them as an `Extract` of `IrBackendTargetCapability`. The inline union in `IrSelectionOptions` predates this PR and is left as is. |
+| 6 | an orphaned JSDoc in from-ast | fixed: the table is gone |
+| 7 | the carrier-local test did not check its declaration belongs to the current subject | fixed: it reads the current subject's admitted set |
+| 8 | the route's off-switch was not applied at all four sites | fixed: the proof wrapper checks `exactMixedPrimitiveConditionalContextReady` |
+| 9 | the `__extern_is_array` signature is restated in four other files | rebutted: it predates this PR. Integration's table mirrors legacy's registration on purpose. Folding it is its own cleanup. |
+| 10 | `declaration!` assertions | fixed: narrowed local |

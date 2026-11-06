@@ -59,11 +59,7 @@ import { localIsRewritten } from "./lattice-param-facts.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
-import {
-  certifiedAliasCall,
-  type CertifiedAliasCall,
-  isStoredObjectDescriptorMemberRead,
-} from "./uncurried-object-alias.js";
+import { certifiedAliasCall, isStoredObjectDescriptorMemberRead } from "./uncurried-object-alias.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
 import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
@@ -1800,6 +1796,12 @@ let currentDynamicRuntimeBuildable = true;
 // (#7106 S3a) The current subject's dynamic-typed PARAMETER names: the only
 // callees `new <name>(…)` may construct through `dyn.construct`.
 let currentDynamicParamNames = new Set<string>();
+/**
+ * (#7272) The #5092 mixed conditionals the current subject's shape walk
+ * admitted. The move-only scan and the carrier-local test run after that walk
+ * and read its verdict instead of re-deriving it out of scope.
+ */
+let currentProvenMixedConditionals = new Set<ts.ConditionalExpression>();
 // The current subject's resolved return kind: `concreteResultRecoversDynamic`
 // reads it to recover a dynamic `return` operand into a concrete result.
 let currentFnReturnKind: ResolvedKind = null;
@@ -1812,6 +1814,14 @@ let currentCatchBoundNames = new Set<string>();
 // read, so the define arm admits by text; the move-only scan treats the binding
 // like a catch binding.
 let currentOpenCarrierNames = new Set<string>();
+
+/** A function subject starts with no dynamic parameters, catch bindings, open carriers or admitted mixed conditionals. */
+function resetSubjectCarrierState(): void {
+  currentDynamicParamNames = new Set<string>();
+  currentProvenMixedConditionals = new Set<ts.ConditionalExpression>();
+  currentCatchBoundNames = new Set<string>();
+  currentOpenCarrierNames = new Set<string>();
+}
 /** Mirrors `IR_DYNAMIC_CONSTRUCT_MAX_ARITY` (`codegen/ir-dynamic-construct.ts`): the fixed-arity driver family. */
 const IR_DYNAMIC_CONSTRUCT_MAX_ARITY = 8;
 // #2949 S5.P follow-up — dynamic member reads used by equality require the
@@ -2194,9 +2204,7 @@ function whyNotIrClaimable(
   // the move-only scan). Non-empty ⇒ the claim is additionally gated on
   // `dynamicUsesAreMoveOnly` below.
   const dynNames = new Set<string>();
-  currentDynamicParamNames = new Set<string>();
-  currentCatchBoundNames = new Set<string>();
-  currentOpenCarrierNames = new Set<string>();
+  resetSubjectCarrierState();
   // Method bodies and constructor bodies see `this` as an implicit local;
   // mark it so a `return this;` / `this.field` reference passes the
   // identifier-in-scope check at Phase-1 expression position.
@@ -3419,7 +3427,7 @@ function dynamicUsesAreMoveOnly(
       return true;
     }
     // (#7272) a #5092 mixed conditional boxes both concrete arms into a carrier.
-    if (ts.isConditionalExpression(e) && mixedPrimitiveConditionalArmsProven(e)) return true;
+    if (ts.isConditionalExpression(e) && currentProvenMixedConditionals.has(e)) return true;
     if (ts.isPropertyAccessExpression(e)) return isDynShaped(e.expression);
     if (ts.isElementAccessExpression(e)) return isDynShaped(e.expression);
     return false;
@@ -3929,7 +3937,7 @@ function dynamicUsesAreMoveOnly(
       const trueIsDynamic = isDynShaped(e.whenTrue);
       const falseIsDynamic = isDynShaped(e.whenFalse);
       // (#7272) #5092 boxes each concrete arm onto the carrier it produces.
-      if (expectDyn && !trueIsDynamic && !falseIsDynamic && mixedPrimitiveConditionalArmsProven(e)) {
+      if (expectDyn && !trueIsDynamic && !falseIsDynamic && currentProvenMixedConditionals.has(e)) {
         return (
           scanExpr(e.condition, isDynShaped(e.condition)) && scanExpr(e.whenTrue, false) && scanExpr(e.whenFalse, false)
         );
@@ -7115,7 +7123,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       // (#7272) A mixed conditional boxes each arm into a fresh carrier: the
       // local holds a copy, never the module slot.
       const freshMixedCarrier =
-        ts.isConditionalExpression(initializer) && mixedPrimitiveConditionalArmsProven(initializer);
+        ts.isConditionalExpression(initializer) && mixedPrimitiveConditionalArmsProven(initializer, scope);
       if (
         expressionTouchesTrackedModuleValue(d.initializer) &&
         !exactMapGetAlias &&
@@ -8527,40 +8535,78 @@ export function boundedMixedConditionalPrimitiveFamily(
   return visit(expression);
 }
 
+export interface MixedPrimitiveConditionalArms {
+  readonly whenTrue: IrPrimitiveExpressionFamily;
+  readonly whenFalse: IrPrimitiveExpressionFamily;
+}
+
 /**
- * #5092 — both arms of `expr` are bounded primitives of DIFFERENT families, so
- * the route boxes each into a fresh dynamic carrier (from-ast's
- * `mixedPrimitiveConditionalClaim` is the same test). The condition is any
- * Phase-1 condition: it lowers through the ordinary truthiness test.
+ * #5092 — the claim the selector and from-ast's `mixedPrimitiveConditionalClaim`
+ * share: both arms are bounded primitives of DIFFERENT families, each boxed
+ * into a fresh dynamic carrier, and the condition lowers to an i32 boolean.
+ * The condition is a bounded primitive, or (#7272) a comparison result over
+ * any operands, `!`, `&&` or `||` of such, or a certified boolean alias call
+ * (`__isArray(obj) && name === "length"`).
  */
-function mixedPrimitiveConditionalArmsProven(expr: ts.ConditionalExpression): boolean {
-  const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
-  const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
-  if (classifyPrimitive === undefined || classifyDeclared === undefined) return false;
-  const lane = additiveLane();
+export function mixedPrimitiveConditionalArms(
+  expr: ts.ConditionalExpression,
+  classifyPrimitive: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined,
+  classifyDeclared: (expr: ts.Expression) => IrDeclaredPrimitiveExpressionFamily | undefined,
+  lane: AdditiveLane,
+  shadowed: (name: string) => boolean,
+): MixedPrimitiveConditionalArms | undefined {
   const familyOf = (e: ts.Expression) =>
     boundedMixedConditionalPrimitiveFamily(e, classifyPrimitive, classifyDeclared, lane);
   const whenTrue = familyOf(expr.whenTrue);
   const whenFalse = familyOf(expr.whenFalse);
-  return whenTrue !== undefined && whenFalse !== undefined && whenTrue !== whenFalse;
+  if (whenTrue === undefined || whenFalse === undefined || whenTrue === whenFalse) return undefined;
+  const condition = familyOf(expr.condition) !== undefined || booleanResultCondition(expr.condition, shadowed);
+  return condition ? { whenTrue, whenFalse } : undefined;
+}
+
+function booleanResultCondition(expr: ts.Expression, shadowed: (name: string) => boolean): boolean {
+  const e = unwrapPhase1Parens(expr);
+  if (ts.isCallExpression(e)) return certifiedAliasCall(e, shadowed)?.result === "boolean";
+  if (ts.isPrefixUnaryExpression(e)) {
+    return e.operator === ts.SyntaxKind.ExclamationToken && booleanResultCondition(e.operand, shadowed);
+  }
+  if (!ts.isBinaryExpression(e)) return false;
+  const op = e.operatorToken.kind;
+  if (isComparisonResultOperator(op)) return true;
+  return (
+    (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) &&
+    booleanResultCondition(e.left, shadowed) &&
+    booleanResultCondition(e.right, shadowed)
+  );
+}
+
+/** {@link mixedPrimitiveConditionalArms} in the current subject, with the route enabled. */
+function mixedPrimitiveConditionalArmsProven(expr: ts.ConditionalExpression, scope: ReadonlySet<string>): boolean {
+  const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
+  const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
+  if (classifyPrimitive === undefined || classifyDeclared === undefined) return false;
+  if (!exactMixedPrimitiveConditionalContextReady(expr)) return false;
+  const shadowed = (name: string) => scope.has(name);
+  return (
+    mixedPrimitiveConditionalArms(expr, classifyPrimitive, classifyDeclared, additiveLane(), shadowed) !== undefined
+  );
 }
 
 /**
- * (#7272) An unannotated, never-written local of the current function whose
- * initializer is a proven #5092 mixed conditional: it holds that conditional's
- * fresh dynamic carrier (`var unlikelyValue = c ? 4294967295 : "unlikely"`).
+ * (#7272) An unannotated, never-written local whose initializer is a mixed
+ * conditional the current subject admitted: it holds that conditional's fresh
+ * dynamic carrier (`var unlikelyValue = c ? 4294967295 : "unlikely"`). A
+ * declaration outside the subject has no admitted initializer.
  */
 function mixedConditionalCarrierLocal(identifier: ts.Identifier): boolean {
   if (moduleBinding(identifier)) return false;
   const declaration = currentModuleBindingResolver?.localVariableDeclaration(identifier);
-  const initializer = declaration?.initializer && unwrapPhase1Parens(declaration.initializer);
+  if (declaration?.initializer === undefined || declaration.type !== undefined) return false;
+  const initializer = unwrapPhase1Parens(declaration.initializer);
   return (
-    initializer !== undefined &&
-    declaration!.type === undefined &&
     ts.isConditionalExpression(initializer) &&
-    exactMixedPrimitiveConditionalContextReady(declaration!) &&
-    !localIsRewritten(declaration!) &&
-    mixedPrimitiveConditionalArmsProven(initializer)
+    currentProvenMixedConditionals.has(initializer) &&
+    !localIsRewritten(declaration)
   );
 }
 
@@ -11262,20 +11308,6 @@ function dynamicLogicalValueCarrier(operand: ts.Expression): boolean {
   );
 }
 
-/** The backend capability each certified alias lowers through, and its refusal arm. */
-function certifiedAliasLane(alias: CertifiedAliasCall): {
-  readonly capability: "native-own-property-test" | "native-own-property-descriptor" | "native-array-is-array";
-  readonly refusal: string;
-} {
-  if (alias.form === "uncurried") {
-    return { capability: "native-own-property-test", refusal: "expr-call-uncurried-object-alias-lane" };
-  }
-  return {
-    capability: alias.method === "isArray" ? "native-array-is-array" : "native-own-property-descriptor",
-    refusal: "expr-call-stored-object-static-alias-lane",
-  };
-}
-
 /** The parameter names of the function-like node enclosing `node` (empty at top level). */
 function enclosingFunctionParameterNames(node: ts.Node): ReadonlySet<string> {
   for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
@@ -11973,9 +12005,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       if (!exactMixedPrimitiveConditionalContextReady(expr)) {
         return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-context", expr);
       }
-      if (!mixedPrimitiveConditionalArmsProven(expr)) {
+      if (!mixedPrimitiveConditionalArmsProven(expr, scope)) {
         return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-proof", expr);
       }
+      currentProvenMixedConditionals.add(expr);
       return true;
     }
     if (expressionTouchesTrackedModuleValue(expr.whenTrue) || expressionTouchesTrackedModuleValue(expr.whenFalse)) {
@@ -12006,12 +12039,15 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // (legacy's `call-object-builtins.ts` / `Array.isArray` arms).
     const alias = certifiedAliasCall(expr, (name) => scope.has(name));
     if (alias !== undefined) {
-      const lane = certifiedAliasLane(alias);
       if (
         !currentDynamicRuntimeBuildable ||
-        currentSelectionOptions?.supportsBackendCapability?.(lane.capability) !== true
+        currentSelectionOptions?.supportsBackendCapability?.(alias.capability) !== true
       ) {
-        return capabilityNo("call-resolution-unsupported", lane.refusal, expr);
+        const arm =
+          alias.form === "uncurried"
+            ? "expr-call-uncurried-object-alias-lane"
+            : "expr-call-stored-object-static-alias-lane";
+        return capabilityNo("call-resolution-unsupported", arm, expr);
       }
       return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
     }
@@ -13292,6 +13328,7 @@ export function assessModuleInit(
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();
   currentDynamicParamNames = new Set<string>(); // (#7106 S3a) no parameters at module init
+  currentProvenMixedConditionals = new Set<ts.ConditionalExpression>();
   const maskedRejects: ModuleInitReject[] | undefined = MODULE_INIT_ALL_REJECTS_ON ? [] : undefined;
   for (const stmt of population) {
     if (constBindingWriteRefused(stmt) || !isPhase1BodyStatement(stmt, scope, localClasses)) {

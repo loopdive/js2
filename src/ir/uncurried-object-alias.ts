@@ -19,6 +19,7 @@
  */
 
 import { ts } from "../ts-api.js";
+import type { IrBackendTargetCapability } from "./backend/legality.js";
 
 export type UncurriedObjectAliasMethod = "hasOwnProperty" | "propertyIsEnumerable";
 
@@ -38,23 +39,64 @@ export type UncurriedObjectAliasMethod = "hasOwnProperty" | "propertyIsEnumerabl
  */
 export type StoredStaticAliasMethod = "getOwnPropertyDescriptor" | "isArray";
 
-/** Each stored static: the builtin namespace it reads and its call arity. */
-const STORED_STATICS: Readonly<Record<StoredStaticAliasMethod, { readonly receiver: string; readonly arity: number }>> =
-  {
-    getOwnPropertyDescriptor: { receiver: "Object", arity: 2 },
-    isArray: { receiver: "Array", arity: 1 },
-  };
+/** The object-runtime provider a stored static lowers to. */
+export type StoredStaticAliasProvider = "__getOwnPropertyDescriptor" | "__extern_is_array";
+
+type CertifiedAliasCapability = Extract<
+  IrBackendTargetCapability,
+  "native-own-property-test" | "native-own-property-descriptor" | "native-array-is-array"
+>;
+
+/** What a certified alias call lowers to: its result kind and the backend capability it needs. */
+interface CertifiedAliasLowering {
+  readonly result: "boolean" | "dynamic";
+  readonly capability: CertifiedAliasCapability;
+}
+
+/** Each stored static: the namespace it reads, its arity, and its native lowering. */
+const STORED_STATICS: Readonly<
+  Record<
+    StoredStaticAliasMethod,
+    CertifiedAliasLowering & {
+      readonly receiver: string;
+      readonly arity: number;
+      readonly provider: StoredStaticAliasProvider;
+    }
+  >
+> = {
+  getOwnPropertyDescriptor: {
+    receiver: "Object",
+    arity: 2,
+    result: "dynamic",
+    capability: "native-own-property-descriptor",
+    provider: "__getOwnPropertyDescriptor",
+  },
+  isArray: {
+    receiver: "Array",
+    arity: 1,
+    result: "boolean",
+    capability: "native-array-is-array",
+    provider: "__extern_is_array",
+  },
+};
+
+/** The uncurried Object.prototype predicates: two operands, an exact boolean, `dyn.own_property`. */
+const UNCURRIED: CertifiedAliasLowering = { result: "boolean", capability: "native-own-property-test" };
 
 type ObjectAlias =
   | { readonly form: "uncurried"; readonly method: UncurriedObjectAliasMethod }
   | { readonly form: "stored-static"; readonly method: StoredStaticAliasMethod };
 
-/**
- * A call of a certified alias with the arity its native lowering takes, and
- * the kind of value that lowering produces: an exact boolean (the
- * Object.prototype predicates, `isArray`) or the dynamic descriptor.
- */
-export type CertifiedAliasCall = ObjectAlias & { readonly result: "boolean" | "dynamic" };
+/** A call of a certified alias with the arity its native lowering takes, and that lowering. */
+export type CertifiedAliasCall = CertifiedAliasLowering &
+  (
+    | { readonly form: "uncurried"; readonly method: UncurriedObjectAliasMethod }
+    | {
+        readonly form: "stored-static";
+        readonly method: StoredStaticAliasMethod;
+        readonly provider: StoredStaticAliasProvider;
+      }
+  );
 
 const cache = new WeakMap<ts.SourceFile, ReadonlyMap<string, ObjectAlias>>();
 
@@ -79,24 +121,96 @@ function collectAliases(sourceFile: ts.SourceFile): ReadonlyMap<string, ObjectAl
       if (staticMethod !== undefined) candidates.set(name, { form: "stored-static", method: staticMethod });
     }
   }
-  // A top-level binding of the namespace itself makes the initializer read a
-  // user value, not the builtin: no stored-static alias of it survives.
+  withdrawShadowedOrMutatedNamespaces(sourceFile, declared, candidates);
+  withdrawRewrittenAliases(sourceFile, candidates);
+  cache.set(sourceFile, candidates);
+  return candidates;
+}
+
+/**
+ * A stored static reads its namespace once, at its declaration. A top-level
+ * binding of the namespace (it then names a user value), or a write to the
+ * namespace's member anywhere in the file (`Array.isArray = …`, `delete`,
+ * `Object.defineProperty(Array, …)`), withdraws the namespace's aliases: the
+ * slot may then hold something other than the builtin.
+ */
+function withdrawShadowedOrMutatedNamespaces(
+  sourceFile: ts.SourceFile,
+  declared: Set<string>,
+  candidates: Map<string, ObjectAlias>,
+): void {
   for (const statement of sourceFile.statements) {
     if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name) {
       declared.add(statement.name.text);
     }
   }
+  // `<Namespace>.<member>` for a named member write, `<Namespace>.*` for a
+  // write the member name cannot be read off (computed, reflective, the
+  // namespace binding itself).
+  const mutated = new Set([...declared].map((name) => `${name}.*`));
+  const visit = (node: ts.Node): void => {
+    const target =
+      ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)
+        ? node.left
+        : ts.isDeleteExpression(node)
+          ? node.expression
+          : ts.isCallExpression(node) && isReflectiveDefinition(node.expression)
+            ? node.arguments[0]
+            : undefined;
+    if (target && ts.isIdentifier(target)) mutated.add(`${target.text}.*`);
+    else if (target && ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression)) {
+      mutated.add(`${target.expression.text}.${target.name.text}`);
+    } else if (target && ts.isElementAccessExpression(target) && ts.isIdentifier(target.expression)) {
+      mutated.add(`${target.expression.text}.*`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
   for (const [name, alias] of candidates) {
-    if (alias.form === "stored-static" && declared.has(STORED_STATICS[alias.method].receiver)) candidates.delete(name);
+    if (alias.form !== "stored-static") continue;
+    const { receiver } = STORED_STATICS[alias.method];
+    if (mutated.has(`${receiver}.*`) || mutated.has(`${receiver}.${alias.method}`)) candidates.delete(name);
   }
-  // Any write to the name anywhere in the file (assignment, update, a
-  // nested re-declaration) withdraws the alias: the identity is no longer
-  // immutable, which is the whole premise of the native lowering.
+}
+
+const REFLECTIVE_DEFINITIONS = new Set([
+  "Object.defineProperty",
+  "Object.defineProperties",
+  "Object.assign",
+  "Object.setPrototypeOf",
+  "Reflect.defineProperty",
+  "Reflect.set",
+  "Reflect.deleteProperty",
+  "Reflect.setPrototypeOf",
+]);
+
+function isReflectiveDefinition(callee: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    REFLECTIVE_DEFINITIONS.has(`${callee.expression.text}.${callee.name.text}`)
+  );
+}
+
+function isAssignmentOperator(op: ts.SyntaxKind): boolean {
+  return op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment;
+}
+
+/**
+ * Any write to the alias name anywhere in the file (assignment, update, a
+ * nested re-declaration) withdraws the alias: the identity is no longer
+ * immutable, which is the whole premise of the native lowering.
+ */
+function withdrawRewrittenAliases(sourceFile: ts.SourceFile, candidates: Map<string, ObjectAlias>): void {
   const visit = (node: ts.Node): void => {
     if (candidates.size === 0) return;
-    if (ts.isBinaryExpression(node) && ts.isIdentifier(node.left) && candidates.has(node.left.text)) {
-      const op = node.operatorToken.kind;
-      if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment) candidates.delete(node.left.text);
+    if (
+      ts.isBinaryExpression(node) &&
+      ts.isIdentifier(node.left) &&
+      candidates.has(node.left.text) &&
+      isAssignmentOperator(node.operatorToken.kind)
+    ) {
+      candidates.delete(node.left.text);
     } else if (
       (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
       ts.isIdentifier(node.operand) &&
@@ -117,8 +231,6 @@ function collectAliases(sourceFile: ts.SourceFile): ReadonlyMap<string, ObjectAl
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
-  cache.set(sourceFile, candidates);
-  return candidates;
 }
 
 function storedStaticMethodOfInitializer(init: ts.Expression | undefined): StoredStaticAliasMethod | undefined {
@@ -173,9 +285,9 @@ export function certifiedAliasCall(
   if (call.questionDotToken || call.arguments.some(ts.isSpreadElement)) return undefined;
   const alias = objectAliasOf(call.expression, shadowed);
   if (alias === undefined) return undefined;
-  if (alias.form === "uncurried") return call.arguments.length === 2 ? { ...alias, result: "boolean" } : undefined;
-  if (call.arguments.length !== STORED_STATICS[alias.method].arity) return undefined;
-  return { ...alias, result: alias.method === "getOwnPropertyDescriptor" ? "dynamic" : "boolean" };
+  if (alias.form === "uncurried") return call.arguments.length === 2 ? { ...alias, ...UNCURRIED } : undefined;
+  const { arity, result, capability, provider } = STORED_STATICS[alias.method];
+  return call.arguments.length === arity ? { ...alias, result, capability, provider } : undefined;
 }
 
 /**
