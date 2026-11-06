@@ -93,3 +93,31 @@ admission sits next to its sibling checks in the same arm.
 - Wrapped ledger: 0 invariants, compileOk not lower.
 - Standalone test262 A/B on propertyHelper includers plus 300 random: no
   pass→fail, no new trap.
+
+## Results (2026-11-06; base = #7260 head `217cbd51`, head `4bdbc499`; corpus on `30856ab9`)
+
+- **isWritable:** in the real harness it still stops first at #7250 step 1
+  (`vardecl-module-binding-alias`, the `__isArray(obj) && …` conditional),
+  then at the second alias `var hadValue = __hasOwnProperty(obj, name)`.
+  With both stubbed inside the assembled harness
+  (`built-ins/Boolean/prop-desc.js`, sloppy):
+  - head emits isWritable, verifyWritable and verifyNotWritable as whole IR
+    units;
+  - base refuses isWritable at (b), and the other two through call-graph
+    closure;
+  - verifyProperty stays blocked by its own alias
+    (`__getOwnPropertyDescriptor(obj, name)`).
+
+  The next lever for the propertyHelper files is therefore #7250 steps 1–2.
+  Whole units freed by #7265 alone: 0.
+- **Wrapped ledger** (stride 40, standalone, SHAPE_DIAG): identical, with
+  compileOk 1118 → 1118, invariants `{}`, routes `both 8531 / legacy 4780 /
+  ir 1137`, and 0 `unsupportedDetails` rows changed.
+- **Route diff:** stride-40 plus 300 seeded random, kept where the
+  assembled source has a `[… || …]` key or a `var x;` later assigned a
+  call. 208 files, 0 changes.
+- **Standalone test262 A/B:** 300 random + the 208 candidates + every 20th
+  propertyHelper includer (263), 721 distinct files. `{ pass: 506, fail: 161,
+  compile_error: 43, skip: 11 }` on both sides, with the same non-pass set.
+- **Typed corpus:** 264/264 byte-identical (gc/standalone/wasi).
+- **Tests:** 13/13 (#7265, #7260, #7258). Gates bare green.

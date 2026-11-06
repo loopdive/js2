@@ -1411,6 +1411,7 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       case "global.get":
         emitter.emitGlobalGet(resolver.resolveGlobal(instr.target), out);
+        if (instr.resultType?.kind === "class") emitter.pushRaw(out, { op: "ref.as_non_null" }); // pushraw-ok(#7252): `(ref null $C)` slot, as legacy reads it
         return;
       case "global.set":
         emitValue(instr.value, out);
