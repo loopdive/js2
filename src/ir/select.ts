@@ -4972,10 +4972,23 @@ function isPhase1ThrowStatement(
   if (expressionTouchesModuleMapGetAlias(stmt.expression)) {
     return shapeNo("throw-module-map-get-alias", stmt.expression);
   }
-  if (expressionTouchesScalarModuleBinding(stmt.expression) && obviousModuleValueFamily(stmt.expression) !== "string") {
+  if (mayYieldUnboxedModuleScalar(stmt.expression)) {
     return shapeNo("throw-module-scalar-unboxed", stmt.expression);
   }
   return isPhase1Expr(stmt.expression, scope, localClasses);
+}
+
+/**
+ * True when a value built from `expr` may carry an unboxed f64/boolean module
+ * read. A `new` yields an object, so only its callee and arguments can (#7281):
+ * `new Test262Error('Actual: ' + x)` reads `x` inside a string concat.
+ */
+function mayYieldUnboxedModuleScalar(expr: ts.Expression): boolean {
+  const candidate = unwrapPhase1Parens(expr);
+  if (ts.isNewExpression(candidate)) {
+    return [candidate.expression, ...(candidate.arguments ?? [])].some(mayYieldUnboxedModuleScalar);
+  }
+  return expressionTouchesScalarModuleBinding(candidate) && obviousModuleValueFamily(candidate) !== "string";
 }
 
 /**
@@ -8104,6 +8117,11 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
   if (ts.isCallExpression(candidate) && isExactF64ScalarToStringCall(candidate)) return "string";
   if (ts.isCallExpression(candidate) && exactModuleMapMethod(candidate) === "get") return "extern";
   return currentModuleBindingResolver?.scalarExpressionFamily(candidate);
+}
+
+/** A string `+` converts its scalar side, so its mixed operand families are the concat itself (#7281). */
+function isModuleStringConcat(expr: ts.BinaryExpression): boolean {
+  return expr.operatorToken.kind === ts.SyntaxKind.PlusToken && obviousModuleValueFamily(expr) === "string";
 }
 
 /**
@@ -11687,7 +11705,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           rightFamily === "nullish" ||
           leftFamily === undefined ||
           rightFamily === undefined);
-      if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality) {
+      if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality && !isModuleStringConcat(expr)) {
         return shapeNo("expr-module-value-representation-mismatch", expr);
       }
       const booleanModuleOperand =
