@@ -11667,11 +11667,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isBinaryExpression(expr)) {
     const binOp = expr.operatorToken.kind;
-    if (isNumberCompoundAssignOperator(binOp) && ts.isIdentifier(expr.left)) {
-      if (binOp === ts.SyntaxKind.PlusEqualsToken && moduleBinding(expr.left)?.valueKind.kind === "dynamic")
-        return shapeNo("expr-dynamic-module-add-assign", expr);
+    if (isNumberCompoundAssignOperator(binOp) && ts.isIdentifier(expr.left))
       return isSelectableNumberCompound(expr, scope, localClasses) && isPhase1ForUpdateExpr(expr, scope, localClasses);
-    }
     // #4787 — only exactNumericExponentiationAdmissible's proved operands
     // may reach the semantic math.pow arm; the shared claim row is insufficient.
     if (binOp === ts.SyntaxKind.AsteriskAsteriskToken) {

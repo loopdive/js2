@@ -86,20 +86,6 @@ it("does not admit dynamic exponentiation as a compound value", async () => {
   expect(init?.irBodyEmitted).toBe(false);
 });
 
-it("refuses dynamic module += before claiming a compound value", async () => {
-  const result = await compile("var x; x = 2; var y = (x += 3);", {
-    fileName: "compound-dynamic-plus.js",
-    allowJs: true,
-    target: "standalone",
-    trackIrOutcomes: true,
-  });
-  expect(result.success, JSON.stringify(result.errors)).toBe(true);
-  expect(result.irPostClaimErrors).toEqual([]);
-  const init = result.irOutcomes?.find((entry) => entry.displayName === "<module-init>");
-  expect(init?.stage).toBe("select");
-  expect(init?.irBodyEmitted).toBe(false);
-});
-
 for (const [name, mutation, checks] of [
   ["dynamic", "var y = (m += 2);", "if (m !== 7) return; if (y !== 7) return;"],
   ["string", 'var s = "a"; var y = (s += "b");', 'if (s !== "ab") return; if (y !== "ab") return;'],

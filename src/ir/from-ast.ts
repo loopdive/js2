@@ -13727,17 +13727,19 @@ function lowerCompoundAssignment(
     cx.scope.set(id.text, { ...storage, stringEncoding: proof.resultEncoding });
     return result;
   }
-  // (#7106 Stage 4) `message += …` on a dynamic slot (assert.js's reassigned
-  // `message` parameter): GetValue(lhs) first, then the RHS, then the SAME
-  // dynamic `+` the binary operator lowers through (`IR_DYN_ADD_FN`).
+  // Dynamic += reads the binding before the RHS, then uses the same dynamic
+  // addition producer as binary + (IR_DYN_ADD_FN).
   if (compoundOp === ts.SyntaxKind.PlusEqualsToken && slotFamily === "dynamic") {
-    if (storage.kind !== "slot") {
+    if (storage.kind === "local") {
       demoteToLegacy(
         "compound-assign-unsupported",
-        `ir/from-ast: dynamic "${id.text} +=" into a module or captured binding not in slice 6 (${cx.funcName})`,
+        `ir/from-ast: dynamic "${id.text} +=" into a captured binding not in slice 6 (${cx.funcName})`,
       );
     }
-    const lhs = cx.builder.emitSlotReadAs(storage.slotIndex, logicalType);
+    const lhs =
+      storage.kind === "moduleGlobal"
+        ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
+        : cx.builder.emitSlotReadAs(storage.slotIndex, logicalType);
     const rhsValue = lowerExpr(rhs, cx, logicalType);
     const rhsType = cx.builder.typeOf(rhsValue);
     if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs))) {
@@ -13751,7 +13753,8 @@ function lowerCompoundAssignment(
     if (dynamicRhs === null) throw new Error(`ir/from-ast: admitted dynamic "+=" operand did not box (${cx.funcName})`);
     const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [lhs, dynamicRhs], irDynamic());
     if (added === null) throw new Error(`ir/from-ast: dynamic '+=' produced no result in ${cx.funcName}`);
-    cx.builder.emitSlotWrite(storage.slotIndex, added);
+    if (storage.kind === "moduleGlobal") cx.builder.emitGlobalSet(storage.globalRef, added);
+    else cx.builder.emitSlotWrite(storage.slotIndex, added);
     return added;
   }
   // Dynamic captured cells need a separately proven storage contract.
