@@ -5,8 +5,10 @@ import type { IrHostVoidCallbackLoweringPlan, IrImportedCallLoweringPlan } from 
 import type { IrUnitId } from "../ir/identity.js";
 import { IrInvariantError, type IrPreparationFailure } from "../ir/outcomes.js";
 import type { IrPromiseDelayLoweringPlans } from "../ir/promise-delay-lowering.js";
+import type { IrRuntimeEvalSite } from "../ir/runtime-eval-boundary-plan.js";
 import type { IrSelection } from "../ir/select.js";
-import type { ts } from "../ts-api.js";
+import { forEachChild, ts } from "../ts-api.js";
+import { isBindingReferencePosition } from "../checker/binder.js";
 import type { CodegenContext } from "./context/types.js";
 import { prepareIrAmbientClassCallLowering, recordIrOverlayPreparationFailure } from "./ir-imported-call-planning.js";
 import { prepareIrCompilerTimerShimCallLowering } from "./ir-timer-shim-planning.js";
@@ -41,6 +43,72 @@ export function synchronizeIrSafeFunctionSelection(
     ...selection,
     funcs: irOverlayIdentity.retainIrSafeFunctionUnitIds(plan.identityPlan, retainedUnitIds),
   };
+}
+
+/**
+ * (#7106 A1) Withdraw each safe function that crosses a runtime-eval boundary;
+ * the rest stay prepared. Each withdrawal records `failure` with the reason:
+ *
+ *  - `eval-site`: the declaration contains an inventoried site. A direct eval
+ *    reads and writes its caller's activation, which only the direct frontend
+ *    models.
+ *  - `eval-visible-binding`: the body references a script binding evaluated
+ *    code may replace: a live function (`ctx.liveFuncBindingGlobals`), or a
+ *    global `var`/lexical binding, whose storage `registerReassignedFunctionGlobals`
+ *    widened to externref. IR binds functions statically and types variables
+ *    itself, so it would miss the rebind or disagree with the slot.
+ *  - `wasi`: the WASI lane has no measured per-unit route yet.
+ *
+ * Site spans ignore `sourceId`, so that test over-approximates; it can only
+ * keep a function direct, never admit one.
+ */
+export function withdrawRuntimeEvalBoundaryFunctions(
+  ctx: CodegenContext,
+  identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
+  funcs: Set<string>,
+  failure: IrPreparationFailure,
+  record: (legacyName: string, failure: IrPreparationFailure) => void,
+): void {
+  const sites = ctx.runtimeEvalBoundaryPlan?.sites ?? [];
+  const evalVisible = new Set([
+    ...(ctx.liveFuncBindingGlobals ?? []),
+    ...(ctx.globalObjectVarBindings ?? []),
+    ...(ctx.globalLexicalBindings ?? []),
+  ]);
+  for (const name of [...funcs]) {
+    const why = ctx.wasi
+      ? "wasi"
+      : runtimeEvalBoundaryCrossing(ctx, sites, identityPlan.declarationByLegacyName.get(name)!, evalVisible);
+    if (why === undefined) continue;
+    record(name, { ...failure, detail: `${failure.detail} (${why})` });
+    funcs.delete(name);
+    identityPlan.safeFunctionUnitIds.delete(irOverlayIdentity.requireIrOverlayFunctionUnitId(identityPlan, name));
+  }
+}
+
+function runtimeEvalBoundaryCrossing(
+  ctx: CodegenContext,
+  sites: readonly IrRuntimeEvalSite[],
+  declaration: ts.FunctionDeclaration,
+  evalVisible: ReadonlySet<string>,
+): "eval-site" | "eval-visible-binding" | undefined {
+  const start = declaration.getStart();
+  if (sites.some((site) => site.start >= start && site.end <= declaration.end)) return "eval-site";
+  // A reference resolving outside this declaration (or nowhere) reaches the script binding.
+  const reachesScriptBinding = (id: ts.Identifier): boolean => {
+    const target = ctx.oracle.valueDeclarationOf(id);
+    if (target === undefined || target.getSourceFile() !== declaration.getSourceFile()) return true;
+    return target.pos < declaration.pos || target.end > declaration.end;
+  };
+  let crosses = false;
+  const visit = (node: ts.Node): void => {
+    if (crosses) return;
+    if (ts.isIdentifier(node) && evalVisible.has(node.text) && isBindingReferencePosition(node)) {
+      crosses = reachesScriptBinding(node);
+    } else forEachChild(node, visit);
+  };
+  if (declaration.body && evalVisible.size !== 0) visit(declaration.body);
+  return crosses ? "eval-visible-binding" : undefined;
 }
 
 export function applyIrFinalContextFunctionUnitIds(

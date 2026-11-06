@@ -563,12 +563,11 @@ export function collectPreparedTopLevelFunctionValueTargetUnitIds(
   sourceFile: ts.SourceFile,
   identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
 ): ReadonlySet<IrUnitId> {
-  return collectTopLevelFunctionValueTargets(
-    ctx,
-    sourceFile,
-    topLevelFunctionUnitsByName(sourceFile, identityPlan),
-    true,
-  );
+  const unitsByName = topLevelFunctionUnitsByName(sourceFile, identityPlan);
+  // (#7106 A1) The standalone runtime-eval push publishes every function value after seal.
+  if (ctx.standalone && ctx.runtimeEvalGlobalFunctionBindings === true)
+    return new Set([...unitsByName.values()].flatMap((units) => units.map((unit) => unit.unitId)));
+  return collectTopLevelFunctionValueTargets(ctx, sourceFile, unitsByName, true);
 }
 
 /**

@@ -71,9 +71,13 @@ describe("#7106 canonical primitive-apply receiver demand before sealing", () =>
     expect([...f.collect()]).toEqual([]);
   });
 
-  it("does not certify a runtime-eval global binding's cached owner", () => {
+  it("plans every top-level function under the runtime-eval global push", () => {
+    // (#7106 A1) The push publishes every top-level function as a cached value
+    // after the component seals, so each one is a value target, apply receiver
+    // or not. A rebindable owner is protected one level up: a unit that names a
+    // live binding stays direct (`withdrawRuntimeEvalBoundaryFunctions`).
     const f = fixture("fn.apply(null, true);");
     f.ctx.runtimeEvalGlobalFunctionBindings = true;
-    expect([...f.collect()]).toEqual([]);
+    expect([...f.collect()]).toEqual([f.unitId]);
   });
 });
