@@ -13,7 +13,6 @@ task_type: investigation
 area: ir
 goal: ir-full-coverage
 related: [7277, 7253, 7251]
-depends_on: [7277]
 assignee: "ttraenkler/c-lead"
 ---
 
