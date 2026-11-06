@@ -3068,6 +3068,7 @@ function planIrOverlay(
     ctx.requiresStandaloneClockCapability === true,
   );
   const backendCapabilitySelectionOptions = {
+    backendTargetProfile: { backend: "wasmgc" } as const,
     supportsBackendCapability: (capability: IrBackendTargetCapability): boolean =>
       capability === "host-date-snapshot"
         ? calendarResolvers.supportsDateSnapshots
