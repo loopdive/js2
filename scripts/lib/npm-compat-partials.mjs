@@ -201,6 +201,7 @@ export function mergeNpmCompatPartials(
           ),
         ]
       : [],
+    { preserveDistinctMeasurements: true },
   );
 
   return { summary, perfRows, perfHistory };
