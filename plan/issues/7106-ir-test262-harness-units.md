@@ -5565,17 +5565,126 @@ branch of the binary arm. The rules themselves stay in
   measured "alone"), and the `P` / `N` co-blockers exposed for `N+P+T`
   (493).
 
-## ES5 lever K: annexB block-function hoisting (plan pending, 2026-11-06)
+## ES5 lever K: annexB block functions at script level (plan, 2026-11-06)
 
-Paused before measurement. #7106 lever `K` (175 carry, 91 alone, census
-upper bound, not unmasked) covers B.3.3: a function declaration in a block,
-an `if` arm or a `switch` case, and reads of its name outside the block.
-- **What is known so far:** every annexB block-function test is `noStrict`.
-  About 79 of the 312 `function-code` / `global-code` files use none of
-  `verifyProperty`, `fnGlobalObject` or `eval`, so they are the likely
-  K-alone population.
-- **Next:** probe those files on main to find the refusing arm, then write
-  the plan here.
+Lever `K` of "ES5 IR-only: ranked levers": 175 files carry it and 91 are
+freed by it alone (census upper bound, not unmasked). Nothing is implemented.
+
+### The census over-counts K
+
+The classifier (`es5-levers.mjs`) maps every lowercase unresolved name in an
+`annexB` file to K. In the census sample, K covers 80 files. 60 of them are
+`annexB/language/eval-code` (plus one `annexB/built-ins/Function`) eval
+programs:
+- their unresolved names are the harness's `assert` (600 hits),
+  `compareArray` and `Test262Error`;
+- the program-wide runtime-eval withdrawal also withdraws each one.
+
+Those belong to lever `A` (#7136, the per-function eval boundary), not to K.
+That is about 456 weighted files to move from K's "carry" to A's.
+
+**Genuine K: 18 sample files** (about 137 weighted). 17 are
+`annexB/language/global-code`, and one is `function-code` behind an IIFE
+(that one is lever `F`).
+
+### Shapes (single-file probes on main 245e830d49, standalone)
+
+Every genuine file is refused in `<module-init>` with one or both of:
+- `body-unhandled-stmt:FunctionDeclaration`: a function declared in a
+  block, an `if` arm or a `switch` clause;
+- `expr-ident-not-in-scope «f»`: reads, calls and `typeof` of that name
+  outside the block.
+
+The IR has no binding for such a name. Legacy backs it with a live
+`externref` module global:
+- `registerAnnexBGlobalLiveBindings` creates the global
+  (`ctx.annexBModuleBindings` and `ctx.liveFuncBindingGlobals`);
+- `annexBModuleGlobalSeedsFromTopLevel` decides whether `__module_init`
+  seeds it with a real top-level `function f`;
+- `tryCompileAnnexBModuleBlockFnEvaluation` compiles each block declaration
+  as its own function and does `global.set` of its closure at the
+  declaration's position.
+
+Three cases in the tests:
+- **update / init:** the block's evaluation writes the function value to the
+  global `f`. Before that, `f` is `undefined` or the outer `function f`.
+- **existing-fn-no-init:** an outer `function f` keeps the binding until the
+  block runs.
+- **skip-early-err:** an intervening `let f` cancels the hoisting
+  (`hasInterveningLexicalBinder`), so the block `f` is block-local and the
+  outer binding is untouched.
+
+A source-reassigned function (`function g(){}; g = function(){}`) is the same
+live-global storage and is refused the same way (`unattributed-arm`, then
+`expr-ident-not-in-scope «g»`). K's storage arm therefore serves both.
+
+**K-alone:** about 10 to 12 of the 18 files have no refusal besides the two
+above and the `;` of an `if (…) ; else function f(){}`. The rest also need
+`D` (`for-init-noinit`, `vardecl-noinit`), `L` (`{}`) or a `for-in`
+receiver. That matches the census's 91.
+
+### Implementation Plan
+
+**Target structure:**
+- **A new module `src/ir/annexb-block-functions.ts`:**
+  - the classification: which module-init `FunctionDeclaration`s are B.3.3.2
+    evaluations, which are cancelled (block-local), and which names they bind;
+  - one entry point that `select.ts`'s module-init statement walker and
+    `from-ast.ts`'s statement lowering both call.
+- **The predicates move, not copy.** Legacy's eligibility rules
+  (`annexBDeclaringRange`, `hasInterveningLexicalBinder`,
+  `annexBHoistCancels`, `annexBUpdatesExistingVarBinding` in
+  `codegen/annexb-cancel.ts`) are pure AST predicates. Move them to
+  `src/shared/` and import them from both legacy and the IR module.
+- **Storage.** The module-binding resolver (`ir/module-bindings.ts`,
+  `integration.ts`) exposes a live function global (`liveFuncBindingGlobals`,
+  which includes `annexBModuleBindings`) as an `extern` binding:
+  - reads, `typeof` and `===` use the existing extern arms;
+  - writes are `global.set`.
+- **Evaluation.** Each block declaration becomes its own function unit. This
+  needs identity units for module-init-nested declarations, so check
+  `functionBodyContainsNestedRuntimeDeclaration`. Its value comes from the
+  prepared top-level function-value path
+  (`collectPreparedTopLevelFunctionValueTargetUnitIds`), extended to these
+  units. The declaration site lowers to that value plus the binding write.
+- **Cancelled case.** The block-local function value is a block-scoped local.
+  The outer binding is unchanged.
+
+**Depends on:**
+- `F` (#7112, the function-object value path) for `f()`: a call through a
+  function-valued binding;
+- `S` for the live slot's IR binding.
+
+`typeof f` and `f === 123` reads need only the storage arm.
+
+**Reuse, and duplicates avoided:**
+- legacy's B.3.3 predicates, moved rather than re-derived;
+- the extern module-binding arms;
+- the prepared function-value path.
+
+No IR copy of the `__module_init` seed loop: the IR reads the seeded global.
+
+**Acceptance:**
+- **Correctness:**
+  - 0 pass→fail, both lanes, on `annexB/language/global-code` (153 files) and
+    `function-code` (159);
+  - 0 claim-then-demote (an empty post-claim error list) on those files;
+  - programs without a module-scope sloppy block function byte-identical
+    (gated on `ctx.annexBModuleBindings`, as legacy is), plus the playground.
+- **Tests:** both lanes, each case claimed and run:
+  - update, existing-fn-no-init, skip-early-err;
+  - a duplicate block `f`;
+  - a `switch` default clause;
+  - a source-reassigned `function g`.
+- **Code quality:**
+  - one new module;
+  - the B.3.3 predicates exist once (moved, imported by both paths);
+  - `select.ts` and `from-ast.ts` grow by dispatch lines only;
+  - no new binding kind (live globals reuse `extern`).
+- **Expected gain:** about 76 to 91 ES5 files IR-only on standalone (10 to
+  12 sample files), once `F` lands for the call shapes. The census's K row
+  should read about 137 carry, with the about 456 eval-program files
+  reattributed to `A`.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
