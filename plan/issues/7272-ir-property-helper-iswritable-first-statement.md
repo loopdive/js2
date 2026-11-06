@@ -88,9 +88,17 @@ three slices changes the resolver contract.
     each restated it.
   - The condition is still a bounded primitive, OR now a boolean result that
     is an i32 however its operands lower:
-    - a comparison (`===`, `<`, `in`, `instanceof`, …);
+    - a strict (in)equality (`===` / `!==`);
     - `!`, `&&` or `||` of such;
     - a certified boolean alias call.
+
+    Relational and loose operators (`<`, `>=`, `==`, …) keep the
+    operand-family proof. Their dynamic-operand lowering skips ToPrimitive
+    for an object (`0 >= []` answers false). That defect is pre-existing and
+    filed separately; this way it cannot reach a conditional that used to
+    be legacy. The first cut admitted any comparison, and the second fresh
+    review reproduced the defect: `m11(0, [])` returned 6, where node and
+    base return 4.
   - An unproven condition (`[] ? 1.5 : "a"`) keeps the conditional off the
     route, so it falls back to legacy. A first cut accepted any Phase-1
     condition, and the fresh review showed that turns such a conditional into
@@ -141,6 +149,13 @@ verifyProperty's next blockers, peeled with stubs on an inline copy of propertyH
 3. `assert.sameValue(originalDesc, undefined, label + "…")` (`move-only[concrete]`).
 
 ## Review (fresh context, 2026-11-06)
+
+**Second review** (6697720838), on `8926791e`: BLOCKER. (e)'s comparison arm
+admitted relational and loose operators over dynamic operands. Fixed: it now
+admits strict (in)equality only. Test: `>=` / `<` / `<=` / `==` / `!=` over
+object, array, null, undefined and NaN operands all stay legacy, and the
+gc / standalone / wasi binaries are identical to base.
+
 
 The verdict on the first push was **"not met"**. Every finding:
 

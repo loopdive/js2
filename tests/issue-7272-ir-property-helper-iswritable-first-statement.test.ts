@@ -170,6 +170,39 @@ assert.sameValue(isArr(new Proxy([], {})), true, "proxy of array");
     ["member-rewritten", 'Array.isArray = function () { return "yes"; };\nvar __isArray = Array.isArray;\n'],
     ["redefined", 'var __isArray = Array.isArray;\nObject.defineProperty(Array, "isArray", { value: 0 });\n'],
   ];
+  // Relational and loose comparisons over dynamic operands keep the
+  // operand-family proof: their IR lowering does not apply ToPrimitive to an
+  // object (`0 >= []`), so such a conditional stays legacy and correct.
+  it("keeps a mixed conditional over a relational or loose comparison of dynamic operands legacy", async () => {
+    const body = `function ge(a, b) { var v = a >= b ? 2 : "3"; return v * 2; }
+function lt(a, b) { var v = a < b ? 2 : "3"; return v * 2; }
+function le(a, b) { var v = a <= b ? 2 : "3"; return v * 2; }
+function eq(a, b) { var v = a == b ? 2 : "3"; return v * 2; }
+function ne(a, b) { var v = a != b ? 2 : "3"; return v * 2; }
+var cases = [[0, []], [-0, []], [0, ""], [1, [1]], [0, {}], [0, null], [NaN, NaN], [undefined, null], [[2], 1]];
+var expected = {
+  ge: [4, 4, 4, 4, 6, 4, 6, 6, 4],
+  lt: [6, 6, 6, 6, 6, 6, 6, 6, 6],
+  le: [4, 4, 4, 4, 6, 4, 6, 6, 6],
+};
+var fns = { ge: ge, lt: lt, le: le };
+for (var name in fns) {
+  for (var i = 0; i < cases.length; i++) {
+    assert.sameValue(fns[name](cases[i][0], cases[i][1]), expected[name][i], name + " case " + i);
+  }
+}
+`;
+    const path = fixture("relational-condition", body);
+    for (const unit of ["ge", "lt", "le", "eq", "ne"]) {
+      expect((await outcomeOf(path, unit))?.irBodyEmitted).toBe(false);
+    }
+    // eq / ne only assert the route: legacy's own loose `==` traps on some of
+    // these operand pairs (base and head alike).
+    for (const lane of ["standalone", undefined] as const) {
+      expect(await runTest262File(path, "issue-7272", undefined, lane)).toMatchObject({ status: "pass" });
+    }
+  });
+
   // A condition the claim cannot prove boolean keeps the conditional off the
   // mixed route, so the function compiles (legacy) instead of failing after
   // the claim.
