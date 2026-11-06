@@ -1,7 +1,8 @@
 ---
 id: 7272
 title: "IR: propertyHelper isWritable's first statement (dynamic isArray, dynamic mixed conditional, dynamic logical operand)"
-status: in-progress
+status: done
+completed: 2026-11-06
 sprint: current
 created: 2026-11-06
 updated: 2026-11-06
@@ -124,6 +125,20 @@ Strict function code keeps isWritable legacy. Since #7265@418467f9, the
 only, until the strict `__dyn_member_set` exotic-receiver defect (#7270) is
 fixed. The wrapped ledger compiles each file's primary variant, which is
 sloppy unless the file is `onlyStrict`.
+
+## Result
+
+Wrapped ledger, stride 40, standalone, against #7269 at `aad8abd8`:
+
+- **Legacy units:** 4750 → 4373 (−377). isWritable is freed in 128 files, verifyNotWritable in 126 and verifyWritable in 123.
+- **No regressions:** no unit becomes legacy, compileOk stays 1118, invariants stay at 0.
+- **Zero-legacy files:** 32 → 32. Every includer still has verifyProperty, verifyCallableProperty, verifyAccessorProperty, verifyEqualTo, the two verifyPrimordial* units and `<module-init>` legacy.
+
+verifyProperty's next blockers, peeled with stubs on an inline copy of propertyHelper:
+
+1. `var names = __getOwnPropertyNames(desc)` and the `names[i]` loop (`vardecl-module-binding-alias`).
+2. `if (__hasOwnProperty(desc, 'value'))` (`condition-module-value-nonbool`: a certified boolean alias call in a condition).
+3. `assert.sameValue(originalDesc, undefined, label + "…")` (`move-only[concrete]`).
 
 ## Review (fresh context, 2026-11-06)
 
