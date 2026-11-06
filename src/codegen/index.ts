@@ -2793,7 +2793,13 @@ function collectIrImplicitParamProjectionCandidates(
     }
     if (ts.isElementAccessExpression(parent) && parent.expression === child) return true;
     if (ts.isConditionalExpression(parent) && parent.condition === child) return true;
-    return false;
+    // (#7251) A `||` / `&&` left operand is a ToBoolean test, like a conditional's.
+    return (
+      ts.isBinaryExpression(parent) &&
+      (parent.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) &&
+      parent.left === child
+    );
   };
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {
@@ -4249,7 +4255,9 @@ export function scriptVarHome(
     case "externref":
       return ctx.fast ? undefined : "dynamic";
     case "ref_null":
-      return type.typeIdx === ctx.anyStrTypeIdx ? "string" : undefined;
+      if (type.typeIdx === ctx.anyStrTypeIdx) return "string";
+      // (#7252) The struct legacy allocated for a user class.
+      return [...ctx.classSet].some((n) => ctx.structMap.get(n) === type.typeIdx) ? "class-instance" : undefined;
     case "f64":
     case "i32":
       return "typed";

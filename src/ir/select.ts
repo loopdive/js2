@@ -106,6 +106,7 @@ import {
 } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
+import { admitAmbientGlobalFunctionCall } from "./ambient-global-function-call.js";
 import {
   isAffineThreeDeepElementAccess,
   unwrapTypeErasedExpression,
@@ -148,7 +149,12 @@ import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
-import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
+import {
+  isIrModuleClassInstanceValueKind,
+  isIrModuleMapValueKind,
+  isIrModuleReferenceValueKind,
+} from "./module-bindings.js";
+import { outermostParenthesized } from "../shared/binding-writes.js";
 import { firstConstBindingWrite } from "./const-binding-writes.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
@@ -275,9 +281,26 @@ function probeShape(check: () => boolean): boolean {
   const savedDetail = shapeRejectDetail;
   const savedReason = typedShapeRejectReason;
   if (check()) return true;
+  if (SHAPE_DIAG_ON && shapeRejectDetail !== savedDetail) declinedProbeArm = shapeRejectDetail?.split(":")[0] ?? null;
   shapeRejectDetail = savedDetail;
   typedShapeRejectReason = savedReason;
   return false;
+}
+
+/** (#7254) SHAPE_DIAG only: the first-refusal arm of the last declined discard probe. */
+let declinedProbeArm: string | null = null;
+
+/**
+ * (#7254) An ExpressionStatement catch-all (`body-exprstmt-other`, …). Under
+ * SHAPE_DIAG the label names the refusal the discard probe declined with —
+ * `body-exprstmt-other(expr-binary-op-in)` — so a census attributes the row to
+ * the value lowering that is missing rather than to the statement position.
+ * The probe's restore is unchanged: only the detail string moves.
+ */
+function expressionStatementCatchAllNo(arm: string, expr: ts.Expression): false {
+  const inner = ts.isDeleteExpression(unwrapPhase1Parens(expr)) ? "expr-delete-no-ir-lowering" : declinedProbeArm;
+  declinedProbeArm = null;
+  return shapeNo(inner === null ? arm : `${arm}(${inner})`, expr);
 }
 
 /** (#7003) Selector-owned hooks for `./closure-signature-flow.ts`. */
@@ -838,7 +861,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-dynamic-member-read"
       | "planned-closure-direct-call"
       | "native-dynamic-loose-equality"
-      | "dynamic-method-call-wrapper",
+      | "dynamic-method-call-wrapper"
+      | "native-global-function-call",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -4546,6 +4570,7 @@ function expressionStatementIsPhase1Discardable(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  declinedProbeArm = null;
   if (expressionStatementMutatesAtTopLevel(expr)) return false;
   return probeShape(() => isPhase1DiscardedExpr(expr, scope, localClasses));
 }
@@ -4804,7 +4829,7 @@ function isPhase1StatementListInScope(
       // binding bookkeeping; the two labels below survive for expressions
       // the Phase-1 walker still cannot admit.
       if (expressionStatementIsPhase1Discardable(es, scope, localClasses)) continue;
-      return shapeNo(nontailExpressionStatementArm(es), es);
+      return expressionStatementCatchAllNo(nontailExpressionStatementArm(es), es);
     }
     // Phase 2 extension: an `if (cond)` with NO else, split by whether the
     // then-arm unconditionally terminates — mirroring `lowerStatementList`'s
@@ -6151,7 +6176,7 @@ function isPhase1BodyStatement(
     if (expressionStatementIsPhase1Discardable(stmt.expression, scope, localClasses)) return true;
     // (#7106 propertyHelper) a dropped dynamic delete.
     if (dynamicDeleteStatementOperand(unwrapPhase1Parens(stmt.expression)) !== null) return true;
-    return shapeNo("body-exprstmt-other", stmt.expression);
+    return expressionStatementCatchAllNo("body-exprstmt-other", stmt.expression);
   }
   if (ts.isForOfStatement(stmt)) {
     return isPhase1ForOf(stmt, scope, localClasses, labels, breaks);
@@ -6925,12 +6950,6 @@ function dynamicShapedLocal(d: ts.VariableDeclaration, seen: Set<ts.VariableDecl
 function assignmentWrite(parent: ts.Node, value: ts.Node): { readonly target: ts.Expression } | undefined {
   if (!ts.isBinaryExpression(parent) || parent.right !== value) return undefined;
   return parent.operatorToken.kind === ts.SyntaxKind.EqualsToken ? { target: parent.left } : undefined;
-}
-
-function outermostParenthesized(expr: ts.Expression): ts.Expression {
-  let node: ts.Expression = expr;
-  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
-  return node;
 }
 
 /**
@@ -7894,7 +7913,10 @@ function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
     if (touched) return;
     if (ts.isIdentifier(node)) {
       const binding = moduleBinding(node);
-      const scalarBinding = binding && !isIrModuleReferenceValueKind(binding.valueKind);
+      const scalarBinding =
+        binding &&
+        !isIrModuleReferenceValueKind(binding.valueKind) &&
+        !isIrModuleClassInstanceValueKind(binding.valueKind);
       if (scalarBinding || moduleScalarAliasFamily(node) !== undefined) {
         touched = true;
         return;
@@ -12438,7 +12460,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       return true;
     }
-    if (!ts.isIdentifier(expr.expression)) return false;
+    if (!ts.isIdentifier(expr.expression)) return shapeNo("expr-call-callee-nonident", expr.expression);
     const mixedPrimitiveWrapper = exactMixedPrimitiveWrapperCall(expr);
     if (mixedPrimitiveWrapper) {
       return isPhase1Expr(mixedPrimitiveWrapper.conditional, scope, localClasses);
@@ -13242,7 +13264,8 @@ export function assessModuleInit(
   decls.set(syntheticName, synthetic);
   const graph = buildLocalCallGraph(decls, localClasses);
   if (graph.hasExternalCall.has(syntheticName)) {
-    return { stmtCount: population.length, reason: "external-call" };
+    const callee = graph.externalCallees.get(syntheticName);
+    return { stmtCount: population.length, reason: "external-call", ...(callee ? { detail: `callee:${callee}` } : {}) };
   }
   for (const callee of graph.callees.get(syntheticName) ?? []) {
     if (!claimedFuncs.has(callee)) {
@@ -13259,10 +13282,25 @@ export function buildLocalCallGraph(
   callers: Map<string, Set<string>>;
   callees: Map<string, Set<string>>;
   hasExternalCall: Set<string>;
+  /** (#7253) Diag-only (`JS2WASM_IR_SHAPE_DIAG=1`): the first external callee per caller. */
+  externalCallees: Map<string, string>;
 } {
   const callers = new Map<string, Set<string>>();
   const callees = new Map<string, Set<string>>();
   const hasExternalCall = new Set<string>();
+  const externalCallees = new Map<string, string>();
+  const markExternal = (callerName: string, node: ts.Node): void => {
+    hasExternalCall.add(callerName);
+    if (SHAPE_DIAG_ON && !externalCallees.has(callerName)) {
+      const callee = ts.isCallExpression(node) || ts.isNewExpression(node) ? node.expression : node;
+      const text = ts.isIdentifier(callee)
+        ? callee.text
+        : ts.isPropertyAccessExpression(callee)
+          ? `${ts.isIdentifier(callee.expression) ? callee.expression.text : "<expr>"}.${callee.name.text}`
+          : `<${ts.SyntaxKind[callee.kind]}>`;
+      externalCallees.set(callerName, `${ts.isNewExpression(node) ? "new " : ""}${text}`);
+    }
+  };
   for (const name of decls.keys()) {
     callers.set(name, new Set());
     callees.set(name, new Set());
@@ -13343,7 +13381,7 @@ export function buildLocalCallGraph(
         // Unknown constructor → external. Fall through to default
         // ts.forEachChild walking + the CallExpression branch below
         // doesn't reach here, so we mark it explicitly.
-        hasExternalCall.add(callerName);
+        markExternal(callerName, node);
         if (node.arguments) {
           for (const a of node.arguments) visit(a);
         }
@@ -13353,7 +13391,7 @@ export function buildLocalCallGraph(
         if (
           !certifiedImportedHofCall(node, currentSelectionOptions?.importedFunctions) &&
           visitProgramCallableUse(currentSelectionOptions?.resolveProgramCallableUse, node, visit, () =>
-            hasExternalCall.add(callerName),
+            markExternal(callerName, node),
           )
         )
           return;
@@ -13378,6 +13416,17 @@ export function buildLocalCallGraph(
           const toNumberArgs = preparedNumberConversionCall(node);
           if (toNumberArgs !== null) {
             for (const argument of toNumberArgs) visit(argument);
+            return;
+          }
+          // (#7253) …and the host-free global functions.
+          const globalFunctionArgs = admitAmbientGlobalFunctionCall(
+            node,
+            callerName === MODULE_INIT_UNIT_NAME,
+            selectorSeesAmbientBinding,
+            currentSelectionOptions,
+          );
+          if (globalFunctionArgs !== null) {
+            for (const argument of globalFunctionArgs) visit(argument);
             return;
           }
           const imported = certifyImportedIrCall(node, currentSelectionOptions?.importedFunctions);
@@ -13443,7 +13492,7 @@ export function buildLocalCallGraph(
             // Call to a non-local identifier (e.g. parseInt, String, Number).
             // from-ast.ts throws for unknown callees so we must exclude this
             // function from the IR path.
-            hasExternalCall.add(callerName);
+            markExternal(callerName, node);
           }
         } else if (ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.name)) {
           // Slice 4 (#1169d): `<recv>.<methodName>(...)`. The lowerer
@@ -13516,14 +13565,14 @@ export function buildLocalCallGraph(
           // Member-expression or computed call: Array.from(...), Math.trunc(...),
           // arr[Symbol.iterator](), obj.method(), etc.  The IR path cannot lower
           // these — exclude the enclosing function from the IR claim set.
-          hasExternalCall.add(callerName);
+          markExternal(callerName, node);
         }
       }
       forEachChild(node, visit);
     };
     forEachChild(fn.body, visit);
   }
-  return { callers, callees, hasExternalCall };
+  return { callers, callees, hasExternalCall, externalCallees };
 }
 
 function parseNumberCallUsesDynamicCarrier(callerName: string, call: ts.CallExpression): boolean {

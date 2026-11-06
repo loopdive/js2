@@ -12361,6 +12361,14 @@
       "nextBoundary": "Pure TypeScript-AST fold shared by the selector and from-ast (#7106 S1b); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/ambient-global-function-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "TypeScript-AST shape plus builder lowering of the ambient parse/escape/isNaN calls shared by the selector and from-ast (#7253); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/numeric-slot-coercion.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12450,6 +12458,14 @@
     },
     {
       "path": "src/ir/class-instance-initializers.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/class-instance-storage.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -12994,6 +13010,14 @@
     },
     {
       "path": "src/ir/math-runtime-providers.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/module-binding-class-instance.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
