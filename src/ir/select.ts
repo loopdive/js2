@@ -7105,11 +7105,23 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     if (!currentSubjectIsModuleInit) {
       const initializer = unwrapPhase1Parens(d.initializer);
       const exactMapGetAlias = ts.isCallExpression(initializer) && exactModuleMapMethod(initializer) === "get";
+      // (#7269) `var hadValue = __hasOwnProperty(obj, name)`: the callee is a
+      // certified alias whose result is the provider's, not module storage.
+      // Its arguments still obey the alias rule.
+      const certifiedAlias =
+        ts.isCallExpression(initializer) &&
+        certifiedAliasCall(initializer, (name) => scope.has(name)) !== undefined &&
+        !initializer.arguments.some(expressionTouchesTrackedModuleValue);
       // (#7272) A mixed conditional boxes each arm into a fresh carrier: the
       // local holds a copy, never the module slot.
       const freshMixedCarrier =
         ts.isConditionalExpression(initializer) && mixedPrimitiveConditionalArmsProven(initializer);
-      if (expressionTouchesTrackedModuleValue(d.initializer) && !exactMapGetAlias && !freshMixedCarrier) {
+      if (
+        expressionTouchesTrackedModuleValue(d.initializer) &&
+        !exactMapGetAlias &&
+        !certifiedAlias &&
+        !freshMixedCarrier
+      ) {
         const family = obviousModuleValueFamily(d.initializer);
         if (!isConst || (family !== "f64" && family !== "boolean")) {
           return shapeNo("vardecl-module-binding-alias", d.initializer);
@@ -7908,14 +7920,6 @@ function expressionTouchesModuleBinding(expr: ts.Expression): boolean {
     if (touched) return;
     if (ts.isIdentifier(node) && moduleBinding(node)) {
       touched = true;
-      return;
-    }
-    // (#7269, #7272) A certified alias call's callee is never read as a
-    // value: the call lowers to the native provider, whose result is not
-    // module storage. Only its arguments can touch a module value. A local
-    // that shadows the alias is no module binding either way.
-    if (ts.isCallExpression(node) && certifiedAliasCall(node, () => false) !== undefined) {
-      node.arguments.forEach(visit);
       return;
     }
     forEachChild(node, visit);

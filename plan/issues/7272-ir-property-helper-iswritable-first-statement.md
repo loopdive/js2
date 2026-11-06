@@ -69,9 +69,11 @@ three slices changes the resolver contract.
   - integration: `STORED_STATIC_PROVIDER_IMPORTS` registers legacy's import
     signature for each one used. The one-off `usesOwnPropertyDescriptor` flag
     is folded into that table.
-  - `expressionTouchesModuleBinding` no longer counts a certified alias
-    call's callee as a module read; only its arguments count. That subsumes
-    #7269's vardecl special case, which is removed.
+  - #7269's vardecl exemption stays local to `isPhase1VarDecl`. A first cut
+    made every certified alias callee "not a module read" inside
+    `expressionTouchesModuleBinding`. That widened other arms, for example
+    `!__getOwnPropertyDescriptor(o, k)`, which #7190 deliberately keeps
+    refused, so it was reverted.
   - Deferred: the direct `Array.isArray(dyn)` form, which propertyHelper does
     not use.
 - **(e) the mixed conditional** (#5092, `select.ts` plus from-ast's claim):
