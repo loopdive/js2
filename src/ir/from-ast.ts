@@ -11463,6 +11463,11 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
     }
     return value;
   }
+  // (#7258) A dynamic carrier into a BOOL result: the selector admits only a
+  // boolean-holding `var x;` local (`concreteResultRecoversDynamic`).
+  if (declared && irTypeIsBoolean(declared) && cx.builder.typeOf(value).kind === "dynamic") {
+    return cx.builder.emitDynTruthy(value);
+  }
   // (#2856 C3) externref value into a NUMBER (f64) declared result —
   // `return hit;` where `hit = cache.get(n)` is the externref Map_get
   // result. Unbox through `__unbox_number`, exactly what legacy emits for
