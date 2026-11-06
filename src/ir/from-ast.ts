@@ -7789,12 +7789,17 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding.
   const bindingLogicalType =
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
-  if (bindingLogicalType?.kind === "dynamic") {
+  // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
+  const dynamicModuleCallee =
+    binding === undefined && cx.resolver?.resolveModuleBinding?.(expr.expression)?.type.kind === "dynamic";
+  if (bindingLogicalType?.kind === "dynamic" || dynamicModuleCallee) {
     const callee = lowerExpr(expr.expression, cx, irDynamic());
     if (cx.builder.typeOf(callee).kind !== "dynamic") {
       demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
     }
-    return functionObjects.lowerDynamicValueCall(expr, callee, functionObjectLoweringHost(cx));
+    const declaration = dynamicModuleCallee && cx.checker ? localValueDeclaration(expr.expression, cx.checker) : null;
+    const message = declaration === null ? undefined : functionObjects.scriptVarCalleeNotCallableMessage(declaration);
+    return functionObjects.lowerDynamicValueCall(expr, callee, functionObjectLoweringHost(cx), message);
   }
 
   // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /

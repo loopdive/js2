@@ -20,6 +20,17 @@ loc-budget-allow:
   # (the shared seam both the selector and from-ast resolve through). It reads
   # only the candidates that function already gathers, so it lives beside it.
   - src/ir/module-bindings.ts
+  # 2026-11-06 (#7287 slice B): from-ast.ts +6 / select.ts +6 — the one arm
+  # each side adds to its existing call dispatch (the Stage-4 dynamic-callee
+  # arm also takes a dynamic module binding; the call graph treats that call as
+  # a lowering, not an edge), with the message choice from the declaration.
+  - src/ir/from-ast.ts
+  - src/ir/select.ts
+func-budget-allow:
+  # 2026-11-06 (#7287 slice B): one arm each in the existing call dispatchers;
+  # splitting `lowerCall` / `buildLocalCallGraph` is its own refactor.
+  - src/ir/from-ast.ts::lowerCall
+  - src/ir/select.ts::buildLocalCallGraph
 ---
 
 # #7287: a script `var` holding a function expression, callable from IR units

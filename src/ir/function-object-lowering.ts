@@ -158,12 +158,29 @@ export function lowerDynamicValueCall(
   expr: ts.CallExpression,
   callee: IrValueId,
   cx: FunctionObjectLoweringHost,
+  notCallableMessage = NOT_A_FUNCTION,
 ): IrValueId {
   if (expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) {
     demoteToLegacy("call-resolution-unsupported", "optional/spread dynamic value call is unsupported");
   }
   const receiver = cx.builder.emitDynUndefined();
-  return applyDynamicCallee(callee, receiver, expr.arguments, "called value is not a function", cx);
+  return applyDynamicCallee(callee, receiver, expr.arguments, notCallableMessage, cx);
+}
+
+const NOT_A_FUNCTION = "called value is not a function";
+
+/**
+ * (#7287) Legacy's TypeError text when a script `var` callee is not callable.
+ * A `var` initialized with a function expression or an arrow compiles to a typed closure
+ * call, whose null check reads "Cannot access property on null or undefined"
+ * for any non-callable value (before initialization, after `p = null`, …);
+ * every other `var` takes the generic dynamic call's text.
+ */
+export function scriptVarCalleeNotCallableMessage(declaration: ts.Declaration | undefined): string {
+  const initializer = declaration && ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+  return initializer !== undefined && (ts.isFunctionExpression(initializer) || ts.isArrowFunction(initializer))
+    ? "Cannot access property on null or undefined"
+    : NOT_A_FUNCTION;
 }
 
 function applyDynamicCallee(

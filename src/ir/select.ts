@@ -13476,6 +13476,12 @@ export function buildLocalCallGraph(
             for (const argument of node.arguments) visit(argument);
             return;
           } else {
+            // (#7287) A script `var` in its dynamic module home is called
+            // through the carrier (from-ast's Stage-4 dynamic call), not an edge.
+            if (currentModuleBindingResolver?.(node.expression)?.valueKind.kind === "dynamic") {
+              for (const argument of node.arguments) visit(argument);
+              return;
+            }
             // Call to a non-local identifier (e.g. parseInt, String, Number).
             // from-ast.ts throws for unknown callees so we must exclude this
             // function from the IR path.
