@@ -53,8 +53,10 @@ export interface IrRuntimeEvalBoundaryPlan {
   readonly providerMayExecute: boolean;
   readonly sharedRealmMayContainCanonicalValues: boolean;
   readonly callableBoundaryRequired: boolean;
+  /** Some dynamic source is computed, or a literal one writes bindings no scan can name. */
   readonly unknownDynamicSource: boolean;
-  readonly dynamicSourceFragments: readonly string[];
+  /** (#7106 A3) Every name a literal dynamic source can write (`literalSourceWrites`). */
+  readonly dynamicSourceWrites: ReadonlySet<string>;
 }
 
 const PROVIDER_NAMES = new Set([
@@ -85,6 +87,68 @@ function unwrapExpression(expression: ts.Expression): ts.Expression {
 function isGlobalIntrinsic(identifier: ts.Identifier, oracle: TypeOracle): boolean {
   const declaration = oracle.valueDeclarationOf(identifier);
   return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+}
+
+/** Calls that write a property named by a runtime value (`Object.defineProperty(this, k, …)`). */
+const PROPERTY_DEFINING_CALLS = new Set(["defineProperty", "defineProperties", "assign", "set"]);
+
+/**
+ * (#7106 A3) Add to `written` every script binding the literal source can
+ * write, or answer `false` when it can write one this scan cannot name.
+ *
+ * Written: an assignment, `++`/`--` or `for-in`/`for-of` target (an identifier,
+ * or a property name, since the receiver may be the global object); a declared
+ * name (Annex B block functions in sloppy eval code are global var bindings);
+ * an object-literal key or a string literal (`Object.assign(this, { f })`,
+ * `this["f"] = …`). Unnameable: a computed assignment target, a
+ * property-defining call, or nested dynamic code (`eval` / `Function`). The
+ * answer over-approximates; it only ever makes a function live.
+ */
+function literalSourceWrites(source: string, written: Set<string>): boolean {
+  const script = ts.createSourceFile("eval-source.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  let nameable = true;
+  const target = (expression: ts.Expression): void => {
+    const node = unwrapExpression(expression);
+    if (ts.isIdentifier(node)) written.add(node.text);
+    else if (ts.isPropertyAccessExpression(node)) written.add(node.name.text);
+    else if (!ts.isElementAccessExpression(node) || !ts.isStringLiteralLike(node.argumentExpression)) nameable = false;
+  };
+  const visit = (node: ts.Node): void => {
+    if (!nameable) return;
+    if (ts.isIdentifier(node) && (node.text === "eval" || node.text === "Function")) nameable = false;
+    else if (ts.isStringLiteralLike(node)) written.add(node.text);
+    else if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) target(node.left);
+    else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+      const update = node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken;
+      if (update) target(node.operand);
+    } else if (
+      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+      !ts.isVariableDeclarationList(node.initializer)
+    ) {
+      target(node.initializer);
+    } else if (ts.isPropertyAccessExpression(node) && PROPERTY_DEFINING_CALLS.has(node.name.text)) nameable = false;
+    const declared = declaredName(node);
+    if (declared !== undefined && ts.isIdentifier(declared)) written.add(declared.text);
+    forEachChild(node, visit);
+  };
+  visit(script);
+  return nameable;
+}
+
+/** A declaration's or object-literal key's own name. */
+function declaredName(node: ts.Node): ts.Node | undefined {
+  return ts.isFunctionDeclaration(node) ||
+    ts.isClassDeclaration(node) ||
+    ts.isVariableDeclaration(node) ||
+    ts.isBindingElement(node) ||
+    ts.isPropertyAssignment(node) ||
+    ts.isShorthandPropertyAssignment(node)
+    ? node.name
+    : undefined;
+}
+
+function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
+  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
 }
 
 function stableSourceId(sourceFile: ts.SourceFile, index: number): string {
@@ -253,7 +317,9 @@ function isDirectCalleeIntrinsicValue(identifier: ts.Identifier): boolean {
     parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
     parent.right === identifier
   ) {
-    const call = parent.parent;
+    // `(0, eval)(…)`: the comma always sits inside the parentheses the call's callee unwraps.
+    let call = parent.parent;
+    while (ts.isParenthesizedExpression(call)) call = call.parent;
     return (ts.isCallExpression(call) || ts.isNewExpression(call)) && unwrapExpression(call.expression) === parent;
   }
   return false;
@@ -406,7 +472,10 @@ export function buildIrRuntimeEvalBoundaryPlan(
   });
 
   const frozenSites = Object.freeze(sites.slice());
-  const frozenFragments = Object.freeze(dynamicSourceFragments.slice());
+  const dynamicSourceWrites = new Set<string>();
+  for (const fragment of dynamicSourceFragments) {
+    if (!literalSourceWrites(fragment, dynamicSourceWrites)) unknownDynamicSource = true;
+  }
   const providerMayExecute = frozenSites.some((site) => site.providerDisposition !== "provided");
   // A provider module has no *consumer* call site of its own, but its exported
   // boundary functions receive and retain canonical caller-realm values. Keep
@@ -421,6 +490,6 @@ export function buildIrRuntimeEvalBoundaryPlan(
     sharedRealmMayContainCanonicalValues,
     callableBoundaryRequired: frozenSites.length !== 0,
     unknownDynamicSource,
-    dynamicSourceFragments: frozenFragments,
+    dynamicSourceWrites,
   });
 }
