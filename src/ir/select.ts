@@ -1768,9 +1768,9 @@ let currentDynamicRuntimeBuildable = true;
 // (#7106 S3a) The current subject's dynamic-typed PARAMETER names: the only
 // callees `new <name>(…)` may construct through `dyn.construct`.
 let currentDynamicParamNames = new Set<string>();
-// (#7106 S1c) The current subject resolves a STRING return: a dynamic value in
-// return position recovers its carrier through `dyn.string_carrier`.
-let currentFnReturnsString = false;
+// The current subject's resolved return kind: `concreteResultRecoversDynamic`
+// reads it to recover a dynamic `return` operand into a concrete result.
+let currentFnReturnKind: ResolvedKind = null;
 // (#7106 S1c) Catch bindings of the current subject: a thrown payload is ALWAYS
 // the boxed-any carrier, never a callback-boundary parameter carrier, so a
 // member read off one is safe in equality even in a value-used function.
@@ -2113,7 +2113,7 @@ function whyNotIrClaimable(
   // #2949 slice 2 — true when the return position resolved `dynamic`
   // (unannotated + lattice unknown/dynamic). Feeds the move-only scan below.
   let isDynamicReturn = false;
-  currentFnReturnsString = false; // (#7106 S1c) set below when the return resolves string
+  currentFnReturnKind = null; // set below from the resolved return
   if (!isGenerator) {
     if (ts.isConstructorDeclaration(fn)) {
       // Constructors have no source-level return type — they always return
@@ -2152,7 +2152,7 @@ function whyNotIrClaimable(
       }
       isVoidReturn = returnResolved === "void";
       isDynamicReturn = returnResolved === "dynamic";
-      currentFnReturnsString = returnResolved === "string";
+      currentFnReturnKind = returnResolved;
     }
   }
 
@@ -3189,11 +3189,47 @@ function containsCarrierAbiCall(body: ts.Block): boolean {
 }
 
 /**
+ * Can `return <dynamic>` land in the subject's CONCRETE result? Each arm names
+ * the canonical recovery from-ast's `coerceReturnValue` emits:
+ *
+ *   - string (#7106 S1c): legacy recovers the carrier
+ *     (`coerceType(externref → $AnyString)`); the IR mirrors it with
+ *     `dyn.string_carrier` — assert.js's `formatSimpleValue` returning `basic`.
+ *   - bool (#7258): a `var x;` local (#7106 Stage 4) in an INFERRED boolean
+ *     result. TypeScript's evolving type for `x` is then boolean (one `any`
+ *     write would make the result `any`), so the carrier holds a boolean or
+ *     its initial undefined and `dyn.truthy` reads exactly legacy's slot.
+ */
+function concreteResultRecoversDynamic(
+  fn: IrClaimableSubject,
+  returned: ts.Expression,
+  dynamicUndefinedVars: ReadonlySet<string>,
+): boolean {
+  switch (currentFnReturnKind) {
+    case "string":
+      return (
+        currentDynamicRuntimeBuildable &&
+        currentSelectionOptions?.supportsBackendCapability?.("native-string-carrier-coercion") === true
+      );
+    case "bool":
+      return (
+        ts.isIdentifier(returned) &&
+        dynamicUndefinedVars.has(returned.text) &&
+        fn.type === undefined &&
+        ts.getJSDocReturnType(fn) === undefined
+      );
+    default:
+      return false;
+  }
+}
+
+/**
  * #2949 slice 2 — verify every use of a dynamic value in `fn`'s body is a
  * MOVE the from-ast builder can lower withOUT box/unbox/tag.test (which land
  * in slice 3). Allowed sinks for a dynamic value:
  *
- *   - `return <dyn>` when the function's return resolved dynamic;
+ *   - `return <dyn>` when the function's return resolved dynamic, or into a
+ *     concrete result `concreteResultRecoversDynamic` recovers it into;
  *   - argument position of a DIRECT call to a local function whose
  *     corresponding param also resolved dynamic (`irTypeEquals` at the
  *     from-ast call site then holds by construction);
@@ -3219,6 +3255,7 @@ function dynamicUsesAreMoveOnly(
 ): boolean {
   const body = fn.body;
   if (!body) return false;
+  const dynamicUndefinedVars = new Set<string>(); // the `var x;` names (#7106 Stage 4)
 
   const unwrap = (e: ts.Expression): ts.Expression => {
     while (ts.isParenthesizedExpression(e)) e = e.expression;
@@ -3901,6 +3938,7 @@ function dynamicUsesAreMoveOnly(
         // (#7106 Stage 4) `var x;` holds the dynamic carrier's undefined.
         if (ts.isIdentifier(d.name) && !d.initializer && uninitializedVarIsDynamicUndefined(d, lexical)) {
           dynNames.add(d.name.text);
+          dynamicUndefinedVars.add(d.name.text);
           continue;
         }
         if (!ts.isIdentifier(d.name) || !d.initializer) {
@@ -3915,18 +3953,13 @@ function dynamicUsesAreMoveOnly(
     }
     if (ts.isReturnStatement(s)) {
       if (!s.expression) return true;
-      // (#7106 S1c) `return <dynamic>` into a string-registered result: legacy
-      // recovers the carrier (`coerceType(externref → $AnyString)`); the IR
-      // mirrors it with `dyn.string_carrier` — assert.js's `formatSimpleValue`
-      // returning its `basic` local.
+      const returned = unwrap(s.expression);
       if (
         !returnIsDynamic &&
-        currentFnReturnsString &&
-        currentDynamicRuntimeBuildable &&
-        isDynShaped(s.expression) &&
-        currentSelectionOptions?.supportsBackendCapability?.("native-string-carrier-coercion") === true
+        isDynShaped(returned) &&
+        concreteResultRecoversDynamic(fn, returned, dynamicUndefinedVars)
       ) {
-        return scanExpr(s.expression, true);
+        return scanExpr(returned, true);
       }
       if (!returnIsDynamic) return scanExpr(s.expression, false);
       if (isDynShaped(s.expression)) return scanExpr(s.expression, true);
