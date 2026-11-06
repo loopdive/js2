@@ -13465,7 +13465,10 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   // exact i32; it is never an f64 that we then truncate.
   if (binding.i32Storage) {
     const value = writePromotedI32Slot(binding.slotIndex, rhs, cx, id.text);
-    return cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64);
+    const type = asVal(cx.builder.typeOf(value));
+    return type?.kind === "i32" && type.boolean === true
+      ? value
+      : cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64);
   }
   // Slice 6 part 4 refactor (#1185): when the binding has an asType
   // widening, the IR type the body sees is `asType`, not the

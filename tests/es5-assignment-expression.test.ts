@@ -172,3 +172,28 @@ return a + b ${count === 3 ? "+ c" : ""} === "${"z".repeat(count)}" ? 1 : 0;
     expect((instance.exports.run as () => number)()).toBe(1);
   });
 }
+
+for (const prepared of [false, true]) {
+  for (const [comparison, expected] of [
+    ["2 < 3", 1],
+    ["3 < 2", 0],
+  ] as const) {
+    it(`promoted assignment preserves Boolean RHS (${prepared ? "prepared" : "overlay"}, ${comparison})`, async () => {
+      const source = `export function run(): boolean { let x = 1 < 2; return (x = ${comparison}); }`;
+      const result = prepared
+        ? await compile(source, {
+            target: "standalone",
+            optimize: false,
+            wholeProgram: { kind: "prepared-program-required", version: 1 },
+          })
+        : await compileOverlay(source, { target: "standalone", optimize: false, trackIrOutcomes: true });
+      expect(result.success, JSON.stringify(result.errors)).toBe(true);
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+      if (!prepared) expect(result.irOutcomes?.find((row) => row.displayName === "run")?.irBodyEmitted).toBe(true);
+      const module = await WebAssembly.compile(result.binary);
+      expect(WebAssembly.Module.imports(module)).toEqual([]);
+      const instance = await WebAssembly.instantiate(module, {});
+      expect((instance.exports.run as () => number)()).toBe(expected);
+    });
+  }
+}
