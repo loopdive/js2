@@ -57,7 +57,7 @@ export function selfGuardedConstructorLeavesFnctor(ctx: CodegenContext, decl: ts
   const plan = ctx.runtimeEvalBoundaryPlan;
   if (!ctx.standalone || plan === undefined) return false;
   if (ctx.runtimeEvalProviderAbsent === true || !plan.sharedRealmMayContainCanonicalValues) return true;
-  return !plan.unknownDynamicSource && !plan.dynamicSourceWrites.has(decl.name?.text ?? "");
+  return !plan.unknownDynamicSource && !plan.dynamicSourceWrites.has(decl.name!.text);
 }
 
 function isNotThisInstanceOf(condition: ts.Expression, name: string): boolean {

@@ -6,6 +6,7 @@
  */
 import type { TypeOracle } from "../checker/oracle.js";
 import { forEachChild, ts } from "../ts-api.js";
+import { identifierWritesOf, isStoreTarget } from "../shared/binding-writes.js";
 
 export type IrRuntimeEvalSiteKind =
   | "direct-eval"
@@ -84,71 +85,65 @@ function unwrapExpression(expression: ts.Expression): ts.Expression {
   return current;
 }
 
-function isGlobalIntrinsic(identifier: ts.Identifier, oracle: TypeOracle): boolean {
-  const declaration = oracle.valueDeclarationOf(identifier);
+function isGlobalIntrinsic(identifier: ts.Identifier, oracle: TypeOracle | undefined): boolean {
+  const declaration = oracle?.valueDeclarationOf(identifier);
   return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
 }
 
-/** Calls that write a property named by a runtime value (`Object.defineProperty(this, k, …)`). */
-const PROPERTY_DEFINING_CALLS = new Set(["defineProperty", "defineProperties", "assign", "set"]);
+/** `Object.defineProperty(this, k, …)` and friends write a property named by a runtime value. */
+function isPropertyDefiningCall(call: ts.CallExpression): boolean {
+  const callee = unwrapExpression(call.expression);
+  if (!ts.isPropertyAccessExpression(callee)) return false;
+  const name = callee.name.text;
+  if (name === "defineProperty" || name === "defineProperties" || name === "assign") return true;
+  return name === "set" && ts.isIdentifier(callee.expression) && callee.expression.text === "Reflect";
+}
 
 /**
  * (#7106 A3) Add to `written` every script binding the literal source can
  * write, or answer `false` when it can write one this scan cannot name.
  *
- * Written: an assignment, `++`/`--` or `for-in`/`for-of` target (an identifier,
- * or a property name, since the receiver may be the global object); a declared
- * name (Annex B block functions in sloppy eval code are global var bindings);
- * an object-literal key or a string literal (`Object.assign(this, { f })`,
- * `this["f"] = …`). Unnameable: a computed assignment target, a
- * property-defining call, or nested dynamic code (`eval` / `Function`). The
- * answer over-approximates; it only ever makes a function live.
+ * Writes are the shared binding-write walker's identifier targets
+ * (`identifierWritesOf`: assignment and destructuring, `++`/`--`, for-in/of
+ * heads, `var` initializers), a store into `X.f` / `X["f"]` (the receiver may
+ * be the global object), and a function declaration (Annex B block functions
+ * in sloppy eval code are global var bindings). Nested dynamic code is found
+ * by the plan's own site visitor: a literal nested source is scanned the same
+ * way, anything else is unnameable — as are a computed member store, a
+ * property-defining call, any `.constructor(…)` call and any computed-member
+ * call (`this["ev" + "al"](…)`), the spellings a string can use to reach
+ * `eval` / `Function` without naming them. The answer over-approximates; it
+ * only ever makes a function live.
  */
 function literalSourceWrites(source: string, written: Set<string>): boolean {
   const script = ts.createSourceFile("eval-source.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   let nameable = true;
-  const target = (expression: ts.Expression): void => {
-    const node = unwrapExpression(expression);
-    if (ts.isIdentifier(node)) written.add(node.text);
-    else if (ts.isPropertyAccessExpression(node)) written.add(node.name.text);
-    else if (!ts.isElementAccessExpression(node) || !ts.isStringLiteralLike(node.argumentExpression)) nameable = false;
-  };
+  const nested: string[] = [];
+  visitRuntimeEvalSites(script, undefined, {
+    site: () => {},
+    source: (literal) => {
+      if (literal === undefined) nameable = false;
+      else nested.push(literal);
+    },
+  });
   const visit = (node: ts.Node): void => {
-    if (!nameable) return;
-    if (ts.isIdentifier(node) && (node.text === "eval" || node.text === "Function")) nameable = false;
-    else if (ts.isStringLiteralLike(node)) written.add(node.text);
-    else if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) target(node.left);
-    else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-      const update = node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken;
-      if (update) target(node.operand);
-    } else if (
-      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
-      !ts.isVariableDeclarationList(node.initializer)
-    ) {
-      target(node.initializer);
-    } else if (ts.isPropertyAccessExpression(node) && PROPERTY_DEFINING_CALLS.has(node.name.text)) nameable = false;
-    const declared = declaredName(node);
-    if (declared !== undefined && ts.isIdentifier(declared)) written.add(declared.text);
+    for (const write of identifierWritesOf(node)) written.add(write.target.text);
+    if (ts.isFunctionDeclaration(node) && node.name) written.add(node.name.text);
+    if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && isStoreTarget(node)) {
+      const key = ts.isPropertyAccessExpression(node) ? node.name : unwrapExpression(node.argumentExpression);
+      if (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) written.add(key.text);
+      else nameable = false;
+    }
+    if (ts.isCallExpression(node)) {
+      const callee = unwrapExpression(node.expression);
+      const reachesConstructor = ts.isPropertyAccessExpression(callee) && callee.name.text === "constructor";
+      if (reachesConstructor || ts.isElementAccessExpression(callee) || isPropertyDefiningCall(node)) nameable = false;
+    }
     forEachChild(node, visit);
   };
   visit(script);
+  for (const fragment of nested) if (!literalSourceWrites(fragment, written)) nameable = false;
   return nameable;
-}
-
-/** A declaration's or object-literal key's own name. */
-function declaredName(node: ts.Node): ts.Node | undefined {
-  return ts.isFunctionDeclaration(node) ||
-    ts.isClassDeclaration(node) ||
-    ts.isVariableDeclaration(node) ||
-    ts.isBindingElement(node) ||
-    ts.isPropertyAssignment(node) ||
-    ts.isShorthandPropertyAssignment(node)
-    ? node.name
-    : undefined;
-}
-
-function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
-  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
 }
 
 function stableSourceId(sourceFile: ts.SourceFile, index: number): string {
@@ -170,13 +165,12 @@ export function sourceMayContainRuntimeEvalBoundary(sourceFile: ts.SourceFile): 
     text.includes("Function") ||
     text.includes("__runtime_") ||
     text.includes("\\u") ||
-    // (#6651 A9) `Object.getPrototypeOf(function* () {}).constructor(src)`
-    // reaches CreateDynamicFunction without spelling `Function`.
-    (text.includes("constructor") && GENERATOR_FUNCTION_KEYWORD.test(text))
+    // (#6651 A9, #7106 A3) `Object.getPrototypeOf(function* () {}).constructor(src)`
+    // and `(function () {}).constructor(src)` reach CreateDynamicFunction
+    // without spelling `Function`.
+    text.includes("constructor")
   );
 }
-
-const GENERATOR_FUNCTION_KEYWORD = /function\s*\*/;
 
 /**
  * (#6651 A9) Does `expression` denote `%GeneratorFunction%` by SYNTAX alone?
@@ -342,6 +336,143 @@ function isLikelyGlobalObjectReceiver(expression: ts.Expression): boolean {
 }
 
 /** Build the single immutable runtime-eval routing authority for a program. */
+/** Where the site visitor reports what it finds. */
+interface RuntimeEvalSiteSink {
+  site(
+    node: ts.Node,
+    kind: IrRuntimeEvalSiteKind,
+    providerDisposition: IrRuntimeEvalSite["providerDisposition"],
+    literalSource?: string,
+    intrinsicName?: "eval" | "Function",
+  ): void;
+  /** A dynamic source reaches the provider: its literal text, or `undefined` when computed. */
+  source(literalSource: string | undefined): void;
+}
+
+function recordStringArguments(source: { literalSource?: string; unknown: boolean }, sink: RuntimeEvalSiteSink): void {
+  if (source.literalSource !== undefined) sink.source(source.literalSource);
+  if (source.unknown) sink.source(undefined);
+}
+
+/** `globalThis.eval(src)` passes `src`; any other use escapes the realm's `eval`. */
+function recordGlobalEvalPropertySource(node: ts.Expression, sink: RuntimeEvalSiteSink): void {
+  const call = node.parent;
+  const source = ts.isCallExpression(call) && call.expression === node ? call.arguments[0] : undefined;
+  if (source === undefined || !ts.isStringLiteralLike(source)) sink.source(undefined);
+  else sink.source(source.text);
+}
+
+/**
+ * `(function () {}).constructor(…)` / `[].constructor.constructor(…)`: a
+ * function's `constructor` is `%Function%`, reached without naming it.
+ */
+function isFunctionConstructorReach(callee: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "constructor") return false;
+  const receiver = unwrapExpression(callee.expression);
+  return (
+    ts.isFunctionExpression(receiver) ||
+    ts.isArrowFunction(receiver) ||
+    (ts.isPropertyAccessExpression(receiver) && receiver.name.text === "constructor")
+  );
+}
+
+/**
+ * Every runtime-eval site under `root`. Without an `oracle` (an eval source
+ * fragment) every `eval` / `Function` identifier is the global intrinsic and
+ * the generator-constructor spelling is left to the fragment scan.
+ */
+function visitRuntimeEvalSites(root: ts.Node, oracle: TypeOracle | undefined, sink: RuntimeEvalSiteSink): void {
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+      const callee = unwrapExpression(node.expression);
+      if (ts.isIdentifier(callee) && callee.text === "__js2wasm_global_script_eval") {
+        const source = node.arguments?.[0];
+        const literalSource = source && ts.isStringLiteralLike(source) ? source.text : undefined;
+        sink.site(node, "global-script-eval", "required", literalSource);
+        if (source !== undefined) sink.source(literalSource);
+      } else if (ts.isIdentifier(callee) && isGlobalIntrinsic(callee, oracle)) {
+        if (callee.text === "eval") {
+          const source = node.arguments?.[0];
+          const literalSource = source && ts.isStringLiteralLike(source) ? source.text : undefined;
+          sink.site(node, "direct-eval", "required", literalSource);
+          if (source !== undefined) sink.source(literalSource);
+        } else if (callee.text === "Function") {
+          const source = stringArguments(node.arguments);
+          sink.site(node, "function-constructor", "may-fallback", source.literalSource);
+          recordStringArguments(source, sink);
+        }
+      } else if (isFunctionConstructorReach(callee)) {
+        const source = stringArguments(node.arguments);
+        sink.site(node, "function-constructor", "may-fallback", source.literalSource);
+        recordStringArguments(source, sink);
+      } else if (ts.isBinaryExpression(callee) && callee.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+        const intrinsic = unwrapExpression(callee.right);
+        if (ts.isIdentifier(intrinsic) && intrinsic.text === "eval" && isGlobalIntrinsic(intrinsic, oracle)) {
+          const source = node.arguments?.[0];
+          const literalSource = source && ts.isStringLiteralLike(source) ? source.text : undefined;
+          sink.site(node, "indirect-eval", "required", literalSource);
+          if (source !== undefined) sink.source(literalSource);
+        }
+      }
+      if (oracle !== undefined && isStaticGeneratorFunctionConstructorSyntax(callee, oracle)) {
+        const source = stringArguments(node.arguments);
+        sink.site(node, "generator-function-constructor", "required", source.literalSource);
+        recordStringArguments(source, sink);
+      }
+    }
+
+    // `eval` is normally accounted for by the identifier walk below, but a
+    // realm-object read (`global.eval` / `globalThis.eval`) has the property
+    // name in AST member position and therefore intentionally does not count
+    // as an `intrinsic-value` site. It still needs the provider-backed,
+    // identity-stable wrapper when the compiler seeds the native global
+    // object, so record this narrow demand separately.
+    const elementKey = ts.isElementAccessExpression(node) ? unwrapExpression(node.argumentExpression) : undefined;
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      node.name.text === "eval" &&
+      isLikelyGlobalObjectReceiver(node.expression)
+    ) {
+      sink.site(node, "global-eval-property", "required");
+      recordGlobalEvalPropertySource(node, sink);
+    } else if (
+      ts.isElementAccessExpression(node) &&
+      elementKey !== undefined &&
+      ts.isStringLiteralLike(elementKey) &&
+      elementKey.text === "eval" &&
+      isLikelyGlobalObjectReceiver(node.expression)
+    ) {
+      sink.site(node, "global-eval-property", "required");
+      recordGlobalEvalPropertySource(node, sink);
+    }
+
+    if (
+      ts.isIdentifier(node) &&
+      (node.text === "eval" || node.text === "Function") &&
+      isGlobalIntrinsic(node, oracle) &&
+      !isDirectCalleeIntrinsicValue(node)
+    ) {
+      const parent = node.parent;
+      const isMemberName =
+        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        (ts.isElementAccessExpression(parent) && parent.argumentExpression === node);
+      // (#2960/#4394) The predicate deliberately fires only for `Function` —
+      // `eval` stays a site in receiver position (`eval.call(null, src)` is a
+      // real indirect eval), and `.constructor` chains stay escapes because
+      // `Function.prototype.constructor` IS the eval-capable constructor.
+      // This supersedes the broader any-receiver-read carve-out that briefly
+      // held this arm: that version also excused the `.constructor` chain.
+      const isSafePrototypeMethodReceiver = node.text === "Function" && isFunctionPrototypeMethodChain(node);
+      if (!isMemberName && !isSafePrototypeMethodReceiver) {
+        sink.site(node, "intrinsic-value", "required", undefined, node.text as "eval" | "Function");
+        sink.source(undefined);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(root);
+}
+
 export function buildIrRuntimeEvalBoundaryPlan(
   sourceFiles: readonly ts.SourceFile[],
   oracle: TypeOracle,
@@ -381,94 +512,14 @@ export function buildIrRuntimeEvalBoundaryPlan(
       }
     }
 
-    const visit = (node: ts.Node): void => {
-      if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-        const callee = unwrapExpression(node.expression);
-        if (ts.isIdentifier(callee) && callee.text === "__js2wasm_global_script_eval") {
-          const source = node.arguments?.[0];
-          const literalSource = source && ts.isStringLiteralLike(source) ? source.text : undefined;
-          addSite(sourceFile, id, node, "global-script-eval", "required", literalSource);
-          if (literalSource !== undefined) dynamicSourceFragments.push(literalSource);
-          else if (source !== undefined) unknownDynamicSource = true;
-        } else if (ts.isIdentifier(callee) && isGlobalIntrinsic(callee, oracle)) {
-          if (callee.text === "eval") {
-            const source = node.arguments?.[0];
-            const literalSource = source && ts.isStringLiteralLike(source) ? source.text : undefined;
-            addSite(sourceFile, id, node, "direct-eval", "required", literalSource);
-            if (literalSource !== undefined) dynamicSourceFragments.push(literalSource);
-            else if (source !== undefined) unknownDynamicSource = true;
-          } else if (callee.text === "Function") {
-            const source = stringArguments(node.arguments);
-            addSite(sourceFile, id, node, "function-constructor", "may-fallback", source.literalSource);
-            if (source.literalSource !== undefined) dynamicSourceFragments.push(source.literalSource);
-            if (source.unknown) unknownDynamicSource = true;
-          }
-        } else if (ts.isBinaryExpression(callee) && callee.operatorToken.kind === ts.SyntaxKind.CommaToken) {
-          const intrinsic = unwrapExpression(callee.right);
-          if (ts.isIdentifier(intrinsic) && intrinsic.text === "eval" && isGlobalIntrinsic(intrinsic, oracle)) {
-            const source = node.arguments?.[0];
-            const literalSource = source && ts.isStringLiteralLike(source) ? source.text : undefined;
-            addSite(sourceFile, id, node, "indirect-eval", "required", literalSource);
-            if (literalSource !== undefined) dynamicSourceFragments.push(literalSource);
-            else if (source !== undefined) unknownDynamicSource = true;
-          }
-        }
-        if (isStaticGeneratorFunctionConstructorSyntax(callee, oracle)) {
-          const source = stringArguments(node.arguments);
-          addSite(sourceFile, id, node, "generator-function-constructor", "required", source.literalSource);
-          if (source.literalSource !== undefined) dynamicSourceFragments.push(source.literalSource);
-          if (source.unknown) unknownDynamicSource = true;
-        }
-      }
-
-      // `eval` is normally accounted for by the identifier walk below, but a
-      // realm-object read (`global.eval` / `globalThis.eval`) has the property
-      // name in AST member position and therefore intentionally does not count
-      // as an `intrinsic-value` site. It still needs the provider-backed,
-      // identity-stable wrapper when the compiler seeds the native global
-      // object, so record this narrow demand separately.
-      const elementKey = ts.isElementAccessExpression(node) ? unwrapExpression(node.argumentExpression) : undefined;
-      if (
-        ts.isPropertyAccessExpression(node) &&
-        node.name.text === "eval" &&
-        isLikelyGlobalObjectReceiver(node.expression)
-      ) {
-        addSite(sourceFile, id, node, "global-eval-property", "required");
-      } else if (
-        ts.isElementAccessExpression(node) &&
-        elementKey !== undefined &&
-        ts.isStringLiteralLike(elementKey) &&
-        elementKey.text === "eval" &&
-        isLikelyGlobalObjectReceiver(node.expression)
-      ) {
-        addSite(sourceFile, id, node, "global-eval-property", "required");
-      }
-
-      if (
-        ts.isIdentifier(node) &&
-        (node.text === "eval" || node.text === "Function") &&
-        isGlobalIntrinsic(node, oracle) &&
-        !isDirectCalleeIntrinsicValue(node)
-      ) {
-        const parent = node.parent;
-        const isMemberName =
-          (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
-          (ts.isElementAccessExpression(parent) && parent.argumentExpression === node);
-        // (#2960/#4394) The predicate deliberately fires only for `Function` —
-        // `eval` stays a site in receiver position (`eval.call(null, src)` is a
-        // real indirect eval), and `.constructor` chains stay escapes because
-        // `Function.prototype.constructor` IS the eval-capable constructor.
-        // This supersedes the broader any-receiver-read carve-out that briefly
-        // held this arm: that version also excused the `.constructor` chain.
-        const isSafePrototypeMethodReceiver = node.text === "Function" && isFunctionPrototypeMethodChain(node);
-        if (!isMemberName && !isSafePrototypeMethodReceiver) {
-          addSite(sourceFile, id, node, "intrinsic-value", "required", undefined, node.text as "eval" | "Function");
-          unknownDynamicSource = true;
-        }
-      }
-      forEachChild(node, visit);
-    };
-    visit(sourceFile);
+    visitRuntimeEvalSites(sourceFile, oracle, {
+      site: (node, kind, disposition, literalSource, intrinsicName) =>
+        addSite(sourceFile, id, node, kind, disposition, literalSource, intrinsicName),
+      source: (literalSource) => {
+        if (literalSource === undefined) unknownDynamicSource = true;
+        else dynamicSourceFragments.push(literalSource);
+      },
+    });
   });
 
   const frozenSites = Object.freeze(sites.slice());
