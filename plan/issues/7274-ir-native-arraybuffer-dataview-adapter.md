@@ -43,7 +43,7 @@ func-budget-allow:
   - src/codegen/index.ts::planIrOverlay
   - src/ir/select.ts::isPhase1Expr
 import-cycles-allow:
-  - largestSccSize: 731 # 2026-11-06 (#7274): codegen/buffers/array-buffer-native.ts holds the ArrayBuffer sequences extracted from new-indexed.ts / property-access-dispatch.ts (both in the SCC) and codegen/buffers/ir-native-buffer.ts wraps them with dataview-native.ts's slice body; both join the SCC their siblings buffers/shared-array-buffer*.ts are already in
+  - largestSccSize: 732 # 2026-11-06 (#7274 slice 2): +1, codegen/buffers/data-view-native.ts holds the DataView construct / byte-attr sequences extracted from new-indexed.ts and property-access-dispatch.ts (both in the SCC), shared with the IR adapters; it needs dataview-native.ts and type-coercion.ts like the code it was cut from. Slice 1: 2026-11-06 (#7274): codegen/buffers/array-buffer-native.ts holds the ArrayBuffer sequences extracted from new-indexed.ts / property-access-dispatch.ts (both in the SCC) and codegen/buffers/ir-native-buffer.ts wraps them with dataview-native.ts's slice body; both join the SCC their siblings buffers/shared-array-buffer*.ts are already in
 ---
 
 # IR: native ArrayBuffer / DataView / SharedArrayBuffer surface (standalone)

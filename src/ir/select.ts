@@ -145,7 +145,7 @@ import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
 import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
-import type { IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
+import { nativeBufferOperationParts, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
@@ -11479,7 +11479,7 @@ function functionObjectCallIsPhase1(
 }
 
 /**
- * (#7274) The plan-certified native ArrayBuffer operations, ahead of the
+ * (#7274) The plan-certified native ArrayBuffer / DataView operations, ahead of the
  * module-extern consumer gate (a buffer var is a capability-extern binding):
  * the operands must be Phase-1 and a var receiver must resolve to the
  * native-buffer storage kind. A certified receiver's member outside the plan
@@ -11499,18 +11499,16 @@ function phase1NativeBufferVerdict(
       ? capabilityNo("host-surface-unavailable", "expr-native-buffer-member", expr)
       : undefined;
   }
-  if (op.kind === "construct") {
-    return [op.length, op.maxByteLength].every((e) => e === undefined || isPhase1Expr(e, scope, localClasses));
-  }
-  const receiver = unwrapPhase1Parens(op.receiver);
-  if (ts.isIdentifier(receiver)) {
+  const { handle, operands } = nativeBufferOperationParts(op);
+  const receiver = handle === undefined ? undefined : unwrapPhase1Parens(handle);
+  if (receiver !== undefined && ts.isIdentifier(receiver)) {
     const kind = moduleBinding(receiver)?.valueKind;
     if (kind === undefined || !isIrModuleNativeBufferValueKind(kind)) {
       return shapeNo("expr-native-buffer-receiver", receiver);
     }
   }
-  if (!isPhase1Expr(op.receiver, scope, localClasses)) return false;
-  return op.kind === "get" || op.bounds.every((bound) => isPhase1Expr(bound, scope, localClasses));
+  if (handle !== undefined && !isPhase1Expr(handle, scope, localClasses)) return false;
+  return operands.every((operand) => isPhase1Expr(operand, scope, localClasses));
 }
 
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {

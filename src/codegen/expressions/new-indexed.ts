@@ -44,7 +44,7 @@ import {
   emitDataViewOffsetBoundsCheck,
   emitDataViewOffsetToIndex,
   emitDataViewWindow,
-} from "../buffers/data-view-construct.js"; // (#7274) shared with the IR adapters
+} from "../buffers/data-view-native.js"; // (#7274) shared with the IR adapters
 
 /** Sentinel: the `new` target is not one of the indexed built-in constructors. */
 export const NEW_INDEXED_FALLTHROUGH = Symbol("new-indexed-fallthrough");

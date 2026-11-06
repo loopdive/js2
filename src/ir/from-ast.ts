@@ -9298,6 +9298,9 @@ function lowerMethodCallWithSourcePlan(
 ): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerMethodCallWithSourcePlan(expr, cx, statementPosition));
+  // (#7274) A certified DataView setter is usually a statement; this entry must consult the plan too.
+  const nativeBuffer = tryLowerNativeBufferOperation(expr, cx);
+  if (nativeBuffer !== undefined) return nativeBuffer;
   if (!ts.isPropertyAccessExpression(expr.expression)) {
     demoteToLegacy("method-call-unsupported", `ir/from-ast: malformed method call in ${cx.funcName}`);
   }

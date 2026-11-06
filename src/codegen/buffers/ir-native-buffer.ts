@@ -29,11 +29,23 @@ import {
   IR_NATIVE_AB_NEW_RESIZABLE_FN,
   IR_NATIVE_AB_RESIZABLE_FN,
   IR_NATIVE_AB_SLICE_FN,
+  IR_NATIVE_DV_BYTE_LENGTH_FN,
+  IR_NATIVE_DV_BYTE_OFFSET_FN,
+  IR_NATIVE_DV_NEW_FN,
+  irNativeDvAccessorOf,
+  isIrNativeBufferFn,
   type IrNativeBufferFn,
 } from "../../shared/contracts/native-buffer-adapters.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { emitArrayBufferSliceParamsBody, i32ByteVec, makeHelperFctx } from "../dataview-native.js";
+import {
+  dvDetachedThrowInstrs,
+  emitArrayBufferSliceParamsBody,
+  ensureDvAccessorHelper,
+  getOrRegisterDvWindowType,
+  i32ByteVec,
+  makeHelperFctx,
+} from "../dataview-native.js";
 import { ensureNamedHelperFunc } from "../func-space.js";
 import { addFuncType, getOrRegisterResizableAbType } from "../registry/types.js";
 import {
@@ -47,6 +59,17 @@ import {
   emitResizableAbLength,
   emitResizableAbMaxLength,
 } from "./array-buffer-native.js";
+import {
+  dataViewBufferByteLengthInstrs,
+  dataViewByteAttrInstrs,
+  emitDataViewBufferBrandCheck,
+  emitDataViewDetachedCheck,
+  emitDataViewLengthFromExtern,
+  emitDataViewLengthToIndex,
+  emitDataViewOffsetBoundsCheck,
+  emitDataViewOffsetToIndex,
+  emitDataViewWindow,
+} from "./data-view-native.js";
 
 const F64: ValType = { kind: "f64" };
 const I32: ValType = { kind: "i32" };
@@ -76,6 +99,22 @@ interface AdapterSpec {
   readonly params: readonly ValType[];
   readonly result: ValType;
   emit(ctx: CodegenContext, fctx: FunctionContext): void;
+}
+
+/** `byteOffset` / `byteLength` of the view in param 0, as f64. */
+function dataViewByteAttrAdapter(attr: "byteOffset" | "byteLength"): AdapterSpec {
+  return {
+    params: [EXTERNREF],
+    result: F64,
+    emit(ctx, fctx) {
+      const { vecTypeIdx } = i32ByteVec(ctx);
+      const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
+      const detachedThrow = dvDetachedThrowInstrs(ctx);
+      const any = receiverAnyLocal(fctx);
+      fctx.body.push(...dataViewByteAttrInstrs(any, attr, detachedThrow, vecTypeIdx, dvWinTypeIdx));
+      fctx.body.push({ op: "f64.convert_i32_s" });
+    },
+  };
 }
 
 const ADAPTERS: Readonly<Record<IrNativeBufferFn, AdapterSpec>> = {
@@ -132,6 +171,31 @@ const ADAPTERS: Readonly<Record<IrNativeBufferFn, AdapterSpec>> = {
       fctx.body.push(...arrayBufferResizableInstrs(getOrRegisterResizableAbType(ctx), any));
     },
   },
+  // The view over param 0's buffer: `new DataView(buffer, byteOffset, byteLength)`,
+  // byteLength `undefined` when omitted (the emitters' "to the end" default).
+  [IR_NATIVE_DV_NEW_FN]: {
+    params: [EXTERNREF, F64, EXTERNREF],
+    result: EXTERNREF,
+    emit(ctx, fctx) {
+      const { vecTypeIdx } = i32ByteVec(ctx);
+      const bufferByteLength = dataViewBufferByteLengthInstrs(0, false, vecTypeIdx);
+      const offsetF64 = allocLocal(fctx, "offset", F64);
+      const lenF64 = allocLocal(fctx, "len", F64);
+      const lenExtern = allocLocal(fctx, "lenx", EXTERNREF);
+      const lenWasUndefined = allocLocal(fctx, "len_undef", I32);
+      emitDataViewBufferBrandCheck(ctx, fctx, 0, vecTypeIdx);
+      fctx.body.push({ op: "local.get", index: 1 });
+      emitDataViewOffsetToIndex(ctx, fctx, offsetF64);
+      emitDataViewDetachedCheck(ctx, fctx, bufferByteLength);
+      emitDataViewOffsetBoundsCheck(ctx, fctx, offsetF64, bufferByteLength);
+      fctx.body.push({ op: "local.get", index: 2 });
+      emitDataViewLengthFromExtern(ctx, fctx, lenExtern, lenWasUndefined);
+      emitDataViewLengthToIndex(ctx, fctx, { lenF64, offsetF64, lenWasUndefined }, bufferByteLength);
+      emitDataViewWindow(ctx, fctx, { bufLocal: 0, isStructBuf: false, offsetF64, lenF64 }, vecTypeIdx);
+    },
+  },
+  [IR_NATIVE_DV_BYTE_LENGTH_FN]: dataViewByteAttrAdapter("byteLength"),
+  [IR_NATIVE_DV_BYTE_OFFSET_FN]: dataViewByteAttrAdapter("byteOffset"),
   [IR_NATIVE_AB_SLICE_FN]: {
     params: [EXTERNREF, EXTERNREF, EXTERNREF],
     result: EXTERNREF,
@@ -155,4 +219,15 @@ export function ensureIrNativeBufferAdapter(ctx: CodegenContext, symbol: IrNativ
       return { locals: fctx.locals, body: fctx.body };
     },
   );
+}
+
+/**
+ * The provider handle of a native-buffer runtime symbol: one of the adapters
+ * above, or legacy's own `__dv_m_<accessor>` helper (compiler-owned since
+ * #7274). `undefined` for any other symbol.
+ */
+export function irNativeBufferProvider(ctx: CodegenContext, symbol: string): FuncHandle | undefined {
+  if (isIrNativeBufferFn(symbol)) return ensureIrNativeBufferAdapter(ctx, symbol);
+  const accessor = irNativeDvAccessorOf(symbol);
+  return accessor === undefined ? undefined : ensureDvAccessorHelper(ctx, accessor);
 }

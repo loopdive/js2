@@ -1,8 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#7274) The native `new DataView(buffer, byteOffset, byteLength)` sequences
- * (ECMA-262 §25.3.2.1), shared by legacy codegen (`new-indexed.ts`, inline at
- * the source site) and the IR's `__ir_dv_new` adapter (`ir-native-buffer.ts`).
+ * (#7274) The native `DataView` sequences — `new DataView(buffer, byteOffset,
+ * byteLength)` (ECMA-262 §25.3.2.1) and the `byteOffset` / `byteLength`
+ * getters (§25.3.4.2/3) — shared by legacy codegen (`new-indexed.ts`,
+ * `property-access-dispatch.ts`, inline at the source site) and the IR's
+ * `__ir_dv_*` adapters (`ir-native-buffer.ts`).
  *
  * Every emitter works on locals the caller owns (or a value the caller left
  * on the stack), so one instruction sequence serves both. The step order is
@@ -224,4 +226,45 @@ export function emitDataViewWindow(
     then: wrapWindow,
     else: passThrough,
   });
+}
+
+/**
+ * `byteOffset` / `byteLength` of the view in `anyLocal`, as an i32: a
+ * `$__dv_window`'s field (TypeError once its buffer is detached), or 0 / the
+ * vec length for a bare buffer vec. `detachedThrow` is built by the caller
+ * before the receiver was compiled (funcIdx-capture ordering).
+ */
+export function dataViewByteAttrInstrs(
+  anyLocal: number,
+  attr: "byteOffset" | "byteLength",
+  detachedThrow: Instr[],
+  vecTypeIdx: number,
+  dvWinTypeIdx: number,
+): Instr[] {
+  const winBranch: Instr[] = [
+    { op: "local.get", index: anyLocal },
+    { op: "ref.cast", typeIdx: dvWinTypeIdx },
+    { op: "struct.get", typeIdx: dvWinTypeIdx, fieldIdx: 0 }, // buf
+    { op: "ref.cast", typeIdx: vecTypeIdx },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }, // buf.length
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    { op: "if", blockType: { kind: "empty" }, then: detachedThrow, else: [] },
+    { op: "local.get", index: anyLocal },
+    { op: "ref.cast", typeIdx: dvWinTypeIdx },
+    { op: "struct.get", typeIdx: dvWinTypeIdx, fieldIdx: attr === "byteOffset" ? 1 : 2 },
+  ];
+  const vecBranch: Instr[] =
+    attr === "byteOffset"
+      ? [{ op: "i32.const", value: 0 }]
+      : [
+          { op: "local.get", index: anyLocal },
+          { op: "ref.cast", typeIdx: vecTypeIdx },
+          { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+        ];
+  return [
+    { op: "local.get", index: anyLocal },
+    { op: "ref.test", typeIdx: dvWinTypeIdx },
+    { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: winBranch, else: vecBranch },
+  ];
 }

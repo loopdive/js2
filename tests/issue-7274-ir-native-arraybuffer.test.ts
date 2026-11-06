@@ -1,8 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7274 slice 1 — the native ArrayBuffer surface lowers through the IR on a
-// host-free lane: construction, `byteLength` / `maxByteLength` / `resizable`
-// and `slice`, on a certified receiver, each a direct adapter call.
+// #7274 — the native ArrayBuffer (slice 1) and DataView (slice 2) surface
+// lowers through the IR on a host-free lane: construction, the ArrayBuffer
+// `byteLength` / `maxByteLength` / `resizable` / `slice` and the DataView
+// `byteLength` / `byteOffset` / element accessors, on a certified receiver,
+// each a direct call of an adapter or of legacy's `__dv_m_<accessor>` helper.
 //
 // What these tests protect:
 //   - the three target test262 files claim `<module-init>` and still pass;
@@ -194,5 +196,92 @@ describe("#7274 adapter ownership vs a same-name source function", () => {
       expect(definitions(wat, adapter), adapter).toBe(1);
     }
     await passes(path);
+  });
+});
+
+const DV_TARGETS = [
+  "built-ins/DataView/prototype/byteLength/return-bytelength.js",
+  "built-ins/DataView/prototype/getInt32/return-values.js",
+].map((rel) => resolve("test262/test", rel));
+
+describe("#7274 IR native DataView (standalone)", () => {
+  it.each(DV_TARGETS)("claims and passes %s", async (path) => {
+    expect((await route(path, "standalone")).claimed).toBe(true);
+    await passes(path);
+  });
+
+  it("builds the body from the adapters and accessor helpers, adds no host import", async () => {
+    const path = probe(`
+      var buffer = new ArrayBuffer(12);
+      var view = new DataView(buffer, 2, 8);
+      var whole = new DataView(buffer);
+      view.setInt16(0, -2);
+      view.setFloat32(2, 1.5, true);
+      view.setUint8(6, 300);
+      assert.sameValue(view.byteLength * 10 + view.byteOffset, 82);
+      assert.sameValue(whole.byteLength + whole.byteOffset, 12);
+      assert.sameValue(view.getUint16(0), 65534);
+      assert.sameValue(whole.getInt16(2), -2);
+      assert.sameValue(view.getFloat32(2, true), 1.5);
+      assert.sameValue(view.getUint8(6), 44);
+      assert.sameValue(new DataView(buffer, 1.9, undefined).byteLength, 11);
+    `);
+    const { claimed, wat, imports } = await route(path, "standalone");
+    expect(claimed).toBe(true);
+    for (const helper of [
+      "__ir_dv_new",
+      "__ir_dv_byte_length",
+      "__ir_dv_byte_offset",
+      "__dv_m_setInt16",
+      "__dv_m_getFloat32",
+    ]) {
+      expect(definitions(wat, helper), helper).toBe(1);
+    }
+    expect(imports.filter((name) => name.startsWith("env."))).toEqual([]);
+    await passes(path);
+  });
+
+  it.each([
+    [
+      "a shadowed constructor",
+      "function DataView(b) { this.n = 1; } var v = new DataView(new ArrayBuffer(4)); assert.sameValue(typeof v, 'object');",
+    ],
+    [
+      "a BigInt accessor",
+      "var v = new DataView(new ArrayBuffer(8)); v.setBigInt64(0, 5n); assert.sameValue(v.getBigInt64(0), 5n);",
+    ],
+    ["a string offset", 'var v = new DataView(new ArrayBuffer(4), "1"); assert.sameValue(v.byteOffset, 1);'],
+    [
+      "a member outside the table",
+      "var v = new DataView(new ArrayBuffer(4)); assert.sameValue(v.buffer.byteLength, 4);",
+    ],
+    [
+      "a non-view write",
+      "var v = new DataView(new ArrayBuffer(4)); v = new ArrayBuffer(6); assert.sameValue(v.byteLength, 6);",
+    ],
+  ])("keeps %s on the legacy route", async (_label, body) => {
+    const path = probe(body);
+    const { claimed, wat } = await route(path, "standalone");
+    expect(claimed).toBe(false);
+    expect(wat).not.toContain("__ir_dv_");
+    await passes(path);
+  });
+
+  it.each([
+    [
+      "an accessor helper",
+      "function __dv_m_getUint8(a, b, c) { return 77; }",
+      "v.setUint8(0, 5); assert.sameValue(v.getUint8(0), 5);",
+    ],
+    ["an adapter", "function __ir_dv_byte_length(x) { return 77; }", "assert.sameValue(v.byteLength, 4);"],
+  ])("keeps the IR claim beside a source function named like %s", async (_label, namesake, body) => {
+    const path = probe(`${namesake} var v = new DataView(new ArrayBuffer(4)); ${body}`);
+    expect((await route(path, "standalone")).claimed).toBe(true);
+    await passes(path);
+  });
+
+  it("never claims on the gc lane", async () => {
+    const { wat } = await route(DV_TARGETS[1]!);
+    expect(wat).not.toContain("__ir_dv_");
   });
 });
