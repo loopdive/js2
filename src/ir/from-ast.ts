@@ -589,12 +589,15 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * (#7066) The selector's `supportsBackendCapability` for this compile: the
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
-  supportsBackendCapability?(capability: "number-to-string" | "native-global-function-call"): boolean;
+  supportsBackendCapability?(
+    capability: "number-to-string" | "native-global-function-call" | "native-json-codec" | "native-dynamic-member-read",
+  ): boolean;
   /**
    * (#7253) The host-free provider legacy calls for a direct ambient
    * `parseInt` / `parseFloat` (`(externref, f64) -> f64` / `(externref) -> f64`)
-   * or `escape` / `unescape` (`(externref) -> externref`); null when the lane
-   * has none, which keeps the legacy call.
+   * or `escape` / `unescape` (`(externref) -> externref`), and (#7267) the
+   * native codec's `JSON.parse` entry (`(externref) -> anyref`); null when the
+   * lane has none, which keeps the legacy call.
    */
   ambientGlobalFunctionTarget?(name: Exclude<IrAmbientGlobalFunctionName, "isNaN">): IrFuncRef | null;
   /**
@@ -14043,10 +14046,15 @@ function tryLowerAmbientGlobalFunctionCall(expr: ts.CallExpression, cx: LowerCtx
   if (!cx.checker) return null;
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => tryLowerAmbientGlobalFunctionCall(expr, cx));
+  const resolver = cx.resolver;
   return lowerAmbientGlobalFunctionCall(expr, {
     builder: cx.builder,
-    resolver: cx.resolver,
-    classify: makeIrDeclaredPrimitiveExpressionClassifier(cx.checker),
+    admission: {
+      classify: makeIrDeclaredPrimitiveExpressionClassifier(cx.checker),
+      supportsBackendCapability: (capability) => resolver?.supportsBackendCapability?.(capability) === true,
+      isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding?.(node) === true,
+    },
+    target: (name) => resolver?.ambientGlobalFunctionTarget?.(name) ?? null,
     lowerOperand: (argument, family) => lowerExpr(argument, cx, family === "string" ? { kind: "string" } : IR_F64),
     refuseOperand: (name, index, type) =>
       demoteToLegacy(

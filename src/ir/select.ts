@@ -3314,6 +3314,8 @@ function dynamicUsesAreMoveOnly(
     ) {
       return false;
     }
+    // (#7267) `JSON.parse(<string>)` answers the codec's value graph on the carrier.
+    if (ts.isCallExpression(e) && selectorAmbientGlobalFunctionCall(e)?.result === "dynamic") return true;
     if (
       currentDynamicRuntimeBuildable &&
       ts.isCallExpression(e) &&
@@ -3454,6 +3456,11 @@ function dynamicUsesAreMoveOnly(
         if (expectDyn) return false;
         if (isDynShaped(jsonStringifyArg)) return currentDynamicRuntimeBuildable && scanExpr(jsonStringifyArg, true);
         return currentDynamicRuntimeBuildable && scanExpr(jsonStringifyArg, false);
+      }
+      // (#7267) `JSON.parse(<string>)`: a dynamic result over one concrete string operand.
+      const globalFunction = selectorAmbientGlobalFunctionCall(e);
+      if (globalFunction?.result === "dynamic") {
+        return expectDyn && globalFunction.arguments.every((argument) => scanExpr(argument, false));
       }
       // (#7106 S1c) `Object.prototype.toString.call(<dynamic>)` → `dyn.object_tag`.
       const objectTagArg = dynNames.has("Object") ? null : ambientObjectToStringTagCall(e);
@@ -8564,6 +8571,16 @@ function isAmbientIntrinsicValue(expr: ts.Identifier): boolean {
   );
 }
 
+/** (#7253 / #7267) The shared ambient-call admission, on the selector's lane and binding facts. */
+function selectorAmbientGlobalFunctionCall(expr: ts.CallExpression, callerIsModuleInit = currentSubjectIsModuleInit) {
+  const resolver = currentModuleBindingResolver;
+  return admitAmbientGlobalFunctionCall(expr, callerIsModuleInit, {
+    classify: currentSelectionOptions?.classifyDeclaredPrimitiveExpression,
+    supportsBackendCapability: currentSelectionOptions?.supportsBackendCapability,
+    isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding(node) === true,
+  });
+}
+
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
   return (
     currentSelectionOptions?.isAmbientBinding?.(node) === true ||
@@ -12085,6 +12102,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // (#7106 S1b) `JSON.stringify(v)`: one argument, native codec lanes only.
       const jsonStringifyArg = scope.has("JSON") ? null : ambientJsonStringifyCall(expr);
       if (jsonStringifyArg !== null) return isPhase1Expr(jsonStringifyArg, scope, localClasses);
+      // (#7267) `JSON.parse(text)` of a typed string: the shared #7253 admission.
+      const globalFunction = selectorAmbientGlobalFunctionCall(expr);
+      if (globalFunction) return globalFunction.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
       // (#7106 S1c) `Object.prototype.toString.call(v)`: standalone classifier lanes only.
       const objectTagArg = scope.has("Object") ? null : ambientObjectToStringTagCall(expr);
       if (objectTagArg !== null) return isPhase1Expr(objectTagArg, scope, localClasses);
@@ -13333,14 +13353,9 @@ export function buildLocalCallGraph(
             return;
           }
           // (#7253) …and the host-free global functions.
-          const globalFunctionArgs = admitAmbientGlobalFunctionCall(
-            node,
-            callerName === MODULE_INIT_UNIT_NAME,
-            selectorSeesAmbientBinding,
-            currentSelectionOptions,
-          );
-          if (globalFunctionArgs !== null) {
-            for (const argument of globalFunctionArgs) visit(argument);
+          const globalFunction = selectorAmbientGlobalFunctionCall(node, callerName === MODULE_INIT_UNIT_NAME);
+          if (globalFunction !== null) {
+            for (const argument of globalFunction.arguments) visit(argument);
             return;
           }
           const imported = certifyImportedIrCall(node, currentSelectionOptions?.importedFunctions);
