@@ -1440,7 +1440,7 @@ function compileNativeStringCompoundAssignment(
       reportError(ctx, expr, "Failed to compile string += RHS");
       return null;
     }
-    compileStringBuilderAppend(ctx, fctx, coerced, sb);
+    compileStringBuilderAppend(ctx, fctx, sb);
     // The += statement is normally side-effecting (statement-level) — the
     // wrapping ExpressionStatement drops the result. Push a sentinel
     // `ref.null $AnyString` so callers that DO consume the value get a

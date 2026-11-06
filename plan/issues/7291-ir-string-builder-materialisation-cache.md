@@ -105,3 +105,30 @@ Re-defaulting `JS2WASM_IR_STRING_BUILDER` to `0` (defer every builder loop to
 legacy) restores the numbers at once (table above). It would reverse
 #3740/#3744 and take units off the IR, which runs against the IR-replaces-legacy
 direction. It is not taken unless the lead asks for a stopgap.
+
+## Progress
+
+`run(200000)`, median of 7 after warm-up, `dc52abf7` base. Untyped `run(n)`
+is legacy; typed `run(n: number)` is IR.
+
+| step | source | wasi | standalone | gc |
+| --- | --- | --- | --- | --- |
+| base | `run(n)` (legacy) | 2.0–2.9 | 2.0 | 2.0 |
+| base | `run(n: number)` (IR) | 12.1 | 11.5 | 8.9 |
+| 1 | `run(n)` (legacy) | 2.0 | 2.0 | 2.0 |
+| 1 | `run(n: number)` (IR) | 10.6 | 9.8 | 10.1 |
+
+**Step 1** (shared emitters, `src/codegen/string-builder-emit.ts`). Legacy
+output is byte-identical:
+- typed corpus 264/264 (gc/standalone/wasi);
+- 234 compiles of the builder fixtures extracted from the #1004/#1210/#1580/
+  #1744/#1746/#1761/#1919/#2641/#3744 tests (each on gc/standalone/wasi as
+  `.ts` and `.js`);
+- those nine test files: 76/78 pass. The two failures (#1004 host-assisted
+  option, #3744 untyped benchmark route) fail identically on `dc52abf7`.
+
+The step also:
+- removes the duplicated growth block between the string and code-unit
+  appends;
+- drops `compileStringBuilderAppend`'s unused `rhsAnyStrType` parameter;
+- gives `fctx.stringBuilders` the shared `StringBuilderSlots` type.

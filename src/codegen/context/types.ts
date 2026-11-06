@@ -10,6 +10,7 @@ import { ts } from "../../ts-api.js";
 import type { TypeOracle } from "../../checker/oracle.js";
 import type { UsageInference } from "../../checker/usage-inference.js";
 import type { IrUnitId } from "../../ir/identity.js";
+import type { StringBuilderSlots } from "../string-builder-emit.js";
 import type {
   FieldDef,
   FuncHandle,
@@ -1437,16 +1438,7 @@ export interface FunctionContext {
    * `$NativeString` view of the current buffer state via
    * `emitStringBuilderRead`.
    */
-  stringBuilders?: Map<
-    string,
-    {
-      bufLocalIdx: number; // ref_null $__str_data — the growable i16 buffer
-      lenLocalIdx: number; // i32 — current logical length
-      capLocalIdx: number; // i32 — current physical capacity (== buf.length)
-      materializedLocalIdx: number; // ref_null $AnyString — reserved for future cache
-      presized?: boolean; // #1761: true when buffer presized; appends skip cap-check
-    }
-  >;
+  stringBuilders?: Map<string, StringBuilderSlots>;
   /**
    * #1886 Slice B — live linear-backed `Uint8Array` buffers in this function. A
    * buffer proven linear-safe by the #1886 analysis
