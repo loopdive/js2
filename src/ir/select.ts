@@ -3981,8 +3981,9 @@ function dynamicUsesAreMoveOnly(
         if (ts.isIdentifier(key) && dynNames.has(key.text)) return true; // dynamic index → used as-is
         // (#7265) Any other dynamic key (`verifyProp || name`); kept off a body with
         // a member call (#7261).
-        needsNoDynamicMethodCall ||= isDynShaped(key);
-        if (isDynShaped(key)) return scanExpr(key, true);
+        const dynamicKey = isDynShaped(key);
+        needsNoDynamicMethodCall ||= dynamicKey;
+        if (dynamicKey) return scanExpr(key, true);
         // (#7106 item 1) a PROVEN-number index (`b[i]` in a counted loop):
         // the producer lowers it f64 and boxes it tag-3 (`boxConcreteToDynamic`),
         // so the key is never null.

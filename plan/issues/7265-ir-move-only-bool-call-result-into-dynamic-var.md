@@ -1,7 +1,8 @@
 ---
 id: 7265
 title: "IR move-only scan: local boolean call result into a dynamic var; dynamic computed element key (#7250 rule b)"
-status: in-progress
+status: done
+completed: 2026-11-06
 sprint: current
 created: 2026-11-06
 updated: 2026-11-06
@@ -22,10 +23,11 @@ loc-budget-allow:
   # closure state lives in select.ts.
   - src/ir/select.ts
 func-budget-allow:
-  # 2026-11-06: +6 in scanExprInner, for the bool-call operand in the
-  # dynamic-local assignment arm and the dynamic-key read arm. Each sits next
-  # to its sibling key and operand checks. Restates #7258/#7260's #7261-guard
-  # grant.
+  # 2026-11-06: scanExprInner measures +10 against origin/main `8b349439`
+  # (the gate's figure, not a hand count): the bool-call operand in the
+  # dynamic-local assignment arm, and the dynamic-key read arm with its #7261
+  # flag. Each sits next to its sibling key and operand checks.
+  # dynamicUsesAreMoveOnly restates #7258/#7260's #7261-guard grant.
   - src/ir/select.ts::scanExprInner
   - src/ir/select.ts::dynamicUsesAreMoveOnly
 ---
@@ -94,7 +96,7 @@ admission sits next to its sibling checks in the same arm.
 - Standalone test262 A/B on propertyHelper includers plus 300 random: no
   pass→fail, no new trap.
 
-## Results (2026-11-06; base = #7260 head `217cbd51`, head `4bdbc499`; corpus on `30856ab9`)
+## Results (2026-11-06; measured at `4bdbc499` against #7260 `217cbd51`, corpus at `30856ab9`; the review-fix head `e76868b6` re-checked below)
 
 - **isWritable:** in the real harness it still stops first at #7250 step 1
   (`vardecl-module-binding-alias`, the `__isArray(obj) && …` conditional),
