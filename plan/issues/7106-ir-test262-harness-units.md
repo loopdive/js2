@@ -5445,6 +5445,138 @@ depends on it, not for its own gain.
     reused);
   - no new function.
 
+## ES5 lever T: `throw new Test262Error('…' + x)` over a script scalar (plan, 2026-11-06)
+
+Lever `T` of "ES5 IR-only: ranked levers" (census branch
+`claude/7106-es5-ir-only-census`, 1835ec7d60): 463 files carry it, 52 are
+freed by it alone (measured). Nothing is implemented. #7251 (the
+`Test262Error` harness unit, merged as #7096) and S3c own the constructor and
+its harness unit; this lever is only the test body's `throw` statement and
+its message.
+
+### Root cause (single-file probes on main 245e830d49, standalone)
+
+The ES5 `S…` shape is
+`var x = 1; if (x !== 1) { throw new Test262Error('#1: ' + x); }`. Two
+selector rules in `src/ir/select.ts` refuse it. Both are written in terms of
+module bindings, not the value the IR builds:
+
+1. **`throw-module-scalar-unboxed`** (`isPhase1ThrowStatement`, ~L5016).
+   - It refuses when the thrown expression *touches* a scalar module binding
+     anywhere inside (`expressionTouchesScalarModuleBinding`), unless the
+     whole value is a string.
+   - So `new Test262Error('#1: ' + x)`, an object whose operand happens to
+     read `x`, is refused like `throw x`.
+   - The builder's rule (`throwOperandAdmissible` in
+     `analysis/operand-admissibility.ts`, read by `lowerThrowStatement` and
+     by the planned-closure walk) judges the *thrown value's* family only.
+2. **`expr-module-value-representation-mismatch`** (the module branch of the
+   binary arm, ~L11719) and its sibling **`expr-module-boolean-nonboolean-op`**.
+   - They refuse a `+` whose operands have different module families:
+     string vs f64, or string vs boolean.
+   - The selector's own `obviousModuleValueFamily` already reads that `+` as
+     a string through #7066's `additiveResultFamily`, so the two arms disagree.
+
+The function-local twin of the same body is already claimed, which confirms
+the builder lowers it.
+
+### Prototype (scratch only, reverted)
+
+The prototype made three one-line changes:
+- the throw arm refuses only when the thrown value's own family is scalar
+  (`obviousModuleValueFamily(expr)` is defined and not `string`);
+- both module `+` refusals are skipped when that family reads the `+` as a
+  string or a number.
+
+Results:
+- **Claims:** `<module-init>` is claimed for the base shape, `'…' + (x)`, a
+  boolean `x`, and a rewritten `x`.
+- **Run-time values:** `'#' + 1.5`, `'#' + -0`, `'#' + 1e21` and `'#' + true`
+  match node at run time, and the failing check throws.
+- **Still refused, correctly:** `throw x` on an f64 module var and
+  `true + 1` stay refused.
+- **10 hand-picked T-shaped files:**
+  - one becomes IR-only (`S11.13.1_A3.1`);
+  - five move on to their next lever (chained assignment, `*=` / `/=` /
+    `+=` / `-=` → `P`).
+- **The hazard:** four files (`S11.13.2_A3.1_T1`, `_T2`, `_T4`, `_T5`) newly
+  *withdraw after the claim*. `var y; y = 1; y *= -1;` is admitted by the
+  selector's module-init compound arm (`isSelectableNumberCompound`, ~L4800).
+  The builder then refuses it:
+  - `compoundWriteAdmissible` on a dynamic slot ("compound assign *= to "y"
+    (dynamic) not in slice 6");
+  - for `+=`, "dynamic "y +=" into a module or captured binding".
+
+  On main the throw refusal masked that disagreement.
+
+### Implementation Plan
+
+**Target module.** `src/ir/select.ts` only: the throw arm and the module
+branch of the binary arm. The rules themselves stay in
+`src/ir/analysis/operand-admissibility.ts`.
+
+**Changes:**
+1. **Throw arm.** Replace the touch test with the builder's rule:
+   - refuse when `throwOperandAdmissible` fails on the thrown value's proven
+     family;
+   - for a module operand that family is `obviousModuleValueFamily`, mapped
+     to an `OperandFamily` through the existing `OBVIOUS_OPERAND_FAMILIES`
+     table;
+   - an object-valued `new …(…)` is judged by `isPhase1Expr` as today.
+   - Keep the code `throw-module-scalar-unboxed` for the refusal, so census
+     history stays comparable.
+2. **Module `+`.** In the module branch, a `+` whose
+   `obviousModuleValueFamily(expr)` is defined is judged by #7066's additive
+   rule (`provenBinaryOperandsAdmissible` with `additiveLane()`). It is no
+   longer judged by the family-equality check or the boolean-operand check.
+   Both refusals stay for every other operator.
+3. **Precondition: compound on a dynamic module binding.** The module-init
+   compound arm must refuse what `lowerCompoundAssign` refuses:
+   - `compoundWriteAdmissible(op, slotFamily, …)` on the binding's family;
+   - `+=` on a dynamic binding whose storage is not a slot.
+
+   Without this, step 1 unmasks four post-claim withdrawals. Lever `P` later
+   lowers these and removes the refusal again.
+
+**Reuse, and duplicates removed:**
+- Reused: `throwOperandAdmissible`, `provenBinaryOperandsAdmissible` /
+  `additiveLane`, `compoundWriteAdmissible`. No new predicate.
+- Removed: the selector's private "touches a scalar module binding" rule for
+  `throw` (a second throw rule beside `throwOperandAdmissible`), and the
+  module branch's own `+` family rule (a second `+` rule beside #7066's).
+- `expressionTouchesScalarModuleBinding` loses its last throw caller. Delete
+  it if no other caller remains.
+
+**Acceptance:**
+- **Correctness:**
+  - 0 pass→fail, both lanes, on the census's T population;
+  - 0 claim-then-demote (the post-claim error list is empty) on those files
+    and on the four `S11.13.2_A3.1_T*` files above;
+  - legacy bytes and the playground identical.
+- **Tests:** one test file covering both lanes:
+  - the base shape, a boolean, a rewritten var and `'…' + (x)`, each claimed
+    and run;
+  - `throw x` on a module f64 refused at select;
+  - `var y; y = 1; y *= -1;` refused at select, not withdrawn.
+- **Code quality:**
+  - `select.ts` does not grow: two rules removed, three call sites rerouted;
+  - no new predicate.
+- **Expected gain:** about 52 ES5 files IR-only on standalone (the census's
+  measured "alone"), and the `P` / `N` co-blockers exposed for `N+P+T`
+  (493).
+
+## ES5 lever K: annexB block-function hoisting (plan pending, 2026-11-06)
+
+Paused before measurement. #7106 lever `K` (175 carry, 91 alone, census
+upper bound, not unmasked) covers B.3.3: a function declaration in a block,
+an `if` arm or a `switch` case, and reads of its name outside the block.
+- **What is known so far:** every annexB block-function test is `noStrict`.
+  About 79 of the 312 `function-code` / `global-code` files use none of
+  `verifyProperty`, `fnGlobalObject` or `eval`, so they are the likely
+  K-alone population.
+- **Next:** probe those files on main to find the refusing arm, then write
+  the plan here.
+
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
 The following 115 lines are preserved verbatim from the completed #6876 plan
