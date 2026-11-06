@@ -13,6 +13,7 @@ import type { CodegenContext } from "./context/types.js";
 import { prepareIrAmbientClassCallLowering, recordIrOverlayPreparationFailure } from "./ir-imported-call-planning.js";
 import { prepareIrCompilerTimerShimCallLowering } from "./ir-timer-shim-planning.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
+import { runtimeEvalPushPublishesCachedFunctionValues } from "./expressions/runtime-eval-provider.js";
 import {
   applyIrFinalContextFunctionRetention,
   prepareHostDateSnapshotLoweringByIdentity,
@@ -57,7 +58,8 @@ export function synchronizeIrSafeFunctionSelection(
  *    global `var`/lexical binding, whose storage `registerReassignedFunctionGlobals`
  *    widened to externref. IR binds functions statically and types variables
  *    itself, so it would miss the rebind or disagree with the slot.
- *  - `wasi`: the WASI lane has no measured per-unit route yet.
+ *  - `uncached-push`: the push publishes a per-site closure that cannot be
+ *    planned before the component seals, so every function stays direct.
  *
  * Site spans ignore `sourceId`, so that test over-approximates; it can only
  * keep a function direct, never admit one.
@@ -75,9 +77,10 @@ export function withdrawRuntimeEvalBoundaryFunctions(
     ...(ctx.globalObjectVarBindings ?? []),
     ...(ctx.globalLexicalBindings ?? []),
   ]);
+  const wholeProgram = !runtimeEvalPushPublishesCachedFunctionValues(ctx);
   for (const name of [...funcs]) {
-    const why = ctx.wasi
-      ? "wasi"
+    const why = wholeProgram
+      ? "uncached-push"
       : runtimeEvalBoundaryCrossing(ctx, sites, identityPlan.declarationByLegacyName.get(name)!, evalVisible);
     if (why === undefined) continue;
     record(name, { ...failure, detail: `${failure.detail} (${why})` });

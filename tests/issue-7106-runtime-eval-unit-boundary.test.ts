@@ -49,7 +49,7 @@ describe("#7106 A1 — runtime-eval boundary per unit", () => {
     const byName = await outcomes("wasi");
     for (const name of ["helper", "shadow", "live", "callsLive", "bump", "run"]) {
       expect(byName.get(name)?.irBodyEmitted).toBe(false);
-      expect(byName.get(name)?.detail).toContain("(wasi)");
+      expect(byName.get(name)?.detail).toContain("(uncached-push)");
     }
   });
 });

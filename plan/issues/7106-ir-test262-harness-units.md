@@ -5525,15 +5525,22 @@ What the withdrawal still protects, and what replaces it:
   - `eval-site`: an inventoried site lies inside the declaration;
   - `eval-visible-binding`: a reference resolves to a live function or to a
     global `var`/lexical binding;
-  - `wasi`: the WASI lane keeps the whole-program withdrawal, because it has
-    no measured per-unit lane yet.
+  - `uncached-push`: the lane's push publishes a per-site closure
+    (`emitFuncRefAsClosure`, today the WASI lane), which cannot be planned
+    before the seal, so every function stays direct.
+
+  The lane question is one capability predicate,
+  `runtimeEvalPushPublishesCachedFunctionValues`
+  (`expressions/runtime-eval-provider.ts`). The push itself, the withdrawal
+  and the value-target collector all read it, so A1 adds no `ctx.standalone`
+  or `ctx.wasi` arm (standalone-arms gate, #7143).
 
   The rest prepare.
 - **Pre-seal publication**
   (`ir-prepared-free-functions.ts`,
   `collectPreparedTopLevelFunctionValueTargetUnitIds`).
-  - When the native push is active (`ctx.runtimeEvalGlobalFunctionBindings`),
-    every top-level function is a value target.
+  - When the push is active (`ctx.runtimeEvalGlobalFunctionBindings`) and
+    publishes cached values, every top-level function is a value target.
   - The existing `prepareTopLevelFunctionValueTargetSupport` then allocates
     the same cached singleton that `emitCachedFuncClosureAccess` reuses,
     before the component seals.
