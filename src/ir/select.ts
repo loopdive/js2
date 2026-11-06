@@ -5013,24 +5013,17 @@ function isPhase1ThrowStatement(
   if (expressionTouchesModuleMapGetAlias(stmt.expression)) {
     return shapeNo("throw-module-map-get-alias", stmt.expression);
   }
-  // (#7106 lever T) `throwOperandAdmissible` judges the thrown value (a construction is an object). Still
-  // refused: nullish; a read of a `null`-initialized script var (its initializer does not lower yet, #7127);
-  // and a top-level throw, which integration withdraws after the claim outside WASI.
+  // (#7106 lever T) `throwOperandAdmissible` judges a thrown value that reads a scalar module binding (a
+  // construction is an object). Its `+` is judged by `checkerAdditionVerdict` in `isPhase1Expr`; this arm
+  // only names the result family. A top-level throw is withdrawn by integration after the claim outside WASI.
   const thrown = unwrapPhase1Parens(stmt.expression);
-  const family = ts.isNewExpression(thrown)
-    ? "reference"
-    : OBVIOUS_OPERAND_FAMILIES[obviousModuleValueFamily(thrown) ?? "unknown"];
-  const refused =
-    family === "nullish" ||
-    !throwOperandAdmissible(family) ||
-    ts.isSourceFile(stmt.parent) ||
-    expressionTouchesIdentifier(
-      thrown,
-      (node) =>
-        currentModuleBindingResolver?.localVariableDeclaration(node)?.initializer?.kind === ts.SyntaxKind.NullKeyword,
-    );
-  if (refused && expressionTouchesScalarModuleBinding(thrown)) {
-    return shapeNo("throw-module-scalar-unboxed", stmt.expression);
+  if (expressionTouchesScalarModuleBinding(thrown)) {
+    const family = ts.isNewExpression(thrown)
+      ? "reference"
+      : OBVIOUS_OPERAND_FAMILIES[obviousModuleValueFamily(thrown) ?? "unknown"];
+    if (family === "nullish") return shapeNo("throw-module-nullish", stmt.expression);
+    if (!throwOperandAdmissible(family)) return shapeNo("throw-module-scalar-unboxed", stmt.expression);
+    if (ts.isSourceFile(stmt.parent)) return shapeNo("throw-module-top-level", stmt.expression);
   }
   return isPhase1Expr(stmt.expression, scope, localClasses);
 }
@@ -10972,6 +10965,15 @@ function templateSubstitutionFamily(
 const laneFormatsNumbers = (): boolean =>
   currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true;
 
+/**
+ * A function's `+` over a dynamic script var: from-ast adds that var as the carrier only where it is in scope
+ * (`<module-init>`); a function reads it through `resolveModuleBinding`, which `addsAsCarrier` does not consult.
+ */
+function functionAddsDynamicModuleRead(expr: ts.BinaryExpression): boolean {
+  const readsDynamic = (e: ts.Expression) => moduleBinding(e)?.valueKind.kind === "dynamic";
+  return !currentSubjectIsModuleInit && (readsDynamic(expr.left) || readsDynamic(expr.right));
+}
+
 /** The builder's `+` proof (`provenAdditiveOperands`) over the checker's use-site types; `undefined` if unclassified. */
 function checkerAdditionVerdict(expr: ts.BinaryExpression): boolean | undefined {
   const classify = currentSelectionOptions?.classifyPrimitiveExpression;
@@ -11735,6 +11737,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       const rightFamily = obviousModuleValueFamily(expr.right);
       // (#7106 lever T) A `+` the builder proves at the use site needs no family agreement.
       const additive = binOp === ts.SyntaxKind.PlusToken && checkerAdditionVerdict(expr) === true;
+      if (binOp === ts.SyntaxKind.PlusToken && !additive && functionAddsDynamicModuleRead(expr)) {
+        return shapeNo("expr-module-dynamic-addition", expr);
+      }
       const isEquality = isEqualityOperator(binOp);
       const nullishEquality =
         isEquality &&

@@ -59,9 +59,14 @@ const REFUSED: Record<string, string> = {
   // The guard narrows the read to `never`, which the builder's `+` proof rejects (S8.3_A1_T1).
   narrowedBoolean: "var x = true;\nif (x !== true) { throw new Test262Error('#1: ' + x); }",
   narrowedTypeof: "var x = 1;\nif (typeof x !== 'number') { throw new Test262Error('#1: ' + x); }",
-  // A null script var's read does not lower yet (#7127).
+  // A `null` written into a dynamic script slot does not lower yet (#7127): the write refuses.
   nullVar: "var x = null;\nif (x !== null) { throw new Test262Error('#1: ' + x); }",
   nullMessage: "var x = null;\ntry { throw new Test262Error('#' + x); } catch (e) {}",
+  nullAssigned: "var x;\nx = null;\nif (x !== null) { throw new Test262Error('#1: ' + x); }",
+  nullAssignedMessage: "var a;\na = null;\nif (('#' + a) !== '#null') { throw new Test262Error('#1: ' + ('#' + a)); }",
+  // A function reads a dynamic script var through `resolveModuleBinding`, which from-ast's carrier `+` misses.
+  dynamicReadInFunction: "var x;\nfunction g() { if (x !== undefined) { throw new Test262Error('#1: ' + x); } }\ng();",
+  nullOperand: "var a = null;\nvar n = 2;\nvar z = a + n;\nif (z !== 2) { throw new Test262Error('#1: ' + z); }",
 };
 
 describe("#7106 lever T — throw messages over a script scalar", () => {
