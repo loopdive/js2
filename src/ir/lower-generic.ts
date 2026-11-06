@@ -3454,6 +3454,11 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "extern.regex": {
+        // (#7106 lever R) A host-free lane constructs it in-module.
+        if (instr.provider) {
+          emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(instr.provider) });
+          return;
+        }
         // Mirror the legacy `compileRegExpLiteral` pattern (see
         // `src/codegen/typeof-delete.ts:158`):
         //   <emit pattern as string literal>

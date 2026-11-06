@@ -679,10 +679,13 @@ function implicitSupportRequirement(
         ? null
         : `${instr.kind} resolves host/runtime callables or globals without explicit symbolic refs`;
     case "extern.regex":
-      // Besides RegExp_new, this instruction materializes pattern and flags
+      // Besides RegExp_new, the host lowering materializes pattern and flags
       // through backend-selected string storage. Keep it fail-closed until
-      // all three symbolic dependencies are attached together.
-      return `${instr.kind} resolves host/runtime callables or globals without explicit symbolic refs`;
+      // all three symbolic dependencies are attached together; a host-free
+      // lane's in-module provider (#7106 lever R) is its only dependency.
+      return instr.provider
+        ? null
+        : `${instr.kind} resolves host/runtime callables or globals without explicit symbolic refs`;
     case "await":
     case "async.return":
     case "async.throw":
@@ -1461,7 +1464,8 @@ function collectFunctionEvidence(
         (nested.kind === "extern.new" ||
           nested.kind === "extern.call" ||
           nested.kind === "extern.prop" ||
-          nested.kind === "extern.propSet") &&
+          nested.kind === "extern.propSet" ||
+          nested.kind === "extern.regex") &&
         nested.provider
       ) {
         recordExternalCallable(evidence, nested.provider, input.abi, ownership);

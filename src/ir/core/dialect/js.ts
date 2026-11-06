@@ -795,6 +795,12 @@ export interface IrInstrRegExpLiteral extends IrInstrBase {
   readonly kind: "extern.regex";
   readonly pattern: string;
   readonly flags: string;
+  /**
+   * (#7106 lever R) A host-free lane's in-module construction, `() -> externref`
+   * (`codegen/ir-regexp-literal.ts`), attached by `attachIrExternSupport`.
+   * Absent: the host `RegExp_new(pattern, flags)` lowering.
+   */
+  readonly provider?: IrFuncRef;
 }
 
 // ---------------------------------------------------------------------------
