@@ -207,20 +207,73 @@ one case group → `ensureIrNativeBufferAdapters` +
 
 ### Slices (each a separate commit, each measured)
 
-1. **ArrayBuffer**, files 1–3:
-   - construct `(n)`, `(n, {})`, `(n, {maxByteLength: e})`;
+The test262 files are paths under `test262/test/built-ins/`.
+
+**Source files, shared by all slices:**
+
+- `src/ir/native-buffer-surface.ts` (new): the admission table.
+- `src/ir/capability.ts`: the capability row.
+- `src/ir/module-binding-value-kinds.ts`: the
+  `capability-extern {capability: "native-buffer"}` member of the capability
+  union.
+- `src/ir/module-bindings.ts`: certify the script-var / lexical binding when
+  every write is a table construction or a `slice` result.
+- `src/ir/select.ts`: the `phase1NewExpression` exemption, the member arms
+  and `expressionTouchesScalarModuleBinding`, which consult the table.
+- `src/ir/from-ast.ts`: one native arm placed before the `externInfo` path,
+  plus one picker for member lowering.
+- `src/ir/integration.ts`: one `irRuntimeFuncRef` case group and provider
+  observation.
+- `src/codegen/buffers/ir-native-buffer.ts` (new): the adapters.
+- Helpers extracted from `src/codegen/expressions/new-indexed.ts`,
+  `src/codegen/property-access-dispatch.ts` and `src/codegen/dataview-native.ts`.
+
+**Slices:**
+
+1. **ArrayBuffer.**
+   - Construct `(n)`, `(n, {})` and `(n, {maxByteLength: e})`. The options
+     literal is consumed by the admission.
    - `byteLength`, `maxByteLength`, `resizable`, `slice(a[, b])`.
-2. **DataView**, files 4–6:
-   - construct `(buf[, off[, len]])`;
-   - `byteLength`, `byteOffset`, `buffer`, and all `get*/set*` with an
-     optional little-endian argument.
-3. **SharedArrayBuffer**, file 7: construct `()` / `(n)`, `byteLength`.
+   - Target files:
+     - `ArrayBuffer/options-maxbytelength-undefined.js`
+     - `ArrayBuffer/prototype/maxByteLength/return-maxbytelength-resizable.js`
+     - `ArrayBuffer/prototype/slice/end-default-if-undefined.js`
+2. **DataView.**
+   - Construct `(buf[, off[, len]])`.
+   - `byteLength`, `byteOffset`, `buffer`, and `get*/set*` with an optional
+     little-endian argument, all through `__dv_m_<m>`.
+   - Target files:
+     - `DataView/prototype/byteLength/return-bytelength.js`
+     - `DataView/prototype/getInt32/return-values.js`
+     - `DataView/prototype/getFloat64/to-boolean-littleendian.js`, only if
+       `Symbol("1")` is already admitted in module-init. Per the lead
+       (2026-11-06), Symbol support is out of scope here.
+3. **SharedArrayBuffer.**
+   - Construct `()` / `(n)` through `emitSabConstruct`, and `byteLength`.
+   - Target file: `SharedArrayBuffer/length-is-absent.js`.
+
+**Lead requirements (2026-11-06), apply to every slice:**
+
+- **Representation identity.** The IR value is exactly what legacy's
+  provider returns on each lane: `extern.convert_any` of the same struct on
+  standalone/wasi, and legacy's externref on gc.
+  - Prove it with a mixed-route run in each direction: the IR constructs and
+    legacy reads the module slot and members; legacy constructs and the IR
+    reads.
+- **Admission by type identity, never by name.** A member use is admitted
+  only when the receiver is proven to be:
+  - a value from this table's construction or `slice`, or
+  - a binding certified through it, or
+  - an ambient-lib-typed binding (the #7264 quantifier).
+- **PR body.** State max +7 / likely 5–7, and list the 7 closure /
+  object-literal files as blocked on #7271 / #7267.
 
 ### Expected zero-legacy delta (stated before coding)
 
 - **Bounded maximum:** +7 files on the stride, rows 1–7 above.
 - **Likely range:** 5–7.
-  - Row 6 depends on `Symbol("1")` lowering in module-init.
+  - Row 6 depends on `Symbol("1")`, which is out of scope here, so it is
+    expected to stay legacy.
   - Every file depends on no other module-init refusal appearing behind the
     constructor. I have checked the first refusal only.
 - **The 7 closure / object-literal files:** 0 from this issue. They follow
