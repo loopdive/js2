@@ -42,9 +42,9 @@ interface IrAmbientGlobalFunctionCall {
 }
 
 /**
- * The admission both sides read: the call shape, and every operand
- * checker-classified as its position's family. Binding and lane proofs are
- * the caller's.
+ * The admission both sides read: the call shape, no script declaration of the
+ * name, and every operand checker-classified as its position's family. The
+ * lib-only binding and lane proofs are the caller's.
  */
 function ambientGlobalFunctionCall(
   expr: ts.CallExpression,
@@ -55,8 +55,46 @@ function ambientGlobalFunctionCall(
   const name = callee.text as IrAmbientGlobalFunctionName;
   const families = OPERAND_FAMILIES.get(name);
   if (families === undefined || expr.arguments.length < 1 || expr.arguments.length > families.length) return null;
+  if (scriptDeclaresName(expr.getSourceFile(), name)) return null;
   const operands = expr.arguments.map((argument, index) => ({ argument, family: families[index]! }));
   return operands.every(({ argument, family }) => classify(argument) === family) ? { name, callee, operands } : null;
+}
+
+const SCRIPT_DECLARED_NAMES = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+
+/**
+ * Does a script declare `name` anywhere? A script's `var unescape = …` does not
+ * merge with the lib's `declare function unescape` — the checker resolves the
+ * call to the lib symbol alone — so no binding predicate can see it.
+ * Conservative: any declaration of the name in the file, at any depth,
+ * refuses. ES modules scope their bindings, so the checker answers there.
+ */
+function scriptDeclaresName(sourceFile: ts.SourceFile, name: string): boolean {
+  if (ts.isExternalModule(sourceFile)) return false;
+  let names = SCRIPT_DECLARED_NAMES.get(sourceFile);
+  if (names === undefined) {
+    const declared = new Set<string>();
+    const visit = (node: ts.Node): void => {
+      if (
+        (ts.isVariableDeclaration(node) ||
+          ts.isParameter(node) ||
+          ts.isBindingElement(node) ||
+          ts.isFunctionDeclaration(node) ||
+          ts.isFunctionExpression(node) ||
+          ts.isClassDeclaration(node) ||
+          ts.isClassExpression(node)) &&
+        node.name !== undefined &&
+        ts.isIdentifier(node.name)
+      ) {
+        declared.add(node.name.text);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    names = declared;
+    SCRIPT_DECLARED_NAMES.set(sourceFile, names);
+  }
+  return names.has(name);
 }
 
 /**

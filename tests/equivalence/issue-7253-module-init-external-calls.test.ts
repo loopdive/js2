@@ -175,9 +175,11 @@ export function test() { return y * 10 + (z !== z ? 1 : 0) + (u === "65" ? 100 :
   },
 };
 
-// A script declaration of the same name MERGES with the lib's `declare
-// function`, so only a lib-only binding is the built-in (#7118). Each shape
-// must keep calling the source binding.
+// (#7264) A script declaration of the same name is the binding, not the
+// built-in: a `function` merges with the lib's `declare function` (only a
+// lib-only binding is the built-in, #7118), and a `var` / `let` is invisible to
+// the checker (it resolves the call to the lib symbol). Every shape keeps the
+// legacy body, byte-identical to the pre-#7103 base.
 const SCRIPT_SHADOWS: Record<string, (name: string, args: string) => string> = {
   "function declaration": (n, a) =>
     `function ${n}(s) { return "U"; }\nfunction f() { return ${n}(${a}); }\nif (f() !== "U") throw new Error("x");`,
@@ -212,7 +214,7 @@ for (const name of Object.keys(SHADOW_ARGS)) {
       source: make(name, SHADOW_ARGS[name]!),
       skipSemanticDiagnostics: true,
       preexistingValueMismatch: LEGACY_MISBINDS(name, shape),
-      legacyUnits: shape.startsWith("function declaration") ? ["f"] : [],
+      legacyUnits: ["f"],
     };
   }
 }
