@@ -56,6 +56,12 @@ const REFUSED: Record<string, string> = {
   voidCallOperand:
     "var x;\nfunction f() { x = 1; return; }\n" +
     "if (f() !== undefined) { throw new Test262Error('#1: ' + f()); }\nif (x !== 1) { throw new Test262Error('#2: ' + x); }",
+  // The guard narrows the read to `never`, which the builder's `+` proof rejects (S8.3_A1_T1).
+  narrowedBoolean: "var x = true;\nif (x !== true) { throw new Test262Error('#1: ' + x); }",
+  narrowedTypeof: "var x = 1;\nif (typeof x !== 'number') { throw new Test262Error('#1: ' + x); }",
+  // A null script var's read does not lower yet (#7127).
+  nullVar: "var x = null;\nif (x !== null) { throw new Test262Error('#1: ' + x); }",
+  nullMessage: "var x = null;\ntry { throw new Test262Error('#' + x); } catch (e) {}",
 };
 
 describe("#7106 lever T — throw messages over a script scalar", () => {

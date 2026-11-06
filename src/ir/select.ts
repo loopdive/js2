@@ -193,8 +193,8 @@ import {
   boxableIntoDynamic,
   isCarrierAddition,
   additiveResultFamily,
-  compoundWriteAdmissible,
   provenBinaryOperandsAdmissible,
+  throwOperandAdmissible,
   isComparisonResultOperator,
   isEqualityOperator,
   isNumberCompoundAssignOperator,
@@ -3055,18 +3055,14 @@ function calleeReturnKind(calleeName: string, typeMap: TypeMap | undefined): Res
   return resolveReturnType(decl, typeMap?.get(calleeName)?.returnType);
 }
 
-function calleeReturnIsDynamic(calleeName: string, typeMap: TypeMap | undefined): boolean {
-  return calleeReturnKind(calleeName, typeMap) === "dynamic";
-}
-
 /** (#7106 lever T) A call to a local `void` function has no value to combine (from-ast: "returned void"). */
-function isVoidLocalCall(expr: ts.Expression, scope: ReadonlySet<string>): boolean {
+function isVoidLocalCall(expr: ts.Expression, scope: ReadonlySet<string>, typeMap: TypeMap | undefined): boolean {
   const call = unwrapPhase1Parens(expr);
   return (
     ts.isCallExpression(call) &&
     ts.isIdentifier(call.expression) &&
     !scope.has(call.expression.text) &&
-    calleeReturnKind(call.expression.text, currentClaimTypeMap) === "void"
+    calleeReturnKind(call.expression.text, typeMap) === "void"
   );
 }
 
@@ -3371,7 +3367,7 @@ function dynamicUsesAreMoveOnly(
     // (#7106 propertyHelper) the stored descriptor alias yields a carrier.
     if (ts.isCallExpression(e) && isStoredObjectDescriptorAliasCall(e, (name) => dynNames.has(name))) return true;
     if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
-      return calleeReturnIsDynamic(e.expression.text, typeMap);
+      return calleeReturnKind(e.expression.text, typeMap) === "dynamic";
     }
     if (
       ts.isCallExpression(e) &&
@@ -3676,7 +3672,7 @@ function dynamicUsesAreMoveOnly(
       if (ts.isIdentifier(e.expression)) {
         if (dynNames.has(e.expression.text)) return false;
         const calleeName = e.expression.text;
-        if (calleeReturnIsDynamic(calleeName, typeMap) !== expectDyn) return false;
+        if ((calleeReturnKind(calleeName, typeMap) === "dynamic") !== expectDyn) return false;
         return scanDirectCallArgs(e, calleeName);
       }
       // Method-shaped / other callees: no dynamic involvement allowed.
@@ -5017,10 +5013,23 @@ function isPhase1ThrowStatement(
   if (expressionTouchesModuleMapGetAlias(stmt.expression)) {
     return shapeNo("throw-module-map-get-alias", stmt.expression);
   }
-  // (#7106 lever T) A construction (`new E('#' + x)`) or a string only reads the script scalar.
+  // (#7106 lever T) `throwOperandAdmissible` judges the thrown value (a construction is an object). Still
+  // refused: nullish; a read of a `null`-initialized script var (its initializer does not lower yet, #7127);
+  // and a top-level throw, which integration withdraws after the claim outside WASI.
   const thrown = unwrapPhase1Parens(stmt.expression);
-  const thrownScalar = !ts.isNewExpression(thrown) && obviousModuleValueFamily(thrown) !== "string";
-  if (thrownScalar && expressionTouchesScalarModuleBinding(thrown)) {
+  const family = ts.isNewExpression(thrown)
+    ? "reference"
+    : OBVIOUS_OPERAND_FAMILIES[obviousModuleValueFamily(thrown) ?? "unknown"];
+  const refused =
+    family === "nullish" ||
+    !throwOperandAdmissible(family) ||
+    ts.isSourceFile(stmt.parent) ||
+    expressionTouchesIdentifier(
+      thrown,
+      (node) =>
+        currentModuleBindingResolver?.localVariableDeclaration(node)?.initializer?.kind === ts.SyntaxKind.NullKeyword,
+    );
+  if (refused && expressionTouchesScalarModuleBinding(thrown)) {
     return shapeNo("throw-module-scalar-unboxed", stmt.expression);
   }
   return isPhase1Expr(stmt.expression, scope, localClasses);
@@ -7887,11 +7896,12 @@ function trackedModuleAliasHasName(name: string): boolean {
 }
 
 /** True when any value position refers to a checker-owned module binding. */
-function expressionTouchesModuleBinding(expr: ts.Expression): boolean {
+/** Whether any identifier in `expr` satisfies `matches`. */
+function expressionTouchesIdentifier(expr: ts.Expression, matches: (node: ts.Identifier) => boolean): boolean {
   let touched = false;
   const visit = (node: ts.Node): void => {
     if (touched) return;
-    if (ts.isIdentifier(node) && moduleBinding(node)) {
+    if (ts.isIdentifier(node) && matches(node)) {
       touched = true;
       return;
     }
@@ -7901,40 +7911,27 @@ function expressionTouchesModuleBinding(expr: ts.Expression): boolean {
   return touched;
 }
 
+function expressionTouchesModuleBinding(expr: ts.Expression): boolean {
+  return expressionTouchesIdentifier(expr, (node) => moduleBinding(node) !== undefined);
+}
+
 function expressionTouchesBooleanModuleBinding(expr: ts.Expression): boolean {
-  let touched = false;
-  const visit = (node: ts.Node): void => {
-    if (touched) return;
-    if (ts.isIdentifier(node) && (isDirectBooleanModuleBinding(node) || moduleScalarAliasFamily(node) === "boolean")) {
-      touched = true;
-      return;
-    }
-    forEachChild(node, visit);
-  };
-  visit(expr);
-  return touched;
+  return expressionTouchesIdentifier(
+    expr,
+    (node) => isDirectBooleanModuleBinding(node) || moduleScalarAliasFamily(node) === "boolean",
+  );
 }
 
 /** True when an expression contains an f64/boolean module-storage read. */
 function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
-  let touched = false;
-  const visit = (node: ts.Node): void => {
-    if (touched) return;
-    if (ts.isIdentifier(node)) {
-      const binding = moduleBinding(node);
-      const scalarBinding =
-        binding &&
-        !isIrModuleReferenceValueKind(binding.valueKind) &&
-        !isIrModuleClassInstanceValueKind(binding.valueKind);
-      if (scalarBinding || moduleScalarAliasFamily(node) !== undefined) {
-        touched = true;
-        return;
-      }
-    }
-    forEachChild(node, visit);
-  };
-  visit(expr);
-  return touched;
+  return expressionTouchesIdentifier(expr, (node) => {
+    const binding = moduleBinding(node);
+    const scalarBinding =
+      binding &&
+      !isIrModuleReferenceValueKind(binding.valueKind) &&
+      !isIrModuleClassInstanceValueKind(binding.valueKind);
+    return scalarBinding || moduleScalarAliasFamily(node) !== undefined;
+  });
 }
 
 function expressionTouchesTrackedModuleValue(expr: ts.Expression): boolean {
@@ -9066,10 +9063,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
     !carrierOperand &&
     (mayBeElementRead(expr.left, selectorLeafReadsElement) || mayBeElementRead(expr.right, selectorLeafReadsElement))
   ) {
-    const classify = currentSelectionOptions?.classifyPrimitiveExpression;
-    const leftProof = classify?.(expr.left);
-    const rightProof = classify?.(expr.right);
-    if (leftProof && rightProof && !provenBinaryOperandsAdmissible(expr, leftProof, rightProof, additiveLane())) {
+    if (checkerAdditionVerdict(expr) === false) {
       return capabilityNo("operand-coercion-unsupported", "expr-binary-element-concat-proof", expr);
     }
   }
@@ -9182,11 +9176,9 @@ function isSelectableNumberCompound(
   if (expr.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken) {
     return exactNumericExponentiationAdmissible(expr, scope, localClasses);
   }
-  const op = expr.operatorToken.kind;
-  if (!isNumberCompoundAssignOperator(op)) return false;
-  // (#7106 lever T) `lowerCompoundAssignment` writes a dynamic script var only as `compoundWriteAdmissible` allows, never by `+=`.
-  const dynamicModule = ts.isIdentifier(expr.left) && moduleBinding(expr.left)?.valueKind.kind === "dynamic";
-  if (dynamicModule && (op === ts.SyntaxKind.PlusEqualsToken || !compoundWriteAdmissible(op, "dynamic", "number"))) {
+  if (!isNumberCompoundAssignOperator(expr.operatorToken.kind)) return false;
+  // (#7106 lever T) `lowerCompoundAssignment` writes no dynamic script var yet; #7130 lowers it.
+  if (ts.isIdentifier(expr.left) && moduleBinding(expr.left)?.valueKind.kind === "dynamic") {
     return shapeNo("compound-dynamic-module", expr);
   }
   // (#7106 S5) A carrier leaf's read is no number, whatever the checker says.
@@ -10980,6 +10972,15 @@ function templateSubstitutionFamily(
 const laneFormatsNumbers = (): boolean =>
   currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true;
 
+/** The builder's `+` proof (`provenAdditiveOperands`) over the checker's use-site types; `undefined` if unclassified. */
+function checkerAdditionVerdict(expr: ts.BinaryExpression): boolean | undefined {
+  const classify = currentSelectionOptions?.classifyPrimitiveExpression;
+  const left = classify?.(expr.left);
+  const right = classify?.(expr.right);
+  if (left === undefined || right === undefined) return undefined;
+  return provenBinaryOperandsAdmissible(expr, left, right, additiveLane());
+}
+
 /** (#7066) An array-pattern leaf the selector resolves reads an element (`patternLeafReadsElement`). */
 const selectorLeafReadsElement = patternLeafReadsElement((id) =>
   currentModuleBindingResolver?.localValueDeclaration(id),
@@ -11713,7 +11714,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       if (selectorValuePositionComma(expr, scope, localClasses)) return true;
       return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
     }
-    const voidOperand = [expr.left, expr.right].find((side) => isVoidLocalCall(side, scope));
+    const voidOperand = [expr.left, expr.right].find((side) => isVoidLocalCall(side, scope, currentClaimTypeMap));
     if (voidOperand) return shapeNo("expr-void-call-operand", voidOperand);
     if (!nativeI32OperandsAdmissible(expr, currentSelectionOptions)) {
       return capabilityNo("operand-coercion-unsupported", "expr-native-i32-operand", expr);
@@ -11732,8 +11733,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (leftTracksModule || rightTracksModule) {
       const leftFamily = obviousModuleValueFamily(expr.left);
       const rightFamily = obviousModuleValueFamily(expr.right);
-      // (#7106 lever T) A `+` the family reads through #7066's additive rule needs no agreement.
-      const additive = binOp === ts.SyntaxKind.PlusToken && obviousModuleValueFamily(expr) !== undefined;
+      // (#7106 lever T) A `+` the builder proves at the use site needs no family agreement.
+      const additive = binOp === ts.SyntaxKind.PlusToken && checkerAdditionVerdict(expr) === true;
       const isEquality = isEqualityOperator(binOp);
       const nullishEquality =
         isEquality &&
