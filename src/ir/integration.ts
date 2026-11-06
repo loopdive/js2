@@ -98,7 +98,7 @@ import {
   irNativeI32SlotRead,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
-import { emitJsonParseText, emitJsonStringifyValue } from "../codegen/json-codec-native.js";
+import { emitJsonParseText, emitJsonStringifyValue, JSON_PARSE_TEXT_FN } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
 import {
@@ -556,8 +556,6 @@ import {
   IR_STRING_REPEAT_FN,
 } from "./string-runtime.js";
 import { readEnv } from "../env.js";
-/** (#7267) The native codec's `JSON.parse` entry, `(externref) -> anyref`. */
-const IR_JSON_PARSE_TEXT_FN = "__json_parse_text";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -7169,7 +7167,7 @@ function makeFromAstResolver(
       return !ctx.fast;
     },
     ambientGlobalFunctionTarget(name) {
-      if (name === "JSON.parse") return irRuntimeFuncRef(IR_JSON_PARSE_TEXT_FN); // (#7267) pre-registered at finalize
+      if (name === "JSON.parse") return irRuntimeFuncRef(JSON_PARSE_TEXT_FN); // (#7267) pre-registered at finalize
       const symbol = ambientGlobalFunctionProviderSymbol(ctx, name); // (#7253)
       return symbol === null ? null : irRuntimeFuncRef(symbol);
     },
@@ -9480,7 +9478,7 @@ function preregisterDynamicSupport(
               case "__getOwnPropertyDescriptor":
                 usesOwnPropertyDescriptor = true;
                 break;
-              case IR_JSON_PARSE_TEXT_FN:
+              case JSON_PARSE_TEXT_FN:
                 usesJsonParseText = true;
                 break;
               // (#4461) native `$Map` module-binding storage.
@@ -9682,7 +9680,7 @@ function preregisterDynamicSupport(
   if (usesJsonParseText && ctx.nativeStrings && !ctx.fast) {
     emitJsonParseText(ctx);
     flushLateImportShifts(ctx, null);
-    observeNativeRuntimeProvider(ctx, IR_JSON_PARSE_TEXT_FN);
+    observeNativeRuntimeProvider(ctx, JSON_PARSE_TEXT_FN);
   }
   if (usesDynToString && !ctx.fast) {
     if (ctx.nativeStrings) {

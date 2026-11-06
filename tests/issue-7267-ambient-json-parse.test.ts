@@ -159,6 +159,17 @@ if (f({ parse: function (s) { return 7; } }) !== 7) throw 0;`,
     source: `function f() { var JSON = { parse: function (s) { return 7; } }; return JSON.parse("1"); }
 if (f() !== 7) throw 0;`,
   },
+  // The #7253 rows share the lib-only + same-file binding test since #7267.
+  "a script function parseInt": {
+    shadow: true,
+    source: `function parseInt(s) { return 7; }
+if (parseInt("5") !== 7) throw "parseInt";`,
+  },
+  "an inner-scope escape": {
+    shadow: true,
+    source: `function f() { var escape = function (s) { return "e"; }; return escape("<"); }
+if (f() !== "e") throw "escape";`,
+  },
 };
 
 describe("#7267 ambient JSON.parse on the IR path", () => {

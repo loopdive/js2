@@ -1,7 +1,8 @@
 ---
 id: 7267
 title: "IR: ambient global object statics (`Object`, `String`, `Date`, `JSON`, `Reflect`, `Function`, `Array`) refused as `expr-ident-not-in-scope` — slice 1: `JSON.parse(<string>)`"
-status: in-progress
+status: done
+completed: 2026-11-06
 sprint: current
 created: 2026-11-06
 updated: 2026-11-06
@@ -20,14 +21,16 @@ loc-budget-allow:
   # table row). What remains in the god-files is wiring that has no other home:
   # select.ts +15 — one shared selector adapter (replacing #7253's argument
   # list) and the three sibling arms beside `JSON.stringify`'s (Phase-1 call,
-  # dynamic-shape, dynamic scan); integration.ts +13 — the provider constant,
-  # the resolver row, and the finalize pre-registration beside
-  # `dyn.json_stringify`'s; from-ast.ts +10 — the resolver capability union,
+  # dynamic-shape, dynamic scan); integration.ts +11 — the resolver row, and the finalize pre-registration beside
+  # `dyn.json_stringify`'s; from-ast.ts +12 — the resolver capability union,
   # the admission adapter, and the same arm on the statement-call entry
   # (`lowerMethodCallWithSourcePlan`, which statement calls enter directly).
+  # json-codec-native.ts +3: the parse entry's name as one exported constant,
+  # shared by legacy's three spellings and the IR provider row (review nit 8).
   - src/ir/select.ts
   - src/ir/integration.ts
   - src/ir/from-ast.ts
+  - src/codegen/json-codec-native.ts
 func-budget-allow:
   # 2026-11-06 (#7267): each is one sibling arm in an existing flat dispatch
   # (one entry per provider / per ambient special form); splitting the
@@ -164,3 +167,68 @@ not have as a callable. Those stay out of this slice (see Left).
   computation moved into a callable helper first.
 - `preregisterDynamicSupport` is a flat flag-per-provider list (this slice
   adds one more); a table-driven pre-registration is its own cleanup.
+
+## Result (2026-11-06, base `origin/main` 9129f7e1)
+
+- **Wrapped ledger** (stride 40, standalone, SHAPE_DIAG): compileOk 1118 =
+  1118, invariants 0 = 0, legacy units 4750 → 4749, `expr-ident-not-in-scope
+  «JSON»` 2 → 1 (the remaining one has a reviver), **zero-legacy files 32 →
+  33** (`built-ins/JSON/parse/15.12.1.1-g4-2.js`). The one route-changed file
+  in the stride.
+- **Typed corpus** (playground examples × gc / standalone / WASI, 39
+  compiles): binaries and host imports byte-identical base vs head.
+- **test262 A/B**, row by row, base vs head, every non-pass row identical,
+  no trap on either side:
+  - standalone, 781 paths (`built-ins/JSON` 165, every 15th `built-ins/Object`,
+    every 3rd `built-ins/Reflect`, all 91 `JSON.parse` files, 300 seeded-random,
+    the route-changed file): 607 pass / 126 fail / 22 CE / 26 skip on both;
+  - gc, `built-ins/JSON` + the route-changed file: 118 / 45 / 2 on both;
+  - WASI: no row can change route (the admission requires
+    `native-dynamic-member-read`, which WASI lacks); its corpus compiles are
+    byte-identical.
+- **Equivalence gate** (`12aec39b`): 0 new regressions, 4760 passing.
+- **Tests**: `tests/issue-7267-ambient-json-parse.test.ts` (14 cases × 3 lanes,
+  incl. 7 source-binding shadows of `JSON` / `parseInt` / `escape` against the
+  IR-off compile) and #7253's suite: 87 / 87.
+
+## Adversarial review (fresh context, 2026-11-06)
+
+Verdict: **no must-fix**; the reviewer could not construct a claim-then-refuse
+mismatch, a shadow hole or a lane-gating error. Should-fix / nits:
+
+1. **Fixed.** The lowering branched on names three times; it now dispatches
+   on the row's `result`.
+2. **Fixed.** The capability literals had a third hand-written copy; the row
+   capability is `Extract<IrBackendTargetCapability, …>`, exported, and
+   from-ast's resolver signature uses it.
+3. **Fixed.** `legality.ts`: `native-json-codec` and
+   `native-dynamic-member-read` now say they gate `JSON.parse` (and why WASI
+   is out).
+4. **Fixed.** `runtimeCallable` renamed `refusedInEsModuleInit` with the real
+   reason (a `funcMap` helper vs an `ambientBuiltinFuncMap` builtin); every
+   row is one literal shape.
+5. **Rebutted.** "from-ast does not apply the ES-module `<module-init>`
+   refusal": from-ast only lowers claimed units, and nothing else in the
+   selector can claim a `JSON.parse(s)` call — without this arm the `JSON`
+   receiver is `expr-ident-not-in-scope` (#7118 lists no `JSON` value), so the
+   refusal in the shared selector half is the only route. Inherited unchanged
+   from #7253's `escape`.
+6. **Fixed.** Tests for the #7253 rows under the lib-only binding test
+   (`function parseInt`, an inner-scope `escape`).
+7. **Rebutted (kept).** The arm sits on both call entries on purpose, like the
+   function-object certificate beside it; statement calls skip `lowerCall`.
+8. **Fixed.** `__json_parse_text` is one exported constant in
+   `json-codec-native.ts`.
+9. **Rebutted.** `ambientGlobalFunctionProviderSymbol` looks up helpers
+   legacy has already registered; `JSON.parse`'s is registered by the IR's own
+   finalize pre-registration, so it is not that helper's row.
+10. **Fixed.** `target` is a required, non-optional function.
+11. **Fixed.** `IrAmbientGlobalFunctionAdmission`.
+12. **Rebutted.** The pre-registration guard mirrors `dyn.json_stringify`'s
+    sibling; the capability makes the other branch unreachable.
+
+Not verified by the reviewer, checked here: a monkeypatched lib global
+(`JSON.parse = function () { return 7; }; JSON.parse("1")`) keeps the unit
+legacy (`body-shape-rejected` on the member store), and legacy itself calls
+`__json_parse_text` directly (answers 1) — a pre-existing legacy divergence
+from node, unchanged here.

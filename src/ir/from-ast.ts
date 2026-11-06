@@ -359,7 +359,11 @@ import {
 } from "./nodes.js";
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
-import { lowerAmbientGlobalFunctionCall, type IrAmbientGlobalFunctionName } from "./ambient-global-function-call.js";
+import {
+  lowerAmbientGlobalFunctionCall,
+  type IrAmbientGlobalFunctionCapability,
+  type IrAmbientGlobalFunctionName,
+} from "./ambient-global-function-call.js";
 import {
   IR_HOLEY_ARRAY_ELEM_SET,
   IR_HOLEY_ARRAY_NEW,
@@ -589,9 +593,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * (#7066) The selector's `supportsBackendCapability` for this compile: the
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
-  supportsBackendCapability?(
-    capability: "number-to-string" | "native-global-function-call" | "native-json-codec" | "native-dynamic-member-read",
-  ): boolean;
+  supportsBackendCapability?(capability: "number-to-string" | IrAmbientGlobalFunctionCapability): boolean;
   /**
    * (#7253) The host-free provider legacy calls for a direct ambient
    * `parseInt` / `parseFloat` (`(externref, f64) -> f64` / `(externref) -> f64`)

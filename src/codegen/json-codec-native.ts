@@ -1976,8 +1976,11 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
  *
  * Returns the `__json_parse_text` funcIdx.
  */
+/** The parse entry's function name (`(externref) -> anyref`), shared with the IR's provider row (#7267). */
+export const JSON_PARSE_TEXT_FN = "__json_parse_text";
+
 export function emitJsonParseText(ctx: CodegenContext): number {
-  const existing = ctx.funcMap.get("__json_parse_text");
+  const existing = ctx.funcMap.get(JSON_PARSE_TEXT_FN);
   if (existing !== undefined) return existing;
 
   // Dependencies (all idempotent).
@@ -2081,7 +2084,7 @@ export function emitJsonParseText(ctx: CodegenContext): number {
 
   const textTypeIdx = addFuncType(ctx, [externref], [anyref]);
   const textFuncIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set("__json_parse_text", textFuncIdx);
+  ctx.funcMap.set(JSON_PARSE_TEXT_FN, textFuncIdx);
 
   // ════════════════════════════════════════════════════════════════════════
   // __json_parse_value(p: anyref) -> anyref
@@ -3425,7 +3428,7 @@ export function emitJsonParseText(ctx: CodegenContext): number {
   } as unknown as (typeof ctx.mod.functions)[number]);
 
   pushDefinedFunc(ctx, textFuncIdx, {
-    name: "__json_parse_text",
+    name: JSON_PARSE_TEXT_FN,
     typeIdx: textTypeIdx,
     locals: [
       { count: 1, type: strRefNative }, // T_FLAT
