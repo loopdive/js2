@@ -52,17 +52,17 @@ and `functionObjectValues.resolveTopLevelFunctionValue`); `-` means no answer.
 
 | Name | Unit (origin) | Parts | eval-linked / plain | Use shape | Defined | Resolver answer |
 | --- | --- | ---: | --- | --- | --- | --- |
-| `Function` | test `<module-init>` | 129 | 0 / 129 | `Function.prototype.…` member reads and calls | ambient | lib-only ambient → #7267 / #7275 |
+| `Function` | test `<module-init>` | 129 | 0 / 129 | member access (e.g. `Function.prototype.…`; not probed per row) | ambient | lib-only ambient → #7267 / #7275 |
 | `assert` | harness `assert` | 74 | 74 / 0 | `assert._toString(x)` (function-object expando call) | `assert.js`, function declaration with expandos | binding -, direct no, top-level fn value **no** (planner absent in eval-linked files) |
 | `assert` | harness `compareArray` | 74 | 74 / 0 | `!assert._isSameValue(b[i], a[i])` | same | same |
-| `assert` | test `<module-init>` | 32 | 31 / 1 | `assert.deepEqual(…)`, `assert.throws(…)` | same | same |
+| `assert` | test `<module-init>` | 32 | 31 / 1 | `assert.<method>(…)` receiver (e.g. `assert.deepEqual`) | same | same |
 | `Array` | harness `makeArray` | 52 | 3 / 49 | `Array.from(x)` | ambient | lib-only ambient → #7267 (ambient calls) |
 | `Int32Array` | harness `testWithAtomicsFriendlyTypedArrayConstructors` | 52 | 3 / 49 | constructor as an array-literal element `[Int32Array, …]` | ambient | lib-only ambient; no IR value kind for a constructor value → #7275 |
 | `Float16Array` | harness `floatTypedArrayConstructorPrecision` | 52 | 3 / 49 | `typeof Float16Array !== "undefined" && FA === Float16Array` | **not in the TS lib** | not lib-only, not ambient: an undeclared global; legacy handles `typeof` |
 | `nonAtomicsFriendlyTypedArrayConstructors` | harness `testWithNonAtomicsFriendlyTypedArrayConstructors` | 50 | 3 / 47 | call argument | `testTypedArray.js` `var` = array of ambient constructors | binding -, direct no (its module storage is itself refused as `vardecl-module-storage-unrepresentable`) |
-| `Object` | test `<module-init>` / harness `asyncTest` | 45 | 0 / 45 | `Object.getPrototypeOf(…)`, `Object.create` … | ambient | → #7267 / #7275 |
-| `String` | harness `buildString` / test | 24 | 0 / 24 | `String.fromCharCode(…)`, `String(x)` | ambient | → #7267 |
-| `Reflect` | harness `isConstructor` / test | 18 | 0 / 18 | `Reflect.construct(…)` | ambient | → #7267 |
+| `Object` | test `<module-init>` / harness `asyncTest` | 45 | 0 / 45 | member calls (e.g. `Object.getPrototypeOf`; not probed per row) | ambient | → #7267 / #7275 |
+| `String` | harness `buildString` / test | 24 | 0 / 24 | member / direct calls (not probed per row) | ambient | → #7267 |
+| `Reflect` | harness `isConstructor` / test | 18 | 0 / 18 | `Reflect.construct(…)` in `isConstructor` | ambient | → #7267 |
 | `$262` | harness `$DETACHBUFFER` | 7 | 6 / 1 | `!$262`, `$262.detachArrayBuffer` | host-provided, absent on standalone | undeclared |
 | `__globalObject` | harness `fnGlobalObject` | 5 | 5 / 0 | value | `fnGlobalObject.js` | eval-linked |
 | `verifyPrimordialProperty` / `nonIndexNumericPropertyName` | harness `propertyHelper.js` | 4 / 2 | 6 / 0 | call / value | harness | eval-linked |
