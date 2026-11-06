@@ -481,6 +481,12 @@ unused. Script files (test262) are unaffected.
   instead of throwing for a value past the i32-indexed backing, and the
   resizable length has no upper bound before `array.new_default` (a trap).
   Shared by both routes.
+- **`ir-inline` recognises `__ir_map_*` by name** (`isAdapter`), so a source
+  function with one of those names skips the inliner's size budget.
+  Performance only (#7121 delta review, pre-existing).
+- **`__ir_map_*` namesakes beside a real `Map` trap** with a null
+  dereference on wasi/standalone, on main and on #7121's head alike (#7121
+  delta review, pre-existing; the compile-failure half is fixed by #7121).
 - **Legacy argument order.** Legacy validates the length before evaluating
   the `maxByteLength` expression; the spec evaluates the whole argument list
   first. The IR admits only a number-literal `maxByteLength`, so the
