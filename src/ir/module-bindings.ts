@@ -1560,6 +1560,11 @@ function writeValueMatches(
     // has an object-to-dynamic materializer.
     return classifyPrimitiveExpression(valueExpr) !== undefined;
   }
+  // Dynamic += returns its carrier, even when the checker infers a number.
+  if (ts.isBinaryExpression(valueExpr) && valueExpr.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
+    const left = unwrapParens(valueExpr.left);
+    if (ts.isIdentifier(left) && resolve(left)?.valueKind.kind === "dynamic") return false;
+  }
   // (#7106 S5) Only the carrier takes a carrier leaf's read: its checker type is no evidence.
   if (carrierLeafReads(valueExpr, resolve).length > 0) return false;
   if (targetKind.kind === "class-instance")
@@ -1569,13 +1574,8 @@ function writeValueMatches(
     return isNativeMapConstruction(checker, valueExpr);
   }
   if (targetKind.kind === "string") {
-    // (#3523 R4-M1) REPRESENTATION agreement only, exactly like the `dynamic`
-    // arm above: this asks whether the written value inhabits the slot's
-    // carrier, not whether the write EXPRESSION has an IR lowering. The
-    // latter is the selector's separate `isPhase1Expr` question, and keeping
-    // the two apart is what stops a shape gap from being mis-reported as a
-    // storage gap. The provenance-following classifier is used (not the raw
-    // declared type) so `"x" as string` cannot assert its way into the slot.
+    // Representation agreement only; isPhase1Expr separately checks lowering.
+    // Follow provenance so a type assertion cannot claim a string carrier.
     return classifyPrimitiveExpression(valueExpr) === "string";
   }
   // A capability kind is certified for a lexical, so identifier, declaration only.

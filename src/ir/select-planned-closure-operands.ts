@@ -35,6 +35,7 @@ import {
   dynamicCallArgumentAdmissible,
   incrementSlotAdmissible,
   isEqualityOperator,
+  isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   isTypedBinaryOperator,
   isUndefinedCompareOperand,
@@ -418,8 +419,8 @@ export function plannedClosureOperandRefusal(
   const binaryProof = (expr: ts.BinaryExpression): OperandProof => {
     const op = expr.operatorToken.kind;
     if (op === ts.SyntaxKind.CommaToken) return operandProof(expr.right);
-    // A write's value is its slot's (a chained `s = t = v` stores one value
-    // into slots that must share the family).
+    // Numeric compounds return a number; plain writes and += retain the admitted slot family.
+    if (isNumberCompoundAssignOperator(op) && op !== ts.SyntaxKind.PlusEqualsToken) return NUMBER;
     if (isAssignmentOperator(op)) {
       const target = unwrapParens(expr.left);
       return ts.isIdentifier(target) ? operandProof(target) : UNKNOWN;
