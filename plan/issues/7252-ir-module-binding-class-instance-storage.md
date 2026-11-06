@@ -1,10 +1,11 @@
 ---
 id: 7252
 title: "IR: a script var holding instances of one class binds to legacy's class-struct slot"
-status: in-progress
+status: done
+completed: 2026-11-06
 sprint: current
 created: 2026-11-05
-updated: 2026-11-05
+updated: 2026-11-06
 priority: high
 horizon: m
 feasibility: medium

@@ -38,11 +38,11 @@ function constructedTopLevelClass(checker: ts.TypeChecker, expr: ts.Expression):
 function computeBindingClass(
   checker: ts.TypeChecker,
   declaration: ts.VariableDeclaration,
+  declaredType: ts.Type,
 ): ts.ClassDeclaration | undefined {
   if (!ts.isIdentifier(declaration.name) || declaration.initializer === undefined) return undefined;
   const classDeclaration = constructedTopLevelClass(checker, declaration.initializer);
   if (classDeclaration === undefined) return undefined;
-  const declaredType = checker.getTypeAtLocation(declaration.name);
   const classSymbol = checker.getSymbolAtLocation(classDeclaration.name!);
   if (declaredType.isUnion() || declaredType.getSymbol() !== classSymbol) return undefined;
   const sourceFile = declaration.getSourceFile();
@@ -65,11 +65,12 @@ function computeBindingClass(
 export function classInstanceValueKind(
   checker: ts.TypeChecker,
   declaration: ts.VariableDeclaration | ts.BindingElement,
+  declaredType: ts.Type,
 ): ClassInstanceKind | undefined {
   if (!ts.isVariableDeclaration(declaration)) return undefined;
   let cached = bindingClassCache.get(declaration);
   if (cached === undefined) {
-    cached = computeBindingClass(checker, declaration) ?? null;
+    cached = computeBindingClass(checker, declaration, declaredType) ?? null;
     bindingClassCache.set(declaration, cached);
   }
   return cached ? { kind: "class-instance", classDeclaration: cached } : undefined;

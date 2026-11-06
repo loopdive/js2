@@ -87,6 +87,11 @@ export function isIrModuleMapValueKind(valueKind: IrModuleBindingValueKind): boo
  * here instead would change every existing #4208 retype binding's consumer
  * discipline, which this issue did not measure.
  */
+/** (#7252) A class instance: its uses are the class arms', neither scalar nor extern-like. */
+export function isIrModuleClassInstanceValueKind(valueKind: IrModuleBindingValueKind): boolean {
+  return valueKind.kind === "class-instance";
+}
+
 export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind): boolean {
   return (
     valueKind.kind === "extern" ||
