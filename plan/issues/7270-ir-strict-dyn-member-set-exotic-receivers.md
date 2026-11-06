@@ -56,9 +56,11 @@ assert.sameValue(a[0], 9);
 
 - The reviewer's measurement on gc, standalone and wasi: TypeError on head
   (IR), pass on base (legacy).
-- My 17-receiver matrix (standalone and gc, the same `put`):
+- My 17-receiver matrix (standalone and gc). It used one `put`, widened by
+  `put({}, Symbol(), null)` and then called once per receiver inside a
+  `try` wrapper (`.tmp/rv7107/m-onlyStrict.js` shape):
 
-| receiver | legacy strict | IR strict (`73ea42c2`) |
+| receiver | legacy strict | IR strict (`73ea42c2`), matrix shape |
 | --- | --- | --- |
 | array `[0]`, `[10]`, `["1"]`, `length` | stores | stores |
 | Uint8Array in-bounds / string key | stores | stores |
@@ -68,6 +70,11 @@ assert.sameValue(a[0], 9);
 | Date, Error `message`, DataView, ArrayBuffer | stores | stores |
 | plain object, function, RegExp | stores | stores |
 | frozen object | TypeError | TypeError |
+
+  The rows depend on the call shape. In the repro above, a single `put`
+  call per receiver in a fresh file, `a[0] = 9` already throws, and so do
+  `a[10] = 1` and `err.message = "n"` (the reviewer's `.tmp/rv/p5/ta.js`).
+  The matrix is a lower bound, not a list of safe receivers.
 
 The reviewer's wider probe (`.tmp/rv/p5/ta.js`, strict, `put` claimed) also
 saw TypeError on head for:
@@ -82,6 +89,18 @@ above is a lower bound.
 Separate row, the same on both sides (legacy and IR, sloppy and strict):
 `o[k] = "true"` with `o = [1]` and `k = 0` leaves `o[0] === 1`. The boxed
 string-literal store to an array element is a no-op. Expected `"true"`.
+
+## Related gap (pre-existing, not fixed here)
+
+The selector's two option lists differ:
+- `dynamicCarrierDivergesFromLegacy` (the up-front refusal of a parameter
+  whose legacy slot diverges from the dynamic carrier) is wired only in
+  `planIrOverlay` (`src/codegen/index.ts`), not in `compileIrPathFunctions`'s
+  list (`src/ir/integration.ts`);
+- `functionCodeStrictness` is wired in both.
+
+Noted in the #7107 delta review; worth folding the two lists into one
+builder.
 
 ## Acceptance criteria
 

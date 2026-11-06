@@ -205,7 +205,18 @@ legacy resolved the parameter to a scalar slot (`f64`/`i32`, from numeric
 call sites). The selector refuses such a parameter up front
 (`param-dynamic-carrier-diverges-from-legacy`) instead of claiming and then
 falling back on `abi-signature-parity`. With no abandoned IR attempt left,
-no strict-helper literal is registered. The reviewer's
+no strict-helper literal is registered.
+
+The rule is global. It applies to every dynamic-carrier parameter, not just
+this store. Wrapped-ledger delta at `83bcf7e5` (delta review, comment
+6678915251):
+- `resolve:abi-signature-parity` falls from 123 to 0; those were harness
+  functions such as `verifyEqualTo`, claimed and then refused;
+- `param-type-not-resolvable` rises from 842 to 978;
+- a new detail `param-dynamic-carrier-diverges-from-legacy` appears
+  (`value` ×126, `n` ×9).
+
+Routes, compileOk and invariants are unchanged. The reviewer's
 `put`/`pk`-with-numeric-`v` probe is now byte-identical to base on wasi,
 standalone and gc.
 
