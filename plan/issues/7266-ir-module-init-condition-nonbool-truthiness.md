@@ -16,13 +16,17 @@ goal: ir-full-coverage
 related: [4512, 7240, 7124]
 assignee: "ttraenkler/c-lane-opus"
 loc-budget-allow:
-  # 2026-11-06 (#7266): select.ts +24 — the one truthiness predicate and its
-  # two composed condition/`!` helpers (+18 incl. doc), the updated
-  # isPhase1ConditionExpr doc (+1). They read select.ts's per-run selector
-  # state (`moduleBinding`, `currentDynamicRuntimeBuildable`), the same state
-  # their siblings (`isDirectBooleanModuleBinding`, `trackedModuleInfluenceIsBoolean`)
-  # read, so they cannot move to a stateless module without threading it.
+  # 2026-11-06 (#7266): select.ts +14 — the one truthiness predicate
+  # `isTruthinessTestableModuleBinding` (+11 incl. doc) and its three call
+  # sites. It reads select.ts's per-run selector state (`moduleBinding`,
+  # `currentDynamicRuntimeBuildable`) like its sibling
+  # `isDirectBooleanModuleBinding`, so it cannot move to a stateless module.
   - src/ir/select.ts
+func-budget-allow:
+  # 2026-11-06 (#7266): isPhase1Expr +1 — the `!` arm's one added clause
+  # calling the shared predicate (review: a single-use wrapper to dodge the
+  # line was rejected as an abstraction with one user).
+  - src/ir/select.ts::isPhase1Expr
 ---
 
 # #7266 — IR module-init: admit truthiness tests of non-boolean module values
@@ -77,14 +81,13 @@ a blocker class but cannot move the zero-legacy count by itself.
   dynamic `||` / `&&` arm already uses). It is read by all three sites that
   decide a module value's truthiness: the two condition checks in
   `isPhase1ConditionExpr` and the `!` arm of `isPhase1Expr`.
-  `moduleInfluenceIsTruthinessTestable` = boolean influence OR that predicate.
 - **Deliberately not admitted.** `string`, `class-instance`, `extern`,
   `capability-extern`, `native-map`: their slots are nullable, and the IR read
   types (`string` → length, `class` → constant `true`) or the host-only extern
   truthiness would be wrong or need a host. Compound operands (`!n && m`,
   `n ? 0 : m`) keep their value-family refusal. The `__str__instance` call
   stays refused (module-rooted call, no result proof).
-- **Quality criterion.** One new predicate + one composed helper, no new arm
+- **Quality criterion.** One new predicate, no wrapper helpers, no new arm
   shape, no duplicated truthiness table; the lowering stays the single
   `lowerToBooleanForCondition`.
 

@@ -7764,18 +7764,8 @@ function isDirectBooleanModuleBinding(expr: ts.Expression): boolean {
  * class-instance and extern slots are nullable and stay refused.
  */
 function isTruthinessTestableModuleBinding(expr: ts.Expression): boolean {
-  const kind = moduleBinding(expr)?.valueKind.kind;
-  return isDirectBooleanModuleBinding(expr) || kind === "f64" || (kind === "dynamic" && currentDynamicRuntimeBuildable);
-}
-
-/** A condition operand whose module influence is only ever ToBoolean'd. */
-function moduleInfluenceIsTruthinessTestable(operand: ts.Expression): boolean {
-  return trackedModuleInfluenceIsBoolean(operand) || isTruthinessTestableModuleBinding(operand);
-}
-
-/** A `!` operand: exactly boolean, or a module binding `!` ToBoolean's host-free. */
-function moduleInfluenceIsNegatable(operand: ts.Expression, scope: ReadonlySet<string>): boolean {
-  return moduleInfluenceIsExactBoolean(operand, scope) || isTruthinessTestableModuleBinding(operand);
+  const kind = moduleBinding(expr)?.valueKind.kind; // an `i32` module binding is always boolean
+  return kind === "i32" || kind === "f64" || (kind === "dynamic" && currentDynamicRuntimeBuildable);
 }
 
 /**
@@ -8223,9 +8213,10 @@ function isPhase1ConditionExpr(
   }
   // A bare `null` lowers only into a reference (`nullValueAdmissible`), never the i32 a condition reads.
   if (truthinessOperand.kind === ts.SyntaxKind.NullKeyword) return shapeNo("condition-null", expr);
-  if (!moduleInfluenceIsTruthinessTestable(truthinessOperand)) {
+  if (!trackedModuleInfluenceIsBoolean(truthinessOperand) && !isTruthinessTestableModuleBinding(truthinessOperand)) {
     return shapeNo("condition-module-value-nonbool", expr);
   }
+  // Reached only through conditional / nullish wrappers of module values.
   if (expressionMayBeModuleBinding(truthinessOperand) && !isTruthinessTestableModuleBinding(truthinessOperand)) {
     return shapeNo("condition-module-value-truthiness", expr);
   }
@@ -11579,7 +11570,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // (`dyn.truthy`), not a module slot; uncertified operands stay refused.
     if (
       expr.operator === ts.SyntaxKind.ExclamationToken &&
-      !moduleInfluenceIsNegatable(expr.operand, scope) &&
+      !moduleInfluenceIsExactBoolean(expr.operand, scope) &&
+      !isTruthinessTestableModuleBinding(expr.operand) &&
       !isStoredObjectDescriptorMemberRead(unwrapPhase1Parens(expr.operand), (name) => scope.has(name))
     ) {
       return shapeNo("expr-module-value-not", expr);
