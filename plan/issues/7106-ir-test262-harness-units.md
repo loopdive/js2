@@ -5721,6 +5721,33 @@ TEST262_FULL_RUNTIME_EVAL=1`), built per tree.
   - an eval-written `Test262Error` keeps the constructor off the
     self-guarded route.
 
+#### Review round 1 (#7146)
+
+- **Soundness.** A fragment could reach `eval` / `Function` without naming
+  them (`(function(){}).constructor(…)`, `[].constructor.constructor(…)`,
+  `this["ev" + "al"](…)`), so its writes went unseen.
+  - The fragment scan now runs the plan's own site visitor
+    (`visitRuntimeEvalSites`, extracted from the builder). A literal nested
+    source is scanned recursively; a computed one is unnameable.
+  - Any `.constructor(…)` call and any computed-member call in a fragment is
+    unnameable.
+  - The six review repros, plus the generator-constructor spelling, keep
+    `f` and `g` live (test rows).
+- **Fewer walkers.** Write targets come from the shared
+  `identifierWritesOf` / `isStoreTarget` (`src/shared/binding-writes.ts`).
+  The private declared-name, string-literal and object-key rules are gone.
+- **Program-level reaches (pre-existing).**
+  - `globalThis.eval(src)` / `this.eval` / `globalThis["eval"]` now record
+    their argument as a fragment; any other use counts as a computed source.
+  - `(function(){}).constructor(src)` in the program records a
+    `function-constructor` site.
+- **Nits.** Dropped the impossible `decl.name?.text ?? ""` fallback;
+  `isPropertyDefiningCall` matches `.set` only on `Reflect`.
+- **Measured** (head fd24068b24): units on the 141 unchanged at 830, 141 /
+  141 compile with 0 post-claim errors, the 40-file control byte-identical.
+  Interpreter-provider verdicts: 0 pass→fail on standalone (101 / 40) and on
+  the JS host (98 / 43).
+
 ### A2 and A3 (outline; each gets its own measured plan before code)
 
 - **A2.**
