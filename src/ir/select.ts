@@ -4270,43 +4270,6 @@ function isPhase1MutableMemberTarget(
 }
 
 /**
- * (#5163 S3) Shape gate for a chained assignment STATEMENT `a = b = e;`.
- *
- * Admits chains whose every target is either a plain in-scope local (not a
- * module binding — those carry TDZ and representation checks this desugaring
- * does not perform) or a plain-field property access, and whose innermost RHS
- * is Phase-1. Element targets stay out of this slice.
- */
-function isPhase1ChainedAssignmentStatement(
-  expr: ts.BinaryExpression,
-  scope: ReadonlySet<string>,
-  localClasses: ReadonlySet<string>,
-): boolean {
-  const chain = peelAssignmentChain(expr);
-  if (chain === null) return false;
-  for (const target of chain.targets) {
-    if (ts.isIdentifier(target)) {
-      if (isUnrepresentableModuleBinding(target)) return false;
-      if (currentModuleBindingResolver?.(target)) return false;
-      if (!scope.has(target.text)) return false;
-      if (projectionBindingMutationIsUnsupported(target.text, expr)) return false;
-      continue;
-    }
-    if (ts.isPropertyAccessExpression(target)) {
-      if (!isPhase1MutableMemberTarget(target, scope, localClasses)) return false;
-      continue;
-    }
-    return false;
-  }
-  if (!isPhase1Expr(chain.rhs, scope, localClasses)) return false;
-  // Every target is written; none of them keeps a projection binding.
-  for (const target of chain.targets) {
-    if (ts.isIdentifier(target)) clearProjectionBinding(target.text);
-  }
-  return true;
-}
-
-/**
  * Label for a top-level ExpressionStatement no arm admitted, keyed by the
  * offending expression kind + operator so the histogram keeps distinguishing
  * assignment from inc-dec.
@@ -4355,9 +4318,7 @@ function phase1MutatingStatementVerdict(
     // S3 — `a = b = e;`.
     const chain = op === ts.SyntaxKind.EqualsToken ? peelAssignmentChain(expr) : null;
     if (chain !== null) {
-      const admitted = chain.targets.every(ts.isIdentifier)
-        ? isPhase1ForUpdateExpr(expr, scope, localClasses)
-        : isPhase1ChainedAssignmentStatement(expr, scope, localClasses);
+      const admitted = isPhase1Expr(expr, scope, localClasses);
       return admitted ? { ok: true } : { ok: false, arm: "chained-assign", node: expr };
     }
     // S1/S2 — `o.x += e;` / `a[i] *= e;`. The receiver/index restrictions
@@ -4770,9 +4731,7 @@ function isPhase1StatementListInScope(
         continue;
       }
       // (#2856 C2) element store `<id>[<idx>] = <rhs>;` as a NON-TAIL
-      // statement — quicksort's post-partition swap (`arr[i + 1] = arr[hi];
-      // arr[hi] = tmp;`). Same receiver restriction as the body-buffer arm:
-      // a plain in-scope identifier; the lowerer dispatches on its IrType.
+      // statement, with the same receiver restrictions as the body-buffer arm.
       if (
         ts.isBinaryExpression(s.expression) &&
         s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -4788,6 +4747,7 @@ function isPhase1StatementListInScope(
         ) {
           return shapeNo("nontail-elemstore-recv", lhs.expression);
         }
+        if (ts.isStringLiteralLike(lhs.argumentExpression) && !preflightClassPropertyWrite(lhs, scope)) return false;
         if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses))
           return shapeNo("nontail-elemstore-idx", lhs.argumentExpression);
         if (!isPhase1Expr(s.expression.right, scope, localClasses))
@@ -6004,6 +5964,68 @@ function isPhase1WithStatement(
  *     `<id> = <id> <op> <expr>`).
  *   - Nested `ForOfStatement`.
  */
+function isPhase1MemberAssignment(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (ts.isPropertyAccessExpression(expr.left)) {
+    if (expr.left.questionDotToken !== undefined) {
+      return shapeNo("body-assign-optional", expr.left);
+    }
+    // #3000 — allow `this.#x = v` (PrivateIdentifier) in method / ctor
+    // bodies, in addition to plain-Identifier field writes.
+    if (!ts.isIdentifier(expr.left.name) && !ts.isPrivateIdentifier(expr.left.name)) return false;
+    // (#3522 W1-C) `super.<accessor> = v` in NON-tail position. Same
+    // reason as the read arm: `super` never survives the receiver walk
+    // three lines down, so the shape must be settled before it runs.
+    const superBodyWrite = superAccessorAdmission(expr.left, "setter");
+    if (superBodyWrite !== "not-super") {
+      return superBodyWrite === "admitted" && isPhase1Expr(expr.right, scope, localClasses);
+    }
+    const standaloneDomSet = standaloneDomOperation(expr.left);
+    if (standaloneDomSet?.kind === "member-set") {
+      return (
+        isPhase1Expr(standaloneDomSet.access.expression, scope, localClasses) &&
+        isPhase1Expr(expr.right, scope, localClasses)
+      );
+    }
+    if (!moduleExternPropertyWriteIsProven(expr.left, expr.right)) {
+      return shapeNo("body-module-extern-assign-value", expr.right);
+    }
+    if (staticPrivateFieldOwner(expr.left) !== undefined) {
+      return (
+        staticPrivateFieldReceiverIsAdmitted(expr.left, scope, localClasses) &&
+        isPhase1Expr(expr.right, scope, localClasses)
+      ); // (#7233)
+    }
+    if (!preflightClassPropertyWrite(expr.left, scope)) return false;
+    if (!isPhase1Expr(expr.left.expression, scope, localClasses)) return false;
+    return isPhase1Expr(expr.right, scope, localClasses);
+  }
+  // (#2856 C2) element store `<id>[<idx>] = <rhs>;` — receiver
+  // restricted to a plain in-scope identifier (quicksort's `arr[i] =
+  // arr[j]`); the lowerer dispatches on its IrType (vec → the
+  // __vec_elem_set helper with full legacy grow semantics; non-vec
+  // receivers demote cleanly).
+  if (ts.isElementAccessExpression(expr.left)) {
+    const lhs = expr.left;
+    if (lhs.questionDotToken !== undefined) {
+      return shapeNo("body-elemstore-optional", lhs);
+    }
+    if (
+      (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text)) &&
+      !stableDynamicStoreReceiverHasAdmittedRoot(lhs.expression)
+    ) {
+      return shapeNo("body-elemstore-recv", lhs.expression);
+    }
+    if (ts.isStringLiteralLike(lhs.argumentExpression) && !preflightClassPropertyWrite(lhs, scope)) return false;
+    if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses)) return false;
+    return isPhase1Expr(expr.right, scope, localClasses);
+  }
+  return false;
+}
+
 function isPhase1BodyStatement(
   stmt: ts.Statement,
   scope: Set<string>,
@@ -6083,60 +6105,8 @@ function isPhase1BodyStatement(
           if (className !== null) currentClassBindings.set(stmt.expression.left.text, className);
           return true;
         }
-        if (ts.isPropertyAccessExpression(stmt.expression.left)) {
-          if (stmt.expression.left.questionDotToken !== undefined) {
-            return shapeNo("body-assign-optional", stmt.expression.left);
-          }
-          // #3000 — allow `this.#x = v` (PrivateIdentifier) in method / ctor
-          // bodies, in addition to plain-Identifier field writes.
-          if (!ts.isIdentifier(stmt.expression.left.name) && !ts.isPrivateIdentifier(stmt.expression.left.name))
-            return false;
-          // (#3522 W1-C) `super.<accessor> = v` in NON-tail position. Same
-          // reason as the read arm: `super` never survives the receiver walk
-          // three lines down, so the shape must be settled before it runs.
-          const superBodyWrite = superAccessorAdmission(stmt.expression.left, "setter");
-          if (superBodyWrite !== "not-super") {
-            return superBodyWrite === "admitted" && isPhase1Expr(stmt.expression.right, scope, localClasses);
-          }
-          const standaloneDomSet = standaloneDomOperation(stmt.expression.left);
-          if (standaloneDomSet?.kind === "member-set") {
-            return (
-              isPhase1Expr(standaloneDomSet.access.expression, scope, localClasses) &&
-              isPhase1Expr(stmt.expression.right, scope, localClasses)
-            );
-          }
-          if (!moduleExternPropertyWriteIsProven(stmt.expression.left, stmt.expression.right)) {
-            return shapeNo("body-module-extern-assign-value", stmt.expression.right);
-          }
-          if (staticPrivateFieldOwner(stmt.expression.left) !== undefined) {
-            return (
-              staticPrivateFieldReceiverIsAdmitted(stmt.expression.left, scope, localClasses) &&
-              isPhase1Expr(stmt.expression.right, scope, localClasses)
-            ); // (#7233)
-          }
-          if (!preflightClassPropertyWrite(stmt.expression.left, scope)) return false;
-          if (!isPhase1Expr(stmt.expression.left.expression, scope, localClasses)) return false;
-          return isPhase1Expr(stmt.expression.right, scope, localClasses);
-        }
-        // (#2856 C2) element store `<id>[<idx>] = <rhs>;` — receiver
-        // restricted to a plain in-scope identifier (quicksort's `arr[i] =
-        // arr[j]`); the lowerer dispatches on its IrType (vec → the
-        // __vec_elem_set helper with full legacy grow semantics; non-vec
-        // receivers demote cleanly).
-        if (ts.isElementAccessExpression(stmt.expression.left)) {
-          const lhs = stmt.expression.left;
-          if (lhs.questionDotToken !== undefined) {
-            return shapeNo("body-elemstore-optional", lhs);
-          }
-          if (
-            (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text)) &&
-            !stableDynamicStoreReceiverHasAdmittedRoot(lhs.expression)
-          ) {
-            return shapeNo("body-elemstore-recv", lhs.expression);
-          }
-          if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses)) return false;
-          return isPhase1Expr(stmt.expression.right, scope, localClasses);
-        }
+        if (ts.isPropertyAccessExpression(stmt.expression.left) || ts.isElementAccessExpression(stmt.expression.left))
+          return isPhase1MemberAssignment(stmt.expression, scope, localClasses);
       }
       // Compound assignment `<id> <op>= <expr>` — desugars to
       // `<id> = <id> <op> <expr>`. Same scope check applies.
@@ -6423,7 +6393,6 @@ function isPhase1Tail(
       return isPhase1Expr(expr.right, scope, localClasses);
     }
     // #3000-B: element-store assignment as the void tail (`arr[i] = v;` last).
-    // Same receiver restriction as the non-tail element-store arm.
     if (
       ts.isBinaryExpression(expr) &&
       expr.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -6432,6 +6401,7 @@ function isPhase1Tail(
       const lhs = expr.left;
       if (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text))
         return shapeNo("tail-elemstore-recv", lhs.expression);
+      if (ts.isStringLiteralLike(lhs.argumentExpression) && !preflightClassPropertyWrite(lhs, scope)) return false;
       if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses))
         return shapeNo("tail-elemstore-idx", lhs.argumentExpression);
       return isPhase1Expr(expr.right, scope, localClasses);
@@ -9832,19 +9802,23 @@ function classPropertyWriteHasKnownProjectionGap(className: string, propertyName
   return true;
 }
 
-function preflightClassPropertyWrite(expression: ts.PropertyAccessExpression, scope: ReadonlySet<string>): boolean {
-  if (!ts.isIdentifier(expression.name)) return true;
+function preflightClassPropertyWrite(
+  expression: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  scope: ReadonlySet<string>,
+): boolean {
+  const name = ts.isPropertyAccessExpression(expression) ? expression.name : expression.argumentExpression;
+  if (!ts.isIdentifier(name) && !ts.isStringLiteralLike(name)) return true;
   const receiverClass = localClassNameForExpression(expression.expression, scope);
   if (receiverClass === null) return true;
   if (localClassHasKnownProjectionGap(receiverClass)) {
     return capabilityNo("class-projection-unsupported", "expr-class-property-write-shape", expression);
   }
-  if (classPropertyWriteHasKnownProjectionGap(receiverClass, expression.name.text)) {
+  if (classPropertyWriteHasKnownProjectionGap(receiverClass, name.text)) {
     return capabilityNo("class-member-unsupported", "expr-class-property-write-member", expression);
   }
   if (
-    classPropertyIsAccessor(receiverClass, expression.name.text) &&
-    instanceMemberIsVirtual(receiverClass, expression.name.text, expression.expression)
+    classPropertyIsAccessor(receiverClass, name.text) &&
+    instanceMemberIsVirtual(receiverClass, name.text, expression.expression)
   ) {
     return capabilityNo("class-method-virtual", "expr-class-setter-virtual", expression);
   }
@@ -11671,8 +11645,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isBinaryExpression(expr)) {
     const binOp = expr.operatorToken.kind;
-    if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left))
-      return isPhase1ForUpdateExpr(expr, scope, localClasses);
+    if (binOp === ts.SyntaxKind.EqualsToken) {
+      if (ts.isIdentifier(expr.left)) return isPhase1ForUpdateExpr(expr, scope, localClasses);
+      if (ts.isPropertyAccessExpression(expr.left) || ts.isElementAccessExpression(expr.left))
+        return isPhase1MemberAssignment(expr, scope, localClasses);
+    }
     // Only exactNumericExponentiationAdmissible's proof may reach math.pow (#4787).
     if (binOp === ts.SyntaxKind.AsteriskAsteriskToken) {
       if (!exactNumericExponentiationAdmissible(expr, scope, localClasses)) return false;
@@ -11681,10 +11658,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       return true;
     }
-    // (#5164 S1) VALUE-position comma. Checked here, ahead of the module-value
-    // and module-extern operand rules below, because those model a COMBINING
-    // operator's representation agreement and a comma performs none — see
-    // `selectorValuePositionComma`.
+    // Value-position comma does not combine representations (#5164 S1).
     if (binOp === ts.SyntaxKind.CommaToken) {
       if (selectorValuePositionComma(expr, scope, localClasses)) return true;
       return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);

@@ -17,7 +17,7 @@ for (const strict of [false, true]) {
     ["unsigned result", "let x = 0; return (x = (4294967295 >>> 0)) + x;", 8589934590],
     ["loop assignment result", "let sum = 0; for (let i = 0; i < 3;) sum = sum + (i = i + 1); return sum;", 6],
   ] as const) {
-    it(`prepared assignment ${name} (${strict ? "strict" : "sloppy"})`, async () => {
+    it(`prepared assignment ${name} (${strict ? "explicit strict directive" : "module strictness"})`, async () => {
       const result = await compile(`${strict ? '"use strict";' : ""} export function run(): number { ${body} }`, {
         target: "standalone",
         wholeProgram: { kind: "prepared-program-required", version: 1 },
