@@ -107,13 +107,11 @@ import {
 } from "./runtime/standalone-timer-callback-bridge.js";
 import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
 import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
-import { createStrictIteratorHostRuntime } from "./runtime/strict-iterator-host.js";
 import { callResolvedClassPrimitive, createClassMemberResolver } from "./runtime/class-method-host-bridge.js";
 import { scheduleNativeMicrotaskCheckpoint } from "./runtime/native-microtask-checkpoint.js"; // (#6982)
 import { _makeLegacyRegExpState, type LegacyRegExpState } from "./runtime/legacy-regexp.js";
 import { readEnv } from "./env.js";
 import { getNodeRequire } from "./runtime/node-require.js";
-import { resolveEagerGeneratorImport } from "./runtime/eager-generator-buffer.js";
 import { resolveCryptoCapabilityImport } from "./runtime/crypto-capability.js";
 import { resolveStringMemoryImport } from "./runtime/string-memory-adapter.js";
 import { resolveExternClassImport } from "./runtime/extern-class-capability.js";
@@ -1026,205 +1024,6 @@ function _markAccessorGetterReturn(getterFn: any): any {
     _wasmAccessorGetterReturnWrappers.add(getterFn);
   }
   return getterFn;
-}
-
-/**
- * (#3195) Resolve a member (`next` / `done` / `value` / `return`) of a closure-
- * iterator object or its result record. Tries native access first, then the
- * safe getter, then the `__sget_<key>` struct export — so it reads both plain-JS
- * and opaque-WasmGC-struct iterators/results. Functionally equivalent to
- * {@link _readIterResultField} for both shapes (a wasm struct's native/`_safeGet`
- * reads yield `undefined`, so both fall through to `__sget_<key>`).
- */
-function _resolveIterProp(target: any, key: string, exports: Record<string, Function> | undefined): any {
-  let direct: any;
-  try {
-    direct = target?.[key];
-  } catch {
-    direct = undefined;
-  }
-  if (direct !== undefined) return direct;
-  const safe = _safeGet(target, key);
-  if (safe !== undefined) return safe;
-  const sget = exports?.[`__sget_${key}`];
-  if (typeof sget === "function") return sget(target);
-  return undefined;
-}
-
-/**
- * (#3195) The single closure-iterator step loop shared by the three drainers
- * (`_drainClosureIterableToArray`, `_drainWasmClosureIterable`, and the nested
- * `_walkWasmIterator`). Given an already-obtained `iteratorObj`, step it through
- * the closure protocol — native `next()` OR `__call_fn_0` on a wasm-struct
- * `next` — reading each result's `done`/`value` via {@link _resolveIterProp},
- * collecting values into a real JS array.
- *
- * The callers' historical divergences are the options (verified 1:1 against the
- * three originals, #1849 review):
- *  - `cap`: defensive runaway guard (`1e6` for the single-value #1 cases,
- *    `1 << 16` elsewhere).
- *  - `limit`: stop after `limit` values (`Infinity` = full drain).
- *  - `closeOnStop`: §7.4.6 IteratorClose (`return()`) when the loop stops on a
- *    finite `limit` or the `cap` (a NormalCompletion stop) — NOT on natural
- *    `done`. Only the bounded destructuring walk sets it. A non-Object
- *    `return()` result throws a TypeError (§7.4.6 step 9).
- *  - `nullOnMalformedNext`: return `null` (abort — caller keeps the original)
- *    instead of breaking with the values so far, when no usable `.next()` is
- *    found (`_drainClosureIterableToArray`).
- *  - `nullOnMissingCallFn0`: return `null` when the `next` is a wasm-struct
- *    closure but `__call_fn_0` is unavailable (`_drainWasmClosureIterable`'s
- *    wrapper path); others break instead.
- */
-function _stepClosureIterator(
-  iteratorObj: any,
-  exports: Record<string, Function> | undefined,
-  opts: {
-    cap?: number;
-    limit?: number;
-    closeOnStop?: boolean;
-    nullOnMalformedNext?: boolean;
-    nullOnMissingCallFn0?: boolean;
-  } = {},
-): any[] | null {
-  const callFn0 = exports?.["__call_fn_0"];
-  const cap = opts.cap ?? 1 << 16;
-  const limit = opts.limit ?? Infinity;
-  const out: any[] = [];
-  let stopped = false;
-  let iterCount = 0;
-  while (true) {
-    if (out.length >= limit) {
-      stopped = true;
-      break;
-    }
-    if (iterCount++ >= cap) {
-      stopped = true;
-      break;
-    }
-    const nextFn = _resolveIterProp(iteratorObj, "next", exports);
-    let result: any;
-    if (typeof nextFn === "function") {
-      result = nextFn.call(iteratorObj);
-    } else if (nextFn != null && typeof nextFn === "object" && _isWasmStruct(nextFn)) {
-      // Wasm-struct next — invoke via __call_fn_0. Spec-mandated throws from the
-      // user's next() propagate.
-      if (typeof callFn0 !== "function") {
-        if (opts.nullOnMissingCallFn0) return null;
-        break;
-      }
-      result = callFn0(nextFn);
-    } else {
-      // No usable .next — malformed iterator.
-      if (opts.nullOnMalformedNext) return null;
-      break;
-    }
-    if (result == null) break;
-    if (_resolveIterProp(result, "done", exports)) break;
-    out.push(_resolveIterProp(result, "value", exports));
-  }
-  if (opts.closeOnStop && stopped) {
-    // §7.4.6 IteratorClose: call return(); a non-Object return result IS
-    // observable on this NormalCompletion stop (step 9 → TypeError). Absent
-    // return method → NormalCompletion, no call.
-    const returnFn = _resolveIterProp(iteratorObj, "return", exports);
-    let innerResult: any;
-    let called = false;
-    if (typeof returnFn === "function") {
-      innerResult = returnFn.call(iteratorObj);
-      called = true;
-    } else if (
-      returnFn != null &&
-      typeof returnFn === "object" &&
-      _isWasmStruct(returnFn) &&
-      typeof callFn0 === "function"
-    ) {
-      innerResult = callFn0(returnFn);
-      called = true;
-    }
-    if (called && (innerResult === null || (typeof innerResult !== "object" && typeof innerResult !== "function"))) {
-      throw new TypeError("iterator close: return() did not return an Object");
-    }
-  }
-  return out;
-}
-
-/**
- * (#1320/#1684) Drain a closure-backed iterable into a real JS array.
- *
- * When compiled code does `obj[Symbol.iterator] = function () { … }`, the
- * value stored on the plain JS object is an opaque WasmGC closure struct, not
- * a JS function. Native `Array.from` reads `obj[Symbol.iterator]`, sees a
- * non-function, and throws "items[Symbol.iterator] … be a function" (#1320
- * Layer 1). The iterator object the closure returns — and each `{ value, done }`
- * result — may themselves be WasmGC structs whose fields only read back through
- * `__sget_*` (#1320 Layer 2 / #1684).
- *
- * This drives the iterator protocol entirely through `__call_fn_0` + the
- * struct-aware field reader, collecting yielded values into a plain array that
- * native `Array.from` / `Iterator.from` can consume. Mirrors the closure
- * dispatch already done by the `__iterator` host import.
- *
- * Returns null when the object is not a closure-backed iterable (caller keeps
- * the original value).
- */
-function _drainClosureIterableToArray(obj: any, exports: Record<string, Function> | undefined): any[] | null {
-  const callFn0 = exports?.__call_fn_0;
-  if (typeof callFn0 !== "function") return null;
-  const iterFn = _safeGet(obj, Symbol.iterator) ?? _safeGet(obj, "@@iterator");
-  if (iterFn == null || typeof iterFn !== "object" || !_isWasmStruct(iterFn)) return null;
-  const iterator = callFn0(iterFn);
-  if (iterator == null) return null;
-  // (#3195) Drain through the shared step loop. A generous cap is safe — the
-  // test262 cases that reach here yield a single value; a malformed `next()`
-  // aborts (returns null → caller keeps the original value).
-  return _stepClosureIterator(iterator, exports, { cap: 1_000_000, nullOnMalformedNext: true });
-}
-
-function _materializeIterable(iter: any, callbackState?: MarshalExportSource): any {
-  if (iter == null) return iter;
-  if (_nativeIsArray(iter)) return iter;
-  if (typeof iter !== "object") return iter;
-  // (#1382) Check `_isWasmStruct` BEFORE `Symbol.iterator in iter` —
-  // the `in` operator on an opaque WasmGC struct throws "WebAssembly
-  // objects are opaque", aborting the host call. `_isWasmStruct`
-  // handles the throw internally and returns true for opaque structs.
-  if (_isWasmStruct(iter)) {
-    // (#5193) Start-section fallback: during module init `getExports()` is
-    // still undefined, so this returned the raw struct and every host callee
-    // saw a non-array-like.
-    const exports = marshalExports(callbackState);
-    if (!exports) return iter;
-    const vecLen = exports.__vec_len;
-    const vecGet = exports.__vec_get;
-    // (#3637) POSITIVE discriminator. The old `typeof vecLen(iter) === "number"`
-    // guard was vacuous (see `_isWasmVec`), so EVERY wasm struct materialised to
-    // `[]` here — a plain object, a class instance, or a struct whose
-    // `@@iterator` is a wasm closure all came back as an empty array instead of
-    // being drained or reported not-iterable. A non-vec struct now falls
-    // through to the closure-drain path below, and failing that is returned
-    // unchanged so the caller's own not-iterable handling runs.
-    if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(iter, exports)) {
-      const len = vecLen(iter) as number;
-      if (typeof len !== "number" || len < 0) return iter;
-      const result: any[] = new Array(len);
-      for (let i = 0; i < len; i++) {
-        result[i] = vecGet(iter, i);
-      }
-      return result;
-    }
-  }
-  // Plain JS object (or a non-vec wasm struct, #3637). If its
-  // `[Symbol.iterator]` is a Wasm closure struct
-  // (compiled `obj[Symbol.iterator] = function(){…}`), native Array.from would
-  // see a non-function and throw — drain it through __call_fn_0 instead
-  // (#1320/#1684). Otherwise pass through (real JS iterables: Maps, Sets,
-  // generators, host objects).
-  const symIter = _safeGet(iter, Symbol.iterator) ?? _safeGet(iter, "@@iterator");
-  if (symIter != null && typeof symIter === "object" && _isWasmStruct(symIter)) {
-    const drained = _drainClosureIterableToArray(iter, callbackState?.getExports());
-    if (drained != null) return drained;
-  }
-  return iter;
 }
 
 // Keep native consumers of cached callable bridges in sync with raw-closure sidecar writes.
@@ -2549,19 +2348,6 @@ function _nativePrimitiveToHost(value: any, exports: Record<string, Function> | 
   }
   return _MISS;
 }
-
-// (#5131) Strict GetIterator/IteratorNext and strict array materialization are
-// isolated from the permissive compatibility bridge. Inject the established
-// runtime operations so the extraction changes neither host ABI nor dispatch.
-const _strictIteratorHostRuntime = createStrictIteratorHostRuntime({
-  isWasmStruct: _isWasmStruct,
-  safeGet: _safeGet,
-  wrapForHost: _wrapForHost,
-  nativePrimitiveToHost: _nativePrimitiveToHost,
-  missingValue: _MISS,
-  maybeWrapCallable: _maybeWrapCallable,
-  marshalExports,
-});
 
 /** Present a Wasm-owned `$Promise` as a real JS Promise at the value boundary. */
 function _nativePromiseToHost(value: any, exports: Record<string, Function> | undefined): any | typeof _MISS {
@@ -4160,17 +3946,6 @@ function resolveImport(
           }
           return mirroredVec;
         };
-      const eagerGenerator = resolveEagerGeneratorImport(name, callbackState, {
-        materializeIterable: _materializeIterable,
-        sidecarGet: _sidecarGet,
-        safeGet: _safeGet,
-        isWasmStruct: _isWasmStruct,
-        canBeWeakKey: _canBeWeakKey,
-        isFnctorInstance: (value) => _fnctorInstanceCtor.has(value),
-        yieldStarStepImport: () =>
-          _strictIteratorHostRuntime.yieldStarStepImport(callbackState, builtin("TypeError", TypeError)),
-      });
-      if (eagerGenerator) return eagerGenerator;
       const processRead = resolveProcessCapability(name, (value) => {
         const exports = callbackState?.getExports(); // (#6910) the native regime's value boundary
         return isNativeRegimeExports(exports) ? _nativeDynamicFromHost(value, exports) : value;

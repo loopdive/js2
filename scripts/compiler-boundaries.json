@@ -14121,11 +14121,6 @@
       "layer": "legacy-host"
     },
     {
-      "path": "src/runtime/strict-iterator-host.ts",
-      "state": "unmigrated",
-      "layer": "legacy-host"
-    },
-    {
       "path": "src/runtime/string-constants.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -15793,11 +15788,6 @@
     },
     {
       "path": "src/runtime/dom-containment.ts",
-      "state": "unmigrated",
-      "layer": "legacy-host"
-    },
-    {
-      "path": "src/runtime/eager-generator-buffer.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
     },

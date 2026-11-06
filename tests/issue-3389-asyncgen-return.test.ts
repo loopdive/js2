@@ -7,8 +7,9 @@
 // current `next()`-promise with the §27.6.3.8 return completion
 // `{value: E, done: true}` (distinct from fall-through's `{value: undefined}`),
 // then completes the frame so subsequent `next()` give `{value: undefined,
-// done: true}`. Correct-or-legacy: a return nested in control flow, or
-// `return await P`, stays on the legacy path.
+// done: true}`. Correct-or-refused: a return nested in control flow, or
+// `return await P`, is a compile-time refusal (#7010 retired the legacy
+// host buffer those shapes used to fall back to).
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
@@ -31,13 +32,15 @@ async function drive(code: string): Promise<number> {
   return ex.probe();
 }
 
-/** Compile standalone; assert the module KEEPS the legacy host imports. */
-async function expectLegacy(code: string): Promise<void> {
+/**
+ * Compile standalone; assert the shape is REFUSED. (#6979 S7-f, #7010) These
+ * shapes used to fall back to the legacy host imports; that eager host buffer
+ * is retired, so an unsupported shape is a compile-time refusal now.
+ */
+async function expectRefused(code: string): Promise<void> {
   const r = await compile(code, { fileName: "test.ts", target: "standalone" });
-  expect(r.success).toBe(true);
-  expect(
-    (r.imports ?? []).map((i) => `${i.module}.${i.name}`).filter((n) => n.startsWith("env.")).length,
-  ).toBeGreaterThan(0);
+  expect(r.success).toBe(false);
+  expect(r.errors?.[0]?.message ?? "").toContain("generator-no-host-free-lowering");
 }
 
 describe("#3389 Slice 1 — settleReturn for top-level return in driven async-gen (standalone)", () => {
@@ -115,9 +118,9 @@ describe("#3389 Slice 1 — settleReturn for top-level return in driven async-ge
     expect(v).toBe(100); // side set to 99 by the lead, return 99+1
   });
 
-  describe("correct-or-legacy: unsupported return shapes stay on the legacy path", () => {
-    it("return nested in an if stays legacy", async () => {
-      await expectLegacy(`
+  describe("correct-or-refused: unsupported return shapes are refused", () => {
+    it("return nested in an if is refused", async () => {
+      await expectRefused(`
         export function test(): number {
           async function* g() { yield 1; if (Math.random() > 0.5) return 3; yield 2; }
           g().next();
@@ -126,8 +129,8 @@ describe("#3389 Slice 1 — settleReturn for top-level return in driven async-ge
       `);
     });
 
-    it("return await P stays legacy", async () => {
-      await expectLegacy(`
+    it("return await P is refused", async () => {
+      await expectRefused(`
         export function test(): number {
           async function* g() { yield 1; return await Promise.resolve(9); }
           g().next();
