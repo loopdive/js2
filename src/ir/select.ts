@@ -193,6 +193,7 @@ import {
   boxableIntoDynamic,
   isCarrierAddition,
   additiveResultFamily,
+  compoundWriteAdmissible,
   provenBinaryOperandsAdmissible,
   isComparisonResultOperator,
   isEqualityOperator,
@@ -4802,18 +4803,7 @@ function isPhase1StatementListInScope(
         ts.isIdentifier(s.expression.left) &&
         isSelectableNumberCompound(s.expression, scope, localClasses)
       ) {
-        if (isUnrepresentableModuleBinding(s.expression.left)) {
-          return shapeNo("nontail-module-storage-unrepresentable", s.expression);
-        }
-        if (currentModuleBindingResolver?.(s.expression.left) && !currentSubjectIsModuleInit) {
-          return shapeNo("nontail-module-compound", s.expression);
-        }
-        if (!scope.has(s.expression.left.text)) return shapeNo("nontail-compound-scope", s.expression.left);
-        if (projectionBindingMutationIsUnsupported(s.expression.left.text, s.expression)) return false;
-        if (!isPhase1Expr(s.expression.right, scope, localClasses)) {
-          return shapeNo("nontail-compound-rhs", s.expression.right);
-        }
-        clearProjectionBinding(s.expression.left.text);
+        if (!isPhase1IdentifierCompound(s.expression, s.expression.left, scope, localClasses, "nontail")) return false;
         continue;
       }
       // (#2856) Catch-all for ExpressionStatements outside the accepted set:
@@ -5012,7 +5002,10 @@ function isPhase1ThrowStatement(
   if (expressionTouchesModuleMapGetAlias(stmt.expression)) {
     return shapeNo("throw-module-map-get-alias", stmt.expression);
   }
-  if (expressionTouchesScalarModuleBinding(stmt.expression) && obviousModuleValueFamily(stmt.expression) !== "string") {
+  // (#7106 lever T) A construction (`new E('#' + x)`) or a string only reads the script scalar.
+  const thrown = unwrapPhase1Parens(stmt.expression);
+  const thrownScalar = !ts.isNewExpression(thrown) && obviousModuleValueFamily(thrown) !== "string";
+  if (thrownScalar && expressionTouchesScalarModuleBinding(thrown)) {
     return shapeNo("throw-module-scalar-unboxed", stmt.expression);
   }
   return isPhase1Expr(stmt.expression, scope, localClasses);
@@ -6141,17 +6134,7 @@ function isPhase1BodyStatement(
       // Compound assignment `<id> <op>= <expr>` — desugars to
       // `<id> = <id> <op> <expr>`. Same scope check applies.
       if (ts.isIdentifier(stmt.expression.left) && isSelectableNumberCompound(stmt.expression, scope, localClasses)) {
-        if (isUnrepresentableModuleBinding(stmt.expression.left)) {
-          return shapeNo("body-module-storage-unrepresentable", stmt.expression);
-        }
-        if (currentModuleBindingResolver?.(stmt.expression.left) && !currentSubjectIsModuleInit) {
-          return shapeNo("body-module-compound", stmt.expression);
-        }
-        if (!scope.has(stmt.expression.left.text)) return false;
-        if (projectionBindingMutationIsUnsupported(stmt.expression.left.text, stmt.expression)) return false;
-        if (!isPhase1Expr(stmt.expression.right, scope, localClasses)) return false;
-        clearProjectionBinding(stmt.expression.left.text);
-        return true;
+        return isPhase1IdentifierCompound(stmt.expression, stmt.expression.left, scope, localClasses, "body");
       }
     }
     // Slice 12 (#1280): postfix `i++` / `i--` / prefix `++i` / `--i`
@@ -9184,9 +9167,33 @@ function isSelectableNumberCompound(
   if (expr.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken) {
     return exactNumericExponentiationAdmissible(expr, scope, localClasses);
   }
-  if (!isNumberCompoundAssignOperator(expr.operatorToken.kind)) return false;
+  const op = expr.operatorToken.kind;
+  if (!isNumberCompoundAssignOperator(op)) return false;
+  // (#7106 lever T) `lowerCompoundAssignment` writes a dynamic script var only as `compoundWriteAdmissible` allows, never by `+=`.
+  const dynamicModule = ts.isIdentifier(expr.left) && moduleBinding(expr.left)?.valueKind.kind === "dynamic";
+  if (dynamicModule && (op === ts.SyntaxKind.PlusEqualsToken || !compoundWriteAdmissible(op, "dynamic", "number"))) {
+    return shapeNo("compound-dynamic-module", expr);
+  }
   // (#7106 S5) A carrier leaf's read is no number, whatever the checker says.
   return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
+}
+
+/** `<id> <op>= e` as a statement, for the body and the non-tail walks (`arm` prefixes the refusal). */
+function isPhase1IdentifierCompound(
+  expr: ts.BinaryExpression,
+  left: ts.Identifier,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+  arm: "body" | "nontail",
+): boolean {
+  if (isUnrepresentableModuleBinding(left)) return shapeNo(`${arm}-module-storage-unrepresentable`, expr);
+  if (currentModuleBindingResolver?.(left) && !currentSubjectIsModuleInit)
+    return shapeNo(`${arm}-module-compound`, expr);
+  if (!scope.has(left.text)) return shapeNo(`${arm}-compound-scope`, left);
+  if (projectionBindingMutationIsUnsupported(left.text, expr)) return false;
+  if (!isPhase1Expr(expr.right, scope, localClasses)) return shapeNo(`${arm}-compound-rhs`, expr.right);
+  clearProjectionBinding(left.text);
+  return true;
 }
 
 /**
@@ -11708,6 +11715,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (leftTracksModule || rightTracksModule) {
       const leftFamily = obviousModuleValueFamily(expr.left);
       const rightFamily = obviousModuleValueFamily(expr.right);
+      // (#7106 lever T) A `+` the family reads through #7066's additive rule needs no agreement.
+      const additive = binOp === ts.SyntaxKind.PlusToken && obviousModuleValueFamily(expr) !== undefined;
       const isEquality = isEqualityOperator(binOp);
       const nullishEquality =
         isEquality &&
@@ -11715,7 +11724,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           rightFamily === "nullish" ||
           leftFamily === undefined ||
           rightFamily === undefined);
-      if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality) {
+      if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality && !additive) {
         return shapeNo("expr-module-value-representation-mismatch", expr);
       }
       const booleanModuleOperand =
@@ -11723,6 +11732,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         (rightTracksModule && (rightFamily === "boolean" || expressionTouchesBooleanModuleBinding(expr.right)));
       if (
         booleanModuleOperand &&
+        !additive &&
         !isComparisonResultOperator(binOp) &&
         binOp !== ts.SyntaxKind.AmpersandAmpersandToken &&
         binOp !== ts.SyntaxKind.BarBarToken
