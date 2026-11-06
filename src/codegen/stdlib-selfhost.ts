@@ -61,6 +61,7 @@
  * tail statement in the IR subset (`lowerTail`).
  */
 
+import { stringMethodPlan } from "../ir/string-method-surface.js";
 import type { IrFromAstResolver } from "../ir/from-ast.js";
 import { buildInlineNativeStringLiteral } from "../runtime/wasmgc/values/string-literal-bodies.js";
 import { buildSelfHostedIrBody } from "../frontend/builtins/build-ir.js";
@@ -114,20 +115,13 @@ export type { SelfHostedFuncDef } from "../frontend/builtins/contracts.js";
  * Unknown methods return null, which from-ast surfaces as a loud build
  * error — the same scope-guard discipline as the pilot's throwing resolver.
  */
-const NATIVE_STRING_METHOD_PLANS: ReadonlyMap<
-  string,
-  {
-    funcName: string;
-    indexArgRep: "f64" | "i32";
-    padOmitted: "host" | "native-slice-len" | "native-substring" | "charcode-zero";
-  }
-> = new Map([
-  // (#3156) guarded `(recv, i32) -> f64` helper, materialized on demand by
-  // the driver's resolveFunc (ensureNativeCharCodeAtHelper).
-  ["charCodeAt", { funcName: NATIVE_CHARCODEAT_FN, indexArgRep: "i32", padOmitted: "charcode-zero" as const }],
-  // (#3156) `__str_substring` clamps both i32 indices to [0, len].
-  ["substring", { funcName: "__str_substring", indexArgRep: "i32", padOmitted: "native-substring" as const }],
-]);
+/**
+ * The string-method helpers the self-hosted defs lower through: the guarded
+ * `charCodeAt` (#3156, materialized on demand by the driver's resolveFunc) and
+ * `__str_substring`, which clamps both i32 indices to [0, len]. Every other
+ * method keeps its legacy body here.
+ */
+const SELF_HOST_STRING_HELPERS: ReadonlySet<string> = new Set([NATIVE_CHARCODEAT_FN, "__str_substring"]);
 
 const NATIVE_STRINGS_FROMAST_RESOLVER: IrFromAstResolver = {
   // (#2955 slices 3/4) The de-polymorphed from-ast arms consult these
@@ -155,8 +149,9 @@ const NATIVE_STRINGS_FROMAST_RESOLVER: IrFromAstResolver = {
   stringForOfPlan(): "char-loop" | "iter-host" {
     return "char-loop";
   },
-  stringMethodPlan(method: string) {
-    return NATIVE_STRING_METHOD_PLANS.get(method) ?? null;
+  stringMethodPlan(method: string, argCount: number) {
+    const plan = stringMethodPlan("wasmgc", method, argCount);
+    return plan && SELF_HOST_STRING_HELPERS.has(plan.helper) ? plan : null;
   },
 };
 
