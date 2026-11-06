@@ -121,3 +121,33 @@ admission sits next to its sibling checks in the same arm.
   compile_error: 43, skip: 11 }` on both sides, with the same non-pass set.
 - **Typed corpus:** 264/264 byte-identical (gc/standalone/wasi).
 - **Tests:** 13/13 (#7265, #7260, #7258). Gates bare green.
+
+## Review fix (2026-11-06, PR #7120 review 5798191801)
+
+**Finding (P2): annotated Boolean calls were claimed, then demoted.**
+`resolvePositionType(BooleanKeyword)` (`src/codegen/index.ts`) returned a
+bare `i32`, while `typeNodeToIr` and the inferred lattice producer keep the
+Boolean brand. A callee annotated `(): boolean` therefore reached the new
+(b1) arm as an unbranded i32, which `boxConcreteToDynamic` cannot box as a
+Boolean.
+
+Reproduced before the fix: `function b(): boolean { return true; }` and
+`function use(seed: any): any { var r; r = b(); return r; }`, standalone and
+gc. `use` was claimed, then fell back with "assignment to "r" (dynamic) got
+i32". The inferred `function bi() { return 1 === 1; }` was emitted fine.
+
+The fix is at the canonical annotation producer: `BooleanKeyword` now
+returns `irVal({ kind: "i32", boolean: true })`. The physical ABI is still
+i32. The producer also serves Boolean parameters, so both projections were
+re-checked:
+
+- **Typed corpus** (88 files × gc/standalone/wasi): 264/264 byte-identical
+  to current main `8b349439`.
+- **Boolean parameter/return probe** (string concat, template, ternary,
+  `+ 1`, `!b`, `===`, `x > 1` return; 13 functions, all IR-emitted on both
+  sides): identical values on gc, standalone and wasi, and byte-identical
+  binaries on all three.
+- **Test:** annotated and inferred true/false callees assigned into a
+  dynamic local. All four carriers are IR-emitted on head (legacy on main),
+  and each yields a JS Boolean with the right value (`typeof === "boolean"`,
+  `=== true` / `=== false`), on standalone and gc.

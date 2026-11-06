@@ -331,36 +331,38 @@ function committedHistoryPoints() {
       .trim()
       .split(/\r?\n/)
       .filter(Boolean);
-    return revisions.map((revision) => {
-      const report = JSON.parse(
-        execFileSync("git", ["show", `${revision}:benchmarks/results/npm-compat.json`], {
-          cwd: ROOT,
-          encoding: "utf-8",
-          maxBuffer: 16 * 1024 * 1024,
-        }),
-      );
-      // `recordedIn`, NOT `sourceRevision`: this is the commit that committed
-      // the measurement, which is never the commit it was measured at — the
-      // generator runs at one revision and its output lands at a later one.
-      // Recording it as `sourceRevision` was the bug that ate the history. The
-      // refresh workflow checks out `fetch-depth: 1`, so this log yields
-      // exactly one revision, HEAD, whose committed artifact holds the
-      // PREVIOUS run — labelling that point `sourceRevision: HEAD` made it
-      // collide with the live point (also HEAD) and the previous run was
-      // dropped on every single refresh. See mergeNpmPerfHistory.
-      const { generatedAt, optimizationLevels, packages } = npmPerfHistoryPoint(
-        report.packages ?? [],
-        report.generatedAt,
-        null,
-        report.performanceMethodology?.optimizationLevels,
-      );
-      return {
-        generatedAt,
-        recordedIn: revision,
-        ...(optimizationLevels ? { optimizationLevels } : {}),
-        packages,
-      };
-    });
+    return revisions
+      .map((revision) => {
+        const report = JSON.parse(
+          execFileSync("git", ["show", `${revision}:benchmarks/results/npm-compat.json`], {
+            cwd: ROOT,
+            encoding: "utf-8",
+            maxBuffer: 16 * 1024 * 1024,
+          }),
+        );
+        // `recordedIn`, NOT `sourceRevision`: this is the commit that committed
+        // the measurement, which is never the commit it was measured at — the
+        // generator runs at one revision and its output lands at a later one.
+        // Recording it as `sourceRevision` was the bug that ate the history. The
+        // refresh workflow checks out `fetch-depth: 1`, so this log yields
+        // exactly one revision, HEAD, whose committed artifact holds the
+        // PREVIOUS run — labelling that point `sourceRevision: HEAD` made it
+        // collide with the live point (also HEAD) and the previous run was
+        // dropped on every single refresh. See mergeNpmPerfHistory.
+        const { generatedAt, optimizationLevels, packages } = npmPerfHistoryPoint(
+          report.packages ?? [],
+          report.generatedAt,
+          null,
+          report.performanceMethodology?.optimizationLevels,
+        );
+        return {
+          generatedAt,
+          recordedIn: revision,
+          ...(optimizationLevels ? { optimizationLevels } : {}),
+          packages,
+        };
+      })
+      .filter((point) => Object.keys(point.packages).length > 0);
   } catch (error) {
     console.warn(
       `[npm-compat] could not backfill committed performance history: ${
@@ -3389,15 +3391,19 @@ if (!reuseStandaloneBinaryPath) assertMeasuredOptimizationReceipts(packages);
 // skipped placements remain visible in the package JSON/cards and are never
 // converted to misleading zero-duration bars.
 const perfRows = npmPerfRows(packages);
-const perfHistory = mergeNpmPerfHistory(readHistoryArtifact(), [
-  ...committedHistoryPoints(),
-  npmPerfHistoryPoint(
-    packages,
-    summary.generatedAt,
-    currentRevision(),
-    summary.performanceMethodology.optimizationLevels,
-  ),
-]);
+const perfHistory = mergeNpmPerfHistory(
+  readHistoryArtifact(),
+  [
+    ...committedHistoryPoints(),
+    npmPerfHistoryPoint(
+      packages,
+      summary.generatedAt,
+      currentRevision(),
+      summary.performanceMethodology.optimizationLevels,
+    ),
+  ],
+  { preserveDistinctMeasurements: true },
+);
 
 if (writeArtifacts) {
   mkdirSync(dirname(RESULTS_PATH), { recursive: true });
