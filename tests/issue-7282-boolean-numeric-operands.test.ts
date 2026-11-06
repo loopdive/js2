@@ -62,10 +62,11 @@ interface Case {
   readonly fileName: string;
   /** Units that must take the IR body on the host-free lanes. */
   readonly irUnits?: readonly string[];
+  /** Units that must keep the legacy body on the host-free lanes. */
+  readonly legacyUnits?: readonly string[];
 }
 
 const CASES: Record<string, Case> = {
-  // test262 language/expressions/bitwise-and/S11.10.1_A3_T2.8.js
   // test262 language/expressions/bitwise-and/S11.10.1_A3_T2.8.js shape; a
   // script's verdict is only that it completes, so the values are checked by
   // the module cases below.
@@ -129,6 +130,7 @@ export function test(): number { return f(3, true) + f("2", false) * 10000; }`,
   "a boolean beside a string keeps the legacy unit": {
     fileName: "issue-7282.ts",
     source: `export function test(): number { const t = true; return t & ("3" as any); }`,
+    legacyUnits: ["test"],
   },
 };
 
@@ -142,6 +144,7 @@ describe("#7282 boolean operands of numeric readers", () => {
         expect(value).toBe(expected);
         if (lane.options.target !== undefined) {
           for (const unit of testCase.irUnits ?? []) expect(irRoute(result, unit), unit).toBe(true);
+          for (const unit of testCase.legacyUnits ?? []) expect(irRoute(result, unit), unit).toBe(false);
         }
       });
     }

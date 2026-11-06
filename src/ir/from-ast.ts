@@ -15552,7 +15552,7 @@ function lowerBinaryOperands(
     const leftFamily = irOperandFamily(typeOfValue(lhs, cx), expr.left);
     const rightFamily = irOperandFamily(typeOfValue(rhs, cx), expr.right);
     if (!booleanReadAsNumber(op, leftFamily, rightFamily)) return [lhs, rhs];
-    // (#7282) ToNumber(boolean): the 0 / 1 as an f64.
+    // Signed and unsigned agree on 0 / 1; `f64.convert_i32_s` is the IR's i32→f64 unop.
     const toNumber = (value: IrValueId, family: OperandFamily): IrValueId =>
       family === "boolean" ? cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64) : value;
     return [toNumber(lhs, leftFamily), toNumber(rhs, rightFamily)];
@@ -16318,9 +16318,10 @@ function tryLowerDynamicRelational(
  * relational compare and the numeric-arithmetic arm): a dynamic carrier
  * ToNumbers via `dyn.to_number`; a concrete `f64` is used as-is. Any other
  * concrete kind (i32/ref/string) returns `null` so the caller demotes cleanly —
- * these slices only convert the dynamic side, and add no i32/string→number
- * coercion (numeric literals lower to `f64` under the f64 hint the operands
- * were lowered with, so `dyn > 0` / `dyn - 1` are covered).
+ * these slices only convert the dynamic side (numeric literals lower to `f64`
+ * under the f64 hint the operands were lowered with, so `dyn > 0` / `dyn - 1`
+ * are covered; a boolean partner arrives already converted by
+ * `lowerBinaryOperands`, #7282).
  */
 function relOperandToF64(v: IrValueId, t: IrType, cx: LowerCtx): IrValueId | null {
   if (t.kind === "dynamic") return cx.builder.emitDynToNumber(v);

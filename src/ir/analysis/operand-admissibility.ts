@@ -304,7 +304,9 @@ function numberIfNullOrUndefined(family: OperandFamily): OperandFamily {
  * it reads as one, or the dynamic carrier (`undefined` is one on the native
  * lanes); `- * / %` read a boolean pair as two f64s (bitwise and relational
  * operators take that pair as i32s). from-ast's `lowerBinaryOperands`
- * converts each boolean operand.
+ * converts each boolean operand, on the RAW lowered families (an f64
+ * `undefined` sentinel, an f64 `null` +0), so this predicate normalizes them
+ * itself rather than relying on the nullish / undefined arms below.
  */
 export function booleanReadAsNumber(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
   if (!isNumericReaderOperator(op)) return false;
@@ -323,6 +325,8 @@ function isI32Carrier(family: OperandFamily): boolean {
  * LOWERED operand families (after the `+` proof of
  * {@link additiveOperandsProvable}, and after the operator-specific arms for a
  * `null` / `undefined` operand):
+ * - a numeric reader ToNumbers a boolean beside a number, `null`, `undefined`
+ *   or the carrier ({@link booleanReadAsNumber}), checked first;
  * - a `null` operand of a numeric reader is +0; `+` and the equalities have no
  *   `null` arm here (`tryFoldNullCompare` owns `== null`).
  * - a dynamic operand: equality and `+` box the other side (`tryLowerDynamicEq`,
@@ -332,8 +336,6 @@ function isI32Carrier(family: OperandFamily): boolean {
  * - a string operand: `+` converts each side as its `+` proof names, so the
  *   `+` rule decides which sides it takes (#7066); the equalities and the
  *   relationals need a string on both sides.
- * - a numeric reader ToNumbers a boolean beside a number, `null`, `undefined`
- *   or the carrier ({@link booleanReadAsNumber});
  * - otherwise one carrier on both sides: `+ - * / %` need f64; relational,
  *   equality and bitwise take f64 or i32.
  */

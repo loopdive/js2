@@ -110,11 +110,12 @@ Expected zero-legacy delta stated before coding: **+1**
   predicate names from i32 0/1 to f64 (`f64.convert_i32_s`), so the existing
   number arm (`emitNumberBinary`, ToInt32 for bitwise) and carrier arms
   (`tryLowerDynamicRelational` / arithmetic) lower the result unchanged.
-- **Removed duplicate behaviour.** It closes a pre-existing claim-then-demote:
+- **Leave it better.** It closes part of a pre-existing claim-then-demote:
   main's selector already claimed function bodies whose boolean locals it sees
   as `unknown` (`f * -1`, `t / f`), and from-ast then demoted them
   ("Phase 1 requires matching operand types" / "no lowering for i32
-  operands"). Those bodies now lower.
+  operands"). Those bodies now lower; the call-result and compound residuals
+  are under Follow-ups.
 - **Quality criterion.** One predicate in the shared module, one conversion
   next to the sibling `null` arm, no new arm shape, no new import.
 
@@ -146,6 +147,11 @@ Expected zero-legacy delta stated before coding: **+1**
   undefined` hits `late-preparation-unsupported`
   (`implicit-support-reference-unavailable`) for the `dyn.undefined` support
   reference; `1 & undefined` does so on main too.
+- (review) Two boolean-operand residuals still demote at build, as on main:
+  a boolean-returning CALL (`g() - 1`) lowers to an i32 the IR does not brand
+  boolean, so `irOperandFamily` names it `int32` and no conversion runs; and
+  the compound `x -= t` goes through `compoundWriteAdmissible`, which has no
+  boolean rule. Both are the same ToNumber(boolean) gap on other producers.
 - RegExp object values on the host-free lanes (8 files above) and the
   `Object.prototype` accessor (`10.4.3-1-104.js`) remain the next levers in
   these families.
