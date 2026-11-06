@@ -186,27 +186,38 @@ Adversarial cases (`tests/issue-7269-ir-property-helper-alias-call-vardecls.test
   legacy's behaviour; head and base give the same result.
 - **Alias that throws (`probe(null, "x")`):** TypeError on both.
 
-## Next slice (proposal; needs the rules owner, #2949 / #7106)
+## Next slice
 
-In order of what unblocks isWritable's first statement:
-
-1. **Dynamic locals as logical-value carriers.** `dynamicLogicalValueCarrier`
-   would accept a `var` that the move-only scan already put in `dynNames`
-   (`initIsDyn`). This is a rule change, so it needs the owner's sign-off.
-2. **A dynamic-carrier mixed conditional.** A conditional over a dynamic or
-   boolean condition with arms of different primitive families (including a
-   boxed f64 module read) would produce a dynamic carrier.
-3. **`__isArray` certification + dynamic isArray.** Add `Array.isArray` to
-   the stored-static form in `uncurried-object-alias.ts`, plus an IR isArray
-   over a dynamic operand (a native helper; no host import on
-   standalone/wasi).
-4. **Admission (1), the alias-call exemption, lands with 1–3.** Share one
-   predicate in `uncurried-object-alias.ts` (`isCertifiedObjectAliasCall`)
-   between `isPhase1VarDecl` and from-ast. The measured stub is ~6 lines.
+isWritable's first statement is [#7272](7272-ir-property-helper-iswritable-first-statement.md):
+- (d) a dynamic-operand `__isArray`;
+- (e) a mixed conditional over a boolean-result condition;
+- (f) a mixed-conditional local as a dynamic logical operand.
 
 After that, verifyProperty still needs its own chain (`__getOwnPropertyNames`
 …). The file count only moves once all 7 remaining units ship, so this is a
 multi-PR cover, not one lever.
+
+## Implementation Plan
+
+- **Module:** `src/ir/select.ts` (`isPhase1VarDecl`) only. The certification
+  stays in `src/ir/uncurried-object-alias.ts`.
+- **Reuses:** the existing alias certification (`uncurriedObjectAliasMethod`,
+  `isStoredObjectDescriptorAliasCall`), the existing expression arms and
+  from-ast's existing lowering.
+- **Duplicate removed:** the selector's inline 2-argument uncurried test
+  folds into `isUncurriedObjectAliasCall`.
+- **Effect table** (fresh review, 2026-11-06): `isSideEffecting` (the DCE
+  facet in `src/ir/analysis/effects.ts`) now agrees with `effectsOf` for
+  every value-producing call-like dyn op. Added: `dyn.own_property` (the
+  blocker), `dyn.member_get`, `dyn.instanceof`, `dyn.instanceof_fn`,
+  `dyn.arguments_length`, `iter.done`, `iter.value`.
+  - Left droppable on purpose: `dyn.current_this` and `dyn.global_object`
+    only read. `dyn.publish_argc` has no result, so the null-result rule
+    keeps it.
+  - `vec.set` / `vec.set_length` are #7134's (not on main yet).
+- **Code-quality criterion:** no new copy of an alias predicate, the
+  exemption sits next to its siblings in `isPhase1VarDecl`, and the effect
+  facets agree op for op on the dyn ops.
 
 ## Acceptance (for the slice that ships)
 

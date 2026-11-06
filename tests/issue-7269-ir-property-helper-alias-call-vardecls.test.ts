@@ -97,6 +97,30 @@ describe("#7269 certified alias-call vardecls", () => {
     });
   }
 
+  // A local whose value is never read still runs its alias call: the key's
+  // ToPropertyKey (and a Proxy receiver's traps) are observable, so dead-code
+  // removal must keep `dyn.own_property` (`isSideEffecting`).
+  const UNUSED_RESULT = `function f(obj, name) {
+  var hadValue = __hasOwnProperty(obj, name);
+  var desc = __getOwnPropertyDescriptor(obj, name);
+  if (desc === undefined) { return -1; }
+  return desc.value;
+}
+var log = "";
+var k = { toString: function () { log += "k"; return "w"; } };
+assert.sameValue(f({ w: 1 }, k), 1);
+assert.sameValue(log, "kk", "ToPropertyKey must run once per alias call");
+`;
+  for (const flag of ["noStrict", "onlyStrict"]) {
+    for (const target of ["gc", "standalone"] as const) {
+      it(`keeps an unused alias call's key conversion (${flag}, ${target})`, async () => {
+        const path = fixture(`unused-${target}`, ALIASES + UNUSED_RESULT, flag);
+        const lane = target === "standalone" ? "standalone" : undefined;
+        expect(await runTest262File(path, "issue-7269", undefined, lane)).toMatchObject({ status: "pass" });
+      });
+    }
+  }
+
   it("does not certify a call through a shadowing local", async () => {
     const shadowed = PROBE.replace("function probe(obj, name) {", "function probe(obj, name, __hasOwnProperty) {");
     const path = fixture(
