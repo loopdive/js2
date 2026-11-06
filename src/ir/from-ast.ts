@@ -602,6 +602,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * lane has none, which keeps the legacy call.
    */
   ambientGlobalFunctionTarget?(name: Exclude<IrAmbientGlobalFunctionName, "isNaN">): IrFuncRef | null;
+  /** (#7267) The selector's `jsonParseFoldsAtCompileTime`, asked again per call. */
+  jsonParseFoldsAtCompileTime?(call: ts.CallExpression): boolean;
   /**
    * Does this lane own a host-free `Number::toFixed` provider whose result is
    * already the IR string carrier? The bounded literal-digits lowering asks
@@ -13896,6 +13898,7 @@ function tryLowerAmbientGlobalFunctionCall(expr: ts.CallExpression, cx: LowerCtx
       classify: makeIrDeclaredPrimitiveExpressionClassifier(cx.checker),
       supportsBackendCapability: (capability) => resolver?.supportsBackendCapability?.(capability) === true,
       isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding?.(node) === true,
+      foldsAtCompileTime: (call) => resolver?.jsonParseFoldsAtCompileTime?.(call) !== false,
     },
     target: (name) => resolver?.ambientGlobalFunctionTarget?.(name) ?? null,
     lowerOperand: (argument, family) => lowerExpr(argument, cx, family === "string" ? { kind: "string" } : IR_F64),

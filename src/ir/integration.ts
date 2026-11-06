@@ -181,6 +181,7 @@ import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import {
   ambientGlobalFunctionProviderSymbol,
+  jsonParseTextFoldsAtCompileTime,
   ensureNativeStringHelpers,
   STANDALONE_STDOUT_APPEND_FN,
 } from "../codegen/native-strings.js";
@@ -2577,6 +2578,7 @@ export function compileIrPathFunctions(
       resolveModuleBinding: moduleBindingResolver,
       classifyPrimitiveExpression,
       classifyDeclaredPrimitiveExpression,
+      jsonParseFoldsAtCompileTime: (call: ts.CallExpression) => jsonParseTextFoldsAtCompileTime(ctx, call),
       isArrayExpression,
       classifyArrayElementFamily,
       isRegExpExpression,
@@ -7169,6 +7171,7 @@ function makeFromAstResolver(
     dynamicCarrierIsExternref() {
       return !ctx.fast;
     },
+    jsonParseFoldsAtCompileTime: (call) => jsonParseTextFoldsAtCompileTime(ctx, call),
     ambientGlobalFunctionTarget(name) {
       if (name === "JSON.parse") return irRuntimeFuncRef(JSON_PARSE_TEXT_FN); // (#7267) pre-registered at finalize
       const symbol = ambientGlobalFunctionProviderSymbol(ctx, name); // (#7253)

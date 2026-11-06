@@ -31,6 +31,12 @@ loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/from-ast.ts
   - src/codegen/json-codec-native.ts
+  # 2026-11-06 (#7267 review, compile-time fold): codegen/index.ts +2 — the
+  # production planning site's `jsonParseFoldsAtCompileTime` option and its
+  # import; native-strings.ts +1 — the IR-bridge re-export of legacy's fold
+  # predicate (no new ir -> codegen import edge).
+  - src/codegen/index.ts
+  - src/codegen/native-strings.ts
 func-budget-allow:
   # 2026-11-06 (#7267): each is one sibling arm in an existing flat dispatch
   # (one entry per provider / per ambient special form); splitting the
@@ -40,6 +46,9 @@ func-budget-allow:
   - src/ir/select.ts::scanExprInner
   - src/ir/select.ts::isPhase1Expr
   - src/ir/integration.ts::makeFromAstResolver
+  # 2026-11-06 (#7267 review): +1 each — the fold option on both planning sites.
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
 ---
 
 # #7267: ambient global object statics refused as `expr-ident-not-in-scope(<Name>)`
@@ -186,6 +195,49 @@ Follow-up: the Program ABI captured-subtype locator (`program-abi-session.ts`
 So the row scope is `plain-unit`: the escape rule in ES modules, and in a script
 neither a class member nor a closure nested in a function. Regression tests for
 each row of the table are in the vitest file.
+
+## Review fix: legacy's compile-time fold (2026-11-06, review 6697778597)
+
+**Blocker.** Legacy folds `JSON.parse(<static text>)` at compile time with the
+host's parser (`tryEmitJsonParseLiteral` / `parsedJsonLiteral`,
+`src/codegen/json-standalone.ts`). A static text is a string literal, a
+no-substitution template, or a `const` chain to one. The admission sent those
+texts to the runtime `__json_parse_text`, whose number scan rounds wrongly:
+`JSON.parse("4.35") !== 4.35` on head; base completes. The same holds for
+`"5e-324"`, `"1.7976931348623157e308"` and `"12345678901234567890"`.
+
+**Fix.** The `JSON.parse` row is `staticTextFolded`. The admission asks
+legacy's own predicate, `jsonParseTextFoldsAtCompileTime` (exported from
+`json-standalone.ts`, re-exported for the IR bridge through
+`native-strings.ts`), and refuses exactly the calls legacy folds. That is a
+static text the host parser accepts. An *invalid* static text (the
+`SyntaxError` tests) is not folded by legacy either, so it keeps the runtime
+codec on both paths. Both planning sites pass the predicate as
+`jsonParseFoldsAtCompileTime`:
+
+- `codegen/index.ts`, the production site;
+- the integration compatibility path;
+- the from-ast resolver.
+
+An absent seam reads as "folds", so the call is refused.
+
+**Verified.**
+
+- The four texts: head = IR-off on standalone; vitest rows on all three
+  lanes. A `const t = "4.35"` chain stays legacy too.
+- `built-ins/JSON/parse/15.12.1.1-g4-2.js` (the stride's +1 zero-legacy file)
+  passes `'"\u0008…"'`, which the host parser rejects, so legacy does not fold
+  it. It is still zero-legacy.
+
+**Follow-ups** (ids not allocated: `claim-issue.mjs --allocate` refused
+because the open-PR scan was degraded):
+
+- (a) The runtime codec's number scan (`__json_parse_text`) rounds wrongly for
+  11 of 20 number texts given as runtime strings. This is pre-existing and
+  hit by both paths for non-static texts.
+- (b) Legacy's fold gets `JSON.parse("true")` / `("false")` wrong on
+  standalone and gc. The runtime path answers them right; the fold is where
+  it goes wrong.
 
 ## Left (follow-ups)
 

@@ -619,6 +619,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly classifyDeclaredPrimitiveExpression?: (
     expr: ts.Expression,
   ) => IrDeclaredPrimitiveExpressionFamily | undefined;
+  /** (#7267) Does legacy fold this `JSON.parse(text)` at compile time? */
+  readonly jsonParseFoldsAtCompileTime?: (call: ts.CallExpression) => boolean;
   /**
    * Checker-backed proof that an expression is an Array or tuple. Used to
    * keep Array prototype methods without IR producers out of the claimed set
@@ -8646,6 +8648,7 @@ function selectorAmbientGlobalFunctionCall(expr: ts.CallExpression) {
     classify: currentSelectionOptions?.classifyDeclaredPrimitiveExpression,
     supportsBackendCapability: currentSelectionOptions?.supportsBackendCapability,
     isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding(node) === true,
+    foldsAtCompileTime: (call) => currentSelectionOptions?.jsonParseFoldsAtCompileTime?.(call) !== false,
   });
 }
 

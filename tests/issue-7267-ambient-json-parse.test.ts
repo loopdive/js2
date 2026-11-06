@@ -84,16 +84,36 @@ interface Case {
 const CASES: Record<string, Case> = {
   // A string throw keeps the checks themselves on the IR path.
   "object, array, string, number and literal texts in a script": {
-    source: `var o = JSON.parse('{"a":1,"b":"x","c":[true,null]}');
+    source: `var to = '{"a":1,"b":"x","c":[true,null]}', ta = "[1,2,3]", ts = '"str"', tn = " 5e1 ", tt = "true", tz = "null";
+var o = JSON.parse(to);
 if (o.a !== 1 || o.b !== "x") throw "object";
-var p = JSON.parse("[1,2,3]");
+var p = JSON.parse(ta);
 if (p.length !== 3) throw "array";
-var q = JSON.parse('"str"');
+var q = JSON.parse(ts);
 if (q !== "str") throw "string";
-var n = JSON.parse(" 5e1 ");
+var n = JSON.parse(tn);
 if (n !== 50) throw "number";
-if (JSON.parse("true") !== true || JSON.parse("null") !== null) throw "literal";`,
+var vt = JSON.parse(tt);
+if (vt !== true) throw "true";
+var vz = JSON.parse(tz);
+if (vz !== null) throw "null";`,
     irUnits: ["<module-init>"],
+  },
+  // (#7267 review) A static text — a literal or a `const` chain to one — keeps
+  // legacy's compile-time fold and its exact number parse; the runtime codec's
+  // number scan rounds some of these wrongly.
+  "literal number texts keep legacy's compile-time fold": {
+    source: `var a = JSON.parse("4.35"); var b = JSON.parse("5e-324");
+var c = JSON.parse("1.7976931348623157e308"); var d = JSON.parse("12345678901234567890");
+if (a !== 4.35 || b !== 5e-324 || c !== 1.7976931348623157e308 || d !== 12345678901234567890) throw "fold";`,
+    legacyUnits: ["<module-init>"],
+  },
+  "a const-chained literal text keeps the fold": {
+    fileName: "issue-7267.ts",
+    source: `const t = "4.35";
+function f(): boolean { return JSON.parse(t) === 4.35; }
+export function test(): number { return f() ? 1 : 0; }`,
+    legacyUnits: ["f"],
   },
   "a string-typed text read from a var": {
     source: `var text = '{"k":"v"}';
@@ -107,7 +127,8 @@ if (o.k !== "v") throw "k";`,
   },
   // A statement-position member call enters from-ast through the method-call path, not `lowerCall`.
   "a statement-position call": {
-    source: `JSON.parse("[1]");
+    source: `var t = "[1]";
+JSON.parse(t);
 JSON.parse("{");`,
     irUnits: ["<module-init>"],
   },

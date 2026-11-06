@@ -59,6 +59,12 @@ interface AmbientGlobalFunctionPlan {
   /** The lane capabilities that name the provider's host-free lanes (all must hold). */
   readonly capabilities: readonly IrAmbientGlobalFunctionCapability[];
   readonly scope: UnitScope;
+  /**
+   * Legacy folds a static text at compile time with the host's parser; the
+   * admission refuses those calls so the fold stays legacy's (the runtime
+   * codec's number scan is not exact — #7267 review).
+   */
+  readonly staticTextFolded?: true;
   /** What the call answers: a concrete scalar / string, or (`JSON.parse`) the dynamic carrier. */
   readonly result: "number" | "boolean" | "string" | "dynamic";
 }
@@ -86,6 +92,7 @@ const PLANS: ReadonlyMap<IrAmbientGlobalFunctionName, AmbientGlobalFunctionPlan>
       operands: ["string"],
       capabilities: ["native-json-codec", "native-dynamic-member-read"],
       scope: "plain-unit",
+      staticTextFolded: true,
       result: "dynamic",
     },
   ],
@@ -116,6 +123,8 @@ export interface IrAmbientGlobalFunctionAdmission {
   readonly supportsBackendCapability: ((capability: IrAmbientGlobalFunctionCapability) => boolean) | undefined;
   /** The lib-only ("every") binding test — a script `function JSON() {}` merges with the lib's. */
   readonly isLibOnlyBinding: (node: ts.Identifier) => boolean;
+  /** Legacy's own compile-time fold test for a `staticTextFolded` row's call. */
+  readonly foldsAtCompileTime: (call: ts.CallExpression) => boolean;
 }
 
 /** `parseInt` or `JSON.parse`: the callee's table name and the global it resolves through. */
@@ -144,6 +153,7 @@ function ambientGlobalFunctionCall(
   const operands = expr.arguments.map((argument, index) => ({ argument, family: plan.operands[index]! }));
   if (!operands.every(({ argument, family }) => classify(argument) === family)) return null;
   if (!isUnshadowedLibGlobal(callee.root, admission.isLibOnlyBinding)) return null;
+  if (plan.staticTextFolded && admission.foldsAtCompileTime(expr)) return null;
   return { name: callee.name as IrAmbientGlobalFunctionName, plan, root: callee.root, operands };
 }
 
