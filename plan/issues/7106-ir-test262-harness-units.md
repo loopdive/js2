@@ -5731,8 +5731,9 @@ Caveats:
 
 1. **A3 first.** It is the only lever that pays off alone. Its blockers (the
    harness function names, `Test262Error`) sit in all 60 files, so A2
-   without A3 makes 0 files IR-only. Measured potential: A3 ≤ 10 / 60, then
-   A2 + A3 ≤ 29 / 60 (~68 / 141).
+   without A3 makes 0 files IR-only. Static classification: A3 ≤ 10 / 60, then
+   A2 + A3 ≤ 29 / 60 (~68 / 141). The A3 prototype (see "Lever A3", Gain)
+   measured A3 alone at 0 / 60, and exposed one more module-init blocker.
 2. **The `(0,eval)` escaped-value liveness belongs in A3.**
    - `buildIrRuntimeEvalBoundaryPlan` also records the bare `eval` in
      `(0, eval)(…)` as an `intrinsic-value` site, which sets
@@ -5898,3 +5899,220 @@ Caveats:
   - **No new flat `src/codegen` file, no grants.** The new IR module sits
     under `src/ir/`, and the codegen half goes in `runtime-eval-provider.ts`.
     The cycle, flat-dir and LOC gates pass with no grant.
+
+## Lever A3 — write-precise eval liveness (plan)
+
+Plan only; a fresh agent implements it. A3 lands before A2 (see "Lever A2",
+Order). It builds on A1 (#7136): the per-unit boundary,
+`withdrawEvalBoundaryFunctions`, and every top-level function planned as a
+value target while the push is active.
+
+### What is unsafe today, and why
+
+Two separate hazards hide behind the one flag
+`ctx.runtimeEvalGlobalFunctionBindings`.
+
+1. **Rebinding.** Evaluated code can replace a top-level function.
+   - Legacy routes calls, reads and values of such a name through its live
+     global (`liveFuncBindingGlobals` / `reassignedFunctionDeclarations`).
+   - The IR resolver already refuses those declarations itself
+     (`makeIrFunctionObjectValueResolver` and
+     `hasPreparedFunctionObjectReference` both check
+     `reassignedFunctionDeclarations`).
+   - So rebinding needs no blanket switch: it needs liveness that is right
+     (sections 2 and 3).
+2. **Identity split.** The push (`emitRuntimeEvalGlobalBindingPushBody`)
+   publishes each non-live function to evaluated code. It takes the cached
+   singleton (`emitCachedFuncClosureAccess`), then wraps it in the AOT-callable
+   adapter (`needsAotAdapter` → `emitRuntimeEvalAotCallableAdapter`).
+   - Evaluated code therefore sees a carrier, while IR function values are
+     the bare singleton: two objects for one function.
+   - The #7106 S3c merge-group regression (pr-6844) is this split.
+     `e.constructor === Test262Error` failed once the self-guarded
+     constructor left the fnctor path. That is why
+     `selfGuardedConstructorsLeaveFnctor` (`codegen/helpers/self-guarded-constructor.ts`)
+     stands down whenever runtime eval may share the realm.
+   - A property that evaluated code writes on `assert` (`assert.x = 1`) would
+     likewise land on the carrier, not on the singleton the IR reads.
+
+**Narrowest safe condition.** A function may take the IR value route under
+an active push when both hold:
+
+- **(a)** no literal eval source *writes* its name, and there is no computed
+  source (sections 2 and 3);
+- **(b)** its value has *one* identity on both sides of the seam.
+
+**How to get (b) (the core of A3).** The push publishes the same object the
+IR's function-value accessor returns.
+
+- The adapter's carrier is minted once per function and stored in that
+  function's existing value cache. That is the
+  `function-value-cache` global that `prepareTopLevelFunctionValueTargetSupport`
+  already plans, so the accessor and the push read one object.
+- The rule matches what live bindings already do: they hold their carrier in
+  the module global permanently (#2928/#4307 comments in
+  `runtime-eval-provider.ts`).
+- If the carrier cannot be the cache value, fall back to a predicate. A
+  function stays off the value route when any literal fragment *mentions*
+  its name, or when a fragment reaches the global object generically
+  (`this`, `globalThis`, `for (… in this)`).
+- In that fallback the predicate replaces the blanket flag at all four sites
+  in `codegen/ir-imported-call-planning.ts`:
+  - `makeIrFunctionObjectValueResolver`;
+  - `hasPreparedFunctionObjectReference`;
+  - the function-object receiver planner (`addOwner` loop);
+  - `planIrFunctionValueResolverState`.
+
+  `selfGuardedConstructorsLeaveFnctor` then reads the same answer for the
+  constructor name.
+
+### 1. Liveness: a literal source makes a name live only when it writes it
+
+- **Where.** `registerReassignedFunctionGlobals` (`codegen/index.ts`)
+  replaces `mentionedByDynamicSource` (an identifier-boundary substring
+  search) with a syntactic scan.
+- **How.** Each literal fragment is parsed once with
+  `ts.createSourceFile(…, ScriptKind.JS)`. A name counts as written by any of
+  these:
+  - an assignment target (`=` and every compound operator, unwrapping
+    parentheses);
+  - a `++`/`--` operand;
+  - a `for-in`/`for-of` head identifier;
+  - a `function` declaration name anywhere, because Annex B block functions
+    in sloppy eval code create global var bindings;
+  - a `var`/`let`/`const`/binding-element name anywhere (over-approximate).
+- **Conservative cases**, which make the fragment count as an unknown source:
+  - a non-identifier, non-property assignment target;
+  - an `eval` or `Function` identifier inside the fragment (nested dynamic
+    code);
+  - a string literal equal to a function name, as in
+    `Object.defineProperty(this, "f", …)`; this is a name write;
+  - a property-assignment target `X.f = …` counts as a write of `f`, since
+    `X` may be the global object.
+- **Computed source.** A non-literal source keeps today's fallback: every
+  top-level function is live (`unknownDynamicSource`).
+- **Mention set.** A mention without a write no longer makes a function
+  live. The mention set is still computed, because identity condition (b)
+  needs it in the predicate fallback. One scan returns both sets.
+
+### 2. The `(0,eval)` escaped value: which test decides, and the precise version
+
+- **The decider.** `isDirectCalleeIntrinsicValue`
+  (`src/ir/runtime-eval-boundary-plan.ts`) excuses a comma-form callee only
+  when `parent.parent` (the comma's parent) is the call. But `(0, eval)(…)`
+  always wraps the comma in a `ParenthesizedExpression`, so `parent.parent`
+  is the parenthesis.
+  - The bare `eval` is then recorded as an `intrinsic-value` site, which
+    sets `unknownDynamicSource` and makes every function live.
+  - Measured at the A1 head: `(0, eval)("live = …")` produced sites
+    `indirect-eval@95, intrinsic-value@99`, with `unknownDynamicSource`
+    true.
+- **The precise version.** Walk up through `ParenthesizedExpression` before
+  the `CallExpression` / `NewExpression` test: the same unwrapping the
+  callee side already does with `unwrapExpression`. It is a three-line
+  change.
+  - `(0, eval)` then contributes only its indirect-eval site with its
+    literal fragment.
+  - A bare `eval` read anywhere else (`var e = eval`) stays an escape, as it
+    must.
+
+### 3. Placement, reuse, duplicate removed
+
+- **Liveness scan.** The function lives in `src/ir/runtime-eval-boundary-plan.ts`,
+  beside the inventory that collects `dynamicSourceFragments`.
+  - It is pure and backend-neutral, so `codegen/index.ts` keeps one call
+    and does not grow.
+  - The plan exposes `writtenNames` and `mentionedNames` (or computes them
+    on demand from the fragments).
+  - `registerReassignedFunctionGlobals` drops its inline
+    `mentionedByDynamicSource` closure. That closure is the duplicate: a
+    second, string-level reading of the same fragments the inventory
+    already owns.
+- **Identity.** The singleton-carrier unification lives in
+  `codegen/expressions/runtime-eval-provider.ts`, in the push body. The
+  accessor side is the existing function-value support.
+- **Function-value gate.** The blanket checks in
+  `ir-imported-call-planning.ts` (four copies of
+  `ctx.runtimeEvalGlobalFunctionBindings`) collapse into the per-declaration
+  checks that already exist there. In the predicate fallback, they collapse
+  into one shared predicate. Either way, four copies become zero or one.
+- **Constructor gate.** `selfGuardedConstructorsLeaveFnctor` consults the
+  same answer instead of standing down for every eval program.
+- **A1's `eval-visible-binding` refusal.** Its function half uses the
+  precise live set unchanged; its var/lexical half waits for A2's slot
+  typing.
+
+### 4. Gain (60-file sample, upper-bound prototype)
+
+- **Prototype.** A throwaway, env-gated change at the A1 head (843236bc12):
+  - the parenthesis fix from section 2;
+  - a write-only liveness scan;
+  - all four function-value guards off;
+  - in a second run, the S3c stand-down off too.
+- **What it ignores.** It does not fix the identity split, so these numbers
+  are an upper bound and not a correctness result.
+- **IR-only files: 0 / 60** in both runs. A3 alone does not make a file
+  IR-only. This corrects the "≤ 10 / 60" read from the static
+  classification in "Lever A2"; that classification attributed module-init
+  rejects too optimistically.
+
+What the prototype did gain:
+
+- **Function values on:**
+  - `compareArray` becomes IR in 36 / 60 files.
+  - `assert` moves from "not in scope" to `expr-new-ctor-unknown
+    «Test262Error»` in 36. Its remaining 24 files still have every function
+    live, through computed sources or conservative fragments.
+- **Plus the S3c gate lifted:** `assert`, `compareArray` and `Test262Error`
+  are all IR in 36 / 60 files. `<module-init>` is then the *sole* blocker in
+  32 files.
+- **The newly exposed module-init blocker (33 / 60):**
+  `closure-return-type` on assert.js's
+  `assert._isSameValue = function (a, b) {…}`.
+  - It is eval-only: the non-eval control's module-init has no such reject;
+    there the harness module-init blocker is ordinary, e.g. «Object».
+  - The cause is unverified. The likely suspect is the dynamic-carrier
+    divergence rule under the push.
+  - **A3 must diagnose it.** Without it, A3 + A2 cannot reach IR-only either.
+    The remaining module-init blockers are A2's eval-visible slots (27) and
+    sites (14).
+
+### 5. Acceptance
+
+- **Correctness**, with the interpreter provider built per tree
+  (`JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`):
+  - 0 pass→fail on the 141 eval files on standalone and on the JS host;
+  - linked-harness lane: 141 / 141 compile.
+- **Focused tests**, both lanes:
+  - `(0,eval)("f = …")` rebinds `f` for IR callers;
+  - a fragment that only *reads* `f` leaves `f` static;
+  - a computed source keeps every function live;
+  - `Object.defineProperty(this, "f", …)` inside a fragment counts as a
+    write;
+  - an Annex B block function in a fragment counts as a write;
+  - `e.constructor === Test262Error` for an IR-thrown error caught in eval
+    code (the pr-6844 regression);
+  - `assert === (0,eval)("assert")`;
+  - `(0,eval)("assert.x = 1")`, then the IR reads `assert.x === 1`.
+- **0 claim-then-demote:** `irPostClaimErrors` stays empty on the 141 files
+  and on the focused tests.
+- **Non-eval byte identity:** the A1 40-file control and the playground
+  examples are byte-identical on gc and standalone.
+- **Report:**
+  - harness units (assert / compareArray / Test262Error / module-init) that
+    become IR on the 141;
+  - IR-only files (expected 0 until A2 and the `closure-return-type`
+    blocker land);
+  - the classification re-run.
+- **Code quality:**
+  - **One fragment scan** in `runtime-eval-boundary-plan.ts` yields written
+    and mentioned names. The inline `mentionedByDynamicSource` closure is
+    removed.
+  - **Four flag checks become zero or one.** The blanket
+    `runtimeEvalGlobalFunctionBindings` checks in
+    `ir-imported-call-planning.ts` disappear, or become one shared
+    predicate.
+  - **No new mode arms or growth.** No `ctx.standalone`/`ctx.wasi` arms
+    (lane facts go through `runtimeEvalPushPublishesCachedFunctionValues`);
+    `index.ts` does not grow.
+  - **No new flat `src/codegen` file, and no grants.**
