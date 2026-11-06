@@ -1,7 +1,8 @@
 ---
 id: 7276
 title: "IR module-init: `Object.create(proto, {descriptor map})` lowered the way legacy does, by compile-time expansion"
-status: in-progress
+status: done
+completed: 2026-11-06
 sprint: current
 created: 2026-11-06
 updated: 2026-11-06
@@ -103,3 +104,46 @@ All 320 `built-ins/Object/create` files under the same scratch admission:
   - The selector and from-ast read one plan.
   - No second descriptor parser and no second field-boxing loop.
   - No new host imports and no new provider.
+
+## Result (2026-11-06)
+
+- **Wrapped ledger** (stride 40, standalone, SHAPE_DIAG; base `origin/main` c0e553e4):
+  - compileOk unchanged, invariants 0 = 0, legacy units 4750 → 4749;
+  - **zero-legacy files 32 → 33** (`built-ins/Object/create/15.2.3.5-4-154.js`);
+  - `15.2.3.5-4-229` and `-305` now refuse later, on `newObj.hasOwnProperty(…)`;
+  - no other file changes.
+- **`built-ins/Object/create`, all-literal subset.** Zero-legacy: `15.2.3.5-4-{152,154,232}`. The 7 `for-in` files of the subset pass on both sides, but from-ast withdraws them (`module-init unit contains a nested var declaration`). That gap was already on main and is not this arm's.
+- **Typed corpus** (playground examples × gc / standalone / WASI, 39 compiles): binaries and host imports byte-identical base vs head, before and after the review fix.
+- **test262 A/B**, row by row, base `origin/main` d28280a0. Every status is identical, and no file traps or differs on head where it did not on base:
+  - standalone, 1249 paths (`built-ins/Object/create` 320, `built-ins/Object/defineProperties`, 300 seeded-random): 1137 pass / 86 fail / 15 CE / 11 skip on both sides. The only error-text differences are the checkout path inside a missing-QuickJS-provider message;
+  - gc, `built-ins/Object/create`: 319 / 1 on both;
+  - after the `in` fix: the 39 files using `"<Object.prototype key>" in …`, plus `language/expressions/in`, standalone 30 / 8 / 1 and gc 29 / 9 / 1 on both; `Object/create` standalone again 319 / 1 on both.
+- **Tests:** `tests/issue-7276-object-create-descriptor-map.test.ts` runs 23 cases × 3 lanes, and the #7128 suite passes too (133 / 133). The cases:
+  - the admitted shapes, against JS;
+  - non-writable writes in sloppy and strict mode, ToBoolean of the literal flags, `for-in` enumerability, `delete` against configurability, `in`;
+  - the refused shapes and the `Object` shadows, against the IR-off compile.
+
+## Adversarial review (fresh context, 2026-11-06)
+
+Verdict before the fixes: one must-fix, the rest should-fix and nits. The reviewer found no claim-then-refuse in any position, and found the refusals and key canonicalisation correct.
+
+1. **Fixed (must-fix).**
+   - The finding: `"toString" in o` answered false on the IR route, where legacy and JS answer true. The IR's native `in` arm called `__extern_has`, which stops at an open `$Object`'s implicit `%Object.prototype%` terminal.
+   - This was already wrong on main for any dynamic receiver: `function f(o) { return "toString" in o }` took the IR body and threw.
+   - The fix: a string-literal key on `OBJECT_PROTOTYPE_KEYS` now calls legacy's fixed-name helper `__extern_has_with_implicit_object_proto` (`native-in.ts`), and the existing pre-registration covers both symbols. Measured unchanged on the 39 `in` files above (standalone and gc) and the corpus.
+2. **Fixed.**
+   - The finding: `isUnshadowedLibGlobal`'s comment named a caller that does not use it.
+   - The comment now names its real second caller.
+   - Main's `ambient-global-function-call.ts` keeps its own `scriptDeclaresName`; #7267 (PR #7118) replaces it with this helper.
+3. **Fixed.** The module doc now says legacy folds the flags for literal descriptors (`__defineProperty_value`), and that the IR takes legacy's runtime-applier arm instead.
+4. **Fixed.**
+   - The finding: the plan said standalone only, while gc also claims.
+   - The lane is `native-dynamic-member-read`, which covers standalone and the native-first gc lane (it projects as standalone); this is now stated in the module doc and here.
+   - gc output changes only for claimed units. The corpus is byte-identical.
+5. **Fixed.** The known divergence (`typeof o.hasOwnProperty`, identical on main) is labelled as such, and `in` cases checked against JS were added.
+6. **Fixed.** The admission's capability query is non-optional, symmetric with `isLibOnlyBinding`.
+7. **Fixed.** One helper, `staticNamedProperties`, now serves both the descriptor parser and the descriptor-map parser.
+8. **Fixed.** The arm sits above the `Object.defineProperty` comment.
+9. **Fixed.** The double cast is gone.
+10. **Fixed.** The `literalDataDescriptorFields` doc is no longer ambiguous.
+
