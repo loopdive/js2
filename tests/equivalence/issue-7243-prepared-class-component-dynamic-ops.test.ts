@@ -27,11 +27,18 @@ const LANES: { name: string; options: CompileOptions; ir: boolean }[] = [
 
 const wasiStub = new Proxy({}, { get: () => () => 0 });
 
-/** The harness shape: legacy itself (`message || ""` is not an IR value yet). */
+/**
+ * The harness shape, kept on the legacy body: the trailing `for…in` is a tail
+ * the IR rejects, so `MyErr` itself always takes the direct backend and the
+ * methods below really construct a legacy-compiled `F` (asserted per case).
+ * It sits after the guard because the self-guarded-constructor recogniser
+ * needs the guard as the first statement.
+ */
 const F = `
 function MyErr(message) {
   if (!(this instanceof MyErr)) return new MyErr(message);
   this.message = message || "";
+  for (var k in { a: 1 }) {}
 }
 MyErr.prototype.toString = function () { return "MyErr: " + this.message; };
 `;
@@ -122,6 +129,7 @@ describe("#7243 class methods construct a self-guarded function constructor", ()
         const source = F + c.source;
         const { result, exports } = await compileAndRun(source, lane.options);
         const outcomes = result.irOutcomes ?? [];
+        expect(outcomes.find((o) => o.displayName === "MyErr")?.kind, "MyErr stays legacy").not.toBe("emitted");
         for (const unit of c.irUnits) {
           const kind = outcomes.find((o) => o.displayName === unit)?.kind;
           expect(kind, `${unit} route`).toBe(lane.ir ? "emitted" : "unsupported");
