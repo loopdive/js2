@@ -216,6 +216,28 @@ export function pushDefinedFunc(ctx: CodegenContext, funcIdx: FuncHandle, fn: Wa
 }
 
 /**
+ * Mint the named, unexported helper `name` once. Its type and body are built
+ * only on the first call, after the handle is minted, so a late import the
+ * body registers cannot stale it. (#7274) Shared by the IR's native adapter
+ * families (`ir-native-map.ts`, `buffers/ir-native-buffer.ts`).
+ */
+export function ensureNamedHelperFunc(
+  ctx: CodegenContext,
+  name: string,
+  typeIdx: () => number,
+  build: () => Pick<WasmFunction, "locals" | "body">,
+): FuncHandle {
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined && definedFuncAt(ctx, existing) !== undefined) return existing;
+  const type = typeIdx();
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(name, funcIdx);
+  const { locals, body } = build();
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx: type, locals, body, exported: false });
+  return funcIdx;
+}
+
+/**
  * The function signature (`FuncTypeDef`) for an absolute function handle,
  * covering BOTH index subspaces: imports (scanned in import-declaration
  * order, matching the function index space) and defined functions (via

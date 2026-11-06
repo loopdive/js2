@@ -56,7 +56,10 @@ import {
 } from "../codegen/standalone-clock-capability.js";
 import { makeCalendarIrSelectionSupport } from "./calendar-selection-support.js";
 import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "./dom-capability.js";
+import { makeIrNativeBufferSurfacePlan, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
+import { isIrNativeBufferFn, type IrNativeBufferFn } from "../shared/contracts/native-buffer-adapters.js";
 import { irBackendCapabilityQuery, projectIrBackendTargetProfile } from "./backend/legality.js";
+import { nativeBufferSurfaceCapability } from "./capability.js";
 
 import {
   ensureAnyHelpers,
@@ -96,6 +99,8 @@ import {
   moduleInitPrologueMayEmit,
   retireModuleInitPrologueHelper,
   irNativeI32SlotRead,
+  ensureIrNativeBufferAdapter, // (#7274) native ArrayBuffer adapters
+  nativeBufferProvidersAvailable,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
@@ -325,6 +330,9 @@ import {
   makeIrModuleBindingResolver,
   makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
+  capabilityExternBindingOptions,
+  abiPinnedCapability,
+  isIrModuleNativeBufferValueKind,
   type IrLegacyModuleBindingIdentity,
   type IrLegacyModuleBindingResolver,
   type IrFnctorArrayMethodPlan,
@@ -2400,6 +2408,7 @@ export function compileIrPathFunctions(
     ctx.targetProfile.environment === "none"
       ? makeIrStandaloneDomCapabilityPlan(ctx.checker, sourceFile)
       : undefined;
+  const nativeBufferSurface = planIrNativeBufferSurface(ctx, sourceFile); // (#7274)
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   const { supportsDateSnapshots, resolveHostVoidCallback, backendCapabilitySelectionOptions } =
     makeCalendarIrSelectionSupport(ctx, jsHostExterns, standaloneDomCapability, supportsBackendCapability);
@@ -2410,7 +2419,7 @@ export function compileIrPathFunctions(
     allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
     // (#4461) Native `$Map` storage must agree with the selector-side option.
     allowNativeMapStorage: ctx.nativeStrings,
-    resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
+    ...capabilityExternBindingOptions(standaloneDomCapability, nativeBufferSurface),
     stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
     // (#7105) Must agree with the selector-side option: a script `var` the
     // selector admitted is written here through the same slot classifier.
@@ -2571,6 +2580,7 @@ export function compileIrPathFunctions(
       experimentalIR: true,
       jsHostExterns,
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
+      ...(nativeBufferSurface ? { nativeBufferSurface } : {}),
       ...(resolveHostVoidCallback ? { hostVoidCallbacks: resolveHostVoidCallback } : {}),
       ...(supportsDateSnapshots ? { hostDateSnapshots: makeIrHostDateSnapshotResolver(ctx.checker) } : {}),
       resolveModuleBinding: moduleBindingResolver,
@@ -3214,6 +3224,7 @@ export function compileIrPathFunctions(
     loweringPlans?.fnctorParameterPreselection,
     loweringPlans?.fnctorParameterPreselectionIsCurrent,
     preparedNumberCall,
+    nativeBufferSurface,
   );
   // (#7001) The verifier's string-result rule needs the lane's string carrier.
   const verifyOptions = {
@@ -6171,7 +6182,12 @@ function resolveModuleBindingGlobal(
       break;
     case "extern":
     case "capability-extern":
-      if (!ctx.externClasses.has(identity.valueKind.className)) {
+      // (#7274) A native-buffer slot holds the lane's own byte vec, which no
+      // extern-class registration describes.
+      if (
+        !isIrModuleNativeBufferValueKind(identity.valueKind) &&
+        !ctx.externClasses.has(identity.valueKind.className)
+      ) {
         throw new IrInvariantError(
           "unknown-type-ref",
           "build",
@@ -6275,7 +6291,7 @@ function resolveModuleBindingGlobal(
     );
   }
   const tdzGlobalName = tdzGlobal ? expectedTdzGlobalName : null;
-  const capability = identity.valueKind.kind === "capability-extern" ? identity.valueKind.capability : undefined;
+  const capability = abiPinnedCapability(identity.valueKind);
   const globalRef = irSourceGlobalRef(identity.globalBindingId, globalName, capability);
   const tdzGlobalRef = tdzGlobal ? irSourceGlobalRef(identity.tdzBindingId, expectedTdzGlobalName) : null;
   planProgramAbiGlobal(ctx, {
@@ -7052,6 +7068,22 @@ function sameValType(a: ValType, b: ValType): boolean {
   return true;
 }
 
+/**
+ * (#7274) The source's native ArrayBuffer plan, present only where its
+ * capability row claims. The one constructor for both planning sites (here
+ * and the codegen driver), so the plan's presence is the only gate selection
+ * and lowering consult.
+ */
+export function planIrNativeBufferSurface(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+): IrNativeBufferSurfacePlan | undefined {
+  const jsHost = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }).allowHostImports;
+  return nativeBufferSurfaceCapability(jsHost, nativeBufferProvidersAvailable(ctx)) === "claim"
+    ? makeIrNativeBufferSurfacePlan(ctx.checker, sourceFile)
+    : undefined;
+}
+
 function makeFromAstResolver(
   ctx: CodegenContext,
   classShapes: ReadonlyMap<string, IrClassShape> | undefined,
@@ -7061,6 +7093,7 @@ function makeFromAstResolver(
   fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
   fnctorParameterPreselectionIsCurrent?: () => boolean,
   preparedNumberCall?: (call: ts.CallExpression) => boolean, // (#7106 module-init lever B)
+  nativeBufferSurface?: IrNativeBufferSurfacePlan, // (#7274)
 ): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
@@ -7386,6 +7419,9 @@ function makeFromAstResolver(
     },
     standaloneDomOperation(node: ts.Node) {
       return standaloneDomCapability?.operation(node);
+    },
+    nativeBufferOperation(node: ts.Node) {
+      return nativeBufferSurface?.operation(node);
     },
     // (#4461) The three host-free capabilities the native-`$Map` arms consult.
     // They live here, on the lower/integration side, for the same #2955 reason
@@ -9293,6 +9329,16 @@ function buildTemplateWrapperFamily(
   flushLateImportShifts(ctx, null);
 }
 
+/** (#7274) Mint the native ArrayBuffer adapters the bodies call, before Phase 3 bakes a funcIdx. */
+function reserveNativeBufferAdapters(ctx: CodegenContext, symbols: ReadonlySet<IrNativeBufferFn>): void {
+  if (symbols.size === 0) return;
+  for (const symbol of [...symbols].sort()) {
+    ensureIrNativeBufferAdapter(ctx, symbol);
+    observeNativeRuntimeProvider(ctx, symbol);
+  }
+  flushLateImportShifts(ctx, null);
+}
+
 function preregisterDynamicSupport(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
@@ -9339,6 +9385,7 @@ function preregisterDynamicSupport(
   // Both are REAL Wasm functions on this lane, so they are reserved here —
   // before any Phase-3 body bakes a funcIdx — exactly like the union family.
   let usesNativeMapAdapters = false;
+  const nativeBufferAdapters = new Set<IrNativeBufferFn>();
   let usesNativeExternIsUndefined = false;
   // (#7104) `dyn.undefined` on the host externref carrier needs the
   // `__get_undefined` import reserved BEFORE Phase 3 bakes funcIdxs.
@@ -9460,6 +9507,7 @@ function preregisterDynamicSupport(
             if (methodWrapper !== undefined) dynamicMethodCallWrappers.set(symbol, methodWrapper);
             const borrowWrapper = parseIrArrayPrototypeBorrowHelperName(symbol);
             if (borrowWrapper !== undefined) arrayPrototypeBorrowWrappers.set(symbol, borrowWrapper);
+            if (isIrNativeBufferFn(symbol)) nativeBufferAdapters.add(symbol); // (#7274)
             switch (symbol) {
               case "__extern_set_strict":
                 usesFunctionMemberStrictSet = true;
@@ -9690,6 +9738,7 @@ function preregisterDynamicSupport(
     ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, null);
   }
+  reserveNativeBufferAdapters(ctx, nativeBufferAdapters);
   if (usesNativeMapAdapters) {
     ensureIrNativeMapAdapters(ctx);
     flushLateImportShifts(ctx, null);

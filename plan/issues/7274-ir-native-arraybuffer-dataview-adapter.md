@@ -14,6 +14,36 @@ area: ir
 goal: ir-full-coverage
 parent: 7106
 related: [7273, 6981, 4461, 4462, 7011, 2835, 1654]
+assignee: "ttraenkler/c-r12"
+# 2026-11-06 (#7274 slice 1): the native ArrayBuffer surface. The plan, the
+# lowering and the adapters live in their own modules
+# (ir/native-buffer-surface.ts, ir/native-buffer-lowering.ts,
+# codegen/buffers/{ir-native-buffer,array-buffer-native}.ts); what remains in
+# each god-file is one arm beside its siblings and the plumbing: the selector
+# verdict + arming (select.ts), the script-var capability arm and the
+# escape-rule hook (module-bindings.ts), the provider reservation, plan
+# constructor, resolver methods and storage check (integration.ts), the
+# resolver interface + one dispatch arm (from-ast.ts), and the plan option +
+# re-export (codegen/index.ts). dataview-native.ts grows by the slice body's
+# receiver-slot parameter and makeHelperFctx's return-type parameter (the
+# adapters reuse both). The four god-functions grow by one call or option
+# each: the plan, the provider options, the resolver hook, the reservation,
+# and isPhase1Expr its one dispatch to the buffer verdict.
+loc-budget-allow:
+  - src/codegen/dataview-native.ts
+  - src/ir/select.ts
+  - src/ir/integration.ts
+  - src/ir/module-bindings.ts
+  - src/ir/from-ast.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/integration.ts::preregisterDynamicSupport
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/select.ts::isPhase1Expr
+import-cycles-allow:
+  - largestSccSize: 731 # 2026-11-06 (#7274): codegen/buffers/array-buffer-native.ts holds the ArrayBuffer sequences extracted from new-indexed.ts / property-access-dispatch.ts (both in the SCC) and codegen/buffers/ir-native-buffer.ts wraps them with dataview-native.ts's slice body; both join the SCC their siblings buffers/shared-array-buffer*.ts are already in
 ---
 
 # IR: native ArrayBuffer / DataView / SharedArrayBuffer surface (standalone)
@@ -258,6 +288,90 @@ one case group → `ensureIrNativeBufferAdapters` +
 - Legacy helpers are reused or extracted, never copied.
 - No new IR type.
 - LOC and function budgets are respected; any grant is dated in this file.
+
+## Slice 1 — ArrayBuffer (2026-11-06, implemented)
+
+### What was built
+
+| Module | Role |
+| --- | --- |
+| `src/ir/native-buffer-surface.ts` | The one node-identity plan (constructions, getters, `slice`, script-var certification). Selector and from-ast both read it. |
+| `src/ir/native-buffer-lowering.ts` | Lowers a certified operation to its adapter call. |
+| `src/shared/contracts/native-buffer-adapters.ts` | The six adapter names (producer ↔ provider ABI). |
+| `src/codegen/buffers/array-buffer-native.ts` | The construction / getter sequences, extracted from `new-indexed.ts` and `property-access-dispatch.ts`; legacy now calls them inline. |
+| `src/codegen/buffers/ir-native-buffer.ts` | The adapters: plain functions whose bodies are those emitters (and `dataview-native.ts`'s slice body, now parameterised by receiver slot). |
+| `src/ir/capability.ts` | `nativeBufferSurfaceCapability(jsHost, providersAvailable)`. |
+
+The plumbing: the selector verdict sits at the top of `isPhase1Expr`
+(before the module-extern consumer gate), the module-binding resolver gains
+the script-var capability arm, integration mints the adapters pre-Phase-3
+and builds the plan once for both planning sites (`planIrNativeBufferSurface`).
+
+### Decisions taken while implementing (deviations from the plan above)
+
+- **A producer is certified only where the plan consumes it**: as a
+  certified getter / `slice` receiver, or as a write into a certified var.
+  The first cut admitted a construction anywhere; probes then showed three
+  post-claim demotes (an argument to a legacy function, `typeof`, a
+  conditional arm). Those stay legacy now.
+- **Escape rule.** A certified var whose handle ends in a plain member read
+  (`buf.byteLength`, `buf.slice(1).byteLength`) does not count as a
+  module-extern consumer (`isNativeBufferMemberReceiver`); the selector
+  refuses every member outside the table by name
+  (`expr-native-buffer-member`).
+- **Shadowing.** The checker reports a script's `function ArrayBuffer(){}`
+  as the lib declarations alone, so the lib-only quantifier is not enough;
+  the plan also requires that the file declares no `ArrayBuffer`
+  (`isUnshadowedLibBinding`, factored out of `ambient-intrinsics.ts`).
+- **Operands.** Lengths and `maxByteLength` must be number-typed (a string,
+  `undefined` or object length stays legacy, where ToPrimitive runs). The
+  `slice` bounds travel as the IR dynamic carrier, which is the externref the
+  shared slice body ToNumbers — hence `!ctx.fast` in the availability check.
+- **`{maxByteLength: undefined}`** builds a fixed buffer (§25.1.3.1
+  GetArrayBufferMaxByteLengthOption). Legacy builds a resizable buffer with
+  max 0 there; that is unchanged on the legacy route.
+- **Script vars only.** `let` / `const` buffer bindings are not certified
+  (their legacy slot is not the externref dynamic home). Certification is a
+  least fixpoint, so `ab = ab.slice(1)` (a self-justifying write) stays legacy.
+- **Use-site rule** is #7252's, shared: `scriptVarUseFollowsDeclaration`
+  (renamed from `classInstanceUseFollowsDeclaration`), refusal arm
+  `script-var-use-site` (was `class-instance-use-site`).
+- The IR inliner splices the small adapters into their callers; the adapter
+  functions stay in the module.
+
+### Measurements
+
+All base-vs-head, base = this branch's merge of `origin/main` before the change.
+
+| Check | Result |
+| --- | --- |
+| Byte identity, playground corpus × gc / standalone / wasi | 39/39 rows identical (sha + imports) |
+| Byte identity, 344 buffer test262 files (all `built-ins/ArrayBuffer` + 1/30 of DataView / TypedArray* / SharedArrayBuffer + 41 probes) × gc / standalone / wasi / standalone-noIR / wasi-noIR | 1720/1720 identical (raw compiles; legacy extraction is byte-neutral) |
+| Wrapped ledger, stride 40, standalone | zero-legacy 32 → 35 (+3: the three target files); compileOk 1118 = 1118; invariants 0 = 0; `select:host-surface-unavailable` 20 → 8, `select:body-shape-rejected` 1921 → 1930 (9 DataView / transfer files now stop at their next blocker) |
+| test262 A/B, all 221 `built-ins/ArrayBuffer` + 300 random (seed 7274), gc + standalone, plus wasi / standalone compile + imports | 1 fail → pass (`options-maxbytelength-undefined.js`), 0 regressions, 0 import or compile diffs; 12 ArrayBuffer files newly claim `<module-init>`, all pass |
+| 41 adversarial probes (lengths NaN / -1 / 1.9 / 2^53 / "8" / undefined / absent; options non-object / max < len / "16" / -1 / NaN / `undefined`; no `new`; subclass; script shadow; detached via a legacy function; slice negative / out-of-range / fractional / undefined / chained; reads before the declaration; mixed construct-IR/member-legacy and the reverse; escapes as argument / array / view / typeof / ternary; parity `var n`, retyped `n`, `n >>> 28`) × gc / standalone / wasi | 1 standalone fail → pass (`{maxByteLength: undefined}` is now fixed-length on the IR route), every other cell identical; no post-claim demote |
+| `tests/issue-7274-ir-native-arraybuffer.test.ts` | 10/10 |
+
+Not measured: test262 for `--target wasi` (the runner has no wasi lane; compile, validation and imports were compared instead), and eval-dependent tests (the local QuickJS provider is not built; those fail identically on both sides).
+
+### Adversarial review (fresh context, 2026-11-06)
+
+Verdict on the first cut: quality goal not met. Fixed in this PR:
+
+1. Number operands: from-ast accepted only f64 / signed i32 while the selector admitted any number-typed operand (`var n` in the dynamic home). Now one `toNumber` over `relOperandToF64`, and an un-lowerable certified operand is an invariant, not a demote. Slice bounds are restricted to number- or `undefined`-typed operands, for the same parity.
+2. The capability row is now consulted once, in `planIrNativeBufferSurface`; plan presence is the only gate (the dead `true`, the resolver hook and the lowering re-check are gone).
+3. Adapter minting: `ensureNamedHelperFunc` in `func-space.ts`, used by both adapter families (the Map copy is folded).
+4. `isIrModuleNativeBufferValueKind` / `abiPinnedCapability` replace the inline capability comparisons.
+5. The escape rule is the plan's own `consumesHandle` (threaded as `consumesCapabilityHandle`), not a looser AST walk in the value-kinds module.
+6. The adapter names live once, in the shared contract, and type the `ADAPTERS` record.
+7. The plan builder is split into `collectBufferSites` / `scriptVarCandidates` / `certifyBufferVars` / `planBufferOperations`.
+8. `isUnshadowedUndefined` (ambient-intrinsics) replaces a new undefined predicate.
+10. The unreachable reservation throw is gone; `ensureIrNativeBufferAdapter` returns a handle.
+11. Explicit return type restored; the duplicated #5349 comment trimmed; `makeTaDynHelperFctx` → `makeHelperFctx` with a return-type parameter.
+
+Rebutted:
+
+9. One entry point instead of per-arm consultation: the extern-new / prop / call arms sit behind the host-extern capability and the extern-class registry, which is empty on these lanes, so a per-arm hook would add three copies of the same consult; a single plan lookup at the head of `isPhase1Expr` and `lowerExprUnchecked` keeps the selector and the builder symmetric by construction. The plan reads the checker directly, like its sibling `dom-capability.ts` (the oracle ratchet covers `src/codegen`). Availability reads the target profile's *environment* on purpose: the IR's provider-regime projection reports a JS-environment build as standalone, and that lane's output must stay byte-identical.
 
 ## Follow-ups
 

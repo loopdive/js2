@@ -254,6 +254,8 @@ import {
   stringElementReadLowerable,
 } from "./capability.js";
 import type { IrStandaloneDomOperation } from "./dom-capability.js";
+import type { IrNativeBufferOperation } from "./native-buffer-surface.js";
+import { lowerNativeBufferOperation } from "./native-buffer-lowering.js"; // (#7274)
 import { IR_CONSOLE_METHODS, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import type { IrLowerResolver, IrVecLowering } from "./lower.js";
 import {
@@ -720,6 +722,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * provider. Absence never falls back to a name/type guess.
    */
   standaloneDomOperation?(node: ts.Node): IrStandaloneDomOperation | undefined;
+  /** (#7274) The plan-certified native ArrayBuffer operation `node` is; absent where the surface does not claim. */
+  nativeBufferOperation?(node: ts.Node): IrNativeBufferOperation | undefined;
   /**
    * (#4461) The host-free `Map` carrier. Returns the lane's native `$Map`
    * module-binding storage type (`(ref null $Map)` as an IR `val`) when this
@@ -5086,6 +5090,8 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   // selector claim ⇔ lowering parity.
   const typeErasedOperand = unwrapTypeErasedExpression(expr);
   if (typeErasedOperand) return lowerExpr(typeErasedOperand, cx, hint);
+  const nativeBuffer = tryLowerNativeBufferOperation(expr, cx);
+  if (nativeBuffer !== undefined) return nativeBuffer;
   if (ts.isAwaitExpression(expr)) {
     return lowerAwaitExpression(expr, cx, hint);
   }
@@ -9252,6 +9258,19 @@ function lowerOpenCarrierDefineProperty(expr: ts.CallExpression, cx: LowerCtx): 
     return { name, value: boxed };
   });
   return emitOpenCarrierDefine(cx.builder, object, plan.key, fields);
+}
+
+/** (#7274) A plan-certified native ArrayBuffer operation, lowered to its adapter call. */
+function tryLowerNativeBufferOperation(expr: ts.Expression, cx: LowerCtx): IrValueId | undefined {
+  const op = cx.resolver?.nativeBufferOperation?.(expr);
+  if (op === undefined) return undefined;
+  return lowerNativeBufferOperation(op, {
+    builder: cx.builder,
+    funcName: cx.funcName,
+    lower: (operand, hint) => lowerExpr(operand, cx, hint),
+    toNumber: (value) => relOperandToF64(value, cx.builder.typeOf(value), cx),
+    toDynamic: (value, operand) => boxConcreteToDynamic(value, cx.builder.typeOf(value), operand, cx),
+  });
 }
 
 /**

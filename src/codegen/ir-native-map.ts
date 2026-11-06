@@ -36,7 +36,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
-import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { ensureNamedHelperFunc } from "./func-space.js";
 import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
 import { ensureMapHelpers } from "./map-runtime.js";
 import { addUnionImports } from "./registry/imports.js";
@@ -49,12 +49,12 @@ export const IR_NATIVE_MAP_GET_NUM_FN = "__ir_map_get_num";
 export const IR_NATIVE_MAP_SET_NUM_FN = "__ir_map_set_num";
 
 function addAdapter(ctx: CodegenContext, name: string, params: ValType[], results: ValType[], body: Instr[]): void {
-  const existing = ctx.funcMap.get(name);
-  if (existing !== undefined && definedFuncAt(ctx, existing) !== undefined) return;
-  const typeIdx = addFuncType(ctx, params, results);
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(name, funcIdx);
-  pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: [], body, exported: false });
+  ensureNamedHelperFunc(
+    ctx,
+    name,
+    () => addFuncType(ctx, params, results),
+    () => ({ locals: [], body }),
+  );
 }
 
 /**
