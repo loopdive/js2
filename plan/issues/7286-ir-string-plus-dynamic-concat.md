@@ -48,12 +48,13 @@ implementation today: 0 files, 0 units.
 ### What legacy emits, and what the IR already has
 
 Binary `+` with a dynamic operand is `emitAnyAddFromExternTemps`
-(§13.15.3): ToPrimitive with the default hint on each operand (`Symbol.toPrimitive`,
-then `valueOf` before `toString`; a Symbol operand throws TypeError; a Date
-takes the string hint through its own `@@toPrimitive`), then string concat if
-either side is a string, else numeric add. The IR already owns exactly that
+(§13.15.3): per its #7223 note, ToPrimitive with the default hint on each
+operand (`Symbol.toPrimitive`, then `valueOf` before `toString`; a Symbol
+operand throws TypeError), then string concat if either side is a string, else
+numeric add. (Whether a Date takes its string hint there is not verified here;
+it is in the acceptance list.) The IR already owns exactly that
 dispatch as `__ir_dyn_add` (#7223, `src/codegen/dyn-ops.ts`
-`ensureDynamicAdd`, behind `dyn.add`-style runtime calls `IR_DYN_ADD_FN`), on
+`ensureDynamicAdd`, the `IR_DYN_ADD_FN` runtime helper), on
 the externref carrier — no new op and no new import.
 
 ## Implementation plan (ready for when #7284 (1) lands)
