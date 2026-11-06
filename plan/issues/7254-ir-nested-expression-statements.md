@@ -41,7 +41,8 @@ first refusal. To see what the discard probe refused, `probeShape` was
 temporarily patched to expose the inner detail (scratch only, not committed).
 
 15 rows in 15 files, all in `<module-init>` (nested in `try` / block bodies of
-the script). 12 of the 15 files have no other unsupported unit.
+the script). 13 of the 15 files have no other unsupported unit (one of them,
+`intl402/.../toString-removed-tag.js`, does not compile on standalone).
 
 | Statement shape | Rows | Example | Inner (value) refusal | Value lowering in IR? |
 | --- | ---: | --- | --- | --- |
@@ -83,6 +84,32 @@ missing value lowering:
 - Without the variable nothing changes: `shapeNo` records only under
   SHAPE_DIAG, the probe still restores detail and typed reason, and no claim
   decision reads the new state.
+
+## Evidence (2026-11-06)
+
+Wrapped stride-40 A/B, standalone, SHAPE_DIAG on, base e73e190c6c vs head,
+per-file through `measureSource` (1340 stride paths, 1296 compiled, 44 skipped
+by `shouldSkip`):
+
+| | base | head |
+| --- | ---: | ---: |
+| compileOk / threw | 1117 / 0 | 1117 / 0 |
+| units / invariants | 14433 / 0 | 14433 / 0 |
+| units with a legacy body (legacy + both) | 13297 | 13297 |
+| files whose route, select reasons or compileOk differ | — | 0 |
+| bare `body-exprstmt-other` rows | 15 | 0 (all 15 qualified) |
+| total detail rows | 4774 | 4774 |
+
+Detail rows that moved (diagnostics only): the 15 catch-all rows gain their
+inner arm (table above); 31 more rows now read `expr-call-callee-nonident`
+instead of an outer label — `vardecl-init-expr` 28 → 3, `unattributed-arm`
+23 → 18, `closure-body` 2 → 1. Those are IIFEs in initializers
+(`var it = function* () { … }();`), `import(…)` calls and
+`f.bind(null)()`. So the non-identifier callee is a 37-row first refusal on
+the stride, the biggest single item this attribution uncovers.
+
+Files with no legacy-only unit (compiled OK): 25 → 25 (no claim decision changes by design; the 13
+sole-blocker files stay on legacy `<module-init>`).
 
 ## Acceptance
 
