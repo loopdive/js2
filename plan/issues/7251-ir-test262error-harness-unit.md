@@ -212,7 +212,12 @@ timing/commit fields.
 **Typed corpus bytes** (playground examples, `examples/`,
 `benchmarks/suites/`, interpolation-free program literals from
 `tests/equivalence/`; gc / standalone / wasi; 6861 compiles, 4854
-successful): byte-identical.
+successful): byte-identical. Re-run after the review fixes in two shards: 9
+compiles (3 snippets × 3 lanes) differ from the unsharded base run; each of
+them compiled alone in a fresh process gives the same bytes on base and head,
+so that is cross-compile state in a long single process (pre-existing), not
+this change. The wrapped ledger after the review fixes equals the first head
+run key for key.
 
 **Standalone test262 A/B** (`scripts/run-test262-paths.mts --standalone`,
 296 files: the 22 bucket-B files + every 4th compiling file of the sample):
@@ -242,3 +247,17 @@ expectations in `issue-7106-ir-dyn-instanceof`, `-module-init-chunks`,
   shared realm (runtime-eval callable carrier, session A). Those files keep
   ~8 other legacy harness units anyway.
 - Buckets C–E (9/1296), see the chain table.
+
+## Adversarial review (fresh-context agent, 2026-11-06)
+
+Verdict on the first cut: FAIL on two should-fix findings, no blocker.
+
+| finding | resolution |
+| --- | --- |
+| `catch` condition `isReceiver \|\| isStoredValue \|\| isSelfGuardedValue` is always true (a plan only exists for those three uses) | fixed: unconditional opaque fallback |
+| plan said "two-token change, no new branch" and omitted the planner change / `union` refusal | fixed: chain step 6, second change and quality criterion restated |
+| `\|\|`/`&&` in the binary-op table also projected the RIGHT operand, a value position like a ternary branch | fixed: a left-operand arm beside the conditional-test arm |
+| item 1 (shared projection keeps selector and resolver equal; parity guard stays the backstop) | confirmed acceptable |
+| item 2 (no `objectReceiver` plan reads the signature) | confirmed acceptable |
+| nit: three test titles claimed an ABI the case does not assert | fixed: titled "value only" |
+| nit: lane-runner scaffolding repeated across ≥10 equivalence tests | rebutted for this PR (pre-existing pattern); a shared lane runner in `tests/equivalence/helpers.ts` is a separate cleanup |
