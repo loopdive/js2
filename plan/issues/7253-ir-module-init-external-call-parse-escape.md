@@ -94,16 +94,20 @@ units in those files already take the IR body (7 `both` + 1 `ir`).
 - `src/ir/ambient-global-function-call.ts` — the shape both sides share:
   callee name, arity, and the one primitive family each operand position
   accepts (`string` text; `number` radix / `isNaN` operand).
-- Selector (`admittedAmbientGlobalFunctionCall`, consulted in
-  `buildLocalCallGraph`'s identifier arm): an unshadowed ambient binding, the
-  new `native-global-function-call` capability (wasmgc, non-fast, standalone
-  / WASI only — no gc/JS-host change), and every operand checker-classified
-  as its family. Admitted calls are a lowering, not a call edge.
-- from-ast (`tryLowerAmbientGlobalFunctionCall`): lowers each operand to its
-  family (anything else withdraws the unit — no ToString / ToNumber here),
-  then the provider the resolver names (`ambientGlobalFunctionTarget`:
-  `ambientBuiltinFuncMap` for the parsers, `annexBEscapeHelperName` — legacy's
-  own table — for escape / unescape). A missing radix is `f64.const nan`;
+- One admission both sides read (`ambientGlobalFunctionCall`): the shape and
+  every operand checker-classified (`classifyDeclaredPrimitiveExpression`) as
+  its family. On top of it both sides require the checker-resolved ambient
+  binding and the new `native-global-function-call` capability (wasmgc,
+  non-fast, standalone / WASI profile).
+- Selector (`admitAmbientGlobalFunctionCall`, consulted in
+  `buildLocalCallGraph`'s identifier arm): admitted calls are a lowering, not
+  a call edge.
+- from-ast (`tryLowerAmbientGlobalFunctionCall`): returns null where the
+  selector would not admit (so the older call arms keep their calls), else
+  lowers each operand to its family, then the provider the resolver names
+  (`ambientGlobalFunctionTarget`: `ambientBuiltinFuncMap` for the parsers,
+  `NATIVE_STRING_TRANSFORM_HELPERS` — legacy's own table — for escape /
+  unescape). A missing radix is `f64.const nan`;
   the escape result recovers the native string through
   `dyn.string_carrier`; `isNaN` is `f64.ne n n` (boolean-branded).
 - `Boolean(x)` is out of scope (a ToBoolean of arbitrary values, not a fixed
@@ -118,3 +122,8 @@ units in those files already take the IR body (7 `both` + 1 `ir`).
 - Standalone test262 A/B on `built-ins/{parseInt,parseFloat}`,
   `annexB/built-ins/{escape,unescape}`, `built-ins/isNaN`: no pass→fail.
 - `tests/equivalence/issue-7253-module-init-external-calls.test.ts`.
+- Code quality: the shape/admission lives once in
+  `src/ir/ambient-global-function-call.ts` and both the selector and from-ast
+  read it (no second predicate); the capability arm sits with its siblings in
+  `legality.ts`; adversarial review with fresh context finds no unrebutted
+  must-fix.
