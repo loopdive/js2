@@ -237,7 +237,7 @@ import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-s
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
 import { irJsInstanceMethodMaySkip } from "./classes/ir-class-member-projection.js"; // (#7233)
-import { irClassExtendsLibInterfaceAsRoot } from "./classes/ir-lib-interface-root-heritage.js"; // (#7241)
+import { irClassHeritageIsRootStruct } from "./classes/ir-root-struct-heritage.js"; // (#7241 / #7244)
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import {
   planIrImportedCalls,
@@ -1798,10 +1798,10 @@ function buildIrClassShapes(
     // (`src/ir/select.ts`) so a claimed subclass member always finds a shape here.
     let parentShape: import("../ir/nodes.js").IrClassShape | undefined;
     const parentClassId = resolveIrParentClassId(ctx.checker, stmt, identityContext);
-    // (#7241) `extends <lib interface>` that legacy lays out as a root struct
-    // projects flat, like an `implements`-only class.
-    const libInterfaceRoot = parentClassId === undefined && irClassExtendsLibInterfaceAsRoot(ctx, stmt, className);
-    if (parentClassId !== null && !libInterfaceRoot) {
+    // (#7241 / #7244) `extends <lib interface | compiled function>` that legacy
+    // lays out as a root struct projects flat, like an `implements`-only class.
+    const rootStructHeritage = parentClassId === undefined && irClassHeritageIsRootStruct(ctx, stmt, className);
+    if (parentClassId !== null && !rootStructHeritage) {
       const parentPosition = parentClassId === undefined ? undefined : collectionPosition.get(parentClassId);
       const currentPosition = collectionPosition.get(classId)!;
       // Dependency ordering may move a later type-position dependency before
@@ -2172,7 +2172,7 @@ function buildIrClassShapes(
       ...(constructorInitTarget ? { constructorInitTarget } : {}),
       // #3000-E: present only for a single-level subclass of a local user class.
       ...(parentShape ? { parent: parentShape } : {}),
-      ...(libInterfaceRoot ? { libInterfaceRoot: true as const } : {}),
+      ...(rootStructHeritage ? { rootStructHeritage: true as const } : {}),
     };
     const provisional = provisionalEntries.get(classId);
     if (provisional) {
@@ -2789,7 +2789,13 @@ function collectIrImplicitParamProjectionCandidates(
     }
     if (ts.isElementAccessExpression(parent) && parent.expression === child) return true;
     if (ts.isConditionalExpression(parent) && parent.condition === child) return true;
-    return false;
+    // (#7251) A `||` / `&&` left operand is a ToBoolean test, like a conditional's.
+    return (
+      ts.isBinaryExpression(parent) &&
+      (parent.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) &&
+      parent.left === child
+    );
   };
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {

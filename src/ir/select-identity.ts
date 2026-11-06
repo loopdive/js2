@@ -1356,17 +1356,17 @@ export function planIrCompilationByIdentity(
           if (trackFallbacks) reasons.set(unit.unitId, "class-projection-unsupported");
           continue;
         }
-        // (#7241) A flat `extends <lib interface>` shape (legacy root struct)
-        // admits its own `super`-free instance methods; the constructor and
-        // accessors stay legacy.
-        const libInterfaceRootMethod =
+        // (#7241 / #7244) A flat root-struct heritage shape (`extends <lib
+        // interface>` or `extends <compiled function>`) admits its own
+        // `super`-free instance methods; the constructor and accessors stay legacy.
+        const rootStructHeritageMethod =
           !nestedClass &&
           ts.isMethodDeclaration(member) &&
-          (exactClassShape ?? options.projectedClassShapes?.get(className))?.libInterfaceRoot === true &&
+          (exactClassShape ?? options.projectedClassShapes?.get(className))?.rootStructHeritage === true &&
           !referencesSuper(member);
         const claimableUnderParent = isStaticMethod
           ? !referencesSuper(member)
-          : parentIsLocal || libInterfaceRootMethod;
+          : parentIsLocal || rootStructHeritageMethod;
         if (hasParent && !claimableUnderParent) {
           if (trackFallbacks) reasons.set(unit.unitId, "class-method");
           continue;
