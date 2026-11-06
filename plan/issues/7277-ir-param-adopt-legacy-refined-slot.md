@@ -144,3 +144,25 @@ the existing resolver; no new import, no selector change.
   (including `-0`), and `built-ins/Boolean/prop-desc.js` passes.
 - **Gates** (bare, also vs `origin/main`): green.
 - **Equivalence gate:** running; the result will go on the PR.
+
+## CI fix (2026-11-06, PR #7143 run 42306438300)
+
+**`quality`: import-cycles.** `fnctor-typed-instances.ts` value-imported
+`irVal` from `../ir/nodes.js`, which added one codegen→ir two-way edge
+(302 → 303). It now imports only the `IrType` type and writes the `f64`
+literal inline. The gate passes against the merge base.
+
+**`equivalence-gate`: 14 regressions** in
+`tests/equivalence/issue-7242-ir-new-compiled-function-constructor.test.ts`,
+gc and standalone. In `check(x, msg)` and `make(m)` every call site passes a
+string, so the new projection typed the parameter `string`. But
+`legacyCallerAbiIsProjected` (`planIrOverlay`) certified only `f64`/`dynamic`
+implicit projections as a stable non-fast ABI. A string-projected function
+with a legacy caller (`inner`) therefore lost its claim to the standalone/wasi
+caller-direction closure (`call-graph-closure`).
+
+A `string` projection is the non-null native string slot legacy registered
+(the same `ctx.nativeStrings` / `anyStrTypeIdx` carrier #3518 certified for
+annotated positions), so it now counts as non-fast stable as well. The
+#7242 file passes 30/30 again, and the typed corpus is still 264/264
+byte-identical.

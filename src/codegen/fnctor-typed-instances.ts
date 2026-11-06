@@ -40,7 +40,7 @@
 import ts from "typescript";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
-import { irVal, type IrType } from "../ir/nodes.js";
+import type { IrType } from "../ir/nodes.js";
 import { definedFuncAt } from "./func-space.js";
 import { isAnyStringSlot } from "./native-strings-shared.js";
 import { readEnv } from "../env.js";
@@ -186,7 +186,7 @@ export function legacyParamSlotProjection(
   parameter: ts.ParameterDeclaration,
 ): { readonly kind: "string" | "f64"; readonly type: IrType } | undefined {
   const slot = legacyParamSlot(ctx, parameter);
-  if (slot?.kind === "f64") return { kind: "f64", type: irVal({ kind: "f64" }) };
+  if (slot?.kind === "f64") return { kind: "f64", type: { kind: "val", val: { kind: "f64" } } };
   return slot?.kind === "ref" && isAnyStringSlot(ctx, slot) ? { kind: "string", type: { kind: "string" } } : undefined;
 }
 

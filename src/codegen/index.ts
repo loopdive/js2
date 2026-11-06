@@ -3229,7 +3229,7 @@ function planIrOverlay(
       if (projection.kind === "object") hasIndexedCarrier = true;
       if (projection.kind === "bool") hasBooleanProjection = true;
       else allProjectionsAreBoolean = false;
-      if (projection.kind === "f64" || projection.kind === "dynamic") {
+      if (projection.kind === "f64" || projection.kind === "dynamic" || projection.kind === "string") {
         hasNonFastScalarProjection = true;
       } else {
         allProjectionsAreNonFastStable = false;
