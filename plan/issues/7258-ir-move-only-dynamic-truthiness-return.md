@@ -1,7 +1,8 @@
 ---
 id: 7258
 title: "IR move-only scan: return a boolean-holding `var x;` carrier into a boolean result (#7250 rule c)"
-status: in-progress
+status: done
+completed: 2026-11-06
 sprint: current
 created: 2026-11-06
 updated: 2026-11-06
@@ -70,7 +71,10 @@ Wrapped ledger A/B: see "Results".
     `var x;` dynamic-undefined local, in a function with no `: T` and no JSDoc
     `@returns`. TypeScript's evolving type for `x` is then boolean, because one
     `any` write would make the result `any`. So the carrier holds a boolean or
-    its initial undefined.
+    its initial undefined, unless an assignment goes through an unsound type
+    assertion such as `/** @type {boolean} */ (o.p)`. In that case head
+    returns the correct ToBoolean where legacy's boolean slot does not
+    (review row `f7`).
   - `dynamicUsesAreMoveOnly` records the Stage 4 names in
     `dynamicUndefinedVars` and calls the helper once in its return arm.
   - (review fix, 2026-11-06) The bool admission is withdrawn from any body

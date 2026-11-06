@@ -89,5 +89,7 @@ describe("#7258 dynamic-carrier local returned into a boolean result", () => {
       ).toEqual([0, 1, 1]);
     expect([0, 1, 2].map((n) => exports.m5!(n))).toEqual([0, 1, 0]);
     expect([0, 1, 2].map((n) => exports.m6!(n))).toEqual([0, 0, 1]);
+    // `o["f"]()` throws on the legacy path too (#7261 notes); the body stays legacy.
+    expect(() => exports.m7!(1)).toThrow();
   });
 });
