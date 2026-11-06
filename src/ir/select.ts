@@ -203,6 +203,7 @@ import {
   provenBinaryOperandsAdmissible,
   isComparisonResultOperator,
   isEqualityOperator,
+  isGlobalUndefinedIdentifier,
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   isTypedBinaryOperator,
@@ -7831,9 +7832,11 @@ function isUnshadowedUndefinedIdentifier(expr: ts.Expression, scope: ReadonlySet
   const candidate = unwrapPhase1Parens(expr);
   return (
     ts.isIdentifier(candidate) &&
-    candidate.text === "undefined" &&
-    !scope.has("undefined") &&
-    currentModuleBindingResolver?.isDirectModuleBinding(candidate) !== true
+    isGlobalUndefinedIdentifier(
+      candidate,
+      scope,
+      (id) => currentModuleBindingResolver?.isDirectModuleBinding(id) === true,
+    )
   );
 }
 
@@ -9339,10 +9342,10 @@ function typeNodeIsStrictNumberOnly(typeNode: ts.TypeNode): boolean {
   return false;
 }
 
-function isLiteralStringReplaceCall(expr: ts.CallExpression): boolean {
-  if (!ts.isPropertyAccessExpression(expr.expression) || expr.expression.name.text !== "replace") return false;
-  if (expr.arguments.length !== 2) return false;
+/** A `literalArguments` plan's call: a proven-string receiver and only literal string arguments. */
+function hasLiteralStringMethodArguments(expr: ts.CallExpression): boolean {
   return (
+    ts.isPropertyAccessExpression(expr.expression) &&
     expressionIsProvenString(expr.expression.expression) &&
     expr.arguments.every((arg) => ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))
   );
@@ -12318,7 +12321,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           if (currentSelectionOptions?.supportsLiteralStringReplace !== true) {
             return capabilityNo("string-method-unsupported", "expr-string-replace-backend", expr);
           }
-          if (!isLiteralStringReplaceCall(expr)) {
+          if (!hasLiteralStringMethodArguments(expr)) {
             return capabilityNo("string-method-unsupported", "expr-string-replace-shape", expr);
           }
           if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;

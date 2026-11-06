@@ -47,6 +47,11 @@ export interface StringMethodPlan {
   readonly helper?: string;
   /** `charAt` / `charCodeAt`: a receiver with encoding evidence lowers to the typed string intrinsic. */
   readonly typedIntrinsic?: true;
+  /**
+   * `charCodeAt`: a resolver that keeps the #3931 char-read loop on a `const`
+   * substring receiver (`preferLegacyFlatSubstringCharCodeAt`) declines it.
+   */
+  readonly flatSubstringReceiverPrefersLegacy?: true;
   /** The helper for a receiver proven ASCII, where one exists. */
   readonly asciiHelper?: string;
   readonly parameters: readonly StringMethodParameter[];
@@ -101,6 +106,7 @@ const ROWS: Readonly<Record<string, StringMethodRow>> = Object.freeze({
   charCodeAt: {
     helpers: { wasmgc: NATIVE_CHARCODEAT_FN, linear: "__linear_ir_str_char_code_at" },
     typedIntrinsic: true,
+    flatSubstringReceiverPrefersLegacy: true,
     parameters: [position("zero")],
     result: "number",
   },
@@ -139,8 +145,18 @@ export function stringMethodPlan(backend: IrBackendKind, method: string, argCoun
   if (!row || (helper === undefined && !row.typedIntrinsic)) return null;
   const required = row.parameters.filter((parameter) => parameter.omitted === undefined).length;
   if (argCount < required || argCount > row.parameters.length) return null;
-  const { typedIntrinsic, asciiHelper, parameters, result, literalArguments, fold } = row;
-  return { helper, typedIntrinsic, asciiHelper, parameters, result, literalArguments, fold };
+  const { typedIntrinsic, flatSubstringReceiverPrefersLegacy, asciiHelper, parameters, result } = row;
+  const { literalArguments, fold } = row;
+  return {
+    helper,
+    typedIntrinsic,
+    flatSubstringReceiverPrefersLegacy,
+    asciiHelper,
+    parameters,
+    result,
+    literalArguments,
+    fold,
+  };
 }
 
 /** Whether `symbol` names a WasmGC string-method helper (the resolver materialises them on demand). */

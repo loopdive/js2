@@ -45,7 +45,7 @@ import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
 import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./select-expression-structure.js";
-import { IR_STRING_COMPARE_FN, NATIVE_CHARCODEAT_FN } from "./runtime-symbols.js";
+import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import {
   staticStringMethodArgument,
   type StringArgumentDefault,
@@ -72,6 +72,7 @@ import {
   isToNumericOperator,
   wrapperComparisonIsIdentity,
   isUndefinedCompareOperand,
+  isGlobalUndefinedIdentifier,
   nullComparisonFolds,
   undefinedCompareOperandAdmissible,
   nullishLeftAdmissible,
@@ -9990,16 +9991,6 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       }
       return result;
     }
-    if (
-      methodName === "replace" &&
-      (expr.arguments.length !== 2 ||
-        !expr.arguments.every((arg) => ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)))
-    ) {
-      demoteToLegacy(
-        "method-call-unsupported",
-        `ir/from-ast: String.replace requires two literal-string arguments (${cx.funcName})`,
-      );
-    }
     const r = lowerStringMethodCall(methodName, recv, expr.expression.expression, expr.arguments, cx);
     if (r !== null) return r;
     // Method not in slice 13c table — fall through to the recvType.kind !== "class"
@@ -10304,7 +10295,7 @@ function lowerStringMethodCall(
   const plan = cx.resolver?.stringMethodPlan?.(methodName, args.length, receiverEncoding) ?? null;
   if (plan === null) return null;
   if (
-    plan.helper === NATIVE_CHARCODEAT_FN &&
+    plan.flatSubstringReceiverPrefersLegacy &&
     cx.resolver?.preferLegacyFlatSubstringCharCodeAt?.(receiverExpr) === true
   ) {
     return null;
@@ -10375,9 +10366,8 @@ function lowerStringMethodArgument(
   receiverExpr: ts.Expression,
   cx: LowerCtx,
 ): LoweredStringMethodArgument {
-  const literal = staticStringMethodArgument(
-    arg,
-    (identifier) => !cx.scope.has("undefined") && cx.resolver?.isDirectModuleBinding?.(identifier) !== true,
+  const literal = staticStringMethodArgument(arg, (identifier) =>
+    isGlobalUndefinedIdentifier(identifier, cx.scope, (id) => cx.resolver?.isDirectModuleBinding?.(id) === true),
   );
   if (literal === "undefined") {
     return { value: omittedStringMethodArgument(parameter.omitted ?? "zero", recv, receiverExpr, cx) };
