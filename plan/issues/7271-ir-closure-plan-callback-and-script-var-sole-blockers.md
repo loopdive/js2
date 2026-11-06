@@ -14,7 +14,7 @@ area: ir
 goal: ir-full-coverage
 parent: 7106
 related: [7195, 7198, 7130, 7268]
-depends_on: [7195, 7198, 7268]
+depends_on: [7195, 7198]
 ---
 
 # IR closure source plan: the 8 sole-blocker files from #7268
