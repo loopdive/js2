@@ -128,3 +128,23 @@ export function run() { var n = 0; try { subject.f(5, 0); } catch(e) { if (e ===
     expect((instance.exports.run as () => number)()).toBe(1);
   });
 }
+
+it("judges a numeric compound result as a number, not its dynamic slot", async () => {
+  const result = await compile(
+    `/** @returns {number} */ function subject() { return 0; }
+subject.f = function(m, k) { if(k === 9) return; var y = (m -= 2); if(y === "3") return; throw m; };
+export function run() { var n = 0; try { subject.f(5, 0); } catch(e) { if(e === 3) n += 1; } return n; }`,
+    {
+      fileName: "numeric-compound-proof.js",
+      allowJs: true,
+      target: "standalone",
+      trackIrOutcomes: true,
+    },
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  expect(result.irPostClaimErrors).toEqual([]);
+  const init = result.irOutcomes?.find((entry) => entry.displayName === "<module-init>");
+  // Mixed number/string equality still has no lowering; it must refuse before claim.
+  expect(init?.stage).toBe("select");
+  expect(init?.irBodyEmitted).toBe(false);
+});
