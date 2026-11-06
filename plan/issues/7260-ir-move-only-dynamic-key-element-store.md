@@ -14,7 +14,7 @@ area: ir
 goal: ir-full-coverage
 parent: 7250
 depends_on: [7258]
-related: [2949, 3795, 3797, 7106]
+related: [2949, 3795, 3797, 7106, 7261]
 assignee: "ttraenkler/c-r7"
 loc-budget-allow:
   # 2026-11-06 (#7258, restated so the grant does not strand once #7104 lands):
@@ -30,6 +30,11 @@ func-budget-allow:
   # 2026-11-06 (#7260): +1 line in each option-list literal (same reason).
   - src/ir/integration.ts::compileIrPathFunctions
   - src/codegen/index.ts::planIrOverlay
+  # 2026-11-06: #7258's #7261-guard grant, restated, plus +1 each here.
+  # The store arm sets the same closure flag, and the final check names its
+  # refusal. Removed with #7261.
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::scanExprInner
 ---
 
 # IR move-only scan: statement-position element store on a dynamic local receiver
@@ -90,6 +95,11 @@ through. Neither a new instruction nor a new import is needed.
   an identifier, in a top-level function declaration, when the lowering is
   told its strictness. The arm's existing key check (literal or dynamic
   name) and value check (dynamic or boxable) apply unchanged.
+- (#7261 guard, after the #7104 review) The new local-receiver store sets
+  the scan's `needsNoDynamicMethodCall` flag, as #7258's bool return does. A
+  body that also makes a dynamic method call stays refused, with detail
+  `move-only[dynamic-method-call]`, because such a call traps in an IR body
+  ([#7261](7261-ir-dynamic-method-call-on-returned-object-traps.md)).
 - Out of scope, still refused: dot stores on a dynamic local, assignment as a
   value, compound stores, optional stores.
 

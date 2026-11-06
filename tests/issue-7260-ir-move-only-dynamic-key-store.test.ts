@@ -6,7 +6,8 @@
 // PutValue failure rule: a sloppy store to a frozen object is ignored, a
 // strict one throws TypeError. Each fixture runs through the test262 runner
 // (standalone) and is compiled the same way to read the IR outcomes. Dot
-// stores, assignment-as-value and compound stores stay refused.
+// stores, assignment-as-value, compound stores and a store in a body with a
+// dynamic method call (#7261) stay refused.
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,11 +66,14 @@ assert.sameValue(seen[0], 7);
 function dotStore(obj, v) { obj.k = v; }
 function storeValue(obj, name, v) { return obj[name] = v; }
 function compoundStore(obj, name, v) { obj[name] += v; }
+function storeThenMethod(o, k, v) { o[k] = v; var r = o.f(); return r; }
+function mk(n) { return { f: function () { return n; } }; }
 var key = Symbol("k");
 var o = { k: 0 };
 dotStore(o, key); dotStore(o, "x"); dotStore(o, 1);
 storeValue(o, "a", 1); storeValue(o, key, "s"); storeValue(o, 2, true);
 compoundStore(o, "a", 1); compoundStore(o, key, "t"); compoundStore(o, 2, 3);
+storeThenMethod(mk(1), "a", 1); storeThenMethod(mk(2), key, "s"); storeThenMethod(mk(3), 2, true);
 `,
 };
 
@@ -106,7 +110,7 @@ describe("#7260 dynamic-key element store on a dynamic local receiver", () => {
 
   it("keeps dot stores, assignment-as-value and compound stores refused", async () => {
     const outcomes = await irOutcomes(fixturePath("refused"));
-    for (const name of ["dotStore", "storeValue", "compoundStore"]) {
+    for (const name of ["dotStore", "storeValue", "compoundStore", "storeThenMethod"]) {
       expect(outcomes.find((o) => o.displayName === name)?.irBodyEmitted, name).not.toBe(true);
     }
   });

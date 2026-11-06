@@ -3262,6 +3262,10 @@ function dynamicUsesAreMoveOnly(
   const body = fn.body;
   if (!body) return false;
   const dynamicUndefinedVars = new Set<string>(); // the `var x;` names (#7106 Stage 4)
+  // (#7261) A dynamic method call (`dyn.f()`) traps in IR bodies; a body
+  // with one keeps the #7258 bool return and the #7260 local store off.
+  let callsDynamicMethod = false;
+  let needsNoDynamicMethodCall = false;
 
   const unwrap = (e: ts.Expression): ts.Expression => {
     while (ts.isParenthesizedExpression(e)) e = e.expression;
@@ -3464,6 +3468,10 @@ function dynamicUsesAreMoveOnly(
       return true;
     }
     if (ts.isCallExpression(e)) {
+      const callee = unwrap(e.expression);
+      callsDynamicMethod ||=
+        (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
+        isDynShaped(callee.expression);
       // (#7128 S1) A U1 define: literal key and descriptor, result dropped.
       if (isOpenCarrierDefine(e)) return !expectDyn;
       // (#7106 S1b) `JSON.stringify(<dynamic>)` → `dyn.json_stringify`: a
@@ -3678,6 +3686,9 @@ function dynamicUsesAreMoveOnly(
           (ts.isElementAccessExpression(e.left) && dynamicLocalElementStoreIsLowerable(fn, e.left))) &&
         isDynShaped(e.left.expression)
       ) {
+        needsNoDynamicMethodCall ||= !(
+          subjectHasAmbientThis() && stableDynamicStoreReceiverHasAdmittedRoot(e.left.expression)
+        );
         if (!currentDynamicRuntimeBuildable || !scanExpr(e.left.expression, true)) return false;
         if (ts.isElementAccessExpression(e.left)) {
           const key = unwrap(e.left.argumentExpression);
@@ -3965,6 +3976,7 @@ function dynamicUsesAreMoveOnly(
         isDynShaped(returned) &&
         concreteResultRecoversDynamic(fn, returned, dynamicUndefinedVars)
       ) {
+        needsNoDynamicMethodCall ||= currentFnReturnKind === "bool";
         return scanExpr(returned, true);
       }
       if (!returnIsDynamic) return scanExpr(s.expression, false);
@@ -4109,7 +4121,7 @@ function dynamicUsesAreMoveOnly(
   for (const s of body.statements) {
     if (!scanStmt(s)) return false;
   }
-  return true;
+  return !(needsNoDynamicMethodCall && callsDynamicMethod) || shapeNo("move-only[dynamic-method-call]", body);
 }
 
 // ---------------------------------------------------------------------------

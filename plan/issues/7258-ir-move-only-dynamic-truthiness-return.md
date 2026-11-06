@@ -13,7 +13,7 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 parent: 7250
-related: [2949, 7106, 7190]
+related: [2949, 7106, 7190, 7261]
 assignee: "ttraenkler/c-r7"
 loc-budget-allow:
   # 2026-11-06: +~33 select.ts (one helper `concreteResultRecoversDynamic`
@@ -22,6 +22,13 @@ loc-budget-allow:
   # string/number siblings). Neither can move out without moving the state.
   - src/ir/select.ts
   - src/ir/from-ast.ts
+func-budget-allow:
+  # 2026-11-06 (review fix, #7261 guard): +4 in dynamicUsesAreMoveOnly (two
+  # scan flags and the final check) and +2 in scanExprInner (the flag is set
+  # at the one call arm every call passes). The flags are closure state of
+  # the scan, so they cannot move to a helper. Removed with #7261.
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::scanExprInner
 ---
 
 # IR move-only scan: return a boolean-holding `var x;` carrier into a boolean result
@@ -66,6 +73,13 @@ Wrapped ledger A/B: see "Results".
     its initial undefined.
   - `dynamicUsesAreMoveOnly` records the Stage 4 names in
     `dynamicUndefinedVars` and calls the helper once in its return arm.
+  - (review fix, 2026-11-06) The bool admission is withdrawn from any body
+    that makes a dynamic method call (`callsDynamicMethod`, set in
+    `scanExprInner`'s call arm on an access callee over a dynamic receiver),
+    whatever the statement order. Reason:
+    [#7261](7261-ir-dynamic-method-call-on-returned-object-traps.md). `o.f()`
+    on an object-literal method traps in an IR body on main, and (c) would
+    newly route such bodies there.
 - `src/ir/from-ast.ts` `coerceReturnValue`: a dynamic value into a boolean
   result lowers via the existing `dyn.truthy` (`emitDynTruthy`). It sits next
   to the string (`dyn.string_carrier`) and number (`js.number.unbox`) arms. No
@@ -88,7 +102,24 @@ host import.
 - Standalone test262 A/B on every file whose route changed: no pass→fail, no
   new trap.
 
-## Results (2026-11-06, base `92305e40` vs head `f6c1d280`)
+## Review fix (2026-11-06, PR #7104 comment 6675312601)
+
+The reviewer's repro, `function f4(o){ var ws; ws = !!o.f(); return ws; }`
+called on `{ f: function(){ return k; } }`, trapped on every input on head
+across gc, standalone and wasi; base returns `0, 1, 1, 1`. The root cause
+predates this PR (#7261): base already traps on the `if (ws) return true`
+variant. With the withdrawal, head equals base on all three targets, for the
+repro and for 10 variants:
+- receiver from a parameter, a local literal or a call result;
+- chained `o.a.f()` and element `o["f"]()`;
+- calls with arguments;
+- a dropped call;
+- an early return before the call;
+- a body with no method call, which stays admitted.
+
+The cases are in the vitest test.
+
+## Results (2026-11-06, base `92305e40` vs head `f6c1d280`, before the review fix)
 
 - **Wrapped ledger** (`--wrapped --stride 40 --target standalone --jobs 2`,
   `JS2WASM_IR_SHAPE_DIAG=1`): head equals base apart from timing and the
