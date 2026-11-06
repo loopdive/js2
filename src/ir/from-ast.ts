@@ -5352,16 +5352,11 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     if (dynamicDelete !== null) return dynamicDelete;
     demoteToLegacy("body-shape-rejected", `ir/from-ast: delete has no IR lowering in ${cx.funcName}`);
   }
-  // Slice 11 (#1169n) — `void <expr>`. Lower the operand for side
-  // effects, then push the IR's f64 NaN sentinel as the result. The
-  // hint type drives whether downstream code treats this as f64 or
-  // coerces to externref. For now, emit f64 NaN (the closest scalar
-  // approximation of `undefined` in numeric context). Functions that
-  // use `void` outside f64 context will need a future widening to
-  // emit a proper undefined-typed value; for slice 11, throw if the
-  // operand context demands a non-f64 result.
+  // Preserve operand effects; dynamic consumers need canonical undefined,
+  // while numeric consumers use its ToNumber result, NaN.
   if (ts.isVoidExpression(expr)) {
     lowerDiscardedExpression(expr.expression, cx);
+    if (hint.kind === "dynamic") return cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined);
     return cx.builder.emitConst({ kind: "f64", value: NaN }, irVal({ kind: "f64" }));
   }
   demoteToLegacy(
