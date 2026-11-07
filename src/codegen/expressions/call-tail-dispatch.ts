@@ -765,6 +765,20 @@ export function compileTailDispatch(
       //   - WasmGC closure via __call_fn_0
       //   - __call_@@iterator export for user-defined iterable classes
       //   - __vec_len/__vec_get fallback for vec structs (arrays)
+      // An open literal stores its method under the evaluated Symbol key.
+      // Calling that member returns its raw value, not GetIterator's record.
+      // Reuse the ordinary callable-element owner for real Get, receiver and
+      // arguments; built-in/closed receivers retain their existing dispatch.
+      if (
+        ctx.standalone &&
+        (methodName === "@@iterator" || methodName === "@@asyncIterator") &&
+        isAccessorReceiver(ctx, skipTransparentExpressions(elemAccess.expression))
+      ) {
+        const snapshot = snapshotSpeculative(ctx, fctx);
+        const ownMethod = compileCallableElementAccessCall(ctx, fctx, expr, elemAccess);
+        if (ownMethod !== undefined) return ownMethod;
+        rollbackSpeculative(ctx, fctx, snapshot);
+      }
       if (
         (methodName === "@@iterator" || methodName === "@@asyncIterator") &&
         !receiverHasCompiledSymbolMethod(ctx, elemAccess, receiverType, methodName)

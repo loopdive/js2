@@ -111,6 +111,7 @@ import {
 import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-callable-planning.js";
 import { objectLiteralForcesHostPath, objectLiteralSpreadTakesHostPath } from "../literals.js";
+import { functionReturnsCapturedConstHostLiteral } from "../declarations/host-carrier-object-literal.js";
 import { genericCallbackResultDeclaration } from "../generic-callback-result.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import {
@@ -1536,7 +1537,10 @@ function compileNestedFunctionDeclarationInScope(
     if (!isVoidType(retType)) {
       ensureStructForType(ctx, retType);
       const inferredReturn = widenMixedUndefinedReturn(retType, resolveWasmType(ctx, retType));
-      returnType = functionReturnsPreInitVarValue(ctx, stmt) ? { kind: "externref" } : inferredReturn;
+      returnType =
+        functionReturnsPreInitVarValue(ctx, stmt) || functionReturnsCapturedConstHostLiteral(ctx, stmt)
+          ? { kind: "externref" }
+          : inferredReturn;
     }
   }
   if (asyncDecision !== null) {
@@ -3340,7 +3344,9 @@ export function hoistFunctionDeclarations(
         if (isAsync) rt = unwrapPromiseType(rt, ctx.checker);
         if (!isVoidType(rt)) {
           ensureStructForType(ctx, rt);
-          resultType = widenMixedUndefinedReturn(rt, resolveWasmType(ctx, rt));
+          resultType = functionReturnsCapturedConstHostLiteral(ctx, stmt)
+            ? { kind: "externref" }
+            : widenMixedUndefinedReturn(rt, resolveWasmType(ctx, rt));
         }
       }
       const funcTypeIdx = addFuncType(ctx, paramTypes, resultType ? [resultType] : [], `${funcName}_type`);

@@ -91,6 +91,7 @@ import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.
 import { prepareIntlAcceleratorBoundary } from "./helpers/host-intl-locale.js"; // (#6986)
 import {
   objectLiteralTakesHostCarrier,
+  isCapturedConstHostLiteral,
   unwrapReturnCarrierExpression,
 } from "./declarations/host-carrier-object-literal.js"; // (#6650) return boundary: BOTH host-path reasons
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
@@ -1146,7 +1147,9 @@ function functionReturnsHostObjectLiteralCarrier(ctx: CodegenContext, stmt: ts.F
     if (ts.isObjectLiteralExpression(current)) return objectLiteralTakesHostCarrier(ctx, current);
     if (ts.isIdentifier(current)) {
       const declaration = ctx.oracle.valueDeclarationOf(current);
-      return declaration !== undefined && ts.isVariableDeclaration(declaration) && hostDeclarations.has(declaration);
+      if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return false;
+      if (hostDeclarations.has(declaration)) return true;
+      return isCapturedConstHostLiteral(ctx, current, stmt);
     }
     if (ts.isConditionalExpression(current)) {
       return isHostCarrier(current.whenTrue) || isHostCarrier(current.whenFalse);

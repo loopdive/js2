@@ -2949,6 +2949,106 @@ function nameReadHasModuleOrigin(ctx: CodegenContext, expression: ts.Expression,
   return false;
 }
 
+/** Fresh class name before any effectful static initialization, never a method receiver. */
+function pristineClassInitializerName(ctx: CodegenContext, fctx: FunctionContext, expression: ts.Expression): boolean {
+  const value = skipTransparentExpressions(expression);
+  if (value.kind !== ts.SyntaxKind.ThisKeyword || !fctx.isStaticContext || !fctx.enclosingClassName) return false;
+  // Admit only a direct property chain rooted in this initializer's `this`.
+  // Calls, assignments, branches and nested function bodies cannot borrow it.
+  let chain: ts.Node = value;
+  while (chain.parent && ts.isPropertyAccessExpression(chain.parent) && chain.parent.expression === chain) {
+    chain = chain.parent;
+  }
+  const field = chain.parent;
+  if (!field || !ts.isPropertyDeclaration(field) || field.initializer !== chain) return false;
+  if (!field.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)) return false;
+  const owner = field.parent;
+  if (!ts.isClassDeclaration(owner) || !owner.name || owner.heritageClauses?.length) return false;
+  if (ctx.classDeclarationMap.get(fctx.enclosingClassName) !== owner) return false;
+  if (ts.getDecorators(owner)?.length) return false;
+  let beforeField = true;
+  for (const member of owner.members) {
+    if (member === field) beforeField = false;
+    if (ts.canHaveDecorators(member) && ts.getDecorators(member)?.length) return false;
+    // All computed names are evaluated before fields; an unknown key can own
+    // `name`, and its evaluation can expose or mutate the fresh constructor.
+    if (member.name && ts.isComputedPropertyName(member.name)) return false;
+    const isStatic =
+      ts.canHaveModifiers(member) &&
+      ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
+    if (!isStatic && !ts.isClassStaticBlockDeclaration(member)) continue;
+    if (
+      member.name &&
+      (ts.isIdentifier(member.name) || ts.isStringLiteralLike(member.name)) &&
+      member.name.text === "name"
+    )
+      return false;
+    if (!beforeField) continue;
+    if (ts.isClassStaticBlockDeclaration(member)) return false;
+    if (!ts.isPropertyDeclaration(member) || !member.initializer) continue;
+    // A literal-only completed prefix cannot escape/rebind/mutate the class.
+    const init = skipTransparentExpressions(member.initializer);
+    if (
+      !ts.isStringLiteralLike(init) &&
+      !ts.isNumericLiteral(init) &&
+      init.kind !== ts.SyntaxKind.TrueKeyword &&
+      init.kind !== ts.SyntaxKind.FalseKeyword &&
+      init.kind !== ts.SyntaxKind.NullKeyword
+    )
+      return false;
+  }
+  return true;
+}
+
+/** A callable type/alias does not identify the current function object's own name. */
+function nameReadNeedsCurrentValue(ctx: CodegenContext, expression: ts.Expression): boolean {
+  const value = skipTransparentExpressions(expression);
+  if (!ts.isIdentifier(value)) return true;
+  const declaration = ctx.oracle.valueDeclarationOf(value);
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return true;
+  // Only a direct immutable anonymous definition retains its NamedEvaluation
+  // fold. Parameters, aliases, casts of methods and call results read the value.
+  return (
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+    !isAnonymousFunctionDefinition(declaration.initializer) ||
+    classExpressionDefinesOwnName(declaration.initializer)
+  );
+}
+
+/** Type uncertainty may withdraw an instance projection; it never brands a value. */
+function nameReceiverMayBeConstructor(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  objType: ts.Type,
+): boolean {
+  const fact = ctx.oracle.typeFactOf(expr.expression);
+  const possible =
+    (objType.getConstructSignatures?.().length ?? 0) > 0 ||
+    fact.kind === "function" ||
+    fact.kind === "class" ||
+    fact.kind === "object" ||
+    fact.kind === "builtin" ||
+    fact.kind === "union" ||
+    fact.kind === "any" ||
+    fact.kind === "unknown" ||
+    fact.kind === "unresolvable";
+  if (!possible) return false;
+  // Ask the SAME representation owner as the later physical-field projector.
+  // This lookup only preserves existing own-static dispatch, never folds or
+  // certifies the current receiver's runtime brand/name/identity.
+  const projectedClass = resolveStructNameForExpr(ctx, fctx, expr.expression, expr.name, resolveWasmType(ctx, objType));
+  if (
+    projectedClass !== undefined &&
+    (ctx.staticProps.has(`${projectedClass}_name`) ||
+      ctx.staticMethodSet.has(`${projectedClass}_name`) ||
+      ctx.staticAccessorSet.has(`${projectedClass}_name`))
+  )
+    return false;
+  return true;
+}
+
 export function tryLengthAndNameReads(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3118,6 +3218,22 @@ export function tryLengthAndNameReads(
       // Library signature rooted at a reachable builtin → fall through to
       // externref / __extern_get path below.
     }
+  }
+
+  // A type spelling cannot overrule a fresh method's evaluated-key own name,
+  // including a callable cast/alias that has erased its computed declaration.
+  if (
+    propName === "name" &&
+    nameReadNeedsCurrentValue(ctx, expr.expression) &&
+    !pristineClassInitializerName(ctx, fctx, expr.expression)
+  ) {
+    if (nameReceiverMayBeConstructor(ctx, fctx, expr, objType)) {
+      // A possible constructor cannot borrow an instance layout's name slot.
+      // Keep own-static owners on their existing routes; read the ORIGINAL
+      // actual receiver once through canonical Get, never through a type name.
+      return emitRuntimeDescriptorGet(ctx, fctx, expr.expression, propName, expr, true);
+    }
+    return PA_FALLTHROUGH;
   }
 
   // Handle Function.name — return the function name as a string
@@ -3628,6 +3744,72 @@ export function tryLengthAndNameReads(
   return PA_FALLTHROUGH;
 }
 
+/** Raw evaluated Symbol property for computed keys only; ordinary WKS reads retain their i32 ABI. */
+export function tryCompileLiveSymbolComputedKey(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expression: ts.Expression,
+): ValType | null | undefined {
+  const key = skipTransparentExpressions(expression);
+  if (
+    !(ctx.standalone || ctx.wasi) ||
+    !ts.isPropertyAccessExpression(key) ||
+    !ts.isIdentifier(key.expression) ||
+    key.expression.text !== "Symbol" ||
+    fctx.localMap.has("Symbol") ||
+    (fctx.boxedCaptures?.has("Symbol") ?? false) ||
+    ctx.moduleGlobals.has("Symbol") ||
+    !resolvesToAmbientGlobal(ctx, key.expression)
+  ) {
+    return undefined;
+  }
+  const propName = key.name.text;
+  const symId = getWellKnownSymbolId(propName);
+  if (symId === undefined) return undefined;
+  // The ambient declaration does not freeze the global binding. Read its
+  // current value; only identity with the canonical intrinsic licenses
+  // the immutable WKS shortcut. Replacement objects/getters use real Get.
+  const ext: ValType = { kind: "externref" };
+  ensureLateImport(ctx, "__extern_get", [ext, ext], [ext]);
+  ensureLateImport(ctx, "__extern_strict_eq", [ext, ext], [{ kind: "i32" }]);
+  ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [ext]);
+  addStringConstantGlobal(ctx, "Symbol");
+  addStringConstantGlobal(ctx, propName);
+  flushLateImportShifts(ctx, fctx);
+  if (!emitNativeGlobalThisObject(ctx, fctx)) throw new Error("native Symbol read lost its global object");
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, "Symbol"));
+  const getIdx = ctx.funcMap.get("__extern_get");
+  if (getIdx === undefined) throw new Error("native Symbol read lost its Get provider");
+  fctx.body.push({ op: "call", funcIdx: getIdx });
+  const currentSymbol = allocLocal(fctx, `__symbol_binding_${fctx.locals.length}`, ext);
+  fctx.body.push({ op: "local.set", index: currentSymbol }, { op: "local.get", index: currentSymbol });
+  const intrinsicType = emitBuiltinConstructorIdentity(ctx, fctx, "Symbol");
+  if (intrinsicType.kind !== "externref") coerceType(ctx, fctx, intrinsicType, ext);
+  const equalIdx = ctx.funcMap.get("__extern_strict_eq");
+  const boxIdx = ctx.funcMap.get("__box_symbol");
+  const liveGetIdx = ctx.funcMap.get("__extern_get");
+  if (equalIdx === undefined || boxIdx === undefined || liveGetIdx === undefined) {
+    throw new Error("native Symbol read lost its prepared identity providers");
+  }
+  fctx.body.push(
+    { op: "call", funcIdx: equalIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: ext },
+      then: [
+        { op: "i32.const", value: symId },
+        { op: "call", funcIdx: boxIdx },
+      ],
+      else: [
+        { op: "local.get", index: currentSymbol },
+        ...stringConstantExternrefInstrs(ctx, propName),
+        { op: "call", funcIdx: liveGetIdx },
+      ],
+    },
+  );
+  return ext;
+}
+
 export function tryNamespaceConstantAndSymbolReads(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3793,7 +3975,14 @@ export function tryNamespaceConstantAndSymbolReads(
   }
 
   // Handle Symbol.iterator, Symbol.hasInstance, etc. → constant i32
-  if (ts.isIdentifier(expr.expression) && expr.expression.text === "Symbol") {
+  if (
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Symbol" &&
+    !fctx.localMap.has("Symbol") &&
+    !(fctx.boxedCaptures?.has("Symbol") ?? false) &&
+    !ctx.moduleGlobals.has("Symbol") &&
+    resolvesToAmbientGlobal(ctx, expr.expression)
+  ) {
     const symId = getWellKnownSymbolId(propName);
     if (symId !== undefined) {
       fctx.body.push({ op: "i32.const", value: symId });

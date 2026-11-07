@@ -31,6 +31,7 @@ import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
+import { tryCompileLiveSymbolComputedKey } from "./property-access-dispatch.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
 import { holeFilledArrayNewInstrs } from "./array/array-length-holes.js"; // (#6771 S3)
 import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
@@ -38,7 +39,13 @@ import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.j
 import { hasIncompatibleElementCarrier, hasNonStructElementForStructCarrier } from "./struct-carrier-inhabits.js"; // (#5327 / #6613) array-literal element-carrier compatibility proofs
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4491 T11)
-import { ensureAnyToStringHelper, ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
+import {
+  ensureAnyToStringHelper,
+  ensureNativeStringHelpers,
+  ensureStrToCharVecHelper,
+  nativeStringLiteralInstrs,
+  stringConstantExternrefInstrs,
+} from "./native-strings.js";
 import { emitStandaloneIterableMaterialize, recordStrictMethodLiteralAllocation } from "./iterator-native.js"; // (#3100 S5, #5131 provenance)
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
@@ -95,7 +102,13 @@ import {
 } from "./generators-native.js";
 import { refuseEagerGeneratorBuffer } from "./generator-eager-refusal.js";
 import { emitCollectionIteratorVec } from "./map-runtime.js";
-import { emitSymbolDescStore, ensureNativeSymbolBoundaryBridge, ensureSymbolCarrier } from "./symbol-native.js";
+import {
+  emitSymbolDescLoad,
+  emitSymbolDescStore,
+  ensureNativeSymbolBoundaryBridge,
+  ensureSymbolCarrier,
+  ensureSymbolDescTable,
+} from "./symbol-native.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType, isVecBaseSubtype } from "./registry/types.js";
 import {
   coerceType,
@@ -471,6 +484,8 @@ export function compileObjectLiteralAsExternref(
   fctx: FunctionContext,
   expr: ts.ObjectLiteralExpression,
 ): ValType | null {
+  if (objectLiteralNeedsRuntimeMethodKeys(expr)) return compileObjectLiteralWithAccessors(ctx, fctx, expr, true);
+
   const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   if (newObjIdx === undefined) return null;
@@ -851,12 +866,18 @@ function compileRuntimeComputedPropertyKey(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expression: ts.Expression,
-): void {
+  rawLiveSymbolKey = false,
+): boolean {
   const keyTag = ctx.oracle.staticJsTypeOf(expression);
   const objectKey = keyTag === "object" || keyTag === "function";
-  const keyType = compileExpression(ctx, fctx, expression, objectKey ? undefined : { kind: "externref" });
+  const liveSymbolKey = rawLiveSymbolKey ? tryCompileLiveSymbolComputedKey(ctx, fctx, expression) : undefined;
+  const keyType =
+    liveSymbolKey === undefined
+      ? compileExpression(ctx, fctx, expression, objectKey ? undefined : { kind: "externref" })
+      : liveSymbolKey;
   if (!keyType) {
     fctx.body.push({ op: "ref.null.extern" });
+    return false;
   } else if (objectKey && (keyType.kind === "ref" || keyType.kind === "ref_null") && !isAnyValue(keyType, ctx)) {
     coerceType(ctx, fctx, keyType, { kind: "externref" });
     const toPropertyKeyIdx = ensureLateImport(
@@ -871,10 +892,13 @@ function compileRuntimeComputedPropertyKey(
         op: "call",
         funcIdx: ctx.funcMap.get("__to_property_key") ?? toPropertyKeyIdx,
       });
+    } else {
+      return false;
     }
   } else if (keyType.kind !== "externref") {
     coerceType(ctx, fctx, keyType, { kind: "externref" });
   }
+  return true;
 }
 
 /**
@@ -945,7 +969,19 @@ function compileObjectLiteralWithAccessors(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.ObjectLiteralExpression,
+  needsComputedMethodNameCarrier = false,
 ): ValType | null {
+  const hasComputedMethods = expr.properties.some(
+    (prop) => ts.isMethodDeclaration(prop) && ts.isComputedPropertyName(prop.name),
+  );
+  const seedComputedMethodNames = hasComputedMethods && (ctx.standalone || ctx.wasi);
+  if (
+    (needsComputedMethodNameCarrier && !seedComputedMethodNames) ||
+    (seedComputedMethodNames && !prepareComputedMethodInstanceName(ctx, fctx))
+  ) {
+    reportError(ctx, expr, "Computed method needs an evaluated-key function-name carrier", "error", { sticky: true });
+    return null;
+  }
   // Tag the receiving variable before recursing into initializers.
   tagAccessorObjectLiteralReceiver(ctx, expr);
 
@@ -1324,67 +1360,38 @@ function compileObjectLiteralWithAccessors(
       }
       storeMember(i);
     } else if (ts.isMethodDeclaration(prop)) {
-      // Compile method as a callback closure, then __extern_set.
-      //
-      // (#1433) For computed keys that resolve to well-known Symbols
-      // (e.g. `[Symbol.dispose]() {…}`), box the i32 symbol ID into a
-      // real JS Symbol via __box_symbol so the host can find the method
-      // under the real Symbol property. Otherwise the wasmGC struct path
-      // would name the field "@@dispose" and native APIs (DisposableStack,
-      // `using` declarations) would never see Symbol.dispose.
-      let methodName: string | undefined;
-      let wellKnownSymId: number | undefined;
-      if (ts.isIdentifier(prop.name)) methodName = prop.name.text;
-      else if (ts.isStringLiteral(prop.name)) methodName = prop.name.text;
-      else if (ts.isComputedPropertyName(prop.name)) {
-        const inner = prop.name.expression;
-        if (
-          ts.isPropertyAccessExpression(inner) &&
-          ts.isIdentifier(inner.expression) &&
-          inner.expression.text === "Symbol"
-        ) {
-          wellKnownSymId = getWellKnownSymbolId(inner.name.text);
-        }
-        if (wellKnownSymId === undefined) {
-          // Fall back to the resolved string key (e.g. "@@dispose").
-          methodName = resolveComputedKeyExpression(ctx, prop.name.expression);
-        }
-      }
-      if (wellKnownSymId !== undefined) {
-        const boxSymIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
-        flushLateImportShifts(ctx, fctx);
-        if (boxSymIdx === undefined) continue;
+      if (ts.isComputedPropertyName(prop.name)) {
+        // Evaluate the actual key once; spelling is not ambient Symbol authority.
+        // The original declaration retains closure, super and metadata identity.
         fctx.body.push({ op: "local.get", index: objLocal });
-        fctx.body.push({ op: "i32.const", value: wellKnownSymId });
-        fctx.body.push({ op: "call", funcIdx: boxSymIdx });
-        const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression, objLocal);
-        if (!ok) {
-          fctx.body.push({ op: "ref.null.extern" });
+        if (!compileRuntimeComputedPropertyKey(ctx, fctx, prop.name.expression, true)) {
+          reportError(ctx, prop.name, "Cannot emit computed object method key", "error", { sticky: true });
+          return null;
+        }
+        let evaluatedKeyLocal: number | undefined;
+        if (seedComputedMethodNames) {
+          // ToPropertyKey precedes method creation. Later stores see this same
+          // primitive key and cannot repeat user key conversion effects.
+          const toKeyIdx = ctx.funcMap.get("__to_property_key");
+          if (toKeyIdx === undefined) throw new Error("computed method lost its prepared key provider");
+          fctx.body.push({ op: "call", funcIdx: toKeyIdx });
+          evaluatedKeyLocal = allocLocal(fctx, `__method_key_${fctx.locals.length}`, { kind: "externref" });
+          fctx.body.push({ op: "local.tee", index: evaluatedKeyLocal });
+        }
+        if (!emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression, objLocal)) {
+          reportError(ctx, prop, "Cannot emit computed object method closure", "error", { sticky: true });
+          return null;
+        }
+        if (evaluatedKeyLocal !== undefined) {
+          const methodLocal = allocLocal(fctx, `__method_fresh_${fctx.locals.length}`, { kind: "externref" });
+          fctx.body.push({ op: "local.set", index: methodLocal });
+          emitComputedMethodInstanceName(ctx, fctx, evaluatedKeyLocal, methodLocal);
+          fctx.body.push({ op: "local.get", index: methodLocal });
         }
         storeMember(i);
         continue;
       }
-      if (methodName === undefined && ts.isComputedPropertyName(prop.name)) {
-        // (#2126) Runtime computed method key — same as the PropertyAssignment
-        // branch: evaluate the key expression and pass it as the externref key.
-        fctx.body.push({ op: "local.get", index: objLocal });
-        // (#1336) Keep type-aware scalar/symbol boxing while preserving a
-        // nominal object key until `__extern_set` performs ToPropertyKey; see
-        // the PropertyAssignment arm above for why the expected-externref
-        // materialization path is not used here.
-        compileRuntimeComputedPropertyKey(ctx, fctx, prop.name.expression);
-        const okRt = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression, objLocal);
-        if (okRt) {
-          storeMember(i);
-        } else {
-          // Callback compilation declined — keep the pre-#2126 "property
-          // skipped" semantics (drop key + obj) but the key expression's
-          // side effects above have already run, per spec evaluation order.
-          fctx.body.push({ op: "drop" });
-          fctx.body.push({ op: "drop" });
-        }
-        continue;
-      }
+      const methodName = resolveAccessorPropName(ctx, prop.name);
       if (methodName === undefined) continue;
       fctx.body.push({ op: "local.get", index: objLocal });
       for (const instr of staticHostPropertyKeyInstrs(ctx, methodName)) {
@@ -1551,6 +1558,92 @@ function emitObjectLiteralAccessorFn(
  * closure is invoked through the same `__current_this`-bound closure-call path the
  * getter closures use, so `this` is bound correctly.
  */
+/** Reserve existing providers before evaluating any object literal operand. */
+function prepareComputedMethodInstanceName(ctx: CodegenContext, fctx: FunctionContext): boolean {
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+  ensureObjectRuntime(ctx);
+  ensureNativeStringHelpers(ctx);
+  ensureSymbolCarrier(ctx);
+  ensureSymbolDescTable(ctx);
+  for (const value of ["name", "", "[", "]"]) addStringConstantGlobal(ctx, value);
+  flushLateImportShifts(ctx, fctx);
+  return (
+    ctx.symbolTypeIdx >= 0 &&
+    ctx.funcMap.has("__to_property_key") &&
+    ctx.funcMap.has("__defineProperty_value") &&
+    ctx.nativeStrHelpers.has("__str_concat")
+  );
+}
+
+/** SetFunctionName on THIS fresh method only; never mutate shared declaration metadata. */
+function emitComputedMethodInstanceName(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  keyLocal: number,
+  methodLocal: number,
+): void {
+  const concatIdx = ctx.nativeStrHelpers.get("__str_concat");
+  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  if (concatIdx === undefined || defineIdx === undefined || ctx.symbolTypeIdx < 0) {
+    throw new Error("computed method lost its prepared name provider");
+  }
+  const descriptionLocal = allocLocal(fctx, `__method_desc_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: ctx.anyStrTypeIdx,
+  });
+  const nameLocal = allocLocal(fctx, `__method_name_${fctx.locals.length}`, { kind: "externref" });
+  const savedBody = pushBody(fctx);
+  fctx.body.push(
+    { op: "local.get", index: keyLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: ctx.symbolTypeIdx },
+    { op: "struct.get", typeIdx: ctx.symbolTypeIdx, fieldIdx: 0 },
+  );
+  emitSymbolDescLoad(ctx, fctx);
+  fctx.body.push(
+    { op: "local.set", index: descriptionLocal },
+    { op: "local.get", index: descriptionLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: stringConstantExternrefInstrs(ctx, ""),
+      else: [
+        ...nativeStringLiteralInstrs(ctx, "["),
+        { op: "local.get", index: descriptionLocal },
+        { op: "ref.as_non_null" },
+        { op: "call", funcIdx: concatIdx },
+        ...nativeStringLiteralInstrs(ctx, "]"),
+        { op: "call", funcIdx: concatIdx },
+        { op: "extern.convert_any" },
+      ],
+    },
+  );
+  const symbolName = fctx.body;
+  popBody(fctx, savedBody);
+  fctx.body.push(
+    { op: "local.get", index: keyLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: symbolName,
+      else: [{ op: "local.get", index: keyLocal }],
+    },
+    { op: "local.set", index: nameLocal },
+    { op: "local.get", index: methodLocal },
+    ...stringConstantExternrefInstrs(ctx, "name"),
+    { op: "local.get", index: nameLocal },
+    // The public attributes are 0x04 (W=false, E=false, C=true). The define
+    // provider also requires explicit W/E/C presence bits and [[Value]];
+    // match the canonical fn-intrinsic-seed descriptor-input word, 0xBC.
+    { op: "f64.const", value: 0xbc },
+    { op: "call", funcIdx: ctx.funcMap.get("__defineProperty_value") ?? defineIdx },
+    { op: "drop" },
+  );
+}
+
 function emitObjectLiteralMethodFn(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1840,7 +1933,22 @@ export function objectLiteralHasColonProto(ctx: CodegenContext, expr: ts.ObjectL
   );
 }
 
+/** Runtime method keys need a real property key, not a physical struct field name. */
+export function objectLiteralNeedsRuntimeMethodKeys(expr: ts.ObjectLiteralExpression): boolean {
+  return expr.properties.some(
+    (prop) =>
+      ts.isMethodDeclaration(prop) &&
+      ts.isComputedPropertyName(prop.name) &&
+      !ts.isStringLiteralLike(prop.name.expression) &&
+      !ts.isNumericLiteral(prop.name.expression),
+  );
+}
+
 export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  return objectLiteralNeedsRuntimeMethodKeys(expr) || objectLiteralPreviouslyForcesHostPath(ctx, expr);
+}
+
+function objectLiteralPreviouslyForcesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   return (
     expr.properties.length > 0 &&
     (expr.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) ||
@@ -2175,7 +2283,12 @@ export function compileObjectLiteral(
   // be silently dropped; the host plain-object path evaluates the key at
   // runtime.
   if (objectLiteralForcesHostPath(ctx, expr)) {
-    return compileObjectLiteralWithAccessors(ctx, fctx, expr);
+    return compileObjectLiteralWithAccessors(
+      ctx,
+      fctx,
+      expr,
+      objectLiteralNeedsRuntimeMethodKeys(expr) && !objectLiteralPreviouslyForcesHostPath(ctx, expr),
+    );
   }
 
   // (#2127) Accessor-bearing spreads need host CopyDataProperties [[Get]].

@@ -37,6 +37,7 @@ import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3b) man
 import { addStringConstantGlobal } from "./registry/imports.js"; // (#2025)
 import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#2025)
 import { emitWasiErrorConstructor } from "./registry/error-types.js"; // (#2025)
+import { isCapturedConstHostLiteral } from "./declarations/host-carrier-object-literal.js";
 import { widenClosureReturnForPreInitVar } from "./declarations/hoisted-var-preinit-read.js"; // (#4206)
 import { widenClosureReturnForDynamicModuleBinding } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { widenProxyTrapMixedReturn } from "./closures/proxy-trap-closure-return.js"; // (#6771 S1)
@@ -365,7 +366,10 @@ function closureReturnsExternrefBinding(
     }
     // (#6651 E7) …or a static `$__ta_view` binding, which no vec return type holds.
     return (
-      ts.isIdentifier(current) && (ctx.externrefAccessorVars.has(current.text) || isStaticTaViewBinding(ctx, current))
+      ts.isIdentifier(current) &&
+      (ctx.externrefAccessorVars.has(current.text) ||
+        isStaticTaViewBinding(ctx, current) ||
+        isCapturedConstHostLiteral(ctx, current, fn))
     );
   };
 

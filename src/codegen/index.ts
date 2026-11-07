@@ -14302,7 +14302,7 @@ function hoistVarDecl(
       (declaredWasmType.kind === "ref" || declaredWasmType.kind === "ref_null") &&
       declarationReadsStructuralObjectFromRealmGlobal(ctx, fctx, decl);
     // (#1239 / #1433) Object literals carrying get/set accessor declarations,
-    // or `[Symbol.dispose]` / `[Symbol.asyncDispose]` computed methods, are
+    // or methods with runtime-computed property keys, are
     // routed through the JS-host plain-object (externref) path. The local
     // must be allocated as externref so subsequent property reads/writes
     // bind to the host object, not a struct slot. Tag the var here so
@@ -14329,12 +14329,8 @@ function hoistVarDecl(
         }
         if (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) {
           const inner = p.name.expression;
-          if (
-            ts.isPropertyAccessExpression(inner) &&
-            ts.isIdentifier(inner.expression) &&
-            inner.expression.text === "Symbol" &&
-            (inner.name.text === "dispose" || inner.name.text === "asyncDispose")
-          ) {
+          // Mirror the producer without adding an index-to-literals edge.
+          if (!ts.isStringLiteralLike(inner) && !ts.isNumericLiteral(inner)) {
             initForcesExternref = true;
             break;
           }

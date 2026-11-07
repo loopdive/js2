@@ -1580,6 +1580,13 @@ export function emitReflectiveNativeProtoClosureCall(
   // every other reflective ABI retains its existing null/undefined policy.
   const nativeStringNormalize =
     (ctx.standalone || ctx.wasi) && getNativeProtoBuiltinGlue(ctx, brand)?.name === "String" && member === "normalize";
+  // Like normalize, split has a fixed native closure ABI but JavaScript still
+  // evaluates arguments beyond its public arity before the closure performs
+  // RequireObjectCoercible / ToString / ToUint32. Keep this narrow to the
+  // native standalone/WASI String member: other prototype closures retain
+  // their existing surplus-argument policy.
+  const nativeStringSplit =
+    (ctx.standalone || ctx.wasi) && getNativeProtoBuiltinGlue(ctx, brand)?.name === "String" && member === "split";
   // (#6701) `Array.prototype.slice.call(o, k)`: an omitted `end` is
   // `undefined` (⇒ len), not `null` (⇒ 0), so pad it with the canonical
   // undefined — `[].slice.call(arguments, 1)` answered an empty array.
@@ -1623,11 +1630,11 @@ export function emitReflectiveNativeProtoClosureCall(
       pushDefaultValue(fctx, pType, ctx);
     }
   }
-  // Native closure ABI carries only normalize's receiver and optional form.
-  // JavaScript still evaluates every surplus argument before entering the
-  // builtin, even though NormalizeString ignores them. Preserve those effects
-  // after the form slot and before call_ref; no other native member is widened.
-  if (nativeStringNormalize) {
+  // These fixed native closure ABIs carry only their declared slots. JavaScript
+  // still evaluates every surplus argument before entering the builtin, so
+  // preserve those effects after the fixed raw slots and before `call_ref`.
+  // No other native member is widened here.
+  if (nativeStringNormalize || nativeStringSplit) {
     for (let i = paramTypes.length; i < userArgs.length; i++) {
       const extraType = compileExpression(ctx, fctx, userArgs[i]!);
       if (extraType !== null) fctx.body.push({ op: "drop" });
