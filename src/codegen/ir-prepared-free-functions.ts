@@ -40,6 +40,7 @@ import {
 import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
+import { runtimeEvalPushPublishesCachedFunctionValues } from "./expressions/runtime-eval-provider.js";
 import { timerShimOutsideCaller } from "./ir-timer-shim-planning.js";
 import { closeIrBlockedComponentByIdentity } from "./ir-overlay-finalize.js";
 import { applyIrFinalContextFunctionUnitIds, type IrOverlayPreparationPlan } from "./ir-overlay-preparation.js";
@@ -563,12 +564,11 @@ export function collectPreparedTopLevelFunctionValueTargetUnitIds(
   sourceFile: ts.SourceFile,
   identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
 ): ReadonlySet<IrUnitId> {
-  return collectTopLevelFunctionValueTargets(
-    ctx,
-    sourceFile,
-    topLevelFunctionUnitsByName(sourceFile, identityPlan),
-    true,
-  );
+  const unitsByName = topLevelFunctionUnitsByName(sourceFile, identityPlan);
+  // (#7106 A1) The runtime-eval push publishes every function value after seal.
+  if (ctx.runtimeEvalGlobalFunctionBindings === true && runtimeEvalPushPublishesCachedFunctionValues(ctx))
+    return new Set([...unitsByName.values()].flatMap((units) => units.map((unit) => unit.unitId)));
+  return collectTopLevelFunctionValueTargets(ctx, sourceFile, unitsByName, true);
 }
 
 /**
