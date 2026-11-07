@@ -29,7 +29,7 @@ import { ensureExnTag } from "./registry/imports.js";
 import { ensureHoleType, holeSentinelInstrs } from "./array-holes.js";
 import { buildVectorGrowStoreBody, type VectorGrowStoreGapFill } from "../runtime/wasmgc/values/vector-grow-store.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js";
-import { HOLE_F64_BITS } from "./value-tags.js";
+import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js";
 
 /** Reserved name prefix; the suffix is the vec STRUCT typeIdx. */
 export const VEC_ELEM_SET_PREFIX = "__vec_elem_set_";
@@ -170,17 +170,20 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
   if (elem.kind === "i8" || elem.kind === "i16") return null;
 
   const holeyCarrier = isHoleyArrayType(ctx, vecTypeIdx) && elem.kind === "externref";
-  // Standalone f64 vectors use the same absence marker as sparse literals.
-  // Without this, an indexed write past capacity grows the backing array with
-  // f64 zeroes, materializing every intervening index as an own property.
-  // Mark the carrier here as well as in literal lowering: a module can first
-  // encounter a sparse indexed write before it emits a f64 literal marker.
-  const f64HoleCarrier = ctx.standalone && elem.kind === "f64" && f64HolesActive(ctx);
-  if (f64HoleCarrier) ctx.f64HoleMarkerEmitted = true;
+  // An f64 grow gap holds a marker, never zeroes (which would read back as
+  // `0`), as legacy's inline store (`compileElementAssignment`, #4491 T8/T11)
+  // fills it on every lane: the absence marker where the module tracks hole
+  // presence, else the undefined marker. The host bridge's `__vec_get` maps
+  // both; the flag gating its absence arm is set at finalize for every module
+  // with an f64 vec, before `__vec_get` is built. Set it here as well as in
+  // literal lowering: a module can meet a sparse indexed write before it emits
+  // a f64 literal marker.
+  const f64Absence = elem.kind === "f64" && f64HolesActive(ctx);
+  if (f64Absence) ctx.f64HoleMarkerEmitted = true;
   const gapFill: VectorGrowStoreGapFill = holeyCarrier
     ? { kind: "hole-global", globalIndex: ensureHoleType(ctx) }
-    : f64HoleCarrier
-      ? { kind: "f64-hole", bits: HOLE_F64_BITS }
+    : elem.kind === "f64"
+      ? { kind: "f64-hole", bits: f64Absence ? HOLE_F64_BITS : UNDEF_F64_BITS }
       : { kind: "default" };
   // (#4430) The branded sparse carrier is a FINAL subtype of the ordinary
   // externref vec, and BOTH fields this helper touches (`length`, `data`) are
