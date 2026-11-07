@@ -58,6 +58,8 @@ const CLAIMED: Record<string, string> = {
   booleanBesideCarrierLeaf:
     "var x = 3; var [q] = [1]; var b = x > 2; assert.sameValue(b, true); assert.sameValue(q, 1);",
   booleanWriteAfterPattern: "var [a = 1] = [3]; var b = false; b = a > 2; assert.sameValue(b, true);",
+  // (#7288) S6: an identifier `for` head is a module binding too.
+  identifierHead: loop("var i = 0", "assert.sameValue(i, 0);"),
 };
 
 // Refused at selection.
@@ -65,8 +67,6 @@ const REFUSED: Record<string, string> = {
   // Only a `var` list of a top-level statement declares module-init leaves.
   lexical: "const [a] = [1];\nassert.sameValue(a, 1);",
   nestedVar: "{ var [a] = [1]; }\nassert.sameValue(a, 1);",
-  // S6: an identifier `for` head.
-  identifierHead: loop("var i = 0", "assert.sameValue(i, 0);"),
   // A redeclared leaf is already in scope.
   redeclared: "var x;\nvar [x] = [1];\nassert.sameValue(x, 1);",
   // A `var` pattern takes the literal plan only.

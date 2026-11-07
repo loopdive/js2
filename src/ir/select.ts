@@ -81,7 +81,8 @@ import {
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
-import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists, isModuleInitVarList } from "./module-init-vars.js";
+import { isModuleInitVarList } from "../shared/module-init-var-lists.js";
+import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
@@ -107,6 +108,7 @@ import {
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
 import { admitAmbientGlobalFunctionCall } from "./ambient-global-function-call.js";
+import { objectCreateDescriptorMap, unitInKeysAreOwnOnly } from "./object-create-call.js";
 import {
   isAffineThreeDeepElementAccess,
   unwrapTypeErasedExpression,
@@ -180,13 +182,8 @@ import {
   type StringMethodPlan,
 } from "./string-method-surface.js";
 import type { IrBackendKind } from "./analysis/backend-legality.js";
-import {
-  isPatternDeclaration,
-  isPhase1BindingPattern,
-  patternLeaves,
-  type BindingLeaf,
-  type PatternDeclaration,
-} from "./binding-pattern-plan.js";
+import { isPhase1BindingPattern, patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
+import { isPatternDeclaration, type PatternDeclaration } from "../shared/pattern-declaration.js";
 import {
   literalLeafSource,
   literalPlanExpressions,
@@ -5583,7 +5580,12 @@ function isPhase1ForStatementInScope(
 
   // Init: optional. Variable declaration adds bindings; expression init
   // doesn't. Both must be Phase-1.
-  if (stmt.initializer) {
+  if (isModuleInitVarList(stmt.initializer)) {
+    // (#7288) A hoisted module-init head is checked as the top-level `var`
+    // statement it lowers as (from-ast's `lowerForInitializer`).
+    const head = ts.factory.createVariableStatement(undefined, stmt.initializer);
+    if (!isPhase1VarDecl(head, innerScope, localClasses)) return false;
+  } else if (stmt.initializer) {
     if (ts.isVariableDeclarationList(stmt.initializer)) {
       const flags = stmt.initializer.flags;
       const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
@@ -5879,6 +5881,10 @@ function isPhase1ForInStatement(
   }
   const headName = declaration.name.text;
   if (scope.has(headName)) return shapeNo("forin-head-shadow", declaration.name);
+  // (#7288) In `<module-init>` the head hoists into its `__mod_<name>` slot, which the loop-local key slot never writes.
+  if (currentSubjectIsModuleInit && enclosingProjectionOwner(stmt) === undefined) {
+    return shapeNo("forin-head-module-var", declaration.name);
+  }
   // #2952 slice 6c — the head value is now READABLE in the body. The #2964
   // ABI already materialises the key into the head slot on every iteration
   // (slice 5 wrote it and simply had no reader), so the widening is
@@ -6975,6 +6981,15 @@ function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical
   return false;
 }
 
+/** A declaration the synthetic module initializer owns: a top-level statement's, or (#7288) a hoisted for-head's. */
+function isDirectModuleDeclaration(d: ts.VariableDeclaration): boolean {
+  const list = d.parent;
+  return (
+    ts.isVariableDeclarationList(list) &&
+    ((ts.isVariableStatement(list.parent) && ts.isSourceFile(list.parent.parent)) || isModuleInitVarList(list))
+  );
+}
+
 function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localClasses: ReadonlySet<string>): boolean {
   const flags = stmt.declarationList.flags;
   const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
@@ -7000,7 +7015,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       currentSubjectIsModuleInit &&
       !isLexical &&
       scope.has(d.name.text) &&
-      ts.isSourceFile(stmt.parent) &&
+      isDirectModuleDeclaration(d) &&
       currentModuleBindingResolver?.(d.name)?.declaration !== undefined &&
       currentModuleBindingResolver(d.name)!.declaration !== d;
     if (redeclaredModuleVar && !d.initializer) continue;
@@ -7010,7 +7025,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       // prologue already seeded the slot (`emitModuleVarUndefinedSeeds`).
       // (#7111) An untyped function-local `var x;` is the dynamic carrier's
       // `undefined`; that predicate refuses module-init, so the arms are disjoint.
-      const scriptVar = currentSubjectIsModuleInit && !isLexical && ts.isSourceFile(stmt.parent);
+      const scriptVar = currentSubjectIsModuleInit && !isLexical && isDirectModuleDeclaration(d);
       if (
         scriptVar
           ? currentModuleBindingResolver?.(d.name) === undefined
@@ -7043,12 +7058,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       currentPreparedClassBindingNames.add(d.name.text);
       continue;
     }
-    const declarationList = d.parent;
-    const declarationStatement = ts.isVariableDeclarationList(declarationList) ? declarationList.parent : undefined;
-    const directModuleDeclaration =
-      declarationStatement !== undefined &&
-      ts.isVariableStatement(declarationStatement) &&
-      ts.isSourceFile(declarationStatement.parent);
+    const directModuleDeclaration = isDirectModuleDeclaration(d);
     // The synthetic module-init builder must map every direct declaration to
     // an already-allocated legacy slot. Shape-only primitive acceptance is not
     // enough in a mode whose storage ABI differs (ordinary fast numbers) or
@@ -8659,6 +8669,16 @@ function isAmbientIntrinsicValue(expr: ts.Identifier): boolean {
     currentDynMemberReadBuildable &&
     currentSelectionOptions?.supportsBackendCapability?.("native-current-this") === true
   );
+}
+
+/** (#7276) The shared `Object.create` plan, on the selector's lane and binding facts. */
+function selectorObjectCreateDescriptorMap(expr: ts.CallExpression) {
+  const resolver = currentModuleBindingResolver;
+  return objectCreateDescriptorMap(expr, {
+    supportsBackendCapability: (capability) =>
+      currentSelectionOptions?.supportsBackendCapability?.(capability) === true,
+    isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding(node) === true,
+  });
 }
 
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
@@ -12268,6 +12288,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           (arg) => !ts.isSpreadElement(arg) && expressionIsProvenNumber(arg) && isPhase1Expr(arg, scope, localClasses),
         );
       }
+      // (#7276) `Object.create({}, { <literal data descriptors> })`: literal operands only.
+      if (selectorObjectCreateDescriptorMap(expr) !== null) return true;
       // ES5 Object.defineProperty — an exact ambient static call is a
       // symbolic host-helper operation, not an instance method on a value
       // named `Object`. Reject shadowed bindings and host-free targets before
@@ -12904,6 +12926,7 @@ function isPhase1ObjectLiteral(
     if (binding !== undefined && (binding.references.length === 0 || isOpenCarrierBinding(binding, owner))) {
       return true;
     }
+    if (isDynamicHomeOpenCarrier(expr)) return true;
     return shapeNo("objectlit-empty", expr);
   }
 
@@ -13024,6 +13047,33 @@ function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node
   }
   currentOpenCarrierNames.add(binding.name.text);
   admittedOpenCarrierLiterals.add(binding.literal);
+  return true;
+}
+
+/**
+ * (#7280 S1) A script `var` whose `__mod_` slot is the dynamic carrier,
+ * initialized by `{}`: legacy keeps exactly this literal as an open `$Object`
+ * in an `externref` slot (`isOpenObjectBinding`), which is the object #7128's
+ * open-carrier lowering builds, on the lane that supplies `isOpenObjectBinding`
+ * (standalone). Every use then reads it as the carrier through the ordinary
+ * dynamic arms. An `in` that may reach an inherited
+ * `%Object.prototype%` key keeps the unit legacy (`unitInKeysAreOwnOnly`, as for
+ * `Object.create`). The lowering is the open-carrier literal's.
+ */
+function isDynamicHomeOpenCarrier(literal: ts.ObjectLiteralExpression): boolean {
+  const decl = literal.parent;
+  if (
+    !ts.isVariableDeclaration(decl) ||
+    decl.initializer !== literal ||
+    !ts.isIdentifier(decl.name) ||
+    !isModuleInitVarList(decl.parent) ||
+    currentModuleBindingResolver?.(decl.name)?.valueKind.kind !== "dynamic" ||
+    currentSelectionOptions?.isOpenObjectBinding?.(decl) !== true ||
+    !unitInKeysAreOwnOnly(literal)
+  ) {
+    return false;
+  }
+  admittedOpenCarrierLiterals.add(literal);
   return true;
 }
 
