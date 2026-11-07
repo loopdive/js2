@@ -25,6 +25,7 @@ import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fncto
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import * as classInstance from "./module-binding-class-instance.js";
+import { vecUseSupported, vecValueKind, vecWriteMatches } from "./module-binding-vec.js";
 import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
@@ -599,7 +600,7 @@ export type IrModuleBindingValueKind = bindingValue.IrModuleBindingValueKind;
 export type IrScriptVarHome = bindingValue.IrScriptVarHome;
 export {
   capabilityExternBindingOptions, // (#7274) DOM + native-buffer providers, for both planning sites
-  isIrModuleClassInstanceValueKind,
+  isIrModuleStructValueKind,
   isIrModuleMapValueKind,
   isIrModuleNativeBufferValueKind,
   isIrModuleReferenceValueKind,
@@ -1050,6 +1051,7 @@ function scriptVarReferenceKind(
   checker: ts.TypeChecker,
 ): IrModuleBindingValueKind | undefined {
   if (home === "class-instance") return classInstance.classInstanceValueKind(checker, declaration, declaredType);
+  if (home === "vec") return vecValueKind(checker, declaration);
   return home === "string" && isModuleStringStorageType(declaredType, checker) ? { kind: "string" } : undefined;
 }
 
@@ -1594,6 +1596,7 @@ function writeValueMatches(
   if (carrierLeafReads(valueExpr, resolve).length > 0) return false;
   if (targetKind.kind === "class-instance")
     return classInstance.classInstanceWriteMatches(checker, targetKind, valueExpr);
+  if (targetKind.kind === "vec") return vecWriteMatches(declaration, valueExpr);
   if (targetKind.kind === "native-map") {
     // The native `$Map` carrier has exactly one producer in this slice.
     return isNativeMapConstruction(checker, valueExpr);
@@ -2343,6 +2346,8 @@ export function makeIrLegacyModuleBindingResolver(
       (valueKind.kind === "class-instance" || scriptVarCapability) &&
       !classInstance.scriptVarUseFollowsDeclaration(node, declaration)
     )
+      return { kind: "unsupported", declaration, arm: "script-var-use-site" };
+    if (valueKind.kind === "vec" && !vecUseSupported(node, declaration))
       return { kind: "unsupported", declaration, arm: "script-var-use-site" };
     if (
       writeValue !== undefined &&

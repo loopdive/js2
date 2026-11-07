@@ -152,7 +152,7 @@ import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
-  isIrModuleClassInstanceValueKind,
+  isIrModuleStructValueKind,
   isIrModuleMapValueKind,
   isIrModuleNativeBufferValueKind,
   isIrModuleReferenceValueKind,
@@ -6084,6 +6084,10 @@ function isPhase1MemberAssignment(
     ) {
       return shapeNo("body-elemstore-recv", lhs.expression);
     }
+    // (#7292) A module binding's receiver is a use its resolver certifies (a script-var vec refuses stores).
+    if (ts.isIdentifier(lhs.expression) && isUnrepresentableModuleBinding(lhs.expression)) {
+      return shapeNo("body-elemstore-module-storage-unrepresentable", lhs.expression);
+    }
     if (ts.isStringLiteralLike(lhs.argumentExpression) && !preflightClassPropertyWrite(lhs, scope)) return false;
     if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses)) return false;
     return isPhase1Expr(expr.right, scope, localClasses);
@@ -7972,9 +7976,7 @@ function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
     if (ts.isIdentifier(node)) {
       const binding = moduleBinding(node);
       const scalarBinding =
-        binding &&
-        !isIrModuleReferenceValueKind(binding.valueKind) &&
-        !isIrModuleClassInstanceValueKind(binding.valueKind);
+        binding && !isIrModuleReferenceValueKind(binding.valueKind) && !isIrModuleStructValueKind(binding.valueKind);
       if (scalarBinding || moduleScalarAliasFamily(node) !== undefined) {
         touched = true;
         return;

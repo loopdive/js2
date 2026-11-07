@@ -366,6 +366,7 @@ import {
   forEachInstrDeep, // (#2949 slice 3) deep instr walk for preregisterDynamicSupport
   irDynamic,
   irVal,
+  irVec,
   irTypeEquals,
   mapNestedBuffers,
   type IrClassMemberKind,
@@ -6248,6 +6249,22 @@ function resolveModuleBindingGlobal(
     case "class-instance":
       ({ type, storageType } = classInstanceBindingStorage(ctx, name, identity.valueKind, classShapes));
       break;
+    case "vec": {
+      // (#7292) The vec legacy's string array literal registered: the same
+      // registry key (`resolveVecForElementImpl`), so the struct is shared.
+      const vec = resolveVecForElementImpl(ctx, { kind: "ref", typeIdx: ctx.anyStrTypeIdx });
+      if (vec === null) {
+        throw new IrInvariantError(
+          "unknown-type-ref",
+          "build",
+          `module-init: vec binding '${name}' has no registered vec`,
+        );
+      }
+      // Read only after the declaration wrote it (`vecUseSupported`), so non-null, as a class instance is.
+      type = irVec({ kind: "string" }, false);
+      storageType = { kind: "ref_null", typeIdx: vec.vecStructTypeIdx };
+      break;
+    }
   }
   const storageMatches =
     global.type.kind === storageType.kind &&
