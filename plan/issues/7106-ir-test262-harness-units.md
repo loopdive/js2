@@ -5629,9 +5629,29 @@ the claim: "function member operand has no canonical carrier".
 **Change.** One arm in `src/ir/integration.ts`, `resolveModuleBindingGlobal`:
 the `i32` kind reads as `irBool()`.
 - It reuses the #4503 boolean brand (`boolean-brand.ts`). The brand changes
-  no representation, and `irTypeEquals` erases it, so no join, slot write or
-  verifier check changes. No second boolean rule is added; the value kind
-  already says `boolean`.
+  no representation, and `irTypeEquals` erases it, so no join or verifier
+  check changes. No second boolean rule is added; the value kind already says
+  `boolean`.
+- **Numeric coercion did change** (review round 1). `isNumericIrSlot` refuses
+  a boolean, so a branded read stopped converting into a number result
+  (`let flag = true; function t(): number { return flag; }`) and into a
+  numeric compound field write. Standalone withdrew both after the claim,
+  where main converts the bare `i32`.
+  - `coerceIrToNumber` (`numeric-slot-coercion.ts`) is ToNumber into a
+    numeric slot: a numeric slot's value, or a boolean, whose ToNumber is its
+    0 or 1. Only its real ToNumber consumers take it: a compound field
+    update's operands (`numericFieldUpdate`) and a declared number result.
+  - `coerceIrNumeric` stays slot to slot, so a plain field write keeps the
+    boolean itself (`o.n = true` stores `true`; review round 2 found that
+    widening it stored 1).
+  - The compound write's right-side gate accepts a boolean on both lanes,
+    since its ToNumber needs no recovered domain. The field slot check is
+    main's `laneNumericSlot`.
+  - A boolean is still no numeric target. So a branded read converts exactly
+    where main's bare one did.
+- The selector's `provenIrFamily` names the slot `boolean`, not `int32`, as
+  the brand does. That newly claims `Object.is(x, true)` on both lanes, with
+  the right answer.
 - The `f64` and `i32` arms stay separate. `integration.ts` grows by 2 lines
   (the import and the one-line why), under its existing grant with a dated
   note.
@@ -5662,13 +5682,30 @@ depends on it, not for its own gain.
 **Acceptance.**
 - **Correctness:** no claim-then-demote for a boolean module `var`, 0 flips
   on both lanes, and legacy bytes and the playground identical.
-- **Tests:** `tests/issue-7106-module-bool-slot.test.ts`, both lanes: six
-  claimed shapes, and the S5 boolean-leaf shape, which withdraws nothing.
+- **Tests:** `tests/issue-7106-module-bool-slot.test.ts`:
+  - on both lanes, seven claimed shapes, and the S5 boolean-leaf shape, which
+    withdraws nothing;
+  - on standalone, two numeric consumers that keep main's claim;
+  - on both lanes, a boolean written to an object's number field keeps
+    `true`, and a boolean compound operand (`o.n += flag`) converts, claimed.
+
+  It and `issue-7106-for-head-destructuring.test.ts` share
+  `compileHarnessOn` / `runHarnessOn`
+  (`tests/helpers/harness-module-init.ts`), which take the lane.
 - **Code quality:**
   - one arm changed;
-  - no new predicate or boolean rule (the existing brand and value kind are
-    reused);
-  - no new function.
+  - one conversion added, `coerceIrToNumber`, sharing
+    `coerceIrNumeric`'s body and used by its two ToNumber consumers;
+  - no second boolean rule (the existing brand and value kind are reused).
+
+**Follow-ups.**
+- **Latent: a conditional keeps its true arm's type.** `lowerConditional`
+  keeps the true arm's `IrType`, brand included. So `c ? flag : k`, with `k`
+  a native `i32`, would box `k` as a boolean if it were ever claimed. It is
+  not claimed today, and literal `true` arms on main already carry the same
+  hazard.
+- Once this and #7037 have landed, S5 can drop its boolean-leaf refusal, and
+  its test can use the shared `runHarnessOn`.
 
 ## Lever A — the runtime-eval boundary, per unit (plan, 2026-11-06)
 
@@ -5839,6 +5876,39 @@ the eval rows fail locally with "quickjs provider is not built".
   base. The other failures there match base (353 failing tests, mostly
   `issue-3518` receipt history and the missing QuickJS provider).
 
+### A1 forward fix — a self-reference crosses the boundary (2026-11-07)
+
+- **Bug.** `runtimeEvalBoundaryCrossing` counted a reference as local when
+  its declaration lay inside the function's own range. A recursive `f(n - 1)`
+  resolves to that same `FunctionDeclaration`, whose name is bound in the
+  script scope. So a function eval may rebind kept a static self-call on the
+  IR. An alias call (`var saved = f; …; saved(1)`) leaves no call-graph edge
+  that would rescue it.
+- **Fix.** A reference that resolves to the declaration itself reaches the
+  script binding. Declarations nested in it, and a named function
+  expression's own name, stay local. Admission stays per unit.
+- **Tests:** `tests/issue-7106-runtime-eval-a1-selfref.test.ts`.
+  - The recursive function stays direct (`eval-visible-binding`). This row
+    fails on the base.
+  - Two controls stay IR: a named function expression that recurses on its
+    own name, and a call to a nested same-named declaration.
+- **Measured** (base c03f7d0e3f vs fix, standalone):
+  - all 141 eval files and the 40-file control are byte-identical;
+  - IR units unchanged (513 on the 141, 344 on the control);
+  - 0 new post-claim errors;
+  - the interpreter provider built from each tree is byte-identical, so the
+    verdicts cannot differ.
+
+  None of the 141 has the shape: the fix only changes programs where an
+  eval-visible top-level function calls itself.
+- **The end-to-end answer is blocked by a provider gap, not by this fix.**
+  With the interpreter provider, the repro answers 1 on standalone and
+  overflows the stack on the JS host, before and after the fix. The same
+  holds for a direct `f(1)` after the rebind, and for `(0, eval)("f = …")`.
+  - So the eval rebinding of a top-level function declaration is not
+    observed even by legacy code: the gap A3's focused probes recorded.
+  - The test therefore pins the boundary decision, not the value.
+
 ### A2 and A3 (outline; each gets its own measured plan before code)
 
 - **A2.**
@@ -5854,6 +5924,108 @@ the eval rows fail locally with "quickjs provider is not built".
   - `makeIrFunctionObjectValueResolver` is then re-enabled for non-live
     names, so `assert`, `Test262Error` and `compareArray` keep static
     bindings and function-object values.
+
+## ES5 lever S: module storage — `vardecl-module-storage-unrepresentable` (plan, 2026-11-07)
+
+Claimed for lane L in #6583. Lane C owns the neighbouring work, and S does not
+overlap it: script-var object literals (#7280), array literals (#7292), the
+parameter carrier (#7277), `expr-ident-not-in-scope` (#7278) and default
+parameters (#7279). af35410's A2b owns the eval gate in `scriptVarHomeSlot`.
+
+### What refuses (measured on main cc27f70dfd, standalone)
+
+**Sample:** every 40th test262 file (1,340 files). Two temporary logs ran in a
+scratch tree:
+- `directTopLevelDeclaration` logs why it declines a script `var`;
+- `inspectDirectBinding` logs why it declines a lexical binding.
+
+**Counts:**
+- 389 files' `<module-init>` refuses for this reason, 167 of them as their
+  only legacy unit.
+- 40 are eval programs (A2b's), counted apart.
+- 101 are Temporal.
+
+**Non-eval, non-Temporal rows by cause:**
+
+| cause | rows | sole unit | ES5 sole | owner |
+| --- | ---: | ---: | ---: | --- |
+| array-literal slot (`ref_null` vec/array struct) | ~105 | ~32 | ~6 | C #7292 |
+| object literal, `merged-declaration` (see below) | 34 | 34 | 17 | **S** (identity) + C #7280 (value) |
+| object literal, struct slot (`ref_null` struct) | ~10 | ~7 | ~2 | C #7280 |
+| `var r = /…/.exec(s)` (`RegExpExecArray` struct slot) | 7 | 7 | 7 | R2 + S, and C #7292 for `__expected` |
+| `var s = Symbol()` in a typed slot | 9 | 5 | 0 | unowned, not ES5 |
+| lexical `Set`/`Map`/`Error`/generator/`new C`/function value | ~30 | ~8 | 0 | unowned, not ES5 |
+
+**The `merged-declaration` arm.** In a JS file,
+`Object.defineProperty(obj, "p", …)` makes the argument `obj` one more checker
+declaration of the binding. `directTopLevelDeclaration` then sees two
+declarations and declines the binding as merged, though they are the same
+slot. `isJsExpandoTarget` already accepts the `obj.p = v` and `obj[k] = v`
+spellings of the same thing. Typical case: the ES5 Array generic tests,
+`var obj = {}; Object.defineProperty(obj, "length", …)`.
+
+Scratch experiment on those 34 files (the defineProperty target accepted like
+`isJsExpandoTarget`):
+- 0 post-claim errors;
+- every file moves on to its next refusal: `objectlit-empty` (`var obj = {}`)
+  in 23 (#7280), `call-resolution-unsupported` in 8, others in 3;
+- no file becomes IR-only on its own.
+
+### Plan
+
+- **S1 — identity (module-bindings.ts, `directTopLevelDeclaration`).**
+  - **Change:** the first argument of a JS `Object.defineProperty(<id>, …)`
+    property declaration counts as the same binding, beside
+    `isJsExpandoTarget`. Both are folded into one predicate,
+    "a JS property declaration on this binding".
+  - **Storage:** none new. The binding resolves to legacy's existing
+    `__mod_<name>` slot through `scriptVarHome`.
+  - **Guards:** the eval gate and every other `scriptVarHomeSlot` arm are left
+    alone.
+  - **Gain on its own:** 0 files. It removes the identity refusal so #7280's
+    object-literal value lowering can claim these files. With #7280, the 13
+    ES5 `typeof obj` rows scale to about 520 ES5 files (×40), as an upper
+    bound; each file still needs its own next lever.
+- **S1 implemented (2026-11-07).**
+  - **Change:** `isJsExpandoTarget` became `isJsPropertyDeclarationTarget`.
+    The binding of `o.p = v`, of `o[k] = v`, or the first argument of
+    `Object.defineProperty(o, …)` is the same binding.
+  - **Size:** `module-bindings.ts` grows by 0 lines.
+  - **Measured** (main cc27f70dfd vs head, the 1,340-file sample):
+    - +0 IR-only on both lanes, as expected for an enabler;
+    - 0 status changes and 0 new post-claim;
+    - gc binaries are all identical. On standalone, 3 async tests hashed
+      differently inside the long census process; compiled alone, main and
+      head give identical hashes;
+    - the playground is identical.
+  - **The 34 target files** all move on:
+    - `objectlit-empty` in 23 (#7280);
+    - `call-resolution-unsupported` in 8: `Object.defineProperty` is
+      host-only in the IR, and the host-free path is the open-carrier define
+      that follows #7280's object literal;
+    - three others in 3;
+    - 0 claim-then-withdraw.
+  - **Tests:** `tests/issue-7106-lever-s.test.ts`, at the resolver: the plain
+    `var`, an expando, a `defineProperty` target, and both together. The
+    defineProperty rows fail on main.
+- **S2 — the `exec` result slot.** Stacked on R2 (`.exec` as a carrier
+  value). It binds the legacy struct slot for `RegExpExecArray` the way #7252
+  bound class instances, which needs R2 first. The `__expected` arrays in the
+  same tests need #7292.
+- **Not planned:** symbol-typed slots and the lexical `Set`/`Map`/generator/
+  function-value bindings. None of them is ES5, and the ES5 goal is what this
+  lever serves.
+
+**Acceptance:**
+- 0 pass→fail on both lanes;
+- 0 claim-then-withdraw;
+- byte identity outside the changed files;
+- the gates.
+
+**Code quality:**
+- one predicate for JS property declarations;
+- no new storage kind;
+- no change to `scriptVarHomeSlot`.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
