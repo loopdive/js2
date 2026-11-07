@@ -8935,7 +8935,7 @@ function preregisterInOperatorSupport(ctx: CodegenContext, fns: readonly BuiltFn
           if (
             instr.kind === "call" &&
             instr.target.binding.kind === "runtime" &&
-            instr.target.binding.symbol === "__extern_has"
+            instr.target.binding.symbol.startsWith("__extern_has") // `__extern_has` or native-in's `in` helper
           ) {
             used = true;
           }

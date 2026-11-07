@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { hostFreeEnvironment } from "./context/types.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 /**
@@ -151,10 +152,11 @@ export function hasExplicitNullObjectPrototype(
 /**
  * (#7304) The runtime half of the same name set: the body of
  * `__object_proto_name_key(key) -> i32`, 1 when `key` is a string naming an
- * own member of %Object.prototype%. `__extern_has` asks it at a prototype-walk
- * miss whose terminal is the implicit %Object.prototype% (the walk cannot find
- * these names: that prototype is a `$NativeProto`, not an `$Object`), so a
- * dynamic receiver or key answers what the static fold above answers.
+ * own member of %Object.prototype%. The `in` helper
+ * (`__extern_has_with_implicit_object_proto`) asks it after a HasProperty
+ * miss, so a dynamic key or receiver answers what the static fold above
+ * answers. `__extern_has` itself never asks: ToPrimitive and descriptor reads
+ * share it and need the walk's own answer.
  *
  * params: 0=key(externref); locals: 1=any(anyref) 2=flat(ref null $NativeString)
  */
@@ -197,46 +199,98 @@ export function objectProtoNameKeyBody(
 }
 
 /**
- * (#7304) `__extern_has`'s answer at a prototype-walk miss (key in param 1).
- * The terminal classifier decides whether the chain ends at the implicit
- * %Object.prototype%; if so, the proto-index companion (user-installed
- * members) answers first, then the fixed own-name set. The name set needs a
- * known `$Object` root: a receiver without one (a closed struct, vec or
- * closure) can carry a null prototype the classifier cannot see, so it keeps
- * the companion-only answer. Without a root local (no companion, js lane) the
- * miss is 0, the pre-#7304 shape.
+ * (#7304) Register `__object_proto_name_key` on a host-free lane; the js lane
+ * (gc) keeps its pre-#7304 bytes and gets `undefined`.
  */
-export function implicitObjectProtoMissInstrs(p: {
-  readonly rootLocal: number | undefined;
-  readonly terminalIdx: number;
-  readonly nameKeyIdx: number | undefined;
-  readonly companion: Instr[] | undefined;
-}): Instr[] {
-  const zero: Instr = { op: "i32.const", value: 0 };
-  if (p.rootLocal === undefined) return [zero];
-  const root: Instr = { op: "local.get", index: p.rootLocal };
-  const i32 = { kind: "val", type: { kind: "i32" } } as const;
-  const nameKey: Instr[] =
-    p.nameKeyIdx === undefined
-      ? [zero]
+export function registerObjectProtoNameKey(
+  ctx: CodegenContext,
+  registerNative: (
+    name: string,
+    params: ValType[],
+    results: ValType[],
+    locals: { name: string; type: ValType }[],
+    body: Instr[],
+  ) => number,
+  flattenIdx: number,
+  equalsIdx: number,
+): number | undefined {
+  if (!hostFreeEnvironment(ctx)) {
+    // The js lane (gc): the IR's `in` stays the plain HasProperty, with no new function.
+    ctx.funcMap.set(IN_HAS_PROPERTY_IR, ctx.funcMap.get("__extern_has")!);
+    return undefined;
+  }
+  // The IR's `in` entry, filled at finalize by `fillInHelperBuiltinTerminal`.
+  registerNative(IN_HAS_PROPERTY_IR, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }], [], []);
+  const { locals, body } = objectProtoNameKeyBody(ctx, flattenIdx, equalsIdx);
+  return registerNative("__object_proto_name_key", [{ kind: "externref" }], [{ kind: "i32" }], locals, body);
+}
+
+/** (#7304) The IR's `in` helper: the legacy `in` helper's body with base's IR answer for an unknown carrier. */
+export const IN_HAS_PROPERTY_IR = "__extern_has_in_ir";
+
+/**
+ * (#7304) The `in` helper's step after its HasProperty miss: a key the
+ * implicit %Object.prototype% does not own is absent (key in param 1). The
+ * js lane, which passes only those names, has no such step.
+ */
+export function objectProtoNameMissInstrs(nameKeyIdx: number | undefined): Instr[] {
+  if (nameKeyIdx === undefined) return [];
+  return [
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: nameKeyIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+  ];
+}
+
+/**
+ * (#7304, option b) Finalize fill of the `in` helpers' last answer, for a
+ * receiver that is neither a `$Object` nor a rooted fnctor. A builtin carrier
+ * whose chain is known to end at the implicit %Object.prototype% answers the
+ * name set: a vec (Array.prototype), a closure / Date / RegExp
+ * (`__is_closure_prop_carrier`), a Map-family collection, an Error, a Promise.
+ * A fnctor instance without a `$Object` root (WASI's struct link) answers 0.
+ *
+ * Any other carrier, e.g. a closed struct literal whose `setPrototypeOf` the
+ * runtime does not record (#7326), keeps each caller's base answer: the legacy
+ * helper's permissive 1, and 0 for the IR, whose `in` used `__extern_has`. So
+ * the IR entry `IN_HAS_PROPERTY_IR` is the legacy helper's body with that one
+ * answer changed. `fnctorInstanceTypeIdxs` comes from the caller, since this
+ * module cannot import proto-index-store. On the js lane (gc) the IR entry is
+ * an alias of `__extern_has`, as before, and the legacy helper keeps its bytes.
+ */
+export function fillInHelperBuiltinTerminal(ctx: CodegenContext, fnctorInstanceTypeIdxs: readonly number[]): void {
+  const helper = ctx.mod.functions.find((fn) => fn.name === "__extern_has_with_implicit_object_proto");
+  const irEntry = ctx.mod.functions.find((fn) => fn.name === IN_HAS_PROPERTY_IR);
+  if (!helper || !irEntry) return; // the js lane aliases the IR entry to `__extern_has`
+  const last = helper.body.length - 1;
+  if (helper.body[last]?.op !== "i32.const") throw new Error("the in helper no longer ends at its terminal constant");
+  const receiver: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }];
+  const when = (typeIdx: number | undefined, value: number): Instr[] =>
+    typeIdx === undefined || typeIdx < 0
+      ? []
       : [
-          root,
-          { op: "ref.is_null" },
-          {
-            op: "if",
-            blockType: i32,
-            then: [zero],
-            else: [
-              { op: "local.get", index: 1 },
-              { op: "call", funcIdx: p.nameKeyIdx },
-            ],
-          },
+          ...receiver,
+          { op: "ref.test", typeIdx },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value }, { op: "return" }] },
         ];
-  const hit: Instr[] =
-    p.companion === undefined
-      ? nameKey
-      : p.nameKeyIdx === undefined
-        ? p.companion
-        : [...p.companion, { op: "if", blockType: i32, then: [{ op: "i32.const", value: 1 }], else: nameKey }];
-  return [root, { op: "call", funcIdx: p.terminalIdx }, { op: "if", blockType: i32, then: hit, else: [zero] }];
+  const isClosureCarrier = ctx.funcMap.get("__is_closure_prop_carrier");
+  const terminal = (unknownCarrier: number): Instr[] => [
+    ...fnctorInstanceTypeIdxs.flatMap((typeIdx) => when(typeIdx, 0)),
+    ...[ctx.vecPropBaseTypeIdx, ctx.mapTypeIdx, ctx.errorStructTypeIdx, ctx.structMap.get("$Promise")].flatMap(
+      (typeIdx) => when(typeIdx, 1),
+    ),
+    ...(isClosureCarrier === undefined
+      ? []
+      : [
+          { op: "local.get", index: 0 } as Instr,
+          { op: "call", funcIdx: isClosureCarrier } as Instr,
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] } as Instr,
+        ]),
+    { op: "i32.const", value: unknownCarrier },
+  ];
+  const walk = helper.body.slice(0, last);
+  irEntry.locals = structuredClone(helper.locals);
+  irEntry.body = [...structuredClone(walk), ...terminal(0)];
+  helper.body = [...walk, ...terminal(1)];
 }

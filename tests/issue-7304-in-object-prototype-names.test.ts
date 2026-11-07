@@ -3,8 +3,8 @@
 // #7304 — `key in receiver` at a prototype-walk miss whose terminal is the
 // implicit %Object.prototype%: the native `__extern_has` answers that
 // prototype's own names (`"toString" in {}` is true) for a receiver with a
-// known `$Object` root, on standalone and WASI. A null-prototype receiver
-// stays false. Each case is checked against node, with a literal key (through
+// known `$Object` root or a builtin carrier (function, Error, …), on standalone
+// and WASI. A null-prototype receiver stays false. Each case is checked against node, with a literal key (through
 // the IR's native `in`) and a dynamic key.
 import { describe, expect, it } from "vitest";
 import { compile, type CompileOptions } from "../src/index.js";
@@ -20,6 +20,9 @@ const RECEIVERS: Record<string, string> = {
   "a Number wrapper": "Object(1)",
   "a String wrapper": "Object('s')",
   "a Boolean wrapper": "Object(true)",
+  "a function": "(function () {})",
+  "an arrow": "(() => 1)",
+  "an Error": "new Error('m')",
   // The two receivers whose null prototype the terminal must see (RV7142).
   "an object after setPrototypeOf(null)":
     "(function () { var q = { x: 1 }; Object.setPrototypeOf(q, null); return q; })()",

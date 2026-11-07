@@ -89,7 +89,7 @@ import {
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { hostFreeEnvironment, jsValueBoundary } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { classObjectDisplayName } from "./class-static-metadata.js";
 import {
   captureArgumentsToPrimitiveBindings,
@@ -114,7 +114,7 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
-import { implicitObjectProtoMissInstrs, objectProtoNameKeyBody } from "./object-proto-name-in.js";
+import { objectProtoNameMissInstrs, registerObjectProtoNameKey } from "./object-proto-name-in.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
@@ -1917,12 +1917,6 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "i32.const", value: 1 },
     ],
   );
-
-  // (#7304) The own names of the implicit %Object.prototype% terminal; not on the js lane (gc).
-  const nameKey = hostFreeEnvironment(ctx) ? objectProtoNameKeyBody(ctx, strFlattenIdx, strEqualsIdx) : undefined;
-  const objectProtoNameKeyIdx =
-    nameKey &&
-    registerNative("__object_proto_name_key", [{ kind: "externref" }], [{ kind: "i32" }], nameKey.locals, nameKey.body);
 
   // Approved standalone function constructors use native `__fnctor_<F>`
   // instance structs while their prototype properties live on a per-fnctor
@@ -3818,17 +3812,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // finalization remaps these instruction objects in place.
     const fnctorProtoIndexHasMiss = protoIndexRecvHasMissInstrs(ctx, 0, 1);
     const nullProtoRootLocal =
-      objectProtoIndexHasMiss === undefined && objectProtoNameKeyIdx === undefined
+      objectProtoIndexHasMiss === undefined
         ? undefined
         : 4 + (hasArmIdxs.length > 0 ? 1 : 0) + (fnctorProtoStartIdx === undefined ? 0 : 1);
-    // (#7304) The miss tails, see `implicitObjectProtoMissInstrs`.
-    const implicitObjectProtoMiss = (companion: Instr[] | undefined): Instr[] =>
-      implicitObjectProtoMissInstrs({
-        rootLocal: nullProtoRootLocal,
-        terminalIdx: objectTerminalAllowsImplicitProtoIdx,
-        nameKeyIdx: objectProtoNameKeyIdx,
-        companion,
-      });
     const body: Instr[] = [
       // (#4491) §10.4.3 String-exotic own properties (`length` + the canonical
       // indices) are DERIVED from the wrapper's [[PrimitiveValue]], so the
@@ -3909,7 +3895,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                     { op: "local.set", index: 2 },
                     // Preserve the fnctor's real `$Object` root before this
                     // loop overwrites the cursor, so its terminal can control
-                    // the implicit-prototype fallback below.
+                    // the companion fallback below.
                     ...(nullProtoRootLocal === undefined
                       ? []
                       : ([
@@ -3954,7 +3940,18 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // implicit Object.prototype companion; an unrooted non-$Object
           // receiver remains permissive through the predicate's null-root
           // compatibility answer.
-          ...implicitObjectProtoMiss(fnctorProtoIndexHasMiss),
+          ...(fnctorProtoIndexHasMiss === undefined
+            ? ([{ op: "i32.const", value: 0 }] satisfies Instr[])
+            : ([
+                { op: "local.get", index: nullProtoRootLocal! },
+                { op: "call", funcIdx: objectTerminalAllowsImplicitProtoIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: fnctorProtoIndexHasMiss,
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+              ] satisfies Instr[])),
           { op: "return" },
         ],
       },
@@ -4011,7 +4008,18 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // Object.prototype, boxed-primitive wrappers at their own brand first.
       // The terminal gate is intentionally only for an actual `$Object` walk;
       // non-$Object callers retain their prior permissive companion behavior.
-      ...implicitObjectProtoMiss(objectProtoIndexHasMiss),
+      ...(objectProtoIndexHasMiss === undefined
+        ? ([{ op: "i32.const", value: 0 }] satisfies Instr[])
+        : ([
+            { op: "local.get", index: nullProtoRootLocal! },
+            { op: "call", funcIdx: objectTerminalAllowsImplicitProtoIdx },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: objectProtoIndexHasMiss,
+              else: [{ op: "i32.const", value: 0 }],
+            },
+          ] satisfies Instr[])),
     ];
     registerNative(
       "__extern_has",
@@ -4136,6 +4144,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         blockType: { kind: "empty" },
         then: [{ op: "i32.const", value: 1 }, { op: "return" }],
       },
+      ...objectProtoNameMissInstrs(registerObjectProtoNameKey(ctx, registerNative, strFlattenIdx, strEqualsIdx)),
       { op: "local.get", index: 2 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       {
@@ -4169,9 +4178,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               ],
             },
           ] satisfies Instr[])),
-      // The compiler selected this helper only for one of the fixed
-      // Object.prototype names. Non-`$Object`/non-fnctor receivers retain the
-      // prior permissive constant rather than gaining a new runtime miss.
+      // Any other receiver keeps the permissive implicit-terminal answer (see #7304 for its gaps).
       { op: "i32.const", value: 1 },
     ];
   }

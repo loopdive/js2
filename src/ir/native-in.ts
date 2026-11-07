@@ -46,6 +46,9 @@ export function boxNativeInKey(
   );
 }
 
+/** The runtime helper behind `in` (object-runtime.ts). */
+export const IN_HAS_PROPERTY = "__extern_has_in_ir";
+
 /** §13.10.1: validate the evaluated RHS before observable ToPropertyKey. */
 export function lowerNativeIn(builder: IrFunctionBuilder, key: IrValueId, receiver: IrValueId): IrValueId {
   const object = builder.emitTagTest(receiver, JS_TAG_IDS.Object);
@@ -55,7 +58,10 @@ export function lowerNativeIn(builder: IrFunctionBuilder, key: IrValueId, receiv
   emitThrowTypeErrorIf(builder, invalid, "Cannot use 'in' operator to search for property in a non-object");
   const propertyKey = builder.emitCall(irRuntimeFuncRef("__to_property_key"), [key], irDynamic());
   if (propertyKey === null) throw new Error("ToPropertyKey returned no value for native in");
-  const result = builder.emitCall(irRuntimeFuncRef("__extern_has"), [receiver, propertyKey], irBool());
+  // HasProperty through the `in`-only helper: it also answers the implicit
+  // %Object.prototype% terminal's names, which `__extern_has` (shared with
+  // ToPrimitive and descriptor reads) must not (#7304).
+  const result = builder.emitCall(irRuntimeFuncRef(IN_HAS_PROPERTY), [receiver, propertyKey], irBool());
   if (result === null) throw new Error("HasProperty returned no value for native in");
   return result;
 }
