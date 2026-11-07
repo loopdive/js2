@@ -15,7 +15,6 @@ import type { ValType } from "../../ir/types.js";
 import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { initializerMayProduceHostCallable } from "./host-callable-initializer.js";
 import { readEnv } from "../../env.js";
 import { identifierWritesOf, stripParens, type IdentifierWrite } from "../../shared/binding-writes.js";
 
@@ -181,30 +180,6 @@ function bindingHasOutOfShapePropertyWrite(ctx: CodegenContext, decl: ts.Variabl
 }
 
 /**
- * True when an initialized binding can receive a genuine JavaScript function
- * externref, either initially or through a later simple assignment.
- *
- * A host function and a compiled closure share JavaScript's `function` type but
- * not a Wasm representation.  This proof therefore complements the JsTag
- * comparison below: both values report the same tag even though a closure-ref
- * slot would null the host value during coercion.
- */
-export function bindingMayReceiveHostCallable(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
-  if (!ts.isIdentifier(decl.name) || !decl.initializer || ctx.standalone || ctx.wasi) return false;
-  if (initializerMayProduceHostCallable(ctx, decl.initializer)) return true;
-
-  const facts = scopeCarrierFacts(ctx, containingScope(decl));
-  const resolved = facts.assignmentsByDeclaration.get(decl) ?? [];
-  const unresolvedWith = facts.unresolvedWithAssignmentsByName.get(decl.name.text) ?? [];
-  return [...resolved, ...unresolvedWith].some(
-    (fact) =>
-      fact.target !== decl.name &&
-      fact.write.kind === "value" &&
-      initializerMayProduceHostCallable(ctx, fact.write.expr),
-  );
-}
-
-/**
  * (#4264) True when `node` sits inside the BODY of a `with` statement, without
  * crossing a function boundary first.
  *
@@ -281,7 +256,6 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
   if (!decl.initializer) return false;
 
   if (bindingHasOutOfShapePropertyWrite(ctx, decl)) return true;
-  if (bindingMayReceiveHostCallable(ctx, decl)) return true;
 
   const initialTag = ctx.oracle.staticJsTypeOf(decl.initializer);
   if (initialTag === "mixed") return false;

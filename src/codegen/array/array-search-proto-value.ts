@@ -21,9 +21,6 @@
  *   4. fromIndex → ToNumber (the coercion engine: observable valueOf/toString,
  *      Symbol throws), then the shared clamp and scan (array-search-core.ts),
  *      the same instructions the direct `.call` borrow runs.
- *
- * Gated on the native regime (`ctx.standalone || ctx.wasi`); host-assisted
- * `gc` keeps its fixed-slot closure type and its host bridge, byte-identical.
  */
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -46,7 +43,7 @@ const SEARCH_MEMBERS: ReadonlySet<string> = new Set(["indexOf", "lastIndexOf", "
 
 /** True when `Array.prototype.<member>`'s closure uses the packed variadic ABI for the search family. */
 export function isArraySearchVariadicMember(ctx: CodegenContext, member: string): boolean {
-  return SEARCH_MEMBERS.has(member) && (ctx.standalone || ctx.wasi);
+  return SEARCH_MEMBERS.has(member);
 }
 
 const EXT: ValType = { kind: "externref" };

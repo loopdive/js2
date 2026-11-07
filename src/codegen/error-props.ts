@@ -37,7 +37,6 @@ const FLAG_ACCESSOR = 0x08;
 
 /** Reserve stable helper indices before the object-runtime call sites bake them. */
 export function reserveErrorPropHelpers(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   if (ctx.funcMap.has(IS_ERROR_PROP_CARRIER)) return;
 
   const reserve = (name: string, params: ValType[], results: ValType[], body: Instr[]): void => {

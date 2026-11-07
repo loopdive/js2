@@ -86,7 +86,7 @@
  * **Shadowing**: declines when a user binding shadows the name; those are
  * caught by the collection's own module-global / top-level-function arms.
  *
- * **Standalone only** — both predicates run behind a `ctx.standalone` gate, so
+ * **Standalone only** — both predicates run behind a the regime flag gate, so
  * host/GC output stays byte-identical.
  */
 import { ts } from "../ts-api.js";
@@ -235,7 +235,6 @@ export function isBuiltinNamespaceExpandoWriteTarget(left: ts.Expression, ctx: B
  * builtin the generic root-identifier check cannot see? Standalone-only.
  */
 export function shouldKeepBuiltinReceiverWrite(ctx: BuiltinWriteKeepCtx, left: ts.Expression): boolean {
-  if (!ctx.standalone) return false;
   if ((ctx.protoNamedDirty || ctx.protoIndexDirty) && isBuiltinProtoWriteTarget(left)) return true;
   return isBuiltinNamespaceExpandoWriteTarget(left, ctx);
 }
@@ -307,12 +306,7 @@ export function isStandaloneIntrinsicPromiseResolveWriteTarget(
   left: ts.Expression,
 ): boolean {
   const target = unwrap(left);
-  if (
-    !ctx.standalone ||
-    !ts.isPropertyAccessExpression(target) ||
-    ts.isPrivateIdentifier(target.name) ||
-    target.name.text !== "resolve"
-  ) {
+  if (!ts.isPropertyAccessExpression(target) || ts.isPrivateIdentifier(target.name) || target.name.text !== "resolve") {
     return false;
   }
   const receiver = unwrap(target.expression);

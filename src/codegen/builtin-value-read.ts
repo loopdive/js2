@@ -27,7 +27,7 @@ import {
   skipTransparentExpressions,
   valTypesMatch,
 } from "./shared.js";
-import { emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
+import { emitThrowTypeError } from "./expressions/helpers.js";
 import { emitObjectCreateValueBody } from "./object-create-value-body.js";
 import { allocLocal } from "./context/locals.js";
 import { isViewRefTestInstrs } from "./dataview-native.js"; // (#5150) ArrayBuffer.isView value closure
@@ -79,7 +79,6 @@ import { getArrTypeIdxFromVec } from "./registry/types.js";
 import { emitInlineMathFunctions } from "./math-helpers.js"; // (#6957)
 import { isPatchedBuiltinStaticMember } from "./source-scan-predicates.js"; // (#6957)
 import { emitMathValueReadBody, prepareMathValueRead } from "./math-value-read.js"; // (#4565, #5383)
-import { ensureHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649)
 import {
   emitStringFromCharCodeValueBody,
   prepareStringFromCharCodeValueRead,
@@ -456,61 +455,18 @@ export function emitArrayIsArrayExternrefPredicate(ctx: CodegenContext, fctx: Fu
   // so neither declaration order nor lazy vec registration can produce a wrong
   // answer here. WASI is intentionally NOT routed here: its
   // `__extern_is_array` does not resolve to the native object-runtime func
-  // (OBJECT_RUNTIME_HELPER_NAMES routing is `ctx.standalone`-only), so it stays
+  // (OBJECT_RUNTIME_HELPER_NAMES routing is regime-only), so it stays
   // on the inline chain below.
-  if (ctx.standalone) {
-    const nativeIdx = ensureLateImport(ctx, "__extern_is_array", [{ kind: "externref" }], [{ kind: "i32" }]);
-    if (nativeIdx !== undefined) {
-      flushLateImportShifts(ctx, fctx);
-      fctx.body.push({ op: "call", funcIdx: nativeIdx });
-      return;
-    }
-    // Defensive fallback (should not happen — the object runtime always reserves
-    // the helper under standalone): nothing is an array.
-    fctx.body.push({ op: "drop" });
-    fctx.body.push({ op: "i32.const", value: 0 });
-    return;
-  }
-
-  const vecTypeIdxs = Array.from(new Set(ctx.vecTypeMap.values()));
-  const isArrIdx =
-    !noJsHost(ctx) && !ctx.strictNoHostImports
-      ? ensureLateImport(ctx, "__extern_is_array", [{ kind: "externref" }], [{ kind: "i32" }])
-      : undefined;
-
-  if (vecTypeIdxs.length === 0 && isArrIdx === undefined) {
-    fctx.body.push({ op: "drop" });
-    fctx.body.push({ op: "i32.const", value: 0 });
-    return;
-  }
-
-  const externTmp = allocLocal(fctx, `__isarr_ext_${fctx.locals.length}`, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: externTmp });
-  let emittedTerm = false;
-
-  // (#4649) The compiled-carrier half is a CALL to the finalize-filled
-  // `__host_array_carrier`, not an inline `ref.test` ladder over
-  // `ctx.vecTypeMap` — that ladder was an emission-time snapshot, so a carrier
-  // registered LATER (a `boolean[]` first minted by a test262 body, after the
-  // harness prefix baked its ladder) answered `false`. See host-array-carrier.ts.
-  const carrierIdx = vecTypeIdxs.length > 0 ? ensureHostArrayCarrierPredicate(ctx) : undefined;
-  if (carrierIdx !== undefined) {
-    fctx.body.push({ op: "local.get", index: externTmp });
-    fctx.body.push({ op: "call", funcIdx: carrierIdx });
-    emittedTerm = true;
-  }
-
-  if (isArrIdx !== undefined) {
+  const nativeIdx = ensureLateImport(ctx, "__extern_is_array", [{ kind: "externref" }], [{ kind: "i32" }]);
+  if (nativeIdx !== undefined) {
     flushLateImportShifts(ctx, fctx);
-    fctx.body.push({ op: "local.get", index: externTmp });
-    fctx.body.push({ op: "call", funcIdx: isArrIdx });
-    if (emittedTerm) fctx.body.push({ op: "i32.or" });
-    emittedTerm = true;
+    fctx.body.push({ op: "call", funcIdx: nativeIdx });
+    return;
   }
-
-  if (!emittedTerm) {
-    fctx.body.push({ op: "i32.const", value: 0 });
-  }
+  // Defensive fallback (should not happen — the object runtime always reserves
+  // the helper under standalone): nothing is an array.
+  fctx.body.push({ op: "drop" });
+  fctx.body.push({ op: "i32.const", value: 0 });
 }
 
 function reportUnsupportedStandaloneBuiltinValueRead(ctx: CodegenContext, builtinName: string, propName: string): void {
@@ -743,7 +699,7 @@ function tryCompileStandaloneBuiltinProtoMemberMeta(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (ts.isPrivateIdentifier(expr.name)) return undefined;
   const metaProp = expr.name.text;
   if (metaProp !== "length" && metaProp !== "name") return undefined;
   const memberAccess = skipTransparentExpressions(expr.expression);
@@ -820,7 +776,7 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (ts.isPrivateIdentifier(expr.name)) return undefined;
   const inner = skipTransparentExpressions(expr.expression);
   if (!ts.isPropertyAccessExpression(inner)) return undefined;
   if (inner.name.text !== "prototype") return undefined;
@@ -939,8 +895,6 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
-
   const key = skipTransparentExpressions(expr.argumentExpression);
   if (!ts.isPropertyAccessExpression(key) || !ts.isIdentifier(key.expression) || key.expression.text !== "Symbol") {
     return undefined;
@@ -1254,7 +1208,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // only the value read fell to the generic "not yet implemented in --target
     // standalone" throw. Same 1-arg boxed-predicate shape as `Number.is*`.
     case "ArrayBuffer.isView": {
-      if (!noJsHost(ctx)) return null;
       paramTypes = [{ kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
       break;

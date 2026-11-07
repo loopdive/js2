@@ -41,7 +41,7 @@
  * `ensureNativeArrayHof` / `ensureObjectGroupBy` invariant), so
  * `fillClosedMethodDispatch` only READS `funcMap` (#1719). Standalone-only:
  * the `__extern_get_idx` array-like arms these bodies read through are emitted
- * only under `ctx.standalone` (`objArrayLikeArms` in `ensureObjectRuntime`),
+ * only under the regime flag (`objArrayLikeArms` in `ensureObjectRuntime`),
  * which is the same gate `ensureNativeArrayHof` carries.
  */
 import type { Instr, ValType } from "../ir/types.js";
@@ -616,7 +616,6 @@ function mintHelper(
  * case the dispatcher keeps its pre-#6447 fall-through unchanged.
  */
 export function ensureNativeArrayProducer(ctx: CodegenContext, methodName: string): number | undefined {
-  if (!ctx.standalone) return undefined;
   if (!DYN_ARRAY_PRODUCER_METHODS.has(methodName)) return undefined;
   if (NATIVE_FLAT_METHODS.has(methodName)) return ensureNativeArrayFlat(ctx, methodName); // (#2717)
   if (NATIVE_SLICE_METHODS.has(methodName)) return ensureNativeArraySlice(ctx, methodName); // (#6683)

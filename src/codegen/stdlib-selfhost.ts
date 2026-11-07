@@ -384,7 +384,7 @@ export function emitSelfHostedFunc(ctx: CodegenContext, def: SelfHostedFuncDef):
     functions: [ir],
     sourceFile: `<stdlib:${def.name}>`,
     policy: {
-      target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
+      target: ctx.wasi ? "wasi" : "standalone",
       backend: "wasmgc",
       // (#3526 F1-S1, F1-S2) Self-hosted stdlib bodies own no JS-host imports,
       // so both number-boundary arms AND the boolean box arm resolve to
@@ -558,7 +558,7 @@ function lowerAndRegister(ctx: CodegenContext, name: string, ir: IrFunction): nu
       return ensureExnTag(ctx);
     },
     standardizedExceptions(): boolean {
-      return ctx.standalone || ctx.wasi;
+      return true;
     },
     resolveString(): ValType {
       if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {

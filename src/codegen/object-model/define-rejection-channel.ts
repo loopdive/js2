@@ -57,7 +57,6 @@ function rejectionGlobalIdx(ctx: CodegenContext): number | undefined {
 
 /** The externref global a rejected define parks its TypeError in (standalone only). */
 export function ensureDefineRejectionGlobal(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
   const existing = rejectionGlobalIdx(ctx);
   if (existing !== undefined) return existing;
   const idx = nextModuleGlobalIdx(ctx);
@@ -83,7 +82,7 @@ export function definePropertyBooleanFrom(
   applierStart: number,
   isTruthyIdx: number | undefined,
 ): boolean {
-  if (!ctx.standalone || isTruthyIdx === undefined || rejectionGlobalIdx(ctx) === undefined) return false;
+  if (isTruthyIdx === undefined || rejectionGlobalIdx(ctx) === undefined) return false;
   const call = fctx.body.splice(applierStart);
   call.push({ op: "call", funcIdx: isTruthyIdx });
   fctx.body.push(...catchDefineRejectionAsFalse(ctx, fctx, call));

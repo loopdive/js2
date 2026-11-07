@@ -34,7 +34,7 @@
  * direction: it is the ordinary property read for every non-proxy value too,
  * so a false positive would cost a fast path, never a wrong answer.
  *
- * Both helpers are gated on `ctx.standalone` by their callers' own check plus
+ * Both helpers are gated on the regime flag by their callers' own check plus
  * the one here: on the host lane `__extern_get` is a JS import whose receiver
  * is the host's own proxy, which needs no compiler dispatch — and the gate is
  * what keeps every `gc` binary byte-identical across this slice.
@@ -68,7 +68,7 @@ export function tryProxyReceiverPropertyRead(
   expr: ts.PropertyAccessExpression,
   propName: string,
 ): ValType | null | typeof PROXY_READ_DECLINE {
-  if (!ctx.standalone || !tracesToProxyValue(ctx, expr.expression)) return PROXY_READ_DECLINE;
+  if (!tracesToProxyValue(ctx, expr.expression)) return PROXY_READ_DECLINE;
   const getIdx = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
   flushLateImportShifts(ctx, fctx);
   if (getIdx === undefined) return PROXY_READ_DECLINE;
@@ -95,7 +95,7 @@ export function tryProxyReceiverElementRead(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | null | typeof PROXY_READ_DECLINE {
-  if (!ctx.standalone || !tracesToProxyValue(ctx, expr.expression)) return PROXY_READ_DECLINE;
+  if (!tracesToProxyValue(ctx, expr.expression)) return PROXY_READ_DECLINE;
   const getIdx = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
   flushLateImportShifts(ctx, fctx);
   if (getIdx === undefined) return PROXY_READ_DECLINE;

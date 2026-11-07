@@ -77,7 +77,7 @@ export function emitObjectProtoOwnPredicateBody(
   member: string,
 ): ValType | null {
   const nativeName = OWN_PREDICATE_NATIVE.get(member);
-  if (nativeName === undefined || !(ctx.standalone || ctx.wasi)) return null;
+  if (nativeName === undefined) return null;
   ensureLateImport(ctx, nativeName, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
   ensureLateImport(ctx, "__box_boolean", [{ kind: "i32" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);

@@ -94,7 +94,6 @@ export function tryEmitPrimitiveToLocaleStringInvoke(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   const recvExpr = invokeToStringReceiver(expr, propAccess);
   if (recvExpr === undefined) return undefined;
   const wrapper = wrapperOf(ctx, recvExpr);
@@ -199,7 +198,6 @@ export function tryEmitOverriddenProtoMemberRead(
  * must decline for it.
  */
 export function protoMemberReadIsOverridden(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!ctx.standalone) return false;
   let read: ts.Expression = expr;
   if (ts.isIdentifier(read)) {
     const decl = ctx.oracle.valueDeclarationOf(read);
@@ -269,7 +267,7 @@ export function strictWrapperThisTypeofIsDynamic(
   operand: ts.Expression,
   tsType: ts.Type,
 ): boolean {
-  if (!ctx.standalone || operand.kind !== ts.SyntaxKind.ThisKeyword) return false;
+  if (operand.kind !== ts.SyntaxKind.ThisKeyword) return false;
   const sym = tsType.symbol as ts.Symbol | undefined;
   if (sym === undefined || !PRIMITIVE_WRAPPERS.has(sym.name) || symbolShadowsBuiltinGlobal(sym)) return false;
   // the `this`-binding function: arrows are lexical, a class body is a boundary

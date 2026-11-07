@@ -53,7 +53,7 @@ import type { ClosureReadBinding } from "../runtime/wasmgc/values/object-get-arm
  * late-import index shifter (#329/#1899) in sync.
  *
  * ## Byte-neutrality
- * Everything here is gated on `ctx.standalone || ctx.wasi`. In gc/host mode the
+ * Everything here is gated on the native regime. In gc/host mode the
  * `env::__extern_*` host imports own the dynamic-property path — the defined
  * `__extern_*` bodies (and therefore these helpers) are never emitted — so the
  * gc/host output stays byte-identical.
@@ -477,7 +477,7 @@ function buildFnctorPrototypeWriteArm(
 /**
  * Register the `$ClosurePropEntry` struct type + `$__closure_prop_head` global
  * and reserve the closure-own-property helper placeholders. Called from
- * `ensureObjectRuntime`'s type section under `ctx.standalone || ctx.wasi`,
+ * `ensureObjectRuntime`'s type section under the native regime,
  * BEFORE the `__extern_get`/`__extern_set`/`__extern_method_call` bodies bake
  * their `call <idx>`. Idempotent (guards on `ctx.closurePropHelpersReserved`).
  *
@@ -591,7 +591,7 @@ export function reserveClosurePropHelpers(ctx: CodegenContext): void {
  * the same function — still ordinary body-compilation time, never finalize.
  */
 function ensureDynamicFunctionProtoCompanion(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.protoMemberDirty !== true) return;
+  if (ctx.protoMemberDirty !== true) return;
   const brand = ensureFunctionNativeProtoGlue(ctx);
   if (brand === undefined) return;
   ensureNativeProtoCompanionSeeder(ctx, brand);

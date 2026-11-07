@@ -197,7 +197,6 @@ function fillArgumentsOwnDefines(
  * first funcIdx, or `undefined` outside standalone where the host owns the MOP.
  */
 export function reserveArgumentsLengthBrand(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
   const existing = ctx.funcMap.get(ABSENT_NAME);
   if (existing !== undefined) return existing;
   const reserve = (name: string, params: ValType[], results: ValType[], placeholder: Instr[]): number => {

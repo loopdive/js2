@@ -28,7 +28,6 @@
 //     observation path accepts.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.ts";
-import { buildImports } from "../src/runtime.ts";
 import { irRuntimeFuncRef } from "../src/ir/callable-bindings.js";
 import {
   attachIrGeneratorSupport,
@@ -139,14 +138,20 @@ describe("#3526 F1-S3 generator-number-box policy and providers", () => {
   });
 
   it("is a SIBLING of the number boundary, not a widening of it", () => {
-    // The number box arm still has no native member; only the generator seam
-    // does. If these two ever merge, a native `__box_number` becomes able to
-    // widen the from-ast number arm that F1-S1 deliberately kept host-only.
+    // The two policies stay separate catalogues: the generator seam has its own
+    // provider ids and feature. (#6979 S7-f) The number box arm gained its own
+    // native member since this was written (`native.js.number.box`,
+    // cb64af7b03), so the pin lists it; the sibling invariant is that neither
+    // catalogue names the other's ids.
     expect([...NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS]).toEqual([
       "host.js.number.box",
+      "native.js.number.box",
       "host.js.number.unbox",
       "native.js.number.unbox",
     ]);
+    for (const id of GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS) {
+      expect(NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS as readonly string[]).not.toContain(id);
+    }
     expect([...GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS]).toEqual([
       "host.js.generator.number-box",
       "native.js.generator.number-box",
@@ -335,38 +340,8 @@ describe("#3526 F1-S3 lowering has no second authority", () => {
   });
 });
 
-describe("#3526 F1-S3 end-to-end behavior is unchanged", () => {
-  it("a value-returning host generator still boxes through env.__box_number and drains", async () => {
-    process.env.JS2WASM_IR_FIRST = "1";
-    const res = await compile(`export function* g(){ yield 1; yield 2; return 3; }`, {
-      fileName: "test.ts",
-      emitWat: true,
-    });
-    expect(res.success).toBe(true);
-    expect(res.irFirstSkipped ?? []).toContain("g");
-    expect(res.wat).toContain('(import "env" "__box_number"');
-    const imports = buildImports(res.imports, undefined, res.stringPool) as Record<string, unknown>;
-    const { instance } = await WebAssembly.instantiate(res.binary!, imports as never);
-    (imports as { setExports?: (value: unknown) => void }).setExports?.(instance.exports);
-    const gen = (instance.exports as { g: () => Iterator<number, number> }).g();
-    gen.next();
-    gen.next();
-    const terminal = gen.next();
-    expect([terminal.done, terminal.value]).toEqual([true, 3]);
-  });
-
-  it("the i32 arm takes the convert-then-box path on the IR route", async () => {
-    process.env.JS2WASM_IR_FIRST = "1";
-    const res = await compile(`export function* g(n: number) { yield 1; return n | 0; }`, {
-      fileName: "test.ts",
-      emitWat: true,
-      trackIrOutcomes: true,
-    });
-    expect(res.success).toBe(true);
-    // Anti-vacuity for the i32 parity cell: the owner must actually ride the
-    // IR path, or the `f64.convert_i32_s` below would be legacy's.
-    expect(res.irOutcomes?.find((entry) => entry.displayName === "g")?.legacyBodyEmitted).toBe(false);
-    expect(res.wat).toContain("f64.convert_i32_s");
-    expect(res.wat).toContain('(import "env" "__box_number"');
-  });
-});
+// (#6979 S7-f, #7010) The "end-to-end behavior is unchanged" rows drove an
+// exported generator through the eager host buffer and pinned its
+// `env.__box_number` return boxing. That buffer is retired (a generator now
+// lowers natively or is refused), so neither row has a lane to run on; the
+// manifest/attachment contract above is what remains of the seam.

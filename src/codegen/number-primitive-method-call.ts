@@ -174,7 +174,6 @@ function sourceNamesNumberFormatCall(sourceFile: ts.SourceFile): boolean {
  * Pure AST, cached per `SourceFile`, and additive across a multi-module realm.
  */
 export function noteNumberPrimitiveMethodDemand(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
-  if (!ctx.standalone) return;
   if (sourceNamesNumberFormatCall(sourceFile)) ctx.numberPrimitiveMethodCallDemand = true;
 }
 
@@ -185,7 +184,6 @@ export function noteNumberPrimitiveMethodDemand(ctx: CodegenContext, sourceFile:
  * the module header.
  */
 export function prepareNumberPrimitiveMethodCallArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   if (ctx.numberPrimitiveMethodCallDemand !== true) return;
   if (ctx.numberPrimitiveMethodProtoInstrs !== undefined) return;
   if (!ctx.funcMap.has("__extern_get") || !ctx.funcMap.has("__apply_closure")) return;
@@ -217,7 +215,6 @@ export function prepareNumberPrimitiveMethodCallArm(ctx: CodegenContext): void {
  * 2 = args `$ObjVec` (as externref).
  */
 export function unshiftExternMethodCallNumberPrimitiveArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const protoInstrs = ctx.numberPrimitiveMethodProtoInstrs;
   if (protoInstrs === undefined) return;
   const typeofNumberIdx = ctx.funcMap.get("__typeof_number");

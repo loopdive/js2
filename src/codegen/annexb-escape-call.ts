@@ -40,7 +40,6 @@ export function compileAnnexBEscapeCall(
     toString: (t: ValType | null, staticType: TypeFact, hint: "string") => ValType;
   },
 ): ValType | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   const helperName = NATIVE_STRING_TRANSFORM_HELPERS.get(funcName);
   if (helperName === undefined) return undefined;
   // (#7025) Only the realm builtin. A user binding of the same name — React's

@@ -181,6 +181,6 @@ export function wrapEagerAsyncClosureRejection(ctx: CodegenContext, fctx: Functi
   emitStandalonePromiseReject(ctx, fctx, [{ op: "local.get", index: reason }]);
   const rejected = fctx.body.splice(0);
   fctx.body.push(
-    buildTargetTaggedTry(ctx, { kind: "val", type: { kind: "externref" } }, body, [{ tagIdx, body: rejected }]),
+    buildTargetTaggedTry({ kind: "val", type: { kind: "externref" } }, body, [{ tagIdx, body: rejected }]),
   );
 }

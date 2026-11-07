@@ -48,7 +48,7 @@ export const BOOLEAN_BOUNDARY_POLICY_DISABLED: BooleanBoundaryPolicy = Object.fr
  * load-bearing rather than an alias for `ref.is_null`), and by the
  * `env.__extern_is_undefined` import otherwise. That is the exact truth table
  * the deleted `externIsUndefinedIsNative` resolver predicate carried:
- * `ctx.standalone || ctx.wasi || ctx.nativeStrings`.
+ * standalone, WASI, or native strings (#6979: the native regime on every WasmGC target).
  */
 export interface ExternIsUndefinedPolicy {
   /**
@@ -354,7 +354,7 @@ export const HOST_CALLBACK_WRAP_POLICY_DISABLED: HostCallbackWrapPolicy = Object
  *
  * The truth table is the resolver arm's own, unchanged: `native` exactly when
  * the lane is standalone and not WASI. It is deliberately NOT the wider
- * `ctx.standalone || ctx.wasi` table that `ensureFunctionPrototypeCallHelper`
+ * standalone-or-WASI table that `ensureFunctionPrototypeCallHelper`
  * uses to MINT the helper — minting is the legacy direct-AST path's business on
  * the WASI lane, and reading helper presence as support is the exact inference
  * F1-S1 refused. It is also not the selector's

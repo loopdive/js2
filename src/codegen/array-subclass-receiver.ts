@@ -38,7 +38,7 @@ import { coerceType } from "./shared.js";
  * standalone/WASI externref-backed subclass whose builtin root is `Array`.
  */
 export function isStandaloneArraySubclass(ctx: CodegenContext, className: string | undefined): boolean {
-  if (!(ctx.standalone || ctx.wasi) || className === undefined) return false;
+  if (className === undefined) return false;
   const name = ctx.classExprNameMap.get(className) ?? className;
   return ctx.classExternrefBackedSet.has(name) && ctx.classBuiltinParentMap.get(name) === "Array";
 }

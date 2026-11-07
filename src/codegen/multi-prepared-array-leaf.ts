@@ -367,14 +367,7 @@ function resolveArrayCandidate<Plan extends MultiPreparedScalarLeafPlan>(
   input: ArrayCandidateInput<Plan>,
 ): ArrayCandidateEvidence | undefined {
   const { ctx, declaration, lateProviderOwnerUnitIds, plan, safeSelection, safety, sourceFile } = input;
-  if (
-    !ctx.standalone ||
-    ctx.fast ||
-    ctx.wasi ||
-    declaration.parent !== sourceFile ||
-    !declaration.name ||
-    !declaration.body
-  ) {
+  if (ctx.fast || ctx.wasi || declaration.parent !== sourceFile || !declaration.name || !declaration.body) {
     return undefined;
   }
   const shape = exactArrayShape(ctx, declaration);

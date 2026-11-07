@@ -57,7 +57,7 @@ const OBJECT_PROTOTYPE_KEYS = new Set([
  * refused, which must never leak into a no-JS-host build.
  */
 function withHasBindingImport(ctx: CodegenContext): string {
-  return ctx.standalone ? "__extern_has" : "__with_has_binding";
+  return "__extern_has";
 }
 
 /**
@@ -71,12 +71,10 @@ function withHasBindingImport(ctx: CodegenContext): string {
  * as they did around the bare `ensureLateImport`.
  */
 function withHasBindingFuncIdx(ctx: CodegenContext, fctx: FunctionContext): number | undefined {
-  if (ctx.standalone) {
-    const native = ensureWithHasBindingNative(ctx);
-    if (native !== undefined) {
-      flushLateImportShifts(ctx, fctx);
-      return native;
-    }
+  const native = ensureWithHasBindingNative(ctx);
+  if (native !== undefined) {
+    flushLateImportShifts(ctx, fctx);
+    return native;
   }
   return ensureLateImport(
     ctx,

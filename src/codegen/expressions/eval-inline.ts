@@ -34,8 +34,7 @@ import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-i
 import { collectReferencedIdentifiers, emitFuncRefAsClosure, getFuncSignature } from "../closures.js";
 import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js";
 import { compileAndEmitToString } from "../coercion-engine.js";
-import { compileStringLiteral } from "../string-ops.js";
-import { emitThrowJsError, noJsHost } from "./helpers.js";
+import { emitThrowJsError } from "./helpers.js";
 import { reportError } from "../context/errors.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { isUseStrictDirectiveExpression } from "../helpers/use-strict-directive.js";
@@ -47,6 +46,7 @@ import {
   emitRuntimeEvalProviderActive,
   emitRuntimeEvalResultUnwrap,
   RUNTIME_EVAL_IMPORT_MODULE,
+  runtimeEvalProviderLinkable,
 } from "./runtime-eval-provider.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { ensureRuntimeEvalInterpretedCallbackType } from "../runtime-eval-boundary.js";
@@ -124,7 +124,6 @@ export function resolveConstantString(expr: ts.Expression, checker?: ts.TypeChec
  * behavioural gain.
  */
 function keywordLiteralToString(ctx: CodegenContext, expr: ts.Expression): string | null {
-  if (!ctx.standalone) return null;
   let e: ts.Expression = expr;
   while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) e = e.expression;
   if (e.kind === ts.SyntaxKind.NullKeyword) return "null";
@@ -376,41 +375,6 @@ function nearestExecutionContainer(n: ts.Node): ts.Node {
     p = p.parent;
   }
   return n;
-}
-
-/**
- * (#3048) True when the parsed eval AST contains an object-literal shape that
- * lowers through the `__make_getter_callback` host bridge in JS-host / GC mode:
- * a get/set accessor, or a computed-property method whose key is not a plain
- * numeric/string literal (the well-known-`Symbol` and runtime-key arms in
- * literals.ts — a plain-literal computed key resolves to a static method name
- * and takes the bridge-free struct path). Mirrors the `collectCallbackImports`
- * detection in declarations.ts so an eval-embedded accessor gets its late import
- * registered before the inline codegen references it.
- */
-function evalNeedsGetterCallbackBridge(root: ts.Node): boolean {
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isObjectLiteralExpression(node)) {
-      for (const p of node.properties) {
-        if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) {
-          found = true;
-          return;
-        }
-        if (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) {
-          const inner = p.name.expression;
-          if (!(ts.isNumericLiteral(inner) || ts.isStringLiteralLike(inner))) {
-            found = true;
-            return;
-          }
-        }
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(root);
-  return found;
 }
 
 function addFoldedEvalBindingNames(name: ts.BindingName, names: Set<string>): void {
@@ -1127,9 +1091,9 @@ export function tryStaticEvalInline(
   // the test262 script lane disables synthetic module strictness and therefore
   // still exercises the spec isolation path for explicit strict code.
   const explicitlyStrictEval = bodyIsStrict || (directEval && isStrictContext(expr, false));
-  if (ctx.standalone && explicitlyStrictEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
+  if (explicitlyStrictEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
 
-  if (ctx.standalone && !explicitlyStrictEval && declarationNames.blockFunctionNames.size > 0) {
+  if (!explicitlyStrictEval && declarationNames.blockFunctionNames.size > 0) {
     const annexBNames = declarationNames.blockFunctionNames;
     const collidesWithCaller =
       setsIntersect(annexBNames, declarationNames.varNames) ||
@@ -1172,12 +1136,7 @@ export function tryStaticEvalInline(
   //
   // Ordered AFTER the bucket-A global-lexical collision guard above: that error
   // is statically certain and also covers host mode, so it wins.
-  if (
-    ctx.standalone &&
-    !evalIsStrict &&
-    declarationNames.varNames.size > 0 &&
-    (directEval ? fctx.name === "__module_init" : true)
-  ) {
+  if (!evalIsStrict && declarationNames.varNames.size > 0 && (directEval ? fctx.name === "__module_init" : true)) {
     return undefined; // provider owns EvalDeclarationInstantiation here
   }
 
@@ -1194,13 +1153,7 @@ export function tryStaticEvalInline(
   // Keyed on FUNCTION declarations specifically, NOT on `varNames`: the
   // 192-file `declare-arguments` matrix is entirely function-scope var-only
   // eval and must keep splicing (named canary in the issue's verification).
-  if (
-    ctx.standalone &&
-    !evalIsStrict &&
-    directEval &&
-    fctx.name !== "__module_init" &&
-    foldedEvalHasTopLevelFunctionDeclaration(sf)
-  ) {
+  if (!evalIsStrict && directEval && fctx.name !== "__module_init" && foldedEvalHasTopLevelFunctionDeclaration(sf)) {
     return undefined;
   }
 
@@ -1211,7 +1164,7 @@ export function tryStaticEvalInline(
   // both names compare equal only because both were null). Route those bodies
   // to the bytecode provider, where `%eval%` has a real realm-stable marker and
   // alias calls correctly become indirect eval.
-  if (ctx.standalone && containsEvalValueReference(sf)) return undefined;
+  if (containsEvalValueReference(sf)) return undefined;
 
   // A `typeof` of one of the eval body's own lexical bindings, before that
   // binding's declaration, is a TDZ ReferenceError the splice statically folds
@@ -1255,23 +1208,6 @@ export function tryStaticEvalInline(
   // to the real constructor. So the earlier widened-constant regex bail is gone:
   // a newly-foldable body containing a regex literal inlines correctly.
 
-  // (#3048) The outer-file collection pre-pass (collectCallbackImports) never
-  // saw inside this eval SOURCE STRING, so any object-literal getter/setter or
-  // bridge-routed computed method it contains has NOT had its
-  // `__make_getter_callback` late-import registered — the inline getter/method
-  // codegen would then hit a hard CE "Missing __make_getter_callback import"
-  // (test262 `language/expressions/object/11.1.5*` compile a `get`/`set`
-  // accessor through `eval("o = {get foo(){…}}")`). Register the bridge here,
-  // before compiling the spliced statements, and flush the late-import index
-  // shift immediately (the `literals.ts` well-known-symbol arm uses the same
-  // ensure-then-flush discipline). Host/GC only: under no-JS-host mode the
-  // accessor/method lowers to a host-free closure (#1888 S5b / #2194) and must
-  // not declare the unsatisfiable `env::` bridge import.
-  if (!noJsHost(ctx) && evalNeedsGetterCallbackBridge(sf)) {
-    ensureLateImport(ctx, "__make_getter_callback", [{ kind: "i32" }, { kind: "externref" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
-  }
-
   // Evaluate any additional arguments for side effects only after every
   // compile-time eligibility check. A declined inline is recompiled by the
   // runtime path; doing this earlier evaluated extras twice on a late bail.
@@ -1279,7 +1215,7 @@ export function tryStaticEvalInline(
   // before execution of the eval Script.
   for (let ai = 1; ai < expr.arguments.length; ai++) {
     const extra = expr.arguments[ai]!;
-    if (ctx.standalone && ts.isSpreadElement(extra)) {
+    if (ts.isSpreadElement(extra)) {
       emitDiscardedSpreadArgument(ctx, fctx, extra); // (#6774 S18) ArgumentListEvaluation steps it
       continue;
     }
@@ -2008,7 +1944,7 @@ export function tryStandaloneDynamicFunctionCtorValue(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx)) return undefined;
   const callee = unwrapParenExpr(expr.expression);
   if (!ts.isIdentifier(callee) || !isGlobalFunctionIdentifier(callee, ctx.checker)) return undefined;
   return emitStandaloneDynamicFunctionRuntime(ctx, fctx, expr.arguments);
@@ -2033,7 +1969,7 @@ export function emitStandaloneIndirectEvalRuntime(
   args: readonly ts.Expression[],
   sourceLocal?: number, // (#6774 S18) the source already evaluated (spread args)
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx)) return undefined;
   if (args.length === 0 && sourceLocal === undefined) {
     // (#2875 w4-F) §19.2.1.1 step 2 — `eval()` passes `undefined`, not a String,
     // so PerformEval returns it unchanged. `ref.null.extern` is `null`, a
@@ -2086,7 +2022,7 @@ export function emitStandaloneGlobalScriptEvalRuntime(
   fctx: FunctionContext,
   args: readonly ts.Expression[],
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx)) return undefined;
   if (args.length === 0) {
     emitUndefined(ctx, fctx);
     return { kind: "externref" };
@@ -2200,7 +2136,7 @@ export function emitStandaloneDynamicFunctionRuntime(
   fctx: FunctionContext,
   args: readonly ts.Expression[],
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx)) return undefined;
   if (isRuntimeEvalProviderAbsent(ctx)) return emitRefusedDynamicFunction(ctx, fctx, args);
   const repr = nativeStringRepr(ctx);
   if (repr === undefined) return undefined;
@@ -2358,95 +2294,6 @@ export function ensureRuntimeEvalCallableCarrier(ctx: CodegenContext, fctx: Func
   fctx.body.push({ op: "drop" });
   ctx.runtimeEvalCallableSeeded = true;
   return true;
-}
-
-/**
- * (#2960) Host-mode DYNAMIC `new Function(p0, …, pN, body)` — route to the
- * meta-circular runtime-eval machinery via the `env::__extern_new_function`
- * host shim (`createNewFunctionShim`, the same `compileSourceSync` + LRU-cache
- * machinery indirect eval uses). `new Function` is global-scoped (§20.2.1.1),
- * so the shim compiles a fresh global-scope module and returns a real
- * JS-callable function value (unlike the eval path, whose child-module closure
- * the parent can't cast/invoke).
- *
- * We build TWO runtime strings — a comma-joined `paramString` and the
- * `bodyString` — by ToString-coercing each argument and (for ≥2 params)
- * joining with `__concat_N`, then call `__extern_new_function(params, body)`.
- * Replaces the silent `ref.null.extern` no-op stub for the dynamic-arg cluster
- * (the constant-arg compile-away #2924 runs first).
- *
- * Returns `undefined` (caller falls through) when the shim path is unavailable:
- * no-JS-host (`standalone`/`wasi`, handled by the throwing stub instead) or
- * `nativeStrings` (js-string concat isn't wired there).
- */
-export function emitDynamicNewFunctionHostEval(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  args: readonly ts.Expression[],
-): ValType | undefined {
-  if (noJsHost(ctx) || ctx.nativeStrings) return undefined;
-
-  const emitArgToString = (a: ts.Expression): void => {
-    let tsType: ts.Type;
-    try {
-      tsType = ctx.checker.getTypeAtLocation(a);
-    } catch {
-      tsType = ctx.checker.getTypeAtLocation(a.parent ?? a);
-    }
-    compileAndEmitToString(ctx, fctx, a, tsType, "string");
-  };
-
-  // ── paramString: the first k-1 args, comma-joined (empty when 0 params). ──
-  const numParams = Math.max(0, args.length - 1);
-  if (numParams === 0) {
-    compileStringLiteral(ctx, fctx, "");
-  } else if (numParams === 1) {
-    emitArgToString(args[0]!);
-  } else {
-    let pieces = 0;
-    for (let i = 0; i < numParams; i++) {
-      if (i > 0) {
-        compileStringLiteral(ctx, fctx, ",");
-        pieces++;
-      }
-      emitArgToString(args[i]!);
-      pieces++;
-    }
-    const concatParams: ValType[] = Array.from({ length: pieces }, () => ({ kind: "externref" }) as ValType);
-    const concatIdx = ensureLateImport(ctx, `__concat_${pieces}`, concatParams, [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
-    if (concatIdx === undefined) {
-      // Unwind the pushed pieces conservatively — bail to the null stub.
-      for (let i = 0; i < pieces; i++) fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "ref.null.extern" });
-      return { kind: "externref" };
-    }
-    fctx.body.push({ op: "call", funcIdx: concatIdx });
-  }
-
-  // ── bodyString: the last arg (empty when there are no args at all). ──
-  if (args.length >= 1) {
-    emitArgToString(args[args.length - 1]!);
-  } else {
-    compileStringLiteral(ctx, fctx, "");
-  }
-
-  // ── __extern_new_function(paramString, bodyString) → callable externref. ──
-  const newFnIdx = ensureLateImport(
-    ctx,
-    "__extern_new_function",
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-  );
-  flushLateImportShifts(ctx, fctx);
-  if (newFnIdx === undefined) {
-    fctx.body.push({ op: "drop" });
-    fctx.body.push({ op: "drop" });
-    fctx.body.push({ op: "ref.null.extern" });
-    return { kind: "externref" };
-  }
-  fctx.body.push({ op: "call", funcIdx: newFnIdx });
-  return { kind: "externref" };
 }
 
 /**

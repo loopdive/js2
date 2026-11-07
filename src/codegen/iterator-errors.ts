@@ -18,7 +18,6 @@ const NOT_ITERABLE_MSG = "value is not iterable";
  * already-registered symbols at both the eager and finalize build sites.
  */
 export function ensureNonIterableThrowDeps(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   emitWasiErrorConstructor(ctx, "TypeError", 1); // idempotent (funcMap.has guard)
   addStringConstantGlobal(ctx, NOT_ITERABLE_MSG); // idempotent (keyed by value)
 }
@@ -32,7 +31,6 @@ export function ensureNonIterableThrowDeps(ctx: CodegenContext): void {
  * `buildIteratorBody` sites.
  */
 export function nonIterableThrowInstrs(ctx: CodegenContext): Instr[] | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
   const ctorIdx = ctx.funcMap.get("__new_TypeError");
   if (ctorIdx === undefined) return undefined;
   const tagIdx = ensureExnTag(ctx);

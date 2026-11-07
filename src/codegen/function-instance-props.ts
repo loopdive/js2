@@ -150,7 +150,6 @@ const FLAG_CONFIGURABLE = 0x04;
  * these would only shift `funcMap` indices.
  */
 export function reserveFunctionInstanceProps(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   if (ctx.funcMap.get(FNINST_BAG_OWNS) !== undefined) return;
 
   const reserve = (name: string): void => {
@@ -195,7 +194,6 @@ export function reserveFunctionInstanceProps(ctx: CodegenContext): void {
  * skipped fill degrades to exactly today's behaviour instead of trapping.
  */
 export function fillFunctionInstanceProps(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const bagOwnsIdx = ctx.funcMap.get(FNINST_BAG_OWNS);
   const tombstoneIdx = ctx.funcMap.get(FNINST_TOMBSTONE);
   if (bagOwnsIdx === undefined || tombstoneIdx === undefined) return;

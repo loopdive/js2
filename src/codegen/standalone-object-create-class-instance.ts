@@ -7,7 +7,7 @@
 // ## The gap
 //
 // `object-create-class-instance.ts` opens with
-// `if (ctx.wasi || ctx.standalone || noJsHost(ctx)) return;` — #5239 was built
+// `if (ctx.wasi || the regime flag || noJsHost(ctx)) return;` — #5239 was built
 // as an EXPORT the JS runtime's `__object_create` calls back into, so it has no
 // meaning without a JS host and was gated off. Nothing replaced it, so the
 // standalone lane still falls through to the native `__object_create`, which
@@ -105,7 +105,7 @@ function defaultFieldInstr(type: ValType): Instr {
 
 /** True when this module may need the dispatcher at all. */
 export function standaloneObjectCreateClassInstanceApplies(ctx: CodegenContext): boolean {
-  return ctx.standalone === true && ctx.classSet.size > 0;
+  return ctx.classSet.size > 0;
 }
 
 /**

@@ -58,10 +58,9 @@ import {
   planAsyncCfg,
   planAsyncGenCfg,
   planLinearAwaits,
-  isHostAsyncLane,
   tryCatchAsyncSpillInfo,
 } from "./async-cps.js";
-import { spilledCallLaneSupported, spilledCallSpillNames } from "./async-spilled-call.js";
+import { spilledCallSpillNames } from "./async-spilled-call.js";
 import { ensureNativeGeneratorResultType } from "./generators-native.js";
 import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#3178) canonical undefined for the done-result value
 import { recordAsyncFrameMachinery } from "./compiler-support-abi.js";
@@ -954,7 +953,7 @@ export function asyncFnNeedsDrive(ctx: CodegenContext, fn: ts.FunctionLikeDeclar
   const linear = planLinearAwaits(fn, plan, {
     allowReturnInTry: true,
     checker: ctx.checker,
-    allowSpilledCall: spilledCallLaneSupported(ctx),
+    allowSpilledCall: false,
   });
   if (linear === null) {
     // (#2906 slice 3a) `while`-with-await loop shape (native drive lane only).
@@ -1073,7 +1072,7 @@ function computeTryCatchSpills(
   decl: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
 ): { spillNames: string[]; spillTypes: ValType[] } | null {
-  const info = tryCatchAsyncSpillInfo(decl, plan, isHostAsyncLane(ctx), ctx.checker);
+  const info = tryCatchAsyncSpillInfo(decl, plan, false, ctx.checker);
   if (info === null) return null;
   const declByName = collectVarDeclsByName(decl);
   // `collectVarDeclsByName` also picks up a CATCH clause's own
@@ -1191,7 +1190,7 @@ function computeAsyncSpills(
   const linear = planLinearAwaits(decl, plan, {
     allowReturnInTry,
     checker: ctx.checker,
-    allowSpilledCall: spilledCallLaneSupported(ctx),
+    allowSpilledCall: false,
   });
   if (linear === null) {
     // (#2906 slice 3a) `while`-with-await loop: widened spill set (all loop
@@ -2583,7 +2582,6 @@ export function ensureAsyncResumeFunction(
   emitScopedClassLocalRebinds(ctx, resumeFctx, info.decl); // (#4618)
   resumeFctx.body.push(
     buildAsyncFrameDispatch({
-      target: { wasi: ctx.wasi, standalone: ctx.standalone },
       stateTypeIdx: info.stateTypeIdx,
       stateField: STATE_FIELD,
       modeField: MODE_FIELD,

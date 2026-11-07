@@ -34,15 +34,7 @@ import { coerceType } from "./shared.js";
 const RUNTIME_EVAL_CLAIM_STATE_VALUE_CELL = "__runtime_eval_claim_activation_state_value_cell";
 
 export function emitGlobalEnvironmentObject(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (ctx.standalone || ctx.wasi) {
-    return emitNativeGlobalThisObject(ctx, fctx);
-  }
-
-  const getGlobalIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
-  flushLateImportShifts(ctx, fctx);
-  if (getGlobalIdx === undefined) return null;
-  fctx.body.push({ op: "call", funcIdx: getGlobalIdx });
-  return { kind: "externref" };
+  return emitNativeGlobalThisObject(ctx, fctx);
 }
 
 export function emitGlobalEnvironmentKey(ctx: CodegenContext, fctx: FunctionContext, name: string): void {
@@ -558,7 +550,7 @@ export function emitRuntimeEvalGlobalRead(
   name: string,
   missingAsUndefined: boolean,
 ): ValType | null {
-  if (!(ctx.standalone || ctx.wasi) || ctx.runtimeEvalGlobalFunctionBindings !== true) {
+  if (ctx.runtimeEvalGlobalFunctionBindings !== true) {
     return emitRuntimeEvalGlobalObjectRead(ctx, fctx, name, missingAsUndefined);
   }
   const savedBody = pushBody(fctx);

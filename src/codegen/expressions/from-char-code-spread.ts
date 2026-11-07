@@ -25,7 +25,6 @@ import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { hostStringRepr, nativeStringRepr, type StringRepr } from "../builtin-scaffold.js";
 import { emitThrowRangeError } from "../js-errors.js";
-import { noJsHost } from "../js-errors.js";
 import { addStringImports } from "../registry/imports.js";
 import { buildSpreadArgList, hasSpreadArgument } from "../spread-arg-list.js";
 
@@ -148,7 +147,7 @@ export function compileFromCharCodeFamilySpread(
   fctx.body.push({ op: "local.set", index: accLocal });
 
   // Per element: [f64 code] → coerce → 1-char string → acc = acc ++ part.
-  const emitRangeGuard = isFromCodePoint === true && noJsHost(ctx);
+  const emitRangeGuard = isFromCodePoint === true;
   const post: Instr[] = [];
   if (emitRangeGuard) post.push(...rangeGuardInstrs(ctx, fctx));
   if (native) {

@@ -45,11 +45,8 @@
 // takes the host TypedArray construct bridge is byte-identical.
 
 import type { IrUnitId } from "../ir/identity.js";
-import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import type { WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
-import { definedFuncHandleOf } from "./func-space.js";
-import { noJsHost } from "./js-errors.js";
 
 /**
  * Runtime contract: keep in lock-step with `_INIT_MARSHAL_HELPER_NAMES` in
@@ -66,8 +63,6 @@ export const INIT_MARSHAL_HELPERS: readonly string[] = [
   "__\0js2_is_date",
   "__\0js2_date_value",
 ];
-
-const REGISTER_IMPORT = "__register_init_export";
 
 /**
  * (#5209) Does this module dispatch a DYNAMIC method call through the host?
@@ -121,37 +116,4 @@ function helperFunc(ctx: CodegenContext, name: string): WasmFunction | undefined
  */
 export function emitInitMarshalHelperRegistration(ctx: CodegenContext, preferredUnitId?: IrUnitId): void {
   if (!ctx.needsInitMarshalHelpers && !usesDynamicExternMethodCall(ctx) && !ownsDateCarrier(ctx)) return;
-  if (ctx.wasi || noJsHost(ctx)) return;
-  // Same initializer selection as `finalizeInModuleInitFlag` (index.ts), so the
-  // multi-source pipeline patches the exact prepared unit it owns.
-  const initFn =
-    preferredUnitId !== undefined
-      ? ctx.programAbiModuleInitCallables?.functionForUnit(preferredUnitId)
-      : ctx.programAbiModuleInitCallables?.firstFunction();
-  if (!initFn) return;
-
-  // Nothing to hand over ⇒ leave the module byte-identical.
-  const present = INIT_MARSHAL_HELPERS.map((name, id) => ({ id, fn: helperFunc(ctx, name) })).filter(
-    (entry): entry is { id: number; fn: WasmFunction } => entry.fn !== undefined,
-  );
-  if (present.length === 0) return;
-
-  const params: ValType[] = [{ kind: "i32" }, { kind: "funcref" }];
-  const registerIdx = ensureLateImport(ctx, REGISTER_IMPORT, params, []);
-  if (registerIdx === undefined) return;
-  // Settle the index shift this import caused BEFORE resolving helper handles
-  // and baking the calls — otherwise every index below is one batch stale.
-  flushLateImportShifts(ctx, null);
-  const finalRegisterIdx = ctx.funcMap.get(REGISTER_IMPORT) ?? registerIdx;
-
-  const prologue: Instr[] = [];
-  for (const entry of present) {
-    const handle = definedFuncHandleOf(ctx, entry.fn);
-    if (handle === undefined) continue;
-    prologue.push({ op: "i32.const", value: entry.id });
-    prologue.push({ op: "ref.func", funcIdx: handle });
-    prologue.push({ op: "call", funcIdx: finalRegisterIdx });
-  }
-  if (prologue.length === 0) return;
-  initFn.body = [...prologue, ...initFn.body];
 }

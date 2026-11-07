@@ -160,7 +160,6 @@ export function initializeMultiPreparedProgram(
   ctx.irProgramCallableCutoverEnabled =
     !!options?.experimentalIR &&
     multiAst.sourceFiles.length > 1 &&
-    ctx.standalone &&
     !ctx.wasi &&
     !ctx.fast &&
     ctx.nativeStrings &&
@@ -1287,7 +1286,6 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     !!input.options?.experimentalIR &&
     !input.options.disableIrFirst &&
     !input.explicitlyDisabled(readEnv("JS2WASM_IR_FIRST")) &&
-    input.ctx.standalone &&
     !input.ctx.wasi &&
     !input.ctx.fast &&
     input.multiAst.sourceFiles.length > 1;

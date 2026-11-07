@@ -22,7 +22,7 @@ import { ts } from "../ts-api.js";
 import type { TypeFact } from "../checker/oracle.js";
 import type { FuncHandle, Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { explicitNullReceiverLane, explicitNullThisExternInstrs } from "./explicit-null-receiver.js";
+import { explicitNullThisExternInstrs } from "./explicit-null-receiver.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { bodyReferencesOwnThis } from "./helpers/body-references-own-this.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
@@ -415,7 +415,6 @@ function ensureNamedThisCallTrampoline(
   const prevThisLocal = trampolineParams.length;
   const resultType = results[0];
   const resultLocal = resultType === undefined ? -1 : prevThisLocal + 1;
-  const standardizedEh = ctx.wasi || ctx.standalone;
   const unwindExnLocal = resultType === undefined ? prevThisLocal + 1 : resultLocal + 1;
   const exactCall = (): Instr[] => callTarget(targetFuncIdx, params.length);
 
@@ -425,7 +424,7 @@ function ensureNamedThisCallTrampoline(
     resultType,
     resultLocal,
     unwindExnLocal,
-    standardizedEh,
+    standardizedEh: true,
     exactCall,
   };
   const installAndCall = (receiver: readonly Instr[]): Instr[] => installAndCallFrame(ctx, frame, receiver);
@@ -455,7 +454,7 @@ function ensureNamedThisCallTrampoline(
   const trampolineFunc: WasmFunction = {
     name: helperName,
     typeIdx,
-    locals: installFrameLocals(resultType, standardizedEh),
+    locals: installFrameLocals(resultType, true),
     body,
     exported: false,
   };
@@ -507,7 +506,6 @@ function ensureNamedPlainCallTrampoline(
   const prevThisLocal = params.length;
   const resultType = results[0];
   const resultLocal = resultType === undefined ? -1 : prevThisLocal + 1;
-  const standardizedEh = ctx.wasi || ctx.standalone;
   const unwindExnLocal = resultType === undefined ? prevThisLocal + 1 : resultLocal + 1;
   const frame: ReceiverInstallFrame = {
     currentThisGlobalIdx,
@@ -515,13 +513,13 @@ function ensureNamedPlainCallTrampoline(
     resultType,
     resultLocal,
     unwindExnLocal,
-    standardizedEh,
+    standardizedEh: true,
     exactCall: () => callTarget(targetFuncIdx, params.length, 0),
   };
   const trampolineFunc: WasmFunction = {
     name: helperName,
     typeIdx,
-    locals: installFrameLocals(resultType, standardizedEh),
+    locals: installFrameLocals(resultType, true),
     body: installAndCallFrame(ctx, frame, [{ op: "ref.null.extern" }]),
     exported: false,
   };
@@ -631,9 +629,7 @@ export function resolveNamedThisCallTarget(
   // observe explicit-null differently from absent, so only a strict target
   // needs (or gets) the marker.
   const markerNullArm =
-    declaration?.body !== undefined &&
-    explicitNullReceiverLane(ctx) &&
-    isStrictContext(declaration.body, ctx.inferModuleStrictArguments);
+    declaration?.body !== undefined && isStrictContext(declaration.body, ctx.inferModuleStrictArguments);
   if (
     !declaration?.body ||
     // (#6880) An eval-only live binding keeps the trampoline: the fallback

@@ -25,7 +25,7 @@
  * the method in a property and calls it later, so the receiver is a runtime
  * externref with no static type to key on — the fold cannot reach it. #3201
  * solved this same `getClass` idiom but **host lane only**
- * (`if (!ctx.standalone && !ctx.wasi)`), and its own comment calls the native
+ * (`if (!the regime flag && !ctx.wasi)`), and its own comment calls the native
  * dispatcher's coverage "a follow-up". This is that follow-up.
  *
  * ## Design: one predicate per question, never a second arm list
@@ -644,7 +644,7 @@ export function emitObjectProtoToStringClassifier(
   // gets exported), so the `exportsConsumedByWasm` guard is load-bearing:
   // without it a provider would call itself.
   const peerToStringTagIdx =
-    ctx.standalone && ctx.exportsConsumedByWasm !== true ? ctx.funcMap.get(LINK_BOUNDARY_TO_STRING_TAG) : undefined;
+    ctx.exportsConsumedByWasm !== true ? ctx.funcMap.get(LINK_BOUNDARY_TO_STRING_TAG) : undefined;
   if (peerToStringTagIdx !== undefined) {
     const peerLocal = allocLocal(fctx, `__opts_peer_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push(
@@ -676,7 +676,6 @@ export function ensureObjectProtoToStringRuntimeHelper(ctx: CodegenContext): num
   const name = "__object_proto_to_string_runtime";
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
-  if (!ctx.standalone && !ctx.wasi) return undefined;
 
   const externref: ValType = { kind: "externref" };
   const helper: FunctionContext = {
@@ -853,7 +852,6 @@ function nativeProtoTagOf(ctx: CodegenContext, argExpr: ts.PropertyAccessExpress
  * declines to the existing path rather than baking a possibly stale tag.
  */
 function numberPrototypeAliasTag(ctx: CodegenContext, argExpr: ts.Expression): string | undefined {
-  if (!ctx.standalone) return undefined;
   if (!ts.isIdentifier(argExpr) || !bindingIsSingleAssignment(ctx, argExpr)) return undefined;
   const initializer = ctx.oracle.variableInitializerOf(argExpr);
   if (!initializer) return undefined;
@@ -963,8 +961,7 @@ export function resolveObjectToStringTag(
   // (the deferred @@toStringTag step-15 override is no worse than the pre-#2501
   // CE). `deferOrStandalone(fallback)` encodes that: host → undefined,
   // standalone → fallback.
-  const deferOrStandalone = (fallback: string | undefined): string | undefined =>
-    ctx.standalone ? fallback : undefined;
+  const deferOrStandalone = (fallback: string | undefined): string | undefined => fallback;
 
   // Proxy receivers — never static-classify. The §20.1.3.6 tag of a proxy is
   // resolved through `IsArray`, which unwraps to the proxy target and throws

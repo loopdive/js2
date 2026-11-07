@@ -55,6 +55,7 @@ import { ts } from "../ts-api.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitStandaloneIndirectEvalRuntime, ensureRuntimeEvalCallableCarrier } from "./expressions/eval-inline.js";
+import { runtimeEvalProviderLinkable } from "./expressions/runtime-eval-provider.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { isRuntimeEvalProviderAbsent } from "./expressions/standalone-dynamic-code.js";
 import { generatorFunctionIntrinsicGlobals } from "./generator-function-intrinsic.js";
@@ -168,7 +169,7 @@ export function isDynamicGeneratorFunctionValue(ctx: CodegenContext, expr: ts.Ex
 }
 
 function isClaimedSite(ctx: CodegenContext, node: ts.CallExpression | ts.NewExpression): boolean {
-  if (!ctx.standalone || isRuntimeEvalProviderAbsent(ctx)) return false;
+  if (!runtimeEvalProviderLinkable(ctx) || isRuntimeEvalProviderAbsent(ctx)) return false;
   if ((node.arguments ?? []).some(ts.isSpreadElement)) return false;
   return (
     isStaticGeneratorFunctionConstructorSyntax(node.expression, ctx.oracle) &&

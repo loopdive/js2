@@ -977,8 +977,6 @@ export interface FunctionContext {
    * binding) hands `.then` a real `$Promise`. See `async-eager-promise.ts`.
    */
   eagerAsyncPromiseReturn?: boolean;
-  /** (#6417) A `boolean` host callback: an i32 return boxes via `__box_boolean`. */
-  hostBooleanReturn?: boolean;
   asyncDriveReturn?: {
     /** Local holding the frame's result `$Promise` (loaded at resume entry). */
     resultPromiseLocal: number;
@@ -2344,7 +2342,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * helpers (`__protoidx_*`, proto-index-store.ts) — the runtime companions
    * that make `Object.prototype[i]` / `Array.prototype[i]` writes visible
    * through the prototype chain. Reserved ONLY under
-   * `ctx.standalone && ctx.protoIndexDirty` (pre-scan flag, #4128), so a
+   * `ctx.protoIndexDirty` (pre-scan flag, #4128), so a
    * flag-clear module carries no trace; bodies + chokepoint arms are filled by
    * `fillProtoIndexStore` at FINALIZE.
    */
@@ -3887,8 +3885,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * path (`struct.get`) cannot observe. Membership here suppresses
    * struct-widening for the receiver so it stays on the `$Object` representation
    * and both the dynamic write and the read-back route through the native
-   * runtime consistently. Empty in host/gc/wasi mode (only populated under
-   * `ctx.standalone`).
+   * runtime consistently. Populated under the native regime.
    */
   dynamicDescriptorWidenVars: Set<string>;
   /**
@@ -3903,8 +3900,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * struct-widening for the receiver so it stays a `__new_plain_object` /
    * `$Object`; dot-writes then route through `__extern_set` and every access form
    * reads the same hash consistently. Mirrors `dynamicDescriptorWidenVars`; the
-   * two sets are additive. Empty in host/gc/wasi mode (only populated under
-   * `ctx.standalone`).
+   * two sets are additive. Populated under the native regime.
    */
   objectHashConsumerVars: Set<string>;
   /**
@@ -4267,12 +4263,6 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   wasi: boolean;
   /** Whether Node-compatible ambient globals such as `global` are enabled. */
   nodeGlobals: boolean;
-  /** Whether targeting standalone (no JS host, no WASI runtime — #1470).
-   *  When true, the emitter MUST NOT add `wasm:js-string` namespace imports
-   *  or JS-host string helpers (`__concat_N`, `__extern_toString`,
-   *  `__unbox_string`, `__str_from_mem`, `__str_to_mem`,
-   *  `__str_extern_len`). Implies `nativeStrings === true`. */
-  standalone: boolean;
   /** Linked zero-argument getter for the canonical standalone realm-global object. */
   standaloneGlobalThisImport?: {
     module: string;
@@ -4674,14 +4664,6 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   directCallTrampolines?: Map<string, import("../typed-this.js").DirectCallTrampoline>;
   /**
-   * `"__ownshadow_<Class>_<method>_<arity>"` → the reserved own-property guard
-   * wrapper for that class method. Reserved at the first static call site whose
-   * file could install an own callable member of that name, and FILLED at
-   * finalize (`fillOwnShadowWrappers`) so the reserve stays index-safe.
-   * See `expressions/own-property-method-shadow.ts`.
-   */
-  ownShadowWrappers?: Map<string, import("../expressions/own-property-method-shadow.js").OwnShadowWrapper>;
-  /**
    * Method names whose CLOSED dispatcher (`__call_m_<name>_<arity>`) must ask
    * the receiver for an own slot before running a user-class arm. Recorded at
    * dispatcher-reserve time, when the call's SourceFile is still in hand — the
@@ -4951,11 +4933,21 @@ export type { SourcePos };
 /**
  * (#5385 S1, #6685) Is there NO JavaScript embedder? Answers the environment
  * question only (`targetProfile.environment !== "javascript"`); which
- * ECMAScript implementation lowers the module is `ctx.standalone`. Console
+ * ECMAScript implementation lowers the module is the native regime. Console
  * sinks and other environment-shaped arms key on this, never on the regime.
  */
 export function hostFreeEnvironment(ctx: CodegenContext): boolean {
   return ctx.targetProfile.environment !== "javascript";
+}
+
+/**
+ * (#6979 S7-c) Does console output go to the in-module stdout sink
+ * (`__stdout_append`, #3469)? Only with no embedder at all: WASI writes through
+ * `fd_write` and a JavaScript environment through the host console. An
+ * environment question, so it holds whichever semantic regime lowers the module.
+ */
+export function inModuleStdoutSink(ctx: CodegenContext): boolean {
+  return ctx.targetProfile.environment === "none";
 }
 
 /**

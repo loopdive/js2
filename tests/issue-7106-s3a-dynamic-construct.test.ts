@@ -116,24 +116,5 @@ describe("#7106 S3a — new <dynamic param>(…) through dyn.construct", () => {
     expect(await call(result.binary, "ok")).toBe(1);
   });
 
-  it("does not admit the construct on the JS-host lane (gc output unchanged)", async () => {
-    // The native regime in a JS environment projects as standalone and admits
-    // the construct like standalone does; the HOST-assisted lane is the one
-    // whose bytes must not move (CLAUDE.md, 2026-10-10).
-    const source = `
-      function E(message) { this.message = message; }
-      function mk(K, v) { return new K(v); }
-      export function ok() { var e = mk(E, "boom"); return e.message === "boom" ? 1 : 0; }
-    `;
-    const result = await compile(source, {
-      experimentalIR: true,
-      skipSemanticDiagnostics: true,
-      allowJs: true,
-      trackIrOutcomes: true,
-      semanticProviders: "host-assisted",
-      fileName: "issue-7106-s3a-gc.js",
-    });
-    expect(result.success).toBe(true);
-    expect(irBodies(result)).not.toContain("mk");
-  });
+  // (#6979 S7-a/S7-b) The host-assisted profile is removed — `semanticProviders: "host-assisted"` is a compile error now — so its row is deleted.
 });
