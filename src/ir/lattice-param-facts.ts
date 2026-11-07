@@ -31,6 +31,7 @@
 //     later reads are outside the proven fact.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { identifierWritesOf, skipOuterExpressions } from "../shared/binding-writes.js";
 
 import type { IrDirectCallLoweringPlan } from "./ast-lowering-plans.js";
 import { asVal, type IrType } from "./nodes.js";
@@ -118,22 +119,40 @@ function collectWrittenNamesIncludingNested(root: ts.Node): Set<string> {
   return written;
 }
 
-const writtenNamesByFunction = new WeakMap<ts.Node, ReadonlySet<string>>();
-
 /**
- * (#7106) Is the local `declaration` written after it is declared, anywhere in
- * its function (nested functions included, the same over-approximation as
- * above)? A destructured declaration counts as written: its leaves are not
- * tracked by name here.
+ * A local initializer fact survives only when every write resolves to a
+ * different binding. Canonical declarations also unify repeated `var`s.
+ * Unknown identity and dynamic scope fail closed; nested bodies are visited.
+ * Parameter incoming-value facts below retain their existing conservative scan.
  */
-export function localIsRewritten(declaration: ts.VariableDeclaration): boolean {
-  const scope = ts.findAncestor(declaration.parent, (node) => ts.isFunctionLike(node) || ts.isSourceFile(node))!;
-  let written = writtenNamesByFunction.get(scope);
-  if (written === undefined) {
-    written = collectWrittenNamesIncludingNested(scope);
-    writtenNamesByFunction.set(scope, written);
-  }
-  return !ts.isIdentifier(declaration.name) || written.has(declaration.name.text);
+export function localIsRewritten(
+  declaration: ts.VariableDeclaration,
+  resolve?: (identifier: ts.Identifier) => ts.Declaration | undefined,
+): boolean {
+  if (!ts.isIdentifier(declaration.name) || !resolve) return true;
+  const identity = resolve(declaration.name);
+  const scope = ts.findAncestor(declaration.parent, (node) => ts.isFunctionLike(node) || ts.isSourceFile(node));
+  if (!identity || !scope) return true;
+  const name = declaration.name.text;
+  let rewritten = false;
+  const visit = (node: ts.Node): void => {
+    if (rewritten) return;
+    if (ts.isWithStatement(node)) rewritten = true;
+    if (ts.isCallExpression(node)) {
+      const callee = skipOuterExpressions(node.expression);
+      if (ts.isIdentifier(callee) && callee.text === "eval") rewritten = true;
+    }
+    if (node !== declaration) {
+      for (const { target } of identifierWritesOf(node)) {
+        if (target.text !== name) continue;
+        const written = resolve(target);
+        if (!written || written === identity) rewritten = true;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  return rewritten;
 }
 
 /**
