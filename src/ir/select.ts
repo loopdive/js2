@@ -11758,6 +11758,17 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (expr.operator === ts.SyntaxKind.TildeToken && !expressionIsProvenNumber(expr.operand)) {
       return shapeNo("expr-tilde-nonnumeric", expr.operand);
     }
+    // Unary `-`/`+` apply ToNumber to a fresh wrapper through the same
+    // ToPrimitive path as the binary wrapper operands (#4208 S4, #7144).
+    if (
+      (expr.operator === ts.SyntaxKind.MinusToken || expr.operator === ts.SyntaxKind.PlusToken) &&
+      selectorPrimitiveWrapperConstruction(expr.operand, scope, localClasses) !== null
+    ) {
+      if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") !== true) {
+        return capabilityNo("operand-coercion-unsupported", "expr-wrapper-to-primitive-target", expr);
+      }
+      return true;
+    }
     return isPhase1Expr(expr.operand, scope, localClasses);
   }
   if (ts.isBinaryExpression(expr)) {

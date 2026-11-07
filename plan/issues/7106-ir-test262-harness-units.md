@@ -84,6 +84,7 @@ func-budget-allow:
   - src/ir/select.ts::dynamicUsesAreMoveOnly
   - src/ir/select.ts::scanExpr
   # 2026-10-31 (boolean statics, round 4): the 3-line adapter call beside the Math arms (+3)
+  # 2026-11-07 (lever W): the unary `-`/`+` wrapper-operand arm (+11)
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select.ts::collectCallGraph
   - src/ir/select.ts::whyNotIrClaimable
@@ -117,6 +118,7 @@ loc-budget-allow:
   - src/ir/runtime/verify.ts
   # 2026-10-31 (boolean statics, round 5): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+89); the rule lives in src/ir/static-predicates/
   # 2026-11-01 (#7106 S5): `moduleVarLeavesStorable`, the per-leaf slot fit of a module-init `var` pattern (+36)
+  # 2026-11-07 (lever W): the unary `-`/`+` wrapper-operand arm in isPhase1Expr, with its capability refusal inline like the 36 sibling capability checks (+11)
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
@@ -6026,6 +6028,94 @@ Scratch experiment on those 34 files (the defineProperty target accepted like
 - one predicate for JS property declarations;
 - no new storage kind;
 - no change to `scriptVarHomeSlot`.
+
+## ES5 lever W: `new` of a primitive wrapper in `<module-init>` (2026-11-07)
+
+**Question.** `expr-new-ctor-unknown` is the most common refusal in the
+module-init map. Can the IR take `new String/Number/Boolean/Object(…)` there?
+#7295 (`new <LibBuiltin>(…)` at module init) is `blocked`: measured at 0 yield.
+
+### Scope check (main 83c5c23daf, standalone)
+
+**Population:** the map's 240 files (140 it listed with the code as the only
+module-init refusal, 100 paired with a compound assignment). Re-census:
+- 0 IR-only and 0 post-claim errors on main.
+- `expr-new-ctor-unknown` in 230 files, the sole refusal in **85**.
+- Beside it: `throw-module-scalar-unboxed` in 133, `expr-ident-not-in-scope`
+  in 13.
+- Constructors named: String 225, Number 219, Boolean 171, Object 70,
+  Function 10, Array 4.
+- The other 145 files with the code also refuse elsewhere; they are the
+  compound-assignment matrix (`x op= …` on a dynamic module var).
+
+**Probes on the 85 sole files** (scratch builds, not committed):
+
+| probe | IR-only | post-claim | still refused |
+| --- | ---: | ---: | --- |
+| admit a wrapper `new` anywhere, plus `new Object()` | 5 | 15 | 31 on `callee:new Object`, 29 on `expr-new-ctor-unknown` |
+| rewrite `new Object()` to `{}` | 0 | 0 | 31 on `objectlit-empty` |
+
+The 15 post-claim errors of the first probe split into:
+- a wrapper stored in a module var and read back as a carrier (8);
+- a method call on a wrapper (5);
+- `!wrapper` (2).
+
+Admitting wrappers everywhere is claim-then-demote, so it is not an option.
+The 5 IR-only files are unary `-`/`+` of a fresh wrapper
+(`unary-minus/S11.4.7_A3_T1..T3`, `unary-plus/S11.4.6_A3_T1..T2`). They pass on
+both lanes.
+
+### The arm (built)
+
+- **Where:** `isPhase1Expr`'s prefix-unary arm in `src/ir/select.ts`.
+- **What:** unary `-`/`+` takes a fresh wrapper construction operand
+  (`selectorPrimitiveWrapperConstruction`). It is gated on the
+  `primitive-wrapper-to-primitive` capability with the same refusal as the
+  binary arm (`selectorPrimitiveWrapperOrGenericBinary`).
+- **Reuse:** no new helper and no lowering change. `lowerPrefixUnary` already
+  applies ToNumber through the wrapper's ToPrimitive carrier, the same path
+  the binary operands use (#4208 S4, #7144).
+- **Still refused:** `!`, `~`, `typeof`, `void` on a wrapper, and
+  `new Object()`. `selectorPrimitiveWrapperConstruction` covers only
+  `String`/`Number`/`Boolean` with one argument of the matching family.
+- **Size:** +11 lines in `select.ts`, granted in the frontmatter. The
+  capability check stays inline like its 36 siblings.
+- **Tests:** `tests/issue-7106-lever-w-unary-wrapper.test.ts` on both lanes:
+  - claimed: `-new Number(1)`, `+new String("1")`, `-new Boolean(true)`,
+    `+new Boolean(false)`, `-new String("0x10")`, `+new String("x")`, each
+    checked against the JS result;
+  - refused (legacy body, same result): `!new Boolean(false)`,
+    `~new Number(1)`, `+new Object()`;
+  - the claimed rows fail on main.
+
+**Acceptance:**
+- the 85 sole files gain the 5 target files as IR-only, with 0 pass→fail and
+  0 post-claim errors on both lanes;
+- binaries are byte-identical outside the claimed files on a random ES5
+  sample;
+- the playground is identical;
+- the equivalence gate passes.
+
+**Code quality:** one arm beside its siblings, no new helper, no duplicated
+lowering.
+
+### Measured
+
+«MEAS»
+
+### Follow-ups (not built)
+
+1. **Wrapper values as dynamic carriers / extern receivers.** A wrapper
+   stored in a var, a method call on it, and `!wrapper` were the 15
+   post-claim errors of the probe. They need a wrapper to live as a dynamic
+   carrier value, not only as an operand.
+2. **A callable `__to_object`.** Extract legacy's `emitObjectCoercion` into a
+   helper the IR can call, so `new Object(v)` lowers without a legacy body.
+3. **An open-carrier `{}` that allows property writes,** so `new Object()`
+   can become `{}` (the 31 `objectlit-empty` rows of the second probe; this
+   joins #7280).
+4. **`x op= …` on a dynamic module var.** The 145 paired files need the
+   compound assignment, whatever its right-hand side.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
