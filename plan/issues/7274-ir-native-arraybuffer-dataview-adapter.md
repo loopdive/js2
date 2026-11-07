@@ -653,7 +653,7 @@ adapters are covered by compile, validation and imports only.
     "throw val not in slice 9". The output is legacy's.
   - **Not slice-2 logic:** `var v = 4; try { throw 1 } catch (v) {}` demotes
     the same way on a84cddb1, with no buffer involved.
-  - **Owner:** none yet. #7132 lists `throw 1` under "Not taken", and #7281
+  - **Owner:** **#7318**. #7132 lists `throw 1` under "Not taken", and #7281
     (PR #7147) covers only the string-concat throw.
 - **Wasi reach (RV7161 N5).** With the test262 harness, `--target wasi`
   rejects `<module-init>` at selection (`constructor-resolution-unsupported`),
