@@ -5712,7 +5712,6 @@ function isPhase1ForUpdateExpr(
     clearProjectionBinding(expr.operand.text);
     return true;
   }
-  if (ts.isPostfixUnaryExpression(expr)) return false;
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
     if (!ts.isIdentifier(expr.left)) return isPhase1Expr(expr, scope, localClasses);

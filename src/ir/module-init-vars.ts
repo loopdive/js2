@@ -15,7 +15,11 @@
 // use-before-declaration, and any binding the module-global resolver cannot
 // represent.
 
-import { isModuleInitVarList, moduleInitVarLists } from "../shared/var-declaration-lists.js";
+import {
+  isModuleInitVarList,
+  isTopLevelStatementDeclaration,
+  moduleInitVarLists,
+} from "../shared/var-declaration-lists.js";
 import { ts } from "../ts-api.js";
 import { patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
 
@@ -78,19 +82,13 @@ function moduleInitVarBindings(sourceFile: ts.SourceFile): ModuleInitVarBindings
     const declarations = sourceFile.statements
       .flatMap(moduleInitBindings)
       .flatMap((binding) =>
-        "name" in binding && !isStatementDeclaration(binding.declaration) ? [binding.declaration] : [],
+        "name" in binding && !isTopLevelStatementDeclaration(binding.declaration) ? [binding.declaration] : [],
       );
     const leaves = declarations.filter((declaration) => ts.isBindingElement(declaration));
     cached = { declarations, leafNames: new Set(leaves.map((leaf) => leaf.name.text)) };
     varBindingsBySource.set(sourceFile, cached);
   }
   return cached;
-}
-
-/** A top-level `VariableStatement`'s own declaration, numbered with the statements. */
-function isStatementDeclaration(declaration: ts.VariableDeclaration | BindingLeaf): boolean {
-  const statement = ts.isVariableDeclaration(declaration) ? declaration.parent.parent : undefined;
-  return statement !== undefined && ts.isVariableStatement(statement) && ts.isSourceFile(statement.parent);
 }
 
 /**

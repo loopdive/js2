@@ -25,7 +25,11 @@ import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fncto
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import * as classInstance from "./module-binding-class-instance.js";
-import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import {
+  isModuleInitVarList,
+  isTopLevelStatementDeclaration,
+  isTopLevelVarList,
+} from "../shared/var-declaration-lists.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
   carrierLeafReads,
@@ -943,12 +947,10 @@ function isModuleBindingDeclaration(
   if (!candidate || candidate.getSourceFile() !== sourceFile) return false;
   const declaration = ts.isVariableDeclaration(candidate) || ts.isBindingElement(candidate) ? candidate : undefined;
   if (!declaration || !ts.isIdentifier(declaration.name)) return false;
-  const list = bindingDeclarationList(declaration);
   // A top-level `VariableStatement`'s own name binds in a script or an ES module.
-  const statement = ts.isVariableDeclaration(declaration) ? list?.parent : undefined;
-  if (statement && ts.isVariableStatement(statement) && statement.parent === sourceFile) return true;
+  if (isTopLevelStatementDeclaration(declaration)) return true;
   // (#7106 S5, L, L2) A leaf, a `for` head's or a nested `var`'s name binds in a script's modelled list.
-  return !ts.isExternalModule(sourceFile) && isModuleInitVarList(list);
+  return !ts.isExternalModule(sourceFile) && isModuleInitVarList(bindingDeclarationList(declaration));
 }
 
 function uniqueTopLevelVariableDeclaration(
@@ -1050,6 +1052,8 @@ function scriptVarReferenceKind(
   declaredType: ts.Type,
   checker: ts.TypeChecker,
 ): IrModuleBindingValueKind | undefined {
+  // (#7106 lever L2) A reference slot reads as written, so a nested declaration that may never run binds none.
+  if (!isTopLevelVarList(bindingDeclarationList(declaration))) return undefined;
   if (home === "class-instance") return classInstance.classInstanceValueKind(checker, declaration, declaredType);
   return home === "string" && isModuleStringStorageType(declaredType, checker) ? { kind: "string" } : undefined;
 }

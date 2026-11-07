@@ -62,6 +62,19 @@ const CLAIMED: Record<string, string> = {
 const REFUSED: Record<string, string> = {
   // Annex B.3.5: a `var` re-declaring the catch parameter writes the parameter.
   catchParameter: "try { throw new Test262Error(); } catch (e) { var e = 2; assert.sameValue(e, 2); }",
+  // Review round 1: a string or class-instance slot reads as written, and a
+  // nested declaration may never run, so the binding gets no reference home.
+  stringIfFalse: "if (false) { var a = 'x'; }\nassert.sameValue(a, undefined);",
+  stringIfFalseNotEqual: "if (false) { var a = 'x'; }\nif (a !== undefined) throw new Test262Error('a');",
+  templateIfFalse: "if (false) { var a = `x`; }\nassert.sameValue(a, undefined);",
+  stringWhileFalse: "while (false) { var a = 'x'; }\nassert.sameValue(a, undefined);",
+  stringForFalse: "for (; false; ) { var a = 'x'; }\nassert.sameValue(a, undefined);",
+  stringZeroIterations: "for (var i = 0; i < 0; i++) { var a = 'x'; }\nassert.sameValue(a, undefined);",
+  stringSwitchMiss: "switch (1) { case 2: var a = 'x'; }\nassert.sameValue(a, undefined);",
+  stringAfterBreak: "L: { break L; var a = 'x'; }\nassert.sameValue(a, undefined);",
+  stringNestedHead: "if (false) { for (var a = 'x'; false; ) { } }\nassert.sameValue(a, undefined);",
+  stringUnreachedCatch: "try { } catch (e) { var a = 'x'; }\nassert.sameValue(a, undefined);",
+  classInstanceInBlock: "class C { m() { return 1; } }\n{ var c = new C(); }\nassert.sameValue(c.m(), 1);",
   // A name in a `with` body may resolve to the object.
   withBody: "var o = { v: 1 };\nwith (o) { var v = 2; }\nassert.sameValue(o.v, 2);",
 };

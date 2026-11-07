@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { GlobalDef, Instr, ValType } from "../ir/types.js";
-import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
 import type { CodegenContext } from "./context/types.js";
@@ -193,10 +193,9 @@ export function objectLiteralReadsAmbientRedeclaredVar(ctx: CodegenContext, expr
  * top-level statement's own declaration is observed by the source-order pass.
  */
 export function isHoistedScriptVar(decl: ts.VariableDeclaration): boolean {
-  const statement = decl.parent.parent;
   return (
     !ts.isExternalModule(decl.getSourceFile()) &&
-    !(ts.isVariableStatement(statement) && ts.isSourceFile(statement.parent)) &&
+    !isTopLevelStatementDeclaration(decl) &&
     isModuleInitVarList(decl.parent)
   );
 }

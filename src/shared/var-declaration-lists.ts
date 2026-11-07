@@ -34,6 +34,25 @@ export function isModuleInitVarList(node: ts.Node | undefined): boolean {
   return true;
 }
 
+/**
+ * Whether a modelled `list` (`bindingDeclarationList`'s answer, so possibly
+ * absent) belongs to a top-level statement (a `var` statement or a `for (;;)`
+ * head, labelled or not), which runs before every later top-level statement.
+ * A nested one may never run (lever L2).
+ */
+export function isTopLevelVarList(list: ts.VariableDeclarationList | undefined): boolean {
+  if (list === undefined) return false;
+  let statement: ts.Node = list.parent;
+  while (ts.isLabeledStatement(statement.parent)) statement = statement.parent;
+  return ts.isSourceFile(statement.parent);
+}
+
+/** Whether `declaration` is a top-level `VariableStatement`'s own, numbered and observed with the statements. */
+export function isTopLevelStatementDeclaration(declaration: ts.Node): boolean {
+  const statement = ts.isVariableDeclaration(declaration) ? declaration.parent.parent : undefined;
+  return statement !== undefined && ts.isVariableStatement(statement) && ts.isSourceFile(statement.parent);
+}
+
 /** Every modelled `var` list in `statement`, in source order. */
 export function moduleInitVarLists(statement: ts.Statement): ts.VariableDeclarationList[] {
   const lists: ts.VariableDeclarationList[] = [];
@@ -63,13 +82,18 @@ const SCRIPT_STATEMENT_CONTAINERS: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.DefaultClause,
 ]);
 
+/**
+ * Whether `list` declares a name the catch parameter binds. With a pattern
+ * parameter that is an early error (B.3.5 exempts only an identifier), so a
+ * match refuses a program that does not compile anyway.
+ */
 function catchParameterIsRedeclared(clause: ts.CatchClause, list: ts.VariableDeclarationList): boolean {
   const parameter = clause.variableDeclaration?.name;
   if (parameter === undefined) return false;
-  if (!ts.isIdentifier(parameter)) return true;
-  const declares = (name: ts.BindingName): boolean =>
+  const names = (name: ts.BindingName): string[] =>
     ts.isIdentifier(name)
-      ? name.text === parameter.text
-      : name.elements.some((element) => !ts.isOmittedExpression(element) && declares(element.name));
-  return list.declarations.some((declaration) => declares(declaration.name));
+      ? [name.text]
+      : name.elements.flatMap((element) => (ts.isOmittedExpression(element) ? [] : names(element.name)));
+  const parameterNames = new Set(names(parameter));
+  return list.declarations.some((declaration) => names(declaration.name).some((name) => parameterNames.has(name)));
 }
