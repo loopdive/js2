@@ -141,3 +141,98 @@ live).
 - Known pre-existing gaps recorded: `throw 1` / `dynVar = null`
   claim-then-demote (#7266), `true < d` with an `any` module binding
   (#7282), legacy WASI builtin-proto identity answers wrong (#7294 notes).
+
+### R7 (C-opus) — #7291 string builder, #7277 slots, #7300
+- #7120 (#7265) released, queued. #7143 (#7277) 961d5287 approved, nits
+  pushed, nothing open. #7156 (#7291 steps 1–2 + #7300 file) 5a12d999
+  approved, main merged, releasing on green. **#7168** (#7291 step 3 +
+  #7300 items 4/5 fixed) d52482f0, hold, fresh review RV7168
+  `session_016FRcLy1dTakAnLX3UbMpoZ`; base = #7156's branch, retargets
+  after #7156 merges. #7148 (#7285 docs) queued.
+- Open: #7168 verdict; the codegen->ir 304 grant collides with #7157
+  (whichever merges second restates base+1); #7300 items 1–3 open
+  (Backlog); literal-only builder loops still 1–2.6 ms slower than legacy at
+  n=2M on wasi/gc (follow-up candidate); #7285 unlock is upstream (one
+  `dyn.to_string` engine with the boxed-Boolean pre-check).
+- Numbers: `plan/issues/7291-*.md` (Progress table, review notes),
+  `7277-*.md` ("Scope narrowed"), `7300-*.md` (repros), `7285-*.md`
+  (census); PR bodies #7156/#7168; raw logs in that lane's `.tmp/`
+  (`ab7291*.txt`, `ab7277*.txt`, `equiv7277e.log`, `equiv7291s3.log`,
+  `corpus-*.txt`, `sbfix-*.txt`; bench scripts `perf3.mts`, `frac3.mts`,
+  `corpus.mts`, `sbfix.mts`, `watdelta.mts`).
+
+### R9 (C-opus) — #7287 closure calls, #7304 native `in`, #7311/#7312/#7314
+- **#7164** (#7287) head 67d7f221 (main merged): fresh review BLOCKER
+  6701844712 — `__apply_closure` does not restore `__current_this` when the
+  callee throws (pre-existing on main for dynamic-param callees, now
+  reachable for every statement-position script-var call); a `+=` carrier
+  contradiction surfaces as a post-claim error once `h` goes IR; two inline
+  predicates where one shared helper was planned; not-callable message from
+  the declaration. Fix in progress (helper fix as its own commit).
+- **#7169** (#7304) head 3180ee0d, hold: slice 1 complete (`__extern_has`
+  miss tails answer `OBJECT_PROTOTYPE_OWN_NAMES` for `$Object`-rooted
+  receivers; 38 standalone / 32 WASI rows fixed, 0 regressions, gc
+  byte-identical); fresh review RV7169 `session_016FRcLzJvHmSJSKydzjByx2`;
+  slice 2 (arrays/functions/Error/Map/Date and WASI ctor instances via the
+  real terminal + a per-brand `NATIVE_REALM_CATALOG` name table — the
+  `$DONE` `'name' in error` row) pending on the same branch; #7319 reserved
+  for the own-props gap (fn `length`/`name`, Error `message`). Matrix
+  harness `.tmp/inmatrix.mts`, TSVs `.tmp/inm-{base,head}.tsv`, base
+  worktree `.claude/worktrees/base-7304`.
+- #7165 (#7311 docs) hold, needs a bare main merge to read CLEAN; #7312 /
+  #7314 docs on #7159 (blocked on #7294 / yield 0).
+
+### R11 (C-opus) — propertyHelper chain, censuses, #7313
+- #7111 queued; #7140 df225dec2d approved (releases after #7111); #7151
+  cfe90a65 approved (after #7140); #7306/#7307 filed on the #7151 branch
+  (Q owns #7306).
+- **#7170** (#7313) head 1e9348b8, hold: rows for array
+  `indexOf`/`lastIndexOf`/`includes` with numeric fromIndex, boolean-literal
+  vecs, string search/fill static literals, `replaceAll`; `normalize`
+  refused (legacy validates the form inline → needs a helper). Stride
+  zero-legacy 32 → 36, 4 of 5 targets zero-legacy and passing; 745-file
+  A/B 0 diffs; equivalence running; fresh review RV7170
+  `session_016FRcLvsr5fXNvoV8HgMHrW`.
+- Censuses on #7159: `plan/log/ir-module-init-single-lever-census.md`
+  (complete refusal sets, standalone-pass column, stub-and-recheck);
+  #6583 comments 6701158554 / 6701217976 / 6701292958 / 6701321558.
+  Scratch: the #7302 worktree's `.tmp/` (`mi-files.json`, `mi12-*.jsonl`),
+  the #7313 worktree's `.tmp/ab`, `.tmp/files-head.json`.
+- Stale remote branch `issue-7303-ir-property-helper-verify-pairs`
+  (deletion denied to agents).
+
+### R12 (C-opus) — #7274 native ArrayBuffer / DataView
+- #7121 (slice 1) a84cddb1 queued. **#7161** (slice 2) head e818a83c: APPROVE
+  with nits 6701578180, nits N1–N3 fixed, #7316 (legacy late length-operand
+  order), #7317 (length-tracking DataView wrong on both lanes), #7318
+  (module-init `throw <literal>` claim-then-demote: `throwOperandAdmissible`
+  is applied only by the planned-closure walk, not the module-init /
+  function throw arms) filed; needs the one-line delta confirmation and a
+  bare main merge after #7121 lands.
+- Open: slice 3 (SharedArrayBuffer: `new SharedArrayBuffer()/(n)` via
+  `emitSabConstruct` + `byteLength`, target `SharedArrayBuffer/length-is-absent.js`)
+  not started; mixed-route proof not exercisable until closures (#7271).
+- Numbers: `plan/issues/7274-*.md` ("Slice 1"/"Slice 2": measurements,
+  review records, follow-ups); PR bodies; equivalence results as PR comments.
+
+### R14 (C-opus) — #7281, #7305, docs PR #7159, censuses
+- #7147 (#7281) f53e3db3 approved, awaiting release. **#7166** (#7305)
+  5e3f90fc on #7164, hold: statement call through a top-level subject's own
+  dynamic parameter (`ownParameterStatementCall`, also read by
+  `buildLocalCallGraph`), one move-only sink reading the same predicate,
+  closure-arg boxing via `functionObjectDynamicValue`; 17 probes
+  row-identical, 0 post-claim; fresh review RV7166
+  `session_016FRcLwBs4ahHxeiZiEawiS`; inherits the `__current_this` fix from
+  #7164 and must correct its "latent on #7164" claim (not reproduced by
+  RV7164). Measurements in the lane's `.tmp/` (`L-*`, `C-*`, `T-*`).
+- #7159 (docs) carries 7297, 7298, 7299, 7301, 7305 (design), 7308, 7309,
+  the call-graph-closure census, and this handoff; #7158 (#7295) queued.
+- Blocked lanes recorded: #7298/#7299/#7301/#7308 wait on #7277, #7287,
+  #7294, Symbol/RegExp value kinds, closure plans (#7314).
+
+### R13 (C-opus) — #7276, #7288, #7280
+- Pending at the time of writing: #7142 (#7276) 0fa6d6a0 + strictness fix
+  (RV7142 delta running), #7157 (#7288) 0e558eaf (APPROVE with nits
+  6701393374; #7315 file + `isPatternDeclaration` dedupe push pending),
+  #7280 S1 PR being opened (stacked on #7157; L's merged-declaration fix is
+  the dependency for 23 files), #7304 issue file.
