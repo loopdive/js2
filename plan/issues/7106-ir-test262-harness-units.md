@@ -6051,6 +6051,35 @@ TEST262_FULL_RUNTIME_EVAL=1`), built per tree.
   None of the 141 has these spellings in an eval string, so the stricter
   scan costs nothing measurable.
 
+#### Review round 3 (#7146)
+
+- **Token-level `constructor` rule.** `mayNameConstructor` replaces the
+  `.constructor` read rule. A fragment is unknown when any token in it may
+  name `constructor`:
+  - the identifier or property name itself (a member, a destructuring key,
+    a `with`-scoped call);
+  - a string literal containing it (`Reflect.get(f, "constructor")`,
+    `getOwnPropertyDescriptor(…, "constructor")`);
+  - a name the scan cannot read without evaluating it: a `+` / `+=` with a
+    string operand, or a template with substitutions.
+- **Concatenation is not evaluated, so the operator itself counts as
+  unknown.** `'constr' + 'uctor'` and `` `constr${x}` `` count as unknown.
+- **Not caught (recorded follow-up).** A name built without `+`
+  (`["constr", "uctor"].join("")`, `String.fromCharCode(…)`), then used as a
+  computed member key or passed to a reflective API.
+  - A first cut also counted every computed member READ as unknown.
+  - That over-fired on `arr[ind]` in `for-in/S12.6.4_A3.1.js` (8 → 2 units),
+    so it was dropped. A computed member store stays unknown.
+  - Closing this residue needs real evaluation, or a rule that every call
+    and computed key can build a name.
+- **Tests:** five new rows (concatenated key, `Reflect.get`, destructuring,
+  `with`, the descriptor `.value`), all failing on round 2.
+- **Measured** (against round 2, 0db798be87):
+  - the 141 eval files and the 40-file control are byte-identical
+    (standalone);
+  - IR units are 830 on the 141 and 344 on the control;
+  - 0 post-claim errors on the 141.
+
 ### A2 and A3 (outline; each gets its own measured plan before code)
 
 - **A2.**
