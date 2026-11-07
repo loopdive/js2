@@ -3,7 +3,7 @@
 import ts from "typescript";
 
 import { irBool } from "./boolean-brand.js";
-import { isUnshadowedLibGlobal } from "../shared/ambient-intrinsics.js";
+import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
 import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
@@ -152,7 +152,7 @@ function ambientGlobalFunctionCall(
   if (!plan.capabilities.every((capability) => admission.supportsBackendCapability?.(capability) === true)) return null;
   const operands = expr.arguments.map((argument, index) => ({ argument, family: plan.operands[index]! }));
   if (!operands.every(({ argument, family }) => classify(argument) === family)) return null;
-  if (!isUnshadowedLibGlobal(callee.root, admission.isLibOnlyBinding)) return null;
+  if (!isUnshadowedLibBinding(callee.root, admission.isLibOnlyBinding)) return null;
   if (plan.staticTextFolded && admission.foldsAtCompileTime(expr)) return null;
   return { name: callee.name as IrAmbientGlobalFunctionName, plan, root: callee.root, operands };
 }

@@ -100,6 +100,7 @@ import {
   compileIrPathFunctions,
   irAmbientNamespaceConstant, // (#7106 module-init lever A)
   irNumberConversionPlan, // (#7106 module-init lever B)
+  planIrNativeBufferSurface, // (#7274)
   type IrIntegrationError,
   type IrIntegrationReport,
 } from "../ir/integration.js";
@@ -197,6 +198,7 @@ import {
   makeIrArrayExpressionPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrLocalClassExpressionResolver,
+  capabilityExternBindingOptions,
   makeIrModuleBindingResolver,
   makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
@@ -269,6 +271,8 @@ import {
   finalizePreparedIrSelection,
   prepareHostDateSnapshotPreflight,
   synchronizeIrSafeFunctionSelection,
+  runtimeEvalBoundaryFailure,
+  withdrawEvalBoundaryFunctions,
 } from "./ir-overlay-preparation.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import {
@@ -1370,7 +1374,7 @@ function resolvePositionType(
       return resolvePositionType(node.type, mapped, ctx, classShapes);
     }
     if (node.kind === ts.SyntaxKind.NumberKeyword) return irVal({ kind: "f64" });
-    if (node.kind === ts.SyntaxKind.BooleanKeyword) return irVal({ kind: "i32" });
+    if (node.kind === ts.SyntaxKind.BooleanKeyword) return irVal({ kind: "i32", boolean: true }); // (#7265) branded
     if (node.kind === ts.SyntaxKind.StringKeyword) return { kind: "string" };
     // (#2949 slice 3b) AnyKeyword IS the dynamic type. The historical #1228
     // mapping (externref in ALL modes) diverged from legacy's fast-mode
@@ -3060,6 +3064,7 @@ function planIrOverlay(
   const platformExternClass = irPlatformExternClassPredicate(ctx);
   const hostExternSurface = jsHostExterns || platformExternClass !== undefined;
   const standaloneDomCapability = planStandaloneDomCapability(ctx, ast.checker, ast.sourceFile);
+  const nativeBufferSurface = planIrNativeBufferSurface(ctx, ast.sourceFile); // (#7274)
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   const calendarResolvers = planIrCalendarResolvers(
     ast.checker,
@@ -3089,7 +3094,7 @@ function planIrOverlay(
             // in the WasmGC `$Map` struct, so the binding is representable
             // here even though the extern handle is not.
             allowNativeMapStorage: ctx.nativeStrings,
-            resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
+            ...capabilityExternBindingOptions(standaloneDomCapability, nativeBufferSurface),
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
             scriptVarHome: (declaration) => scriptVarHome(ctx, declaration),
@@ -3267,6 +3272,7 @@ function planIrOverlay(
       jsHostExterns,
       ...(platformExternClass ? { platformExternClass, platformHostGlobal: isJsEnvironmentPlatformGlobalName } : {}),
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
+      ...(nativeBufferSurface ? { nativeBufferSurface } : {}),
       dynMemberReadBuildable,
       builtinProtoCompanionSeeded: ctx.protoMemberDirty, // (#7127)
       ...functionValueSelectionOptions(),
@@ -3539,26 +3545,19 @@ function planIrOverlay(
     // `calleeTypes` from safeSelection.funcs, so this unit returns to legacy.
     moduleInit: selection.moduleInit,
   };
-  // (#2928) The linked runtime-eval carrier is currently owned by the legacy
-  // WasmGC closure/object runtime. Its recursive cross-module types may be
-  // registered while module-init writes are compiled, after legacy function
-  // signatures but before the IR overlay is installed; mixing the two paths
-  // would violate IR/legacy type-index parity. Keep the whole runtime-eval unit
-  // on one backend until the typed IR owns this carrier explicitly.
+  // (#2928, #7106 A1) Runtime eval is a per-unit boundary: only a function that
+  // crosses it stays direct (`withdrawEvalBoundaryFunctions`), and the
+  // value the global push publishes for every other one is planned before its
+  // component seals (`collectPreparedTopLevelFunctionValueTargetUnitIds`).
+  // Module init and class members share the push/pull seam with the direct
+  // carrier, so they stay direct as a whole.
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
-    const failure: IrPreparationFailure = {
-      kind: "unsupported",
-      code: "late-preparation-unsupported",
-      stage: "resolve",
-      detail: "the linked runtime-eval callable carrier is still owned by the direct frontend",
-    };
-    for (const name of safeSelection.funcs) recordPreparationFailure(name, failure);
+    const failure = runtimeEvalBoundaryFailure();
+    withdrawEvalBoundaryFunctions(ctx, ast.sourceFile, identityPlan, safeSelection.funcs, recordPreparationFailure);
     for (const name of safeSelection.classMembers ?? []) recordPreparationFailure(name, failure);
     if (safeSelection.moduleInit?.reason === null && safeSelection.moduleInit.stmtCount > 0) {
       recordPreparationFailure(MODULE_INIT_UNIT_NAME, failure);
     }
-    safeSelection.funcs.clear();
-    identityPlan.safeFunctionUnitIds.clear();
     safeSelection.classMembers = new Set();
     safeSelection.classMemberUnitIds = new Set();
     safeSelection.moduleInit = undefined;
@@ -15498,6 +15497,8 @@ export {
   IR_DYN_INSTANCEOF_HELPER,
   irDynamicInstanceOfAtLegacyParity,
 } from "./ir-dynamic-instanceof.js";
+// (#7274) the IR's native ArrayBuffer adapters (ir/integration.ts).
+export { ensureIrNativeBufferAdapter, nativeBufferProvidersAvailable } from "./buffers/ir-native-buffer.js";
 // (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
 export {
   buildModuleInitPrologueCall,

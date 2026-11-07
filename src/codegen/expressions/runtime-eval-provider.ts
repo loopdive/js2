@@ -316,6 +316,17 @@ function reserveRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
  */
 const IMMUTABLE_GLOBAL_PROPERTY_NAMES: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
 
+/**
+ * (#7106 A1) Does the global push publish each top-level function through its
+ * cached singleton? Preparation plans that singleton before a component seals
+ * (`collectPreparedTopLevelFunctionValueTargetUnitIds`); the per-site closure
+ * of the other route cannot be planned, so its lane keeps the whole-program
+ * runtime-eval withdrawal (`withdrawEvalBoundaryFunctions`).
+ */
+export function runtimeEvalPushPublishesCachedFunctionValues(ctx: CodegenContext): boolean {
+  return ctx.standalone;
+}
+
 function emitRuntimeEvalGlobalBindingPushBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -438,7 +449,7 @@ function emitRuntimeEvalGlobalBindingPushBody(
           const isOrdinary =
             declaration.asteriskToken === undefined &&
             !(declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
-          valueType = ctx.standalone
+          valueType = runtimeEvalPushPublishesCachedFunctionValues(ctx)
             ? emitCachedFuncClosureAccess(ctx, fctx, name, funcIdx, isOrdinary)
             : emitFuncRefAsClosure(ctx, fctx, name, funcIdx, isOrdinary);
           needsAotAdapter = true;
