@@ -6326,6 +6326,39 @@ loc, func (also against origin/main `5ef8f0aae5`), coercion, oracle, dead
 exports, typecheck, import cycles, standalone arms, IR layering, flat dir;
 compiler boundaries as on main. Tests: lever-l, var-pattern-heads,
 for-head-destructuring, script-var, uninitialized-var: 227/227.
+
+### Review round 2 (#7178, 2026-11-07) and main `a484c365fe`
+
+Approved, with two nits, fixed in `93eec5fe24`:
+
+1. `isPhase1VarDeclarationList` computes `isScriptVarList(list)` itself; the
+   parameter (one caller passed a literal `true`) is gone.
+2. `isModuleInitVarList` returns `boolean`, not a type guard that is false for
+   some declaration lists; `lowerForStatement` checks the initializer itself.
+
+Main `a484c365fe` (with #7292, module-init array literals) is merged in
+(`444bb4f67f`). Re-measured on it, one niced worker: base = main, head =
+lever L; standalone on the 790 `for (var` files plus 200 of the random
+sample (926 compile on both sides), gc on the 200 sample files plus every
+changed file (211):
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, main → L | 11 → 27 (**+16**, the same 16) | 11 → 27 (+16) |
+| lost / units newly legacy / new post-claim errors | 0 / 0 / 0 | 0 / 0 / 0 |
+| binaries changed | 16, each a newly claimed `<module-init>` | 16 |
+| pass → fail on the 16 | 0 (16/16 pass on both) | 0 |
+| playground (26 binaries) | identical | identical |
+
+#7292 does not move the leading blocker: `vardecl-module-storage-unrepresentable`
+is still the sole `<module-init>` refusal in 229 files of the census, led by
+`var __expected = [...]` (220 files, a string-element array) and
+`var __executed = /…/.exec(…)` (212, a RegExp match result), then `obj = {…}`
+(125), `print = …` and `$262 = …` (103 each).
+
+Equivalence gate on the merged lever L: no new regressions (4,850 passing,
+20 failing, all in the 22-row known-failures baseline; 2 baseline rows now
+pass).
 ## `<module-init>` lever L2 — the rest of the script-`var` path (plan, 2026-11-07)
 
 Stacked on lever L (`claude/7106-lever-l`, #7178). Three shapes from lever L's
@@ -6460,3 +6493,66 @@ coercion, oracle, dead exports, typecheck, import cycles, standalone arms,
 IR layering, flat dir, IR fallbacks; compiler boundaries as on main.
 Tests: lever-l2, lever-l, var-pattern-heads, for-head-destructuring,
 script-var, uninitialized-var: 263/263.
+
+### L2 review round 1 (#7179, 2026-11-07) and main `a484c365fe`
+
+Changes requested (plus the CI equivalence failure in
+`issue-7252-module-binding-class-instance`, "declared inside a block"). Fixed
+in `b98ab0ea6a`, after merging lever L's round 2 and main (`99d7787d06`).
+
+1. **Fixed — a reference home behind a nested `var` (pass → fail).** A string
+   or class-instance (#7252) home reads as a written value, which holds only
+   when the declaration runs before every later read. A nested declaration
+   may never run (`if (false)`, `while (false)`, `for (; false;)`, a missed
+   `switch` case, `L: { break L; var … }`, a nested head, an unreached
+   `catch`), and the read then answered something other than `undefined`.
+   - The same root as the equivalence failure: L2 claimed a `{ var c = new C(); }`
+     whose class-instance slot may be null. The claim agreed with legacy (both
+     trap on the null slot) but broke #7252's own rule that every IR read sees
+     a written slot. It is answer (a), unsound, fixed at selection.
+   - Fix: `scriptVarReferenceKind` binds no reference kind unless the
+     declaration's list is top-level (`isTopLevelVarList`), so such a binding
+     is refused as `vardecl-module-storage-unrepresentable`. Typed (f64/i32)
+     homes are unchanged: their `0`/`false` read matches legacy and is wrong on
+     main too (out of scope).
+   - **Cost: none measured.** The same 11 files still become IR-only.
+   - Tests: every repro, the template-literal variant, a zero-iteration loop,
+     an unreached `catch` and the #7252 case are in
+     `tests/issue-7106-lever-l2.test.ts` (stay legacy, run correctly).
+2. **Fixed.** The unreachable postfix branch in `isPhase1ForUpdateExpr` is gone.
+3. **Fixed.** One helper, `isTopLevelStatementDeclaration`
+   (`src/shared/var-declaration-lists.ts`), replaces the three copies (ordinal
+   enumerator, resolver, codegen predicate).
+4. **Scope, stated.** The prefix-update change also admits `for (…; ++i)` in
+   every function, not only in `<module-init>`. Its lowering is postfix's
+   (`lowerIncrementDecrement`, the update's value is discarded). The census
+   covered the 22 ES5 files with a prefix `for` update: no binary changed
+   outside the 11 module-init claims. The evidence for function units is the
+   full equivalence gate (below).
+5. **Fixed.** `catchParameterIsRedeclared` matches a pattern parameter's leaf
+   names; a same-named `var` there is an early error (B.3.5 exempts only an
+   identifier parameter), which its doc states.
+
+**Re-measured on main `a484c365fe`**, one niced worker; base = lever L
+(merged with main), head = L2. Standalone on the 446 L2-shape files, the 22
+prefix-update files and 200 random-sample files (597 compile on both sides);
+gc on the 200 sample files plus every changed file (202):
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, L → L2 | 14 → 25 (**+11**, the same 11) | 11 → 22 (+11) |
+| lost / units newly legacy / new post-claim errors | 0 / 0 / 0 | 0 / 0 / 0 |
+| binaries changed | 11, each a newly claimed `<module-init>` | 11 |
+| pass → fail on the 11 | 0 (11/11 pass on main, L and L2) | 0 |
+| playground, main → L2 (26 binaries) | identical | identical |
+
+On top of main + #7292, L and L2 together make **27** more ES5 files IR-only
+on each lane (16 + 11).
+
+**Gates**, bare: loc, func (also against main), coercion, oracle, dead
+exports, typecheck, import cycles, standalone arms, IR layering, flat dir.
+**Equivalence gate** on L2 (and earlier on the merged lever L): no new
+regressions, 4,850 passing, 20 failing, all in the known-failures baseline.
+**Tests**: lever-l2 (60), and with lever-l, var-pattern-heads,
+for-head-destructuring, script-var, script-var-reference-homes and the
+#7252/#7253/var-hoisting/binding-null-guard equivalence files: all pass.
