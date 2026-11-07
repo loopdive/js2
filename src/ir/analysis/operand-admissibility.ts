@@ -371,17 +371,17 @@ export function binaryOperandsAdmissible(op: ts.SyntaxKind, left: OperandFamily,
 }
 
 /**
- * (#7106 lever B) A numeric reader's pair over numbers, the carrier, `null` /
- * `undefined` (read as numbers) and at least one boolean or string. Where the
- * typed arms refuse it, `lowerBinary` boxes each boolean / string side into
- * the dynamic carrier, which keeps its ToNumber and its type, and the dynamic
- * arm runs (`dyn.to_number`, or the carrier relationals, whose IsLessThan
- * compares two strings as strings).
+ * (#7106 lever B) A numeric reader's pair over a string and a number, the
+ * carrier, a boolean, `null` / `undefined` (read as numbers) or another string.
+ * A boolean beside anything but a string is {@link booleanReadAsNumber}'s.
+ * Where the typed arms refuse the pair, `lowerBinary` boxes each boolean /
+ * string side into the dynamic carrier, which keeps its ToNumber and its type,
+ * and the dynamic arm runs (`dyn.to_number`, or the carrier relationals, whose
+ * IsLessThan compares two strings as strings).
  */
 function carrierNumericReaderOperands(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
-  const boxed = (family: OperandFamily): boolean => family === "boolean" || family === "string";
   const read = (family: OperandFamily): boolean => boxableIntoDynamic(numberIfNullOrUndefined(family));
-  return isNumericReaderOperator(op) && (boxed(left) || boxed(right)) && read(left) && read(right);
+  return isNumericReaderOperator(op) && (left === "string" || right === "string") && read(left) && read(right);
 }
 
 /**
