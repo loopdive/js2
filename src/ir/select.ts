@@ -3309,6 +3309,20 @@ function concreteResultRecoversDynamic(
 }
 
 /**
+ * (#7265, #7283) A call whose result is an exact boolean, which boxes onto
+ * the carrier like a comparison: a local direct call that returns a boolean,
+ * or a certified boolean alias call through its module binding.
+ */
+function isBoolCallResult(concrete: ts.Expression, typeMap: TypeMap | undefined): boolean {
+  return (
+    isModuleBooleanAliasCall(concrete) ||
+    (ts.isCallExpression(concrete) &&
+      ts.isIdentifier(concrete.expression) &&
+      calleeReturnKind(concrete.expression.text, typeMap) === "bool")
+  );
+}
+
+/**
  * #2949 slice 2 — verify every use of a dynamic value in `fn`'s body is a
  * MOVE the from-ast builder can lower withOUT box/unbox/tag.test (which land
  * in slice 3). Allowed sinks for a dynamic value:
@@ -3331,20 +3345,6 @@ function concreteResultRecoversDynamic(
  * The walker mutates `dynNames` (alias tracking). Shadowing is already
  * rejected by the Phase-1 scope rules, so a flat set is sound.
  */
-/**
- * (#7265, #7283) A call whose result is an exact boolean, which boxes onto
- * the carrier like a comparison: a local direct call that returns a boolean,
- * or a certified boolean alias call through its module binding.
- */
-function isBoolCallResult(concrete: ts.Expression, typeMap: TypeMap | undefined): boolean {
-  return (
-    isModuleBooleanAliasCall(concrete) ||
-    (ts.isCallExpression(concrete) &&
-      ts.isIdentifier(concrete.expression) &&
-      calleeReturnKind(concrete.expression.text, typeMap) === "bool")
-  );
-}
-
 function dynamicUsesAreMoveOnly(
   fn: IrClaimableSubject,
   dynNames: Set<string>,

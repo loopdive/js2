@@ -13,7 +13,7 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 parent: 7250
-related: [7269, 7272, 7266, 2949, 7106, 7127, 7296]
+related: [7269, 7272, 7266, 2949, 7106, 7127, 7296, 7306, 7307]
 depends_on: [7127]
 loc-budget-allow:
   # 2026-11-07: the five scan admissions (#7283) plus the shared
@@ -28,7 +28,7 @@ func-budget-allow:
   # strict-equality and direct-call-argument sites. The shared predicate
   # (isBoolCallResult) is already module-level. Splitting the ~890-line scan
   # (its statement walk is the natural seam) is a separate refactor of shared
-  # #2949 code. Restates #7265's grant.
+  # #2949 code, filed as #7307. Restates #7265's grant.
   - src/ir/select.ts::dynamicUsesAreMoveOnly
   - src/ir/select.ts::scanExprInner
 assignee: "ttraenkler/c-r11"
