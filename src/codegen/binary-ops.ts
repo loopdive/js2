@@ -1513,7 +1513,6 @@ export function compileBinaryExpression(
   // it to `string`). Recognise the property-read shape at the AST level and
   // treat it as a string operand so the comparison routes to `__str_equals`.
   const isStandaloneErrorStringPropRead = (node: ts.Expression): boolean => {
-    if (!(ctx.standalone || ctx.wasi)) return false;
     if (!ts.isPropertyAccessExpression(node)) return false;
     const p = node.name.text;
     if (p !== "message" && p !== "name" && p !== "stack") return false;
@@ -1546,7 +1545,6 @@ export function compileBinaryExpression(
   // `isStandaloneErrorStringPropRead` augmentation above and the #2888 relational
   // String-wrapper lowering.
   const isStringConcatExpr = (node: ts.Expression): boolean => {
-    if (!(ctx.standalone || ctx.wasi)) return false;
     let cur: ts.Expression = node;
     while (
       ts.isParenthesizedExpression(cur) ||
@@ -1651,7 +1649,7 @@ export function compileBinaryExpression(
     rightIsObjectOperand ||
     // (#6774 S19) any other non-primitive checker type (`var y = {}`) may
     // carry @@toPrimitive / valueOf: §7.2.14 step 11 ToPrimitive, not ToString.
-    (ctx.standalone && !rightIsStrLike && ctx.anyStrTypeIdx >= 0 && (rightTsType.flags & PRIMITIVE_TS_FLAGS) === 0);
+    (!rightIsStrLike && ctx.anyStrTypeIdx >= 0 && (rightTsType.flags & PRIMITIVE_TS_FLAGS) === 0);
   // (#4564) §13.15.3 step 5 reduces BOTH operands BEFORE step 7 asks whether
   // either is a string: `o + ""` must take `valueOf`, but the string routes just
   // below call ToString on the object, which takes `toString`. Standalone only —
@@ -2612,7 +2610,7 @@ export function emitAnyRelational(
   // Compile both operands to externref temps (keep runtime strings boxed).
   // (#6982) A class instance with `[Symbol.toPrimitive]` stays raw until step 1.
   // Provider regime, not host axis: the strict-gc profile is native-first with
-  // `ctx.standalone`/`ctx.wasi` false and keeps the shortcut (#6979 S7-a review).
+  // a JavaScript environment and keeps the shortcut (#6979 S7-a review).
   const operands = compileRelationalOperands(
     ctx,
     fctx,

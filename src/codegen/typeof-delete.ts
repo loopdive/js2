@@ -59,7 +59,6 @@ import { emitLazyNativeProtoGet } from "./native-proto.js";
 import * as tf from "./typeof-static-folds.js";
 import { strictWrapperThisTypeofIsDynamic } from "./object-model/object-proto-to-locale-string.js";
 import { classIdentityFromExpression, hasClassStaticMethod } from "./class-static-metadata.js";
-import { identifierHasExplicitHostAmbientValueDeclaration } from "./expressions/identifier-module-storage.js";
 import { maybeRecordArrayProtoIteratorTombstone } from "./expressions/proto-override.js";
 import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
 import { isReturnOverrideMemberRead } from "./classes/ctor-return-override.js"; // (#6772 S2)
@@ -1926,12 +1925,7 @@ export function compileTypeofExpression(
     if (ts.isIdentifier(bareTdz) && fctx.boxedTdzFlags?.has(bareTdz.text)) {
       forceRuntimeTypeof = true;
     }
-    // An explicit ambient variable describes a host capability, not a value
-    // the checker can prove is present. Read it and classify the runtime value;
-    // in particular, an optional ambient may be absent and answer "undefined".
-    if (ts.isIdentifier(bareTdz) && identifierHasExplicitHostAmbientValueDeclaration(ctx, bareTdz)) {
-      forceRuntimeTypeof = true;
-    }
+
     // A script global synchronized around runtime eval is mutable in the JS
     // sense, irrespective of the checker's flow type at this source position.
     // Eval may have replaced `var initial` (statically `undefined`) with an
@@ -2335,13 +2329,7 @@ export function compileTypeofComparison(
   }
   if (staticTypeof !== null && typeofOperandIsAssignmentDeclaredMember(ctx, guardOperand)) staticTypeof = null; // #6967
   if (strictWrapperThisTypeofIsDynamic(ctx, operand, tsType)) staticTypeof = null; // (#6770 S5)
-  if (
-    staticTypeof !== null &&
-    ts.isIdentifier(guardOperand) &&
-    identifierHasExplicitHostAmbientValueDeclaration(ctx, guardOperand)
-  ) {
-    staticTypeof = null;
-  }
+
   // (#4204) Same unsound-fold guard as compileTypeofExpression.
   if (staticTypeof !== null && ts.isIdentifier(operand) && slotIsDynamicButStaticallyPrimitive(ctx, fctx, operand)) {
     staticTypeof = null;
@@ -2542,9 +2530,7 @@ export function compileTypeofComparison(
   // Route through compileExpression, whose identifier path derefs the cell.
   if (ts.isIdentifier(operand)) {
     const localIdx =
-      identifierHasExplicitHostAmbientValueDeclaration(ctx, operand) ||
-      fctx.boxedCaptures?.has(operand.text) ||
-      runtimeEvalStateMayShadowBinding(ctx, fctx, operand.text)
+      fctx.boxedCaptures?.has(operand.text) || runtimeEvalStateMayShadowBinding(ctx, fctx, operand.text)
         ? undefined
         : externrefCompatibleLocal(fctx, operand.text);
     if (localIdx !== undefined) {

@@ -13,7 +13,7 @@ export function compileStringConversionArgument(
   argument: ts.Expression,
 ): ValType | null {
   const isBigIntArg = ctx.oracle.staticJsTypeOf(argument) === "bigint";
-  const nativeBigIntArg = ctx.standalone && ctx.nativeStrings && isBigIntArg;
+  const nativeBigIntArg = ctx.nativeStrings && isBigIntArg;
   if (nativeBigIntArg) {
     // Wide lowering needs its carrier types before emission. Boxing an i64
     // afterward cannot recover the upper limbs already discarded by lowering.

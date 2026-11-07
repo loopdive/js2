@@ -54,7 +54,7 @@
  *
  * Host mode is untouched. `__object_is*` are host imports there and the bag
  * substrates are standalone/wasi-only (`reserveVecPropHelpers` /
- * `reserveClosurePropHelpers` are gated on `ctx.standalone || ctx.wasi`), so
+ * `reserveClosurePropHelpers` are gated on the no-JS-host lanes), so
  * {@link registerIntegrityResolvers} returns `undefined` and both emitters
  * reproduce their previous bodies byte-for-byte.
  */

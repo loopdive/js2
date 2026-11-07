@@ -8,47 +8,14 @@
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { compileArrayMethodCall } from "../array-methods.js";
-import { allocLocal } from "../context/locals.js";
 import { resolveStoredObjectStaticMethod, resolveUncurriedBuiltinPrototypeMethod } from "../object-builtin-effects.js";
 import { compileObjectDefineProperties, compileObjectDefineProperty } from "../object-ops.js";
-import { ensureObjVecBuilders } from "../object-runtime.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { emitThrowTypeError, noJsHost } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { ts } from "../../ts-api.js";
-import { linkBrandRoleOf } from "../shape-brand.js";
-
-/**
- * (#6482 r6) Is the exact-shape uncurried-builtin alias arm live in this module?
- *
- * It was `ctx.standalone || noJsHost(ctx)`. The js-host lane did not need it,
- * because there the alias's generic `$__bound_fn` dispatch runs the ENGINE's
- * `Object.prototype.hasOwnProperty` against a receiver the host wraps through
- * `_wrapForHost` — correct for anything this module minted.
- *
- * It is NOT correct across a #5225 linked edge. Measured against the real
- * linked harness provider: `__hasOwnProperty(x, k)` — propertyHelper's
- * `Function.prototype.call.bind(Object.prototype.hasOwnProperty)` alias, and
- * the second half of both `isConfigurable` and `isWritable` — answers **false
- * for every consumer-minted receiver**, a plain `{a: 1}` exactly as much as a
- * `[101]`, with no mutation anywhere. Three instrumentations (the
- * `__hasOwnProperty` import closure, a catch-all at `resolveImport`'s entry,
- * and `createHostCallImport`'s `invoke`) recorded ZERO host calls on those
- * rows, so the answer is produced entirely in wasm and no host-side
- * `_decoderExportsFor` redirect can reach it.
- *
- * A linked participant therefore needs the same claim standalone does: route
- * the alias to the `__hasOwnProperty` / `__propertyIsEnumerable` provider,
- * which IS the host import in a js-host module and does resolve the minting
- * module. A single-module js-host compile has no foreign receivers by
- * construction and keeps the identical pre-#6482 path — which is what holds
- * #4017's 684 host-free passes and #4626's index-shift reasoning untouched.
- */
-export function uncurriedBuiltinAliasArmActive(ctx: CodegenContext): boolean {
-  return ctx.standalone || noJsHost(ctx) || linkBrandRoleOf(ctx) !== undefined;
-}
 
 export function tryCompileObjectCreateStaticPrototype(
   ctx: CodegenContext,
@@ -159,48 +126,12 @@ function emitStoredObjectIntrospectionCall(
   return externRef;
 }
 
-function emitStoredObjectAssignCall(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): ValType {
-  const externRef: ValType = { kind: "externref" };
-  emitExternrefArgument(ctx, fctx, expr, 0, externRef);
-  const targetLocal = allocLocal(fctx, `__stored_assign_tgt_${fctx.locals.length}`, externRef);
-  fctx.body.push({ op: "local.set", index: targetLocal });
-
-  const nativeBuilders = ensureObjVecBuilders(ctx);
-  const arrNewIdx = nativeBuilders?.newIdx ?? ensureLateImport(ctx, "__js_array_new", [], [externRef]);
-  const arrPushIdx = nativeBuilders?.pushIdx ?? ensureLateImport(ctx, "__js_array_push", [externRef, externRef], []);
-  const assignIdx = ensureLateImport(ctx, "__object_assign", [externRef, externRef], [externRef]);
-  flushLateImportShifts(ctx, fctx);
-  const finalArrNewIdx = nativeBuilders?.newIdx ?? ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
-  const finalArrPushIdx = nativeBuilders?.pushIdx ?? ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
-  const finalAssignIdx = ctx.funcMap.get("__object_assign") ?? assignIdx;
-  if (finalArrNewIdx === undefined || finalArrPushIdx === undefined || finalAssignIdx === undefined) {
-    fctx.body.push({ op: "ref.null.extern" });
-    return externRef;
-  }
-
-  fctx.body.push({ op: "call", funcIdx: finalArrNewIdx });
-  const sourcesLocal = allocLocal(fctx, `__stored_assign_src_${fctx.locals.length}`, externRef);
-  fctx.body.push({ op: "local.set", index: sourcesLocal });
-  for (let index = 1; index < expr.arguments.length; index++) {
-    fctx.body.push({ op: "local.get", index: sourcesLocal });
-    emitExternrefArgument(ctx, fctx, expr, index, externRef);
-    fctx.body.push({ op: "call", funcIdx: finalArrPushIdx });
-  }
-  fctx.body.push({ op: "local.get", index: targetLocal });
-  fctx.body.push({ op: "local.get", index: sourcesLocal });
-  fctx.body.push({ op: "call", funcIdx: finalAssignIdx });
-  return externRef;
-}
-
 export function tryCompileStoredObjectBuiltinCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
   const storedObjectStatic = resolveStoredObjectStaticMethod(ctx.oracle, expr.expression);
-  if (storedObjectStatic === "assign" && expr.arguments.length >= 1 && !noJsHost(ctx)) {
-    return emitStoredObjectAssignCall(ctx, fctx, expr);
-  }
   if (storedObjectStatic === "defineProperty" && expr.arguments.length >= 3) {
     return compileObjectDefineProperty(ctx, fctx, expr);
   }

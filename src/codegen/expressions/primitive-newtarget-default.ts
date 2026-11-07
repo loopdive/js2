@@ -107,7 +107,7 @@ export function preparePrimitiveNewTargetDefault(
   fctx: FunctionContext,
   target: ts.Expression,
 ): boolean {
-  if (!ctx.standalone || !constructDefaultsToObjectPrototype(ctx, target)) return false;
+  if (!constructDefaultsToObjectPrototype(ctx, target)) return false;
   prepareRuntimeNewTargetProto(ctx, fctx);
   tryEnsureNativeProtoBrand(ctx, "Object"); // registered before the construct code, see emitObjectPrototypeDefault
   return (

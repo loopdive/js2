@@ -24,7 +24,7 @@ export function tryCompileWithRoutedCall(
   fctx: FunctionContext,
   call: ts.CallExpression,
 ): ValType | undefined {
-  if (!ctx.standalone || !ts.isIdentifier(call.expression)) return undefined;
+  if (!ts.isIdentifier(call.expression)) return undefined;
   if (call.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
   const res = resolveWithBinding(fctx, call.expression.text);
   if (res === null) return undefined;

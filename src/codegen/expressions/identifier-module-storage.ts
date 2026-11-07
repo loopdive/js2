@@ -39,55 +39,6 @@ export function identifierHasOnlyAmbientDeclarations(ctx: CodegenContext, id: ts
   );
 }
 
-/**
- * Whether `id` denotes an explicit, typed ambient variable written in a user
- * source file (`declare const/let/var name: T`).
- *
- * Import preprocessing also emits ambient variable stubs, but its value stubs
- * are deliberately `any` (and Node class stubs use `typeof ...`).  Excluding
- * those two synthetic shapes keeps an imported binding from being reinterpreted
- * as a same-named property of globalThis. Declaration-file globals continue to
- * use the established `collectDeclaredGlobals` path.
- */
-export function identifierHasExplicitHostAmbientValueDeclaration(ctx: CodegenContext, id: ts.Identifier): boolean {
-  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return false;
-  const declarations = identifierValueDeclarations(ctx, id);
-  if (declarations.length === 0 || !identifierHasOnlyAmbientDeclarations(ctx, id)) return false;
-  return declarations.some((declaration) => {
-    if (!ts.isVariableDeclaration(declaration) || declaration.getSourceFile().isDeclarationFile) return false;
-    const list = declaration.parent;
-    if (!ts.isVariableDeclarationList(list) || !ts.isVariableStatement(list.parent)) return false;
-    if (!hasDeclareModifier(list.parent)) return false;
-    const type = declaration.type;
-    return type !== undefined && type.kind !== ts.SyntaxKind.AnyKeyword && !ts.isTypeQueryNode(type);
-  });
-}
-
-/**
- * Read a source-level ambient variable from the host global environment.
- * Existing registered declared globals retain their capability thunk (and its
- * dependency injection/cache semantics); otherwise use the live globalThis
- * lookup, which also preserves `undefined` for an absent optional ambient.
- */
-export function tryEmitExplicitHostAmbientValueRead(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  id: ts.Identifier,
-): ValType | undefined {
-  if (!identifierHasExplicitHostAmbientValueDeclaration(ctx, id)) return undefined;
-  const registered = ctx.declaredGlobals.get(id.text);
-  if (registered !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: registered.funcIdx });
-    return registered.type;
-  }
-  if (!emitGlobalEnvironmentObject(ctx, fctx)) throw new TypeError(`ambient global '${id.text}' has no environment`);
-  const getIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_get");
-  if (getIdx === undefined) throw new TypeError(`ambient global '${id.text}' has no environment reader`);
-  emitGlobalEnvironmentKey(ctx, fctx, id.text);
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
-  return { kind: "externref" };
-}
-
 /** Read an ambient binding through its runtime environment before flat registries. */
 export function tryEmitAmbientRegistryCollisionRead(
   ctx: CodegenContext,

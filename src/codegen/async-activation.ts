@@ -210,7 +210,7 @@ function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts.Functi
   // would refuse a population, not a residue (cf. the methods carve-out above),
   // so it relies on the honest unwrap (`emitStandaloneAwaitUnwrap`
   // `throwOnRejected`) instead: a settled rejection throws into the `try`.
-  if ((ctx.wasi === true || ctx.standalone === true) && !isNativeDriveEntryPoint(decl)) return;
+  if (!isNativeDriveEntryPoint(decl)) return;
   const seen = hazardReportedByCtx.get(ctx);
   if (seen?.has(decl)) return;
   const plan = analyzeAsyncBody(ctx, decl);
@@ -227,11 +227,10 @@ function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts.Functi
   // errors trades a latent rejection bug for 402 certain failures. Any future
   // widening has to name a SUBSET (e.g. by decline reason), never the whole
   // population.
-  // (#6995) On the native lanes the honest unwrap delivers a SETTLED operand
-  // exactly (value, or a thrown rejection), so only an await whose operand may
-  // still be PENDING is a hazard there. The host lane keeps every await.
-  const nativeLane = ctx.wasi === true || ctx.standalone === true;
-  const hazard = findSuspensionInsideTry(decl, (a) => !nativeLane || !awaitOperandProvablySettled(ctx, a, plan));
+  // (#6995) The honest unwrap delivers a SETTLED operand exactly (value, or a
+  // thrown rejection), so only an await whose operand may still be PENDING is a
+  // hazard.
+  const hazard = findSuspensionInsideTry(decl, (a) => !awaitOperandProvablySettled(ctx, a, plan));
   if (hazard === null) return;
   if (seen === undefined) hazardReportedByCtx.set(ctx, new WeakSet([decl]));
   else seen.add(decl);

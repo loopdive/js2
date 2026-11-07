@@ -39,7 +39,7 @@ import { readEnv } from "../env.js";
 // so trusting them here is consistent with the representation those fields
 // ALREADY have, not a new claim. Standalone-only, like the verdicts.
 export function provenNumericOperand(ctx: CodegenContext, e: ts.Expression): boolean {
-  if (!ctx.standalone || readEnv("JS2WASM_NUMERIC_OPERANDS") === "0") return false;
+  if (readEnv("JS2WASM_NUMERIC_OPERANDS") === "0") return false;
   const bare = ts.isParenthesizedExpression(e) ? e.expression : e;
   // `this.f` where every write to `f` is numeric.
   if (

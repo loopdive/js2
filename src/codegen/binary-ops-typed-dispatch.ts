@@ -89,7 +89,6 @@ export function tryEmitNativeMapGetLiteralNullishEquality(
     (ts.isVoidExpression(nullishLiteral) && isInertUndefinedLiteral(nullishLiteral));
   if (
     valType?.kind === "anyref" &&
-    (ctx.standalone === true || ctx.wasi === true) &&
     ctx.nativeStrings &&
     ctx.targetProfile.semanticProviders === "native-first" &&
     undefinedSingletonActive(ctx) &&
@@ -139,7 +138,6 @@ export function tryCompileEarlyNativeMapGetEquality(
   // through the oracle, rather than being admitted by its spelling.
   if (
     (isEqOp || isNeqOp) &&
-    (ctx.standalone === true || ctx.wasi === true) &&
     ctx.nativeStrings &&
     ctx.targetProfile.semanticProviders === "native-first" &&
     (isDirectOracleClassifiedMapGet(ctx, expr.left) || isDirectOracleClassifiedMapGet(ctx, expr.right)) &&
@@ -314,7 +312,6 @@ function tryCompileDirectOracleMapGetEquality(
     (rightType.kind === "anyref" && isDirectOracleClassifiedMapGet(ctx, expr.right));
   if (
     !oracleMapGetAnyref ||
-    (ctx.standalone !== true && ctx.wasi !== true) ||
     !ctx.nativeStrings ||
     ctx.targetProfile.semanticProviders !== "native-first" ||
     (!strictMapGetEquality && !isLooseEq && !isLooseNeq)
@@ -447,7 +444,6 @@ export function compileTypedBinaryDispatch(
           const leftIsAnyValue = isAnyValueRef(leftType);
           const rightIsAnyValue = isAnyValueRef(rightType);
           const mixedAnyValueNativeString =
-            (ctx.standalone === true || ctx.wasi === true) &&
             ctx.nativeStrings &&
             leftIsAnyValue !== rightIsAnyValue &&
             ((leftIsAnyValue && isNativeStringRef(rightType)) || (rightIsAnyValue && isNativeStringRef(leftType)));
@@ -485,7 +481,6 @@ export function compileTypedBinaryDispatch(
           // (and the string analogue) stay correct. Non-`$AnyValue` ref pairs
           // (class instances, nominal structs) keep genuine `ref.eq` identity.
           const bothAnyValue =
-            ctx.standalone &&
             ctx.anyValueTypeIdx >= 0 &&
             leftType.kind === "ref" &&
             rightType.kind === "ref" &&
@@ -608,54 +603,52 @@ export function compileTypedBinaryDispatch(
         // honest box. Gated on standalone/wasi + a statically-`$AnyValue`
         // non-null ref side; every other pairing keeps the legacy bridge
         // byte-identical.
-        if (ctx.standalone === true || ctx.wasi === true) {
-          const refSideType = leftIsRef ? leftType : rightType;
-          // Destructuring declaration locals use the nullable carrier even
-          // when the value read from the vector is known to be present.  Keep
-          // the tag-aware path for both carrier spellings; limiting this to
-          // `ref` made `for (const [x] of [[null, 0, false]])` compare through
-          // raw reference identity and lose every primitive value (#4447).
-          const refSideIsAnyValue =
-            ctx.anyValueTypeIdx >= 0 &&
-            (refSideType.kind === "ref" || refSideType.kind === "ref_null") &&
-            refSideType.typeIdx === ctx.anyValueTypeIdx;
-          const otherTsTypeAV = leftIsRef ? rightTsType : leftTsType;
-          const otherBoxableAV = otherType.kind === "externref" || otherType.kind === "i32" || otherType.kind === "f64";
-          if (refSideIsAnyValue && otherBoxableAV) {
-            const honestFromExternIdx = ensureAnyFromExternHelper(ctx, { forceHonest: true });
-            ensureAnyHelpers(ctx);
-            const strictEqIdxAV = ctx.funcMap.get("__any_strict_eq");
-            if (honestFromExternIdx !== undefined && strictEqIdxAV !== undefined) {
-              // Brand a primitive other-side by its static TS type so the box
-              // preserves the JS tag (the #2785 type-aware-box rule).
-              const brandedOther: ValType =
-                otherType.kind === "i32" && (otherTsTypeAV.flags & ts.TypeFlags.ESSymbolLike) !== 0
-                  ? { kind: "i32", symbol: true }
-                  : otherType.kind === "i32" && isBooleanType(otherTsTypeAV)
-                    ? { kind: "i32", boolean: true }
-                    : otherType;
-              // Stack: [left, right] (right on top).
-              if (leftIsRef) {
-                // Right is the non-carrier side: box (if primitive) + classify in place.
-                if (otherType.kind !== "externref") {
-                  coerceType(ctx, fctx, brandedOther, { kind: "externref" });
-                }
-                fctx.body.push({ op: "call", funcIdx: honestFromExternIdx });
-              } else {
-                // Left is the non-carrier side: save right ($AnyValue), box+classify left, restore.
-                const tmpRightAV = allocTempLocal(fctx, rightType);
-                fctx.body.push({ op: "local.set", index: tmpRightAV });
-                if (otherType.kind !== "externref") {
-                  coerceType(ctx, fctx, brandedOther, { kind: "externref" });
-                }
-                fctx.body.push({ op: "call", funcIdx: honestFromExternIdx });
-                fctx.body.push({ op: "local.get", index: tmpRightAV });
-                releaseTempLocal(fctx, tmpRightAV);
+        const refSideType = leftIsRef ? leftType : rightType;
+        // Destructuring declaration locals use the nullable carrier even
+        // when the value read from the vector is known to be present.  Keep
+        // the tag-aware path for both carrier spellings; limiting this to
+        // `ref` made `for (const [x] of [[null, 0, false]])` compare through
+        // raw reference identity and lose every primitive value (#4447).
+        const refSideIsAnyValue =
+          ctx.anyValueTypeIdx >= 0 &&
+          (refSideType.kind === "ref" || refSideType.kind === "ref_null") &&
+          refSideType.typeIdx === ctx.anyValueTypeIdx;
+        const otherTsTypeAV = leftIsRef ? rightTsType : leftTsType;
+        const otherBoxableAV = otherType.kind === "externref" || otherType.kind === "i32" || otherType.kind === "f64";
+        if (refSideIsAnyValue && otherBoxableAV) {
+          const honestFromExternIdx = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+          ensureAnyHelpers(ctx);
+          const strictEqIdxAV = ctx.funcMap.get("__any_strict_eq");
+          if (honestFromExternIdx !== undefined && strictEqIdxAV !== undefined) {
+            // Brand a primitive other-side by its static TS type so the box
+            // preserves the JS tag (the #2785 type-aware-box rule).
+            const brandedOther: ValType =
+              otherType.kind === "i32" && (otherTsTypeAV.flags & ts.TypeFlags.ESSymbolLike) !== 0
+                ? { kind: "i32", symbol: true }
+                : otherType.kind === "i32" && isBooleanType(otherTsTypeAV)
+                  ? { kind: "i32", boolean: true }
+                  : otherType;
+            // Stack: [left, right] (right on top).
+            if (leftIsRef) {
+              // Right is the non-carrier side: box (if primitive) + classify in place.
+              if (otherType.kind !== "externref") {
+                coerceType(ctx, fctx, brandedOther, { kind: "externref" });
               }
-              fctx.body.push({ op: "call", funcIdx: strictEqIdxAV });
-              if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });
-              return { kind: "i32" };
+              fctx.body.push({ op: "call", funcIdx: honestFromExternIdx });
+            } else {
+              // Left is the non-carrier side: save right ($AnyValue), box+classify left, restore.
+              const tmpRightAV = allocTempLocal(fctx, rightType);
+              fctx.body.push({ op: "local.set", index: tmpRightAV });
+              if (otherType.kind !== "externref") {
+                coerceType(ctx, fctx, brandedOther, { kind: "externref" });
+              }
+              fctx.body.push({ op: "call", funcIdx: honestFromExternIdx });
+              fctx.body.push({ op: "local.get", index: tmpRightAV });
+              releaseTempLocal(fctx, tmpRightAV);
             }
+            fctx.body.push({ op: "call", funcIdx: strictEqIdxAV });
+            if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });
+            return { kind: "i32" };
           }
         }
         if (otherType.kind === "externref") {
@@ -1091,10 +1084,8 @@ export function compileTypedBinaryDispatch(
         // (#6774 S19) Standalone passes an EXPLICIT "default" hint: the
         // runtime then keeps a Symbol @@toPrimitive result (§7.2.14 step 11
         // compares it) instead of the abrupt ToNumber it applies otherwise.
-        if (ctx.standalone) addStringConstantGlobal(ctx, "default");
-        const defaultHint: Instr[] = ctx.standalone
-          ? stringConstantExternrefInstrs(ctx, "default")
-          : [{ op: "ref.null.extern" }];
+        addStringConstantGlobal(ctx, "default");
+        const defaultHint: Instr[] = stringConstantExternrefInstrs(ctx, "default");
         const reduceOperand = (externLocal: number): Instr[] => [
           { op: "local.get", index: externLocal },
           ...structuredClone(defaultHint),
@@ -1114,7 +1105,7 @@ export function compileTypedBinaryDispatch(
             then: [...reduceOperand(lTmp), ...reduceOperand(rTmp)],
           },
         ];
-        fctx.body.push(...unlessBothI31(ctx.standalone, lTmp, rTmp, reduce)); // (#6973)
+        fctx.body.push(...unlessBothI31(true, lTmp, rTmp, reduce)); // (#6973)
       }
 
       // (#2081) LOOSE null/undefined arm (§7.2.15 steps 2-3): `null == undefined`
@@ -1478,7 +1469,7 @@ export function compileTypedBinaryDispatch(
               },
             ]
           : coreEqInstrs;
-      fctx.body.push(...i31EqualityFastPath(ctx.standalone, lTmp, rTmp, eqInstrs)); // (#6973)
+      fctx.body.push(...i31EqualityFastPath(true, lTmp, rTmp, eqInstrs)); // (#6973)
       if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
       releaseTempLocal(fctx, rTmp);
       releaseTempLocal(fctx, lTmp);

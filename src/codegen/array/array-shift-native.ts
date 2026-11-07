@@ -232,7 +232,7 @@ function buildUnshiftBody(ctx: CodegenContext, deps: MoveDeps): Instr[] {
  * substrate is unavailable — the dispatcher then keeps its previous behaviour.
  */
 export function ensureNativeArrayShift(ctx: CodegenContext, methodName: string): number | undefined {
-  if (!ctx.standalone || !NATIVE_SHIFT_METHODS.has(methodName)) return undefined;
+  if (!NATIVE_SHIFT_METHODS.has(methodName)) return undefined;
   const name = `__arrprod_${methodName}`;
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;

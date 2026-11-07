@@ -37,10 +37,9 @@ export function compileHostFreeCryptoCall(ctx: CodegenContext, fctx: FunctionCon
  * environment: the host returns a JS string, and the regime's string carrier
  * is the native one, so marshal it (`.length`, RegExp, concat then see a
  * string). Returns null — leaving the raw `externref` — wherever the bridge is
- * unavailable: the host-assisted regime (`ctx.standalone` false) and the
+ * unavailable: the host-assisted regime (the regime flag false) and the
  * host-free environments, which keeps those binaries byte-identical.
  */
 export function marshalRegimeCryptoUuid(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (!ctx.standalone) return null;
   return emitHostExternrefToNativeString(ctx, fctx);
 }

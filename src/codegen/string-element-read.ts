@@ -75,7 +75,7 @@ export function emitGuardedNativeStringElementGet(
   // either string probing or the dynamic index read.
   // Identifier locals can hold the undefined singleton too, including a
   // string | undefined union. A null-only check cannot recognize that value.
-  const isUndefinedIdx = ctx.standalone ? ensureExternIsUndefinedImport(ctx) : undefined;
+  const isUndefinedIdx = ensureExternIsUndefinedImport(ctx);
   flushLateImportShifts(ctx, fctx);
   fctx.body.push({ op: "local.set", index: recvLocal });
   const receiverTypeError = (): Instr[] =>

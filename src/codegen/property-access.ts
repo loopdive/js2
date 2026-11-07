@@ -193,7 +193,6 @@ import {
   localGlobalIdx,
   recordInModuleInitFlagRead,
 } from "./registry/imports.js";
-import { tryCompileArrayMethodValue } from "./array-method-value.js";
 import { realmGlobalModuleGlobalReadApplies } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver; (#5342) self-referential probe
 import { dvDetachedThrowInstrs, getOrRegisterDvWindowType } from "./dataview-native.js"; // (#2159/#38) DataView windowing; (#3173) detached TypeError
 import {
@@ -3988,12 +3987,6 @@ export function compilePropertyAccess(
     return compileOptionalPropertyAccess(ctx, fctx, expr);
   }
 
-  // (#4765 slice 1) `[].includes` as a VALUE — the host intrinsic, so
-  // `[].includes.call(obj, …)` runs the generic algorithm instead of dying on a
-  // null. Non-call position and an array receiver only; see the module comment.
-  const arrayMethodValue = tryCompileArrayMethodValue(ctx, fctx, expr);
-  if (arrayMethodValue !== undefined) return arrayMethodValue;
-
   // Static field initializers can contain a folded direct eval. Its AST is
   // foreign, but `this.<name>` still denotes the surrounding class constructor
   // and must see compiler-owned static-field storage. Handle that one receiver
@@ -4284,88 +4277,6 @@ export function compilePropertyAccess(
   }
 
   return finalizeStructAndDynamicMemberGet(ctx, fctx, expr, propName, objType);
-}
-
-/**
- * Read a property as its boxed JavaScript value for a nullish comparison.
- *
- * Whole-program field inference may otherwise narrow a dynamic read to i32/f64.
- * That is valid for a matching struct, but an unrelated receiver can miss and
- * produce `undefined`; unboxing that miss to 0/false destroys the distinction
- * observed by `value == null` / `value != null`.
- */
-export function canCompilePropertyAccessForNullishObservation(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.PropertyAccessExpression,
-): boolean {
-  if (expr.questionDotToken) return false;
-  const receiver = expr.expression;
-  const receiverIsLocalDynamicValue =
-    receiver.kind === ts.SyntaxKind.ThisKeyword ||
-    (ts.isIdentifier(receiver) &&
-      (fctx.localMap.has(receiver.text) ||
-        (fctx.boxedCaptures?.has(receiver.text) ?? false) ||
-        ctx.moduleGlobals.has(receiver.text) ||
-        ctx.capturedGlobals.has(receiver.text)));
-  if (!receiverIsLocalDynamicValue) return false;
-  const receiverFact = ctx.oracle.typeFactOf(receiver).kind;
-  return receiverFact === "any" || receiverFact === "unknown";
-}
-
-export function compilePropertyAccessForNullishObservation(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.PropertyAccessExpression,
-): ValType | null {
-  if (!canCompilePropertyAccessForNullishObservation(ctx, fctx, expr)) {
-    return compilePropertyAccess(ctx, fctx, expr);
-  }
-  if (expr.questionDotToken) return compilePropertyAccess(ctx, fctx, expr);
-
-  const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
-  const getMemberIdx = reserveMemberGetDispatch(ctx, propName, fctx);
-  const getIdx =
-    getMemberIdx === undefined
-      ? ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }])
-      : undefined;
-  const isUndefinedIdx = ensureExternIsUndefinedImport(ctx);
-  flushLateImportShifts(ctx, fctx);
-
-  const recvType = compileExpression(ctx, fctx, expr.expression);
-  if (!recvType) {
-    fctx.body.push({ op: "ref.null.extern" });
-  } else if (recvType.kind !== "externref") {
-    coerceType(ctx, fctx, recvType, { kind: "externref" });
-  }
-  const recvLocal = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.tee", index: recvLocal });
-  fctx.body.push({ op: "ref.is_null" });
-  if (isUndefinedIdx !== undefined) {
-    fctx.body.push({ op: "local.get", index: recvLocal });
-    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
-    fctx.body.push({ op: "i32.or" });
-  }
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: typeErrorThrowInstrs(ctx, expr),
-    else: [],
-  });
-  fctx.body.push({ op: "local.get", index: recvLocal });
-  releaseTempLocal(fctx, recvLocal);
-  if (getMemberIdx !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: getMemberIdx });
-    return { kind: "externref" };
-  }
-  if (getIdx !== undefined) {
-    fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
-    fctx.body.push({ op: "call", funcIdx: getIdx });
-    return { kind: "externref" };
-  }
-  fctx.body.push({ op: "drop" });
-  fctx.body.push({ op: "ref.null.extern" });
-  return { kind: "externref" };
 }
 
 export function compileExternPropertyGet(
@@ -6612,29 +6523,6 @@ export function compileElementAccessBody(
       if (dynamic) return dynamic;
     }
 
-    // (#2743 b) `vec[Symbol.iterator]` is %Array.prototype.values%
-    // (§10.4.4.6/§10.4.4.7 + the Array iterator), NOT a numeric index. This
-    // covers BOTH `[][Symbol.iterator]` and `arguments[Symbol.iterator]` — both
-    // are vec-typed receivers reaching this path. The default vec lowering
-    // coerces the key to an i32 index, which ToNumber-throws on a Symbol
-    // ("Cannot convert a Symbol value to a number"). Intercept the
-    // statically-known `Symbol.iterator` key and return the host intrinsic, so
-    // both sites get the SAME identity (`[][Symbol.iterator] ===
-    // Array.prototype.values`). Host-mode only: in standalone `Symbol.iterator`
-    // lowers to an i32 well-known id and the index path is harmless. The
-    // receiver vec ref is on the stack here (nothing emitted since entry), so
-    // drop it — `Array.prototype.values` is the shared intrinsic.
-    if (!noJsHost(ctx) && isSymbolIteratorKey(expr.argumentExpression)) {
-      fctx.body.push({ op: "drop" });
-      const valuesIdx = ensureLateImport(ctx, "__array_proto_values", [], [{ kind: "externref" }]);
-      flushLateImportShifts(ctx, fctx);
-      if (valuesIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: valuesIdx });
-      } else {
-        fctx.body.push({ op: "ref.null.extern" });
-      }
-      return { kind: "externref" };
-    }
     if (emitDynamicStringVecElementGet(ctx, fctx, expr.argumentExpression)) return { kind: "externref" };
     // (#2593) Signedness of a packed i8/i16 typed-array element is driven by the
     // VIEW NAME (Int8/Int16 → sign-extend; Uint8/Uint8Clamped/Uint16 →

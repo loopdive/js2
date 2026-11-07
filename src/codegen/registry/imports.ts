@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Import/global registration and late index-space fixups. */
+import { isRetiredEcmaScriptExternClass } from "../../host-import-policy.js";
 import { registerWideBigIntTypes } from "../bigint-wide.js";
 import { buildOpenBigIntType } from "../../runtime/wasmgc/values/bigint-carrier-layouts.js";
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
@@ -359,50 +360,14 @@ export function resolveDeferredStringConstants(ctx: CodegenContext): void {
 }
 
 /**
- * Register a real host string constant even when native strings are enabled.
+ * Register a real host string constant (a `string_constants` imported global).
  *
- * Native-string literals normally use a `-1` sentinel in `stringGlobalMap` and
- * materialize a WasmGC value. That value cannot be handed to a host import,
- * and copying it through exported linear memory is unavailable while the
- * Wasm start function is still running. Keep this separate map so the same
- * source text can retain its native carrier everywhere else.
+ * (#6979 S7-c) Every WasmGC build is on the native regime, which never imports
+ * a host string, so this always answers `undefined` and every caller takes its
+ * native arm. The callers' dead host arms fold in a later S7 sub-slice.
  */
-export function addHostStringConstantGlobal(ctx: CodegenContext, value: string): number | undefined {
-  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return undefined;
-  if (!ctx.nativeStrings) {
-    addStringConstantGlobal(ctx, value);
-    const globalIdx = ctx.stringGlobalMap.get(value);
-    return globalIdx !== undefined && globalIdx >= 0 ? globalIdx : undefined;
-  }
-
-  const existing = ctx.hostStringGlobalMap.get(value);
-  if (existing !== undefined) return existing;
-
-  const hasModuleGlobals = ctx.mod.globals.length > 0 || ctx.mod.functions.length > 0;
-  const oldNumImportGlobals = ctx.numImportGlobals;
-  const globalIdx = ctx.numImportGlobals;
-  const useSurrogateNs = hasLoneSurrogate(value);
-  const importModule = useSurrogateNs ? STRING_CONSTANTS16_NS : "string_constants";
-  const importName = useSurrogateNs ? hexCodeUnits(value) : value;
-  const stableOrdinal = ctx.stringLiteralCounter;
-  const importValue = addImport(ctx, importModule, importName, {
-    kind: "global",
-    type: { kind: "externref" },
-    mutable: false,
-  });
-  if (!importValue) return undefined;
-
-  planProgramAbiStringConstantImport(ctx, importValue, stableOrdinal);
-  ctx.hostStringGlobalMap.set(value, globalIdx);
-  if (!ctx.stringLiteralMap.has(value)) {
-    const literalName = `__str_${ctx.stringLiteralCounter}`;
-    ctx.stringLiteralMap.set(value, literalName);
-    ctx.stringLiteralValues.set(literalName, value);
-  }
-  ctx.stringLiteralCounter++;
-  if (!ctx.mod.stringPool.includes(value)) ctx.mod.stringPool.push(value);
-  if (hasModuleGlobals) fixupModuleGlobalIndices(ctx, oldNumImportGlobals, 1);
-  return globalIdx;
+export function addHostStringConstantGlobal(_ctx: CodegenContext, _value: string): number | undefined {
+  return undefined;
 }
 
 /** Return the absolute Wasm global index for a new module-defined global. */
@@ -774,7 +739,7 @@ export function addStringImports(ctx: CodegenContext): void {
   if (ctx.hasStringImports) return;
   // #1470: standalone target must never register the wasm:js-string namespace.
   // The nativeStrings path is the standalone alternative and is forced on for
-  // ctx.standalone in createCodegenContext. If a caller still reaches this
+  // the native regime in createCodegenContext. If a caller still reaches this
   // path under standalone (e.g. via a missed gate), no-op so the resulting
   // module remains JS-host-free. WASI mode keeps the historical no-op
   // behavior via the same nativeStrings forcing.
@@ -1821,21 +1786,6 @@ export function addIteratorImports(ctx: CodegenContext): void {
   flushLateImportShifts(ctx, ctx.currentFunc);
 }
 
-/** Register array iterator host imports (entries/keys/values) if not already registered */
-export function addArrayIteratorImports(ctx: CodegenContext): void {
-  if (ctx.funcMap.has("__array_entries")) return;
-
-  // (#2689) Batch + immediate flush — see addIteratorImports for the rationale.
-  // Lazily called during body compilation (array-methods.ts), raw addImport
-  // would desync already-baked defined-function funcIdx values.
-  const ER: ValType = { kind: "externref" };
-  // All three: (externref) → externref — take a vec struct, return a JS iterator
-  ensureLateImport(ctx, "__array_entries", [ER], [ER]);
-  ensureLateImport(ctx, "__array_keys", [ER], [ER]);
-  ensureLateImport(ctx, "__array_values", [ER], [ER]);
-  flushLateImportShifts(ctx, ctx.currentFunc);
-}
-
 /**
  * Register the generator host imports if not already registered.
  *
@@ -1864,81 +1814,16 @@ export function addArrayIteratorImports(ctx: CodegenContext): void {
  *   - `__gen_result_done`     (externref) → i32
  *   - `__get_caught_exception` () → externref  (for the body's try/catch wrapper)
  */
-export function addGeneratorImports(ctx: CodegenContext): void {
-  // (#7010) The eager buffer is host-only; host-free builds refuse instead.
-  if (ctx.standalone || ctx.wasi) return;
-  // Guard: only register once
-  if (ctx.funcMap.has("__gen_create_buffer")) return;
-
-  // (#2689) Batch + immediate flush — see addIteratorImports for the rationale.
-  // Can be registered lazily (IR-path generator claim / body compilation) after
-  // other functions baked their funcIdx; raw addImport would desync them.
-  const ER: ValType = { kind: "externref" };
-  ensureLateImport(ctx, "__gen_create_buffer", [], [ER]);
-  ensureLateImport(ctx, "__gen_push_f64", [ER, { kind: "f64" }], []);
-  ensureLateImport(ctx, "__gen_push_i32", [ER, { kind: "i32" }], []);
-  ensureLateImport(ctx, "__gen_push_ref", [ER, ER], []);
-  // __gen_yield_star: (externref, externref) → void  (iterates inner iterable, pushes all values into outer buffer)
-  ensureLateImport(ctx, "__gen_yield_star", [ER, ER], []);
-  // __gen_set_return: (externref, externref) → void  (#2035 — stashes the
-  // generator's `return` value on the buffer instead of pushing it as a yield)
-  ensureLateImport(ctx, "__gen_set_return", [ER, ER], []);
-  // __create_generator: (buf: externref, pendingThrow: externref) -> externref
-  // Takes a buffer of yielded values and an optional pending exception,
-  // returns a Generator-like object that defers the throw to the first next() call.
-  ensureLateImport(ctx, "__create_generator", [ER, ER], [ER]);
-  // __create_async_generator: same Wasm signature as __create_generator, but .next()/.return()/.throw()
-  // return Promise-wrapped results as required by the ES spec for async generators.
-  ensureLateImport(ctx, "__create_async_generator", [ER, ER], [ER]);
-  ensureLateImport(ctx, "__gen_next", [ER], [ER]);
-  ensureLateImport(ctx, "__gen_return", [ER, ER], [ER]);
-  ensureLateImport(ctx, "__gen_throw", [ER, ER], [ER]);
-  ensureLateImport(ctx, "__gen_result_value", [ER], [ER]);
-  ensureLateImport(ctx, "__gen_result_value_f64", [ER], [{ kind: "f64" }]);
-  ensureLateImport(ctx, "__gen_result_done", [ER], [{ kind: "i32" }]);
-  // Ensure __get_caught_exception is available for generator body try/catch wrappers
-  ensureLateImport(ctx, "__get_caught_exception", [], [ER]);
-  flushLateImportShifts(ctx, ctx.currentFunc);
-}
-
-/** Register for-in key enumeration host imports if not already registered */
-export function addForInImports(ctx: CodegenContext): void {
-  // Guard: only register once
-  if (ctx.funcMap.has("__for_in_keys")) return;
-
-  // (#2689) Batch + immediate flush — see addIteratorImports for the rationale.
-  // Only registered in JS-host mode (caller-guarded `!standalone && !wasi`), so
-  // the standalone `__for_in_*` refusal inside ensureLateImport never triggers
-  // here. Raw addImport on this lazy path would desync already-baked funcIdx.
-  const ER: ValType = { kind: "externref" };
-  // __for_in_keys: (externref) -> externref — returns JS array of enumerable string keys
-  ensureLateImport(ctx, "__for_in_keys", [ER], [ER]);
-  // __for_in_len: (externref) -> i32 — returns keys.length
-  ensureLateImport(ctx, "__for_in_len", [ER], [{ kind: "i32" }]);
-  // __for_in_get: (externref, i32) -> externref — returns keys[i]
-  ensureLateImport(ctx, "__for_in_get", [ER, { kind: "i32" }], [ER]);
-  // __for_in_has: (externref obj, externref key) -> i32 — per-visit liveness
-  // check so a property deleted mid-enumeration is skipped (#2066).
-  ensureLateImport(ctx, "__for_in_has", [ER, ER], [{ kind: "i32" }]);
-  // (#3323) __array_forin_keys: (externref vec, i32 len) -> externref — for an
-  // ARRAY receiver, returns the full OrdinaryOwnPropertyKeys string list: integer
-  // indices "0".."len-1" ascending (len is the vec length, read in Wasm via the
-  // `$__vec_base` length field and passed in — the host has no reliable opaque-vec
-  // length otherwise), THEN the own enumerable non-index string keys added via
-  // `arr.k = v` / `Object.defineProperty` (sidecar), in insertion order with
-  // `__get_`/`__set_` accessor keys normalized to their user key and deduped. The
-  // native emitArrayForIn index loop only covered the indices and dropped the
-  // string keys entirely.
-  ensureLateImport(ctx, "__array_forin_keys", [ER, { kind: "i32" }], [ER]);
-  flushLateImportShifts(ctx, ctx.currentFunc);
+export function addGeneratorImports(_ctx: CodegenContext): void {
+  // (#7010) The eager buffer is host-only: the regime registers nothing and a
+  // generator neither native lowering claims is refused at its emit site.
 }
 
 /** Scan user code and register only the extern class imports actually used */
 export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
   const registered = new Set<string>();
-  const useNativeEncodingApi = ctx.wasi || ctx.standalone || ctx.strictNoHostImports;
   const isNativeEncodingClass = (className: string | undefined): boolean =>
-    useNativeEncodingApi && (className === "TextEncoder" || className === "TextDecoder");
+    className === "TextEncoder" || className === "TextDecoder";
 
   // Pre-scan source for user-defined class names. A user-defined class shadows
   // any extern class with the same name (e.g. user `class Node` shadows DOM
@@ -2009,6 +1894,8 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
     let current: string | undefined = className;
     while (current) {
       const info = ctx.externClasses.get(current);
+      // (#6979) ECMAScript builtins have no host extern-class imports any more.
+      if (info && isRetiredEcmaScriptExternClass(info.className, ctx.targetProfile.accelerators)) return null;
       if (info) {
         if (kind === "method" && info.methods.has(memberName)) return info;
         if (kind === "property" && info.properties.has(memberName)) return info;
@@ -2044,7 +1931,9 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
         !isNativeEncodingClass(className)
       ) {
         const info = ctx.externClasses.get(className);
-        if (info) register(`${info.importPrefix}_new`, info.constructorParams, [{ kind: "externref" }]);
+        if (info && !isRetiredEcmaScriptExternClass(info.className, ctx.targetProfile.accelerators)) {
+          register(`${info.importPrefix}_new`, info.constructorParams, [{ kind: "externref" }]);
+        }
       }
     }
 
@@ -2157,9 +2046,6 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
           // class, harness `verifyProperty`/`obj[name]` drives it into ~4.5k
           // tests). Skipping the pre-registration lets the native routing win;
           // host/gc mode is unchanged (still eagerly seeds the host import).
-          if (!(ctx.standalone || ctx.wasi)) {
-            register("__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
-          }
         }
       }
     }

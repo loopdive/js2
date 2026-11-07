@@ -47,6 +47,7 @@ import {
   emitRuntimeEvalProviderActive,
   emitRuntimeEvalResultUnwrap,
   RUNTIME_EVAL_IMPORT_MODULE,
+  runtimeEvalProviderLinkable,
 } from "./runtime-eval-provider.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { ensureRuntimeEvalInterpretedCallbackType } from "../runtime-eval-boundary.js";
@@ -124,7 +125,6 @@ export function resolveConstantString(expr: ts.Expression, checker?: ts.TypeChec
  * behavioural gain.
  */
 function keywordLiteralToString(ctx: CodegenContext, expr: ts.Expression): string | null {
-  if (!ctx.standalone) return null;
   let e: ts.Expression = expr;
   while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) e = e.expression;
   if (e.kind === ts.SyntaxKind.NullKeyword) return "null";
@@ -1127,9 +1127,9 @@ export function tryStaticEvalInline(
   // the test262 script lane disables synthetic module strictness and therefore
   // still exercises the spec isolation path for explicit strict code.
   const explicitlyStrictEval = bodyIsStrict || (directEval && isStrictContext(expr, false));
-  if (ctx.standalone && explicitlyStrictEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
+  if (explicitlyStrictEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
 
-  if (ctx.standalone && !explicitlyStrictEval && declarationNames.blockFunctionNames.size > 0) {
+  if (!explicitlyStrictEval && declarationNames.blockFunctionNames.size > 0) {
     const annexBNames = declarationNames.blockFunctionNames;
     const collidesWithCaller =
       setsIntersect(annexBNames, declarationNames.varNames) ||
@@ -1172,12 +1172,7 @@ export function tryStaticEvalInline(
   //
   // Ordered AFTER the bucket-A global-lexical collision guard above: that error
   // is statically certain and also covers host mode, so it wins.
-  if (
-    ctx.standalone &&
-    !evalIsStrict &&
-    declarationNames.varNames.size > 0 &&
-    (directEval ? fctx.name === "__module_init" : true)
-  ) {
+  if (!evalIsStrict && declarationNames.varNames.size > 0 && (directEval ? fctx.name === "__module_init" : true)) {
     return undefined; // provider owns EvalDeclarationInstantiation here
   }
 
@@ -1194,13 +1189,7 @@ export function tryStaticEvalInline(
   // Keyed on FUNCTION declarations specifically, NOT on `varNames`: the
   // 192-file `declare-arguments` matrix is entirely function-scope var-only
   // eval and must keep splicing (named canary in the issue's verification).
-  if (
-    ctx.standalone &&
-    !evalIsStrict &&
-    directEval &&
-    fctx.name !== "__module_init" &&
-    foldedEvalHasTopLevelFunctionDeclaration(sf)
-  ) {
+  if (!evalIsStrict && directEval && fctx.name !== "__module_init" && foldedEvalHasTopLevelFunctionDeclaration(sf)) {
     return undefined;
   }
 
@@ -1211,7 +1200,7 @@ export function tryStaticEvalInline(
   // both names compare equal only because both were null). Route those bodies
   // to the bytecode provider, where `%eval%` has a real realm-stable marker and
   // alias calls correctly become indirect eval.
-  if (ctx.standalone && containsEvalValueReference(sf)) return undefined;
+  if (containsEvalValueReference(sf)) return undefined;
 
   // A `typeof` of one of the eval body's own lexical bindings, before that
   // binding's declaration, is a TDZ ReferenceError the splice statically folds
@@ -1279,7 +1268,7 @@ export function tryStaticEvalInline(
   // before execution of the eval Script.
   for (let ai = 1; ai < expr.arguments.length; ai++) {
     const extra = expr.arguments[ai]!;
-    if (ctx.standalone && ts.isSpreadElement(extra)) {
+    if (ts.isSpreadElement(extra)) {
       emitDiscardedSpreadArgument(ctx, fctx, extra); // (#6774 S18) ArgumentListEvaluation steps it
       continue;
     }
@@ -2008,7 +1997,7 @@ export function tryStandaloneDynamicFunctionCtorValue(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx)) return undefined;
   const callee = unwrapParenExpr(expr.expression);
   if (!ts.isIdentifier(callee) || !isGlobalFunctionIdentifier(callee, ctx.checker)) return undefined;
   return emitStandaloneDynamicFunctionRuntime(ctx, fctx, expr.arguments);
@@ -2033,7 +2022,7 @@ export function emitStandaloneIndirectEvalRuntime(
   args: readonly ts.Expression[],
   sourceLocal?: number, // (#6774 S18) the source already evaluated (spread args)
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx)) return undefined;
   if (args.length === 0 && sourceLocal === undefined) {
     // (#2875 w4-F) §19.2.1.1 step 2 — `eval()` passes `undefined`, not a String,
     // so PerformEval returns it unchanged. `ref.null.extern` is `null`, a
@@ -2086,7 +2075,7 @@ export function emitStandaloneGlobalScriptEvalRuntime(
   fctx: FunctionContext,
   args: readonly ts.Expression[],
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx)) return undefined;
   if (args.length === 0) {
     emitUndefined(ctx, fctx);
     return { kind: "externref" };
@@ -2200,7 +2189,7 @@ export function emitStandaloneDynamicFunctionRuntime(
   fctx: FunctionContext,
   args: readonly ts.Expression[],
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx)) return undefined;
   if (isRuntimeEvalProviderAbsent(ctx)) return emitRefusedDynamicFunction(ctx, fctx, args);
   const repr = nativeStringRepr(ctx);
   if (repr === undefined) return undefined;

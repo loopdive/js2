@@ -836,7 +836,7 @@ export function tryBorrowedPrototypeNullishThisThrow(
   // idempotent). Without it the late-import fallback below minted
   // `env::__to_property_key`, a host import a standalone module can never be
   // linked against (#4076 rows, since 6cf0f5555c). Host lanes keep the import.
-  if (coercesKeyFirst && ctx.standalone && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (coercesKeyFirst && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     ensureObjectRuntime(ctx);
   }
   const toPropertyKeyIdx = coercesKeyFirst

@@ -124,10 +124,9 @@ export function ensureAnyValuePayloadToNumber(
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
   addUnionImports(ctx);
-  const nativeToPrimitive = ctx.standalone;
-  if (nativeToPrimitive) ensureObjectRuntime(ctx);
+  ensureObjectRuntime(ctx);
   flushLateImportShifts(ctx, fctx);
-  const toPrimitive = (nativeToPrimitive ? runtimeToPrimitiveInstrs(ctx, hint ?? "number") : null) ?? [];
+  const toPrimitive = runtimeToPrimitiveInstrs(ctx, hint ?? "number") ?? [];
   const toNumber = runtimeToNumberInstrs(ctx);
   if (toNumber === null) return null;
   const anyTypeIdx = ctx.anyValueTypeIdx;
