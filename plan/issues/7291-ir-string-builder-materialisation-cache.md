@@ -30,7 +30,7 @@ func-budget-allow:
   - src/ir/lower-generic.ts::emitInstrTree
   - src/ir/integration.ts::makeResolver
 import-cycles-allow:
-  - codegen->ir: 304 # 2026-11-07 (#7291): legacy codegen/string-builder.ts imports the shared builder sequences from ir/backend/wasm-string-builder.ts (the IR layering gate forbids the reverse)
+  - codegen->ir: 304 # 2026-11-07 (#7291): +1 edge over base 303 — legacy codegen/string-builder.ts imports the shared builder sequences from ir/backend/wasm-string-builder.ts (the IR layering gate forbids the reverse); #7288 also grants this pair, so whichever merges second re-states its grant as base+1
 ---
 
 # IR string-builder loop is 6–10× slower than legacy's buffer

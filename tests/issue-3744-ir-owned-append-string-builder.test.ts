@@ -160,10 +160,9 @@ describe("#3744 IR owned-append string-builder fast path", () => {
     }
   });
 
-  it("the actual string-hash benchmark is correct through the owned-append path too", async () => {
+  it("the actual string-hash benchmark is correct through the IR builder too", async () => {
     const src = `
-/** @param {number} n @returns {number} */
-export function run(n) {
+export function run(n: number): number {
   const alphabet = "abcdefghijklmnopqrstuvwxyz012345";
   let text = "";
   for (let i = 0; i < n; i++) {
