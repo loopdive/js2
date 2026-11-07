@@ -5824,8 +5824,57 @@ through `__to_primitive`, in this order, so a redefined
   - claimed rows for each operator group (arithmetic, bitwise, relational)
     over boolean, string and wrapper operands, including the string×string
     relational through a wrapper;
-  - a redefined `valueOf` showing left-before-right order;
   - refused rows for the object-literal operand and a `+`.
+
+### Lever B implemented (2026-11-07)
+
+**What landed:** the design above. `carrierNumericReaderOperands` is the new
+arm of `binaryOperandsAdmissible`, which the selector and the builder share.
+`boxNumericReaderOperands` is the boxing step at the end of
+`lowerBinaryOperands`. The rest of `lowerBinary` is unchanged: the boxed pair
+reaches the existing dynamic arm.
+
+**Order cannot be tested on a claimed body.** The only way to observe it is a
+redefined `Number.prototype.valueOf`, and the IR refuses that body
+(`expr-ident-not-in-scope: Number`). The order stays structural: both operands
+are lowered, then each wrapper's `__to_primitive` and `dyn.to_number` run left
+first.
+
+**Measured** (base origin/main 0fa19fca78 against head 7c29b69936,
+standalone and gc).
+- **Population: 543 files.** The 143 sole-blocker files plus a random 400 ES5
+  files (seed 70106).
+- **Results, identical on both lanes:**
+
+  | measure | standalone | gc |
+  | --- | --- | --- |
+  | `<module-init>` moved legacy → IR | 119 | 119 |
+  | legacy units | 1,126 → 1,007 | 1,126 → 1,007 |
+  | newly IR-only files | +119, all lever-B files | +119 |
+  | IR-only files lost | 0 | 0 |
+  | new post-claim errors | 0 | 0 |
+  | changed binaries | the same 119 files | the same 119 files |
+  | pass/fail of those 119, base and head | 119/119 pass | 119/119 pass |
+
+  - The other 424 binaries are byte-identical, and so are the 26 playground
+    binaries.
+- **The 24 lever-B files still refused:**
+  - 10 are `+` (`addition`, `concatenation`), the #7066 rule's job;
+  - 13 are the object-literal / function operand files, one per operator
+    directory;
+  - 1 is `grouping`.
+
+  All 24 refuse at selection.
+
+**Tests.** `tests/issue-7106-lever-b.test.ts` passes 14/14 on both lanes:
+- claimed: the arithmetic, bitwise and relational operators over boolean,
+  string, `null` / `undefined` and wrapper operands, including
+  `"10" < new String("9")`;
+- refused: an object operand, and `true + true`.
+
+**Follow-ups, not this lever:**
+- ToPrimitive of an ordinary object as a `reference` operand (13 files);
+- `+` with a boolean, `null` or `undefined` (10 files).
 
 ## Lever A — the runtime-eval boundary, per unit (plan, 2026-11-06)
 
