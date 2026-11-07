@@ -1,46 +1,23 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7106 S5 — the top-level `var` lists the synthetic module initializer models
-// and the bindings they declare. Each binding is backed by an exact persistent
-// `__mod_<name>` global, so it needs no hoisting support:
+// #7106 S5 — the bindings the module initializer's `var` lists declare
+// (`moduleInitVarList`, `src/shared/module-init-var-list.ts`). Each binding is
+// backed by an exact persistent `__mod_<name>` global, so it needs no hoisting
+// support:
 //
 //   - a top-level `var` statement: its identifier declarations and, in a
 //     script, its pattern leaves;
-//   - a top-level `for (;;)` `var` head, labelled or not, whose declarations
-//     are all patterns: its leaves. An identifier head is the S6 follow-up.
+//   - a top-level `for (;;)` `var` head, labelled or not: its identifier
+//     declarations (lever L) and, in a script, its pattern leaves.
 //
 // Every other `var` is nested hoisting the IR refuses. The ordinary module
 // selector still rejects duplicate declarations, missing initializers,
 // use-before-declaration, and any binding the module-global resolver cannot
 // represent.
 
+import { isModuleInitVarList, moduleInitVarList } from "../shared/module-init-var-list.js";
 import { ts } from "../ts-api.js";
-import { isPatternDeclaration, patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
-import { isVarDeclarationList } from "./function-local-var.js";
-
-/** The `var` list `statement` contributes to the module initializer, if it models one. */
-export function moduleInitVarList(statement: ts.Node): ts.VariableDeclarationList | undefined {
-  const loop = unlabelled(statement);
-  const list = ts.isVariableStatement(statement)
-    ? statement.declarationList
-    : ts.isForStatement(loop) && loop.initializer && ts.isVariableDeclarationList(loop.initializer)
-      ? loop.initializer
-      : undefined;
-  if (!list || !isVarDeclarationList(list)) return undefined;
-  return ts.isVariableStatement(statement) || list.declarations.every(isPatternDeclaration) ? list : undefined;
-}
-
-/** Whether `node` is the `var` list of a top-level statement that {@link moduleInitVarList} models. */
-export function isModuleInitVarList(node: ts.Node | undefined): boolean {
-  if (node === undefined || !ts.isVariableDeclarationList(node)) return false;
-  let statement: ts.Node = node.parent;
-  while (ts.isLabeledStatement(statement.parent)) statement = statement.parent;
-  return ts.isSourceFile(statement.parent) && moduleInitVarList(statement) === node;
-}
-
-function unlabelled(statement: ts.Node): ts.Node {
-  return ts.isLabeledStatement(statement) ? unlabelled(statement.statement) : statement;
-}
+import { patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
 
 /** The {@link moduleInitVarList} of every module-init statement. */
 export function collectIrSafeModuleVarDeclarationLists(
@@ -80,39 +57,51 @@ export function moduleBindingLexicalFlags(declaration: ts.VariableDeclaration | 
     : ts.NodeFlags.None;
 }
 
-interface ModuleInitLeaves {
-  readonly leaves: readonly BindingLeaf[];
-  readonly names: ReadonlySet<string>;
+interface ModuleInitVarBindings {
+  /** Every pattern leaf and every `for` head name, in source order. */
+  readonly declarations: readonly (ts.VariableDeclaration | BindingLeaf)[];
+  readonly leafNames: ReadonlySet<string>;
 }
 
-const leavesBySource = new WeakMap<ts.SourceFile, ModuleInitLeaves>();
+const varBindingsBySource = new WeakMap<ts.SourceFile, ModuleInitVarBindings>();
 
-/** Every leaf the module-init statements of `sourceFile` bind ({@link moduleInitBindings}), in source order. */
-function moduleInitLeaves(sourceFile: ts.SourceFile): ModuleInitLeaves {
-  let cached = leavesBySource.get(sourceFile);
+/**
+ * The bindings of `sourceFile`'s module-init statements ({@link moduleInitBindings})
+ * that are not a top-level statement's own declaration: the leaves of a modelled
+ * `var` list and the names of a modelled `for` head.
+ */
+function moduleInitVarBindings(sourceFile: ts.SourceFile): ModuleInitVarBindings {
+  let cached = varBindingsBySource.get(sourceFile);
   if (!cached) {
-    const leaves = sourceFile.statements
+    const declarations = sourceFile.statements
       .flatMap(moduleInitBindings)
       .flatMap((binding) =>
-        "name" in binding && ts.isBindingElement(binding.declaration) ? [binding.declaration] : [],
+        "name" in binding && !isStatementDeclaration(binding.declaration) ? [binding.declaration] : [],
       );
-    cached = { leaves, names: new Set(leaves.map((leaf) => leaf.name.text)) };
-    leavesBySource.set(sourceFile, cached);
+    const leaves = declarations.filter((declaration) => ts.isBindingElement(declaration));
+    cached = { declarations, leafNames: new Set(leaves.map((leaf) => leaf.name.text)) };
+    varBindingsBySource.set(sourceFile, cached);
   }
   return cached;
+}
+
+/** A top-level statement's own identifier declaration, numbered with the statements. */
+function isStatementDeclaration(declaration: ts.VariableDeclaration | BindingLeaf): boolean {
+  return ts.isVariableDeclaration(declaration) && ts.isVariableStatement(declaration.parent.parent);
 }
 
 /**
  * The module binding declarations of `sourceFile` in ordinal order: every
  * top-level statement declaration (a pattern keeps its ordinal without a
- * binding, as `module-init-plan.ts` numbers them), then every module-init
- * leaf. Appending the leaves moves no statement declaration's binding id.
+ * binding, as `module-init-plan.ts` numbers them), then every other module-init
+ * binding ({@link moduleInitVarBindings}). Appending them moves no statement
+ * declaration's binding id.
  */
 export function moduleBindingDeclarationOrder(sourceFile: ts.SourceFile): readonly ts.Node[] {
   const declarations = sourceFile.statements.flatMap((statement): readonly ts.Node[] =>
     ts.isVariableStatement(statement) ? statement.declarationList.declarations : [],
   );
-  return [...declarations, ...moduleInitLeaves(sourceFile).leaves];
+  return [...declarations, ...moduleInitVarBindings(sourceFile).declarations];
 }
 
 /**
@@ -136,12 +125,12 @@ export function carrierLeafReads(
   node: ts.Node,
   resolve: (identifier: ts.Identifier) => ModuleBindingRepresentation | undefined,
 ): ts.Identifier[] {
-  const { names } = moduleInitLeaves(node.getSourceFile());
+  const { leafNames } = moduleInitVarBindings(node.getSourceFile());
   const reads: ts.Identifier[] = [];
   const visit = (child: ts.Node): void => {
     if (!ts.isIdentifier(child)) child.forEachChild(visit);
-    else if (names.has(child.text) && isCarrierLeaf(resolve(child))) reads.push(child);
+    else if (leafNames.has(child.text) && isCarrierLeaf(resolve(child))) reads.push(child);
   };
-  if (names.size > 0) visit(node);
+  if (leafNames.size > 0) visit(node);
   return reads;
 }

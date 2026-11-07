@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { GlobalDef, Instr, ValType } from "../ir/types.js";
+import { isModuleInitVarList } from "../shared/module-init-var-list.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
 import type { CodegenContext } from "./context/types.js";
@@ -182,6 +183,15 @@ export function objectLiteralReadsAmbientRedeclaredVar(ctx: CodegenContext, expr
       (ts.isPropertyAssignment(p) && readsAmbientRedeclaringScriptVar(ctx, p.initializer)) ||
       (ts.isShorthandPropertyAssignment(p) && readsAmbientRedeclaringScriptVar(ctx, p.name)),
   );
+}
+
+/**
+ * (#7106 lever L) A top-level `for` head's `var` declaration, which the IR
+ * shares as a module binding, so `registerModuleGlobal` observes its slot. A
+ * top-level statement's own declaration is observed by the source-order pass.
+ */
+export function moduleInitHeadDeclaration(decl: ts.VariableDeclaration): ts.VariableDeclaration | undefined {
+  return !ts.isVariableStatement(decl.parent.parent) && isModuleInitVarList(decl.parent) ? decl : undefined;
 }
 
 /**
