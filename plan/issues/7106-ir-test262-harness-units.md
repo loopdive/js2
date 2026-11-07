@@ -5872,6 +5872,9 @@ standalone and gc).
   `"10" < new String("9")`;
 - refused: an object operand, and `true + true`.
 
+**Equivalence gate:** green on all 8 shards. Every failure is among the 22
+the baseline already knows, and there is no new regression.
+
 **Follow-ups, not this lever:**
 - ToPrimitive of an ordinary object as a `reference` operand (13 files);
 - `+` with a boolean, `null` or `undefined` (10 files).
