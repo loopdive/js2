@@ -231,11 +231,28 @@ live).
   #7294, Symbol/RegExp value kinds, closure plans (#7314).
 
 ### R13 (C-opus) — #7276, #7288, #7280
-- Pending at the time of writing: #7142 (#7276) 0fa6d6a0 + strictness fix
-  (RV7142 delta running), #7157 (#7288) 0e558eaf (APPROVE with nits
-  6701393374; #7315 file + `isPatternDeclaration` dedupe push pending),
-  #7280 S1 PR being opened (stacked on #7157; L's merged-declaration fix is
-  the dependency for 23 files), #7304 issue file.
+- **#7142** (#7276) branch `issue-7276-ir-object-create-descriptor-map` @ 0fa6d6a0:
+  c5afee57 = module-init strictness fix (sloppy `o["p"]=2` on an IR-lowered
+  `Object.create` result threw; now legacy's `isStrictContext`), 0fa6d6a0 =
+  the #7304 issue file. Strictness A/B 2,400 files (base c94ef2bf): standalone
+  2213/119/68 and gc 1874/457/69 on both sides, 0 flips (PR body). Open:
+  RV7142 delta.
+- **#7157** (#7288) branch `issue-7288-ir-module-init-nested-var` @ 89dffab8:
+  f33926b2 = #7315 file + `isPatternDeclaration` dedupe
+  (`src/shared/pattern-declaration.ts`), merges of the #7142 tip and main;
+  delta APPROVE 6702090453; release after #7142.
+- **#7173** (#7280 S1) branch `issue-7280-ir-module-init-object-literals` @
+  2e985219, stacked on #7157: `{}` producer boxed onto the carrier
+  (`isDynamicHomeOpenCarrier` beside #7128's `isOpenCarrierBinding`, reusing
+  `__new_plain_object`); on the 52 `{}` census files zero-legacy 0 → 1
+  (passing), `objectlit-empty` first refusals 29 → 3, 0 withdrawals, verdicts
+  identical std/gc; corpus 39/39 byte-identical; fresh review RV7173
+  `session_016FRcLwLEqpvrBUVLHB2Da3`; release after #7157. Stride ledger not
+  run (capacity); yield measured on the 52 files only.
+- Open: #7280 S3 (the `{}` storage-home classification) waits for L's
+  merged-declaration identity PR and extends L's predicate (34 files, L's
+  census 6701117870); S2 (closed-struct home, 47 files) deferred, design in
+  the issue; #7304 and #7315 ready/Backlog, unowned.
 
 ## Retroactive review of #6924 (ordered by the project lead, 2026-11-07)
 
