@@ -45,7 +45,7 @@ the receivers were probed separately.
 |---|---|---|
 | `String/prototype/trim/15.5.4.20-2-1.js` | none | yes |
 | `Function/prototype/bind/15.3.4.5-2-12.js` | none | yes |
-| `Promise/all/ctx-non-object.js` | none found (the receivers 86, `'string'`, null, … and the `[]` argument are carriers) | probably |
+| `Promise/all/ctx-non-object.js` | the `Symbol()` receiver (`callee:Symbol`, R11's per-argument probe); the other five receivers are fine | no |
 | `Array/from/source-object-constructor.js` | none (reading `Object` as a value is IR) | probably, but see the exactness note |
 | `Map/prototype/delete/context-is-weakmap-object-throws.js` | `new WeakMap()`: `host-surface-unavailable` | no |
 | `Map/prototype/get/does-not-have-mapdata-internal-slot.js` | `vardecl-module-storage-unrepresentable` («m = new Map()») | no |
@@ -55,8 +55,9 @@ the receivers were probed separately.
 | `String/prototype/trim/15.5.4.20-2-46.js` | `arguments` in a closure | no |
 | `Set/prototype/{has,delete}/…`, `WeakMap/prototype/delete/…` | also an instance-member borrow (`s.has.call(0, 1)`), outside this shape | no |
 
-**Yield: 2 certain, up to 4.** These are the census's 5 files minus Map
-`delete`.
+**Yield: at most 3** (trim, bind, Array.from), confirmed by R11's
+stub-and-recheck on main `cc27f70d` (all-rejects diag, per-argument `void`
+probes). **Exact with the generic route: 2** (see below).
 
 ## Why it is not one arm today
 
@@ -109,7 +110,7 @@ through the legacy helper, one arm keyed by brand". Measured:
   - gc bytes are identical (the glue is standalone-only).
   - The head never traps where the base does not.
 
-**Decision for the lead.** The certain yield (2) is below the bar of 3. With
-`Promise.all` it is 3, but that needs a static-member provider #7294 does not
-have. Recommendation: keep #7312 blocked on #7294's value row, and revisit with
+**Decision for the lead.** The exact yield (2) is below the bar of 3. The third file,
+`Array.from`, needs legacy's constructor-receiver arm as a support
+function, plus a static-member provider #7294 does not have. Recommendation: keep #7312 blocked on #7294's value row, and revisit with
 the static provider in the same lane.
