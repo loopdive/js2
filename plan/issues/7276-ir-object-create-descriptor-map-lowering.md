@@ -115,7 +115,7 @@ All 320 `built-ins/Object/create` files under the same scratch admission:
   - **zero-legacy files 32 → 33** (`built-ins/Object/create/15.2.3.5-4-154.js`);
   - `15.2.3.5-4-229` and `-305` now refuse later, on `newObj.hasOwnProperty(…)`;
   - no other file changes.
-- **`built-ins/Object/create`, all-literal subset.** Zero-legacy: `15.2.3.5-4-{152,154,232}`. The 7 `for-in` files of the subset pass on both sides, but from-ast withdraws them (`module-init unit contains a nested var declaration`). That gap was already on main and is not this arm's.
+- **`built-ins/Object/create`, all-literal subset.** Zero-legacy: `15.2.3.5-4-{152,154,232}`. The 7 `for-in` files of the subset pass on both sides, but from-ast withdraws them (`module-init unit contains a nested var declaration`). That gap was already on main and is not this arm's. Follow-up: #7288 (PR #7157) refuses a top-level `for (var k in o)` head at selection (`forin-head-module-var`) instead of withdrawing; lowering that head as a module binding is not yet filed.
 - **Typed corpus** (playground examples × gc / standalone / WASI, 39 compiles): binaries and host imports byte-identical base vs head, before and after the review fix.
 - **test262 A/B**, row by row, base `origin/main` d28280a0. Every status is identical, and no file traps or differs on head where it did not on base:
   - standalone, 1249 paths (`built-ins/Object/create` 320, `built-ins/Object/defineProperties`, 300 seeded-random): 1137 pass / 86 fail / 15 CE / 11 skip on both sides. The only error-text differences are the checkout path inside a missing-QuickJS-provider message;
@@ -168,4 +168,14 @@ Verdict before the fixes: one must-fix, the rest should-fix and nits. The review
   - typed corpus byte-identical;
   - vitest 138 / 138;
   - gates green.
+
+## Delta review (6702199382, head 0fa6d6a0): APPROVE with nits
+
+- Nit 1, follow-up (no code change in this PR, it would need another delta):
+  `unitInKeysAreOwnOnly` keeps the file's only module-level cache (a
+  `WeakMap` keyed by AST node). A per-call scan is simpler unless a profile
+  shows the scan.
+- Nit 2: recorded in #7304 (the whole-file scan for `<module-init>` is the
+  over-refusal to lift once native `in` reaches the terminal).
+- Nit 3: the for-in note above now links #7288.
 
