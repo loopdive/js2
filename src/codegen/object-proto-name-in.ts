@@ -4,6 +4,7 @@ import type { CodegenContext } from "./context/types.js";
 import { hostFreeEnvironment } from "./context/types.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { IN_HAS_PROPERTY } from "../shared/contracts/in-operator-helper.js";
 /**
  * (#4491 wave-5 T4) `"valueOf" in {}` answered **false**.
  *
@@ -203,10 +204,13 @@ export function objectProtoNameKeyBody(
 }
 
 /**
- * (#7304) Register `__object_proto_name_key` on a host-free lane; the js lane
- * (gc) keeps its pre-#7304 bytes and gets `undefined`.
+ * (#7304) Register the `in` helpers' natives on a host-free lane: the IR's `in`
+ * entry (filled at finalize by `fillInHelperBuiltinTerminal`) and
+ * `__object_proto_name_key`, whose index is returned. The js lane (gc) keeps its
+ * pre-#7304 bytes: the IR's `in` is an alias of the plain HasProperty, and the
+ * result is `undefined`.
  */
-export function registerObjectProtoNameKey(
+export function registerInHelperNatives(
   ctx: CodegenContext,
   registerNative: (
     name: string,
@@ -219,18 +223,13 @@ export function registerObjectProtoNameKey(
   equalsIdx: number,
 ): number | undefined {
   if (!hostFreeEnvironment(ctx)) {
-    // The js lane (gc): the IR's `in` stays the plain HasProperty, with no new function.
-    ctx.funcMap.set(IN_HAS_PROPERTY_IR, ctx.funcMap.get("__extern_has")!);
+    ctx.funcMap.set(IN_HAS_PROPERTY, ctx.funcMap.get("__extern_has")!);
     return undefined;
   }
-  // The IR's `in` entry, filled at finalize by `fillInHelperBuiltinTerminal`.
-  registerNative(IN_HAS_PROPERTY_IR, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }], [], []);
+  registerNative(IN_HAS_PROPERTY, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }], [], []);
   const { locals, body } = objectProtoNameKeyBody(ctx, flattenIdx, equalsIdx);
   return registerNative("__object_proto_name_key", [{ kind: "externref" }], [{ kind: "i32" }], locals, body);
 }
-
-/** (#7304) The IR's `in` helper: the legacy `in` helper's body with base's IR answer for an unknown carrier. */
-export const IN_HAS_PROPERTY_IR = "__extern_has_in_ir";
 
 /**
  * (#7304) The `in` helper's step after its HasProperty miss: a key the
@@ -258,14 +257,14 @@ export function objectProtoNameMissInstrs(nameKeyIdx: number | undefined): Instr
  * Any other carrier, e.g. a closed struct literal whose `setPrototypeOf` the
  * runtime does not record (#7326), keeps each caller's base answer: the legacy
  * helper's permissive 1, and 0 for the IR, whose `in` used `__extern_has`. So
- * the IR entry `IN_HAS_PROPERTY_IR` is the legacy helper's body with that one
+ * the IR entry `IN_HAS_PROPERTY` is the legacy helper's body with that one
  * answer changed. `fnctorInstanceTypeIdxs` comes from the caller, since this
  * module cannot import proto-index-store. On the js lane (gc) the IR entry is
  * an alias of `__extern_has`, as before, and the legacy helper keeps its bytes.
  */
 export function fillInHelperBuiltinTerminal(ctx: CodegenContext, fnctorInstanceTypeIdxs: readonly number[]): void {
   const helper = ctx.mod.functions.find((fn) => fn.name === "__extern_has_with_implicit_object_proto");
-  const irEntry = ctx.mod.functions.find((fn) => fn.name === IN_HAS_PROPERTY_IR);
+  const irEntry = ctx.mod.functions.find((fn) => fn.name === IN_HAS_PROPERTY);
   if (!helper || !irEntry) return; // the js lane aliases the IR entry to `__extern_has`
   const last = helper.body.length - 1;
   if (helper.body[last]?.op !== "i32.const") throw new Error("the in helper no longer ends at its terminal constant");

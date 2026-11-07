@@ -13,6 +13,11 @@ task_type: implementation
 area: runtime
 goal: core-semantics
 related: [7304]
+loc-budget-allow:
+  # 2026-11-07 (#7304 RV7169 N5): +1 — the import of the shared `in` helper
+  # name, so the IR's `in` preregistration matches the two `in` runtime
+  # symbols exactly instead of every name starting with `__extern_has`.
+  - src/ir/integration.ts
 ---
 
 # #7319: `in` misses own properties of non-`$Object` receivers

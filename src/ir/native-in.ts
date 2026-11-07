@@ -7,6 +7,7 @@ import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import type { IrPrimitiveExpressionFamily } from "./module-bindings.js";
 import { emitThrowTypeErrorIf } from "./throw-type-error.js";
+import { IN_HAS_PROPERTY } from "../shared/contracts/in-operator-helper.js";
 
 /** Preserve the source brand at the native property-key boundary. */
 export function boxNativeInKey(
@@ -45,9 +46,6 @@ export function boxNativeInKey(
     "native in key has no certified boxing carrier",
   );
 }
-
-/** The runtime helper behind `in` (object-runtime.ts). */
-export const IN_HAS_PROPERTY = "__extern_has_in_ir";
 
 /** §13.10.1: validate the evaluated RHS before observable ToPropertyKey. */
 export function lowerNativeIn(builder: IrFunctionBuilder, key: IrValueId, receiver: IrValueId): IrValueId {

@@ -114,7 +114,7 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
-import { objectProtoNameMissInstrs, registerObjectProtoNameKey } from "./object-proto-name-in.js";
+import { objectProtoNameMissInstrs, registerInHelperNatives } from "./object-proto-name-in.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
@@ -4144,7 +4144,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         blockType: { kind: "empty" },
         then: [{ op: "i32.const", value: 1 }, { op: "return" }],
       },
-      ...objectProtoNameMissInstrs(registerObjectProtoNameKey(ctx, registerNative, strFlattenIdx, strEqualsIdx)),
+      ...objectProtoNameMissInstrs(registerInHelperNatives(ctx, registerNative, strFlattenIdx, strEqualsIdx)),
       { op: "local.get", index: 2 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       {
