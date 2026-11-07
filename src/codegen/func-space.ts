@@ -219,6 +219,23 @@ export function pushDefinedFunc(ctx: CodegenContext, funcIdx: FuncHandle, fn: Wa
 const ownedHelpers = new WeakMap<CodegenContext, Map<string, WasmFunction>>();
 
 /**
+ * The handle of the compiler-owned helper `name`, if this compile minted it.
+ * A source declaration that happens to share the name is never returned.
+ */
+export function ownedHelperHandle(ctx: CodegenContext, name: string): FuncHandle | undefined {
+  const fn = ownedHelpers.get(ctx)?.get(name);
+  return fn === undefined ? undefined : definedFuncHandleOf(ctx, fn);
+}
+
+/** Push a previously minted compiler-owned helper and record it as the owner of `fn.name`. */
+export function pushOwnedHelperFunc(ctx: CodegenContext, funcIdx: FuncHandle, fn: WasmFunction): void {
+  pushDefinedFunc(ctx, funcIdx, fn);
+  let owned = ownedHelpers.get(ctx);
+  if (owned === undefined) ownedHelpers.set(ctx, (owned = new Map()));
+  owned.set(fn.name, fn);
+}
+
+/**
  * Mint the compiler-owned, unexported helper `name` once and return its
  * handle. Ownership is the exact function object this call minted, so a
  * source declaration that happens to share the name (`function
@@ -235,16 +252,11 @@ export function ensureNamedHelperFunc(
   typeIdx: () => number,
   build: () => Pick<WasmFunction, "locals" | "body">,
 ): FuncHandle {
-  let owned = ownedHelpers.get(ctx);
-  if (owned === undefined) ownedHelpers.set(ctx, (owned = new Map()));
-  const existing = owned.get(name);
-  const existingHandle = existing === undefined ? undefined : definedFuncHandleOf(ctx, existing);
-  if (existingHandle !== undefined) return existingHandle;
+  const existing = ownedHelperHandle(ctx, name);
+  if (existing !== undefined) return existing;
   const type = typeIdx();
   const funcIdx = mintDefinedFunc(ctx);
-  const fn: WasmFunction = { name, typeIdx: type, ...build(), exported: false };
-  pushDefinedFunc(ctx, funcIdx, fn);
-  owned.set(name, fn);
+  pushOwnedHelperFunc(ctx, funcIdx, { name, typeIdx: type, ...build(), exported: false });
   return funcIdx;
 }
 

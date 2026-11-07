@@ -65,8 +65,8 @@ import {
   ensureTaDynReverseHelper,
   ensureTaDynSetHelper,
   ensureTaFromArrayLikeHelper,
-  isDataViewAccessor,
 } from "../dataview-native.js";
+import { isDataViewAccessor } from "../../shared/contracts/native-buffer-adapters.js";
 import { buildTaFromMapfnCallableGate, buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6651 E2) §23.2.1 carrier identity + §23.2.2.1 step 3
 import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "../ta-dyn-proto-methods.js"; // (#5194 r3-1.3) dyn-view read-side helpers
 import { taDynDetachedGuardPrologue } from "../ta-dyn-method-call.js"; // (#6501) §23.2.4.4 prologue for the helper-routed mutators
