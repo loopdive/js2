@@ -105,3 +105,33 @@ two-family files: 249 pass and 58 fail. Of the single-family files 134 of
 | 6 | array search methods on a literal with `fromIndex`; string methods | 3 / 3 each |
 | 6 | BigInt literal | 3 / 4 |
 | — | `new Temporal.X` module-var storage | 1 / 4 |
+
+## Stub-and-recheck of the top unowned levers (2026-11-07)
+
+The "files" above count where a lever is the only **reported** family. This
+pass asks whether a file would actually flip:
+- In each passing file, replace the lever with a constant (or, for class
+  expressions, the class-declaration form).
+- Then re-check the whole compile with the all-rejects diagnostic.
+- For call levers, also probe each argument and receiver on its own, as a
+  `void (<expr>);` statement, so refusals hidden inside them show up.
+
+"Flips" means the file has **zero legacy units**.
+
+| lever | passing files | flip with the lever stubbed | flip with its arguments kept | what still refuses |
+| --- | --- | --- | --- | --- |
+| array search / string methods (`[1,2,3].indexOf(1, 1)`, `lastIndexOf(true, NaN)`, `'foo'.normalize('bar')`, `str.replaceAll(…, '$')`, `String("undefined").indexOf(undefined)`) | 6 | 6 | **5** | `lastIndexOf` on the mixed literal `[0, true]` (`expr-arraylit-mixed-primitive-family`) |
+| builtin method `.call` borrows (`String.prototype.trim.call(false)`, `Function.prototype.bind.call(true)`, `Array.from.call(Object, [])`, `Map.prototype.delete.call(new WeakMap(), …)`, `Promise.all.call(<x>, [])`) | 5 | 5 | **3** | `new WeakMap()` (`expr-new-extern-host-free`); `Symbol()` (`callee:Symbol`) |
+| BigInt literals (`0n < 1n`, `1n === Number.MAX_VALUE`) | 3 | **2** (upper bound: literals replaced by numbers, so BigInt semantics are not lowered) | — | `Symbol('2')` comparison operands |
+| class expressions / local classes | 8 | **0** | — | the declaration form refuses too: static class members (`class-member-unsupported`, ×6), `new Err()` of a local builtin subclass, `extends` of an unresolved `B` |
+| `assert.throws` callbacks whose body refuses | 6 | **0** | — | `() => {}` itself refuses: an unannotated closure literal with no closure plan is `closure-return-type` (`select-closure-literal.ts:47`), whatever its body. **122 `<module-init>` units carry this part.** That is the real lever (closure lowering; #7308 / R14). |
+| statement IIFE | 6 | 1 (R9, #7311) | — | unresolvable-global reads, B.3.3 block functions, `arguments` |
+
+The re-ranked top real single levers:
+1. Array search / string methods: 5 files flip.
+2. `.call` borrows: 3 files (#7312, R9, on top of #7294).
+3. BigInt literal lowering: at most 2.
+
+Class expressions and callback bodies flip 0. The unannotated-closure
+`closure-return-type` refusal (122 module-init units) is the cross-cutting
+blocker behind the callbacks.
