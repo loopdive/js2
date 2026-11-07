@@ -106,11 +106,21 @@ if (o.toString !== 7) throw "toString";`,
     source: `Object.create({}, { p: { value: 1 } });`,
     irUnits: ["<module-init>"],
   },
-  // Writes, deletes and for-in on the result are their own arms: whatever route they take, the verdict holds.
+  // Deletes and for-in on the result are their own arms: whatever route they take, the verdict holds.
+  // A write follows PutValue's rule for the script's own strictness: sloppy ignores a failed
+  // [[Set]], strict throws. `<module-init>` is told that strictness, as a function is (#7260).
   "non-writable in sloppy mode": {
     source: `var o = Object.create({}, { p: { value: 1 } });
 o.p = 2;
+var r = (o.q = 3);
+if (o.p !== 1 || o.q !== 3 || r !== 3) throw "write";`,
+    irUnits: ["<module-init>"],
+  },
+  "non-writable element write in sloppy mode": {
+    source: `var o = Object.create({}, { p: { value: 1 } });
+o["p"] = 2;
 if (o.p !== 1) throw "write";`,
+    irUnits: ["<module-init>"],
   },
   "non-writable in strict mode": {
     source: `"use strict";
@@ -118,6 +128,11 @@ var o = Object.create({}, { p: { value: 1 } });
 var threw = false;
 try { o.p = 2; } catch (e) { threw = true; }
 if (!threw) throw "strict";`,
+  },
+  "non-writable element write in strict mode": {
+    source: `"use strict";
+var o = Object.create({}, { p: { value: 1 } });
+o["p"] = 2;`,
   },
   "writable, ToBoolean of literal flags": {
     skipSemanticDiagnostics: true,
