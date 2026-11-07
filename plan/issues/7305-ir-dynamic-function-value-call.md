@@ -191,6 +191,18 @@ admission confirmed it for `verifyCallableProperty`.
 
 ## Coordination
 
-Who implements after 04:00Z is to be agreed with R9 (#7287), whose branch
-owns the script-var arm. The widening in §4 touches the same predicate
-family but not R9's module-binding arm.
+R9 (#7287) agreed on 2026-11-07: this lane implements once #7287 lands. R9
+will not claim it. Constraints carried over from #7287:
+
+- Statement position only is load-bearing. #7287's first cut also admitted
+  value-position calls, and #7253's equivalence cases caught the call result
+  coerced to the checker's signature for the callee
+  (`var isNaN = function () { return "U"; }` then `return isNaN(1)` read as
+  `true`). Any local whose checker type is wrong or `any` has the same hazard.
+  Measure it before admitting a value position.
+- The new arm goes after the propertyHelper alias arms in both `lowerCall`
+  and `buildLocalCallGraph`, in the selector's order (#7287's review
+  must-fix).
+
+The widening in §4 touches the same predicate family but not R9's
+module-binding arm.
