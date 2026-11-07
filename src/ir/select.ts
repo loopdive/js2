@@ -8550,7 +8550,7 @@ export interface MixedPrimitiveConditionalArms {
  * any operands, `!`, `&&` or `||` of such, or a certified boolean alias call
  * (`__isArray(obj) && name === "length"`). Relational and loose operators
  * keep the operand-family proof: their dynamic-operand lowering does not
- * apply ToPrimitive to an object operand (`0 >= []`, filed separately).
+ * apply ToPrimitive to an object operand (`0 >= []`, #7289).
  */
 export function mixedPrimitiveConditionalArms(
   expr: ts.ConditionalExpression,

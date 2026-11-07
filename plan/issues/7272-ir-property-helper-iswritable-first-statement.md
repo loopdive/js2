@@ -14,7 +14,7 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 parent: 7250
-related: [7269, 2949, 7266, 7106, 5092]
+related: [7269, 2949, 7266, 7106, 5092, 7289]
 assignee: "ttraenkler/c-r11"
 ---
 
@@ -95,7 +95,7 @@ three slices changes the resolver contract.
     Relational and loose operators (`<`, `>=`, `==`, …) keep the
     operand-family proof. Their dynamic-operand lowering skips ToPrimitive
     for an object (`0 >= []` answers false). That defect is pre-existing and
-    filed separately; this way it cannot reach a conditional that used to
+    filed as [#7289](7289-ir-dynamic-relational-comparison-toprimitive.md); this way it cannot reach a conditional that used to
     be legacy. The first cut admitted any comparison, and the second fresh
     review reproduced the defect: `m11(0, [])` returned 6, where node and
     base return 4.
