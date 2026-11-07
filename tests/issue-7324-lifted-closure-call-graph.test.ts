@@ -5,7 +5,8 @@
 // A variable, an ambient function or an unclaimed function declaration called
 // from the closure has no direct-call plan, so selection refuses the unit
 // instead of claiming it and letting from-ast withdraw it. A claimed function
-// declaration and a call through the closure's own parameter keep the IR route.
+// declaration, a call through the closure's own parameter and (#7287) a
+// statement call through an uninitialized script `var` keep the IR route.
 // On main each refused case was claimed and then withdrawn by from-ast ("no
 // exact AST-site plan"), so the selection-refusal assertion is what tells the
 // two apart; runtime values are covered by the test262 A/B (the routes are
@@ -44,7 +45,6 @@ const REFUSED: Record<string, Case> = {
   "module-init: let holding a number": moduleInitCase(
     `let getter = 3; assert.throws(TypeError, function () { getter(); });`,
   ),
-  "module-init: uninitialized var": moduleInitCase(`var getter; assert.throws(TypeError, function () { getter(); });`),
   "module-init: an ambient function": moduleInitCase(`assert.throws(SyntaxError, function () { RegExp("(?-m:a)"); });`),
   "module-init: an unclaimed function declaration": moduleInitCase(`function f({ w: { x } = undefined }) {}
 assert.throws(TypeError, function () { f(); });`),
@@ -63,6 +63,12 @@ const CLAIMED: Record<string, Case> = {
   "module-init: a claimed function declaration": moduleInitCase(`function getter() { return 1; }
 assert.throws(TypeError, function () { getter(); });`),
   "module-init: the closure's own parameter": moduleInitCase(`assert.throws(TypeError, function (g) { if (g) g(); });`),
+  // (#7287) An uninitialized script `var` lives in its dynamic module home, and
+  // a statement call through it lowers as the dynamic call (IsCallable, then a
+  // catchable TypeError), so the closure has a plan for it.
+  "module-init: an uninitialized script var": moduleInitCase(
+    `var getter; assert.throws(TypeError, function () { getter(); });`,
+  ),
   "function: a claimed function declaration": functionCase(
     `function g(y: number): number { return y + 1; }
 function t(x: number): number { const c = (y: number): number => g(y); return c(x); }
