@@ -62,6 +62,15 @@ describe("#7106 A3 — write-precise runtime-eval liveness", () => {
     ["a constructed constructor", "(0, eval)(\"new (Object.constructor)('f = function () { return 2; }')()\");"],
     ["a member delete", '(0, eval)("delete this.f");'],
     ["a getter definition", "(0, eval)(\"this.__defineGetter__('f', function () { return 2; })\");"],
+    // (#7146 review round 3) `constructor` named without a literal `.constructor`
+    ["a concatenated key", "(0, eval)(\"var c = (function () {})['constr' + 'uctor']; c('f = 2')()\");"],
+    ["Reflect.get", "(0, eval)(\"var c = Reflect.get(function () {}, 'constructor'); c('f = 2')()\");"],
+    ["a destructured constructor", "(0, eval)(\"var { constructor: c } = function () {}; c('f = 2')()\");"],
+    ["a with-scoped constructor", "(0, eval)(\"with (function () {}) { constructor('f = 2')(); }\");"],
+    [
+      "a constructor descriptor",
+      "(0, eval)(\"Object.getOwnPropertyDescriptor(Object.getPrototypeOf(function () {}), 'constructor').value('f = 2')()\");",
+    ],
     // the same reaches in the program itself
     ["globalThis.eval", 'globalThis.eval("f = function () { return 2; }");'],
     ['globalThis["eval"]', 'globalThis["eval"]("f = function () { return 2; }");'],

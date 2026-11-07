@@ -114,6 +114,30 @@ function memberKeyName(member: ts.PropertyAccessExpression | ts.ElementAccessExp
   return ts.isStringLiteralLike(key) ? key.text : undefined;
 }
 
+function isStringPiece(node: ts.Expression): boolean {
+  const piece = unwrapExpression(node);
+  return ts.isStringLiteralLike(piece) || ts.isTemplateExpression(piece);
+}
+
+/**
+ * A fragment token that may name `constructor`, through which every function
+ * value reaches `%Function%`: the identifier or property name itself (member,
+ * destructuring key, `with`-scoped call), a string literal containing it
+ * (`Reflect.get(f, "constructor")`), or a name the scan cannot read without
+ * evaluating — a string concatenation or a template with substitutions. A
+ * name built some other way (`["constr", "uctor"].join("")`) and used as a
+ * key or passed to a reflective API is not caught.
+ */
+function mayNameConstructor(node: ts.Node): boolean {
+  if (ts.isIdentifier(node)) return node.text === "constructor";
+  if (ts.isStringLiteralLike(node)) return node.text.includes("constructor");
+  if (ts.isTemplateExpression(node)) return true;
+  if (!ts.isBinaryExpression(node)) return false;
+  const kind = node.operatorToken.kind;
+  const concatenates = kind === ts.SyntaxKind.PlusToken || kind === ts.SyntaxKind.PlusEqualsToken;
+  return concatenates && (isStringPiece(node.left) || isStringPiece(node.right));
+}
+
 /**
  * (#7106 A3) Add to `written` every script binding the literal source can
  * write, or answer `false` when it can write one this scan cannot name.
@@ -124,11 +148,11 @@ function memberKeyName(member: ts.PropertyAccessExpression | ts.ElementAccessExp
  * (the receiver may be the global object), and a function declaration (Annex
  * B block functions in sloppy eval code are global var bindings). Nested
  * dynamic code is found by the plan's own site visitor: a literal nested
- * source is scanned the same way, anything else is unnameable — as are a
- * computed member store, a property-defining call, any `.constructor` read
- * (every function value reaches `%Function%` through it, called or not) and
- * any computed-member call (`this["ev" + "al"](…)`). The answer
- * over-approximates; it only ever makes a function live.
+ * source is scanned the same way, anything else is unnameable — as are any
+ * token that may name `constructor` (`mayNameConstructor`), a computed member
+ * store, a property-defining call and any computed-member call
+ * (`this["eval"](…)`). The answer over-approximates; it only ever makes a
+ * function live.
  */
 function literalSourceWrites(source: string, written: Set<string>): boolean {
   const script = ts.createSourceFile("eval-source.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
@@ -144,13 +168,14 @@ function literalSourceWrites(source: string, written: Set<string>): boolean {
   const visit = (node: ts.Node): void => {
     for (const write of identifierWritesOf(node)) written.add(write.target.text);
     if (ts.isFunctionDeclaration(node) && node.name) written.add(node.name.text);
-    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+    if (mayNameConstructor(node)) nameable = false;
+    if (
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      (isStoreTarget(node) || ts.isDeleteExpression(node.parent))
+    ) {
       const key = memberKeyName(node);
-      if (key === "constructor") nameable = false;
-      else if (isStoreTarget(node) || ts.isDeleteExpression(node.parent)) {
-        if (key === undefined) nameable = false;
-        else written.add(key);
-      }
+      if (key === undefined) nameable = false;
+      else written.add(key);
     }
     if (ts.isCallExpression(node)) {
       const callee = unwrapExpression(node.expression);
