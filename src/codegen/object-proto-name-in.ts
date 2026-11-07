@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import type { Instr, ValType } from "../ir/types.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 /**
  * (#4491 wave-5 T4) `"valueOf" in {}` answered **false**.
  *
@@ -144,4 +146,97 @@ export function hasExplicitNullObjectPrototype(
     if (initializer && initializer !== current) return hasExplicitNullObjectPrototype(ctx, initializer, seen);
   }
   return false;
+}
+
+/**
+ * (#7304) The runtime half of the same name set: the body of
+ * `__object_proto_name_key(key) -> i32`, 1 when `key` is a string naming an
+ * own member of %Object.prototype%. `__extern_has` asks it at a prototype-walk
+ * miss whose terminal is the implicit %Object.prototype% (the walk cannot find
+ * these names: that prototype is a `$NativeProto`, not an `$Object`), so a
+ * dynamic receiver or key answers what the static fold above answers.
+ *
+ * params: 0=key(externref); locals: 1=any(anyref) 2=flat(ref null $NativeString)
+ */
+export function objectProtoNameKeyBody(
+  ctx: CodegenContext,
+  flattenIdx: number,
+  equalsIdx: number,
+): { locals: { name: string; type: ValType }[]; body: Instr[] } {
+  const nameArms: Instr[] = [...OBJECT_PROTOTYPE_OWN_NAMES].flatMap((name): Instr[] => [
+    { op: "local.get", index: 2 },
+    { op: "ref.as_non_null" },
+    ...nativeStringLiteralInstrs(ctx, name),
+    { op: "call", funcIdx: equalsIdx },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+  ]);
+  return {
+    locals: [
+      { name: "any", type: { kind: "anyref" } },
+      { name: "flat", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+    ],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: 1 },
+      { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+          { op: "call", funcIdx: flattenIdx },
+          { op: "local.set", index: 2 },
+          ...nameArms,
+        ],
+      },
+      { op: "i32.const", value: 0 },
+    ],
+  };
+}
+
+/**
+ * (#7304) `__extern_has`'s answer at a prototype-walk miss (key in param 1).
+ * The terminal classifier decides whether the chain ends at the implicit
+ * %Object.prototype%; if so, the proto-index companion (user-installed
+ * members) answers first, then the fixed own-name set. The name set needs a
+ * known `$Object` root: a receiver without one (a closed struct, vec or
+ * closure) can carry a null prototype the classifier cannot see, so it keeps
+ * the companion-only answer. Without a root local (no companion, js lane) the
+ * miss is 0, the pre-#7304 shape.
+ */
+export function implicitObjectProtoMissInstrs(p: {
+  readonly rootLocal: number | undefined;
+  readonly terminalIdx: number;
+  readonly nameKeyIdx: number | undefined;
+  readonly companion: Instr[] | undefined;
+}): Instr[] {
+  const zero: Instr = { op: "i32.const", value: 0 };
+  if (p.rootLocal === undefined) return [zero];
+  const root: Instr = { op: "local.get", index: p.rootLocal };
+  const i32 = { kind: "val", type: { kind: "i32" } } as const;
+  const nameKey: Instr[] =
+    p.nameKeyIdx === undefined
+      ? [zero]
+      : [
+          root,
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: i32,
+            then: [zero],
+            else: [
+              { op: "local.get", index: 1 },
+              { op: "call", funcIdx: p.nameKeyIdx },
+            ],
+          },
+        ];
+  const hit: Instr[] =
+    p.companion === undefined
+      ? nameKey
+      : p.nameKeyIdx === undefined
+        ? p.companion
+        : [...p.companion, { op: "if", blockType: i32, then: [{ op: "i32.const", value: 1 }], else: nameKey }];
+  return [root, { op: "call", funcIdx: p.terminalIdx }, { op: "if", blockType: i32, then: hit, else: [zero] }];
 }
