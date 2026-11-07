@@ -5609,11 +5609,6 @@ export function emitRegExpTestFromLocals(
   fctx.body.push({ op: "local.get", index: matchedLocal });
 }
 
-// (#7106 levers R2, S2) The `exec` carrier and its match-result struct, re-exported beside the `.test` helper: the
-// IR reaches RegExp codegen through this one module (a direct import would be a new ir -> codegen edge).
-export { ensureStandaloneRegExpCarrierExecHelper } from "./regexp-exec-carrier.js";
-export { ensureRegexMatchVecType } from "./native-regex.js";
-
 /**
  * #3507 — native `.test` entry point for RegExp values whose static type was
  * erased to `any`/externref by a helper parameter, object property, or array

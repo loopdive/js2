@@ -86,6 +86,7 @@ import {
   TYPED_ARRAY_NAMES,
   scriptVarHome,
   ensureIrDynamicDeleteHelper, // (#7106 propertyHelper) dynamic delete wrappers
+  ensureStandaloneRegExpCarrierExecHelper, // (#7106 lever R2) the `.test` helper's `exec` twin
   IR_DYN_DELETE_SLOPPY_HELPER,
   IR_DYN_DELETE_STRICT_HELPER,
   irDeleteSiteIsStrict,
@@ -192,14 +193,9 @@ import {
   type NativeStringLiteralMaterialization,
   type StringEncoding,
 } from "../codegen/native-string-literals.js";
-import {
-  STANDALONE_REGEXP_CARRIER_EXEC_HELPER,
-  STANDALONE_REGEXP_CARRIER_TEST_HELPER,
-} from "./regexp-runtime-contract.js";
+import type { RegExpCarrierMethod } from "../shared/regexp-static.js";
 import {
   ensureIrRegExpLiteralHelper,
-  ensureRegexMatchVecType,
-  ensureStandaloneRegExpCarrierExecHelper,
   ensureStandaloneRegExpCarrierTestHelper,
   standaloneStaticRegExpCompiles,
 } from "../codegen/regexp-standalone.js";
@@ -6158,7 +6154,6 @@ function resolveModuleBindingGlobal(
 
   let type: IrType;
   let storageType: ValType;
-  let slot: ValType | undefined;
   switch (identity.valueKind.kind) {
     case "f64":
       type = { kind: "val", val: { kind: "f64" } };
@@ -6248,9 +6243,11 @@ function resolveModuleBindingGlobal(
       ({ type, storageType } = classInstanceBindingStorage(ctx, name, identity.valueKind, classShapes));
       break;
     case "regexp-match":
-      // (#7106 lever S2) Legacy's #1914 match-result slot, read and written as a dynamic value.
+      // (#7106 lever S2) The #1914 match-result slot `scriptVarHome` named this
+      // binding's home, read and written as a dynamic value through
+      // `emitModuleSlotAdapter`: the storage is that slot by definition.
       type = irDynamic();
-      storageType = slot = { kind: "ref_null", typeIdx: ensureRegexMatchVecType(ctx) };
+      storageType = global.type;
       break;
   }
   const storageMatches =
@@ -6326,7 +6323,6 @@ function resolveModuleBindingGlobal(
     globalName,
     tdzGlobalName,
     type,
-    ...(slot ? { slot } : {}),
     ...(capability ? { capability } : {}),
     ...(postWasmStartTdzSafeBindingsByOwnerUnitId?.get(identity.ownerUnitId)?.has(identity.globalBindingId)
       ? { omitTdzReadCheck: true as const }
@@ -7076,6 +7072,17 @@ function sameValType(a: ValType, b: ValType): boolean {
   return true;
 }
 
+/**
+ * (#7106 levers R1, R2) Legacy's builder of a carrier method's helper
+ * (`REGEXP_CARRIER_METHODS`). A function, not a table: the `exec` builder
+ * arrives through the `codegen/index.ts` facade, inside the import cycle.
+ */
+function ensureRegExpCarrierHelper(ctx: CodegenContext, method: RegExpCarrierMethod): number | undefined {
+  return method === "test"
+    ? ensureStandaloneRegExpCarrierTestHelper(ctx)
+    : ensureStandaloneRegExpCarrierExecHelper(ctx);
+}
+
 function makeFromAstResolver(
   ctx: CodegenContext,
   classShapes: ReadonlyMap<string, IrClassShape> | undefined,
@@ -7153,17 +7160,22 @@ function makeFromAstResolver(
       const plan = moduleBindingResolver.retainedFunctionMethodPlan(call);
       return plan ? resolveRetainedFunctionMethod(ctx, plan) : null;
     },
-    nativeRegExpMethodPlan(receiver: ts.Expression, method: "test" | "exec") {
-      if (!supportsBackendCapability("native-regexp")) return null;
+    isNativeRegExpReceiver(receiver: ts.Expression) {
+      return (
+        supportsBackendCapability("native-regexp") &&
+        (moduleBindingResolver?.staticRegExpTestPlan(receiver) !== undefined || isRegExpExpression(receiver))
+      );
+    },
+    nativeRegExpMethodPlan(receiver: ts.Expression, method: RegExpCarrierMethod) {
+      if (ensureRegExpCarrierHelper(ctx, method) === undefined) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/integration: the native-regexp lane has no ${method} carrier helper`,
+        );
+      }
       const stable = moduleBindingResolver?.staticRegExpTestPlan(receiver);
-      if (!stable && !isRegExpExpression(receiver)) return null;
-      const funcIdx =
-        method === "test" ? ensureStandaloneRegExpCarrierTestHelper(ctx) : ensureStandaloneRegExpCarrierExecHelper(ctx);
-      if (funcIdx === undefined) return null;
-      return {
-        ...(stable ? { receiverGlobal: resolveStandaloneRegExpTestGlobal(ctx, stable) } : {}),
-        funcName: method === "test" ? STANDALONE_REGEXP_CARRIER_TEST_HELPER : STANDALONE_REGEXP_CARRIER_EXEC_HELPER,
-      };
+      return stable ? { receiverGlobal: resolveStandaloneRegExpTestGlobal(ctx, stable) } : {};
     },
     classStaticFieldStorage: (owner, field) => resolveIrClassStaticFieldStorage(ctx, owner, field), // (#7233)
     staticNumericArrayRead(expression: ts.Expression, expected: IrType) {
@@ -8103,6 +8115,9 @@ function makeResolver(
       return preparedScopeLookup
         ? preparedScopeLookup.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding))
         : ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding));
+    },
+    resolveGlobalType(ref: IrGlobalRef): ValType | undefined {
+      return ctx.mod.globals[localGlobalIdx(ctx, resolver.resolveGlobal(ref))]?.type;
     },
     resolveType(ref: IrTypeRef): number {
       if (readEnv("JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE") === "type") {

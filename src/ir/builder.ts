@@ -321,15 +321,15 @@ export class IrFunctionBuilder {
     return result;
   }
 
-  emitGlobalGet(target: IrGlobalRef, resultType: IrType, slot?: ValType): IrValueId {
+  emitGlobalGet(target: IrGlobalRef, resultType: IrType): IrValueId {
     const result = this.allocator.fresh();
     this.valueTypes.set(result, resultType);
-    this.pushInstr({ kind: "global.get", target, result, resultType, ...(slot ? { slot } : {}) });
+    this.pushInstr({ kind: "global.get", target, result, resultType });
     return result;
   }
 
-  emitGlobalSet(target: IrGlobalRef, value: IrValueId, slot?: ValType): void {
-    this.pushInstr({ kind: "global.set", target, value, result: null, resultType: null, ...(slot ? { slot } : {}) });
+  emitGlobalSet(target: IrGlobalRef, value: IrValueId): void {
+    this.pushInstr({ kind: "global.set", target, value, result: null, resultType: null });
   }
 
   emitBinary(op: IrBinop, lhs: IrValueId, rhs: IrValueId, resultType: IrType): IrValueId {

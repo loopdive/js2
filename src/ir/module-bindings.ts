@@ -25,7 +25,7 @@ import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fncto
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import * as classInstance from "./module-binding-class-instance.js";
-import * as regExpMatch from "./module-binding-regexp-match.js";
+import { regExpMatchUseSupported, regExpMatchWriteMatches } from "./regexp-match-uses.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
   carrierLeafReads,
@@ -659,7 +659,7 @@ export type IrModuleBindingRefusalArm =
   | "no-value-kind"
   | "write-value-mismatch"
   | "class-instance-use-site"
-  | "regexp-match-store"
+  | "regexp-match-use-site"
   | "destructuring-pattern"
   | "inspection-threw";
 
@@ -1569,7 +1569,7 @@ function writeValueMatches(
   if (carrierLeafReads(valueExpr, resolve).length > 0) return false;
   if (targetKind.kind === "class-instance")
     return classInstance.classInstanceWriteMatches(checker, targetKind, valueExpr);
-  if (targetKind.kind === "regexp-match") return regExpMatch.regExpMatchWriteMatches(valueExpr);
+  if (targetKind.kind === "regexp-match") return regExpMatchWriteMatches(valueExpr);
   if (targetKind.kind === "native-map") {
     // The native `$Map` carrier has exactly one producer in this slice.
     return isNativeMapConstruction(checker, valueExpr);
@@ -2308,8 +2308,8 @@ export function makeIrLegacyModuleBindingResolver(
     if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
     if (valueKind.kind === "class-instance" && !classInstance.classInstanceUseFollowsDeclaration(node, declaration))
       return { kind: "unsupported", declaration, arm: "class-instance-use-site" };
-    if (valueKind.kind === "regexp-match" && !regExpMatch.regExpMatchUseSupported(node, declaration.name))
-      return { kind: "unsupported", declaration, arm: "regexp-match-store" };
+    if (valueKind.kind === "regexp-match" && !regExpMatchUseSupported(node, declaration, classifyPrimitiveExpression))
+      return { kind: "unsupported", declaration, arm: "regexp-match-use-site" };
     if (
       writeValue !== undefined &&
       !writeValueMatches(checker, declaration, valueKind, writeValue, options, classifyPrimitiveExpression, resolve)

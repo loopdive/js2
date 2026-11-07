@@ -169,7 +169,8 @@ import type { IrFnctorAdmission, IrFnctorSelectionAdmissionResolver, LatticeType
 import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
-import { staticRegExpPair } from "../shared/regexp-static.js";
+import { matchRegExpCarrierCall, staticRegExpPair } from "../shared/regexp-static.js";
+import { regExpMatchUseAdmitted } from "./regexp-match-uses.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
@@ -4758,10 +4759,7 @@ function isPhase1StatementListInScope(
         if (lhs.questionDotToken !== undefined) {
           return shapeNo("nontail-elemstore-optional", lhs);
         }
-        if (
-          (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text)) &&
-          !stableDynamicStoreReceiverHasAdmittedRoot(lhs.expression)
-        ) {
+        if (!elementStoreReceiverAdmitted(lhs.expression, scope)) {
           return shapeNo("nontail-elemstore-recv", lhs.expression);
         }
         if (ts.isStringLiteralLike(lhs.argumentExpression) && !preflightClassPropertyWrite(lhs, scope)) return false;
@@ -6030,12 +6028,7 @@ function isPhase1MemberAssignment(
     if (lhs.questionDotToken !== undefined) {
       return shapeNo("body-elemstore-optional", lhs);
     }
-    if (
-      (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text)) &&
-      !stableDynamicStoreReceiverHasAdmittedRoot(lhs.expression)
-    ) {
-      return shapeNo("body-elemstore-recv", lhs.expression);
-    }
+    if (!elementStoreReceiverAdmitted(lhs.expression, scope)) return shapeNo("body-elemstore-recv", lhs.expression);
     if (ts.isStringLiteralLike(lhs.argumentExpression) && !preflightClassPropertyWrite(lhs, scope)) return false;
     if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses)) return false;
     return isPhase1Expr(expr.right, scope, localClasses);
@@ -8261,6 +8254,16 @@ function moduleExternConsumerIsProven(expr: ts.Expression, scope: ReadonlySet<st
 }
 
 /** A real module lexical whose legacy storage has no sound IR representation. */
+/**
+ * (#2856 C2) An element store's receiver: a plain in-scope identifier or a
+ * stable dynamic root. (#7106 lever S2) A module binding answers for its own
+ * use site, so a slot that refuses a store (`regexp-match`) is not one.
+ */
+function elementStoreReceiverAdmitted(receiver: ts.Expression, scope: ReadonlySet<string>): boolean {
+  if (ts.isIdentifier(receiver) && scope.has(receiver.text)) return !isUnrepresentableModuleBinding(receiver);
+  return stableDynamicStoreReceiverHasAdmittedRoot(receiver);
+}
+
 function isUnrepresentableModuleBinding(node: ts.Identifier): boolean {
   const resolver = currentModuleBindingResolver;
   return resolver !== null && resolver(node) === undefined && resolver.isDirectModuleBinding(node);
@@ -8775,9 +8778,9 @@ function nativeStaticRegExp(expr: ts.Expression): boolean {
   const consumer = outermostParenthesized(expr).parent;
   const methodReceiver =
     ts.isPropertyAccessExpression(consumer) &&
-    (consumer.name.text === "test" || consumer.name.text === "exec") &&
     ts.isCallExpression(consumer.parent) &&
-    consumer.parent.expression === consumer;
+    consumer.parent.expression === consumer &&
+    matchRegExpCarrierCall(consumer.parent) !== undefined;
   return (
     pair !== undefined &&
     (methodReceiver || ts.isExpressionStatement(consumer)) &&
@@ -12149,37 +12152,32 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           return true;
         }
       }
+      // #3791, #7106 lever R — a host-free method on a RegExp value. Only
+      // `.test(subject)` / `.exec(subject)` lower, through the in-module
+      // carrier helper: an exact stable top-level carrier passes its real
+      // legacy externref global (that binding is not a general IR module
+      // value, so it bypasses the receiver walk), any other receiver must be
+      // an IR value, and an `.exec` result only where `regExpMatchUseAdmitted`
+      // places it. (#7014) Every other method (`(/a/g).toString()`), a
+      // non-string subject and all other shapes keep the target-capability
+      // refusal; claimed, they hit from-ast's capability-violation assert.
       if (
-        (expr.expression.name.text === "test" || expr.expression.name.text === "exec") &&
         currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
         hostRegExpUnavailable()
       ) {
-        // #3791, #7106 lever R — host-free `.test(subject)` / `.exec(subject)`
-        // call the in-module carrier helper. An exact stable top-level carrier
-        // passes its real legacy externref global (that binding is not a
-        // general IR module value, so it bypasses the receiver walk); any other
-        // receiver must be an IR value. Non-string subjects and all other
-        // shapes keep the established target-capability refusal.
-        const receiver = expr.expression.expression;
+        const call = matchRegExpCarrierCall(expr);
         if (
+          call !== undefined &&
           currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
-          expr.arguments.length === 1 &&
-          !ts.isSpreadElement(expr.arguments[0]!) &&
-          (expressionIsProvenString(expr.arguments[0]!) ||
-            currentSelectionOptions?.classifyPrimitiveExpression?.(expr.arguments[0]!) === "string") &&
-          (currentModuleBindingResolver?.staticRegExpTestPlan(receiver) !== undefined ||
-            isPhase1Expr(receiver, scope, localClasses))
+          (expressionIsProvenString(call.subject) ||
+            currentSelectionOptions?.classifyPrimitiveExpression?.(call.subject) === "string") &&
+          (call.method === "test" ||
+            regExpMatchUseAdmitted(expr, currentSelectionOptions?.classifyPrimitiveExpression)) &&
+          (currentModuleBindingResolver?.staticRegExpTestPlan(call.receiver) !== undefined ||
+            isPhase1Expr(call.receiver, scope, localClasses))
         ) {
-          return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
+          return isPhase1Expr(call.subject, scope, localClasses);
         }
-        return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
-      }
-      // (#7014) Every OTHER host-free RegExp method (`(/a/g).toString()`) keeps
-      // that refusal; claimed, it hit from-ast's capability-violation assert.
-      if (
-        currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
-        hostRegExpUnavailable()
-      ) {
         return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
       }
       if (currentSelectionOptions?.preparedAsyncDateNowCall?.(expr) === true) return true;

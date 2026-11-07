@@ -60,13 +60,35 @@ const CLAIMED: Record<string, string> = {
     "var __executed = /a(b)/.exec('xab');\n" +
     "assert.sameValue(__executed.length, 2);\nassert.sameValue(__executed.index, 1);\n" +
     "assert.sameValue(__executed.input, 'xab');\nassert.sameValue(__executed[1], 'b');",
-  // A bare `null` argument of a function-object call crosses as the externref null.
-  execBoundMiss: "var __executed = /q/.exec('xab');\nassert.sameValue(__executed, null);",
+  execBoundMiss: "var __executed = /q/.exec('xab');\nif (__executed !== null) { throw new Test262Error('#1'); }",
+  // The dynamic `+`: ToPrimitive joins the match array; a miss renders `null`.
+  execConcatenated:
+    "if (('y' + /a(b)/.exec('ab')) !== 'yab,b' || ('y' + /a/.exec('b')) !== 'ynull') {\n" +
+    "  throw new Test262Error('#1');\n}",
+  // A bare `null` in a dynamic position is the externref carrier's null, distinct from `undefined`.
+  nullArgument:
+    "function chk(v) { if (v !== null) { throw new Test262Error('#1'); } }\nchk(null);\nassert.sameValue(null, (null));\n" +
+    "var u = 0;\ntry { assert.sameValue(undefined, null); } catch (e) { u = 1; }\n" +
+    "if (u !== 1) { throw new Test262Error('#2'); }",
 };
 
 const REFUSED: Record<string, string> = {
   // R2 takes a proven-string subject only.
   execNumberSubject: "if (/1/.exec(1) === null) { throw new Test262Error('#1'); }",
+  // An `.exec` result only where `regExpMatchUseAdmitted` places it: no call argument (beside an array
+  // literal it fails after the claim), no loose `!=`, no `groups` / `indices` (the dynamic reader does
+  // not serve them), and no store into it (an element store traps on the native match vector).
+  execArgument: "assert.compareArray(/a/.exec('a'), ['a']);",
+  execLooseNull: "var __executed = /a/.exec('a');\nif (!(__executed != null)) { throw new Test262Error('#1'); }",
+  execGroups: "if (/(?<x>b)/.exec('ab').groups.x !== 'b') { throw new Test262Error('#1'); }",
+  execGroupsTypeof: "if (typeof /(?<x>b)/.exec('ab').groups !== 'object') { throw new Test262Error('#1'); }",
+  execBoundGroups:
+    "var __executed = /(?<x>b)/.exec('ab');\nif (__executed.groups === undefined) { throw new Test262Error('#1'); }",
+  execIndices: "if (/a(b)/d.exec('xab').indices[1][0] !== 2) { throw new Test262Error('#1'); }",
+  execElementStore: "var __executed = /a(b)/.exec('xab');\n__executed[0] = 'z';",
+  execLengthStore: "var __executed = /a/.exec('a');\n__executed.length = 1;",
+  execIndexStore: "var __executed = /a/.exec('a');\n__executed.index = 7;",
+  execExpandoStore: "var __executed = /a/.exec('a');\n__executed.foo = 7;",
   // S2: the slot's one IR write is its declaration's `.exec(…)` initializer.
   execReassigned: "var __executed = /a/.exec('a');\n__executed = /b/.exec('b');\nassert.sameValue(__executed[0], 'b');",
   execRedeclared:
