@@ -253,10 +253,11 @@ export function lowerFunctionObjectPropertyWrite(
   name: string,
   source: ts.Expression,
   cx: FunctionObjectLoweringHost,
-): void {
+): IrValueId {
   if (cx.dynamicCarrierIsExternref()) {
     const key = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst(name));
-    const value = functionObjectDynamicValue(cx.lowerExpression(source), source, cx);
+    const result = cx.lowerExpression(source);
+    const value = functionObjectDynamicValue(result, source, cx);
     const externalReceiver = cx.builder.emitCall(
       irRuntimeFuncRef(cx.symbols.IR_DYN_CALL_VALUE_FN),
       [receiver],
@@ -269,9 +270,11 @@ export function lowerFunctionObjectPropertyWrite(
     );
     if (externalReceiver === null || externalValue === null) throw new Error("native write projection returned void");
     cx.builder.emitCall(irRuntimeFuncRef("__extern_set_strict"), [externalReceiver, key, externalValue], null);
-    return;
+    return result;
   }
   const key = cx.builder.emitBox(cx.builder.emitStringConst(name), irDynamic(JS_TAG_IDS.String));
-  const value = functionObjectDynamicValue(cx.lowerExpression(source), source, cx);
+  const result = cx.lowerExpression(source);
+  const value = functionObjectDynamicValue(result, source, cx);
   cx.builder.emitDynMemberSet(receiver, key, value);
+  return result;
 }

@@ -53,7 +53,7 @@ func-budget-allow:
   - src/ir/select.ts::isPhase1Expr # 2026-11-06 (#7106 lever T): +5 — the module `+` reads the builder's checker proof (`checkerAdditionVerdict`) instead of requiring equal families, a void local call operand is refused, and so is a function's unproven `+` over a dynamic script var
 import-cycles-allow:
   - ir->codegen: 84 # 2026-10-29 (merge-group fix, restated on main's 83 after #6977/#6979 + this borrow wrapper); 2026-10-29 (revive, restated on main's 81 + #7119's wrapper module + this borrow wrapper); 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (module-init lever A): the bridge reads legacy's Math/Number constant table (`codegen/builtin-value-read.ts`); 2026-10-22 (lever B): …and pre-registers the Number(v) provider (`codegen/helpers/ir-number-from-value.ts`); 2026-10-22 (compareArray.format): …and the Array.prototype borrow wrapper
-  - codegen->ir: 301 # 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
+  - codegen->ir: 303 # 2026-11-06 (#7106 string-method surface): the self-hosted string resolver (`codegen/stdlib-selfhost.ts`) reads the one string-method table (`ir/string-method-surface.ts`) instead of keeping its own copy; main already sits at 302; 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
   - ir->frontend: 8 # 2026-10-22 (#7106 lever B): the bridge builds the source-bound Number-conversion plan (`frontend/builtins/prepare-number-conversion.ts`) for the selector, as program-source.ts does for its resolver
   - ir->runtime: 10 # 2026-10-29 (#7106 function-object realm members): `ir/select-expression-structure.ts` reads %Function.prototype%'s and %Object.prototype%'s keys from the native realm catalog (`runtime/contracts/native-realm-catalog.ts`, pure data), as `ir/program/native-realm-requirements.ts` already does; a hand copy of those 19 names would duplicate the catalog
   - largestSccSize: 728 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it; 2026-10-22 (dyn.instanceof): codegen/ir-dynamic-instanceof.ts joins it the same way; 2026-10-22 (lever B): codegen/helpers/ir-number-from-value.ts joins it; 2026-10-22 (compareArray.format): codegen/array/ir-array-prototype-borrow.ts joins it
@@ -5396,6 +5396,231 @@ inside or across a `finally` does not share the bug: the selector refuses it
   standalone. Playground: 13/13 identical on both lanes (no example has a
   `finally`).
 
+## `<module-init>` lever: one string-method surface (plan, 2026-11-02)
+
+Plan only; nothing here is implemented, and the pick waits for the lead's
+confirmation. Measured on the in-flight stack: origin/main `80ee75ea4c` plus
+the heads of PRs #7033 (`01d96e5820`), #7034 (`676a82e08e`), #7026
+(`ff67ba0fdd`, merged since), the S5 destructuring slice (`7ccee08b69`), the
+bool-slot fix (`45c0231bc4`) and PR #7038 (`5e1543ba03`). The prototypes were
+selection-only edits on a scratch copy of that stack, never committed.
+Standalone, the conformance runner's harness assembly
+(`assembleOriginalHarness`), `JS2WASM_IR_SHAPE_DIAG=1
+JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, one worker.
+
+### Ranking: which refusal makes the most files legacy-free
+
+The sample is 637 seeded test262 files (`sha256("lever-7106:" + path)`,
+first hex digit below 3): 540 compile, 10 are legacy-free and 530 keep at
+least one legacy unit. A file's *roots* are its refusals minus cascades
+(`call-graph-closure`, and an unresolved name or class that is itself a legacy
+unit). One sample file stands for about 84 corpus files.
+
+"Alone" counts the files whose only root is the reason. That count is
+inflated: a refusal hides whatever the selector would refuse next in the same
+declaration or expression. For the four reasons with the largest "alone"
+count, a selection-only prototype admitted the reason and the census was rerun
+on the files concerned. "Unmasked" is what that rerun leaves legacy-free,
+counting a builder demote of the lever's own construct as the lever's work.
+
+| reason | lives in | files carrying it | alone | unmasked: legacy-free | corpus estimate |
+| --- | --- | --- | --- | --- | --- |
+| string methods (`expr-string-method-surface`) | a new `src/ir/string-method-surface.ts` (below) | 5 | 4 | **3** | ~65, measured on its own population (below) |
+| script `var` storage (`*-module-storage-unrepresentable`) | `module-bindings.ts`, codegen `scriptVarHome` | 268 | 12 | 1, and 1 more with array methods | ~85–170, scaled from 1–2 files |
+| array methods (`expr-array-method-not-lowerable`) | the IR array-method arms | 31 | 4 | 1, and 1 more with storage | ~85–170, scaled from 1–2 files |
+| ambient `Object` statics (`expr-ident-not-in-scope «Object»`) | — | 92 | 6 | 0 of 92 | 0 |
+
+No single reason frees more than about 0.3 % of the corpus. Scaling one to
+three sample files by 84 is noise (a 95 % interval on 3 events is 0.6 to 8.8),
+so the storage and array estimates overlap the string one. The string lever
+ranks first because its estimate is the only one measured on its own
+population, and because it is one mechanism; storage is six and array methods
+at least three.
+
+What each unmasked rerun found behind the reason:
+
+- **Storage.** The 12 "alone" files need six different initializer families:
+  object literals (4), other arrays (4), builtin `new` (3), call results (2),
+  number and string arrays. Behind them: `new Date(NaN)`, `new Set([1, 2])`
+  and `new Proxy` with no host-free producer, object literals with methods or
+  duplicate keys, `{}`, BigInt literals, and Temporal. Only
+  `Array/prototype/indexOf/15.4.4.14-3-14.js` is clean once the slot exists.
+  The slices are follow-ups (a)–(h) of "Script `var` reference homes" above;
+  each frees at most three sample files.
+- **Array methods.** `[1, 2, 3].lastIndexOf(3, 1)` needs only a builder arm.
+  The rest hide a function declaration used as a value (`[11].forEach(callbackfn)`)
+  or Temporal arrows.
+- **`Object` statics.** With every runtime-backed static admitted
+  (`getOwnPropertyDescriptor`, `create`, `getPrototypeOf`, `seal`, …,
+  `Object.prototype.<m>.call`), none of the 92 files becomes legacy-free. Behind
+  them: `{}` and object literals with methods as values (#7128's open carrier),
+  `Int8Array` and the other typed-array constructors as values (20 files, from
+  testTypedArray.js), `globalThis`, async generator functions,
+  `new URIError()` with no host-free producer, and `Object` itself as a value
+  (`Object.prototype`, `getOwnPropertyDescriptor(Object, "seal")`).
+
+Three blockers recur behind all four and are not refusal reasons of their own
+in a masked census: a function declaration as a value, an object literal as a
+dynamic value (#7128), and an ambient constructor as a value. Each is a
+candidate for a census of its own before it is planned.
+
+### Population
+
+A seeded one-in-eight sample of `built-ins/String/prototype`
+(`sha256("str-7106:" + path)`, first hex digit below 2): 134 files, 132
+compile, 13 already legacy-free. 15 carry the surface refusal, 9 as their only
+root. The refused calls: `toLocaleLowerCase` 21, `padEnd` 8, `replaceAll` 7,
+`padStart` 3, `lastIndexOf` 2, `repeat` 2, `search` 2, `endsWith` 1,
+`indexOf` 1 (two arguments), `toLocaleUpperCase` 1.
+
+With the surface admitting every arity at select (the same prototype), all 9
+sole carriers are clean at select. Their one remaining refusal is the
+builder's `method call .<m>(...) on string not in slice 4`, which is the
+lowering this lever adds. By method: `lastIndexOf` 2, two-argument `indexOf` 1,
+`padStart` 1, `padEnd` 1, `toLocaleLowerCase` 1, `repeat` 1, `replaceAll` 1
+and `search` 1. `search` needs RegExp and stays out. The other 6 carriers keep
+other blockers: standalone `Object.defineProperty` (3), a BigInt or Symbol
+script `var` (2), a RegExp literal, and a wrapper equality.
+
+So the lever frees up to 8 of the 134 sampled files, about 64 of the 1073 in
+the directory. The three files it frees in the 637-file sample are
+String/prototype files too, so few are expected elsewhere. The prototype admits
+any argument the phase-1 check admits; the role proofs below decide how many of
+the 8 stay. For example `padStart/max-length-not-greater-than-string.js` calls
+`'abc'.padStart(undefined, 'def')` and `padStart(null, 'def')`.
+
+### Existing IR support: three tables for one surface
+
+- **Selector.** `IR_STRING_METHOD_SURFACE` (`select.ts:9079`) lists 10
+  methods as `[min, max, positional]`. Its comment says it is mirrored from
+  from-ast's table and narrowed by hand to the calls some backend's plan
+  lowers. `stringMethodHasSupportedArity` (`:9093`) and
+  `unprovenStringMethodPosition` (`:9102`) read it; the receiver arm is at
+  `:11987`.
+- **Builder.** `STRING_METHOD_TABLE` (`from-ast.ts:10266`) lists 12 methods
+  with host argument kinds; it has `startsWith` / `endsWith`, which the
+  selector leaves out. `lowerStringMethodCall` (`:10332`) carries a second
+  numeric proof for `charAt` / `charCodeAt` (`proveAdditiveOperand`, `:10394`)
+  and a post-claim ToString demote for a non-string search argument
+  (`:10465`).
+- **Lane plans.** `stringMethodPlan` exists twice: `integration.ts:7095`
+  (WasmGC: helper names, index representation, the omitted-argument pad) and
+  `backend/linear-integration.ts:2012` (only `charCodeAt` and `slice`).
+- **What the split costs.**
+  - Selection is lane-blind: the selector admits ten methods, while the linear
+    resolver's plan lowers two. (Measured on the stack: `--target linear`
+    fails `s.toUpperCase()`, `s.charAt(1)` and `s.substring(1, 2)` with
+    "Unsupported method call" from the linear backend.)
+  - A method joins the surface only when three hand edits agree.
+  - Follow-ups 3 (the search-argument proof) and 4 (two numeric proofs for one
+    position) of the #6972 review are both symptoms of the split.
+- **Legacy.** `compileNativeStringMethodCall` (`src/codegen/string-ops.ts:2714`)
+  lowers about 30 methods through `__str_*` helpers, among them `padStart` /
+  `padEnd` (`:3435` / `:3474`), `lastIndexOf` (`:3229`), `includes` /
+  `startsWith` / `endsWith` with a position (`:3253` / `:3286` / `:3313`),
+  `repeat` (`:3379`), `trimStart` / `trimEnd` (`:3342`) and
+  `toLocale{Lower,Upper}Case` (`:3512`, the same helpers as
+  `to{Lower,Upper}Case` without ECMA-402).
+
+### Target structure
+
+**Module.** `src/ir/string-method-surface.ts` (new; pure data and pure
+functions, no builder, no checker). One row per method:
+
+- the role of each argument: `search` and `fill` (ToString), `position`
+  (ToIntegerOrInfinity), `length` (ToLength);
+- the minimum argument count;
+- the result family (string, number, boolean);
+- the native helper and the value each omitted argument takes (position 0;
+  `endsWith`'s end and `lastIndexOf`'s position the length; `padStart` /
+  `padEnd`'s fill a single space).
+
+One function, `stringMethodPlan(lane, method, argCount)`, returns the plan or
+`null`. The selector, the WasmGC resolver and the linear resolver all call it,
+so selection and build cannot disagree. The lane is the existing
+`IrBackendTargetProfile` (`backend/legality.ts`), passed to selection as one
+option next to `supportsBackendCapability`, not one capability name per
+method.
+
+**Argument proofs.** One predicate per role, in the selector:
+
+- `search` / `fill`: a proven string. Generalise `expressionIsProvenString` with
+  the classifier, as #6972 follow-up 3 asks; this retires the post-claim
+  ToString demote. A proven string is never a RegExp, so legacy's IsRegExp
+  step is moot.
+- `position` / `length`: `expressionIsProvenNumber`, which the selector already
+  uses for positions, or a literal whose ToNumber is static (`undefined`,
+  `null`, `NaN`, `Infinity`, a boolean), folded at build the way legacy's
+  `compileStringIntegerArg` folds it. `proveAdditiveOperand`'s second proof in
+  the builder goes (#6972 follow-up 4).
+
+The builder lowers exactly the plan. A missing proof there is an
+`IrInvariantError`, not `demoteToLegacy`.
+
+**Moves.** `STRING_METHOD_TABLE` and `StringMethodSig` leave `from-ast.ts`;
+`IR_STRING_METHOD_SURFACE`, `stringMethodHasSupportedArity` and
+`unprovenStringMethodPosition` leave `select.ts`; both `stringMethodPlan`
+bodies become calls to the module. Integration keeps only the proven-ASCII
+case-helper choice, which picks a helper name and never admits or refuses.
+
+**Duplicates removed.**
+
+- Three method tables become one.
+- Two lane plans become one function.
+- Two numeric proofs for a position become one.
+- The ToString demote becomes a select refusal.
+
+**Code-quality acceptance criterion.**
+
+- `select.ts`, `from-ast.ts` and `integration.ts` shrink, with no
+  `loc-budget-allow:` or `func-budget-allow:` grant.
+- The new module stays under 300 lines, and no function in it exceeds 60.
+- No string-method name is spelled in `select.ts`, `from-ast.ts` or
+  `integration.ts` outside a call into the module.
+- Adding a method is one row; the review checks that S2 adds rows and no code.
+- The fresh-context adversarial review looks for a second table, a per-method
+  branch that differs from its sibling only by helper name, or a proof done
+  twice.
+
+**Correctness acceptance criterion.**
+
+- 0 pass→fail on all 1073 `built-ins/String/prototype` files and on the
+  637-file sample, standalone and gc.
+- No post-claim demote of a string method on WasmGC or linear: one unit test
+  walks every row on both backends.
+- A unit test per role: each omitted-argument default; `padEnd(n, undefined)`
+  pads with a space; `lastIndexOf(x, NaN)` searches from the end;
+  `"a1b".includes(1)` stays legacy; `toLocaleLowerCase()` answers as
+  `toLowerCase()`.
+- Byte-identical gc and standalone binaries for every program in which no unit
+  changes owner (census sha on the String/prototype files, the 637-file sample
+  and `website/playground/examples`).
+
+### Slices
+
+| slice | scope | expected gain |
+| --- | --- | --- |
+| S1 | Structure only: the module, one plan function, and the selector, builder and both lanes reading it. The WasmGC surface is unchanged; the linear lane admits only what its plan lowers. | 0 files; byte-identical on gc and standalone |
+| S2 | Rows: `padStart`, `padEnd`, `toLocaleLowerCase`, `toLocaleUpperCase`, `lastIndexOf`, the position argument of `indexOf` / `includes` / `startsWith` / `endsWith`, `trimStart`, `trimEnd`. | up to 6 of the 134 sampled String/prototype files, and the 3 of the 637-file sample |
+| S3 | `repeat` (RangeError on a negative or infinite count) and `replaceAll` with string arguments. | up to 2 more of the 134 |
+
+Recommendation: S1 and S2 as one PR. S1 alone moves nothing, and S2 is a list
+of rows once S1 exists.
+
+### Risks
+
+- **Helper receivers.** Legacy flattens the receiver (`emitFlatten`) before
+  `__str_padStart`, `__str_padEnd` and the other helpers. Each new row must use
+  the receiver convention the existing rows (`slice`, `toUpperCase`) use, and
+  the per-row unit test must cover a rope receiver (a concatenation).
+- **The host branch of the WasmGC plan.** `string_<method>` imports are
+  reachable only with `nativeStrings` off, which #6979 made a compile error on
+  every WasmGC target. Verify that, then delete the branch in S1 rather than
+  port it.
+- **Conflicts.** `select.ts` and `from-ast.ts` are the busiest IR files. PR
+  #7033 edits `select.ts`'s S0 binary arm, not this one. Land S1 as one
+  short-lived PR.
+
 ## `<module-init>` boolean module slot (plan, 2026-11-01)
 
 **Root cause.** A script `var` that holds a boolean (`var x = true`,
@@ -5591,6 +5816,191 @@ the builder's rules do not use:
 - `select.ts` grows by 34 lines, `module-bindings.ts` by 4 and `isPhase1Expr`
   by 5, granted in the frontmatter. The two refusals are new arms the builder already implied, so
   the plan's "no growth" did not hold.
+
+## Lever A — the runtime-eval boundary, per unit (plan, 2026-11-06)
+
+ES5 census context: 14.4 % of weighted ES5 files contain a runtime-eval site
+(direct or indirect `eval`, `Function(...)`, `new Function(...)`). On
+standalone, every one of them is 100 % legacy, because one site withdraws the
+whole program. The work ships as three PRs, each standing on the previous one:
+
+| PR | What it does | What it gains |
+| --- | --- | --- |
+| A1 | Per-unit boundary: refuse only the units that cross eval | IR units in eval programs (harness helpers) |
+| A2 | Global-scope eval sites in IR, through ONE helper factored from legacy's push/pull path | `<module-init>` with indirect eval, `Function`, script-level direct eval |
+| A3 | Write-precise liveness: parse literal fragments for writes, not mentions | `assert`, `Test262Error`, `compareArray` keep static bindings and function values |
+
+Files become IR-only only from A2 + A3 on, so the IR-only file count is
+reported from A2 onwards. A direct eval inside a function stays legacy in all
+three (refused at select).
+
+### What the program-wide withdrawal protects
+
+`planIrOverlay` (`codegen/index.ts`, #2928) cleared the whole selection
+whenever `runtimeEvalBoundaryPlan.callableBoundaryRequired` held in the native
+regime (`ctx.standalone`, which covers standalone AND the JS host) or on WASI.
+Its comment named type-index parity with the linked carrier.
+
+Measured with the withdrawal simply removed (the 141 eval files of the ES5
+sample, standalone):
+
+- **101 / 141 fail to compile, 0 post-claim errors.** The two failures
+  inspected were both `ABI draft … function-value-trampoline … would mutate
+  sealed prepared scope`, and the fix below clears all 101.
+- **Cause.** The runtime-eval global push
+  (`expressions/runtime-eval-provider.ts`,
+  `emitRuntimeEvalGlobalBindingPushBody`) publishes every top-level function
+  as a cached value through `emitCachedFuncClosureAccess`. That drafts the
+  function's value trampoline after its prepared component has sealed.
+- **Parity.** No type-index parity failure appears once that is fixed. The
+  carrier types are already registered late
+  (`ensureRuntimeEvalAotCallableCarrierTypes`, after IR and legacy bodies
+  settle), so the old comment no longer describes a live hazard.
+
+What the withdrawal still protects, and what replaces it:
+
+1. **Activation semantics.** A direct eval reads and writes its caller's
+   activation (var leakage, `arguments`, `this`). Only the direct frontend
+   models that, so a function that contains any inventoried site stays
+   direct.
+   - Today selection already rejects every site form tried
+     (`external-call`, `call-resolution-unsupported`, `body-shape-rejected`
+     for `eval(s)`, `(0, eval)(s)`, `Function(...)`, `x instanceof Function`,
+     a bare `Function` read).
+   - The `eval-site` arm is therefore the contract A2 stands on, not a
+     measured gain: once A2 claims global-scope sites, a direct eval inside a
+     function must still be refused here.
+2. **Eval-visible bindings.** Evaluated code may replace a script binding.
+   - **Functions** (`eval("f = …")`, `eval("function f(){}")`): legacy routes
+     calls, reads and values of such a name through its live global
+     (`registerReassignedFunctionGlobals` → `ctx.liveFuncBindingGlobals`). IR
+     binds the declaration statically.
+   - **Global `var` and lexical bindings**: the same pass widens their slots
+     to externref. IR types the variable itself, and the first cut failed
+     post-claim with `__mod_<name> uses legacy externref storage but IR
+     resolved f64`. That was 27 tests across 7 test files, e.g.
+     `issue-4515-wave5`, `issue-6651-sc1-param-scope-eval-var`, `issue-1102`.
+   - So a function with a reference that resolves to either kind stays
+     direct. The check goes through `ctx.oracle.valueDeclarationOf`, so a
+     parameter or local of the same name does not count.
+3. **The global push/pull seam.** `<module-init>` and class members share
+   `__runtime_eval_push_globals` / `pull` with the direct carrier. They stay
+   direct as a whole in A1; A2 moves module init.
+
+### Minimal correct boundary (A1, as built)
+
+- **Selection.** The old withdrawal site in `planIrOverlay` keeps its shape,
+  except that functions go through `withdrawEvalBoundaryFunctions`
+  (`codegen/ir-overlay-preparation.ts`, beside the other preparation-time
+  selection edits). A withdrawn function records the same
+  `late-preparation-unsupported` failure plus its reason:
+  - `eval-site`: an inventoried site lies inside the declaration;
+  - `eval-visible-binding`: a reference resolves to a live function or to a
+    global `var`/lexical binding;
+  - `uncached-push`: the lane's push publishes a per-site closure
+    (`emitFuncRefAsClosure`, today the WASI lane), which cannot be planned
+    before the seal, so every function stays direct.
+
+  The lane question is one capability predicate,
+  `runtimeEvalPushPublishesCachedFunctionValues`
+  (`expressions/runtime-eval-provider.ts`). The push itself, the withdrawal
+  and the value-target collector all read it, so A1 adds no `ctx.standalone`
+  or `ctx.wasi` arm (standalone-arms gate, #7143).
+
+  - `boundary-closure` (review round 1): selection's call-graph closure has
+    already run, so the withdrawn set re-closes it through the existing
+    `closeIrBlockedComponentByIdentity`. Without that, a claimed caller of a
+    withdrawn function failed at build with "direct call … has no exact
+    AST-site plan". Example: `g1 ← callsG1 ← run` with
+    `Function("g1 = …")()`.
+
+  The rest prepare. The test walks the whole declaration, so parameter
+  defaults count too, and the shared failure record is
+  `runtimeEvalBoundaryFailure(why)`.
+- **Pre-seal publication**
+  (`ir-prepared-free-functions.ts`,
+  `collectPreparedTopLevelFunctionValueTargetUnitIds`).
+  - When the push is active (`ctx.runtimeEvalGlobalFunctionBindings`) and
+    publishes cached values, every top-level function is a value target.
+  - The existing `prepareTopLevelFunctionValueTargetSupport` then allocates
+    the same cached singleton that `emitCachedFuncClosureAccess` reuses,
+    before the component seals.
+  - Direct function-value references already take this path.
+
+### Reuse and code quality
+
+- **Reused:**
+  - the boundary inventory (`IrRuntimeEvalBoundaryPlan.sites`);
+  - legacy's liveness set (`liveFuncBindingGlobals`);
+  - the existing pre-seal function-value planner;
+  - the existing withdrawal block, failure record and module-init/class arms.
+- **New:**
+  - one exported function and one private predicate (about 30 lines) in an
+    existing module;
+  - one early return in the value-target collector.
+- **Removed:**
+  - the program-wide function clear;
+  - its stale parity comment.
+- **Gates.** All pass with no grant:
+  - no new file;
+  - no new codegen→ir value edge (only a type import);
+  - `index.ts` +1 line, and `planIrOverlay` stays within budget;
+  - `ir-prepared-free-functions.ts` −1 line.
+
+  A first cut put the boundary in a new module. That tripped the
+  import-cycle, flat-dir and compiler-boundaries gates, so the boundary
+  moved next to the existing preparation edits instead.
+- **Tests changed:**
+  - `issue-2960` #4013: the inverted "regime gap" sentinel now holds, so it
+    is a plain `it`;
+  - `issue-7106-apply-receiver-demand`: under the push, every top-level
+    function is a value target. The rebind protection moved to the
+    unit-level withdrawal.
+  - New: `issue-7106-runtime-eval-unit-boundary`.
+
+### A1 measurement (2026-11-06, one worker, base = 53c7c2f910)
+
+Every measurement below was taken on the final code shape.
+
+| set and lane | compile errors | pass → fail | notes |
+| --- | --- | --- | --- |
+| 141 eval files, standalone, interpreter provider | 0 | 0 (101 pass / 40 fail on both) | IR units 0 → 579; output changes in all 141 |
+| same 141, JS host lane (honest), interpreter provider | 0 | 0 (98 pass / 43 fail on both) | same native regime as standalone (`ctx.standalone` is the native-regime flag) |
+| same 141, linked-harness host lane (CI's oracle) | 0 / 141 on both | not run (compile probe only) | body bytes differ only by the provider namespace hash (spot-checked); IR units 0 → 1 |
+| 40 non-eval control, standalone | 0 | — | 40 / 40 byte-identical |
+
+The interpreter provider was built per tree with
+`JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`. Without it,
+the eval rows fail locally with "quickjs provider is not built".
+
+- **Units gained** (files containing the unit):
+  - `isNegativeZero`, `isPrimitive` and `$DONOTEVALUATE`: 141 each;
+  - `formatIdentityFreeValue` and `formatSimpleValue`: 74 each;
+  - `isSameValue`: 7;
+  - one test function.
+- **Still direct:** `assert`, `compareArray`, `Test262Error` and
+  `<module-init>` (A2/A3), so no file is IR-only yet.
+- **Eval test files:** the 168 test files that mention runtime eval were run
+  on the first cut, one worker. That surfaced the 27 regressions fixed above.
+  On the final shape, the files that had regressed show no failure absent on
+  base. The other failures there match base (353 failing tests, mostly
+  `issue-3518` receipt history and the missing QuickJS provider).
+
+### A2 and A3 (outline; each gets its own measured plan before code)
+
+- **A2.**
+  - Lower indirect eval, `Function` / `new Function` and sloppy script-level
+    direct eval in IR as one call through a support helper factored out of
+    legacy's `__runtime_eval_push_globals` / `__runtime_eval_pull_globals`
+    path. Legacy and IR call the same helper; there is no second copy.
+  - `<module-init>` then prepares beside the seam.
+- **A3.**
+  - `registerReassignedFunctionGlobals` marks a function live only when a
+    literal fragment **writes** its name (assignment target, or a function or
+    var declaration of that name), not when the fragment merely mentions it.
+  - `makeIrFunctionObjectValueResolver` is then re-enabled for non-live
+    names, so `assert`, `Test262Error` and `compareArray` keep static
+    bindings and function-object values.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
