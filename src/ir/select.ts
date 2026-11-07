@@ -8396,7 +8396,9 @@ function expressionIsProvenNumber(expr: ts.Expression, seen = new Set<ts.Variabl
     // `new Date().getFullYear()` are intentionally outside this helper's
     // narrow call-expression recursion, but their module slot is still an
     // exact f64 value.
-    if (moduleBinding(candidate)?.valueKind.kind === "f64") return true;
+    // (#7313) A module binding is a number only when its slot is (not after `n = "1"`).
+    const binding = moduleBinding(candidate);
+    if (binding) return binding.valueKind.kind === "f64";
     const checkerProvesNumber = currentSelectionOptions?.classifyPrimitiveExpression?.(candidate) === "number";
     if (currentModuleBindingResolver?.scalarExpressionFamily(candidate) !== "f64" && !checkerProvesNumber) return false;
     const declaration = currentModuleBindingResolver?.localVariableDeclaration(candidate);
@@ -9416,15 +9418,14 @@ function stringMethodSelection(
 }
 
 /**
- * A literal with a static ToNumber stands for a position or a length; an
- * `undefined` fill is the omitted one (a space). The builder folds both.
+ * A literal with static conversions (`undefined`, `null`, `true`, `false`)
+ * stands for any role: the builder folds its ToNumber for a position or a
+ * length, its ToString for a search or a fill (#7313), and an `undefined`
+ * that has an omitted value takes it.
  */
 function stringMethodArgumentProven(role: StringArgumentRole, arg: ts.Expression, scope: ReadonlySet<string>): boolean {
-  const literal = staticStringMethodArgument(arg, (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope));
-  if (literal === undefined) {
-    return role === "search" || role === "fill" ? expressionIsClassifiedString(arg) : expressionIsProvenNumber(arg);
-  }
-  return literal === "undefined" ? role !== "search" : role === "position" || role === "length";
+  if (staticStringMethodArgument(arg, (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope))) return true;
+  return role === "search" || role === "fill" ? expressionIsClassifiedString(arg) : expressionIsProvenNumber(arg);
 }
 
 function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
@@ -11433,6 +11434,7 @@ function isPhase1ArraySearchOrJoin(
     argumentFamily: (argument) =>
       currentSelectionOptions?.classifyPrimitiveExpression?.(argument) ??
       (expressionIsProvenNumber(argument) ? "number" : expressionIsProvenString(argument) ? "string" : undefined),
+    isProvenNumber: (argument) => expressionIsProvenNumber(argument),
   });
   if (verdict === undefined) return undefined;
   if (!verdict.admitted) return capabilityNo("array-method-unsupported", verdict.arm, verdict.node);
