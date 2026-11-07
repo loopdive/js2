@@ -13371,11 +13371,10 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     const rhsString = checkerOperandFamily(rhs, cx) === "string";
     // (#7287 review B2) A checker-string RHS over a dynamic operand
     // (`"a" + f`, `f` a dynamic module var) is a dynamic carrier holding a
-    // string: recover the string carrier (checked, no ToString).
-    const rhsValue =
-      rhsString && cx.builder.typeOf(rhsLowered).kind === "dynamic"
-        ? cx.builder.emitDynStringCarrier(rhsLowered)
-        : rhsLowered;
+    // string: recover the string carrier (checked, no ToString). Its code
+    // units are unknown, so it carries the conservative `wtf16` encoding.
+    const recovered = rhsString && cx.builder.typeOf(rhsLowered).kind === "dynamic";
+    const rhsValue = recovered ? cx.builder.emitDynStringCarrier(rhsLowered) : rhsLowered;
     const rhsType = cx.builder.typeOf(rhsValue);
     if (rhsString && rhsType.kind !== "string") {
       // invariant (producer-promise): the checker POSITIVELY proves the RHS is a
@@ -13389,7 +13388,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     }
     const proof = proveTypedStringAppend(
       typedValueEvidence(id, storage.type, storage.stringEncoding, cx, logicalType),
-      typedValueEvidence(rhs, rhsType, inferStringEncoding(rhs, cx), cx),
+      typedValueEvidence(rhs, rhsType, inferStringEncoding(rhs, cx) ?? (recovered ? "wtf16" : undefined), cx),
     );
     if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs)) || !proof) {
       throw new IrUnsupportedError(

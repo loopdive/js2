@@ -29,8 +29,8 @@ import type { FuncTypeDef, Instr, ValType, WasmExport, WasmFunction } from "../i
 import type { ClosureInfo, CodegenContext } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
-import { addUnionImports, ensureExnTag } from "./registry/imports.js";
-import { buildStandardTryTable } from "../wasm/physical/exception-control.js";
+import { addUnionImports } from "./registry/imports.js";
+import { restoreThisOnUnwind } from "./named-this-call.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
@@ -1681,7 +1681,17 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   body.push({ op: "global.set", index: currentThisGlobalIdx });
   body.push({ op: "local.get", index: resultSaveLocal });
   const thrownLocal = prevThisLocal + 4 + (applyTail ? 1 : 0); // `__thrown`, the last local below
-  body.push(restoreThisOnThrow(ctx, body.splice(guardedFrom), prevThisLocal, currentThisGlobalIdx, thrownLocal));
+  // (#7287 review B1) A caller that catches the dispatch's exception reads its own `this`.
+  body.push(
+    restoreThisOnUnwind(
+      ctx,
+      { kind: "val", type: { kind: "externref" } },
+      body.splice(guardedFrom),
+      prevThisLocal,
+      currentThisGlobalIdx,
+      thrownLocal,
+    ),
+  );
 
   const internalOnly = arity > CLOSURE_METHOD_CALL_PUBLISHED_MAX_ARITY;
   const dispatcherFunc = {
@@ -1756,51 +1766,6 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
     name: argcExportName,
     desc: { kind: "func", index: argcFuncIdx },
   });
-}
-
-/**
- * (#7287 review B1) Run a method dispatch whose `__current_this` was installed
- * so that an exception unwinding through it restores the caller's receiver
- * before it propagates: a caller that catches it reads its own `this`. The EH
- * form follows the module's, as `rest-only-apply.ts` does: a standard
- * `try_table` that catches the JS exception tag on the native regime, the
- * legacy `try`/`catch_all` otherwise.
- */
-function restoreThisOnThrow(
-  ctx: CodegenContext,
-  dispatch: Instr[],
-  prevThisLocal: number,
-  currentThisGlobalIdx: number,
-  thrownLocal: number,
-): Instr {
-  const externref: ValType = { kind: "externref" };
-  const restore: Instr[] = [
-    { op: "local.get", index: prevThisLocal },
-    { op: "global.set", index: currentThisGlobalIdx },
-  ];
-  if (ctx.standalone || ctx.wasi) {
-    const tagIdx = ensureExnTag(ctx);
-    return buildStandardTryTable({ kind: "val", type: externref }, dispatch, [
-      {
-        kind: "catch",
-        tagIdx,
-        payloadType: externref,
-        body: [
-          { op: "local.set", index: thrownLocal },
-          ...restore,
-          { op: "local.get", index: thrownLocal },
-          { op: "throw", tagIdx },
-        ],
-      },
-    ]);
-  }
-  return {
-    op: "try",
-    blockType: { kind: "val", type: externref },
-    body: dispatch,
-    catches: [],
-    catchAll: [...restore, { op: "rethrow", depth: 0 }],
-  };
 }
 
 /**

@@ -230,6 +230,12 @@ if (out !== "a5") throw "out";`,
     expected: "completed",
     irUnits: ["h"],
   },
+  "review B2: a checker-string += of a recovered carrier in module code compiles": {
+    source: `var R = "";
+try { R += "no"; } catch (e) { R += (e instanceof TypeError) + ":" + e.message; }`,
+    expected: "completed",
+    irUnits: ["<module-init>"],
+  },
   "slice B: a value-position call keeps the legacy body": {
     source: `var p = function (v) { return v; };
 function h() { return p(3); }
