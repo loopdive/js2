@@ -75,6 +75,29 @@ export function run(n) { let s = ""; for (let i = 0; i < n; i++) { s += "abc"; }
   then a saturating truncation. Integer-literal bounds keep the i32 path.
 - **Test:** `tests/issue-1761.test.ts` "sizes a fractional bound …".
 
+## 5. A presized builder whose bound a closure changes traps — fixed in #7291 step 3
+
+```js
+export function run(n) {
+  const bump = () => { n = n + 1; };
+  let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i < 2) bump(); }
+  return s.length;
+}
+```
+
+- **Before:** `run(3)`, `run(2.5)`, `run(0.5)` and `run(1e-9)` trap with
+  `array element access out of bounds` on all 3 lanes. JS gives 5, 5, 3, 3.
+- **Cause:** #1761's loop-invariance check looked for writes only directly
+  in the loop body, and only for six assignment operators. A closure
+  writing the bound, or `n |= …` / `n ??= …` in the body, went unseen.
+- **Fix** (#7291 step 3, its own commit): `isLoopInvariantBound` rejects a
+  bound written in the loop body or in any nested function of the
+  enclosing function, by any assignment operator. Typed corpus and builder
+  fixtures are byte-identical; only such programs change.
+- **Test:** `tests/issue-1761.test.ts` "does not presize a bound a closure
+  can change …".
+
 ## Acceptance
 
 - All three return the JS value on standalone, wasi and gc.

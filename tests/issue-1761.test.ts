@@ -172,6 +172,26 @@ describe("#1761 — presize string-build buffer from static trip count", () => {
     }
   });
 
+  it("does not presize a bound a closure can change while the loop runs (#7291)", async () => {
+    const { binary } = await compileNative(`
+      export function run(n) {
+        const bump = () => { n = n + 1; };
+        let s = "";
+        for (let i = 0; i < n; i++) { s += "a"; if (i < 2) bump(); }
+        return s.length;
+      }
+    `);
+    const run = (await instantiate(binary)).run as (n: number) => number;
+    for (const [n, length] of [
+      [3, 5],
+      [2.5, 5],
+      [0.5, 3],
+      [0, 0],
+    ]) {
+      expect(run(n!), `run(${n})`).toBe(length);
+    }
+  });
+
   it("preserves non-ASCII / surrogate-pair appends byte-for-byte under presize", async () => {
     // Single-char charAt over a static alphabet with an astral code point.
     // charAt is code-unit-indexed, so a verbatim i16 copy must match JS.

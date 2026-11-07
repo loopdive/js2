@@ -79,7 +79,7 @@ export function planStringBuilderPresize(
   if (!isUnitIncrementOf(checker, loop.incrementor, counterSym)) return null;
 
   // (3) BOUND is loop-invariant.
-  if (!isLoopInvariantBound(checker, boundExpr, loop.statement, counterSym)) return null;
+  if (!isLoopInvariantBound(checker, boundExpr, loop, counterSym)) return null;
 
   // (4) + (5): walk the body once, summing per-iteration units and rejecting
   // early-exit / conditional appends.
@@ -106,55 +106,55 @@ function isUnitIncrementOf(checker: ts.TypeChecker, incr: ts.Expression, counter
 }
 
 /**
- * True if `boundExpr` is loop-invariant and safe to evaluate once before the
- * loop: a numeric literal, or an identifier whose binding is the loop counter
- * (rejected — that would not be invariant) excluded, or an identifier whose
- * binding is never assigned within `body`. Conservative: anything else → false.
+ * True if `boundExpr` is a numeric literal, or an identifier other than the
+ * counter that nothing writes while the loop runs. Evaluated once before the
+ * loop, it then yields the value every iteration's test sees.
  */
 function isLoopInvariantBound(
   checker: ts.TypeChecker,
   boundExpr: ts.Expression,
-  body: ts.Node,
+  loop: ts.ForStatement,
   counterSym: ts.Symbol,
 ): boolean {
   if (ts.isNumericLiteral(boundExpr)) return true;
   if (!ts.isIdentifier(boundExpr)) return false;
   const boundSym = checker.getSymbolAtLocation(boundExpr);
-  if (!boundSym) return false;
-  if (boundSym === counterSym) return false; // `i < i` is degenerate
-  // Reject if `boundExpr`'s binding is written anywhere inside the body.
+  if (!boundSym || boundSym === counterSym) return false;
+  let owner: ts.Node = loop;
+  while (owner.parent && !isFunctionScopeBoundary(owner)) owner = owner.parent;
+  return !isWrittenDuringLoop(checker, boundSym, owner, loop.statement);
+}
+
+/**
+ * (#7291) A write to `sym` in `loopBody`, or in any function nested in `owner`:
+ * a closure the loop calls can change the bound as well as the body can.
+ */
+function isWrittenDuringLoop(checker: ts.TypeChecker, sym: ts.Symbol, owner: ts.Node, loopBody: ts.Node): boolean {
   let written = false;
-  function visit(node: ts.Node): void {
+  const visit = (node: ts.Node, counts: boolean): void => {
     if (written) return;
-    if (isFunctionScopeBoundary(node)) return;
-    // Assignment LHS.
-    if (ts.isBinaryExpression(node)) {
-      const op = node.operatorToken.kind;
-      const isAssign =
-        op === ts.SyntaxKind.EqualsToken ||
-        op === ts.SyntaxKind.PlusEqualsToken ||
-        op === ts.SyntaxKind.MinusEqualsToken ||
-        op === ts.SyntaxKind.AsteriskEqualsToken ||
-        op === ts.SyntaxKind.SlashEqualsToken ||
-        op === ts.SyntaxKind.PercentEqualsToken;
-      if (isAssign && ts.isIdentifier(node.left) && checker.getSymbolAtLocation(node.left) === boundSym) {
-        written = true;
-        return;
-      }
-    }
-    // ++/-- on the bound.
-    if (
-      (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) &&
-      ts.isIdentifier(node.operand) &&
-      checker.getSymbolAtLocation(node.operand) === boundSym
-    ) {
+    const here = counts || node === loopBody || (node !== owner && isFunctionScopeBoundary(node));
+    if (here && writesSymbol(checker, node, sym)) {
       written = true;
       return;
     }
-    forEachChild(node, visit);
-  }
-  visit(body);
-  return !written;
+    forEachChild(node, (child) => visit(child, here));
+  };
+  visit(owner, false);
+  return written;
+}
+
+/** An assignment to `sym` (any assignment operator), or a prefix/postfix operator on it. */
+function writesSymbol(checker: ts.TypeChecker, node: ts.Node, sym: ts.Symbol): boolean {
+  const target =
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      ? node.left
+      : ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)
+        ? node.operand
+        : undefined;
+  return target !== undefined && ts.isIdentifier(target) && checker.getSymbolAtLocation(target) === sym;
 }
 
 /**
