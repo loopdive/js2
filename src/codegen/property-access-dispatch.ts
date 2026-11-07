@@ -242,6 +242,12 @@ import { tryEmitPromiseSubclassCellRead } from "./promise-subclass-cell-read.js"
 import { tryEmitGuardedArrayConstructorRead } from "./array/array-ctor-this.js"; // (#6771 S7)
 import { recordRuntimeProtoInstallDemand } from "./classes/runtime-proto-install-demand.js"; // (#7061)
 import { emitSabGetter } from "./buffers/shared-array-buffer.js"; // (#7011)
+import {
+  arrayBufferMaxByteLengthInstrs,
+  arrayBufferResizableInstrs,
+  buildPackedByteLengthElse,
+  byteVecLengthInstrs,
+} from "./buffers/array-buffer-native.js"; // (#7274) shared with the IR adapters
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -799,32 +805,6 @@ export function tryBuiltinNamespaceDeferredReads(
   return PA_FALLTHROUGH;
 }
 
-/**
- * (#5349 r3) The `else` arm of the `byteLength` runtime probe for a statically
- * "ArrayBuffer" receiver: consult the PACKED-BYTE view carrier before answering
- * zero. Byte-inert when `$__vec_i8_byte` is not registered in the module (the
- * whole JS-host lane, and any standalone module with no packed-byte view), so
- * the arm keeps its previous single `i32.const 0`.
- */
-function buildPackedByteLengthElse(ctx: CodegenContext, recvAnyLocal: number): Instr[] {
-  const i8VecIdx = ctx.vecTypeMap.get("i8_byte");
-  if (i8VecIdx === undefined) return [{ op: "i32.const", value: 0 }];
-  return [
-    { op: "local.get", index: recvAnyLocal },
-    { op: "ref.test", typeIdx: i8VecIdx },
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "i32" } as ValType },
-      then: [
-        { op: "local.get", index: recvAnyLocal },
-        { op: "ref.cast", typeIdx: i8VecIdx },
-        { op: "struct.get", typeIdx: i8VecIdx, fieldIdx: 0 },
-      ],
-      else: [{ op: "i32.const", value: 0 }],
-    },
-  ];
-}
-
 export function tryBufferViewAttributeReads(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -910,43 +890,12 @@ export function tryBufferViewAttributeReads(
       const abAny = allocLocal(fctx, `__rab_any_${fctx.locals.length}`, { kind: "anyref" });
       fctx.body.push({ op: "local.set", index: abAny });
       if (propName === "resizable") {
-        // IsResizableArrayBuffer is the native subtype identity and is
-        // intentionally unaffected by detachment. Keep the boolean tag on the
-        // ValType so an escaped value boxes as true/false, not numeric 1/0.
-        fctx.body.push({ op: "local.get", index: abAny });
-        fctx.body.push({ op: "ref.test", typeIdx: rabTypeIdx });
+        // Keep the boolean tag on the ValType so an escaped value boxes as
+        // true/false, not numeric 1/0.
+        fctx.body.push(...arrayBufferResizableInstrs(rabTypeIdx, abAny));
         return { kind: "i32", boolean: true };
       }
-      // maxByteLength: detached -> 0; otherwise resizable field 2 or fixed
-      // byteLength field 0.
-      fctx.body.push({ op: "local.get", index: abAny });
-      fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
-      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-      fctx.body.push({ op: "i32.const", value: 0 });
-      fctx.body.push({ op: "i32.lt_s" });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } as ValType },
-        then: [{ op: "i32.const", value: 0 }],
-        else: [
-          { op: "local.get", index: abAny },
-          { op: "ref.test", typeIdx: rabTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } as ValType },
-            then: [
-              { op: "local.get", index: abAny },
-              { op: "ref.cast", typeIdx: rabTypeIdx },
-              { op: "struct.get", typeIdx: rabTypeIdx, fieldIdx: 2 },
-            ],
-            else: [
-              { op: "local.get", index: abAny },
-              { op: "ref.cast", typeIdx: vecTypeIdx },
-              { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-            ],
-          },
-        ],
-      });
+      fctx.body.push(...arrayBufferMaxByteLengthInstrs(vecTypeIdx, rabTypeIdx, abAny));
       if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
       return ctx.fast ? { kind: "i32" } : { kind: "f64" };
     }
@@ -1112,35 +1061,11 @@ export function tryBufferViewAttributeReads(
         }
         const lenTmpBL = allocLocal(fctx, `__bl_len_${fctx.locals.length}`, { kind: "anyref" });
         fctx.body.push({ op: "local.set", index: lenTmpBL });
-        fctx.body.push({ op: "local.get", index: lenTmpBL });
-        fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "val", type: { kind: "i32" } as ValType },
-          then: [
-            { op: "local.get", index: lenTmpBL },
-            { op: "ref.cast", typeIdx: vecTypeIdx },
-            { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-            // A detached ArrayBuffer stores -1 as its canonical native marker;
-            // the public byteLength accessor observes zero.
-            { op: "i32.const", value: 0 },
-            { op: "local.get", index: lenTmpBL },
-            { op: "ref.cast", typeIdx: vecTypeIdx },
-            { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-            { op: "i32.const", value: 0 },
-            { op: "i32.ge_s" },
-            { op: "select" },
-          ],
-          // (#5349 r3) A statically "ArrayBuffer" receiver whose runtime value is
-          // the packed-byte VIEW carrier. Until round 2 branded the two vec
-          // structs apart this hit the `then` arm by canonicalization and read
-          // the right number; now it misses and answers 0 where node answers the
-          // view's byte length (`var b=new ArrayBuffer(8); b=new Uint8Array(8);
-          // b.byteLength` → node 8, main 8, round 2 0). One byte per element, so
-          // field 0 IS the byte length. Emitted only when the carrier is already
-          // registered, so a module without one is byte-identical.
-          else: buildPackedByteLengthElse(ctx, lenTmpBL),
-        });
+        // Detached (-1) reads as 0. (#5349 r3) A statically "ArrayBuffer"
+        // receiver whose runtime value is the packed-byte VIEW carrier misses
+        // the vec test and is answered by the else arm: `var b = new
+        // ArrayBuffer(8); b = new Uint8Array(8); b.byteLength` → 8, as node.
+        fctx.body.push(...byteVecLengthInstrs(vecTypeIdx, lenTmpBL, buildPackedByteLengthElse(ctx, lenTmpBL)));
         if (bytesPerElem !== 1) {
           fctx.body.push({ op: "i32.const", value: bytesPerElem });
           fctx.body.push({ op: "i32.mul" });
