@@ -13211,6 +13211,14 @@
       "nextBoundary": "Frontend source-shape classifier for the top-level `var` lists the module initializer models and the bindings they declare (#7106 S5); move with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
+      "path": "src/shared/var-declaration-lists.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape predicates: the `var`-kind list test (shared by IR and codegen analyses) and the top-level `var` lists (statement and `for` head) the module initializer models (#7106 lever L), shared by the IR and legacy's module-global registration; moves with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/ir/string-method-surface.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
