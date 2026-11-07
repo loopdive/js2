@@ -5909,6 +5909,214 @@ the eval rows fail locally with "quickjs provider is not built".
     observed even by legacy code: the gap A3's focused probes recorded.
   - The test therefore pins the boundary decision, not the value.
 
+### A3 implementation — write-precise eval liveness (2026-11-06)
+
+Branch `claude/7106-eval-a3`, stacked on A1 (#7136, da9e4611b0), because A3
+relies on A1's per-unit boundary and pre-seal value targets. It follows the
+plan on `claude/7106-eval-a2-plan` (bcfdb27dbb).
+
+#### Changes
+
+- **One literal-source write scan.** `literalSourceWrites`
+  (`src/ir/runtime-eval-boundary-plan.ts`) parses each literal fragment
+  once. The plan exposes the result as `dynamicSourceWrites`, and folds an
+  unnameable fragment into `unknownDynamicSource`.
+  - A name counts as written when it is an assignment, `++`/`--` or
+    `for-in`/`of` target, a declared name, an object-literal key or a string
+    literal.
+  - A fragment is unnameable when it has a computed assignment target, a
+    `defineProperty`/`defineProperties`/`assign`/`set` call, or a nested
+    `eval`/`Function`.
+  - `registerReassignedFunctionGlobals` drops its inline
+    `mentionedByDynamicSource` substring search and reads
+    `dynamicSourceWrites`. `dynamicSourceFragments` leaves the plan, since it
+    had no other reader.
+- **`(0, eval)`.** `isDirectCalleeIntrinsicValue` now walks through the
+  parentheses, so the comma callee is the indirect eval's callee, not an
+  escaped `eval` value. A bare `eval` read anywhere else still escapes.
+- **Function-object values under the push.**
+  - The blanket `runtimeEvalGlobalFunctionBindings` checks in
+    `ir-imported-call-planning.ts` go:
+    - `makeIrFunctionObjectValueResolver`;
+    - `hasPreparedFunctionObjectReference`;
+    - the receiver planner;
+    - `planIrFunctionValueResolverState`.
+  - Their per-declaration `reassignedFunctionDeclarations` checks already
+    refuse every live function.
+  - A fifth copy sat in `planMemberClosure`
+    (`function-member-closure-planning.ts`). It becomes
+    `runtimeEvalMayRebindClosureSite`: refused only when a source is computed
+    or a literal one writes the member or var name.
+  - That fifth copy was the "closure-return-type on
+    `assert._isSameValue = function (a, b) {…}`" blocker the plan asked to
+    diagnose: the member closure had no plan under the push. It is part of
+    this lever, not a separate one.
+- **S3c self-guarded constructor.**
+  - `selfGuardedConstructorsLeaveFnctor(ctx)` (whole-program) becomes
+    `selfGuardedConstructorLeavesFnctor(ctx, decl)`.
+  - It stands down only when a computed source exists, or a literal source
+    writes that constructor's name. The pr-6844 identity split needs a live
+    binding, so this keeps the guard exact.
+  - Its users all pass the declaration: the escape gate's `leavesFnctor`
+    parameter, `calleeIsStandaloneSelfGuardedConstructor`,
+    `irFunctionThisStrictness` and `irSelfGuardedConstructorValue`.
+- **Shared-wrapper identity: not needed.** The focused identity probes
+  (below) pass with the push unchanged, so neither the shared wrapper nor
+  the mention-based fallback was implemented.
+  - I did not trace why the published carrier compares equal to the IR
+    value. The probes are the evidence, not a proof of the mechanism.
+  - If a later shape breaks identity, add the shared wrapper then.
+- **Left for A2.** One more blanket check stays:
+  `preparedModuleInitMemberEvidence` in `ir-imported-call-planning.ts`. It
+  is module-init only, and A1 still withdraws module init in eval programs.
+
+#### Measurement
+
+Setup: niced, one process, standalone unless stated. The verdicts use the
+interpreter provider (`JS2WASM_EVAL_ENGINE=interpreter
+TEST262_FULL_RUNTIME_EVAL=1`), built per tree.
+
+| check | result |
+| --- | --- |
+| 141 eval files, standalone verdicts | 0 pass→fail (101 pass / 40 fail, same as base) |
+| 141 eval files, JS host verdicts | 0 pass→fail (98 pass / 43 fail, same as base) |
+| 141 eval files, compile (standalone and JS host) | 141 / 141 each, 0 post-claim errors |
+| IR units on the 141 | 513 → 830. `assert` IR in 89 files, `compareArray` 90, `Test262Error` 90, `isNegativeZero` back to 91 |
+| IR-only files on the 141 | 0 (expected: module init is still withdrawn wholesale until A2) |
+| 40-file non-eval control | 40 / 40 byte-identical to the A1 head da9e4611b0 |
+
+13 focused probes, run on standalone and the JS host against the A1 head:
+
+- identical verdicts on both lanes;
+- passing: `assert === (0,eval)("assert")`, `e.constructor === Test262Error`
+  on both the IR side and the eval side, an eval-written `assert.extraProp`
+  visible to IR, a read-only mention, and a computed source;
+- failing on base as well:
+  - eval rebinding of a top-level function (`f = …`, `defineProperty`,
+    an Annex B block function, `Function(...)`, `this['f']`);
+  - `assert.throws` called from inside eval code.
+
+  These are legacy provider gaps, not A3.
+
+60-file census (`JS2WASM_IR_SHAPE_DIAG=1`):
+
+- `assert`, `compareArray` and `Test262Error` are IR in 36 / 60 files.
+- In the other 24, every function stays live (a computed source, or an
+  unnameable fragment).
+- `<module-init>` is the sole blocker in 32 files. What is left is A2's
+  ground: eval-visible slots, sites, and direct eval inside functions.
+
+#### Tests
+
+- New: `tests/issue-7106-runtime-eval-a3-liveness.test.ts`. It pins:
+  - a read-only mention leaves `f`, `g` and `run` on the IR;
+  - each write form, plus computed, nested and escaped sources, keeps them
+    live;
+  - the harness function objects stay on the IR under the push;
+  - an eval-written `Test262Error` keeps the constructor off the
+    self-guarded route.
+
+#### Review round 1 (#7146)
+
+- **Soundness.** A fragment could reach `eval` / `Function` without naming
+  them (`(function(){}).constructor(…)`, `[].constructor.constructor(…)`,
+  `this["ev" + "al"](…)`), so its writes went unseen.
+  - The fragment scan now runs the plan's own site visitor
+    (`visitRuntimeEvalSites`, extracted from the builder). A literal nested
+    source is scanned recursively; a computed one is unnameable.
+  - Any `.constructor(…)` call and any computed-member call in a fragment is
+    unnameable.
+  - The six review repros, plus the generator-constructor spelling, keep
+    `f` and `g` live (test rows).
+- **Fewer walkers.** Write targets come from the shared
+  `identifierWritesOf` / `isStoreTarget` (`src/shared/binding-writes.ts`).
+  The private declared-name, string-literal and object-key rules are gone.
+- **Program-level reaches (pre-existing).**
+  - `globalThis.eval(src)` / `this.eval` / `globalThis["eval"]` now record
+    their argument as a fragment; any other use counts as a computed source.
+  - `(function(){}).constructor(src)` in the program records a
+    `function-constructor` site.
+- **Nits.** Dropped the impossible `decl.name?.text ?? ""` fallback;
+  `isPropertyDefiningCall` matches `.set` only on `Reflect`.
+- **Measured** (head fd24068b24): units on the 141 unchanged at 830, 141 /
+  141 compile with 0 post-claim errors, the 40-file control byte-identical.
+  Interpreter-provider verdicts: 0 pass→fail on standalone (101 / 40) and on
+  the JS host (98 / 43).
+
+#### Review round 2 (#7146)
+
+- **HIGH — a variable member key.** `this[k] = …` recorded the variable `k`
+  as the written name.
+  - Now `memberKeyName` names a property access by its `.name`, and an
+    element access only by a string-literal key.
+  - Any other key is unknown.
+- **MEDIUM — `%Function%` through a stored or forwarded `.constructor`.**
+  `var c = (…).constructor; c(…)`, `Object.constructor`, `.call` / `.apply`,
+  and `new (Object.constructor)(…)` escaped the call-only check.
+  - Any `.constructor` read in a fragment (`X.constructor` or
+    `X["constructor"]`) now makes the fragment unknown, called or not.
+  - That read replaces the call-only test, and the scan has one fewer rule.
+- **LOW — member closures.**
+  - A `delete` of `X.m` / `X["m"]` counts as a write of `m`.
+  - `__defineGetter__` / `__defineSetter__` join the property-defining calls,
+    which count as unknown.
+- **LOW — program-level `.constructor` reaches: follow-up, not fixed here.**
+  The cases are `Object.constructor("…")()`, `g.constructor("…")()`,
+  `var c = (…).constructor; c(…)` and `.call`.
+  - The fragment rule ("any `.constructor` read") is not cheap at program
+    level: the harness itself reads `.constructor` (`assert.throws`,
+    `e.constructor === Test262Error`). Every eval file would become unknown,
+    and A3's gain would be lost.
+  - A precise version needs a receiver test (a value that is a function) that
+    the oracle can answer, plus a site kind for a non-call escape. That is
+    its own change.
+- **Nit.** The "single immutable runtime-eval routing authority" comment is
+  back above `buildIrRuntimeEvalBoundaryPlan`.
+- **Also ported:** the A1 self-reference forward fix
+  (`claude/7106-eval-a1-selfref`), by merging that branch. It brings in
+  origin/main.
+- **Tests:** eight new rows: the variable key, the five `.constructor`
+  spellings, a member delete, and a getter definition. All eight fail on the
+  round-1 scan.
+- **Measured** (base = round 1 merged with origin/main, 61c6fb5d67):
+  - the 141 eval files and the 40-file control are byte-identical (standalone);
+  - IR units unchanged at 830 on the 141 and 344 on the control, with 0
+    post-claim errors on the 141;
+  - the interpreter provider built from each tree is byte-identical, so the
+    verdicts cannot differ from the base.
+
+  None of the 141 has these spellings in an eval string, so the stricter
+  scan costs nothing measurable.
+
+#### Review round 3 (#7146)
+
+- **Token-level `constructor` rule.** `mayNameConstructor` replaces the
+  `.constructor` read rule. A fragment is unknown when any token in it may
+  name `constructor`:
+  - the identifier or property name itself (a member, a destructuring key,
+    a `with`-scoped call);
+  - a string literal containing it (`Reflect.get(f, "constructor")`,
+    `getOwnPropertyDescriptor(…, "constructor")`);
+  - a name the scan cannot read without evaluating it: a `+` / `+=` with a
+    string operand, or a template with substitutions.
+- **Concatenation is not evaluated, so the operator itself counts as
+  unknown.** `'constr' + 'uctor'` and `` `constr${x}` `` count as unknown.
+- **Not caught (recorded follow-up).** A name built without `+`
+  (`["constr", "uctor"].join("")`, `String.fromCharCode(…)`), then used as a
+  computed member key or passed to a reflective API.
+  - A first cut also counted every computed member READ as unknown.
+  - That over-fired on `arr[ind]` in `for-in/S12.6.4_A3.1.js` (8 → 2 units),
+    so it was dropped. A computed member store stays unknown.
+  - Closing this residue needs real evaluation, or a rule that every call
+    and computed key can build a name.
+- **Tests:** five new rows (concatenated key, `Reflect.get`, destructuring,
+  `with`, the descriptor `.value`), all failing on round 2.
+- **Measured** (against round 2, 0db798be87):
+  - the 141 eval files and the 40-file control are byte-identical
+    (standalone);
+  - IR units are 830 on the 141 and 344 on the control;
+  - 0 post-claim errors on the 141.
+
 ### A2 and A3 (outline; each gets its own measured plan before code)
 
 - **A2.**
