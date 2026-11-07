@@ -209,6 +209,27 @@ try { h(); throw "no throw"; } catch (e) { if (!(e instanceof RangeError)) throw
     expected: "completed",
     irUnits: ["h"],
   },
+  "review B1: a throwing callee restores the caller's receiver": {
+    source: `var out = "";
+var o = { v: 1, m: function () { try { h(); } catch (e) {} out += this.v; } };
+var f = function () { throw 1; };
+function h() { f(); }
+o.m();
+if (out !== "1") throw "this";`,
+    expected: "completed",
+    irUnits: ["h"],
+  },
+  "review B2: a checker-string += over a dynamic module var compiles": {
+    source: `var out = "";
+var f;
+f = 5;
+function h() { return 1; }
+h();
+out += "a" + f;
+if (out !== "a5") throw "out";`,
+    expected: "completed",
+    irUnits: ["h"],
+  },
   "slice B: a value-position call keeps the legacy body": {
     source: `var p = function (v) { return v; };
 function h() { return p(3); }

@@ -1386,6 +1386,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
     ...(applyTail?.prologue() ?? []),
     ...buildMethodDispatchPrologue(ctx, arity, anyLocal, prevThisLocal, currentThisGlobalIdx),
   ];
+  const guardedFrom = body.length; // (#7287 review B1) the installed receiver's extent
 
   const npArgs = {
     anyLocal,
@@ -1678,6 +1679,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   body.push({ op: "local.get", index: prevThisLocal });
   body.push({ op: "global.set", index: currentThisGlobalIdx });
   body.push({ op: "local.get", index: resultSaveLocal });
+  body.push(restoreThisOnThrow(body.splice(guardedFrom), prevThisLocal, currentThisGlobalIdx));
 
   const internalOnly = arity > CLOSURE_METHOD_CALL_PUBLISHED_MAX_ARITY;
   const dispatcherFunc = {
@@ -1751,6 +1753,25 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
     name: argcExportName,
     desc: { kind: "func", index: argcFuncIdx },
   });
+}
+
+/**
+ * (#7287 review B1) Run a method dispatch whose `__current_this` was installed
+ * so that an exception unwinding through it restores the caller's receiver
+ * before it propagates: a caller that catches it reads its own `this`.
+ */
+function restoreThisOnThrow(dispatch: Instr[], prevThisLocal: number, currentThisGlobalIdx: number): Instr {
+  return {
+    op: "try",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    body: dispatch,
+    catches: [],
+    catchAll: [
+      { op: "local.get", index: prevThisLocal },
+      { op: "global.set", index: currentThisGlobalIdx },
+      { op: "rethrow", depth: 0 },
+    ],
+  };
 }
 
 /**

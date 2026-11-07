@@ -29,11 +29,19 @@ loc-budget-allow:
   # propertyHelper alias arms and limited to statement position on both sides.
   - src/ir/from-ast.ts
   - src/ir/select.ts
+  # 2026-11-07 (#7287 review B1): +21 — `__call_fn_method_N` restores the
+  # caller's `__current_this` when the dispatch throws (`restoreThisOnThrow`,
+  # one try/catch_all around the existing dispatch). The dispatcher body is
+  # assembled inline in this file; the wrapper is its own function.
+  - src/codegen/closure-exports.ts
 func-budget-allow:
   # 2026-11-06 (#7287 slice B): one arm each in the existing call dispatchers;
   # splitting `lowerCall` / `buildLocalCallGraph` is its own refactor.
   - src/ir/from-ast.ts::lowerCall
   - src/ir/select.ts::buildLocalCallGraph
+  # 2026-11-07 (#7287 review B1): +2 — the guarded-extent mark and the
+  # `restoreThisOnThrow` call around the dispatch it already assembles.
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
 ---
 
 # #7287: a script `var` holding a function expression, callable from IR units
