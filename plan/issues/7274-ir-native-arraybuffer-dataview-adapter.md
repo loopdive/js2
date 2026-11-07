@@ -512,7 +512,7 @@ any var with a non-DataView write.
 | Byte identity, raw compiles of all 561 `built-ins/DataView` files × gc / standalone / wasi / standalone-noIR / wasi-noIR | 2805/2805 identical (the legacy extraction is byte-neutral) |
 | Byte identity, playground corpus × 3 lanes and the 344-file buffer corpus × 5 lanes, vs a84cddb1 and vs main | all identical |
 | test262 A/B, all 561 `built-ins/DataView` + 221 `built-ins/ArrayBuffer` + 299 random, gc + standalone, plus wasi / standalone compile + imports | **0 status changes**, 0 compile or import differences; 52 files newly claim `<module-init>` on standalone, all 52 pass |
-| Wrapped ledger, stride 40, standalone | pending (base run in progress) |
+| Wrapped ledger, stride 40, standalone | zero-legacy 35 → 37 (+2: `DataView/prototype/byteLength/return-bytelength.js`, `DataView/prototype/getInt32/return-values.js`, the two slice-2 targets); compileOk 1118 = 1118; invariants 0 = 0; `select:body-shape-rejected` 1924 → 1922; no other reason moves |
 | 31 adversarial probes × gc / standalone / wasi | every cell identical to base |
 | `tests/issue-7274-ir-native-arraybuffer.test.ts` + `tests/issue-4461.test.ts` | 31/31 |
 
