@@ -24,7 +24,7 @@ that from-ast lowers with an `f64` hint: unary `-null`, and an object literal
 field `{ a: null }`. from-ast's null arm lowers `null` only into a reference
 consumer (`nullValueAdmissible`), so it withdraws the unit after the claim
 (`irPostClaimErrors`). The output is still correct (legacy fallback), but this
-breaks the claim-then-withdraw rule (the "#7147 standard" in the #7164 review).
+breaks the claim-then-withdraw rule (set in the [#7147 PR review](https://github.com/loopdive/js2/pull/7147): a selector admission that from-ast then rejects counts as a blocker).
 
 ## Repro (bare compile; standalone, wasi and gc alike)
 

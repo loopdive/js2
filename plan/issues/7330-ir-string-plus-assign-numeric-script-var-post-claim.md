@@ -25,7 +25,7 @@ producer string evidence plus an encoding for the right-hand side. A number
 has neither, so the unit is withdrawn after the claim (`irPostClaimErrors`).
 The output is still correct, because the unit falls back to legacy, but the
 selector admits what from-ast rejects. This is the claim-then-withdraw rule
-(the "#7147 standard" in the #7164 review).
+(set in the [#7147 PR review](https://github.com/loopdive/js2/pull/7147): a selector admission that from-ast then rejects counts as a blocker).
 
 ## Repro (bare compile; standalone, wasi and gc alike)
 
