@@ -23,6 +23,7 @@
  *                                       [--limit N]   # cap test262 files (smoke runs)
  *                                       [--jobs N]    # worker processes (default: cores - 1)
  *                                       [--wrapped]   # #7240: compile test262 files as the runner does
+ *                                       [--files-json <path>]  # #7249: per-file rows (wrapped only)
  *
  * The test262 files are split round-robin over `--jobs` worker processes (one
  * compile per process at a time); the merged tallies do not depend on N.
@@ -59,6 +60,12 @@
  * first refusal as `detail` (e.g. `expr-ident-not-in-scope:Identifier «assert»`);
  * the ledger then also tallies `unsupportedDetails` (both modes, and per
  * origin). Without the variable the key is absent, so default output is unchanged.
+ *
+ * Wrapped mode also predicts `ir_only_pass` per file (#7249, see
+ * scripts/ir-claim-ledger-files.mts): the summary gains `zeroLegacyFiles` and
+ * `legacyUnitHistogram`, and `--files-json <path>` (repo-relative) writes one
+ * row per compiled test262 file naming its legacy units. Workers return their
+ * rows inside the partial population; only the parent writes files.
  */
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -67,6 +74,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compile, type CompileOptions, type IrObservedOutcome } from "../src/index.js";
+import { fileRow, legacySummary, type FileRow, type UnitOrigin } from "./ir-claim-ledger-files.mjs";
 
 /** Loaded only under `--wrapped`, so raw mode never imports the runner. */
 type Runner = typeof import("../tests/test262-runner.js");
@@ -96,6 +104,7 @@ interface Args {
   readonly limit: number | undefined;
   readonly jobs: number;
   readonly wrapped: boolean;
+  readonly filesJson: string | undefined;
   /** Internal: `i/N` — measure only test262 files with index % N === i and write the partial to `workerOut`. */
   readonly worker: { readonly index: number; readonly count: number } | undefined;
   readonly workerOut: string | undefined;
@@ -119,6 +128,7 @@ function parseArgs(argv: readonly string[]): Args {
   if (argv.includes("--wrapped") && target !== "standalone") {
     throw new Error(`--wrapped models the runner's --target standalone compile only, got --target ${target}`);
   }
+  if (argv.includes("--files-json") && !argv.includes("--wrapped")) throw new Error("--files-json requires --wrapped");
   return {
     stride,
     target,
@@ -126,6 +136,7 @@ function parseArgs(argv: readonly string[]): Args {
     limit,
     jobs,
     wrapped: argv.includes("--wrapped"),
+    filesJson: value("--files-json"),
     worker: workerMatch ? { index: Number(workerMatch[1]), count: Number(workerMatch[2]) } : undefined,
     workerOut: value("--worker-out"),
   };
@@ -200,9 +211,12 @@ interface Population {
   skippedReasons?: Counts;
   /** Wrapped mode only: the same tallies split by unit origin. */
   byOrigin?: Record<UnitOrigin, OriginTally>;
+  /** Wrapped mode only (#7249): one row per compiled file; the parent moves them to `--files-json`. */
+  fileRows?: FileRow[];
+  zeroLegacyFiles?: number;
+  legacyUnitHistogram?: ReturnType<typeof legacySummary>["legacyUnitHistogram"];
 }
 
-type UnitOrigin = "harness" | "test";
 interface OriginTally {
   units: number;
   byOutcomeKind: Counts;
@@ -227,8 +241,13 @@ function emptyOriginTally(): OriginTally {
   };
 }
 
-function emptyWrappedFields(): Required<Pick<Population, "skipped" | "skippedReasons" | "byOrigin">> {
-  return { skipped: 0, skippedReasons: {}, byOrigin: { harness: emptyOriginTally(), test: emptyOriginTally() } };
+function emptyWrappedFields(): Required<Pick<Population, "skipped" | "skippedReasons" | "byOrigin" | "fileRows">> {
+  return {
+    skipped: 0,
+    skippedReasons: {},
+    byOrigin: { harness: emptyOriginTally(), test: emptyOriginTally() },
+    fileRows: [],
+  };
 }
 
 /** #7240: `<module-init>` runs the test body; any other unit is `test` iff it starts past the harness prefix. */
@@ -380,11 +399,17 @@ async function tallyCompile(
   } catch {
     population.threw += 1;
     population.threwFiles.push(path);
+    population.fileRows?.push(fileRow(path, false, [], () => "test"));
     return;
   }
   if (result.success) population.compileOk += 1;
   else population.compileFail += 1;
   const outcomes = result.irOutcomes ?? [];
+  if (bodyLineOffset !== undefined) {
+    population.fileRows?.push(
+      fileRow(path, result.success, outcomes, (outcome) => unitOrigin(outcome, bodyLineOffset)),
+    );
+  }
   if (outcomes.length === 0) {
     population.noTelemetry += 1;
     population.noTelemetryFiles.push(path);
@@ -430,12 +455,17 @@ function finishOrigin(tally: OriginTally): OriginTally {
   };
 }
 
-function finishWrapped(population: Population): Pick<Population, "skipped" | "skippedReasons" | "byOrigin"> {
+function finishWrapped(
+  population: Population,
+): Pick<Population, "skipped" | "skippedReasons" | "byOrigin" | "fileRows" | "zeroLegacyFiles" | "legacyUnitHistogram"> {
   const { harness, test } = population.byOrigin!;
+  const fileRows = [...population.fileRows!].sort((a, b) => a.file.localeCompare(b.file));
   return {
     skipped: population.skipped,
     skippedReasons: sorted(population.skippedReasons ?? {}),
     byOrigin: { harness: finishOrigin(harness), test: finishOrigin(test) },
+    ...legacySummary(fileRows),
+    fileRows,
   };
 }
 
@@ -472,6 +502,7 @@ function mergeWrapped(into: Population, from: Population): void {
   if (!into.byOrigin) Object.assign(into, emptyWrappedFields());
   into.skipped! += from.skipped ?? 0;
   mergeCounts(into.skippedReasons!, from.skippedReasons ?? {});
+  into.fileRows!.push(...from.fileRows!);
   for (const origin of ["harness", "test"] as const) {
     const target = into.byOrigin![origin];
     const source = from.byOrigin![origin];
@@ -564,7 +595,8 @@ async function main(): Promise<void> {
   // Workers start first; the playground compiles in this process meanwhile.
   const test262Pending = measureTest262(args, corpus.test262);
   for (const path of corpus.playground) await measure(path, args.target, playground);
-  const test262 = await test262Pending;
+  const { fileRows, ...test262 } = finish(await test262Pending);
+  if (args.filesJson) writeFileSync(join(REPO_ROOT, args.filesJson), `${JSON.stringify(fileRows, null, 2)}\n`);
   const ledger = {
     schemaVersion: SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
@@ -586,7 +618,7 @@ async function main(): Promise<void> {
     jobs: args.jobs,
     seconds: Math.round((Date.now() - started) / 1000),
     playground: finish(playground),
-    test262: finish(test262),
+    test262,
   };
   writeFileSync(join(REPO_ROOT, args.out), `${JSON.stringify(ledger, null, 2)}\n`);
   const route = ledger.test262.byBodyRoute;
@@ -597,7 +629,8 @@ async function main(): Promise<void> {
       `no telemetry ${ledger.test262.noTelemetry} files` +
       (ledger.test262.byOrigin
         ? `; harness units ${ledger.test262.byOrigin.harness.units}, test units ${ledger.test262.byOrigin.test.units}` +
-          `, skipped ${ledger.test262.skipped} files`
+          `, skipped ${ledger.test262.skipped} files; zero-legacy ${ledger.test262.zeroLegacyFiles} files ` +
+          JSON.stringify(ledger.test262.legacyUnitHistogram)
         : "") +
       `; ${ledger.seconds}s → ${args.out}\n`,
   );

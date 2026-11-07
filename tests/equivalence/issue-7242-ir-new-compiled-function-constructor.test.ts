@@ -9,6 +9,9 @@
 // signature has no flow evidence, and the planner used to refuse the value
 // plan, so the claimed body demoted at build (`unknown class "MyErr"`). The
 // plan now takes the opaque all-dynamic signature, as a receiver use does.
+// Since #7251 the mixed-caller `MyErr` below is itself IR-claimed (its `||`
+// operand param projects legacy's externref); its `union` lattice signature
+// does not resolve, and the value plan takes the opaque signature again.
 // Inside a class method the planner mints the plan too since #7243, and the
 // member compiles on the post-direct overlay.
 //

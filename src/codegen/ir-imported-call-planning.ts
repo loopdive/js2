@@ -900,10 +900,10 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
                       : resolvePositionType(returnNode, claim?.typeEntry.returnType, classShapeSidecar),
                 };
               } catch (error) {
-                // (#7106 Stage 4) Evidence that does not resolve (a JSDoc
-                // `{object}` parameter) is no signature either: a receiver-only
-                // or stored use never reads it, so it takes the opaque one.
-                if (error instanceof IrUnsupportedError && (isReceiver || isStoredValue)) return undefined;
+                // (#7106 Stage 4, #7251) Evidence that does not resolve (a JSDoc
+                // `{object}` parameter, a `union` lattice) is no signature
+                // either; no use of an `objectReceiver` plan reads it (above).
+                if (error instanceof IrUnsupportedError) return undefined;
                 throw error;
               }
             };

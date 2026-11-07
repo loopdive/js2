@@ -21,7 +21,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { mergeNpmPerfHistory } from "../scripts/lib/npm-compat-perf.mjs";
+import { mergeNpmPerfHistory, npmPerfHistoryPoint } from "../scripts/lib/npm-compat-perf.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const HISTORY_PATH = resolve(ROOT, "benchmarks", "results", "npm-compat-history.json");
@@ -162,7 +162,13 @@ describe("npm-compat history producers", () => {
   });
 
   it("unions the pending and landed copies before force-updating the promotion branch", () => {
-    const workflow = executable(readFileSync(resolve(ROOT, ".github/workflows/npm-compat-refresh.yml"), "utf-8"));
+    let workflow = executable(readFileSync(resolve(ROOT, ".github/workflows/npm-compat-refresh.yml"), "utf-8"));
+    const reusablePromotion = /^\s+uses:\s+\.\/\.github\/workflows\/npm-compat-promote\.yml\s*$/m;
+    if (reusablePromotion.test(workflow)) {
+      // Follow only the real reusable promotion edge; older workflows remain inline.
+      expect(workflow).toMatch(reusablePromotion);
+      workflow = executable(readFileSync(resolve(ROOT, ".github/workflows/npm-compat-promote.yml"), "utf-8"));
+    }
     const union = workflow.indexOf("scripts/merge-npm-compat-history.mjs");
     const commit = workflow.indexOf('git add -f -- "${ARTIFACTS[@]}"');
 
@@ -172,4 +178,120 @@ describe("npm-compat history producers", () => {
     expect(union).toBeLessThan(commit);
     expect(workflow).toContain('for REF in deploykey/main "deploykey/${PROMOTION_BRANCH}"');
   });
+});
+
+// Fast and long-pole lanes can publish different measurements of one revision.
+// Exercise the coordinator and the subsequent pending/main history union.
+import { mergeNpmCompatPartials } from "../scripts/lib/npm-compat-partials.mjs";
+
+const laneRevision = "40007cf98a3c2fb34e21a3830b19996e8bcf4423";
+const slowStamp = "2026-11-06T00:06:00.329Z";
+const fastStamp = "2026-11-06T00:22:02.486Z";
+const preserveMeasurements = { preserveDistinctMeasurements: true };
+
+function lanePackage(name: string, ratio: number, measuredAt: string) {
+  return {
+    name,
+    measuredAt,
+    correctness: { status: "verified" },
+    perf: { lanes: { jsHost: { status: "measured", ratio, wasmUs: 1, nodeUs: ratio } } },
+  };
+}
+
+function assembleBothLanes() {
+  const slow = mergeNpmCompatPartials(
+    [{ sourceRevision: laneRevision, packages: [lanePackage("react-dom", 1, slowStamp)] }],
+    {
+      sourceRevision: laneRevision,
+      generatedAt: slowStamp,
+      expectedNames: ["acorn", "react-dom"],
+      existingPackages: [lanePackage("acorn", 2, "2026-11-05T23:00:00.000Z")],
+      allowStaleFallback: true,
+    },
+  );
+  const fast = mergeNpmCompatPartials(
+    [{ sourceRevision: laneRevision, packages: [lanePackage("acorn", 3, fastStamp)] }],
+    {
+      sourceRevision: laneRevision,
+      generatedAt: fastStamp,
+      expectedNames: ["acorn", "react-dom"],
+      existingPackages: slow.summary.packages,
+      existingHistory: slow.perfHistory,
+      allowStaleFallback: true,
+    },
+  );
+  return { slow, fast };
+}
+
+describe("npm-compat independent lane measurement identity", () => {
+  it("retains both timestamped measurements and keeps carried-forward packages out of the new point", () => {
+    const { slow, fast } = assembleBothLanes();
+    expect(fast.perfHistory.runs).toHaveLength(2);
+    expect(fast.perfHistory.runs[0]).toEqual(slow.perfHistory.runs[0]);
+    expect(fast.perfHistory.runs[1]).toMatchObject({
+      generatedAt: fast.summary.generatedAt,
+      sourceRevision: laneRevision,
+      packages: { acorn: { jsHost: { dynamic: 3 } } },
+    });
+    expect(Object.keys(fast.perfHistory.runs[1].packages)).toEqual(["acorn"]);
+    expect(fast.summary.packages.find((row: any) => row.name === "react-dom")?.measuredAt).toBe(slowStamp);
+  });
+
+  it("cannot replace the newer measurement when an older main or pending copy is unioned afterward", () => {
+    const { slow, fast } = assembleBothLanes();
+    const before = JSON.stringify({ slow, fast });
+    const union = mergeNpmPerfHistory(fast.perfHistory, slow.perfHistory.runs, preserveMeasurements);
+    expect(union).toEqual(fast.perfHistory);
+    expect(mergeNpmPerfHistory(slow.perfHistory, fast.perfHistory.runs, preserveMeasurements)).toEqual(union);
+    expect(mergeNpmPerfHistory(union, fast.perfHistory.runs, preserveMeasurements)).toEqual(union);
+    expect(JSON.stringify({ slow, fast })).toBe(before);
+  });
+
+  it("does not invent a new history measurement when every package is carried forward", () => {
+    const { fast } = assembleBothLanes();
+    const stale = mergeNpmCompatPartials([], {
+      sourceRevision: laneRevision,
+      generatedAt: "2026-11-06T00:30:00.000Z",
+      expectedNames: ["acorn", "react-dom"],
+      existingPackages: fast.summary.packages,
+      existingHistory: fast.perfHistory,
+      allowStaleFallback: true,
+    });
+    expect(stale.summary.refresh.freshCount).toBe(0);
+    expect(stale.perfHistory).toEqual(fast.perfHistory);
+  });
+});
+
+describe("npm-compat mixed-age committed report backfill", () => {
+  it("derives only fresh measurements from a mixed-age report", () => {
+    const fresh = lanePackage("acorn", 3, fastStamp);
+    const stale = { ...lanePackage("react-dom", 1, slowStamp), refresh: { status: "stale" } };
+    const point = npmPerfHistoryPoint([fresh, stale], fastStamp);
+    expect(Object.keys(point.packages)).toEqual(["acorn"]);
+    expect(point.packages.acorn.jsHost.dynamic).toBe(3);
+    expect(npmPerfHistoryPoint([stale], fastStamp).packages).toEqual({});
+  });
+
+  it.each([laneRevision, undefined])(
+    "keeps an existing timestamp's measurement on backfill replay (provenance %s)",
+    (sourceRevision) => {
+      const original = {
+        generatedAt: fastStamp,
+        ...(sourceRevision ? { sourceRevision } : {}),
+        packages: { acorn: { jsHost: { dynamic: 3 }, standalone: {} } },
+      };
+      const replay = {
+        generatedAt: fastStamp,
+        recordedIn: "a-recording-commit",
+        packages: { acorn: { jsHost: { dynamic: 99 } }, "react-dom": { jsHost: { dynamic: 1 } } },
+      };
+      const before = JSON.stringify(original);
+      const result = mergeNpmPerfHistory({ schemaVersion: 1, runs: [original] }, [replay], preserveMeasurements);
+      expect(result.runs).toHaveLength(1);
+      expect(result.runs[0].packages).toEqual(original.packages);
+      expect(result.runs[0].sourceRevision).toBe(sourceRevision);
+      expect(result.runs[0].recordedIn).toBe("a-recording-commit");
+      expect(JSON.stringify(original)).toBe(before);
+    },
+  );
 });

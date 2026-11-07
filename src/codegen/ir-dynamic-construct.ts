@@ -298,6 +298,11 @@ export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionNa
   return publishHelperFunction(ctx, helper);
 }
 
+/** (#7260) The strictness of a top-level function's code: the rule a dynamic PutValue follows. */
+export function irFunctionCodeStrictness(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
+  return isStrictFunction(fn, ctx.inferModuleStrictArguments);
+}
+
 /**
  * Selector/lowering predicate: may the IR read `this` inside `fn`, and with
  * which strictness? `undefined` = not on this lane / not this shape.
@@ -305,7 +310,7 @@ export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionNa
 export function irFunctionThisStrictness(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean | undefined {
   if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return undefined;
   if (!isSelfGuardedConstructor(fn)) return undefined;
-  return isStrictFunction(fn, ctx.inferModuleStrictArguments);
+  return irFunctionCodeStrictness(ctx, fn);
 }
 
 /**

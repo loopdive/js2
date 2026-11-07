@@ -48,7 +48,7 @@ for (const source of sources) {
   try {
     const other = JSON.parse(readFileSync(source, "utf-8"));
     const runs = Array.isArray(other) ? other : (other.runs ?? []);
-    history = mergeNpmPerfHistory(history, runs);
+    history = mergeNpmPerfHistory(history, runs, { preserveDistinctMeasurements: true });
     console.log(`[npm-compat] unioned ${runs.length} run(s) from ${source}`);
   } catch (error) {
     console.warn(`[npm-compat] could not read ${source}: ${error instanceof Error ? error.message : String(error)}`);
