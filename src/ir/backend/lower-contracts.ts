@@ -16,7 +16,7 @@ import type {
 } from "../nodes.js";
 import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
 import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
-import type { StringBuilderLowering } from "./wasm-string-builder.js";
+import type { StringBuilderLowering } from "../../backend/wasmgc/lowering/wasm-string-builder.js";
 import type {
   IrBoxedLowering,
   IrClassLowering,

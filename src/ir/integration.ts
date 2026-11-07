@@ -58,7 +58,7 @@ import {
 import { makeCalendarIrSelectionSupport } from "./calendar-selection-support.js";
 import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "./dom-capability.js";
 import { irBackendCapabilityQuery, projectIrBackendTargetProfile } from "./backend/legality.js";
-import type { StringBuilderLowering } from "./backend/wasm-string-builder.js";
+import type { StringBuilderLowering } from "../backend/wasmgc/lowering/wasm-string-builder.js";
 
 import {
   ensureAnyHelpers,
@@ -184,6 +184,7 @@ import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983)
 import {
   ambientGlobalFunctionProviderSymbol,
   ensureNativeStringHelpers,
+  nativeStringBuilderTypes,
   STANDALONE_STDOUT_APPEND_FN,
 } from "../codegen/native-strings.js";
 import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
@@ -8009,7 +8010,7 @@ function nativeStringBuilderLowering(
     throw new Error("ir/integration: native string builder helpers not registered");
   }
   return {
-    types: { data: ctx.nativeStrDataTypeIdx, flat: ctx.nativeStrTypeIdx, any: ctx.anyStrTypeIdx },
+    types: nativeStringBuilderTypes(ctx),
     helpers: { flatten, nextCap },
   };
 }

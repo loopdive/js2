@@ -24,13 +24,17 @@ loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/from-ast.ts
   - src/ir/lower-generic.ts
+  # 2026-11-07 (#7291 review nit 2): +6, `nativeStringBuilderTypes`, the one
+  # source of the builder type indices for legacy and the IR resolver; it sits
+  # beside `ensureNativeStringHelpers`, which integration.ts already imports.
+  - src/codegen/native-strings.ts
 func-budget-allow:
   # 2026-11-07 (#7291 step 2): one-line hooks to src/ir/lowering/string-builder.ts.
   - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/lower-generic.ts::emitInstrTree
   - src/ir/integration.ts::makeResolver
 import-cycles-allow:
-  - codegen->ir: 304 # 2026-11-07 (#7291): +1 edge over base 303 — legacy codegen/string-builder.ts imports the shared builder sequences from ir/backend/wasm-string-builder.ts (the IR layering gate forbids the reverse); #7288 also grants this pair, so whichever merges second re-states its grant as base+1
+  - ir->backend: 26 # 2026-11-07 (#7291): +1 edge over base 25 — ir/backend/wasmgc-emitter.ts (destined for backend-wasmgc) calls the shared builder sequences in backend/wasmgc/lowering/wasm-string-builder.ts
 ---
 
 # IR string-builder loop is 6–10× slower than legacy's buffer
@@ -90,7 +94,7 @@ backend, ~700–900 LOC).
 - The read loop snapshots the slot once through `__str_flatten`.
 
 ### Step 1 — shared emitters (done, `ebbdafbb`)
-`src/ir/backend/wasm-string-builder.ts`.
+`src/backend/wasmgc/lowering/wasm-string-builder.ts`.
 
 ### Step 2 — slot role + WasmGC scalar replacement
 1. **IR fact.** `IrSlotDef` (core/nodes.ts) gains
@@ -125,8 +129,8 @@ backend, ~700–900 LOC).
      - `string.char_at` → a bounds-checked `array.get_u` on the receiver's
        flat data. The bounds check is needed because `charAt` out of range is
        `""`. Legacy omits it; the IR must not.
-6. **Inliner.** inline-small `appendCalleeSlots` copies the role and remaps a
-   presize slot.
+6. **Inliner.** Nothing to do: `canInline` rejects every loop-bearing callee,
+   so a builder slot never reaches `appendCalleeSlots` (review, 2026-11-07).
 
 ### Step 3 — presize (#1761)
 - Move the checker-only part of legacy's `computePresizeInfo` into
@@ -157,7 +161,7 @@ backend, ~700–900 LOC).
   - async/generator (refused);
   - a surrogate pair split by `charAt`.
 - **Quality:**
-  - every instruction sequence comes from `ir/backend/wasm-string-builder.ts`;
+  - every instruction sequence comes from `backend/wasmgc/lowering/wasm-string-builder.ts`;
   - the role check lives in one verifier arm;
   - fresh-context adversarial review recorded in the PR body.
 
@@ -182,7 +186,7 @@ is legacy; typed `run(n: number)` is IR.
 | 2 | `run(n)` (legacy) | 2.0 | 2.0 | 2.1 |
 | 2 | `run(n: number)` (IR) | 4.4 | 3.6–3.9 | 3.7–3.9 |
 
-**Step 1** (shared emitters, `src/ir/backend/wasm-string-builder.ts`). Legacy
+**Step 1** (shared emitters, `src/backend/wasmgc/lowering/wasm-string-builder.ts`). Legacy
 output is byte-identical:
 - typed corpus 264/264 (gc/standalone/wasi);
 - 234 compiles of the builder fixtures extracted from the #1004/#1210/#1580/
@@ -224,3 +228,28 @@ The step also:
     `__str_concat_owned`.
 - **Cleanup:** `collectTerminatorUses` is folded into `core/nodes.ts` from
   identical copies in `verify.ts` and `lower-generic.ts`.
+
+**Step 2 review** (PR #7156, fresh-context review, 2026-11-07): approved with
+nits.
+- **Standalone test262 A/B**, 202 files (every 8th `built-ins/String` file
+  plus 50 `template-literal` files): 190 pass / 10 fail / 2 CE on base
+  `dc52abf7` and on head, with the same 12 non-pass files.
+- **Nits folded in:**
+  - one scratch type (`Pick<StringBuilderScratch, …>`) and one helpers type;
+  - the type-index literal now comes from `nativeStringBuilderTypes`
+    (`codegen/native-strings.ts`), used by legacy and by the IR resolver;
+  - the `StringBuilderInfo` alias is gone;
+  - the unreachable inliner role copy is reverted.
+- **Deferred:**
+  - scratch locals are allocated eagerly per builder slot (7 extra);
+  - the lowering trusts the verifier's `""` / single-use contract, so a
+    mismatch throws (fails closed).
+- **Moved:** the shared sequences now live in
+  `src/backend/wasmgc/lowering/wasm-string-builder.ts`, the canonical WasmGC
+  lowering home. That satisfies the compiler-boundaries inventory and removes
+  the codegen→ir import edge; the remaining +1 is `ir->backend`.
+- **Pre-existing legacy builder bugs** found by the review: filed as #7300.
+
+**Status:** stays `in-progress`. Step 3 (presize, #1761) is the next PR,
+stacked on #7156. Acceptance "IR ≥ legacy" is not met yet: 3.4–4.0 ms vs
+2.1 ms.

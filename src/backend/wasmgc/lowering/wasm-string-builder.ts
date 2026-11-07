@@ -8,7 +8,7 @@
  * (#1580). Each emitter is pure: the caller owns local allocation and passes
  * the slot indices in, so both front-ends emit the same bytes.
  */
-import type { Instr } from "../types.js";
+import type { Instr } from "../../../wasm/model/instructions.js";
 
 export interface StringBuilderSlots {
   readonly buf: number;
@@ -29,10 +29,27 @@ export interface StringBuilderTypes {
   readonly any: number;
 }
 
-/** Scratch locals of one append; `oldBuf` is required unless the builder is presized. */
-export interface StringBuilderAppendScratch {
+/** The native helpers a builder calls. */
+export interface StringBuilderHelpers {
+  readonly flatten: number;
+  readonly nextCap: number;
+}
+
+/** What the WasmGC resolver answers when the native string builder applies. */
+export interface StringBuilderLowering {
+  readonly types: StringBuilderTypes;
+  readonly helpers: StringBuilderHelpers;
+}
+
+/** A builder's scratch locals; `oldBuf` is required unless the builder is presized. */
+export interface StringBuilderScratch {
   readonly needed: number;
   readonly oldBuf?: number;
+  readonly rhs: number;
+  readonly rhsLen: number;
+  readonly cu: number;
+  readonly receiver: number;
+  readonly index: number;
 }
 
 /** A never-iterated builder wastes little; a few iterations do not grow it. */
@@ -93,8 +110,8 @@ export function stringBuilderPresizedAllocInstrs(
 export function stringBuilderAppendStringInstrs(
   t: StringBuilderTypes,
   sb: StringBuilderSlots,
-  scratch: StringBuilderAppendScratch & { readonly rhs: number; readonly rhsLen: number },
-  helpers: { readonly flatten: number; readonly nextCap: number },
+  scratch: Pick<StringBuilderScratch, "needed" | "oldBuf" | "rhs" | "rhsLen">,
+  helpers: StringBuilderHelpers,
 ): Instr[] {
   const { rhs, rhsLen, needed } = scratch;
   return [
@@ -131,7 +148,7 @@ export function stringBuilderAppendStringInstrs(
 export function stringBuilderAppendCodeUnitInstrs(
   t: StringBuilderTypes,
   sb: StringBuilderSlots,
-  scratch: StringBuilderAppendScratch & { readonly cu: number },
+  scratch: Pick<StringBuilderScratch, "needed" | "oldBuf" | "cu">,
   nextCap: number,
 ): Instr[] {
   const { cu, needed } = scratch;
@@ -159,8 +176,8 @@ export function stringBuilderAppendCodeUnitInstrs(
 export function stringBuilderAppendCharAtInstrs(
   t: StringBuilderTypes,
   sb: StringBuilderSlots,
-  scratch: StringBuilderAppendScratch & { readonly receiver: number; readonly index: number; readonly cu: number },
-  helpers: { readonly flatten: number; readonly nextCap: number },
+  scratch: Pick<StringBuilderScratch, "needed" | "oldBuf" | "cu" | "receiver" | "index">,
+  helpers: StringBuilderHelpers,
 ): Instr[] {
   const { receiver, index } = scratch;
   const field = (fieldIdx: number): Instr[] => [
@@ -219,7 +236,7 @@ export function stringBuilderReadInstrs(t: StringBuilderTypes, sb: StringBuilder
 function stringBuilderGrowInstrs(
   t: StringBuilderTypes,
   sb: StringBuilderSlots,
-  scratch: StringBuilderAppendScratch,
+  scratch: Pick<StringBuilderScratch, "needed" | "oldBuf">,
   nextCap: number,
 ): Instr[] {
   if (sb.presized) return [];
@@ -263,27 +280,4 @@ function stringBuilderCommitInstrs(t: StringBuilderTypes, sb: StringBuilderSlots
     { op: "ref.null", typeIdx: t.any },
     { op: "local.set", index: sb.mat },
   ];
-}
-
-/** The native helpers a builder calls. */
-export interface StringBuilderHelpers {
-  readonly flatten: number;
-  readonly nextCap: number;
-}
-
-/** What the WasmGC resolver answers when the native string builder applies. */
-export interface StringBuilderLowering {
-  readonly types: StringBuilderTypes;
-  readonly helpers: StringBuilderHelpers;
-}
-
-/** One builder's scratch locals, shared by all of its appends. */
-export interface StringBuilderScratch {
-  readonly needed: number;
-  readonly oldBuf: number;
-  readonly rhs: number;
-  readonly rhsLen: number;
-  readonly cu: number;
-  readonly receiver: number;
-  readonly index: number;
 }

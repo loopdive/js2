@@ -6,7 +6,7 @@
  */
 import type { BackendEmitter } from "../backend/emitter.js";
 import type { StringBuilderEmitter } from "../backend/string-contract.js";
-import type { StringBuilderScratch, StringBuilderSlots } from "../backend/wasm-string-builder.js";
+import type { StringBuilderScratch, StringBuilderSlots } from "../../backend/wasmgc/lowering/wasm-string-builder.js";
 import type { IrInstr, IrSlotDef, IrValueId } from "../core/nodes.js";
 import type { ValType } from "../types.js";
 

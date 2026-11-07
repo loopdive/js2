@@ -37,7 +37,7 @@ import {
   stringBuilderAppendStringInstrs,
   stringBuilderInitInstrs,
   stringBuilderReadInstrs,
-} from "./wasm-string-builder.js";
+} from "../../backend/wasmgc/lowering/wasm-string-builder.js";
 import type {
   BackendEmitter,
   BackendI32BitwiseOp,

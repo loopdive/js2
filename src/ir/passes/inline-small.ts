@@ -389,7 +389,7 @@ function appendCalleeSlots(callee: IrFunction, callerSlots: IrSlotDef[]): number
   if (defs.some((def, i) => def.index !== i)) return null;
   const offset = callerSlots.length;
   for (const def of defs) {
-    callerSlots.push({ ...def, index: offset + def.index, name: `${callee.name}$${def.name}` });
+    callerSlots.push({ index: offset + def.index, name: `${callee.name}$${def.name}`, type: def.type });
   }
   return offset;
 }

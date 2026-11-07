@@ -38,14 +38,14 @@ import {
   stringBuilderReadInstrs,
   stringBuilderResetInstrs,
   type StringBuilderSlots,
-  type StringBuilderTypes,
-} from "../ir/backend/wasm-string-builder.js";
+} from "../backend/wasmgc/lowering/wasm-string-builder.js";
 import { collectReferencedIdentifiers } from "./closures.js";
 import { allocLocal } from "./context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { compileExpression } from "./shared.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { nativeStrHelperHandle } from "./func-space.js";
+import { nativeStringBuilderTypes } from "./native-strings.js";
 import { readEnv } from "../env.js";
 
 /**
@@ -709,10 +709,10 @@ export function compileStringBuilderInit(
     cap: allocLocal(fctx, `${name}$cap`, { kind: "i32" }),
     mat: allocLocal(fctx, `${name}$mat`, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx }),
   };
-  const t = builderTypes(ctx);
+  const t = nativeStringBuilderTypes(ctx);
   // #1761: presize when the bound compiles to a number, else keep doubling.
   const presized = presize !== undefined && emitPresizedBufferAlloc(ctx, fctx, presize, { ...slots, presized: true });
-  const sb: StringBuilderInfo = { ...slots, presized };
+  const sb: StringBuilderSlots = { ...slots, presized };
   fctx.body.push(
     ...(presized ? stringBuilderResetInstrs(t, sb) : stringBuilderInitInstrs(t, sb, STRING_BUILDER_INITIAL_CAP)),
   );
@@ -729,7 +729,7 @@ function emitPresizedBufferAlloc(
   ctx: CodegenContext,
   fctx: FunctionContext,
   presize: StringBuilderPresizeInfo,
-  sb: StringBuilderInfo,
+  sb: StringBuilderSlots,
 ): boolean {
   // #1919 — a failed bound compile rolls back the body, locals, late imports
   // and errors it leaked.
@@ -743,18 +743,17 @@ function emitPresizedBufferAlloc(
     return false;
   }
   const boundTmp = allocLocal(fctx, `__sb_bound_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push(...stringBuilderPresizedAllocInstrs(builderTypes(ctx), sb, boundTmp, presize.unitsPerIter));
+  fctx.body.push(
+    ...stringBuilderPresizedAllocInstrs(nativeStringBuilderTypes(ctx), sb, boundTmp, presize.unitsPerIter),
+  );
   return true;
 }
-
-/** The slots of a `let s = ""` builder; the instruction shapes live in `ir/backend/wasm-string-builder.ts`. */
-export type StringBuilderInfo = StringBuilderSlots;
 
 /**
  * Append the `ref $AnyString` on the stack to the builder. The detector
  * matches `s += <expr>` only as a statement, so nothing is left on the stack.
  */
-export function compileStringBuilderAppend(ctx: CodegenContext, fctx: FunctionContext, sb: StringBuilderInfo): void {
+export function compileStringBuilderAppend(ctx: CodegenContext, fctx: FunctionContext, sb: StringBuilderSlots): void {
   // Resolve at emit time: an earlier `addImport` may have moved the helpers (#3909).
   const flatten = lookupModuleFuncByName(ctx, "__str_flatten");
   const nextCap = lookupModuleFuncByName(ctx, "__str_buf_next_cap");
@@ -766,7 +765,12 @@ export function compileStringBuilderAppend(ctx: CodegenContext, fctx: FunctionCo
   const needed = allocLocal(fctx, `__sb_needed_${fctx.locals.length}`, { kind: "i32" });
   const oldBuf = sb.presized ? undefined : allocOldBuf(ctx, fctx, "__sb_oldBuf_");
   fctx.body.push(
-    ...stringBuilderAppendStringInstrs(builderTypes(ctx), sb, { rhs, rhsLen, needed, oldBuf }, { flatten, nextCap }),
+    ...stringBuilderAppendStringInstrs(
+      nativeStringBuilderTypes(ctx),
+      sb,
+      { rhs, rhsLen, needed, oldBuf },
+      { flatten, nextCap },
+    ),
   );
 }
 
@@ -778,7 +782,7 @@ export function compileStringBuilderAppend(ctx: CodegenContext, fctx: FunctionCo
 export function emitStringBuilderAppendCodeUnit(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  sb: StringBuilderInfo,
+  sb: StringBuilderSlots,
 ): void {
   // #1761: a presized builder never grows and needs no growth helper.
   const nextCap = sb.presized ? 0 : lookupModuleFuncByName(ctx, "__str_buf_next_cap");
@@ -789,12 +793,14 @@ export function emitStringBuilderAppendCodeUnit(
   const cu = allocLocal(fctx, `__sb_cu_${fctx.locals.length}`, { kind: "i32" });
   const needed = allocLocal(fctx, `__sb_needed1_${fctx.locals.length}`, { kind: "i32" });
   const oldBuf = sb.presized ? undefined : allocOldBuf(ctx, fctx, "__sb_oldBuf1_");
-  fctx.body.push(...stringBuilderAppendCodeUnitInstrs(builderTypes(ctx), sb, { cu, needed, oldBuf }, nextCap));
+  fctx.body.push(
+    ...stringBuilderAppendCodeUnitInstrs(nativeStringBuilderTypes(ctx), sb, { cu, needed, oldBuf }, nextCap),
+  );
 }
 
 /** #1580 — push the builder's contents as `ref $NativeString`, cached in `mat`. */
-export function emitStringBuilderRead(ctx: CodegenContext, fctx: FunctionContext, sb: StringBuilderInfo): ValType {
-  fctx.body.push(...stringBuilderReadInstrs(builderTypes(ctx), sb));
+export function emitStringBuilderRead(ctx: CodegenContext, fctx: FunctionContext, sb: StringBuilderSlots): ValType {
+  fctx.body.push(...stringBuilderReadInstrs(nativeStringBuilderTypes(ctx), sb));
   return { kind: "ref", typeIdx: ctx.nativeStrTypeIdx };
 }
 
@@ -802,12 +808,8 @@ function allocOldBuf(ctx: CodegenContext, fctx: FunctionContext, prefix: string)
   return allocLocal(fctx, `${prefix}${fctx.locals.length}`, { kind: "ref_null", typeIdx: ctx.nativeStrDataTypeIdx });
 }
 
-function builderTypes(ctx: CodegenContext): StringBuilderTypes {
-  return { data: ctx.nativeStrDataTypeIdx, flat: ctx.nativeStrTypeIdx, any: ctx.anyStrTypeIdx };
-}
-
 /** Helper to look up an active builder by binding name. */
-export function getBuilderInfo(fctx: FunctionContext, name: string): StringBuilderInfo | undefined {
+export function getBuilderInfo(fctx: FunctionContext, name: string): StringBuilderSlots | undefined {
   return fctx.stringBuilders?.get(name);
 }
 

@@ -3,7 +3,7 @@
 import type { AllocSiteId, IrFuncRef, IrGlobalRef, IrStringLengthProvider } from "../nodes.js";
 import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
 import type { ValType } from "../types.js";
-import type { StringBuilderScratch, StringBuilderSlots } from "./wasm-string-builder.js";
+import type { StringBuilderScratch, StringBuilderSlots } from "../../backend/wasmgc/lowering/wasm-string-builder.js";
 
 /**
  * Typed lowering boundary for shared string instructions. Operands are already
