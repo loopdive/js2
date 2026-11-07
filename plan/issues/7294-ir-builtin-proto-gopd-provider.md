@@ -1,7 +1,7 @@
 ---
 id: 7294
 title: "IR: `Object.getOwnPropertyDescriptor(<Builtin>.prototype, \"m\")` via a shared compile-time descriptor provider"
-status: in-progress
+status: in-review
 sprint: current
 created: 2026-11-07
 updated: 2026-11-07
@@ -111,7 +111,48 @@ descriptor's `.value`), the upper bound is 133 files.
   returning `externref`, which legacy and IR both `call`. Legacy's standalone
   bytes then change (inline → call) while gc bytes stay identical.
 
-## Recommendation
+## Status (2026-11-07)
+
+PR #7167, held. It cannot release before #7324 lands. That is a
+pre-existing gap: the call-graph gate skips lifted closures. This admission
+newly reaches it in one file,
+`built-ins/SharedArrayBuffer/prototype/growable/invoked-as-func.js`. #7324 is
+merged into this branch once it lands, and then the 108-file byte proof
+is redone.
+
+## Implementation Plan (as built)
+
+- **Shapes (syntactic, shared):** `src/shared/ambient-intrinsics.ts` gets
+  `builtinProtoMemberValueRead` (`<B>.prototype.<m>` in a value position:
+  initializer, `===`/`!==` operand, call argument) and
+  `builtinProtoDescriptorCall`
+  (`Object.getOwnPropertyDescriptor(<B>.prototype, "<lit>")`).
+  - Both shapes use one unshadowed-globals check.
+  - One symbol codec per role, `value` and `descriptor`.
+- **Admission and lowering (IR):** `src/ir/builtin-proto-member.ts` gets
+  `admittedBuiltinProtoMember`, which the selector (`isPhase1Expr`'s call and
+  property-access arms) and from-ast (`lowerPropertyAccess`, `lowerCall`)
+  both read.
+  - It declines ES modules (prepared components), shadowed globals, members
+    that are not own, overridden members, and a getter read as a value
+    (reading a getter invokes it).
+  - Lowering is one `emitCall` of the support function's runtime symbol.
+- **The one synthesis (codegen):** `src/codegen/native-proto-value-read.ts`
+  `builtinProtoMemberInstrs` builds the singleton closure value, or the
+  data/accessor descriptor around it.
+  - Legacy's gOPD arm inlines it, so legacy bytes are unchanged.
+  - `ensureBuiltinProtoMemberFunc` wraps it as the support function the IR
+    calls, resolved in `resolveAndObserveCallableProvider`. The bridge is
+    re-exported through `builtin-value-read.ts`, so no new ir → codegen edge
+    appears.
+- **Selection-time query:** `builtinProtoMemberProvided` (native, non-fast lane,
+  member not overridden in the source) runs inside
+  `withProvisionalNativeProtoGlue`, so a declined unit leaves no glue
+  registered.
+- **Quality criterion:** one synthesis shared by legacy and IR, one admission
+  shared by the selector and from-ast, no per-builtin arms.
+
+## Recommendation (pre-implementation, superseded by the plan above)
 
 Do shape 1 and shape 2 in ONE lane. Both are the same provider: the
 (brand, member) singleton closure. Expose it as two compiler-support

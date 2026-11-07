@@ -6,12 +6,14 @@
 // with the same singleton closure and descriptor (`desc.value ===
 // Array.prototype.slice` holds across routes).
 //
-// VALUES: a script's verdict is whether it completes; each check calls
-// `fail()` when its value differs from the JS evaluation. Run on standalone
-// and gc (WASI never takes this admission: it rides legacy's standalone-gated
-// synthesis, and legacy's WASI identity answers are pre-existing, #7294 notes).
-// ROUTES: the same shapes without `fail()` (a call into a legacy unit keeps the
-// module-init legacy), asserting the `<module-init>` route on standalone.
+// VALUES: a script's verdict is whether it completes; each check throws a
+// string (a throw the IR lowers, so the module-init stays on the IR route,
+// which every value case asserts) when its value differs from the JS
+// evaluation. Run on standalone and gc (WASI never takes this admission: it
+// rides legacy's standalone-gated synthesis, and legacy's WASI identity
+// answers are pre-existing, #7294 notes).
+// ROUTES: the shapes the admission must decline, asserting the `<module-init>`
+// route on standalone.
 import { describe, expect, it } from "vitest";
 import { compile, type CompileOptions } from "../src/index.js";
 import { instantiateWithRuntime } from "./equivalence/helpers.js";
@@ -30,6 +32,8 @@ async function run(source: string, options: CompileOptions) {
   });
   const hard = result.errors.filter((e) => e.severity !== "warning");
   expect(result.success, hard.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
+  const unit = result.irOutcomes?.find((o) => o.displayName === "<module-init>");
+  expect(unit?.irBodyEmitted, unit?.detail).toBe(true);
   try {
     const instance =
       options.target === "standalone"
@@ -51,24 +55,22 @@ function scriptVerdict(source: string): string {
   }
 }
 
-const FAIL = `function fail() { throw new TypeError("mismatch"); }\n`;
-
 const VALUE_CASES: Record<string, string> = {
   "method descriptor and identity (Array.prototype.slice)": `var d = Object.getOwnPropertyDescriptor(Array.prototype, "slice");
-if (d.value !== Array.prototype.slice) fail();
-if (d.writable !== true || d.enumerable !== false || d.configurable !== true) fail();
-if (Object.getOwnPropertyDescriptor(Array.prototype, "slice").value !== d.value) fail();`,
+if (d.value !== Array.prototype.slice) throw "mismatch";
+if (d.writable !== true || d.enumerable !== false || d.configurable !== true) throw "mismatch";
+if (Object.getOwnPropertyDescriptor(Array.prototype, "slice").value !== d.value) throw "mismatch";`,
   "String and Date members": `var s = Object.getOwnPropertyDescriptor(String.prototype, "toLocaleUpperCase");
-if (s.value !== String.prototype.toLocaleUpperCase) fail();
+if (s.value !== String.prototype.toLocaleUpperCase) throw "mismatch";
 var t = Object.getOwnPropertyDescriptor(Date.prototype, "getTimezoneOffset");
-if (t.value !== Date.prototype.getTimezoneOffset) fail();
-if (t.writable !== true || t.enumerable !== false) fail();
-if (Date.prototype.getTime === Date.prototype.getDay) fail();`,
+if (t.value !== Date.prototype.getTimezoneOffset) throw "mismatch";
+if (t.writable !== true || t.enumerable !== false) throw "mismatch";
+if (Date.prototype.getTime === Date.prototype.getDay) throw "mismatch";`,
   "getter descriptor (RegExp.prototype.global)": `var g = Object.getOwnPropertyDescriptor(RegExp.prototype, "global");
-if (typeof g.get !== "function" || g.set !== undefined) fail();
-if (g.enumerable !== false || g.configurable !== true) fail();`,
+if (typeof g.get !== "function" || g.set !== undefined) throw "mismatch";
+if (g.enumerable !== false || g.configurable !== true) throw "mismatch";`,
   "a mismatching identity still fails": `var d = Object.getOwnPropertyDescriptor(Array.prototype, "slice");
-if (d.value !== Array.prototype.splice) fail();`,
+if (d.value !== Array.prototype.splice) throw "mismatch";`,
 };
 
 const ROUTE_CASES: Record<string, { readonly source: string; readonly ir: boolean; readonly fileName?: string }> = {
@@ -107,10 +109,9 @@ export function test() { return d === undefined ? 0 : 1; }`,
 
 describe("#7294 builtin-prototype member support functions", () => {
   for (const [label, body] of Object.entries(VALUE_CASES)) {
-    const source = FAIL + body;
     for (const lane of VALUE_LANES) {
       it(`${label} (${lane.name})`, async () => {
-        expect(await run(source, lane.options)).toBe(scriptVerdict(source));
+        expect(await run(body, lane.options)).toBe(scriptVerdict(body));
       });
     }
   }

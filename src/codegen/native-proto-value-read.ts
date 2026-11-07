@@ -142,9 +142,10 @@ export function resolveStandaloneProtoMemberValueClosure(
  *
  * Both are named functions so legacy's `gOPD(<B>.prototype, "<m>")` arm and the
  * IR (through `resolver.resolveFunc` on the runtime symbol) call the SAME
- * synthesis. Only the standalone lanes reach them: the native-proto glue is
- * standalone-only, and the IR resolves the runtime symbol only after the
- * selector's standalone-gated admission.
+ * synthesis. Only the native lanes reach them (`ctx.standalone`, which the
+ * default JS target sets too since the native-first core): the native-proto
+ * glue is native-only, and the IR resolves the runtime symbol only after the
+ * selector's native-gated admission.
  */
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -157,14 +158,16 @@ const FLAG_CONFIGURABLE = 0x04;
  * native-proto glue (registering the glue on demand), else `undefined`. An
  * inherited member is not own, so `gOPD` must not answer it from here.
  */
-export function builtinProtoOwnMemberKind(
+function builtinProtoOwnMember(
   ctx: CodegenContext,
   builtin: string,
   member: string,
-): "method" | "getter" | undefined {
+): { readonly brand: number; readonly kind: "method" | "getter" } | undefined {
   const brand = tryEnsureNativeProtoBrand(ctx, builtin);
   const glue = brand === undefined ? undefined : getNativeProtoBuiltinGlue(ctx, brand);
-  return glue?.memberCsv.split(",").includes(member) ? glue.memberKind(member) : undefined;
+  return brand !== undefined && glue?.memberCsv.split(",").includes(member)
+    ? { brand, kind: glue.memberKind(member) }
+    : undefined;
 }
 
 /**
@@ -181,7 +184,7 @@ export function builtinProtoMemberProvided(
   anchor: ts.Node,
 ): "method" | "getter" | undefined {
   if (!ctx.standalone || ctx.fast || sourceOverridesBuiltinPrototypeMember(anchor, builtin, member)) return undefined;
-  return withProvisionalNativeProtoGlue(ctx, () => builtinProtoOwnMemberKind(ctx, builtin, member));
+  return withProvisionalNativeProtoGlue(ctx, () => builtinProtoOwnMember(ctx, builtin, member)?.kind);
 }
 
 /**
@@ -198,9 +201,9 @@ export function builtinProtoMemberInstrs(
   builtin: string,
   member: string,
 ): Instr[] | undefined {
-  const kind = builtinProtoOwnMemberKind(ctx, builtin, member);
-  if (kind === undefined) return undefined;
-  const brand = tryEnsureNativeProtoBrand(ctx, builtin)!;
+  const own = builtinProtoOwnMember(ctx, builtin, member);
+  if (own === undefined) return undefined;
+  const { brand, kind } = own;
   // (#2984 Phase 2) Un-wired members use identity-stable throwing closures so
   // the value and the descriptor stay spec-shaped.
   const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, kind, { refusalBodyFallback: true });

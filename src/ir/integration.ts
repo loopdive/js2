@@ -7611,6 +7611,7 @@ function resolveAndObserveCallableProvider(
 
   let index: number | null | undefined;
   const { symbol } = ref.binding;
+  const builtinProtoMember = ref.binding.kind === "runtime" ? parseBuiltinProtoMemberSymbol(symbol) : undefined; // (#7294)
   if (ref.binding.kind === "intrinsic" && isIntrinsicId(symbol)) {
     const provider = runtimeProviders?.get(symbol);
     if (!provider || provider.implementation.kind !== "self-hosted") {
@@ -7680,8 +7681,8 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNativePromiseAllProvider(ctx);
   } else if (ref.binding.kind === "runtime" && IR_NATIVE_CONSOLE_SYMBOLS.has(symbol)) {
     index = ensureIrNativeConsoleProvider(ctx, symbol);
-  } else if (ref.binding.kind === "runtime" && parseBuiltinProtoMemberSymbol(symbol) !== undefined) {
-    const { role, builtin, member } = parseBuiltinProtoMemberSymbol(symbol)!;
+  } else if (builtinProtoMember !== undefined) {
+    const { role, builtin, member } = builtinProtoMember;
     index = ensureBuiltinProtoMemberFunc(ctx, role, builtin, member) ?? null;
   } else if (ref.binding.kind === "runtime" && symbol === "__hof_holey_array_filter") {
     index = ensureHoleyArrayFilter(ctx);

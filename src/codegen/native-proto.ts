@@ -286,8 +286,12 @@ export interface NativeProtoBuiltinGlue {
   ) => ValType | null;
 }
 
+function builtinGlueSlot(ctx: CodegenContext): { __nativeProtoGlue?: Map<number, NativeProtoBuiltinGlue> } {
+  return ctx as unknown as { __nativeProtoGlue?: Map<number, NativeProtoBuiltinGlue> };
+}
+
 function builtinGlueRegistry(ctx: CodegenContext): Map<number, NativeProtoBuiltinGlue> {
-  const slot = ctx as unknown as { __nativeProtoGlue?: Map<number, NativeProtoBuiltinGlue> };
+  const slot = builtinGlueSlot(ctx);
   if (!slot.__nativeProtoGlue) slot.__nativeProtoGlue = new Map();
   return slot.__nativeProtoGlue;
 }
@@ -301,10 +305,12 @@ export function registerNativeProtoBuiltin(ctx: CodegenContext, glue: NativeProt
  * (#7294) Answer `query` with whatever glue it registers in place, then
  * withdraw what it added: a selection-time question about a builtin's glue
  * must leave no registration behind, because later emission reads both tables
- * and a unit the IR then declines would reorder the module.
+ * and a unit the IR then declines would reorder the module. Every
+ * `ensure*NativeProtoGlue` writes only these two tables, so withdrawing them is
+ * exact; a non-mutating peek would split each of them into make and register.
  */
 export function withProvisionalNativeProtoGlue<T>(ctx: CodegenContext, query: () => T): T {
-  const slot = ctx as unknown as { __nativeProtoGlue?: Map<number, NativeProtoBuiltinGlue> };
+  const slot = builtinGlueSlot(ctx);
   const brandMap = ctx.builtinBrandMap;
   const registry = slot.__nativeProtoGlue;
   const brandNames = new Set(brandMap?.keys());
