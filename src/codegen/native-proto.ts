@@ -297,6 +297,28 @@ export function registerNativeProtoBuiltin(ctx: CodegenContext, glue: NativeProt
   builtinGlueRegistry(ctx).set(glue.brand, glue);
 }
 
+/**
+ * (#7294) Answer `query` with whatever glue it registers in place, then
+ * withdraw what it added: a selection-time question about a builtin's glue
+ * must leave no registration behind, because later emission reads both tables
+ * and a unit the IR then declines would reorder the module.
+ */
+export function withProvisionalNativeProtoGlue<T>(ctx: CodegenContext, query: () => T): T {
+  const slot = ctx as unknown as { __nativeProtoGlue?: Map<number, NativeProtoBuiltinGlue> };
+  const brandMap = ctx.builtinBrandMap;
+  const registry = slot.__nativeProtoGlue;
+  const brandNames = new Set(brandMap?.keys());
+  const brands = new Set(registry?.keys());
+  try {
+    return query();
+  } finally {
+    if (brandMap === undefined) ctx.builtinBrandMap = undefined;
+    else for (const name of [...brandMap.keys()]) if (!brandNames.has(name)) brandMap.delete(name);
+    if (registry === undefined) slot.__nativeProtoGlue = undefined;
+    else for (const brand of [...registry.keys()]) if (!brands.has(brand)) registry.delete(brand);
+  }
+}
+
 /** Look up a registered builtin's glue by brand. */
 export function getNativeProtoBuiltinGlue(ctx: CodegenContext, brand: number): NativeProtoBuiltinGlue | undefined {
   return builtinGlueRegistry(ctx).get(brand);

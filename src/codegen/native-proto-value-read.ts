@@ -37,7 +37,11 @@
 
 import type { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
-import { getNativeProtoBuiltinGlue, ensureStandaloneNativeMethodClosure } from "./native-proto.js";
+import {
+  getNativeProtoBuiltinGlue,
+  ensureStandaloneNativeMethodClosure,
+  withProvisionalNativeProtoGlue,
+} from "./native-proto.js";
 import { ensureObjectNativeProtoGlue } from "./array-object-proto.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
@@ -177,7 +181,7 @@ export function builtinProtoMemberProvided(
   anchor: ts.Node,
 ): "method" | "getter" | undefined {
   if (!ctx.standalone || ctx.fast || sourceOverridesBuiltinPrototypeMember(anchor, builtin, member)) return undefined;
-  return builtinProtoOwnMemberKind(ctx, builtin, member);
+  return withProvisionalNativeProtoGlue(ctx, () => builtinProtoOwnMemberKind(ctx, builtin, member));
 }
 
 /**
