@@ -2300,6 +2300,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/in-operator-helper.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/ir/analysis/contracts/allocations.ts",
       "state": "clean",
       "layer": "ir-analysis"
