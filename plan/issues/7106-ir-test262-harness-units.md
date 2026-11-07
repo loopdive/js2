@@ -5916,6 +5916,28 @@ Scratch experiment on those 34 files (the defineProperty target accepted like
     object-literal value lowering can claim these files. With #7280, the 13
     ES5 `typeof obj` rows scale to about 520 ES5 files (×40), as an upper
     bound; each file still needs its own next lever.
+- **S1 implemented (2026-11-07).**
+  - **Change:** `isJsExpandoTarget` became `isJsPropertyDeclarationTarget`.
+    The binding of `o.p = v`, of `o[k] = v`, or the first argument of
+    `Object.defineProperty(o, …)` is the same binding.
+  - **Size:** `module-bindings.ts` grows by 0 lines.
+  - **Measured** (main cc27f70dfd vs head, the 1,340-file sample):
+    - +0 IR-only on both lanes, as expected for an enabler;
+    - 0 status changes and 0 new post-claim;
+    - gc binaries are all identical. On standalone, 3 async tests hashed
+      differently inside the long census process; compiled alone, main and
+      head give identical hashes;
+    - the playground is identical.
+  - **The 34 target files** all move on:
+    - `objectlit-empty` in 23 (#7280);
+    - `call-resolution-unsupported` in 8: `Object.defineProperty` is
+      host-only in the IR, and the host-free path is the open-carrier define
+      that follows #7280's object literal;
+    - three others in 3;
+    - 0 claim-then-withdraw.
+  - **Tests:** `tests/issue-7106-lever-s.test.ts`, at the resolver: the plain
+    `var`, an expando, a `defineProperty` target, and both together. The
+    defineProperty rows fail on main.
 - **S2 — the `exec` result slot.** Stacked on R2 (`.exec` as a carrier
   value). It binds the legacy struct slot for `RegExpExecArray` the way #7252
   bound class instances, which needs R2 first. The `__expected` arrays in the
