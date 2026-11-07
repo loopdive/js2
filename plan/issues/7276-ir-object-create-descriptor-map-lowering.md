@@ -113,8 +113,9 @@ All 320 `built-ins/Object/create` files under the same scratch admission:
 - **test262 A/B**, row by row, base `origin/main` d28280a0. Every status is identical, and no file traps or differs on head where it did not on base:
   - standalone, 1249 paths (`built-ins/Object/create` 320, `built-ins/Object/defineProperties`, 300 seeded-random): 1137 pass / 86 fail / 15 CE / 11 skip on both sides. The only error-text differences are the checkout path inside a missing-QuickJS-provider message;
   - gc, `built-ins/Object/create`: 319 / 1 on both;
-  - after the `in` fix: the 39 files using `"<Object.prototype key>" in …`, plus `language/expressions/in`, standalone 30 / 8 / 1 and gc 29 / 9 / 1 on both; `Object/create` standalone again 319 / 1 on both.
-- **Tests:** `tests/issue-7276-object-create-descriptor-map.test.ts` runs 23 cases × 3 lanes, and the #7128 suite passes too (133 / 133). The cases:
+  - after the second review (head 43f03fb4, base `origin/main` d28280a0): `language/expressions/in` + `built-ins/Object/create` + the 39 `"<Object.prototype key>" in …` files (359 files), standalone 349 / 9 / 1 and gc 348 / 10 / 1 on both.
+- **`in` probe matrix** (second review): 16 receiver kinds × 7 keys, through a dynamic parameter and at module level, on standalone, WASI and gc: head = base on all 112 programs × 3 lanes.
+- **Tests:** `tests/issue-7276-object-create-descriptor-map.test.ts` runs 23 cases × 3 lanes plus the review's receivers; the #7128 suite passes too (138 / 138). The cases:
   - the admitted shapes, against JS;
   - non-writable writes in sloppy and strict mode, ToBoolean of the literal flags, `for-in` enumerability, `delete` against configurability, `in`;
   - the refused shapes and the `Object` shadows, against the IR-off compile.
@@ -123,10 +124,10 @@ All 320 `built-ins/Object/create` files under the same scratch admission:
 
 Verdict before the fixes: one must-fix, the rest should-fix and nits. The reviewer found no claim-then-refuse in any position, and found the refusals and key canonicalisation correct.
 
-1. **Fixed (must-fix).**
+1. **Fixed (must-fix); the fix was replaced after the second review, see below.**
    - The finding: `"toString" in o` answered false on the IR route, where legacy and JS answer true. The IR's native `in` arm called `__extern_has`, which stops at an open `$Object`'s implicit `%Object.prototype%` terminal.
    - This was already wrong on main for any dynamic receiver: `function f(o) { return "toString" in o }` took the IR body and threw.
-   - The fix: a string-literal key on `OBJECT_PROTOTYPE_KEYS` now calls legacy's fixed-name helper `__extern_has_with_implicit_object_proto` (`native-in.ts`), and the existing pre-registration covers both symbols. Measured unchanged on the 39 `in` files above (standalone and gc) and the corpus.
+   - First fix (016fd153, withdrawn): a string-literal key on `OBJECT_PROTOTYPE_KEYS` called legacy's fixed-name helper `__extern_has_with_implicit_object_proto` from the native `in`.
 2. **Fixed.**
    - The finding: `isUnshadowedLibGlobal`'s comment named a caller that does not use it.
    - The comment now names its real second caller.
@@ -142,4 +143,22 @@ Verdict before the fixes: one must-fix, the rest should-fix and nits. The review
 8. **Fixed.** The arm sits above the `Object.defineProperty` comment.
 9. **Fixed.** The double cast is gone.
 10. **Fixed.** The `literalDataDescriptorFields` doc is no longer ambiguous.
+
+## Second review (fresh context, PR comment 6698801419): BLOCKER, fixed in 43f03fb4
+
+- **Finding.** The first fix sent every dynamic receiver to the fixed-name helper. Its last fallback is a constant `1` for any receiver that is not an `$Object` or fnctor. Legacy only calls it for receivers it knows statically to be an `$Object`. So a null-prototype struct (`setPrototypeOf(q, null)`), or a constructor instance whose `prototype` is `Object.create(null)`, answered `true` where main answered `false`. That was 5 standalone and 10 WASI programs.
+- **Alternatives measured and rejected:**
+  - Refuse such an `in` in the selector. That regresses `"toString" in undefined`: main's IR route throws the TypeError, legacy does not.
+  - A new variant of the helper with an exact fallback. That needs a runtime function registered beside legacy's; registered eagerly it changes legacy bytes, and registering it lazily needs the object-runtime internals.
+- **Fix.**
+  - The native `in` is restored to main's exactly (`native-in.ts`, `integration.ts` and from-ast's `in` arm are unchanged from main).
+  - The Object.create plan admits a call only when every `in` of its enclosing unit has a string-literal key `%Object.prototype%` does not own (`unitInKeysAreOwnOnly`). There the native probe and legacy agree on the open `$Object` it creates. Any other unit keeps legacy, as on main.
+  - A function elsewhere that receives the object sees the same `$Object` legacy would have created.
+- **The pre-existing gap** stays out of this PR: the native `in` misses the implicit `%Object.prototype%` terminal of a non-`$Object` receiver (`"toString" in {x: 1}` through a dynamic parameter answers false). Its own issue was not filed: `claim-issue --allocate` refused (the open-PR scan was degraded), so it is reported to the lead.
+- **Measured:**
+  - `in` matrix of 112 programs × 3 lanes: head = base;
+  - 359 test262 files (standalone, gc): identical;
+  - typed corpus byte-identical;
+  - vitest 138 / 138;
+  - gates green.
 
