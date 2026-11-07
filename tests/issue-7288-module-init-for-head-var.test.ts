@@ -22,8 +22,8 @@ const LANES: { name: string; options: CompileOptions }[] = [
 
 const wasiStub = new Proxy({}, { get: () => () => 0 });
 
-async function compileAndRun(source: string, options: CompileOptions) {
-  const result = await compile(source, { fileName: "issue-7288.js", trackIrOutcomes: true, ...options });
+async function compileAndRun(source: string, options: CompileOptions, fileName: string) {
+  const result = await compile(source, { fileName, trackIrOutcomes: true, ...options });
   const hard = result.errors.filter((e) => e.severity !== "warning");
   expect(result.success, hard.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
   // A script's body runs at instantiation (the start function); its verdict is what it throws.
@@ -57,6 +57,8 @@ function route(result: Awaited<ReturnType<typeof compile>>, unit: string): boole
 
 interface Case {
   readonly source: string;
+  /** Default `issue-7288.js` (a script); a `.ts` name types an `any` receiver. */
+  readonly fileName?: string;
   /** The lanes on which `<module-init>` takes the IR body; on the others it keeps legacy's. */
   readonly irOn: readonly string[];
 }
@@ -100,29 +102,66 @@ if (i !== 3 || j !== 7) throw "multi";`,
 if (i !== 1) throw "break";`,
     irOn: ALL,
   },
+  "a head named like an Object.prototype method": {
+    source: `for (var toString = 0; toString < 2; toString++) {}
+if (toString !== 2) throw "toString";`,
+    irOn: ALL,
+  },
+  "a pattern statement next to a head": {
+    source: `var [a, b] = [1, 2];
+for (var i = 0; i < 3; i++) {}
+if (a !== 1 || b !== 2 || i !== 3) throw "pattern";`,
+    irOn: ALL,
+  },
   "typeof after the loop": {
     source: `for (var x = 0.5; x < 2; x = x * 2) {}
 if (typeof x !== "number" || x !== 2) throw "typeof";`,
     irOn: ALL,
   },
   // Shapes that keep legacy (refused up front, never claimed and withdrawn).
+  // An `any` receiver reaches the for-in arm; the head hoists, so it is refused up front.
   "a for-in head": {
-    source: `var seen = false;
-for (var k in { a: 1 }) { seen = true; }
+    fileName: "issue-7288.ts",
+    source: `var o: any = { a: 1 };
+var seen = false;
+for (var k in o) { seen = true; }
 if (!seen) throw "forin";`,
     irOn: [],
   },
+  // The head is checked as the `var` statement it lowers as: a carrier leaf into an f64 slot is refused.
+  "a head initialised from a carrier leaf": {
+    source: `var [a] = [1];
+for (var i = a; i < 3; i++) {}
+if (i !== 3) throw "carrier";`,
+    irOn: [],
+  },
+  "a head named like a top-level function": {
+    source: `function i() {}
+for (var i = 0; i < 2; i++) {}
+if (i !== 2) throw "fn";`,
+    irOn: [],
+  },
+  "an ES module head": {
+    fileName: "issue-7288.ts",
+    source: `let x: any = 0;
+x++;
+for (var i = 0; i < 2; i++) {}
+if (i !== 2) throw "module";
+export {};`,
+    irOn: [],
+  },
+  // Checked and lowered as the `var` statement they are: a seeded `undefined`, and a write to the first slot.
   "a head without an initializer": {
     source: `var n = 0;
 for (var i; n < 2; n++) {}
 if (i !== undefined) throw "noinit";`,
-    irOn: [],
+    irOn: ALL,
   },
   "a head that redeclares a top-level var statement": {
     source: `var i = 10;
 for (var i = 0; i < 2; i++) {}
 if (i !== 2) throw "stmt+head";`,
-    irOn: [],
+    irOn: ALL,
   },
   "a function reads the counter after the loop": {
     source: `function f() { return i; }
@@ -136,8 +175,10 @@ describe("#7288 top-level for-head var in module-init", () => {
   for (const [label, testCase] of Object.entries(CASES)) {
     for (const lane of LANES) {
       it(`${label} (${lane.name})`, async () => {
-        const { result, value } = await compileAndRun(testCase.source, lane.options);
-        expect(value).toBe(scriptVerdict(testCase.source));
+        const fileName = testCase.fileName ?? "issue-7288.js";
+        const { result, value } = await compileAndRun(testCase.source, lane.options, fileName);
+        if (fileName.endsWith(".js")) expect(value).toBe(scriptVerdict(testCase.source));
+        else expect(value).toBe("completed");
         expect(route(result, "<module-init>")).toBe(testCase.irOn.includes(lane.name));
       });
     }

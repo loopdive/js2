@@ -16,7 +16,7 @@
 // represent.
 
 import { ts } from "../ts-api.js";
-import { patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
+import { isPatternDeclaration, patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
 import { isVarDeclarationList } from "./function-local-var.js";
 
 /** The `var` list `statement` contributes to the module initializer, if it models one. */
@@ -27,11 +27,16 @@ export function moduleInitVarList(statement: ts.Node): ts.VariableDeclarationLis
     : ts.isForStatement(loop) && loop.initializer && ts.isVariableDeclarationList(loop.initializer)
       ? loop.initializer
       : undefined;
-  return list && isVarDeclarationList(list) ? list : undefined;
+  if (!list || !isVarDeclarationList(list)) return undefined;
+  // (#7288) An identifier head binds a module global in a script only; an ES module keeps the S5 pattern heads.
+  const script = !ts.isExternalModule(statement.getSourceFile());
+  return ts.isVariableStatement(statement) || script || list.declarations.every(isPatternDeclaration)
+    ? list
+    : undefined;
 }
 
 /** Whether `node` is the `var` list of a top-level statement that {@link moduleInitVarList} models. */
-export function isModuleInitVarList(node: ts.Node | undefined): boolean {
+export function isModuleInitVarList(node: ts.Node | undefined): node is ts.VariableDeclarationList {
   if (node === undefined || !ts.isVariableDeclarationList(node)) return false;
   let statement: ts.Node = node.parent;
   while (ts.isLabeledStatement(statement.parent)) statement = statement.parent;
@@ -83,8 +88,6 @@ export function moduleBindingLexicalFlags(declaration: ts.VariableDeclaration | 
 interface ModuleInitLeaves {
   readonly leaves: readonly BindingLeaf[];
   readonly names: ReadonlySet<string>;
-  /** (#7288) The identifier declarations of the modelled `for (;;)` heads, in source order. */
-  readonly forHeadDeclarations: readonly ts.VariableDeclaration[];
 }
 
 const leavesBySource = new WeakMap<ts.SourceFile, ModuleInitLeaves>();
@@ -93,19 +96,25 @@ const leavesBySource = new WeakMap<ts.SourceFile, ModuleInitLeaves>();
 function moduleInitLeaves(sourceFile: ts.SourceFile): ModuleInitLeaves {
   let cached = leavesBySource.get(sourceFile);
   if (!cached) {
-    const bindings = sourceFile.statements.flatMap((statement) =>
-      ts.isVariableStatement(statement) ? [] : moduleInitBindings(statement),
-    );
-    const leaves = bindings.flatMap((binding) =>
-      "name" in binding && ts.isBindingElement(binding.declaration) ? [binding.declaration] : [],
-    );
-    const forHeadDeclarations = bindings.flatMap((binding) =>
-      "name" in binding && ts.isVariableDeclaration(binding.declaration) ? [binding.declaration] : [],
-    );
-    cached = { leaves, names: new Set(leaves.map((leaf) => leaf.name.text)), forHeadDeclarations };
+    const leaves = sourceFile.statements
+      .flatMap(moduleInitBindings)
+      .flatMap((binding) =>
+        "name" in binding && ts.isBindingElement(binding.declaration) ? [binding.declaration] : [],
+      );
+    cached = { leaves, names: new Set(leaves.map((leaf) => leaf.name.text)) };
     leavesBySource.set(sourceFile, cached);
   }
   return cached;
+}
+
+/** (#7288) The identifier declarations of the modelled `for (;;)` heads of `sourceFile`, in source order. */
+function forHeadDeclarations(sourceFile: ts.SourceFile): ts.VariableDeclaration[] {
+  return sourceFile.statements
+    .filter((statement) => !ts.isVariableStatement(statement))
+    .flatMap(moduleInitBindings)
+    .flatMap((binding) =>
+      "name" in binding && ts.isVariableDeclaration(binding.declaration) ? [binding.declaration] : [],
+    );
 }
 
 /**
@@ -118,8 +127,7 @@ export function moduleBindingDeclarationOrder(sourceFile: ts.SourceFile): readon
   const declarations = sourceFile.statements.flatMap((statement): readonly ts.Node[] =>
     ts.isVariableStatement(statement) ? statement.declarationList.declarations : [],
   );
-  const { leaves, forHeadDeclarations } = moduleInitLeaves(sourceFile);
-  return [...declarations, ...leaves, ...forHeadDeclarations];
+  return [...declarations, ...moduleInitLeaves(sourceFile).leaves, ...forHeadDeclarations(sourceFile)];
 }
 
 /**

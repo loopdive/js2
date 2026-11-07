@@ -200,7 +200,7 @@ import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
-  observeHoistedForHeadVars, // (#7288)
+  observeHoistedForHeadVars,
   prepareModuleTdzGlobals,
   prepareSelfImportingModuleTdzGlobals,
   registerModuleGlobal,

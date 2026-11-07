@@ -5564,7 +5564,12 @@ function isPhase1ForStatementInScope(
 
   // Init: optional. Variable declaration adds bindings; expression init
   // doesn't. Both must be Phase-1.
-  if (stmt.initializer) {
+  if (stmt.initializer && currentSubjectIsModuleInit && isModuleInitVarList(stmt.initializer)) {
+    // (#7288) A hoisted module-init head is checked as the top-level `var`
+    // statement it lowers as (from-ast's `lowerForInitializer`).
+    const head = ts.factory.createVariableStatement(undefined, stmt.initializer);
+    if (!isPhase1VarDecl(head, innerScope, localClasses)) return false;
+  } else if (stmt.initializer) {
     if (ts.isVariableDeclarationList(stmt.initializer)) {
       const flags = stmt.initializer.flags;
       const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
@@ -6960,6 +6965,15 @@ function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical
   return false;
 }
 
+/** A declaration the synthetic module initializer owns: a top-level statement's, or (#7288) a hoisted for-head's. */
+function isDirectModuleDeclaration(d: ts.VariableDeclaration): boolean {
+  const list = d.parent;
+  return (
+    ts.isVariableDeclarationList(list) &&
+    ((ts.isVariableStatement(list.parent) && ts.isSourceFile(list.parent.parent)) || isModuleInitVarList(list))
+  );
+}
+
 function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localClasses: ReadonlySet<string>): boolean {
   const flags = stmt.declarationList.flags;
   const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
@@ -6985,7 +6999,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       currentSubjectIsModuleInit &&
       !isLexical &&
       scope.has(d.name.text) &&
-      ts.isSourceFile(stmt.parent) &&
+      isDirectModuleDeclaration(d) &&
       currentModuleBindingResolver?.(d.name)?.declaration !== undefined &&
       currentModuleBindingResolver(d.name)!.declaration !== d;
     if (redeclaredModuleVar && !d.initializer) continue;
@@ -6995,7 +7009,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       // prologue already seeded the slot (`emitModuleVarUndefinedSeeds`).
       // (#7111) An untyped function-local `var x;` is the dynamic carrier's
       // `undefined`; that predicate refuses module-init, so the arms are disjoint.
-      const scriptVar = currentSubjectIsModuleInit && !isLexical && ts.isSourceFile(stmt.parent);
+      const scriptVar = currentSubjectIsModuleInit && !isLexical && isDirectModuleDeclaration(d);
       if (
         scriptVar
           ? currentModuleBindingResolver?.(d.name) === undefined
@@ -7028,12 +7042,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       currentPreparedClassBindingNames.add(d.name.text);
       continue;
     }
-    const declarationList = d.parent;
-    const declarationStatement = ts.isVariableDeclarationList(declarationList) ? declarationList.parent : undefined;
-    const directModuleDeclaration =
-      declarationStatement !== undefined &&
-      ts.isVariableStatement(declarationStatement) &&
-      ts.isSourceFile(declarationStatement.parent);
+    const directModuleDeclaration = isDirectModuleDeclaration(d);
     // The synthetic module-init builder must map every direct declaration to
     // an already-allocated legacy slot. Shape-only primitive acceptance is not
     // enough in a mode whose storage ABI differs (ordinary fast numbers) or
