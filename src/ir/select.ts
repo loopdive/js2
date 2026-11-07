@@ -5669,9 +5669,9 @@ function recordForInitLeaks(stmt: ts.ForStatement, scope: Set<string>): void {
 
 /**
  * Slice 12 (#1280): the `update` clause of a `for` loop. Same as
- * Phase-1 expressions plus postfix `i++` / `i--` on identifiers in
+ * Phase-1 expressions plus `i++` / `++i` / `i--` / `--i` on identifiers in
  * scope (which the body-statement layer accepts as an
- * ExpressionStatement but `isPhase1Expr` does not — postfix is a
+ * ExpressionStatement but `isPhase1Expr` does not — an update is a
  * mutation, not a pure expression).
  */
 function isPhase1ForUpdateExpr(
@@ -5695,16 +5695,18 @@ function isPhase1ForUpdateExpr(
     if (!isPhase1ForUpdateExpr(expr.left, scope, localClasses)) return false;
     return isPhase1ForUpdateExpr(expr.right, scope, localClasses);
   }
-  if (ts.isPostfixUnaryExpression(expr)) {
-    const op = expr.operator;
-    if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
-      if (!ts.isIdentifier(expr.operand)) return false;
-      if (identifierUpdateRefusal(expr.operand, expr, scope) !== undefined) return false;
-      clearProjectionBinding(expr.operand.text);
-      return true;
-    }
-    return false;
+  // (#7106 lever L2) The update's value is discarded, so prefix and postfix are
+  // the same write: `lowerForUpdateExpr` lowers both through `lowerIncrementDecrement`.
+  if (
+    (ts.isPostfixUnaryExpression(expr) || ts.isPrefixUnaryExpression(expr)) &&
+    (expr.operator === ts.SyntaxKind.PlusPlusToken || expr.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    if (!ts.isIdentifier(expr.operand)) return false;
+    if (identifierUpdateRefusal(expr.operand, expr, scope) !== undefined) return false;
+    clearProjectionBinding(expr.operand.text);
+    return true;
   }
+  if (ts.isPostfixUnaryExpression(expr)) return false;
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
     if (!ts.isIdentifier(expr.left)) return isPhase1Expr(expr, scope, localClasses);

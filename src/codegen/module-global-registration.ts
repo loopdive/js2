@@ -186,12 +186,14 @@ export function objectLiteralReadsAmbientRedeclaredVar(ctx: CodegenContext, expr
 }
 
 /**
- * (#7106 lever L) A top-level `for` head's `var` declaration, which the IR
- * shares as a module binding, so `registerModuleGlobal` observes its slot. A
- * top-level statement's own declaration is observed by the source-order pass.
+ * (#7106 levers L, L2) A `var` declaration of a modelled list that is not a
+ * top-level statement's own (a `for` head's, or a nested `var` statement's):
+ * the IR shares it as a module binding, so `registerModuleGlobal` observes its
+ * slot. A top-level statement's own declaration is observed by the source-order pass.
  */
-export function moduleInitHeadDeclaration(decl: ts.VariableDeclaration): ts.VariableDeclaration | undefined {
-  return !ts.isVariableStatement(decl.parent.parent) && isModuleInitVarList(decl.parent) ? decl : undefined;
+export function hoistedModuleVarDeclaration(decl: ts.VariableDeclaration): ts.VariableDeclaration | undefined {
+  const topLevelStatement = ts.isVariableStatement(decl.parent.parent) && ts.isSourceFile(decl.parent.parent.parent);
+  return !topLevelStatement && isModuleInitVarList(decl.parent) ? decl : undefined;
 }
 
 /**

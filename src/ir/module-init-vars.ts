@@ -1,29 +1,29 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // #7106 S5 — the bindings the module initializer's `var` lists declare
-// (`moduleInitVarList`, `src/shared/module-init-var-list.ts`). Each binding is
-// backed by an exact persistent `__mod_<name>` global, so it needs no hoisting
-// support:
+// (`isModuleInitVarList`, `src/shared/module-init-var-list.ts`). Each binding
+// is backed by an exact persistent `__mod_<name>` global, so it needs no
+// hoisting support:
 //
 //   - a top-level `var` statement: its identifier declarations and, in a
 //     script, its pattern leaves;
-//   - a top-level `for (;;)` `var` head, labelled or not: its identifier
-//     declarations (lever L) and, in a script, its pattern leaves.
+//   - a `var` statement or `for (;;)` `var` head in top-level control flow:
+//     its identifier declarations (levers L, L2) and, in a script, its leaves.
 //
-// Every other `var` is nested hoisting the IR refuses. The ordinary module
+// Every other `var` is hoisting the IR refuses. The ordinary module
 // selector still rejects duplicate declarations, missing initializers,
 // use-before-declaration, and any binding the module-global resolver cannot
 // represent.
 
-import { isModuleInitVarList, moduleInitVarList } from "../shared/module-init-var-list.js";
+import { isModuleInitVarList, moduleInitVarLists } from "../shared/module-init-var-list.js";
 import { ts } from "../ts-api.js";
 import { patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
 
-/** The {@link moduleInitVarList} of every module-init statement. */
+/** The modelled `var` lists ({@link moduleInitVarLists}) of every module-init statement. */
 export function collectIrSafeModuleVarDeclarationLists(
   statements: readonly ts.Statement[],
 ): ReadonlySet<ts.VariableDeclarationList> {
-  return new Set(statements.flatMap((statement) => moduleInitVarList(statement) ?? []));
+  return new Set(statements.flatMap(moduleInitVarLists));
 }
 
 /** A name a module-init statement binds to a module global, or a pattern with no one-to-one global. */
@@ -37,19 +37,20 @@ export type ModuleInitBinding =
  * list. A lexical top-level pattern has no one-to-one global.
  */
 export function moduleInitBindings(statement: ts.Statement): ModuleInitBinding[] {
-  const list = ts.isVariableStatement(statement) ? statement.declarationList : moduleInitVarList(statement);
-  if (!list) return [];
-  const leavesBind = isModuleInitVarList(list);
-  return list.declarations.flatMap((declaration): ModuleInitBinding[] => {
-    if (ts.isIdentifier(declaration.name)) return [{ name: declaration.name, declaration }];
-    if (!leavesBind) return [{ unmapped: declaration }];
-    return [...patternLeaves(declaration.name)].map((leaf) => ({ name: leaf.name, declaration: leaf }));
+  const lists = ts.isVariableStatement(statement) ? [statement.declarationList] : moduleInitVarLists(statement);
+  return lists.flatMap((list) => {
+    const leavesBind = isModuleInitVarList(list);
+    return list.declarations.flatMap((declaration): ModuleInitBinding[] => {
+      if (ts.isIdentifier(declaration.name)) return [{ name: declaration.name, declaration }];
+      if (!leavesBind) return [{ unmapped: declaration }];
+      return [...patternLeaves(declaration.name)].map((leaf) => ({ name: leaf.name, declaration: leaf }));
+    });
   });
 }
 
 /**
  * The `let`/`const` flag of a module binding declaration. A leaf has none: it
- * binds as a module global only from a {@link moduleInitVarList}.
+ * binds as a module global only from a modelled `var` list.
  */
 export function moduleBindingLexicalFlags(declaration: ts.VariableDeclaration | ts.BindingElement): ts.NodeFlags {
   return ts.isVariableDeclaration(declaration)
@@ -85,9 +86,10 @@ function moduleInitVarBindings(sourceFile: ts.SourceFile): ModuleInitVarBindings
   return cached;
 }
 
-/** A top-level statement's own identifier declaration, numbered with the statements. */
+/** A top-level `VariableStatement`'s own declaration, numbered with the statements. */
 function isStatementDeclaration(declaration: ts.VariableDeclaration | BindingLeaf): boolean {
-  return ts.isVariableDeclaration(declaration) && ts.isVariableStatement(declaration.parent.parent);
+  const statement = ts.isVariableDeclaration(declaration) ? declaration.parent.parent : undefined;
+  return statement !== undefined && ts.isVariableStatement(statement) && ts.isSourceFile(statement.parent);
 }
 
 /**

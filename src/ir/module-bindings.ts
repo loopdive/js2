@@ -936,8 +936,8 @@ function isModuleBindingDeclaration(
   if (!declaration || !ts.isIdentifier(declaration.name)) return false;
   const list = bindingDeclarationList(declaration);
   const statement = ts.isVariableDeclaration(declaration) ? list?.parent : undefined;
-  if (statement && ts.isVariableStatement(statement)) return statement.parent === sourceFile;
-  // (#7106 S5, lever L) A leaf, or a `for` head's name, binds in a script's module-init `var` list.
+  if (statement && ts.isVariableStatement(statement) && statement.parent === sourceFile) return true;
+  // (#7106 S5, L, L2) A leaf, a `for` head's or a nested `var`'s name binds in a script's modelled list.
   return !ts.isExternalModule(sourceFile) && isModuleInitVarList(list);
 }
 
