@@ -124,7 +124,7 @@ pass asks whether a file would actually flip:
 | builtin method `.call` borrows (`String.prototype.trim.call(false)`, `Function.prototype.bind.call(true)`, `Array.from.call(Object, [])`, `Map.prototype.delete.call(new WeakMap(), …)`, `Promise.all.call(<x>, [])`) | 5 | 5 | **3** | `new WeakMap()` (`expr-new-extern-host-free`); `Symbol()` (`callee:Symbol`) |
 | BigInt literals (`0n < 1n`, `1n === Number.MAX_VALUE`) | 3 | **2** (upper bound: literals replaced by numbers, so BigInt semantics are not lowered) | — | `Symbol('2')` comparison operands |
 | class expressions / local classes | 8 | **0** | — | the declaration form refuses too: static class members (`class-member-unsupported`, ×6), `new Err()` of a local builtin subclass, `extends` of an unresolved `B` |
-| `assert.throws` callbacks whose body refuses | 6 | **0** | — | `() => {}` itself refuses: an unannotated closure literal with no closure plan is `closure-return-type` (`select-closure-literal.ts:47`), whatever its body. **122 `<module-init>` units carry this part.** That is the real lever (closure lowering; #7308 / R14). |
+| `assert.throws` callbacks whose body refuses | 6 | **3** (the three `function` callbacks, once their inner statement lowers; each inner statement is its own singleton: `undefined = 12`, `Object.defineProperty(Array.prototype, …)`, `String.fromCharCode(0n)`) | — | the three **arrow** callbacks refuse `closure-return-type` whatever their body: an arrow literal gets no closure plan, so `() => { 0; }` refuses while `function () { 0; }` lowers (`select-closure-literal.ts:47`). For a function expression, `closure-return-type` instead masks a refusal inside its body (an empty `function () {}` also refuses). **54 `<module-init>` units carry an arrow `closure-return-type` part; 68 carry a function-expression one.** Arrow-callback planning is the cross-cutting lever (#7308 / R14?). |
 | statement IIFE | 6 | 1 (R9, #7311) | — | unresolvable-global reads, B.3.3 block functions, `arguments` |
 
 The re-ranked top real single levers:
@@ -132,6 +132,6 @@ The re-ranked top real single levers:
 2. `.call` borrows: 3 files (#7312, R9, on top of #7294).
 3. BigInt literal lowering: at most 2.
 
-Class expressions and callback bodies flip 0. The unannotated-closure
-`closure-return-type` refusal (122 module-init units) is the cross-cutting
-blocker behind the callbacks.
+Class expressions flip 0. Callback bodies flip 3, one per inner construct.
+The cross-cutting blocker behind arrow callbacks is that **arrow literals
+get no closure plan** (54 module-init units).
