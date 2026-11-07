@@ -36,10 +36,10 @@ export interface StringBuilderPresizeInfo {
  *      keep the common case and bail otherwise.)
  *   3. Nothing but the loop's own `i++` writes the counter, and BOUND is
  *      loop-invariant: a numeric literal, or an identifier nothing writes
- *      while the loop runs (the body, or any function in the bound's scope,
- *      through any assignment form; a direct `eval` or a sloppy `arguments`
- *      alias in that scope refuses). Evaluating BOUND once before the loop
- *      then yields the value every test sees, and the loop runs exactly
+ *      while the loop runs (the body, or any function or class in the bound's
+ *      scope, through any assignment form; any `eval`, `arguments` or `with`
+ *      in that scope refuses). Evaluating BOUND once before the loop then
+ *      yields the value every test sees, and the loop runs exactly
  *      `ceil(BOUND)` times.
  *   4. The loop body contains NO `break` / `continue` / `return` / `throw`
  *      (which could cut the iteration count short) — though a short run only
@@ -133,14 +133,15 @@ function isLoopInvariantBound(
   return !hasUnmodelledWriter(owner) && !isWrittenDuringLoop(checker, boundSym, owner, loop.statement);
 }
 
-/** A direct `eval` or an `arguments` alias can write a binding no syntactic search sees. */
+/**
+ * `eval` (direct or not, any reference), an `arguments` alias or a `with`
+ * scope can write a binding no syntactic search sees.
+ */
 function hasUnmodelledWriter(scope: ts.Node): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
-    found =
-      (ts.isIdentifier(node) && node.text === "arguments") ||
-      (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval");
+    found = ts.isWithStatement(node) || (ts.isIdentifier(node) && (node.text === "eval" || node.text === "arguments"));
     if (!found) forEachChild(node, visit);
   };
   visit(scope);
@@ -148,14 +149,16 @@ function hasUnmodelledWriter(scope: ts.Node): boolean {
 }
 
 /**
- * (#7291) A write to `sym` in `loopBody`, or in any function nested in `owner`:
- * a closure the loop calls can change the binding as well as the body can.
+ * (#7291) A write to `sym` in `loopBody`, or in any function or class nested in
+ * `owner`: a closure the loop calls, or a class field initializer or static
+ * block the loop runs (`new K()`), can change the binding as the body can.
  */
 function isWrittenDuringLoop(checker: ts.TypeChecker, sym: ts.Symbol, owner: ts.Node, loopBody: ts.Node): boolean {
   let written = false;
   const visit = (node: ts.Node, counts: boolean): void => {
     if (written) return;
-    const here = counts || node === loopBody || (node !== owner && isFunctionScopeBoundary(node));
+    const here =
+      counts || node === loopBody || (node !== owner && (isFunctionScopeBoundary(node) || ts.isClassLike(node)));
     const target = here ? assignmentTarget(node) : undefined;
     if (target && targetWritesSymbol(checker, target, sym)) {
       written = true;

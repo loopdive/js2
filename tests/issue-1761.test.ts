@@ -293,6 +293,10 @@ describe("#7291 presize only with a proven trip count", () => {
   for (let i = 0; i < n; i++) { s += "a"; if (i === 0) ({ n } = { n: 5 }); }`,
     "a direct eval writes the bound": `let s = "";
   for (let i = 0; i < n; i++) { s += "a"; if (i === 0) eval("n = 5"); }`,
+    "a parenthesized eval writes the bound": `let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i === 0) (eval)("n = 5"); }`,
+    "a with block writes the bound": `let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i === 0) { with ({}) { n = 5; } } }`,
     "a for-of target writes the bound": `let s = "";
   for (let i = 0; i < n; i++) { s += "a"; if (i === 0) { for (n of [5]) {} } }`,
   };
@@ -309,8 +313,25 @@ export function run(n: number): number {
     `export function run(n: number): number {\n  ${body}\n  return s.length;\n}`,
   ]);
   sources.push(["a top-level function writes a module-level bound", MODULE_BOUND]);
+  sources.push([
+    "a class field initializer writes a module-level bound",
+    // Only the field writes \`m\` (a function write would already refuse), and
+    // module state carries across calls identically in Wasm and in node.
+    `let m = 2;
+class K { x = (m = 5); }
+export function run(n: number): number {
+  let s = "";
+  for (let i = 0; i < m; i++) { s += "a"; if (i === n - n) new K(); }
+  return s.length;
+}`,
+  ]);
   // A module \`let\` assigned a fraction is a separate legacy bug (#7300 item 6).
-  const integerBoundsOnly = new Set(["a top-level function writes a module-level bound"]);
+  const integerBoundsOnly = new Set([
+    "a top-level function writes a module-level bound",
+    "a class field initializer writes a module-level bound",
+  ]);
+  // TypeScript rejects \`with\`; the case runs on the legacy (.js) route only.
+  const jsOnly = new Set(["a with block writes the bound"]);
   const PRESIZE = /__sb_bound_|\$slot_\w+\$bound/;
 
   for (const [title, ts] of sources) {
@@ -320,6 +341,7 @@ export function run(n: number): number {
       ["legacy", "t.js", js],
       ["IR", "t.ts", ts],
     ] as const) {
+      if (route === "IR" && jsOnly.has(title)) continue;
       for (const target of ["standalone", "wasi"] as const) {
         it(`${title} [${route}, ${target}]`, async () => {
           const result = await compile(source, { fileName, target, nativeStrings: true });
