@@ -14,6 +14,40 @@ area: ir
 goal: ir-full-coverage
 related: [7275, 7267, 7127, 7293]
 assignee: "ttraenkler/c-lane-opus"
+loc-budget-allow:
+  # 2026-11-07 (#7294): the shapes, admission and lowering live in the new
+  # src/ir/builtin-proto-member.ts and src/shared/ambient-intrinsics.ts; the
+  # god files carry only wiring. from-ast.ts +15: the import, the two
+  # one-line lowering hooks (+2 each) and the 8-line resolver adapter
+  # `builtinProtoMemberLane`; select.ts +13: the import, two one-line hooks and
+  # the selection adapter (+8), the options field and its doc (+2);
+  # integration.ts +10: the multi-line re-export import (+4), the resolver
+  # method (+2) and the provider arm (+3); index.ts +2: the import and the
+  # selection option; builtin-value-read.ts +2: the re-export that keeps the
+  # IR bridge off a new ir -> codegen edge (check:ir-layering).
+  - src/ir/from-ast.ts
+  - src/ir/select.ts
+  - src/ir/integration.ts
+  - src/codegen/index.ts
+  - src/codegen/builtin-value-read.ts
+standalone-arms-allow:
+  # 2026-11-07 (#7294): builtinProtoMemberProvided repeats the SAME
+  # `ctx.standalone` gate legacy's synthesis already sits behind
+  # (`resolveBuiltinProtoGopdReceiver`), so the IR admits exactly where legacy
+  # synthesizes the value and descriptor — not a new lane split.
+  - src/codegen/native-proto-value-read.ts
+func-budget-allow:
+  # 2026-11-07 (#7294): one dispatch line per site into the shared module
+  # (lowerPropertyAccess, lowerCall, isPhase1Expr: +2 each with prettier's
+  # wrap), the resolver method (makeFromAstResolver +2), the selection option
+  # (planIrOverlay +1) and the support-function arm beside the other
+  # symbol-prefixed providers (resolveAndObserveCallableProvider +3).
+  - src/ir/integration.ts::resolveAndObserveCallableProvider
+  - src/ir/from-ast.ts::lowerPropertyAccess
+  - src/ir/from-ast.ts::lowerCall
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/select.ts::isPhase1Expr
+  - src/codegen/index.ts::planIrOverlay
 ---
 
 # #7294 — IR: builtin-prototype `getOwnPropertyDescriptor` provider

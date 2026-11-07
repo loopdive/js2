@@ -63,6 +63,8 @@ import {
 } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet, getBuiltinBrand, getNativeProtoBuiltinGlue } from "./native-proto.js";
 import { resolveStandaloneProtoMemberValueClosure } from "./native-proto-value-read.js";
+// (#7294) Re-exported for the IR bridge (`src/ir/integration.ts`), so it adds no new ir -> codegen edge.
+export { builtinProtoMemberProvided, ensureBuiltinProtoMemberFunc } from "./native-proto-value-read.js";
 import { tryEmitOverriddenProtoMemberRead } from "./object-model/object-proto-to-locale-string.js";
 import { emitBuiltinProtoConstructorValue } from "./builtin-proto-constructor.js";
 import {

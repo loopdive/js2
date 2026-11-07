@@ -35,6 +35,7 @@
 // (`Object.prototype.hasOwnProperty.call(o, k)` — the propertyHelper.js
 // idiom), and a throwing refusal body would regress it.
 
+import type { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { getNativeProtoBuiltinGlue, ensureStandaloneNativeMethodClosure } from "./native-proto.js";
 import { ensureObjectNativeProtoGlue } from "./array-object-proto.js";
@@ -44,6 +45,8 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { tryEnsureNativeProtoBrand } from "./property-access.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureLateImport } from "./shared.js";
+import { sourceOverridesBuiltinPrototypeMember } from "./builtin-proto-member-override.js";
+import { builtinProtoMemberSymbol, type BuiltinProtoMemberRole } from "../shared/ambient-intrinsics.js";
 
 /** The `{ type, funcIdx }` closure handle the native-method factory returns. */
 export type NativeProtoClosure = { type: { kind: "ref"; typeIdx: number }; funcIdx: number };
@@ -145,33 +148,6 @@ const I32: ValType = { kind: "i32" };
 const FLAG_WRITABLE = 0x01;
 const FLAG_CONFIGURABLE = 0x04;
 
-export type BuiltinProtoMemberRole = "value" | "descriptor";
-
-const SYMBOL_PREFIX: Readonly<Record<BuiltinProtoMemberRole, string>> = {
-  value: "__builtin_proto_value$",
-  descriptor: "__builtin_proto_gopd$",
-};
-
-/** The runtime symbol naming one (builtin, member) support function. */
-export function builtinProtoMemberSymbol(role: BuiltinProtoMemberRole, builtin: string, member: string): string {
-  return `${SYMBOL_PREFIX[role]}${builtin}$${member}`;
-}
-
-/** Inverse of {@link builtinProtoMemberSymbol}; `undefined` for any other symbol. */
-export function parseBuiltinProtoMemberSymbol(
-  symbol: string,
-): { readonly role: BuiltinProtoMemberRole; readonly builtin: string; readonly member: string } | undefined {
-  for (const role of ["value", "descriptor"] as const) {
-    if (!symbol.startsWith(SYMBOL_PREFIX[role])) continue;
-    const key = symbol.slice(SYMBOL_PREFIX[role].length);
-    const split = key.indexOf("$"); // a builtin name never contains `$`; a member key may
-    return split > 0 && split < key.length - 1
-      ? { role, builtin: key.slice(0, split), member: key.slice(split + 1) }
-      : undefined;
-  }
-  return undefined;
-}
-
 /**
  * The member's kind when `<builtin>.prototype` OWNS `member` in the registered
  * native-proto glue (registering the glue on demand), else `undefined`. An
@@ -185,6 +161,23 @@ export function builtinProtoOwnMemberKind(
   const brand = tryEnsureNativeProtoBrand(ctx, builtin);
   const glue = brand === undefined ? undefined : getNativeProtoBuiltinGlue(ctx, brand);
   return glue?.memberCsv.split(",").includes(member) ? glue.memberKind(member) : undefined;
+}
+
+/**
+ * (#7294) The member's kind when the IR may answer `<builtin>.prototype.<member>`
+ * (or its descriptor) through the support function — an own glue member,
+ * on a native lane that is not fast mode (the result is the externref dynamic
+ * carrier), that the source does not override (`anchor`'s file; an
+ * overridden member is a runtime value, read dynamically as legacy does).
+ */
+export function builtinProtoMemberProvided(
+  ctx: CodegenContext,
+  builtin: string,
+  member: string,
+  anchor: ts.Node,
+): "method" | "getter" | undefined {
+  if (!ctx.standalone || ctx.fast || sourceOverridesBuiltinPrototypeMember(anchor, builtin, member)) return undefined;
+  return builtinProtoOwnMemberKind(ctx, builtin, member);
 }
 
 /**

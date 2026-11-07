@@ -136,7 +136,11 @@ import {
 } from "../codegen/ir-dynamic-construct.js";
 import { reserveModuleInitChunkHelperName } from "../shared/module-init-chunk-plan.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
-import { builtinNamespaceConstantValue } from "../codegen/builtin-value-read.js"; // (#7106 module-init lever A)
+import {
+  builtinNamespaceConstantValue, // (#7106 module-init lever A)
+  builtinProtoMemberProvided, // (#7294)
+  ensureBuiltinProtoMemberFunc, // (#7294)
+} from "../codegen/builtin-value-read.js";
 import { ensureIrNumberFromValueHelper } from "../codegen/helpers/ir-number-from-value.js"; // (#7106 module-init lever B)
 import { IR_NUMBER_FROM_VALUE_FEATURE, IR_NUMBER_FROM_VALUE_NATIVE_FN } from "./runtime/number-conversion-callable.js";
 import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-number-conversion.js"; // (#7106 module-init lever B)
@@ -178,6 +182,7 @@ import {
   VEC_ELEM_SET_PREFIX,
   VEC_NEW_SIZED_PREFIX,
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
+import { parseBuiltinProtoMemberSymbol } from "../shared/ambient-intrinsics.js"; // (#7294)
 import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import {
@@ -7441,6 +7446,8 @@ function makeFromAstResolver(
       return moduleBindingResolver?.isLibOnlyBinding(node) === true;
     },
     builtinProtoCompanionSeeded: () => ctx.protoMemberDirty, // (#7127)
+    builtinProtoMember: (builtin: string, member: string, anchor: ts.Node) =>
+      builtinProtoMemberProvided(ctx, builtin, member, anchor), // (#7294)
     isAmbientStringBinding,
     // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
     // predicates as the legacy `collectConsoleImports` registration scan
@@ -7673,6 +7680,9 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNativePromiseAllProvider(ctx);
   } else if (ref.binding.kind === "runtime" && IR_NATIVE_CONSOLE_SYMBOLS.has(symbol)) {
     index = ensureIrNativeConsoleProvider(ctx, symbol);
+  } else if (ref.binding.kind === "runtime" && parseBuiltinProtoMemberSymbol(symbol) !== undefined) {
+    const { role, builtin, member } = parseBuiltinProtoMemberSymbol(symbol)!;
+    index = ensureBuiltinProtoMemberFunc(ctx, role, builtin, member) ?? null;
   } else if (ref.binding.kind === "runtime" && symbol === "__hof_holey_array_filter") {
     index = ensureHoleyArrayFilter(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
