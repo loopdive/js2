@@ -6848,6 +6848,7 @@ Byte identity is a file-copy A/B against the A2b head 9525d48818.
 | bytes, 40-file control, standalone and gc | 40 / 40 identical |
 | bytes, playground examples, standalone and gc | 13 / 13 identical |
 | eval test files (41) | the only new failure was the renamed shape test, fixed; 50 failures pre-exist on the A2b head |
+| equivalence gate, 8 shards | no new regressions in any shard |
 
 The 6 IR-only files are Annex B `global-*` rows (2 direct, 4 indirect).
 They fail on the base too and still fail, with the same message.
