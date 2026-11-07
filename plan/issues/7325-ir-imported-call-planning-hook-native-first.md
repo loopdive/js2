@@ -1,7 +1,8 @@
 ---
 id: 7325
 title: "issue-3519 tests pin the removed host-assisted regime: move the imported-call planning hook to the native-first route"
-status: in-progress
+status: done
+completed: 2026-11-07
 sprint: current
 created: 2026-11-07
 updated: 2026-11-07
