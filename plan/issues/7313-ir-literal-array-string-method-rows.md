@@ -113,8 +113,20 @@ Base `cc27f70dfd` (main), head = this branch.
 - the 4 census files, zero legacy and passing;
 - refusals: a mixed-family vec, a non-number `fromIndex`, `normalize`.
 
-`tests/issue-7108-ir-array-search-join.test.ts`: the refusal row
-`xs.indexOf(1, 1)` is claimed now, so it becomes a string `fromIndex`.
+Shapes three existing tests used as "the IR refuses this" are claimed now,
+so each moved to a shape that still refuses:
+- `tests/issue-7108-ir-array-search-join.test.ts`: `xs.indexOf(1, 1)` →
+  a string `fromIndex`;
+- `tests/equivalence/issue-1197.test.ts`: pins legacy's batched `indexOf`
+  branch ladder through an explicit `fromIndex`. It now uses
+  `undefined as any`, which the IR refuses; the ladder (`i32.or`) and the
+  answer (12) are unchanged;
+- `tests/issue-3519-ir-outcomes.test.ts` and
+  `tests/issue-3529-selector-preclaim.test.ts`: the "unimplemented Array
+  method" fixture `lastIndexOf` → `copyWithin`.
+
+The equivalence gate on `1e9348b8` reported exactly the `issue-1197` pin as
+new; all other rows matched the baseline.
 
 Pre-existing failures, identical on base (not caused here):
 - `tests/identity-array-search-fast-path.test.ts`, 1;
