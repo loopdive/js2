@@ -5897,6 +5897,51 @@ ships alone.
 - six refused at selection and never withdrawn: `exec`, a dynamic pattern,
   `.source`, a `+`, a script binding and a local binding.
 
+### R3 implemented (2026-11-07): `'…' + re`
+
+**What changed.** The `+` rule now covers a RegExp operand beside a string; the
+string it adds is `RegExp.prototype.toString`'s, computed by legacy's
+existing code. Nothing new is computed.
+- **The `+` rule:**
+  - #7066's `additiveOperandsProvable` gains one proof, `regexp`. It
+    concatenates beside a string, like a string; beside a number or another
+    RegExp it is still refused.
+  - The selector names the operand family `regexp` (`binaryOperandFamily`).
+  - from-ast's `additiveOperandProof` gives the same proof
+    (`lowersAsNativeRegExp`).
+  - Both sides read one predicate, `staticRegExpPair`, over the same lib-only
+    proof.
+- **ToString:** `lowerConcatOperand` calls `__regexp_to_string_carrier`.
+  - It is a three-instruction adapter in `regexp-standalone.ts`:
+    `any.convert_extern`, then a call to legacy's `__regexp_to_string_dyn`
+    (#4465), which renders `"/" + source + "/" + flags`.
+  - Its name sits beside the test helper's in `regexp-runtime-contract.ts`.
+  - Integration's runtime-function resolver builds it on demand, so a module
+    without a RegExp `+` has none.
+- **Selection:** `nativeStaticRegExp` admits a `+` operand as a third consumer.
+  A property read and a binding still refuse.
+
+**Measured** (the merged R1 head vs R3, the same 389 files, standalone and gc):
+- **Newly IR-only:** +6 on both lanes (14 → 20):
+  - `S15.10.1_A1_T1`, `_T6`, `_T12`, `_T14` and `_T16`;
+  - `S15.10.4.1_A9_T2`.
+
+  Each is `'…' + (new RegExp(<invalid>))` inside a `try`. All 6 pass on both
+  trees and lanes.
+- **Everything else:** 383 binaries byte-identical; 0 status changes; 0 new
+  post-claim; the playground is identical.
+- **ES5 IR-only estimate:** about 17 more files: 3 probe gains, plus 3 of the
+  100 random files scaled to the 451-file pool (about 13.5). 78 ES5 RegExp
+  files put a RegExp in a `+`; most of the rest need another lever (`S`,
+  R2's `exec`, the getters).
+
+**Tests:** `tests/issue-7106-lever-r.test.ts`, on both lanes:
+- five more claimed shapes: a literal with flags, the RegExp on the left, an
+  escaped `/` in a constructed pattern, the empty pattern `/(?:)/`, and the
+  S15.10.1 invalid-pair throw;
+- `+` beside a number and `+` beside another RegExp are refused at selection;
+- a script's own `function RegExp` is refused, as on main.
+
 ## Lever A — the runtime-eval boundary, per unit (plan, 2026-11-06)
 
 ES5 census context: 14.4 % of weighted ES5 files contain a runtime-eval site
