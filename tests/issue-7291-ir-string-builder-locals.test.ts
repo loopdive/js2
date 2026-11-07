@@ -46,6 +46,18 @@ function build(n: number): string {
 function inner(): string { return build(6); }`,
     builder: "build",
   },
+  "charAt on a concatenated (non-flat) receiver flattens it": {
+    source: `
+function build(n: number): string {
+  let r = "abc";
+  r = r + "defg";
+  let s = "";
+  for (let i = 0; i < n; i++) { s += r.charAt(i % 7); }
+  return s;
+}
+function inner(): string { return build(20); }`,
+    builder: "build",
+  },
   "a fractional and a negative bound size the presized buffer by ceil": {
     source: `
 function build(n: number): string {

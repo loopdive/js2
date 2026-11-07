@@ -69,6 +69,7 @@ export function createStringBuilderLowering<S>(
         rhsLen: local("rhsLen", i32),
         cu: local("cu", i32),
         receiver: local("receiver", builder.flatType),
+        receiverAny: local("receiverAny", builder.stringType),
         index: local("index", i32),
       },
     });

@@ -49,6 +49,8 @@ export interface StringBuilderScratch {
   readonly rhsLen: number;
   readonly cu: number;
   readonly receiver: number;
+  /** The `charAt` receiver before flattening, typed `$AnyString`. */
+  readonly receiverAny: number;
   readonly index: number;
 }
 
@@ -207,10 +209,10 @@ export function stringBuilderAppendCodeUnitInstrs(
 export function stringBuilderAppendCharAtInstrs(
   t: StringBuilderTypes,
   sb: StringBuilderSlots,
-  scratch: Pick<StringBuilderScratch, "needed" | "oldBuf" | "cu" | "receiver" | "index">,
+  scratch: Pick<StringBuilderScratch, "needed" | "oldBuf" | "cu" | "receiver" | "receiverAny" | "index">,
   helpers: StringBuilderHelpers,
 ): Instr[] {
-  const { receiver, index } = scratch;
+  const { receiver, receiverAny, index } = scratch;
   const field = (fieldIdx: number): Instr[] => [
     { op: "local.get", index: receiver },
     { op: "ref.as_non_null" },
@@ -218,7 +220,22 @@ export function stringBuilderAppendCharAtInstrs(
   ];
   return [
     { op: "local.set", index },
-    { op: "call", funcIdx: helpers.flatten },
+    // An already-flat receiver (a string literal, usually) skips the flatten call.
+    { op: "local.tee", index: receiverAny },
+    { op: "ref.test", typeIdx: t.flat },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: t.flat } },
+      then: [
+        { op: "local.get", index: receiverAny },
+        { op: "ref.cast", typeIdx: t.flat },
+      ],
+      else: [
+        { op: "local.get", index: receiverAny },
+        { op: "ref.as_non_null" },
+        { op: "call", funcIdx: helpers.flatten },
+      ],
+    },
     { op: "local.set", index: receiver },
     { op: "local.get", index },
     ...field(0),

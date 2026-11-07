@@ -140,6 +140,7 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     return {
       bufType: { kind: "ref_null", typeIdx: t.data },
       flatType: { kind: "ref_null", typeIdx: t.flat },
+      stringType: { kind: "ref_null", typeIdx: t.any },
       init: (sb, presize, out) =>
         out.push(
           ...(presize

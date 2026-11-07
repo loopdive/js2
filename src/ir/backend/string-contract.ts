@@ -48,9 +48,10 @@ export interface StringBackendEmitter<Sink> {
  * consumes its operands from the sink and pushes nothing.
  */
 export interface StringBuilderEmitter<Sink> {
-  /** Local types: the code-unit buffer and a flattened string. */
+  /** Local types: the code-unit buffer, a flattened string and any string. */
   readonly bufType: ValType;
   readonly flatType: ValType;
+  readonly stringType: ValType;
   /** A presized builder is sized once from its loop bound and never grows. */
   init(sb: StringBuilderSlots, presize: StringBuilderPresize | undefined, out: Sink): void;
   /** Consumes a string. */
