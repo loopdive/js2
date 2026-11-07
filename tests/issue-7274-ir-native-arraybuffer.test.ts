@@ -259,11 +259,24 @@ describe("#7274 IR native DataView (standalone)", () => {
       "a non-view write",
       "var v = new DataView(new ArrayBuffer(4)); v = new ArrayBuffer(6); assert.sameValue(v.byteLength, 6);",
     ],
+    // A certified var's handle has no dynamic carrier, so a read the plan does not consume refuses selection.
+    [
+      "an assignment of the handle",
+      "var v = new DataView(new ArrayBuffer(8)); var j; j = v; assert.sameValue(j.byteLength, 8);",
+    ],
+    [
+      "an initializer from the handle",
+      "var v = new DataView(new ArrayBuffer(8)); var j = v; assert.sameValue(j.byteLength, 8);",
+    ],
+    [
+      "an ArrayBuffer handle assignment",
+      "var ab = new ArrayBuffer(8); var n = ab.byteLength; var j; j = ab; assert.sameValue(j.byteLength, n);",
+    ],
   ])("keeps %s on the legacy route", async (_label, body) => {
     const path = probe(body);
     const { claimed, wat } = await route(path, "standalone");
     expect(claimed).toBe(false);
-    expect(wat).not.toContain("__ir_dv_");
+    expect(wat).not.toMatch(/__ir_(dv|ab)_/);
     await passes(path);
   });
 

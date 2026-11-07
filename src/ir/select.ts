@@ -11478,6 +11478,12 @@ function functionObjectCallIsPhase1(
   );
 }
 
+/** (#7274) Does `node` read a var bound to the native-buffer storage kind? */
+function isNativeBufferBinding(node: ts.Identifier): boolean {
+  const kind = moduleBinding(node)?.valueKind;
+  return kind !== undefined && isIrModuleNativeBufferValueKind(kind);
+}
+
 /**
  * (#7274) The plan-certified native ArrayBuffer / DataView operations, ahead of the
  * module-extern consumer gate (a buffer var is a capability-extern binding):
@@ -11494,6 +11500,10 @@ function phase1NativeBufferVerdict(
   if (surface === null) return undefined;
   const op = surface.operation(expr);
   if (op === undefined) {
+    // A certified var's handle has no dynamic carrier: a read the plan does not consume escapes.
+    if (ts.isIdentifier(expr) && isNativeBufferBinding(expr) && !surface.consumesHandle(expr)) {
+      return shapeNo("expr-native-buffer-escape", expr);
+    }
     const access = ts.isCallExpression(expr) ? expr.expression : expr;
     return ts.isPropertyAccessExpression(access) && surface.isReceiver(access.expression)
       ? capabilityNo("host-surface-unavailable", "expr-native-buffer-member", expr)
@@ -11501,11 +11511,8 @@ function phase1NativeBufferVerdict(
   }
   const { handle, operands } = nativeBufferOperationParts(op);
   const receiver = handle === undefined ? undefined : unwrapPhase1Parens(handle);
-  if (receiver !== undefined && ts.isIdentifier(receiver)) {
-    const kind = moduleBinding(receiver)?.valueKind;
-    if (kind === undefined || !isIrModuleNativeBufferValueKind(kind)) {
-      return shapeNo("expr-native-buffer-receiver", receiver);
-    }
+  if (receiver !== undefined && ts.isIdentifier(receiver) && !isNativeBufferBinding(receiver)) {
+    return shapeNo("expr-native-buffer-receiver", receiver);
   }
   if (handle !== undefined && !isPhase1Expr(handle, scope, localClasses)) return false;
   return operands.every((operand) => isPhase1Expr(operand, scope, localClasses));

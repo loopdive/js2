@@ -37,6 +37,11 @@
  * i32_byte vec; we `any.convert_extern` + `ref.cast` to recover the struct.
  */
 import type { Instr, ValType } from "../ir/types.js";
+import {
+  dataViewAccessorFn,
+  isDataViewAccessor,
+  type DataViewAccessor,
+} from "../shared/contracts/native-buffer-adapters.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
@@ -281,7 +286,7 @@ export function inferNativeTaViewCallResultType(
   return result;
 }
 
-const DV_ACCESSORS: Record<string, DvAccessor> = {
+const DV_ACCESSORS: Readonly<Record<DataViewAccessor, DvAccessor>> = {
   getInt8: { kind: "get", bytes: 1, signed: true, float: false },
   getUint8: { kind: "get", bytes: 1, signed: false, float: false },
   getInt16: { kind: "get", bytes: 2, signed: true, float: false },
@@ -306,9 +311,7 @@ const DV_ACCESSORS: Record<string, DvAccessor> = {
   setBigUint64: { kind: "set", bytes: 8, signed: false, float: false, int64: true },
 };
 
-export function isDataViewAccessor(name: string): boolean {
-  return Object.prototype.hasOwnProperty.call(DV_ACCESSORS, name);
-}
+export { isDataViewAccessor };
 
 /**
  * (#5150) §25.1.4.1 `ArrayBuffer.isView(arg)`, decided HOST-FREE: true iff the
@@ -2058,8 +2061,8 @@ export function emitDataViewAccessor(
   args: readonly import("../ts-api.js").ts.Expression[],
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
 ): { kind: "get"; result: ValType } | { kind: "set" } | null {
+  if (!isDataViewAccessor(methodName)) return null;
   const acc = DV_ACCESSORS[methodName];
-  if (!acc) return null;
 
   const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
   if (arrTypeIdx < 0) return null;
@@ -2271,9 +2274,9 @@ export function emitDataViewAccessor(
  * throw templates capture their ctor indices anyway.
  */
 export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): number | undefined {
+  if (!isDataViewAccessor(member)) return undefined;
   const acc = DV_ACCESSORS[member];
-  if (!acc) return undefined;
-  const helperName = `__dv_m_${member}`;
+  const helperName = dataViewAccessorFn(member);
   // (#7274) Compiler-owned: a source `function __dv_m_getInt32() {}` shares
   // `ctx.funcMap` and is never this helper.
   const existing = ownedHelperHandle(ctx, helperName);
@@ -2504,9 +2507,10 @@ export function emitDataViewProtoMemberBody(
     return resultType;
   }
 
+  if (!isDataViewAccessor(member)) return null;
   const helperIdx = ensureDvAccessorHelper(ctx, member);
   if (helperIdx === undefined) return null;
-  const acc = DV_ACCESSORS[member]!;
+  const acc = DV_ACCESSORS[member];
   const helperArgs = acc.kind === "get" ? 2 : 3;
   // this (param 1) + args (params 2..), padded with the `undefined` SINGLETON
   // (#5150 — a `null` pad coerces to 0, so `dv.setFloat32(0)` wrote 0 where

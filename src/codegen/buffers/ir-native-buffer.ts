@@ -32,7 +32,7 @@ import {
   IR_NATIVE_DV_BYTE_LENGTH_FN,
   IR_NATIVE_DV_BYTE_OFFSET_FN,
   IR_NATIVE_DV_NEW_FN,
-  irNativeDvAccessorOf,
+  dataViewAccessorOf,
   isIrNativeBufferFn,
   type IrNativeBufferFn,
 } from "../../shared/contracts/native-buffer-adapters.js";
@@ -206,7 +206,7 @@ const ADAPTERS: Readonly<Record<IrNativeBufferFn, AdapterSpec>> = {
 };
 
 /** Mint the adapter `symbol`, idempotently, on a lane whose plan certified a call to it. */
-export function ensureIrNativeBufferAdapter(ctx: CodegenContext, symbol: IrNativeBufferFn): FuncHandle {
+function ensureIrNativeBufferAdapter(ctx: CodegenContext, symbol: IrNativeBufferFn): FuncHandle {
   const spec = ADAPTERS[symbol];
   return ensureNamedHelperFunc(
     ctx,
@@ -228,6 +228,6 @@ export function ensureIrNativeBufferAdapter(ctx: CodegenContext, symbol: IrNativ
  */
 export function irNativeBufferProvider(ctx: CodegenContext, symbol: string): FuncHandle | undefined {
   if (isIrNativeBufferFn(symbol)) return ensureIrNativeBufferAdapter(ctx, symbol);
-  const accessor = irNativeDvAccessorOf(symbol);
+  const accessor = dataViewAccessorOf(symbol);
   return accessor === undefined ? undefined : ensureDvAccessorHelper(ctx, accessor);
 }

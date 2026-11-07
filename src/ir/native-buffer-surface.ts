@@ -37,7 +37,8 @@ import {
   nativeBufferMember,
   type IrNativeBufferClass,
   type IrNativeBufferConstruct,
-  type IrNativeBufferMember,
+  type IrNativeBufferCallMember,
+  type IrNativeBufferGetMember,
   type IrNativeBufferOperands,
 } from "./native-buffer-operands.js";
 
@@ -47,20 +48,16 @@ export type IrNativeBufferOperation =
   | IrNativeBufferConstruct
   | {
       readonly kind: "get";
-      readonly fn: string;
-      readonly result: "number" | "boolean";
+      readonly member: IrNativeBufferGetMember;
       readonly receiver: ts.Expression;
       readonly receiverClass: IrNativeBufferClass;
     }
   | {
       readonly kind: "call";
-      readonly fn: string;
+      readonly member: IrNativeBufferCallMember;
       readonly receiver: ts.Expression;
       readonly receiverClass: IrNativeBufferClass;
       readonly args: readonly ts.Expression[];
-      /** The adapter's operand count; missing arguments are `undefined`. */
-      readonly arity: number;
-      readonly resultClass?: "ArrayBuffer";
     };
 
 /** An operation's handle operand (receiver, or a view's buffer) and its other source operands. */
@@ -125,7 +122,8 @@ function isPlainCall(access: ts.PropertyAccessExpression): access is ts.Property
 interface BufferSites {
   readonly constructions: ReadonlyMap<ts.NewExpression, IrNativeBufferConstruct>;
   readonly reads: readonly ts.PropertyAccessExpression[];
-  readonly calls: ReadonlySet<ts.CallExpression>;
+  /** Each plain method call, with its member access. */
+  readonly calls: ReadonlyMap<ts.CallExpression, ts.PropertyAccessExpression>;
   readonly writesBySymbol: ReadonlyMap<ts.Symbol, readonly ts.Expression[]>;
   /** Symbols stored to by anything but a plain value (`++`, `+=`, a for-in key, …). */
   readonly poisoned: ReadonlySet<ts.Symbol>;
@@ -138,7 +136,7 @@ function collectBufferSites(
 ): BufferSites {
   const constructions = new Map<ts.NewExpression, IrNativeBufferConstruct>();
   const reads: ts.PropertyAccessExpression[] = [];
-  const calls = new Set<ts.CallExpression>();
+  const calls = new Map<ts.CallExpression, ts.PropertyAccessExpression>();
   const writesBySymbol = new Map<ts.Symbol, ts.Expression[]>();
   const poisoned = new Set<ts.Symbol>();
   const visit = (node: ts.Node): void => {
@@ -147,7 +145,7 @@ function collectBufferSites(
       if (shape !== undefined) constructions.set(node, shape);
     } else if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.name)) {
       if (isPlainRead(node)) reads.push(node);
-      else if (isPlainCall(node)) calls.add(node.parent);
+      else if (isPlainCall(node)) calls.set(node.parent, node);
     }
     for (const write of identifierWritesOf(node)) {
       const symbol = checker.getSymbolAtLocation(write.target);
@@ -188,12 +186,10 @@ function scriptVarCandidates(
 
 /** A call the table admits on a certified receiver. */
 interface AdmittedCall {
-  readonly member: Extract<IrNativeBufferMember, { kind: "call" }>;
+  readonly member: IrNativeBufferCallMember;
+  readonly receiver: ts.Expression;
   readonly receiverClass: IrNativeBufferClass;
 }
-
-const accessOf = (call: ts.CallExpression): ts.PropertyAccessExpression =>
-  call.expression as ts.PropertyAccessExpression;
 
 interface CertifiedVar {
   readonly declaration: ts.VariableDeclaration;
@@ -224,22 +220,21 @@ function certifyBufferVars(
       if (shape?.kind === "construct") return "ArrayBuffer";
       return shape && classOf(shape.buffer) === "ArrayBuffer" ? "DataView" : undefined;
     }
-    if (ts.isCallExpression(candidate)) {
-      return sites.calls.has(candidate) ? callMember(candidate)?.member.resultClass : undefined;
-    }
+    if (ts.isCallExpression(candidate)) return callMember(candidate)?.member.resultClass;
     if (!ts.isIdentifier(candidate)) return undefined;
     const symbol = checker.getSymbolAtLocation(candidate);
     const binding = symbol === undefined ? undefined : certified.get(symbol);
     return binding && scriptVarUseFollowsDeclaration(candidate, binding.declaration) ? binding.cls : undefined;
   };
   const callMember = (call: ts.CallExpression): AdmittedCall | undefined => {
-    const access = accessOf(call);
+    const access = sites.calls.get(call);
+    if (access === undefined) return undefined;
     const receiverClass = classOf(access.expression);
     if (receiverClass === undefined) return undefined;
     const member = nativeBufferMember(receiverClass, access.name.text);
     if (member?.kind !== "call" || call.arguments.length > member.operands.length) return undefined;
     const admitted = call.arguments.every((arg, i) => operands.operand(member.operands[i]!, arg));
-    return admitted ? { member, receiverClass } : undefined;
+    return admitted ? { member, receiver: access.expression, receiverClass } : undefined;
   };
   const producerClass = (expr: ts.Expression): IrNativeBufferClass | undefined =>
     ts.isIdentifier(stripParens(expr)) ? undefined : classOf(expr);
@@ -275,18 +270,9 @@ function planBufferOperations(
 ): ReadonlyMap<ts.Node, IrNativeBufferOperation> {
   const { classOf, callMember } = admitted;
   const operations = new Map<ts.Node, IrNativeBufferOperation>();
-  const certifyCall = (call: ts.CallExpression, { member, receiverClass }: AdmittedCall): void => {
-    const receiver = accessOf(call).expression;
-    operations.set(call, {
-      kind: "call",
-      fn: member.fn,
-      receiver,
-      receiverClass,
-      args: call.arguments,
-      arity: member.operands.length,
-      ...(member.resultClass ? { resultClass: member.resultClass } : {}),
-    });
-    consume(receiver);
+  const certifyCall = (call: ts.CallExpression, admitted: AdmittedCall): void => {
+    operations.set(call, { kind: "call", ...admitted, args: call.arguments });
+    consume(admitted.receiver);
   };
   const consume = (expr: ts.Expression): void => {
     const candidate = stripParens(expr);
@@ -294,7 +280,7 @@ function planBufferOperations(
     if (shape !== undefined && classOf(candidate) !== undefined) {
       operations.set(candidate, shape);
       if (shape.kind === "construct-view") consume(shape.buffer);
-    } else if (ts.isCallExpression(candidate) && sites.calls.has(candidate)) {
+    } else if (ts.isCallExpression(candidate)) {
       const admitted = callMember(candidate);
       if (admitted !== undefined) certifyCall(candidate, admitted);
     }
@@ -304,16 +290,10 @@ function planBufferOperations(
     if (receiverClass === undefined) continue;
     const member = nativeBufferMember(receiverClass, access.name.text);
     if (member?.kind !== "get") continue;
-    operations.set(access, {
-      kind: "get",
-      fn: member.fn,
-      result: member.result,
-      receiver: access.expression,
-      receiverClass,
-    });
+    operations.set(access, { kind: "get", member, receiver: access.expression, receiverClass });
     consume(access.expression);
   }
-  for (const call of sites.calls) {
+  for (const call of sites.calls.keys()) {
     const admitted = callMember(call);
     if (admitted !== undefined && admitted.member.resultClass === undefined) certifyCall(call, admitted);
   }

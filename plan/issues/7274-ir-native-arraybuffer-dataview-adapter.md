@@ -36,6 +36,8 @@ loc-budget-allow:
   - src/ir/module-bindings.ts
   - src/ir/from-ast.ts
   - src/codegen/index.ts
+  # 2026-11-07 (#7274 slice 2): +1, the import of the shared `dataViewAccessorFn` that replaces the hard-coded `__dv_m_` prefix (review finding 2)
+  - src/codegen/closed-method-dispatch.ts
 func-budget-allow:
   - src/ir/integration.ts::makeFromAstResolver
   - src/ir/integration.ts::compileIrPathFunctions
@@ -540,9 +542,64 @@ reads or writes a certified var does not claim, so module-init then refuses on
 five mixed probes therefore run legacy on both sides (identical to base); the
 representation identity rests on the shared emitters and the shared slot.
 
-### Adversarial review
+### Adversarial review (fresh context, 2026-11-07)
 
-Pending.
+Verdict on the first cut (c6131a0f): quality goal not met. Fixed in this PR:
+
+1. **P1, selector/builder disagreement.** A certified var read as a plain
+   value was admitted by the selector, then refused by from-ast. This is a
+   post-claim demote: the selector claims `<module-init>`, from-ast fails,
+   and the unit falls back to legacy with a warning. Probes:
+   - `var j; j = v;` failed with "assignment to module binding … got
+     extern<DataView>";
+   - `var j = v;` failed with "initializer has no supported carrier".
+
+   Slice 1 had the ArrayBuffer twin, `j = ab`, so its "no post-claim demote"
+   row was wrong. The ledger's "invariants 0" does not count demotes.
+
+   Fix: `phase1NativeBufferVerdict` now refuses any read of a native-buffer
+   binding that the plan's `consumesHandle` does not cover
+   (`expr-native-buffer-escape`). This is one rule for every position. The
+   three probes are regressions in the test file.
+2. **Accessor names had two sources of truth.** The contract re-listed
+   legacy's `DV_ACCESSORS` keys, and `__dv_m_` was hard-coded at three sites.
+   - The contract now owns `DATA_VIEW_ACCESSORS`: all 22, typed as
+     `DataViewAccessor`.
+   - Legacy's table is `Record<DataViewAccessor, DvAccessor>`, so the
+     compiler checks the two agree.
+   - `isDataViewAccessor` and `dataViewAccessorFn` are shared, and legacy
+     builds helper names with them.
+3. **The BigInt exclusion was policy living in the contract.** It moved to
+   the admission table in `native-buffer-operands.ts`.
+4. **Operations copied their member's fields** (`fn`, `result`, `arity`,
+   `resultClass`). They now carry the table member itself.
+5. **The plan was consulted twice for expression calls.** The extra hook in
+   `lowerMethodCallWithSourcePlan` is now `lowerStatementMethodCall`, used only
+   by the two statement entries that bypass `lowerExpr`.
+6. **Dead exports.** Un-exported `ensureIrNativeBufferAdapter` and the adapter
+   list; removed `isIrNativeDvAccessor`.
+9. **Stale doc** on `tryLowerNativeBufferOperation`.
+10. **Unchecked cast removed.** `accessOf` cast to a property access. The
+    sites now keep each call's member access.
+
+Rebutted or recorded:
+
+7. **Operand evaluation order.** Legacy evaluates a DataView `byteLength`
+   operand only after the detached and offset-bounds checks; the spec and the
+   IR evaluate the whole argument list first. It is not observable on the IR
+   route today (a side-effecting operand needs `try` or a call, neither of
+   which claims here). It is recorded under Follow-ups.
+8. **Redundant checks in the shared emitters.**
+   - `__ir_dv_new` always runs the offset-bounds check, where legacy skips it
+     with no offset; `0 > len` is never true, so this is behaviour-neutral.
+   - The byte-attr adapter keeps the bare-vec branch, which a certified view
+     never takes.
+   - Both are the price of one emitter per sequence; an IR-only variant would
+     duplicate it.
+
+Reviewer's gap, confirmed: with the test262 harness, `--target wasi` never
+claims `<module-init>` (`constructor-resolution-unsupported`). The wasi
+adapters are covered by compile, validation and imports only.
 
 ## Follow-ups
 
@@ -570,6 +627,11 @@ Pending.
   first. The IR admits only a number-literal `maxByteLength`, so the
   difference is not observable on the IR route (#7121 review nit 2).
 
+- **Legacy DataView `byteLength` evaluation order.** Legacy evaluates the
+  length operand after the detached / offset-bounds checks (never, when the
+  offset is out of range); ArgumentListEvaluation evaluates it first. The
+  IR follows the spec. Not yet observable on the IR route; it will be once
+  `try` claims (slice-2 review finding 7).
 - **`DataView#buffer` and the BigInt accessors** stay on legacy (slice 2).
   `buffer` needs the window's backing as a certified ArrayBuffer handle; the
   BigInt accessors need a BigInt operand in the IR.

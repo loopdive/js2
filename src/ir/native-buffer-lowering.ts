@@ -80,17 +80,15 @@ export function lowerNativeBufferOperation(op: IrNativeBufferOperation, host: Ir
       const length = lowerDynamic(op.length, host);
       return call(host, IR_NATIVE_DV_NEW_FN, [buffer, offset, length], handle("DataView"));
     }
-    case "get":
-      return call(
-        host,
-        op.fn,
-        [lowerHandle(op.receiver, op.receiverClass, host)],
-        op.result === "boolean" ? irBool() : F64,
-      );
+    case "get": {
+      const { fn, result } = op.member;
+      return call(host, fn, [lowerHandle(op.receiver, op.receiverClass, host)], result === "boolean" ? irBool() : F64);
+    }
     case "call": {
+      const { fn, operands, resultClass } = op.member;
       const receiver = lowerHandle(op.receiver, op.receiverClass, host);
-      const args = Array.from({ length: op.arity }, (_, i) => lowerDynamic(op.args[i], host));
-      return call(host, op.fn, [receiver, ...args], op.resultClass ? handle(op.resultClass) : irDynamic());
+      const args = operands.map((_, i) => lowerDynamic(op.args[i], host));
+      return call(host, fn, [receiver, ...args], resultClass ? handle(resultClass) : irDynamic());
     }
   }
 }

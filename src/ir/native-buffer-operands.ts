@@ -13,10 +13,10 @@ import {
   IR_NATIVE_AB_MAX_BYTE_LENGTH_FN,
   IR_NATIVE_AB_RESIZABLE_FN,
   IR_NATIVE_AB_SLICE_FN,
-  IR_NATIVE_DV_ACCESSORS,
+  DATA_VIEW_ACCESSORS,
+  dataViewAccessorFn,
   IR_NATIVE_DV_BYTE_LENGTH_FN,
   IR_NATIVE_DV_BYTE_OFFSET_FN,
-  irNativeDvAccessorFn,
 } from "../shared/contracts/native-buffer-adapters.js";
 import { makeIrAmbientBindingPredicate, makeIrPrimitiveExpressionClassifier } from "./module-bindings.js";
 
@@ -30,26 +30,35 @@ export type IrNativeBufferClass = "ArrayBuffer" | "DataView";
  */
 type OperandKind = "number" | "bound" | "flag";
 
-export type IrNativeBufferMember =
-  | { readonly kind: "get"; readonly fn: string; readonly result: "number" | "boolean" }
-  | {
-      readonly kind: "call";
-      readonly fn: string;
-      /** The adapter's operand count; an omitted operand is passed as `undefined`. */
-      readonly operands: readonly OperandKind[];
-      /** The class of the handle the call returns; absent for a dynamic-carrier result. */
-      readonly resultClass?: "ArrayBuffer";
-    };
+export interface IrNativeBufferGetMember {
+  readonly kind: "get";
+  readonly fn: string;
+  readonly result: "number" | "boolean";
+}
 
+export interface IrNativeBufferCallMember {
+  readonly kind: "call";
+  readonly fn: string;
+  /** One kind per adapter operand; an omitted operand is passed as `undefined`. */
+  readonly operands: readonly OperandKind[];
+  /** The class of the handle the call returns; absent for a dynamic-carrier result. */
+  readonly resultClass?: "ArrayBuffer";
+}
+
+type IrNativeBufferMember = IrNativeBufferGetMember | IrNativeBufferCallMember;
+
+// The IR has no BigInt operand, so the BigInt accessors stay on legacy.
 const DV_ACCESSOR_MEMBERS = Object.fromEntries(
-  IR_NATIVE_DV_ACCESSORS.map((accessor): [string, IrNativeBufferMember] => [
-    accessor,
-    {
-      kind: "call",
-      fn: irNativeDvAccessorFn(accessor),
-      operands: accessor.startsWith("get") ? ["number", "flag"] : ["number", "number", "flag"],
-    },
-  ]),
+  DATA_VIEW_ACCESSORS.filter((accessor) => !accessor.includes("BigInt")).map(
+    (accessor): [string, IrNativeBufferMember] => [
+      accessor,
+      {
+        kind: "call",
+        fn: dataViewAccessorFn(accessor),
+        operands: accessor.startsWith("get") ? ["number", "flag"] : ["number", "number", "flag"],
+      },
+    ],
+  ),
 );
 
 const MEMBERS: Readonly<Record<IrNativeBufferClass, Readonly<Record<string, IrNativeBufferMember>>>> = {
