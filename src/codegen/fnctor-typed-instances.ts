@@ -196,6 +196,9 @@ export function makeIrDynamicCarrierDivergenceProbe(ctx: CodegenContext): (posit
       // call-site-inferred reference slot (a vec for `ask([1, 2])`, the
       // non-null string of `verifyNotEnumerable(o, "x")`) cannot match.
       const slot = legacyParamSlot(ctx, position);
+      // (#7260) A scalar slot (legacy resolved `f64` from numeric call sites)
+      // never matches the dynamic carrier either.
+      if (slot?.kind === "f64" || slot?.kind === "i32") return true;
       if (!ctx.fast && (slot?.kind === "ref" || slot?.kind === "ref_null")) {
         if (!(slot.kind === "ref_null" && isAnyStringSlot(ctx, slot))) return true;
       }

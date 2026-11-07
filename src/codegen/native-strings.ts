@@ -53,6 +53,7 @@ export {
   type NativeStringLiteralMaterialization,
   type StringEncoding,
 } from "./native-string-literals.js";
+export { ambientGlobalFunctionProviderSymbol } from "./annexb-escape-call.js"; // (#7253) re-exported for the IR bridge
 
 export function nativeStringType(ctx: CodegenContext): ValType {
   return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };

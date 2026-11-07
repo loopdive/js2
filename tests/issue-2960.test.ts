@@ -145,10 +145,10 @@ describe("#2928 — standalone dynamic indirect eval links the runtime provider"
 describe("#4013 — runtime-eval boundary classification", () => {
   // (#6979 S7-a) Re-pinned from the retired host-assisted lane. On the native
   // regime (default and standalone alike) a module that observes `eval` links
-  // the runtime-eval callable carrier, which is still owned by the direct
-  // frontend, so `add` demotes with late-preparation-unsupported. A regime gap
-  // against #5385, kept as an inverted sentinel.
-  it.fails("does not demote IR merely because a source observes eval as a value (regime gap)", async () => {
+  // the runtime-eval callable carrier. Until #7106 A1 that withdrew every unit
+  // (an inverted sentinel here); the boundary is now per unit, and `add`
+  // touches no eval-visible binding.
+  it("does not demote IR merely because a source observes eval as a value", async () => {
     const r = await compile(
       `const intrinsic: any = eval;
        export function add(a: number, b: number): number { return a + b; }`,
