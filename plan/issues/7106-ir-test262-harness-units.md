@@ -6597,15 +6597,21 @@ A2 turned out large, so it ships in two slices:
 
 #### A2a measurement
 
-Niced, one process, interpreter provider built per tree.
+Setup: niced, one process, interpreter provider built per tree. The final
+tree is A2a merged with the A3 head 2b231a5b67 (round 3, which includes
+origin/main and the A1 self-reference fix).
 
 | check | result |
 | --- | --- |
 | 141 eval files, standalone verdicts | 0 pass→fail (101 / 40, same as base) |
-| 141 eval files, JS host verdicts | 0 pass→fail on the 83 measured so far (run paused for the #7136 forward fix) |
+| 141 eval files, JS host verdicts | 0 pass→fail (98 / 43, same as base) |
 | 141 eval files, compile | 141 / 141, 0 post-claim errors, IR units unchanged at 830, 82 files change bytes (eval sites only) |
-| 40-file non-eval control | 40 / 40 byte-identical to the A3 head |
-| 11 focused probes (`.tmp/a2t`), both lanes | identical verdicts to the A3 head |
+| 40-file non-eval control | 40 / 40 byte-identical to the A3 head 2b231a5b67 |
+| 11 focused probes (`.tmp/a2t`), both lanes | identical verdicts to the A3 head 6756a64218 |
+
+The standalone run was paused at 71 / 141 and resumed after the merge.
+That is sound because the merge left all 141 binaries byte-identical to the
+paused tree.
 
 The JS host lane does not reach the support function at all:
 `emitStandaloneGlobalEvalRuntime` answers only for the native provider, as
