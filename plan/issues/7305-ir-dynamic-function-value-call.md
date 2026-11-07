@@ -251,3 +251,29 @@ empty, standalone and gc pass).
 | 4 (nit) | the closure-or-primitive box choice appears at two from-ast boundaries | kept: two users; folding it is a follow-up if a third appears |
 | 5 (nit) | the catch-binding paragraph read as covering the new arm | now says it describes the closure arm |
 
+
+## RV7166 review (6702803650, delta 6703081743)
+
+| # | finding | resolution |
+| --- | --- | --- |
+| B1 (blocker) | with `u` claimed, `<module-init>` is claimed over `u(null)` / `u({ a: 1 })`, then from-ast refuses them (bare compiles) | `assessModuleInit` refuses a direct call that passes a callee's dynamic parameter a bare `null` or an object literal (`callPassesUncarriedDynamicArgument`, sharing `bodyCallsDynamicParamCallee`'s walk). Functions meet the same rule through the move-only scan. Pinned by bare-compile tests on standalone, wasi and gc. |
+| M1 | `lowerCall` and `buildLocalCallGraph` growth ungranted against the stacked base | granted (7320 / 7305 frontmatter) |
+| N1–N4 | doc and guard nits | N2–N4 fixed; N1 rebutted (a typed parameter never enters `currentDynamicParamNames`) |
+
+### Known pre-existing failures this arm can newly reach
+
+Each reproduces on base `63018c49` without this arm, once `<module-init>` or
+`u` is claimed for another reason (`function u(g) { return typeof g; }`).
+#7305 only removes the legacy `u` that used to keep `<module-init>`
+unclaimed.
+
+- **`R +=` in a `catch`**: `var R = ""; try { R += "no"; } catch (e) { R += (e instanceof TypeError) + ":" + e.message; }`.
+  - On #7164's head this is a post-claim "typed string += requires … evidence"; on 63018c49 it is a hard "contradictory carrier" failure.
+  - It needs no function at all. Routed to [#7287](./7287-ir-script-var-closure-storage-and-call.md), PR #7164, whose `+=` recovery it is.
+- **A `null` in a script `var`**: `var nv = null; nv;` gives a post-claim "bare 'null' in non-reference context (dynamic)", with no call.
+  - The failing node is the initializer, not a call argument.
+  - `writeValueMatches` (`module-bindings.ts`) accepts any value into the script dynamic home, but from-ast has no `null` producer for the carrier.
+  - `u(nv)` only reaches it.
+- **A BigInt argument**: `function u(g) { return typeof g; } u(1n);` withdraws `u` itself ("function typeIdx parity mismatch … keeping legacy body").
+  - That is a parity withdrawal, not a wrong result.
+  - With this arm, `function u(g) { g(1); } u(1n);` reaches it too.
