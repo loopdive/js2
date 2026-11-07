@@ -37,7 +37,18 @@ func-budget-allow:
   # `walkModuleStmtForVars`, which is nested in `collectDeclarations`.
   - src/codegen/declarations.ts::collectDeclarations
 import-cycles-allow:
-  - codegen->ir: 303 # 2026-11-06 (#7288): module-global-registration.ts reads the IR's `isModuleInitVarList`, the one predicate for which hoisted `var` lists are module bindings, so legacy observes exactly the slots the IR resolves
+  # 2026-11-07 (#7288): module-global-registration.ts → ir/module-init-vars.ts.
+  # Legacy must observe exactly the hoisted heads the IR resolves; a second
+  # copy of the rule in codegen would let the two drift, which is the
+  # hard-compile-error class the review found. The edge cannot be cut:
+  #   - moving the predicate below both is not possible, because
+  #     module-init-vars.ts depends on IR modules (binding-pattern-plan,
+  #     function-local-var);
+  #   - injecting it would thread a callback through `collectDeclarations`
+  #     (already over its budget) only to hide the same dependency.
+  # codegen already imports the IR's module-init identity (declarations.ts →
+  # ir/module-init.js), so the direction is not new; only the file pair is.
+  - codegen->ir: 303 # 2026-11-07 (#7288): legacy observes exactly the for-heads the IR resolves, through the IR's one predicate (see above)
 ---
 
 # #7288: nested top-level `var` in `<module-init>`
