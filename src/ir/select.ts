@@ -106,6 +106,7 @@ import {
 } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
+import { lowersAsPreparedComponent } from "./prepared-component-ownership.js";
 import { admitAmbientGlobalFunctionCall } from "./ambient-global-function-call.js";
 import {
   isAffineThreeDeepElementAccess,
@@ -145,7 +146,7 @@ import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
 import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
-import type { IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
+import { nativeBufferOperationParts, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
@@ -155,6 +156,7 @@ import {
   isIrModuleMapValueKind,
   isIrModuleNativeBufferValueKind,
   isIrModuleReferenceValueKind,
+  isStatementDynamicModuleCall,
 } from "./module-bindings.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
 import { firstConstBindingWrite } from "./const-binding-writes.js";
@@ -203,6 +205,7 @@ import {
   isCarrierAddition,
   additiveResultFamily,
   provenBinaryOperandsAdmissible,
+  booleanReadBesideCarrier,
   isComparisonResultOperator,
   isEqualityOperator,
   isGlobalUndefinedIdentifier,
@@ -7156,6 +7159,12 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     }
     if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
       return shapeNo("vardecl-init-expr", d.initializer);
+    // The IR has no dynamic `null` value for a dynamic module home (#7287 review B3).
+    if (
+      directModuleBinding?.valueKind.kind === "dynamic" &&
+      binaryOperandFamily(d.initializer, initializerScope, localClasses) === "nullish"
+    )
+      return shapeNo("vardecl-module-value-flow", d.initializer);
     const initializer = unwrapPhase1Parens(d.initializer);
     const objectMethodValue = isConst ? directObjectMethodValueProjection(d, initializer, initializerScope) : null;
     const returnedCallable = objectMethodValue ? null : directReturnedCallableSignature(initializer, initializerScope);
@@ -9137,6 +9146,11 @@ function selectorPrimitiveWrapperOrGenericBinary(
       !isSlotFreeI32IdentityLowered(expr));
   if (judged && !provenBinaryOperandsAdmissible(expr, left, right, additiveLane())) {
     return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
+  }
+  // (#7282) A boolean ToNumber'd beside the carrier needs carrier supports a
+  // prepared component cannot name.
+  if (booleanReadBesideCarrier(binOp, left, right) && lowersAsPreparedComponent(expr)) {
+    return capabilityNo("operand-coercion-unsupported", "expr-boolean-carrier-prepared-unit", expr);
   }
   return (
     (leftWrapper || isPhase1Expr(expr.left, scope, localClasses)) &&
@@ -11537,8 +11551,14 @@ function functionObjectCallIsPhase1(
   );
 }
 
+/** (#7274) Does `node` read a var bound to the native-buffer storage kind? */
+function isNativeBufferBinding(node: ts.Identifier): boolean {
+  const kind = moduleBinding(node)?.valueKind;
+  return kind !== undefined && isIrModuleNativeBufferValueKind(kind);
+}
+
 /**
- * (#7274) The plan-certified native ArrayBuffer operations, ahead of the
+ * (#7274) The plan-certified native ArrayBuffer / DataView operations, ahead of the
  * module-extern consumer gate (a buffer var is a capability-extern binding):
  * the operands must be Phase-1 and a var receiver must resolve to the
  * native-buffer storage kind. A certified receiver's member outside the plan
@@ -11553,23 +11573,22 @@ function phase1NativeBufferVerdict(
   if (surface === null) return undefined;
   const op = surface.operation(expr);
   if (op === undefined) {
+    // A certified var's handle has no dynamic carrier: a read the plan does not consume escapes.
+    if (ts.isIdentifier(expr) && isNativeBufferBinding(expr) && !surface.consumesHandle(expr)) {
+      return shapeNo("expr-native-buffer-escape", expr);
+    }
     const access = ts.isCallExpression(expr) ? expr.expression : expr;
     return ts.isPropertyAccessExpression(access) && surface.isReceiver(access.expression)
       ? capabilityNo("host-surface-unavailable", "expr-native-buffer-member", expr)
       : undefined;
   }
-  if (op.kind === "construct") {
-    return [op.length, op.maxByteLength].every((e) => e === undefined || isPhase1Expr(e, scope, localClasses));
+  const { handle, operands } = nativeBufferOperationParts(op);
+  const receiver = handle === undefined ? undefined : unwrapPhase1Parens(handle);
+  if (receiver !== undefined && ts.isIdentifier(receiver) && !isNativeBufferBinding(receiver)) {
+    return shapeNo("expr-native-buffer-receiver", receiver);
   }
-  const receiver = unwrapPhase1Parens(op.receiver);
-  if (ts.isIdentifier(receiver)) {
-    const kind = moduleBinding(receiver)?.valueKind;
-    if (kind === undefined || !isIrModuleNativeBufferValueKind(kind)) {
-      return shapeNo("expr-native-buffer-receiver", receiver);
-    }
-  }
-  if (!isPhase1Expr(op.receiver, scope, localClasses)) return false;
-  return op.kind === "get" || op.bounds.every((bound) => isPhase1Expr(bound, scope, localClasses));
+  if (handle !== undefined && !isPhase1Expr(handle, scope, localClasses)) return false;
+  return operands.every((operand) => isPhase1Expr(operand, scope, localClasses));
 }
 
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
@@ -13406,8 +13425,11 @@ export function buildLocalCallGraph(
     // mark the outer as having an external call.
     const localBindings = collectLocalClosureBindings(fn);
 
+    // (#7324) A lifted closure lowers its calls through the same plans as its
+    // enclosing unit, so they pass the same gate; calls to the closure's own
+    // parameters and locals are local, not edges.
     const visit = (node: ts.Node): void => {
-      if (node !== fn && isFunctionLike(node)) return;
+      if (node !== fn && isFunctionLike(node) && !isLiftedClosure(node)) return;
       // Slice 4 (#1169d): `new <className>(...)` is NOT a function-style
       // call; it dispatches to a legacy-compiled constructor with a
       // stable signature. Walk into the args (which may contain real
@@ -13533,7 +13555,8 @@ export function buildLocalCallGraph(
           if (
             (currentModuleBindingResolver === null && localBindings.names.has(callee)) ||
             (localDeclaration !== undefined &&
-              localClosureDeclarationsContain(localBindings.declarations, localDeclaration))
+              (localClosureDeclarationsContain(localBindings.declarations, localDeclaration) ||
+                ts.findAncestor(localDeclaration.parent, isLiftedClosure) !== undefined))
           ) {
             // Slice 3: closure / nested-fn binding within this outer.
             // Variable-backed callables use checker-resolved declaration
@@ -13577,6 +13600,15 @@ export function buildLocalCallGraph(
             return;
           } else if (isStoredObjectDescriptorAliasCall(node, (name) => localBindings.names.has(name))) {
             // (#7106 propertyHelper) likewise the stored descriptor alias.
+            for (const argument of node.arguments) visit(argument);
+            return;
+          } else if (
+            isStatementDynamicModuleCall(
+              node,
+              (callee) => currentModuleBindingResolver?.(callee)?.valueKind.kind === "dynamic",
+            )
+          ) {
+            // (#7287) Lowered by from-ast's Stage-4 dynamic call, not an edge.
             for (const argument of node.arguments) visit(argument);
             return;
           } else {
@@ -13664,6 +13696,10 @@ export function buildLocalCallGraph(
     forEachChild(fn.body, visit);
   }
   return { callers, callees, hasExternalCall, externalCallees };
+}
+
+function isLiftedClosure(node: ts.Node): node is ts.FunctionExpression | ts.ArrowFunction {
+  return ts.isFunctionExpression(node) || ts.isArrowFunction(node);
 }
 
 function parseNumberCallUsesDynamicCarrier(callerName: string, call: ts.CallExpression): boolean {
