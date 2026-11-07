@@ -244,6 +244,25 @@ try { R += "no"; } catch (e) { R += (e instanceof TypeError) + ":" + e.message; 
     expected: "completed",
     irUnits: ["<module-init>"],
   },
+  "review B3: a null argument keeps the legacy body": {
+    source: `var f = function (a) {};
+var print = function (a) {};
+function h() { f(null); }
+function g() { print(null); }
+function k() { f([1]); }
+h(); g(); k();`,
+    expected: "completed",
+    legacyUnits: ["h", "g", "k"],
+  },
+  "review S3: += of a checker-string var the program reassigns appends its ToString": {
+    source: `var out = "";
+var s = "x";
+s = 5;
+try { out += s; } catch (e) { out = "caught"; }`,
+    expected: "completed",
+    irUnits: ["<module-init>"],
+    skipSemanticDiagnostics: true,
+  },
   "slice B: a value-position call keeps the legacy body": {
     source: `var p = function (v) { return v; };
 function h() { return p(3); }
@@ -276,6 +295,8 @@ describe("#7287 script-var closures callable from IR units", () => {
         const irRoute = !(testCase.wasiLegacy && lane.options.target === "wasi");
         for (const unit of testCase.irUnits ?? []) expect(route(result, unit), unit).toBe(irRoute);
         for (const unit of testCase.legacyUnits ?? []) expect(route(result, unit), unit).toBe(false);
+        // A unit the selector admits lowers: no claim is withdrawn after it (#7287 review B3).
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
       });
     }
   }

@@ -1680,7 +1680,20 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   body.push({ op: "local.get", index: prevThisLocal });
   body.push({ op: "global.set", index: currentThisGlobalIdx });
   body.push({ op: "local.get", index: resultSaveLocal });
-  const thrownLocal = prevThisLocal + 4 + (applyTail ? 1 : 0); // `__thrown`, the last local below
+  const locals: WasmFunction["locals"] = [
+    { name: "__any", type: { kind: "anyref" } },
+    { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
+    { name: "__funcref", type: { kind: "funcref" } },
+    { name: "__prev_this", type: { kind: "externref" } },
+    { name: "__result", type: { kind: "externref" } },
+    // (#3673 round 10) declared arity read off the root wrapper for the
+    // arity-bucketed signature dispatch (-1 = not root-readable).
+    { name: "__declared_arity", type: { kind: "i32" } },
+    { name: "__fallback_args", type: { kind: "externref" } },
+    ...(applyTail ? [applyTail.local] : []),
+    { name: "__thrown", type: { kind: "externref" } },
+  ];
+  const thrownLocal = totalParams + locals.findIndex((local) => local.name === "__thrown");
   // (#7287 review B1) A caller that catches the dispatch's exception reads its own `this`.
   body.push(
     restoreThisOnUnwind(
@@ -1697,19 +1710,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   const dispatcherFunc = {
     name: exportName,
     typeIdx: exportFuncTypeIdx,
-    locals: [
-      { name: "__any", type: { kind: "anyref" } },
-      { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
-      { name: "__funcref", type: { kind: "funcref" } },
-      { name: "__prev_this", type: { kind: "externref" } },
-      { name: "__result", type: { kind: "externref" } },
-      // (#3673 round 10) declared arity read off the root wrapper for the
-      // arity-bucketed signature dispatch (-1 = not root-readable).
-      { name: "__declared_arity", type: { kind: "i32" } },
-      { name: "__fallback_args", type: { kind: "externref" } },
-      ...(applyTail ? [applyTail.local] : []),
-      { name: "__thrown", type: { kind: "externref" } },
-    ],
+    locals,
     body,
     exported: !internalOnly,
   } as WasmFunction;

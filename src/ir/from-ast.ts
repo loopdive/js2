@@ -13367,14 +13367,31 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
         : storage.kind === "slot"
           ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
           : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
-    const rhsLowered = lowerExpr(rhs, cx, logicalType);
+    const rhsValue = lowerExpr(rhs, cx, logicalType);
     const rhsString = checkerOperandFamily(rhs, cx) === "string";
-    // (#7287 review B2) A checker-string RHS over a dynamic operand
-    // (`"a" + f`, `f` a dynamic module var) is a dynamic carrier holding a
-    // string: recover the string carrier (checked, no ToString). Its code
-    // units are unknown, so it carries the conservative `wtf16` encoding.
-    const recovered = rhsString && cx.builder.typeOf(rhsLowered).kind === "dynamic";
-    const rhsValue = recovered ? cx.builder.emitDynStringCarrier(rhsLowered) : rhsLowered;
+    const store = (result: IrValueId, stringEncoding: Encoding) => {
+      if (storage.kind === "moduleGlobal") {
+        cx.builder.emitGlobalSet(storage.globalRef, result);
+      } else if (storage.kind === "slot") {
+        cx.builder.emitSlotWrite(storage.slotIndex, result);
+      } else {
+        cx.builder.emitRefCellSet(storage.value, result);
+      }
+      cx.scope.set(id.text, { ...storage, stringEncoding });
+    };
+    if (rhsString && cx.builder.typeOf(rhsValue).kind === "dynamic") {
+      // (#7287 review B2, S3) A checker-string RHS can lower to the dynamic
+      // carrier: `"a" + f` over a dynamic module var, or a JS `var` the checker
+      // types from its string initializer that the program reassigns
+      // (`s = 5`). Append through the dynamic `+` the dynamic-slot arm below
+      // uses (ToPrimitive, then ToString); with a string on its left it yields
+      // a string, whose code units are unknown.
+      const boxedLhs = cx.builder.emitBox(lhs, irDynamic(JS_TAG_IDS.String));
+      const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [boxedLhs, rhsValue], irDynamic());
+      if (added === null) throw new Error(`ir/from-ast: dynamic '+=' produced no result in ${cx.funcName}`);
+      store(cx.builder.emitDynStringCarrier(added), "wtf16");
+      return;
+    }
     const rhsType = cx.builder.typeOf(rhsValue);
     if (rhsString && rhsType.kind !== "string") {
       // invariant (producer-promise): the checker POSITIVELY proves the RHS is a
@@ -13388,7 +13405,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     }
     const proof = proveTypedStringAppend(
       typedValueEvidence(id, storage.type, storage.stringEncoding, cx, logicalType),
-      typedValueEvidence(rhs, rhsType, inferStringEncoding(rhs, cx) ?? (recovered ? "wtf16" : undefined), cx),
+      typedValueEvidence(rhs, rhsType, inferStringEncoding(rhs, cx), cx),
     );
     if (!compoundWriteAdmissible(compoundOp, slotFamily, irOperandFamily(rhsType, rhs)) || !proof) {
       throw new IrUnsupportedError(
@@ -13399,15 +13416,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     }
     const symbol = cx.checker?.getSymbolAtLocation(id);
     const concatMode = symbol && cx.ownedStringAppendSymbols.has(symbol) ? "owned-append" : "immutable";
-    const result = cx.builder.emitStringConcat(lhs, rhsValue, proof.resultEncoding, concatMode);
-    if (storage.kind === "moduleGlobal") {
-      cx.builder.emitGlobalSet(storage.globalRef, result);
-    } else if (storage.kind === "slot") {
-      cx.builder.emitSlotWrite(storage.slotIndex, result);
-    } else {
-      cx.builder.emitRefCellSet(storage.value, result);
-    }
-    cx.scope.set(id.text, { ...storage, stringEncoding: proof.resultEncoding });
+    store(cx.builder.emitStringConcat(lhs, rhsValue, proof.resultEncoding, concatMode), proof.resultEncoding);
     return;
   }
   // (#7106 Stage 4) `message += …` on a dynamic slot (assert.js's reassigned

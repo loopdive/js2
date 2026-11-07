@@ -7122,6 +7122,12 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     }
     if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
       return shapeNo("vardecl-init-expr", d.initializer);
+    // The IR has no dynamic `null` value for a dynamic module home (#7287 review B3).
+    if (
+      directModuleBinding?.valueKind.kind === "dynamic" &&
+      binaryOperandFamily(d.initializer, initializerScope, localClasses) === "nullish"
+    )
+      return shapeNo("vardecl-module-value-flow", d.initializer);
     const initializer = unwrapPhase1Parens(d.initializer);
     const objectMethodValue = isConst ? directObjectMethodValueProjection(d, initializer, initializerScope) : null;
     const returnedCallable = objectMethodValue ? null : directReturnedCallableSignature(initializer, initializerScope);
