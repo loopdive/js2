@@ -5670,6 +5670,191 @@ depends on it, not for its own gain.
     reused);
   - no new function.
 
+## Lever A — the runtime-eval boundary, per unit (plan, 2026-11-06)
+
+ES5 census context: 14.4 % of weighted ES5 files contain a runtime-eval site
+(direct or indirect `eval`, `Function(...)`, `new Function(...)`). On
+standalone, every one of them is 100 % legacy, because one site withdraws the
+whole program. The work ships as three PRs, each standing on the previous one:
+
+| PR | What it does | What it gains |
+| --- | --- | --- |
+| A1 | Per-unit boundary: refuse only the units that cross eval | IR units in eval programs (harness helpers) |
+| A2 | Global-scope eval sites in IR, through ONE helper factored from legacy's push/pull path | `<module-init>` with indirect eval, `Function`, script-level direct eval |
+| A3 | Write-precise liveness: parse literal fragments for writes, not mentions | `assert`, `Test262Error`, `compareArray` keep static bindings and function values |
+
+Files become IR-only only from A2 + A3 on, so the IR-only file count is
+reported from A2 onwards. A direct eval inside a function stays legacy in all
+three (refused at select).
+
+### What the program-wide withdrawal protects
+
+`planIrOverlay` (`codegen/index.ts`, #2928) cleared the whole selection
+whenever `runtimeEvalBoundaryPlan.callableBoundaryRequired` held in the native
+regime (`ctx.standalone`, which covers standalone AND the JS host) or on WASI.
+Its comment named type-index parity with the linked carrier.
+
+Measured with the withdrawal simply removed (the 141 eval files of the ES5
+sample, standalone):
+
+- **101 / 141 fail to compile, 0 post-claim errors.** The two failures
+  inspected were both `ABI draft … function-value-trampoline … would mutate
+  sealed prepared scope`, and the fix below clears all 101.
+- **Cause.** The runtime-eval global push
+  (`expressions/runtime-eval-provider.ts`,
+  `emitRuntimeEvalGlobalBindingPushBody`) publishes every top-level function
+  as a cached value through `emitCachedFuncClosureAccess`. That drafts the
+  function's value trampoline after its prepared component has sealed.
+- **Parity.** No type-index parity failure appears once that is fixed. The
+  carrier types are already registered late
+  (`ensureRuntimeEvalAotCallableCarrierTypes`, after IR and legacy bodies
+  settle), so the old comment no longer describes a live hazard.
+
+What the withdrawal still protects, and what replaces it:
+
+1. **Activation semantics.** A direct eval reads and writes its caller's
+   activation (var leakage, `arguments`, `this`). Only the direct frontend
+   models that, so a function that contains any inventoried site stays
+   direct.
+   - Today selection already rejects every site form tried
+     (`external-call`, `call-resolution-unsupported`, `body-shape-rejected`
+     for `eval(s)`, `(0, eval)(s)`, `Function(...)`, `x instanceof Function`,
+     a bare `Function` read).
+   - The `eval-site` arm is therefore the contract A2 stands on, not a
+     measured gain: once A2 claims global-scope sites, a direct eval inside a
+     function must still be refused here.
+2. **Eval-visible bindings.** Evaluated code may replace a script binding.
+   - **Functions** (`eval("f = …")`, `eval("function f(){}")`): legacy routes
+     calls, reads and values of such a name through its live global
+     (`registerReassignedFunctionGlobals` → `ctx.liveFuncBindingGlobals`). IR
+     binds the declaration statically.
+   - **Global `var` and lexical bindings**: the same pass widens their slots
+     to externref. IR types the variable itself, and the first cut failed
+     post-claim with `__mod_<name> uses legacy externref storage but IR
+     resolved f64`. That was 27 tests across 7 test files, e.g.
+     `issue-4515-wave5`, `issue-6651-sc1-param-scope-eval-var`, `issue-1102`.
+   - So a function with a reference that resolves to either kind stays
+     direct. The check goes through `ctx.oracle.valueDeclarationOf`, so a
+     parameter or local of the same name does not count.
+3. **The global push/pull seam.** `<module-init>` and class members share
+   `__runtime_eval_push_globals` / `pull` with the direct carrier. They stay
+   direct as a whole in A1; A2 moves module init.
+
+### Minimal correct boundary (A1, as built)
+
+- **Selection.** The old withdrawal site in `planIrOverlay` keeps its shape,
+  except that functions go through `withdrawEvalBoundaryFunctions`
+  (`codegen/ir-overlay-preparation.ts`, beside the other preparation-time
+  selection edits). A withdrawn function records the same
+  `late-preparation-unsupported` failure plus its reason:
+  - `eval-site`: an inventoried site lies inside the declaration;
+  - `eval-visible-binding`: a reference resolves to a live function or to a
+    global `var`/lexical binding;
+  - `uncached-push`: the lane's push publishes a per-site closure
+    (`emitFuncRefAsClosure`, today the WASI lane), which cannot be planned
+    before the seal, so every function stays direct.
+
+  The lane question is one capability predicate,
+  `runtimeEvalPushPublishesCachedFunctionValues`
+  (`expressions/runtime-eval-provider.ts`). The push itself, the withdrawal
+  and the value-target collector all read it, so A1 adds no `ctx.standalone`
+  or `ctx.wasi` arm (standalone-arms gate, #7143).
+
+  - `boundary-closure` (review round 1): selection's call-graph closure has
+    already run, so the withdrawn set re-closes it through the existing
+    `closeIrBlockedComponentByIdentity`. Without that, a claimed caller of a
+    withdrawn function failed at build with "direct call … has no exact
+    AST-site plan". Example: `g1 ← callsG1 ← run` with
+    `Function("g1 = …")()`.
+
+  The rest prepare. The test walks the whole declaration, so parameter
+  defaults count too, and the shared failure record is
+  `runtimeEvalBoundaryFailure(why)`.
+- **Pre-seal publication**
+  (`ir-prepared-free-functions.ts`,
+  `collectPreparedTopLevelFunctionValueTargetUnitIds`).
+  - When the push is active (`ctx.runtimeEvalGlobalFunctionBindings`) and
+    publishes cached values, every top-level function is a value target.
+  - The existing `prepareTopLevelFunctionValueTargetSupport` then allocates
+    the same cached singleton that `emitCachedFuncClosureAccess` reuses,
+    before the component seals.
+  - Direct function-value references already take this path.
+
+### Reuse and code quality
+
+- **Reused:**
+  - the boundary inventory (`IrRuntimeEvalBoundaryPlan.sites`);
+  - legacy's liveness set (`liveFuncBindingGlobals`);
+  - the existing pre-seal function-value planner;
+  - the existing withdrawal block, failure record and module-init/class arms.
+- **New:**
+  - one exported function and one private predicate (about 30 lines) in an
+    existing module;
+  - one early return in the value-target collector.
+- **Removed:**
+  - the program-wide function clear;
+  - its stale parity comment.
+- **Gates.** All pass with no grant:
+  - no new file;
+  - no new codegen→ir value edge (only a type import);
+  - `index.ts` +1 line, and `planIrOverlay` stays within budget;
+  - `ir-prepared-free-functions.ts` −1 line.
+
+  A first cut put the boundary in a new module. That tripped the
+  import-cycle, flat-dir and compiler-boundaries gates, so the boundary
+  moved next to the existing preparation edits instead.
+- **Tests changed:**
+  - `issue-2960` #4013: the inverted "regime gap" sentinel now holds, so it
+    is a plain `it`;
+  - `issue-7106-apply-receiver-demand`: under the push, every top-level
+    function is a value target. The rebind protection moved to the
+    unit-level withdrawal.
+  - New: `issue-7106-runtime-eval-unit-boundary`.
+
+### A1 measurement (2026-11-06, one worker, base = 53c7c2f910)
+
+Every measurement below was taken on the final code shape.
+
+| set and lane | compile errors | pass → fail | notes |
+| --- | --- | --- | --- |
+| 141 eval files, standalone, interpreter provider | 0 | 0 (101 pass / 40 fail on both) | IR units 0 → 579; output changes in all 141 |
+| same 141, JS host lane (honest), interpreter provider | 0 | 0 (98 pass / 43 fail on both) | same native regime as standalone (`ctx.standalone` is the native-regime flag) |
+| same 141, linked-harness host lane (CI's oracle) | 0 / 141 on both | not run (compile probe only) | body bytes differ only by the provider namespace hash (spot-checked); IR units 0 → 1 |
+| 40 non-eval control, standalone | 0 | — | 40 / 40 byte-identical |
+
+The interpreter provider was built per tree with
+`JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`. Without it,
+the eval rows fail locally with "quickjs provider is not built".
+
+- **Units gained** (files containing the unit):
+  - `isNegativeZero`, `isPrimitive` and `$DONOTEVALUATE`: 141 each;
+  - `formatIdentityFreeValue` and `formatSimpleValue`: 74 each;
+  - `isSameValue`: 7;
+  - one test function.
+- **Still direct:** `assert`, `compareArray`, `Test262Error` and
+  `<module-init>` (A2/A3), so no file is IR-only yet.
+- **Eval test files:** the 168 test files that mention runtime eval were run
+  on the first cut, one worker. That surfaced the 27 regressions fixed above.
+  On the final shape, the files that had regressed show no failure absent on
+  base. The other failures there match base (353 failing tests, mostly
+  `issue-3518` receipt history and the missing QuickJS provider).
+
+### A2 and A3 (outline; each gets its own measured plan before code)
+
+- **A2.**
+  - Lower indirect eval, `Function` / `new Function` and sloppy script-level
+    direct eval in IR as one call through a support helper factored out of
+    legacy's `__runtime_eval_push_globals` / `__runtime_eval_pull_globals`
+    path. Legacy and IR call the same helper; there is no second copy.
+  - `<module-init>` then prepares beside the seam.
+- **A3.**
+  - `registerReassignedFunctionGlobals` marks a function live only when a
+    literal fragment **writes** its name (assignment target, or a function or
+    var declaration of that name), not when the fragment merely mentions it.
+  - `makeIrFunctionObjectValueResolver` is then re-enabled for non-live
+    names, so `assert`, `Test262Error` and `compareArray` keep static
+    bindings and function-object values.
+
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
 The following 115 lines are preserved verbatim from the completed #6876 plan
