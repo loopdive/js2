@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // #7106 S5 — the bindings the module initializer's `var` lists declare
-// (`isModuleInitVarList`, `src/shared/module-init-var-list.ts`). Each binding
+// (`isModuleInitVarList`, `src/shared/var-declaration-lists.ts`). Each binding
 // is backed by an exact persistent `__mod_<name>` global, so it needs no
 // hoisting support:
 //
@@ -15,7 +15,7 @@
 // use-before-declaration, and any binding the module-global resolver cannot
 // represent.
 
-import { isModuleInitVarList, moduleInitVarLists } from "../shared/module-init-var-list.js";
+import { isModuleInitVarList, moduleInitVarLists } from "../shared/var-declaration-lists.js";
 import { ts } from "../ts-api.js";
 import { patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
 
@@ -33,8 +33,9 @@ export type ModuleInitBinding =
 
 /**
  * What one module-init statement binds, in source order: each identifier
- * declaration of a top-level statement, and each leaf of a modelled `var`
- * list. A lexical top-level pattern has no one-to-one global.
+ * declaration of a top-level statement or of a modelled `for` head, and each
+ * leaf of a modelled `var` list. A lexical top-level pattern has no one-to-one
+ * global.
  */
 export function moduleInitBindings(statement: ts.Statement): ModuleInitBinding[] {
   const lists = ts.isVariableStatement(statement) ? [statement.declarationList] : moduleInitVarLists(statement);

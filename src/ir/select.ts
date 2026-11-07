@@ -81,7 +81,7 @@ import {
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
-import { isModuleInitVarList } from "../shared/module-init-var-list.js";
+import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
@@ -5584,10 +5584,9 @@ function isPhase1ForStatementInScope(
       if (!isLexical && !currentIrSafeVarDeclarationLists.has(stmt.initializer))
         return shapeNo("for-init-var-kind", stmt.initializer);
       // (#7106 lever L) A `<module-init>` `var` head declares script `var`s, as a `var` statement does.
-      const declared =
-        currentSubjectIsModuleInit && isModuleInitVarList(stmt.initializer)
-          ? isPhase1VarDeclarationList(stmt.initializer, innerScope, localClasses)
-          : isPhase1LoopHeadDeclarations(stmt.initializer, innerScope, localClasses);
+      const declared = isScriptVarList(stmt.initializer)
+        ? isPhase1VarDeclarationList(stmt.initializer, true, innerScope, localClasses)
+        : isPhase1LoopHeadDeclarations(stmt.initializer, innerScope, localClasses);
       if (!declared) return false;
     } else {
       // Expression init.
@@ -5658,7 +5657,7 @@ function isPhase1LoopHeadDeclarations(
 function recordForInitLeaks(stmt: ts.ForStatement, scope: Set<string>): void {
   if (!stmt.initializer || !ts.isVariableDeclarationList(stmt.initializer)) return;
   // (#7106 lever L) A `<module-init>` `var` head's names are script `var`s, which no sibling head may shadow.
-  const scriptVars = currentSubjectIsModuleInit && isModuleInitVarList(stmt.initializer);
+  const scriptVars = isScriptVarList(stmt.initializer);
   for (const d of stmt.initializer.declarations) {
     if (ts.isIdentifier(d.name) && !scope.has(d.name.text)) {
       scope.add(d.name.text);
@@ -6993,24 +6992,29 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     return shapeNo("vardecl-var-kind", stmt);
   }
   if (stmt.modifiers && stmt.modifiers.length > 0) return shapeNo("vardecl-modifier", stmt);
-  return isPhase1VarDeclarationList(stmt.declarationList, scope, localClasses);
+  return isPhase1VarDeclarationList(stmt.declarationList, isScriptVarList(stmt.declarationList), scope, localClasses);
+}
+
+/** (#7106 S5, lever L) A `<module-init>` `var` list: its names are script `var`s in their `__mod_<name>` slots. */
+function isScriptVarList(list: ts.Node): boolean {
+  return currentSubjectIsModuleInit && isModuleInitVarList(list);
 }
 
 /**
  * The declarations of a `VariableStatement`, or of a `<module-init>` `var`
  * `for` head (#7106 lever L): both declare the same script `var`s, each in its
- * `__mod_<name>` slot, so one arm checks them.
+ * `__mod_<name>` slot, so one arm checks them. `moduleVarList` is
+ * {@link isScriptVarList} of `list`.
  */
 function isPhase1VarDeclarationList(
   list: ts.VariableDeclarationList,
+  moduleVarList: boolean,
   scope: Set<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
   const flags = list.flags;
   const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
   const isConst = !!(flags & ts.NodeFlags.Const);
-  // A `<module-init>` `var` list declares script `var`s: its names are module bindings (S5, lever L).
-  const moduleVarList = currentSubjectIsModuleInit && isModuleInitVarList(list);
   for (const d of list.declarations) {
     if (isPatternDeclaration(d)) {
       if (currentSubjectIsModuleInit && !moduleVarList) return shapeNo("vardecl-module-destructuring", d.name);
@@ -7214,7 +7218,7 @@ function isPhase1DeclarationPattern(
   if (declarationBindingWritten(d)) return shapeNo("vardecl-dstr-leaf-written", pattern);
   const literalPlan = planLiteralPattern(pattern, d.initializer);
   if (literalPlan) {
-    const moduleVars = currentSubjectIsModuleInit && isModuleInitVarList(d.parent);
+    const moduleVars = isScriptVarList(d.parent);
     if (moduleVars && !moduleVarLeavesStorable(pattern, scope)) return false;
     return isPhase1LiteralPattern(pattern, literalPlanExpressions(literalPlan), scope, localClasses);
   }

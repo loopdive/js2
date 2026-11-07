@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { GlobalDef, Instr, ValType } from "../ir/types.js";
-import { isModuleInitVarList } from "../shared/module-init-var-list.js";
+import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
 import type { CodegenContext } from "./context/types.js";
@@ -186,14 +186,19 @@ export function objectLiteralReadsAmbientRedeclaredVar(ctx: CodegenContext, expr
 }
 
 /**
- * (#7106 levers L, L2) A `var` declaration of a modelled list that is not a
- * top-level statement's own (a `for` head's, or a nested `var` statement's):
- * the IR shares it as a module binding, so `registerModuleGlobal` observes its
- * slot. A top-level statement's own declaration is observed by the source-order pass.
+ * (#7106 levers L, L2) Is `decl` a name of a script's modelled `var` list that
+ * is not a top-level statement's own (a `for` head's, or a nested `var`
+ * statement's)? The IR shares it as a module binding (the resolver's
+ * `isModuleBindingDeclaration`), so `registerModuleGlobal` observes its slot. A
+ * top-level statement's own declaration is observed by the source-order pass.
  */
-export function hoistedModuleVarDeclaration(decl: ts.VariableDeclaration): ts.VariableDeclaration | undefined {
-  const topLevelStatement = ts.isVariableStatement(decl.parent.parent) && ts.isSourceFile(decl.parent.parent.parent);
-  return !topLevelStatement && isModuleInitVarList(decl.parent) ? decl : undefined;
+export function isHoistedScriptVar(decl: ts.VariableDeclaration): boolean {
+  const statement = decl.parent.parent;
+  return (
+    !ts.isExternalModule(decl.getSourceFile()) &&
+    !(ts.isVariableStatement(statement) && ts.isSourceFile(statement.parent)) &&
+    isModuleInitVarList(decl.parent)
+  );
 }
 
 /**

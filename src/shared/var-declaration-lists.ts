@@ -1,16 +1,18 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// (#7106 S5, levers L and L2) The `var` lists the synthetic module initializer
-// models: the list of a `var` statement or of a `for (;;)` `var` head anywhere
-// in a script's top-level code, directly or nested in its blocks, branches,
-// loops, labels, `try` and `switch`. Their names are script `var`s, each in an
-// exact persistent `__mod_<name>` slot that the prologue seeds, so they need no
-// hoisting support: a nested declaration is a write at its position. Shared by
-// the IR (selection, lowering, binding identity) and by legacy's module-global
-// registration, which hands such a slot to the Program ABI.
+// `var`-kind declaration lists, and (#7106 S5, levers L and L2) the ones the
+// synthetic module initializer models: the list of a `var` statement or of a
+// `for (;;)` `var` head anywhere in a script's top-level code, directly or
+// nested in its blocks, branches, loops, labels, `try` and `switch`. Their
+// names are script `var`s, each in an exact persistent `__mod_<name>` slot that
+// the prologue seeds, so they need no hoisting support: a nested declaration is
+// a write at its position. Shared by the IR (selection, lowering, binding
+// identity) and by legacy's module-global registration, which hands such a
+// slot to the Program ABI.
 
 import { ts } from "../ts-api.js";
 
+/** A `var` list: not `let`, `const`, `using` or `await using`. */
 export function isVarDeclarationList(list: ts.VariableDeclarationList): boolean {
   return (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) === 0;
 }
