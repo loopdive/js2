@@ -90,13 +90,28 @@ function isGlobalIntrinsic(identifier: ts.Identifier, oracle: TypeOracle | undef
   return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
 }
 
+const PROPERTY_DEFINING_METHODS = new Set([
+  "defineProperty",
+  "defineProperties",
+  "assign",
+  "__defineGetter__",
+  "__defineSetter__",
+]);
+
 /** `Object.defineProperty(this, k, …)` and friends write a property named by a runtime value. */
 function isPropertyDefiningCall(call: ts.CallExpression): boolean {
   const callee = unwrapExpression(call.expression);
   if (!ts.isPropertyAccessExpression(callee)) return false;
   const name = callee.name.text;
-  if (name === "defineProperty" || name === "defineProperties" || name === "assign") return true;
+  if (PROPERTY_DEFINING_METHODS.has(name)) return true;
   return name === "set" && ts.isIdentifier(callee.expression) && callee.expression.text === "Reflect";
+}
+
+/** The property `X.k` / `X["k"]` names, or `undefined` when the key is computed. */
+function memberKeyName(member: ts.PropertyAccessExpression | ts.ElementAccessExpression): string | undefined {
+  if (ts.isPropertyAccessExpression(member)) return member.name.text;
+  const key = unwrapExpression(member.argumentExpression);
+  return ts.isStringLiteralLike(key) ? key.text : undefined;
 }
 
 /**
@@ -105,15 +120,15 @@ function isPropertyDefiningCall(call: ts.CallExpression): boolean {
  *
  * Writes are the shared binding-write walker's identifier targets
  * (`identifierWritesOf`: assignment and destructuring, `++`/`--`, for-in/of
- * heads, `var` initializers), a store into `X.f` / `X["f"]` (the receiver may
- * be the global object), and a function declaration (Annex B block functions
- * in sloppy eval code are global var bindings). Nested dynamic code is found
- * by the plan's own site visitor: a literal nested source is scanned the same
- * way, anything else is unnameable — as are a computed member store, a
- * property-defining call, any `.constructor(…)` call and any computed-member
- * call (`this["ev" + "al"](…)`), the spellings a string can use to reach
- * `eval` / `Function` without naming them. The answer over-approximates; it
- * only ever makes a function live.
+ * heads, `var` initializers), a store into or `delete` of `X.f` / `X["f"]`
+ * (the receiver may be the global object), and a function declaration (Annex
+ * B block functions in sloppy eval code are global var bindings). Nested
+ * dynamic code is found by the plan's own site visitor: a literal nested
+ * source is scanned the same way, anything else is unnameable — as are a
+ * computed member store, a property-defining call, any `.constructor` read
+ * (every function value reaches `%Function%` through it, called or not) and
+ * any computed-member call (`this["ev" + "al"](…)`). The answer
+ * over-approximates; it only ever makes a function live.
  */
 function literalSourceWrites(source: string, written: Set<string>): boolean {
   const script = ts.createSourceFile("eval-source.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
@@ -129,15 +144,17 @@ function literalSourceWrites(source: string, written: Set<string>): boolean {
   const visit = (node: ts.Node): void => {
     for (const write of identifierWritesOf(node)) written.add(write.target.text);
     if (ts.isFunctionDeclaration(node) && node.name) written.add(node.name.text);
-    if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && isStoreTarget(node)) {
-      const key = ts.isPropertyAccessExpression(node) ? node.name : unwrapExpression(node.argumentExpression);
-      if (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) written.add(key.text);
-      else nameable = false;
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      const key = memberKeyName(node);
+      if (key === "constructor") nameable = false;
+      else if (isStoreTarget(node) || ts.isDeleteExpression(node.parent)) {
+        if (key === undefined) nameable = false;
+        else written.add(key);
+      }
     }
     if (ts.isCallExpression(node)) {
       const callee = unwrapExpression(node.expression);
-      const reachesConstructor = ts.isPropertyAccessExpression(callee) && callee.name.text === "constructor";
-      if (reachesConstructor || ts.isElementAccessExpression(callee) || isPropertyDefiningCall(node)) nameable = false;
+      if (ts.isElementAccessExpression(callee) || isPropertyDefiningCall(node)) nameable = false;
     }
     forEachChild(node, visit);
   };
@@ -335,7 +352,6 @@ function isLikelyGlobalObjectReceiver(expression: ts.Expression): boolean {
   );
 }
 
-/** Build the single immutable runtime-eval routing authority for a program. */
 /** Where the site visitor reports what it finds. */
 interface RuntimeEvalSiteSink {
   site(
@@ -473,6 +489,7 @@ function visitRuntimeEvalSites(root: ts.Node, oracle: TypeOracle | undefined, si
   visit(root);
 }
 
+/** Build the single immutable runtime-eval routing authority for a program. */
 export function buildIrRuntimeEvalBoundaryPlan(
   sourceFiles: readonly ts.SourceFile[],
   oracle: TypeOracle,

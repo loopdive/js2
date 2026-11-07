@@ -4,17 +4,17 @@
   "executionCompilerPath": "unknown",
   "configuredCompilerPath": "hybrid",
   "measurementState": "measured",
-  "attemptedCases": 57703,
+  "attemptedCases": 57701,
   "completedCases": 48735,
   "skippedCases": 114,
   "compileErrorCases": 1401,
-  "compileTimeoutCases": 24,
+  "compileTimeoutCases": 22,
   "verifiedExecutionCases": 0,
   "verifiedFrontendCases": 0,
   "unverifiedExecutionCases": 48621,
-  "timestamp": "2026-11-06T16:12:21.241Z",
-  "baseline_generated_at": "2026-11-06T16:12:21.241Z",
-  "baseline_sha": "53c7c2f9107b59e035d88e59d2103e3f39621b1c",
+  "timestamp": "2026-11-06T21:09:29.768Z",
+  "baseline_generated_at": "2026-11-06T21:09:29.768Z",
+  "baseline_sha": "a67f11711f67169edbc960c87634287d0b823a15",
   "oracle_version": 16,
   "mode": {
     "target": "standalone",
@@ -24,13 +24,13 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 42447,
+    "pass": 42449,
     "fail": 4497,
     "compile_error": 1246,
-    "compile_timeout": 24,
+    "compile_timeout": 22,
     "skip": 18,
-    "compilable": 46944,
-    "host_free_pass": 42447,
+    "compilable": 46946,
+    "host_free_pass": 42449,
     "ir_only_pass": 1190,
     "ir_measured": 39011,
     "ir_only_pass_pct": 2.5,
@@ -38,13 +38,13 @@
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 41404,
+        "pass": 41406,
         "fail": 4468,
         "compile_error": 1232,
-        "compile_timeout": 24,
+        "compile_timeout": 22,
         "skip": 18,
-        "compilable": 45872,
-        "host_free_pass": 41404,
+        "compilable": 45874,
+        "host_free_pass": 41406,
         "ir_only_pass": 1174,
         "ir_measured": 37932,
         "ir_only_pass_pct": 2.5,
@@ -83,13 +83,13 @@
       },
       "official": {
         "total": 48232,
-        "pass": 42447,
+        "pass": 42449,
         "fail": 4497,
         "compile_error": 1246,
-        "compile_timeout": 24,
+        "compile_timeout": 22,
         "skip": 18,
-        "compilable": 46944,
-        "host_free_pass": 42447,
+        "compilable": 46946,
+        "host_free_pass": 42449,
         "ir_only_pass": 1190,
         "ir_measured": 39011,
         "ir_only_pass_pct": 2.5,
@@ -98,13 +98,13 @@
       },
       "full": {
         "total": 48735,
-        "pass": 42683,
+        "pass": 42685,
         "fail": 4513,
         "compile_error": 1401,
-        "compile_timeout": 24,
+        "compile_timeout": 22,
         "skip": 114,
-        "compilable": 47196,
-        "host_free_pass": 42683,
+        "compilable": 47198,
+        "host_free_pass": 42685,
         "ir_only_pass": 1190,
         "ir_measured": 39020,
         "ir_only_pass_pct": 2.4,
@@ -115,13 +115,13 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 42447,
+    "pass": 42449,
     "fail": 4497,
     "compile_error": 1246,
-    "compile_timeout": 24,
+    "compile_timeout": 22,
     "skip": 18,
-    "compilable": 46944,
-    "host_free_pass": 42447,
+    "compilable": 46946,
+    "host_free_pass": 42449,
     "ir_only_pass": 1190,
     "ir_measured": 39011,
     "ir_only_pass_pct": 2.5,
@@ -129,13 +129,13 @@
   },
   "full_summary": {
     "total": 48735,
-    "pass": 42683,
+    "pass": 42685,
     "fail": 4513,
     "compile_error": 1401,
-    "compile_timeout": 24,
+    "compile_timeout": 22,
     "skip": 114,
-    "compilable": 47196,
-    "host_free_pass": 42683,
+    "compilable": 47198,
+    "host_free_pass": 42685,
     "ir_only_pass": 1190,
     "ir_measured": 39020,
     "ir_only_pass_pct": 2.4,
@@ -143,13 +143,13 @@
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 40075,
+    "pass": 40077,
     "fail": 4405,
     "compile_error": 1199,
-    "compile_timeout": 24,
+    "compile_timeout": 22,
     "skip": 18,
-    "compilable": 44480,
-    "host_free_pass": 40075,
+    "compilable": 44482,
+    "host_free_pass": 40077,
     "ir_only_pass": 1170,
     "ir_measured": 36596,
     "ir_only_pass_pct": 2.6,
@@ -506,13 +506,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 41404,
+      "pass": 41406,
       "fail": 4468,
       "compile_error": 1232,
-      "compile_timeout": 24,
+      "compile_timeout": 22,
       "skip": 18,
-      "compilable": 45872,
-      "host_free_pass": 41404,
+      "compilable": 45874,
+      "host_free_pass": 41406,
       "ir_only_pass": 1174,
       "ir_measured": 37932,
       "ir_only_pass_pct": 2.5,
@@ -1264,13 +1264,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4480,
+      "pass": 4482,
       "fail": 101,
       "compile_error": 0,
-      "compile_timeout": 22,
+      "compile_timeout": 20,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4480,
+      "host_free_pass": 4482,
       "ir_only_pass": 0,
       "ir_measured": 0
     },
@@ -1780,8 +1780,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 5938,
-    "classified": 5938,
+    "total_non_pass_non_skip": 5936,
+    "classified": 5936,
     "unclassified_threshold": 0,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1833,14 +1833,14 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 123,
+        "count": 121,
         "statuses": {
           "pass": 0,
           "fail": 101,
           "compile_error": 0,
-          "compile_timeout": 22,
+          "compile_timeout": 20,
           "skip": 0,
-          "total": 123,
+          "total": 121,
           "host_free_pass": 0,
           "ir_only_pass": 0,
           "ir_measured": 0
@@ -1853,7 +1853,7 @@
           "illegal_cast": 1
         },
         "by_edition": {
-          "ES2026": 123
+          "ES2026": 121
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/round/roundingincrement-days-large.js",
@@ -1947,15 +1947,15 @@
           "test/language/expressions/dynamic-import/namespace/promise-then-ns-has-property-str-found-init.js",
           "test/language/expressions/dynamic-import/import-attributes/2nd-param-yield-expr.js",
           "test/language/module-code/top-level-await/dynamic-import-resolution.js",
-          "test/language/expressions/dynamic-import/catch/nested-arrow-import-catch-specifier-tostring-abrupt-rejects.js",
-          "test/language/expressions/dynamic-import/import-attributes/2nd-param-with-undefined.js"
+          "test/language/expressions/dynamic-import/import-attributes/2nd-param-with-undefined.js",
+          "test/language/expressions/dynamic-import/catch/nested-arrow-import-catch-specifier-tostring-abrupt-rejects.js"
         ],
         "sample_signatures": [
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: Cannot find module './module-code_FIXTURE.js' in the standalone module graph",
           "other:L#:## generator-no-host-free-lowering: this generator has no host-free lowering yet (##). Neither the native generator state machine (##) nor the nested-yield planner accepts its body shape, and the eager host buffer (__gen_*) is not availa",
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: Cannot find module './module-import-resolution_FIXTURE.js' in the standalone module graph",
-          "runtime_error:Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: import() failed: a non-literal specifier cannot be resolved in the standalone module graph», «\"custom error\"») to be true",
-          "other:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: import options are not supported by the standalone module graph"
+          "other:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: import options are not supported by the standalone module graph",
+          "runtime_error:Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: import() failed: a non-literal specifier cannot be resolved in the standalone module graph», «\"custom error\"») to be true"
         ]
       },
       {
@@ -2368,14 +2368,14 @@
           "test/language/statements/class/elements/new-no-sc-line-method-rs-static-generator-method-privatename-identifier.js",
           "test/built-ins/Iterator/prototype/forEach/argument-validation-failure-closes-underlying.js",
           "test/built-ins/Iterator/prototype/forEach/next-method-returns-throwing-value.js",
-          "test/built-ins/Iterator/prototype/join/does-not-close-on-iterator-protocol-violation.js"
+          "test/built-ins/Iterator/prototype/take/next-method-returns-throwing-value.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot read properties of undefined (reading a class field)",
           "type_error:TypeError: Invalid iterator protocol",
           "assertion_fail:Test262Error: Expected SameValue(«false», «true») to be true",
           "assertion_fail:Test262Error: Expected a Test262Error but got a TypeError",
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
+          "assertion_fail:Test262Error: Expected a ReturnCalledError but got a Error"
         ]
       },
       {
@@ -2952,15 +2952,15 @@
         "sample_files": [
           "test/language/expressions/arrow-function/scope-param-rest-elem-var-open.js",
           "test/built-ins/Function/prototype/toString/AsyncFunction.js",
-          "test/built-ins/Function/internals/Call/class-ctor-realm.js",
           "test/built-ins/Function/is-a-constructor.js",
+          "test/built-ins/Function/internals/Call/class-ctor-realm.js",
           "test/built-ins/Function/prototype/toString/method-class-expression-static.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «\"inside\"») to be true",
           "assertion_fail:Test262Error: Conforms to NativeFunction Syntax: \"null\" (async function anonymous(a, /* a */ b, c /* b */ // ) { /* c */ ; /* d */ // })",
-          "assertion_fail:Test262Error: Expected a but got a TypeError",
           "assertion_fail:Test262Error: isConstructor(Function) must return true Expected SameValue(«false», «true») to be true",
+          "assertion_fail:Test262Error: Expected a but got a TypeError",
           "assertion_fail:Test262Error: Conforms to NativeFunction Syntax: \"null\" ([ /* a */ x /* b */ ] /* c */ ( /* d */ ) /* e */ { /* f */ })"
         ]
       },

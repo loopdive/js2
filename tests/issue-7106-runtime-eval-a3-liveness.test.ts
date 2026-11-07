@@ -50,6 +50,18 @@ describe("#7106 A3 — write-precise runtime-eval liveness", () => {
     ["a string-keyed eval", "(0, eval)(\"this['eval']('f = function () { return 2; }')\");"],
     ["a computed eval key", "(0, eval)(\"this['ev' + 'al']('f = function () { return 2; }')\");"],
     ["a string-keyed Function", "(0, eval)(\"this['Function']('f = function () { return 2; }')()\");"],
+    // (#7146 review round 2) a computed key and `%Function%` reached through any `.constructor` read
+    ["a variable member key", "(0, eval)(\"var k = 'f'; this[k] = function () { return 2; }\");"],
+    [
+      "a stored constructor",
+      "(0, eval)(\"var c = (function () {}).constructor; c('f = function () { return 2; }')()\");",
+    ],
+    ["Object.constructor", "(0, eval)(\"var c = Object.constructor; c('f = function () { return 2; }')()\");"],
+    ["a constructor called through call", "(0, eval)(\"[].constructor.constructor.call(null, 'f = 2')()\");"],
+    ["a constructor called through apply", "(0, eval)(\"(function () {}).constructor.apply(null, ['f = 2'])()\");"],
+    ["a constructed constructor", "(0, eval)(\"new (Object.constructor)('f = function () { return 2; }')()\");"],
+    ["a member delete", '(0, eval)("delete this.f");'],
+    ["a getter definition", "(0, eval)(\"this.__defineGetter__('f', function () { return 2; })\");"],
     // the same reaches in the program itself
     ["globalThis.eval", 'globalThis.eval("f = function () { return 2; }");'],
     ['globalThis["eval"]', 'globalThis["eval"]("f = function () { return 2; }");'],
