@@ -68,12 +68,24 @@ export function isAmbientIntrinsicValueUse(
 ): boolean {
   return (
     isAmbientIntrinsicName(node.text) &&
-    isLibOnlyBinding(node) &&
-    !declaredNames(node.getSourceFile()).has(node.text) &&
+    isUnshadowedLibBinding(node, isLibOnlyBinding) &&
     (isOpaqueIntrinsicUse(node) ||
       isExactStaticMethodValueRead(node) ||
       (seed?.builtinProtoCompanionSeeded?.() === true && isExactProtoMethodValueRead(node)))
   );
+}
+
+/**
+ * `node` names the built-in: the checker binds it to lib declarations only, and
+ * the file declares no binding of that name. Both are needed, because a script's
+ * `function RegExp() {}` does not join lib's symbol: the checker still answers
+ * lib-only for `new RegExp(…)`.
+ */
+export function isUnshadowedLibBinding(
+  node: ts.Identifier,
+  isLibOnlyBinding: (node: ts.Identifier) => boolean,
+): boolean {
+  return isLibOnlyBinding(node) && !declaredNames(node.getSourceFile()).has(node.text);
 }
 
 const declaredNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();

@@ -13161,6 +13161,14 @@
       "nextBoundary": "The one walker that lowers a destructuring plan into IR values (#7106); takes its AST-facing operations from the builder host, so it splits with from-ast's lowering seams."
     },
     {
+      "path": "src/shared/regexp-static.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Pure-AST static RegExp construction reader (a literal, or `new RegExp` over string literals) shared by legacy's `parseRegExpLiteral` and the IR selector and builder (#7106 lever R); becomes clean once src/ts-api.ts leaves migration debt."
+    },
+    {
       "path": "src/shared/named-evaluation.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

@@ -859,6 +859,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "host-object-define-property"
       | "standalone-function-prototype-call"
       | "native-regexp"
+      | "native-function-methods"
       | "standalone-wrapper-instanceof"
       | "primitive-wrapper-to-primitive"
       | "legacy-numeric-array-global"
@@ -8771,7 +8772,7 @@ function hostRegExpUnavailable(): boolean {
  * property read (`/a/.source`) or a binding has no lowering for it yet.
  */
 function nativeStaticRegExp(expr: ts.Expression): boolean {
-  const pair = staticRegExpPair(expr);
+  const pair = staticRegExpPair(expr, (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true);
   const consumer = outermostParenthesized(expr).parent;
   const testReceiver =
     ts.isPropertyAccessExpression(consumer) &&
@@ -12140,7 +12141,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // lowering uses the existing closed dispatcher so `new this(...)`,
       // retained closure identity, and later property reads stay unchanged.
       if (
-        currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
+        currentSelectionOptions?.supportsBackendCapability?.("native-function-methods") === true &&
         currentSelectionOptions.supportsBackendCapability?.("legacy-numeric-array-global") === true
       ) {
         const receiverFirstMethod = receiverFirstDynamicMethodPlan(expr);

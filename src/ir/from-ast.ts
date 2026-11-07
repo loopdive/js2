@@ -5801,13 +5801,16 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
  */
 /** (#7106 lever R) A static construction this lane builds in-module: a `$NativeRegExp` carrier. */
 function lowersAsNativeRegExp(expr: ts.Expression, cx: LowerCtx): boolean {
-  return cx.resolver?.supportsBackendCapability?.("native-regexp") === true && staticRegExpPair(expr) !== undefined;
+  return (
+    cx.resolver?.supportsBackendCapability?.("native-regexp") === true &&
+    staticRegExpPair(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true) !== undefined
+  );
 }
 
 function lowerRegExpLiteral(expr: ts.Expression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerRegExpLiteral(expr, cx));
-  const { pattern, flags } = staticRegExpPair(expr)!;
+  const { pattern, flags } = staticRegExpPair(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true)!;
   return cx.builder.emitRegExpLiteral(pattern, flags);
 }
 
