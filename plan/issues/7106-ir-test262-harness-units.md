@@ -6461,3 +6461,110 @@ loc, func (also against origin/main `5ef8f0aae5`), coercion, oracle, dead
 exports, typecheck, import cycles, standalone arms, IR layering, flat dir;
 compiler boundaries as on main. Tests: lever-l, var-pattern-heads,
 for-head-destructuring, script-var, uninitialized-var: 227/227.
+
+
+## ES5 lever O — ambient `Object.*` statics (plan, 2026-11-07)
+
+The IR refuses a read of the ambient `Object` (`expr-ident-not-in-scope(Object)`,
+1,183 carrier files on the 2026-11-07 overlay map) and `new Object(…)`
+(`expr-new-ctor-unknown(Object)`). This lever measures which `Object.*`
+statics actually block files and lowers the ones with yield.
+`Object.getOwnPropertyDescriptor` (#7294) and `Object.create` /
+`defineProperty` / `defineProperties` (existing arms) are out of scope.
+
+### Census (measured on base `cb64e11d5f`, standalone)
+
+Population: the 176 overlay-map files whose only refusals are the two
+`Object` arms, plus every ES5 file the overlay map did not sample whose source
+names `Object` (1,207); 1,383 files, 1,370 compile. Method as the 2026-11-07
+map (`JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, original
+harness, `analyze.py`'s reason folding). **262 files** are blocked by the two
+`Object` arms and nothing else. A TypeScript walk classifies every `Object`
+occurrence in each of them; the table counts the files whose occurrences are
+all of one shape.
+
+| shape (sole `Object` use) | files | operands |
+| --- | --- | --- |
+| `Object.create(…)` (out of scope: own arm) | 39 | |
+| `new Object()` / `new Object(v)` | 41 | |
+| `Object.isSealed(x)` | 24 | 22 ES5 intrinsics or `X.prototype`, `0`, `this` |
+| `Object.isExtensible(x)` | 23 | 15 intrinsics, 5 primitive literals, `this` ×2, `foo` |
+| `Object.getOwnPropertyDescriptor` (out of scope: #7294) | 14 | |
+| `Object.getPrototypeOf(x)` | 16 | NativeError constructors, primitives, `new Number(42)` |
+| `Object.isFrozen(x)` | 7 | 5 primitive literals, `{}` ×2, `this` |
+| `Object.freeze(x)` / `preventExtensions(x)` | 5 + 5 | primitive literals (incl. `null`, `undefined`) |
+| `Object.keys(x)` / `getOwnPropertyNames(x)` | 5 + 5 | primitive literals |
+| `Object.prototype.<m>` reads, other | rest | |
+
+**Not built, by measurement:**
+- `new Object()`: replacing it by `{}` in four of the files leaves each one
+  legacy (`objectlit-empty`, `vardecl-var-kind`), so lowering `new Object` alone
+  moves no file; the blocker is the empty-object home (lane C, #7280/#7292).
+- `Object.getPrototypeOf` (16), `Object.keys` / `getOwnPropertyNames` (10):
+  every row needs either ToObject of a primitive (a fresh array / a wrapper
+  prototype) or a constructor's `[[Prototype]]` identity, i.e. legacy's
+  type-directed arms, not a fixed answer. A later lever can route them to
+  legacy's native helpers on a dynamic operand once the operand classes that
+  helper answers wrongly (primitives, per #7189) are separated.
+- `Object(v)` as a call: no file in the population uses it as its sole
+  blocker.
+
+**Built:** the six integrity statics, where the answer is fixed at compile
+time. Expected IR-only gain ≈ 53 files (isSealed 23, isExtensible 20,
+isFrozen 4, freeze 3, preventExtensions 3) before other blockers; measured
+below.
+
+### Implementation Plan
+
+**Module.** `src/ir/object-integrity.ts`, the home of the one existing fold of
+this family (#3776, `isPristineEs5IntrinsicIsFrozenCall`: `Object.isFrozen` of
+an ES5 intrinsic is `false` while the source names no integrity mutator). That
+fold becomes one parameterised arm keyed by the static's name:
+
+- `INTEGRITY_STATICS`: `isFrozen` / `isSealed` / `isExtensible` are `test`
+  rows with two answers, `intrinsic` (pristine realm: extensible, not sealed,
+  not frozen) and `primitive` (§20.1.2.12–14: a non-Object is frozen and
+  sealed, not extensible); `freeze` / `seal` / `preventExtensions` are
+  `mutator` rows (a non-Object operand is returned unchanged).
+- `objectIntegrityCallFold(call, isAmbientBinding)` → `{ answer }` |
+  `{ operand }` | `undefined`. One operand, the ambient `Object`, neither
+  `Object` nor `Object.<name>` reassigned anywhere in the source. Operand
+  classes: an ES5 intrinsic or `X.prototype` (only while the source names no
+  mutator, as before); a primitive literal (boolean, number, string), or
+  `null` / the unshadowed `undefined` for a test. A mutator's result is its
+  operand, so a nullish operand (no IR value without the consumer's hint) and
+  an intrinsic (it mutates) stay legacy.
+- The selector's `isPhase1Expr` call arm and from-ast's `lowerMethodCall` call
+  this one function where they called the isFrozen fold: an answer is admitted
+  and emitted as a branded boolean constant, a mutator's operand is walked /
+  lowered as the expression itself. Refusal happens at select; from-ast never
+  sees a call the selector refused.
+- Legacy's module-init adapter (`call-builtin-static.ts`) keeps calling
+  `isPristineEs5IntrinsicIsFrozenCall`, now the `isFrozen` × intrinsic row of
+  the same classifier, so its decision and its bytes are unchanged.
+
+**Reused:** the intrinsic tables and the source mutation scan of
+`object-integrity.ts`, `isUnshadowedUndefined` (`shared/ambient-intrinsics.ts`),
+the existing fold call sites. No runtime, no host import, no target branch:
+every answer is a constant or a literal.
+
+**Duplicate removed:** the isFrozen-only fold and its isFrozen-only
+reassignment check become rows of one table; the selector and from-ast keep one
+call site each, as before (no new arm beside them).
+
+### Acceptance
+
+- **Gain** measured base vs head on standalone and gc: the 265 ES5 files that
+  name an integrity static, plus 200 random other ES5 files (seeded `shuf`).
+- **Zero** IR-only files lost, units newly legacy, new post-claim errors, and
+  pass → fail flips on the changed files.
+- Every binary without a newly claimed unit is byte-identical; the playground
+  is identical on both lanes.
+- **Tests** (`tests/issue-7106-lever-o.test.ts`, both lanes): each static on
+  each admitted operand class, claimed and checked against node's answer for
+  the same body; refused rows (a mutated intrinsic, a nullish mutator operand,
+  a dynamic operand, a reassigned `Object.isSealed`, gOPD, `Object` as a value)
+  stay legacy and run correctly.
+- **Code quality:** one table-driven arm in the existing module; selector and
+  from-ast call sites unchanged in number; no new module, import edge or budget
+  grant; net `src/ir` growth stated.
