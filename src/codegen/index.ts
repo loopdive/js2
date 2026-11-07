@@ -1373,7 +1373,7 @@ function resolvePositionType(
       return resolvePositionType(node.type, mapped, ctx, classShapes);
     }
     if (node.kind === ts.SyntaxKind.NumberKeyword) return irVal({ kind: "f64" });
-    if (node.kind === ts.SyntaxKind.BooleanKeyword) return irVal({ kind: "i32" });
+    if (node.kind === ts.SyntaxKind.BooleanKeyword) return irVal({ kind: "i32", boolean: true }); // (#7265) branded
     if (node.kind === ts.SyntaxKind.StringKeyword) return { kind: "string" };
     // (#2949 slice 3b) AnyKeyword IS the dynamic type. The historical #1228
     // mapping (externref in ALL modes) diverged from legacy's fast-mode
