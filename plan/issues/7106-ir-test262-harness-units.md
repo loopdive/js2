@@ -6653,3 +6653,45 @@ slots alone.
   eval-visible slots. That is about 13 of the 60-file census.
   - The 14 files whose module init holds `(function () { eval(…) })()` stay
     legacy by design.
+
+### A2b handoff (branch `claude/7106-eval-a2b`, from A2a 06962e1289)
+
+Where the pieces live:
+
+- **Decode seam.** The IR's dynamic member and element read is ONE helper,
+  `__dyn_member_get`, built by `ensureDynMemberGet` (`codegen/dyn-read.ts`).
+  - It has two bodies: the `ctx.fast` `$AnyValue` carrier around line 790,
+    and the externref carrier around line 850. Each calls `__extern_get`.
+  - The decode belongs right after that call:
+    `buildRuntimeEvalValueUnwrap(ctx, locals, paramCount)`
+    (`codegen/runtime-eval-boundary.ts`). Legacy reaches the same builder
+    through `runtimeEvalSharedValueUnwrapInstrs` (`codegen/global-environment.ts`).
+  - Gate it on `ctx.runtimeEvalGlobalFunctionBindings === true`, the flag
+    every legacy decode site uses. It is set in
+    `registerReassignedFunctionGlobals`, before IR preregistration.
+- **Refusal to lift.** `scriptVarHomeSlot` (`codegen/index.ts`, near the
+  `scriptVarHome` doc comment) has the clause
+  `(standalone || wasi) && provider present && plan.sharedRealmMayContainCanonicalValues`.
+  Only that clause is A2b's. Lever S (afc4f80) owns the non-eval rest.
+- **Second gate, also needed for module init.** A1's wholesale withdrawal in
+  `planIrOverlay` (`codegen/index.ts`, the `callableBoundaryRequired` block)
+  sets `safeSelection.moduleInit = undefined`.
+- **Why IR-only files need more than the decode.** Almost every eval
+  program's module init holds the eval site itself (`(0,eval)(…)`,
+  `Function(…)`, a top-level `eval(…)`). So a file becomes IR-only only once
+  the IR lowers those sites. That is the A2 design's
+  `src/ir/runtime-eval-sites.ts` arm:
+  - it calls the A2a support function `__runtime_eval_global_call<entry>`
+    (`ensureRuntimeEvalGlobalCall`) through a runtime symbol;
+  - the IR's current refusal of these sites is
+    `phase1IndirectEvalStatementVerdict` (`ir/select.ts`,
+    `expr-indirect-eval-host-statement`) and the `callee:eval` external-call
+    gate in the module-init assessment.
+- **Measuring.**
+  - Scripts live in `.tmp/` of the agent worktree: `a1-probe.mts` for
+    compile, sha and units; `a1-host.mts` for verdicts (`LANE=host` for the
+    JS host); `sa-cmp.mjs` and `a1-cmp.mjs` for diffs.
+  - Base verdicts are `a1-int-base.jsonl` (101 / 40) and
+    `a1-host-base.jsonl` (98 / 43). The control list is `a1-control.txt`.
+  - Rebuild the interpreter provider per tree, with
+    `JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`.
