@@ -5,7 +5,7 @@ status: done
 completed: 2026-11-06
 sprint: current
 created: 2026-11-06
-updated: 2026-11-06
+updated: 2026-11-07
 priority: medium
 horizon: s
 feasibility: easy
@@ -16,12 +16,14 @@ goal: ir-full-coverage
 related: [7240, 7249, 7251, 7266]
 assignee: "ttraenkler/c-lane-opus"
 loc-budget-allow:
-  # 2026-11-06 (#7281): src/ir/select.ts +16 — two small selector predicates
-  # beside their siblings: `throwValueReadsUnboxedModuleScalar` (+11 incl. doc) next to
-  # `isPhase1ThrowStatement`, its only caller, and `isModuleStringConcat` (+5)
-  # next to `obviousModuleValueFamily`, whose result it reads. Both extend the
-  # existing refusals in place; neither is a new arm, so there is nothing to
-  # split out of select.ts.
+  # 2026-11-07 (#7281): src/ir/select.ts +34 net — three small selector
+  # predicates beside their siblings: `throwValueReadsUnboxedModuleScalar`
+  # (+11 incl. doc) next to `isPhase1ThrowStatement`, its only caller;
+  # `isModuleStringConcat` (+12) and `checkerProvesBinaryOperands` (+11) next
+  # to `obviousModuleValueFamily`. The last one is lifted out of
+  # `isPhase1Expr`'s element-read `+` backstop (−3 there), which now shares it.
+  # Each extends an existing refusal in place; none is a new arm, so there is
+  # nothing to split out of select.ts.
   - src/ir/select.ts
 ---
 
@@ -83,9 +85,16 @@ string `+` over an f64 read already lower; only the selector refused them.
   admits nothing else). `throw new X(x)` (scalar argument) and `throw x`
   stay refused.
 - The `isPhase1Expr` module-value guard exempts `isModuleStringConcat(expr)`:
-  a `+` whose `obviousModuleValueFamily` is string. Boolean module operands are
-  still refused by the next guard (`expr-module-boolean-nonboolean-op`); an
-  extern or nullish operand never proves a string family, so it is unaffected.
+  a `+` whose `obviousModuleValueFamily` is string **and** which the checker
+  proves too (`checkerProvesBinaryOperands`: from-ast's
+  `provenBinaryOperandsAdmissible` over `classifyPrimitiveExpression`'s
+  flow-sensitive families). The slot family alone is flow-insensitive: after
+  `typeof x !== 'number'` the checker narrows `x` to `never` and from-ast's
+  `+` gate refuses, so the selector must refuse too. The helper is lifted out
+  of the element-read `+` backstop in the same function, which made the same
+  check inline. Boolean module operands are still refused by the next guard
+  (`expr-module-boolean-nonboolean-op`); an extern or nullish operand never
+  proves a string family, so it is unaffected.
 
 Quality criterion: both changes extend the existing refusal in place; no new
 lowering arm, no duplicated predicate.
@@ -117,3 +126,13 @@ family; (b) spread and nested `new` arguments stay refused.
 | 1 (should-fix) | no test covered the `+` exemption outside a throw | added module-init and function-body concat cases (IR, correct value) and a boolean-binding concat (stays refused) |
 | 2 (nit) | `isModuleStringConcat` is a one-caller wrapper; comment unclear | comment rewritten; helper kept — inlining it grows `isPhase1Expr`, which sits at its function budget |
 | 3 (nit) | the callee recursion is unreachable; name overstates | dropped the callee; renamed to `throwValueReadsUnboxedModuleScalar` |
+
+## Review round 2 (fresh context, PR comment 6699239528) — BLOCKER, fixed
+
+The selector admitted `var x = 1; if (typeof x !== 'number') { throw new
+Test262Error('#1: ' + (x)); }` and from-ast refused it after the claim
+(`operand-coercion-unsupported` @ build in `irPostClaimErrors`), which also
+changed the gc/standalone binary. Same outside a throw (`typeof x ===
+'string'` in a function). Cause and fix: see the second bullet of the plan.
+Both repros now refuse at select as on main; the tests assert no
+`irPostClaimErrors` on every case and fail on the pre-fix head.
