@@ -13,7 +13,6 @@ task_type: investigation
 area: ir
 goal: ir-full-coverage
 related: [7297, 7277, 7287, 7276, 2949]
-depends_on: [7277, 7287]
 assignee: "ttraenkler/c-lane-opus"
 ---
 
@@ -75,7 +74,7 @@ brief's threshold of 5, so this slice is docs-only.
 
 ## Conclusion
 
-- Parked: `status: blocked`, `depends_on: [7277, 7287]`.
+- Parked: `status: blocked` until #7277 and #7287 land (not `depends_on`, since neither issue file is on main yet).
 - Once both land, `$DONE` is the deferred consumer. The admission is then
   worth one IR unit per async file, about 139 files on the stride. The
   remaining parts of the body are:
