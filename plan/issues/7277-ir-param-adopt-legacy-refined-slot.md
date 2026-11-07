@@ -1,7 +1,8 @@
 ---
 id: 7277
 title: "IR: adopt legacy's refined parameter slot (string / f64) instead of refusing `param-dynamic-carrier-diverges-from-legacy`"
-status: in-progress
+status: done
+completed: 2026-11-07
 sprint: current
 created: 2026-11-06
 updated: 2026-11-06
