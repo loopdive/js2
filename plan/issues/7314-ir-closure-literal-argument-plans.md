@@ -107,8 +107,8 @@ rewritten into a function expression:
 Function expressions in those positions are already planned by #7130 / #7195,
 so the rewrite emulates the generalised planner. Each file was then
 recompiled through the wrapped harness (`JS2WASM_IR_SHAPE_DIAG=1`) and its
-legacy units counted (`.tmp/clprobe.mts` on branch
-`issue-7314-ir-closure-literal-argument-plans`).
+legacy units counted (a local `.tmp` probe, not committed; the rewrite
+rule above is all it does).
 
 **Result: 0 of 170 files reach zero legacy units.** After the rewrite only 3
 files still stop on a closure part (`closure-body` ×2, `closure-return-type`
