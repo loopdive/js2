@@ -135,6 +135,7 @@ describe("#1164 ES5 eval slice — raw Test262 assert classifier", () => {
   // Known failure, measured identically on main 5ef8f0aae5: the shadowing parameter sends this Script through
   // the fresh child Wasm module, which throws a non-Error value. That is the JS-host `hostEval` lane, which is
   // being sunset (no new JS-host work); `it.fails` keeps the gap visible and flags the day it closes.
+  // Tracked in #7106 follow-ups (JS-host hostEval shadowed assert).
   it.fails("runs a raw assert beside a parameter that shadows assert", async () => {
     await withoutGlobalAssert(async () => {
       const evaluate = await hostEvalImport();

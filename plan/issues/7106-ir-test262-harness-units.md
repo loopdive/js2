@@ -6946,3 +6946,10 @@ The pass→fail comparisons in this plan stay valid, since base and head ran
 on the same engine. Absolute pass counts and lever A's gain must come from a
 QuickJS run, i.e. CI. Closing these interpreter gaps is its own issue against
 the interpreter provider, not lever A work.
+
+#### Follow-up: JS-host hostEval shadowed assert
+
+- JS-host `hostEval` shim: a raw `assert` beside a parameter that shadows
+  `assert` throws a non-Error value from the child Wasm module (`it.fails` in
+  `tests/issue-1164-es5-eval-slice.test.ts`). JS-host lane; file as its own
+  issue once ids can be allocated.
