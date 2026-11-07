@@ -105,5 +105,15 @@ each throw Test262Error.
 1. **Dynamic `null`:** not re-implemented here. It depends on #7127 (null
    literals use the existing null reference, boxed only for proven externref
    dynamic consumers).
+   - **Probe, measurement only.** I merged #7127 @ `702d53b7` into this
+     branch in a scratch worktree. `lowerExpr(null, dynamic)` then lowers,
+     but the move-only scan still refuses a `null` argument to a
+     function-object member call (`concreteOperandBoxesOntoCarrier`).
+   - One line in that arm (`null` → continue) is enough. With it,
+     `assert.notSameValue(desc, null, msg)` goes IR and is right on gc and
+     standalone: `{}` and `undefined` pass, `null` throws Test262Error. With
+     the other blockers stubbed, verifyProperty is then a whole IR unit.
+   - So the follow-up to #7127 is that one selector arm, gated on the same
+     externref-carrier condition #7127 uses.
 2. **The value-used seam:** a #2949 contract question. The lead posted the
    proposal on #6583.
