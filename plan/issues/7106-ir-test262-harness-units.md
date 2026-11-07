@@ -6565,7 +6565,8 @@ A2 turned out large, so it ships in two slices:
 
 - **One support function per provider entry.**
   - `ensureRuntimeEvalGlobalCall(ctx, entry)` in `runtime-eval-provider.ts`
-    mints `__runtime_eval_global_call<entry>`, typed
+    mints `__runtime_eval_global_call_<entry>` (the entry without its
+    `__runtime_` prefix, e.g. `__runtime_eval_global_call_indirect_eval`), typed
     `(source…: externref) -> externref`.
   - `RUNTIME_EVAL_GLOBAL_ENTRY_ARITY` gives each entry its argument count:
     indirect eval and script eval take 1, `__runtime_new_function` takes 2.
