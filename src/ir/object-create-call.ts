@@ -12,7 +12,7 @@
  * That runs ToPropertyDescriptor at runtime over the same literal fields, so
  * no flag encoding is duplicated. The object crosses onto the dynamic
  * carrier, whose member-read / `typeof` / `for-in` / `in` arms serve the
- * result.
+ * result — with one exception, below.
  *
  * Lanes: `native-dynamic-member-read`, i.e. standalone and the native-first
  * gc lane, which projects as standalone (`legality.ts`). WASI keeps legacy:
@@ -31,12 +31,20 @@
  *     because it sets the map's prototype and defines no key;
  *   - each value is a literal data descriptor
  *     ({@link literalDataDescriptorFields}). An accessor, a computed flag or
- *     a non-literal descriptor keeps legacy.
+ *     a non-literal descriptor keeps legacy;
+ *   - every `in` of the enclosing unit has a string-literal key that
+ *     `%Object.prototype%` does not own ({@link unitInKeysAreOwnOnly}). The
+ *     IR's native `in` (`__extern_has`) does not reach an open `$Object`'s
+ *     implicit `%Object.prototype%` terminal, while legacy's fixed-name helper
+ *     answers it for exactly the receivers it knows to be one. Its constant
+ *     fallback is wrong for every other carrier, so neither `in` can stand in
+ *     for the other (#7142 review). Such a unit keeps legacy as before.
  */
 
 import ts from "typescript";
 
 import { isUnshadowedLibGlobal } from "../shared/ambient-intrinsics.js";
+import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
 import {
@@ -100,7 +108,42 @@ export function objectCreateDescriptorMap(
   if (!admission.supportsBackendCapability("native-dynamic-member-read")) return null;
   const properties = descriptorMapProperties(expr.arguments[1]!);
   if (properties === null || !isUnshadowedLibGlobal(callee.expression, admission.isLibOnlyBinding)) return null;
-  return properties;
+  return unitInKeysAreOwnOnly(expr) ? properties : null;
+}
+
+const inKeysByUnit = new WeakMap<ts.Node, boolean>();
+
+/**
+ * Every `in` under the call's enclosing unit (its function, or the source
+ * file for `<module-init>`), nested functions included, has a string-literal
+ * key that `%Object.prototype%` does not own: an own-key probe, which the
+ * native `in` answers for an open `$Object` exactly as legacy does.
+ */
+function unitInKeysAreOwnOnly(expr: ts.CallExpression): boolean {
+  let unit: ts.Node = expr.getSourceFile();
+  for (let node: ts.Node | undefined = expr.parent; node; node = node.parent) {
+    if (ts.isFunctionLike(node)) {
+      unit = node;
+      break;
+    }
+  }
+  let answer = inKeysByUnit.get(unit);
+  if (answer === undefined) {
+    answer = true;
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.InKeyword &&
+        !(ts.isStringLiteral(node.left) && !OBJECT_PROTOTYPE_KEYS.has(node.left.text))
+      ) {
+        answer = false;
+      }
+      if (answer) ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(unit, visit);
+    inKeysByUnit.set(unit, answer);
+  }
+  return answer;
 }
 
 /** What the lowering needs from from-ast (no import of the lowerer itself). */

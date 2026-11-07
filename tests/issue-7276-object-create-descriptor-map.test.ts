@@ -147,23 +147,31 @@ if (q.p !== undefined) throw "deleted";`,
 if (typeof o.hasOwnProperty !== "function") throw "inherited";
 if (!o.hasOwnProperty("p")) throw "own";`,
   },
-  // `in` over the carrier reaches the implicit %Object.prototype% terminal.
-  // gc lowers `in` through its own (host) arm; legacy WASI answers it wrongly on main.
-  "in: own, inherited Object.prototype and absent keys": {
+  // An own-key `in` is the native probe's exact answer for an open `$Object`;
+  // gc lowers `in` through its own (host) arm, which does not claim this unit.
+  "in: own and absent keys": {
     irRouteOn: ["standalone"],
-    againstLegacyOn: ["wasi"],
     source: `var o = Object.create({}, { p: { value: 1 } });
 if (!("p" in o)) throw "own";
-if (!("toString" in o) || !("valueOf" in o) || !("hasOwnProperty" in o)) throw "inherited";
 if ("q" in o) throw "absent";`,
     irUnits: ["<module-init>"],
   },
-  // A dynamic parameter is the native `in` arm's own claim (standalone and WASI), not this admission's.
-  "in: an Object.prototype key on a dynamic parameter": {
-    irRouteOn: ["standalone", "wasi"],
-    source: `function f(o) { if (!("toString" in o)) throw "in"; if ("nope" in o) throw "absent"; return 1; }
-f({ p: 1 });`,
-    irUnits: ["f"],
+  // A unit whose `in` may name an inherited `%Object.prototype%` key keeps
+  // legacy, whose fixed-name helper answers it (#7142 review); legacy WASI
+  // answers it wrongly on main.
+  "in: an Object.prototype key keeps the unit on legacy": {
+    againstLegacyOn: ["wasi"],
+    source: `var o = Object.create({}, { p: { value: 1 } });
+if (!("toString" in o) || !("valueOf" in o) || !("hasOwnProperty" in o)) throw "inherited";`,
+    legacyUnits: ["<module-init>"],
+  },
+  // Legacy itself misses the inherited key behind a computed `in` key (identical on main).
+  "in: a computed key keeps the unit on legacy": {
+    againstLegacy: true,
+    source: `var o = Object.create({}, { p: { value: 1 } });
+var k = "toString";
+if (!(k in o)) throw "computed";`,
+    legacyUnits: ["<module-init>"],
   },
   // Shapes the admission refuses keep the legacy call.
   "an accessor descriptor": {
@@ -236,6 +244,32 @@ if (Object.create({}, { p: { value: 1 } }) !== 7) throw 0;`,
 if (f() !== 7) throw 0;`,
   },
 };
+
+// The #7142 review's receivers: an `in` with an Object.prototype key over a
+// null-prototype receiver that is not an open `$Object` must keep main's answer
+// (the IR's native `in` is unchanged by this PR). `c` (a plain struct literal)
+// answers false on main's standalone and WASI IR route, a pre-existing gap
+// tracked separately, so only the null-prototype receivers are asserted.
+const REVIEW_SOURCE = `function h(p) { return "toString" in p; }
+function G() { this.x = 1; }
+G.prototype = Object.create(null);
+export function a() { var q = (function () { var q = { x: 1 }; Object.setPrototypeOf(q, null); return q; })(); return h(q) ? 1 : 0; }
+export function b() { return h(new G()) ? 1 : 0; }
+export function d() { return h(Object.create(null)) ? 1 : 0; }`;
+
+describe("#7276 review: `in` over null-prototype receivers is unchanged", () => {
+  for (const lane of LANES.filter((l) => l.name !== "gc (default)")) {
+    it(lane.name, async () => {
+      const result = await compile(REVIEW_SOURCE, { fileName: "issue-7276-review.js", ...lane.options });
+      expect(result.success).toBe(true);
+      const imports = lane.options.target === "wasi" ? { wasi_snapshot_preview1: wasiStub } : {};
+      const { exports } = (await WebAssembly.instantiate(result.binary, imports)).instance as unknown as {
+        exports: Record<string, () => number>;
+      };
+      expect([exports.a!(), exports.b!(), exports.d!()]).toEqual([0, 0, 0]);
+    });
+  }
+});
 
 /** The verdict of the same source with the IR overlay off: the legacy call a shadow must keep. */
 async function legacyVerdict(source: string, options: CompileOptions): Promise<unknown> {

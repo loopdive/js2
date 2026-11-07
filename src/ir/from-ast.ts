@@ -43,7 +43,6 @@ import {
 } from "./numeric-slot-coercion.js";
 import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
-import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 import * as functionObjects from "./function-object-lowering.js";
 import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./select-expression-structure.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
@@ -14909,10 +14908,7 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId 
       `ir/from-ast: \`in\` receiver lost its dynamic carrier in ${cx.funcName}`,
     );
   }
-  if (nativeKey) {
-    const objectPrototypeName = ts.isStringLiteral(expr.left) && OBJECT_PROTOTYPE_KEYS.has(expr.left.text);
-    return lowerNativeIn(cx.builder, key, receiver, objectPrototypeName);
-  }
+  if (nativeKey) return lowerNativeIn(cx.builder, key, receiver);
   const result = cx.builder.emitCall(irRuntimeFuncRef("__extern_has"), [receiver, key], IR_BOOL);
   // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (result === null) throw new Error(`ir/from-ast: __extern_has produced no result in ${cx.funcName}`);
