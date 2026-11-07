@@ -32,7 +32,7 @@ export type IrBackendTargetCapability =
   | "native-current-this"
   | "native-own-property-test"
   | "host-dynamic-method-call"
-  | "native-own-property-descriptor"
+  | "native-own-property-introspection"
   | "native-array-is-array"
   | "native-number-conversion"
   | "prepared-dynamic-helper-abi"
@@ -143,9 +143,10 @@ export function supportsIrBackendTargetCapability(
     // (#7106 S3c) the `__current_this` receiver ladder and the per-function
     // prototype chain walk on the host-free lanes.
     case "native-own-property-test":
-    // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor`
-    // alias reaches the object runtime's native `__getOwnPropertyDescriptor`.
-    case "native-own-property-descriptor":
+    // (#7106 propertyHelper, #7283) the stored `Object.getOwnPropertyDescriptor`
+    // / `Object.getOwnPropertyNames` aliases reach the object runtime's native
+    // `__getOwnPropertyDescriptor` / `__getOwnPropertyNames`.
+    case "native-own-property-introspection":
       // (#7106 S1g) legacy's uncurried-alias arm is active on the host-free
       // lanes (`uncurriedBuiltinAliasArmActive`); the IR mirrors that lane.
       return (

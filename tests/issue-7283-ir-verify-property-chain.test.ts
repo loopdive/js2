@@ -104,4 +104,28 @@ assert.sameValue(shadowedCond({}, "a", function () { return "yes"; }), 1);
     const path = fixture("noStrict", body, "shadowed");
     expect(await runTest262File(path, "issue-7283", undefined, "standalone")).toMatchObject({ status: "pass" });
   });
+
+  // A reassigned function has no stable direct-call target, so its callers
+  // refuse at selection instead of being claimed and then refused by from-ast.
+  it("refuses a call to a reassigned local function at selection", async () => {
+    const body = `function isTrue(x) { return x === true; }
+function viaEquality(d) { if (d !== isTrue(d)) { return 1; } return 0; }
+function viaAssignment(d) { var w; w = isTrue(d); return w; }
+function plain() { return isTrue(true) ? 1 : 0; }
+viaEquality(1); viaAssignment(1); plain();
+isTrue = function () { return "s"; };
+`;
+    const path = fixture("noStrict", body, "reassigned-callee");
+    const source = readFileSync(path, "utf8");
+    const meta = parseMeta(source);
+    const result = await compile(assembleOriginalHarness(source, meta).primary.source, {
+      ...originalHarnessCompileOptions(meta, "standalone"),
+      fileName: path,
+      trackIrOutcomes: true,
+    });
+    for (const unit of ["viaEquality", "viaAssignment", "plain"]) {
+      const outcome = (result.irOutcomes ?? []).find((o) => o.displayName === unit);
+      expect(outcome).toMatchObject({ irBodyEmitted: false, stage: "select" });
+    }
+  });
 });

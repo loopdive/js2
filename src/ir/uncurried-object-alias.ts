@@ -44,7 +44,7 @@ export type StoredStaticAliasProvider = "__getOwnPropertyDescriptor" | "__getOwn
 
 type CertifiedAliasCapability = Extract<
   IrBackendTargetCapability,
-  "native-own-property-test" | "native-own-property-descriptor" | "native-array-is-array"
+  "native-own-property-test" | "native-own-property-introspection" | "native-array-is-array"
 >;
 
 /** What a certified alias call lowers to: its result kind and the backend capability it needs. */
@@ -68,19 +68,17 @@ const STORED_STATICS: Readonly<
     receiver: "Object",
     arity: 2,
     result: "dynamic",
-    capability: "native-own-property-descriptor",
+    capability: "native-own-property-introspection",
     provider: "__getOwnPropertyDescriptor",
   },
   // (#7283) `var __getOwnPropertyNames = Object.getOwnPropertyNames;`: the
   // object runtime's own-key list, exactly legacy's
   // `emitStoredObjectIntrospectionCall`. The result is a dynamic array value.
-  // It shares the descriptor read's capability because both come from the
-  // same native object-introspection runtime on the same lanes.
   getOwnPropertyNames: {
     receiver: "Object",
     arity: 1,
     result: "dynamic",
-    capability: "native-own-property-descriptor",
+    capability: "native-own-property-introspection",
     provider: "__getOwnPropertyNames",
   },
   isArray: {

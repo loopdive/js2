@@ -869,7 +869,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-current-this"
       | "native-own-property-test"
       | "host-dynamic-method-call"
-      | "native-own-property-descriptor"
+      | "native-own-property-introspection"
       | "native-array-is-array"
       | "native-number-conversion"
       | "prepared-dynamic-helper-abi"
@@ -3331,6 +3331,20 @@ function concreteResultRecoversDynamic(
  * The walker mutates `dynNames` (alias tracking). Shadowing is already
  * rejected by the Phase-1 scope rules, so a flat set is sound.
  */
+/**
+ * (#7265, #7283) A call whose result is an exact boolean, which boxes onto
+ * the carrier like a comparison: a local direct call that returns a boolean,
+ * or a certified boolean alias call through its module binding.
+ */
+function isBoolCallResult(concrete: ts.Expression, typeMap: TypeMap | undefined): boolean {
+  return (
+    isModuleBooleanAliasCall(concrete) ||
+    (ts.isCallExpression(concrete) &&
+      ts.isIdentifier(concrete.expression) &&
+      calleeReturnKind(concrete.expression.text, typeMap) === "bool")
+  );
+}
+
 function dynamicUsesAreMoveOnly(
   fn: IrClaimableSubject,
   dynNames: Set<string>,
@@ -3378,16 +3392,6 @@ function dynamicUsesAreMoveOnly(
     return access.expression;
   };
 
-  /**
-   * (#7265, #7283) A call whose result is an exact boolean, which boxes onto
-   * the carrier like a comparison: a local direct call that returns a
-   * boolean, or a certified boolean alias call through its module binding.
-   */
-  const isBoolCallResult = (concrete: ts.Expression): boolean =>
-    isModuleBooleanAliasCall(concrete) ||
-    (ts.isCallExpression(concrete) &&
-      ts.isIdentifier(concrete.expression) &&
-      calleeReturnKind(concrete.expression.text, typeMap) === "bool");
   const isDynShaped = (e: ts.Expression): boolean => {
     e = unwrap(e);
     if (e.kind === ts.SyntaxKind.ThisKeyword) return subjectHasAmbientThis();
@@ -3510,7 +3514,7 @@ function dynamicUsesAreMoveOnly(
       //
       // Admission is exactly the operand family `boxConcreteToDynamic`
       // accepts, so the claim can never withdraw on a missing box.
-      const boxable = concreteDynamicAssignmentOperandIsBuildable(unwrap(a)) || isBoolCallResult(unwrap(a));
+      const boxable = concreteDynamicAssignmentOperandIsBuildable(unwrap(a)) || isBoolCallResult(unwrap(a), typeMap);
       if (!argumentIsDynamic && expectedKind === "dynamic" && boxable) {
         if (!scanExpr(a, false)) return false;
         continue;
@@ -3838,7 +3842,7 @@ function dynamicUsesAreMoveOnly(
         if (isDynShaped(e.right)) return scanExpr(e.right, true);
         const concrete = unwrap(e.right);
         return (
-          (isBoolCallResult(concrete) || concreteDynamicAssignmentOperandIsBuildable(concrete)) &&
+          (isBoolCallResult(concrete, typeMap) || concreteDynamicAssignmentOperandIsBuildable(concrete)) &&
           scanExpr(concrete, false)
         );
       }
@@ -3887,14 +3891,11 @@ function dynamicUsesAreMoveOnly(
             // A scalar parameter projected from the direct declaration ABI is
             // just as boxable as a literal: from-ast has its exact f64/bool/
             // string IrType and emits the canonical box before dyn.eq. So is
-            // (#7283) a boolean call result under STRICT equality
-            // (`desc.writable !== isWritable(obj, name)`): strict equality
-            // compares the boxed tag and value. Loose `==` would ToNumber the
-            // boolean against an object, which the dynamic loose path is
-            // not proven for.
+            // (#7283) a boolean call result, under strict equality only (it
+            // compares tag and value; loose `==` would ToNumber it).
             return (
               (concreteDynamicEqualityOperandIsBuildable(concrete, isStrictEqualityOperator(op)) ||
-                (isStrictEqualityOperator(op) && isBoolCallResult(concrete))) &&
+                (isStrictEqualityOperator(op) && isBoolCallResult(concrete, typeMap))) &&
               scanExpr(concrete, false)
             );
           };
@@ -4126,11 +4127,9 @@ function dynamicUsesAreMoveOnly(
       if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
         return scanDirectCallArgs(e, e.expression.text);
       }
-      // (#7283) Likewise a member call on a stable function object
-      // (`assert.sameValue(desc, undefined, msg)`): its dynamic result is
-      // dropped. Only this dynamic-call shape is opened here; the other
-      // dyn-shaped calls keep their own statement handling.
-      if (ts.isCallExpression(e) && functionObjectMemberCallee(e) !== null) return scanExpr(e, true);
+      // (#7283) …and a member call on a stable function object
+      // (`assert.sameValue(d, undefined, msg)`); other dyn-shaped calls keep theirs.
+      if (functionObjectMemberCallee(e) !== null) return scanExpr(e, true);
       return scanExpr(s.expression, false);
     }
     if (ts.isIfStatement(s)) {
@@ -13580,7 +13579,10 @@ export function buildLocalCallGraph(
             // Variable-backed callables use checker-resolved declaration
             // identity so a block-local alias cannot hide an ambient or
             // top-level call with the same text elsewhere in the function.
-          } else if (decls.has(callee)) {
+          } else if (decls.has(callee) && !localIsRewritten(decls.get(callee)!)) {
+            // (#7283) A function whose binding is reassigned (`f = …`) has no
+            // stable direct-call target: from-ast plans no direct call to it,
+            // so a call to it is external, not a graph edge.
             callees.get(callerName)!.add(callee);
             callers.get(callee)!.add(callerName);
           } else if (currentSelectionOptions?.fnctorNativeStringBoundary?.(node) === true) {
