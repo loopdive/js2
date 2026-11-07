@@ -207,6 +207,18 @@ export function consoleSurfaceCapability(jsHost: boolean, hostFreeSink: boolean)
   return hostFreeSink ? "claim-partial" : "defer";
 }
 
+// ── The native ArrayBuffer sub-surface (#7274) ─────────────────────────────
+//
+// Like the console row above: on a host-free lane `ArrayBuffer` has a native
+// lowering (legacy's own `$__vec_i32_byte` providers, wrapped as externref-ABI
+// adapters), so the plan-certified constructions and members get their own
+// row instead of `hostExternCapability`'s flat `defer`. The second parameter is
+// "can the backend mint the adapters", answered from the backend, never from a
+// target name. A host lane keeps its extern-class arms and never asks.
+export function nativeBufferSurfaceCapability(jsHost: boolean, providersAvailable: boolean): IrOpCapability {
+  return !jsHost && providersAvailable ? "claim" : "defer";
+}
+
 /** Capability of a BinaryExpression operator token. Unknown ops → "defer". */
 export function binaryOpCapability(op: ts.SyntaxKind): IrOpCapability {
   return BINARY_OP_CAPABILITY.get(op) ?? "defer";

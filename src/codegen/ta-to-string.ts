@@ -24,7 +24,7 @@
  */
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { makeTaDynHelperFctx } from "./dataview-native.js";
+import { makeHelperFctx } from "./dataview-native.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType, getOrRegisterTaDynViewType } from "./registry/types.js";
@@ -53,7 +53,7 @@ export function ensureTaToStringHelper(ctx: CodegenContext, callerFctx: Function
   flushLateImportShifts(ctx, callerFctx);
   if (externToStrIdx === undefined || !ctx.moduleUsesDynTaView) return undefined;
   getOrRegisterTaDynViewType(ctx);
-  const fctx = makeTaDynHelperFctx(name, [{ name: "recv", type: externref }]);
+  const fctx = makeHelperFctx(name, [{ name: "recv", type: externref }]);
   const guard = taDynDetachedGuardPrologue(ctx, fctx, "toString", 0);
   if (guard.length === 0) return undefined;
   const typeIdx = addFuncType(ctx, [externref], [externref]);
