@@ -1018,10 +1018,10 @@ function directTopLevelDeclaration(
   if (!sameSourceDeclarations.has(declaration)) return undefined;
   if (sameSourceDeclarations.size === 1) return declaration;
   // (#7106) Script redeclarations only — a merged function/class declaration
-  // of the same name still rejects. A JS expando target (`o` in `o.p = 1`)
-  // is a property declaration on the same binding, not a second binding.
+  // of the same name still rejects. A JS property declaration on the binding
+  // is not a second binding.
   const allDirectVars = [...sameSourceDeclarations].every(
-    (candidate) => isModuleBindingDeclaration(candidate, sourceFile) || isJsExpandoTarget(candidate),
+    (candidate) => isModuleBindingDeclaration(candidate, sourceFile) || isJsPropertyDeclarationTarget(candidate),
   );
   return script && allDirectVars ? declaration : undefined;
 }
@@ -1058,13 +1058,13 @@ function scriptVarReferenceKind(
   return home === "string" && isModuleStringStorageType(declaredType, checker) ? { kind: "string" } : undefined;
 }
 
-function isJsExpandoTarget(candidate: ts.Declaration): boolean {
-  const access = candidate.parent;
+// `o` in a JS property declaration on it: `o.p = v`, `o[k] = v`, `Object.defineProperty(o, …)` (#7106 lever S).
+function isJsPropertyDeclarationTarget(candidate: ts.Declaration): boolean {
+  const parent = candidate.parent;
+  if (!ts.isIdentifier(candidate) || parent === undefined) return false;
+  if (ts.isCallExpression(parent)) return parent.arguments[0] === candidate;
   return (
-    ts.isIdentifier(candidate) &&
-    access !== undefined &&
-    (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) &&
-    access.expression === candidate
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === candidate
   );
 }
 
