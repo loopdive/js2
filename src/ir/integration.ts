@@ -97,6 +97,8 @@ import {
   moduleInitPrologueMayEmit,
   retireModuleInitPrologueHelper,
   irNativeI32SlotRead,
+  globalEvalRoute, // (#7106 A2c)
+  linkRuntimeEvalGlobalEval,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
@@ -2594,9 +2596,8 @@ export function compileIrPathFunctions(
       supportsHoleyArrayFilter: ctx.standalone,
       implicitParamUsesNumericVecAbi,
       supportsSymbolicMathHelpers: true,
-      // (#4462) Same two host-free capabilities the production planning site
-      // (codegen/index.ts) supplies — this compatibility path must not offer a
-      // narrower table, or a direct caller would demote where production claims.
+      // (#4462) Same two host-free capabilities the production planning site (codegen/index.ts) supplies — this
+      // compatibility path must not offer a narrower table, or a direct caller would demote where production claims.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
@@ -2617,7 +2618,7 @@ export function compileIrPathFunctions(
           }
         : {}),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
-      supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
+      supportsGlobalEval: (call) => globalEvalRoute(ctx, call, jsHostExterns && !ctx.nativeStrings) !== undefined,
       ...backendCapabilitySelectionOptions,
     });
   const integrationPopulation =
@@ -7074,12 +7075,12 @@ function makeFromAstResolver(
     // (#7106) A reserved chunk name also keeps the late user-function inliner off it.
     moduleInitChunkName: (preferred) => reserveModuleInitChunkHelperName(ctx, preferred),
     supportsBackendCapability,
-    hostIndirectEvalTarget() {
-      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings) return null;
-      const functionIndex = ctx.funcMap.get("__extern_eval");
-      const exactIndex = exactCallableImportIndex(ctx, "env", "__extern_eval");
-      if (functionIndex === undefined || exactIndex === undefined || functionIndex !== exactIndex) return null;
-      return irImportFuncRef("env", "__extern_eval");
+    globalEvalTarget(call) {
+      const callee = linkRuntimeEvalGlobalEval(ctx, call);
+      if (callee !== undefined) return { ref: irRuntimeFuncRef(callee), passesIsDirect: false };
+      const functionIndex = ctx.funcMap.get("__extern_eval") ?? -1;
+      if (functionIndex !== exactCallableImportIndex(ctx, "env", "__extern_eval")) return null;
+      return { ref: irImportFuncRef("env", "__extern_eval"), passesIsDirect: true };
     },
     isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
     ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)

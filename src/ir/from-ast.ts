@@ -94,7 +94,7 @@ import {
   lowerSourceClosureInvocation,
   type SourceClosureInvocationPlan,
 } from "./source-closure-invocation.js";
-import { exactIndirectEvalStatement } from "../eval-call-shape.js";
+import { exactGlobalEvalStatement } from "../eval-call-shape.js";
 import { resolveOrdinaryObjectClosureSignature } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
 
@@ -512,8 +512,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
   sourceClosureCallableParameter?(node: ts.FunctionTypeNode): boolean;
-  /** Resolve the pre-collected exact JS-host indirect-eval import. */
-  hostIndirectEvalTarget?(): IrFuncRef | null;
+  /**
+   * (#7106 A2c) The callee of a certified global eval statement: the runtime-eval support function, or the
+   * JS-host import, which is collected only for a proven host shape (`needsHostIndirectEvalImport`) and also
+   * takes `isDirect`.
+   */
+  globalEvalTarget?(call: ts.CallExpression): { readonly ref: IrFuncRef; readonly passesIsDirect: boolean } | null;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
   /** Exact direct filter consumers of those sparse constructors. */
@@ -2651,7 +2655,8 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
       void lowerMethodCallWithSourcePlan(expr, cx, /* statementPosition */ true);
       return;
     }
-    if (ts.isIdentifier(expr.expression) || expr.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    const callee = expr.expression;
+    if (ts.isIdentifier(callee) || callee.kind === ts.SyntaxKind.SuperKeyword || exactGlobalEvalStatement(expr)) {
       void lowerCall(expr, cx, /* statementPosition */ true);
       return;
     }
@@ -7652,44 +7657,37 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (expr.questionDotToken) {
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
   }
-  const indirectEval = exactIndirectEvalStatement(expr);
-  if (indirectEval) {
-    const target = cx.resolver?.hostIndirectEvalTarget?.();
+  const globalEval = exactGlobalEvalStatement(expr);
+  if (globalEval) {
+    const target = cx.resolver?.globalEvalTarget?.(expr);
     if (
       !statementPosition ||
-      cx.resolver?.jsHostExterns?.() !== true ||
-      cx.resolver?.isAmbientBinding?.(indirectEval.evalIdentifier) !== true ||
+      cx.resolver?.isAmbientBinding?.(globalEval.evalIdentifier) !== true ||
       cx.scope.has("eval") ||
-      cx.resolver?.stringIsExternref?.() !== true ||
       !target
     ) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "build",
-        `ir/from-ast: certified host indirect eval lost an owning predicate (${cx.funcName})`,
+        `ir/from-ast: certified global eval lost an owning predicate (${cx.funcName})`,
       );
     }
-    const source = lowerExpr(indirectEval.source, cx, { kind: "string" });
+    const source = lowerExpr(globalEval.source, cx, { kind: "string" });
     if (cx.builder.typeOf(source).kind !== "string") {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "build",
-        `ir/from-ast: certified host indirect eval source is not a string (${cx.funcName})`,
+        `ir/from-ast: certified global eval source is not a string (${cx.funcName})`,
       );
     }
-    const result = cx.builder.emitCall(
-      target,
-      [
-        cx.builder.emitCoerceToExternref(source),
-        cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" })),
-      ],
-      irVal({ kind: "externref" }),
-    );
+    const args = [cx.builder.emitCoerceToExternref(source)];
+    if (target.passesIsDirect) args.push(cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" })));
+    const result = cx.builder.emitCall(target.ref, args, irVal({ kind: "externref" }));
     if (result === null) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "build",
-        `ir/from-ast: host indirect eval provider returned void (${cx.funcName})`,
+        `ir/from-ast: global eval provider returned void (${cx.funcName})`,
       );
     }
     // Statement-position lowering records this as a zero-use side-effecting

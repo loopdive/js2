@@ -13,7 +13,7 @@ import type { CodegenContext } from "./context/types.js";
 import { prepareIrAmbientClassCallLowering, recordIrOverlayPreparationFailure } from "./ir-imported-call-planning.js";
 import { prepareIrCompilerTimerShimCallLowering } from "./ir-timer-shim-planning.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
-import { runtimeEvalPushPublishesCachedFunctionValues } from "./expressions/runtime-eval-provider.js";
+import { globalEvalRoute, runtimeEvalPushPublishesCachedFunctionValues } from "./expressions/runtime-eval-provider.js";
 import {
   applyIrFinalContextFunctionRetention,
   closeIrBlockedComponentByIdentity,
@@ -106,21 +106,33 @@ export function withdrawEvalBoundaryFunctions(
   }
 }
 
-/** (#2928) Why an owner of a runtime-eval program stays direct; `why` is the per-function reason. */
 /**
  * (#7106 A2b) Module init owns every top-level statement except function
  * declarations (their own units), so it holds an eval site when one lies in
  * such a statement — including a nested function expression there. A module
- * init without one only reads the slots the pull rewrites.
+ * init without one only reads the slots the pull rewrites. (#7106 A2c) A site
+ * the IR's global-eval arm lowers (`globalEvalRoute`) does not count; only the
+ * host-free lanes ask, so the JS-host import is never that route here.
  */
-export function moduleInitHoldsEvalSite(sourceFile: ts.SourceFile, sites: readonly IrRuntimeEvalSite[]): boolean {
-  return sourceFile.statements.some(
-    (statement) =>
-      !ts.isFunctionDeclaration(statement) &&
-      sites.some((site) => site.start >= statement.getStart() && site.end <= statement.end),
-  );
+export function moduleInitHoldsEvalSite(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
+  const sites = ctx.runtimeEvalBoundaryPlan?.sites ?? [];
+  const lowered = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && globalEvalRoute(ctx, node, false) !== undefined)
+      lowered.add(`${node.getStart()}:${node.end}`);
+    forEachChild(node, visit);
+  };
+  return sourceFile.statements.some((statement) => {
+    if (ts.isFunctionDeclaration(statement)) return false;
+    visit(statement);
+    const start = statement.getStart();
+    return sites.some(
+      (site) => site.start >= start && site.end <= statement.end && !lowered.has(`${site.start}:${site.end}`),
+    );
+  });
 }
 
+/** (#2928) Why an owner of a runtime-eval program stays direct; `why` is the per-function reason. */
 export function runtimeEvalBoundaryFailure(why?: string): IrPreparationFailure {
   const detail = "the linked runtime-eval callable carrier is still owned by the direct frontend";
   return {
