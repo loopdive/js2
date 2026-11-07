@@ -13179,6 +13179,14 @@
       "nextBoundary": "Frontend source-shape certifier for the empty-object-literal arms (#4471 inert, #7128 S1 open carrier); move with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
+      "path": "src/ir/object-create-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7276",
+      "nextBoundary": "TypeScript-AST plan plus builder lowering of `Object.create({}, { <literal data descriptors> })`, shared by the selector and from-ast (#7276); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/binding-pattern-plan.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13201,6 +13209,14 @@
       "destination": "frontend-ts",
       "owner": "7106",
       "nextBoundary": "Frontend source-shape classifier for the top-level `var` lists the module initializer models and the bindings they declare (#7106 S5); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/shared/var-declaration-lists.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape predicates: the `var`-kind list test (shared by IR and codegen analyses) and the top-level `var` lists (statement and `for` head) the module initializer models (#7106 lever L), shared by the IR and legacy's module-global registration; moves with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/string-method-surface.ts",

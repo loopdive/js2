@@ -3943,6 +3943,7 @@ export function compileIrPathFunctions(
         fnctorNativeStringBoundaries: sourceLoweringPlans?.fnctorNativeStringBoundaries,
         returnTypeOverride: null,
         moduleInitUnit: true,
+        functionCodeStrict: irFunctionCodeStrictness(ctx, moduleInitSourceFile),
         moduleBindings,
         calleeTypes,
         ...projectFunctionValueLoweringPlans(sourceLoweringPlans),
