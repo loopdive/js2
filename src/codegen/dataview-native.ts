@@ -311,8 +311,6 @@ const DV_ACCESSORS: Readonly<Record<DataViewAccessor, DvAccessor>> = {
   setBigUint64: { kind: "set", bytes: 8, signed: false, float: false, int64: true },
 };
 
-export { isDataViewAccessor };
-
 /**
  * (#5150) §25.1.4.1 `ArrayBuffer.isView(arg)`, decided HOST-FREE: true iff the
  * value carries a [[ViewedArrayBuffer]] slot. Every TypedArray lowers to some
@@ -2273,8 +2271,7 @@ export function emitDataViewAccessor(
  * appends only and cannot shift baked funcIdxs; all are pre-ensured before the
  * throw templates capture their ctor indices anyway.
  */
-export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): number | undefined {
-  if (!isDataViewAccessor(member)) return undefined;
+export function ensureDvAccessorHelper(ctx: CodegenContext, member: DataViewAccessor): number | undefined {
   const acc = DV_ACCESSORS[member];
   const helperName = dataViewAccessorFn(member);
   // (#7274) Compiler-owned: a source `function __dv_m_getInt32() {}` shares

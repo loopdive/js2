@@ -642,7 +642,22 @@ adapters are covered by compile, validation and imports only.
   length operand after the detached / offset-bounds checks (never, when the
   offset is out of range); ArgumentListEvaluation evaluates it first. The
   IR follows the spec. Not yet observable on the IR route; it will be once
-  `try` claims (slice-2 review finding 7).
+  `try` claims (slice-2 review finding 7). Filed as **#7316**.
+- **A length-tracking DataView** over a resizable buffer keeps its
+  construction-time length after `resize`. Both routes share the window
+  emitter, so they agree, and both are wrong (RV7161 N6). Filed as **#7317**.
+- **Known post-claim demote, newly reachable (RV7161 N4).**
+  - **Repro:** a DataView module-init that also contains `throw <literal>`,
+    e.g. `var v = new DataView(new ArrayBuffer(4)); try { throw 1; } catch (e) {}`.
+  - **What happens:** the module-init is now claimed, then demotes with
+    "throw val not in slice 9". The output is legacy's.
+  - **Not slice-2 logic:** `var v = 4; try { throw 1 } catch (v) {}` demotes
+    the same way on a84cddb1, with no buffer involved.
+  - **Owner:** none yet. #7132 lists `throw 1` under "Not taken", and #7281
+    (PR #7147) covers only the string-concat throw.
+- **Wasi reach (RV7161 N5).** With the test262 harness, `--target wasi`
+  rejects `<module-init>` at selection (`constructor-resolution-unsupported`),
+  so the wasi adapters are only reached by non-harness programs today.
 - **`DataView#buffer` and the BigInt accessors** stay on legacy (slice 2).
   `buffer` needs the window's backing as a certified ArrayBuffer handle; the
   BigInt accessors need a BigInt operand in the IR.

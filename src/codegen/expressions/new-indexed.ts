@@ -248,7 +248,7 @@ export function tryCompileIndexedBuiltinNew(
       if (!isStructBuf) emitDataViewBufferBrandCheck(ctx, fctx, bufLocal, vecTypeIdx);
 
       if (args.length >= 2) {
-        // #1515 ToIndex(byteOffset) per ECMA §7.1.22 (data-view-construct.ts).
+        // #1515 ToIndex(byteOffset) per ECMA §7.1.22 (buffers/data-view-native.ts).
         // (#3481) ToIndex → ToNumber throws on a Symbol first. The buffer
         // operand is already evaluated (it is in `bufLocal`), so §13.3.6.1
         // argument order is preserved by guarding here.
