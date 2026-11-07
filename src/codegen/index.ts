@@ -2884,10 +2884,15 @@ function makeIrImplicitParamTypeResolver(
     if (parameterFact.kind !== "any" && parameterFact.kind !== "unknown") return undefined;
     const parameterIndex = declaration.parameters.indexOf(parameter);
     if (parameterIndex < 0) return undefined;
-    // (#7277) Off the candidate set, legacy's refined slot is the only evidence;
-    // adopting it gives the IR parameter the same ABI by construction.
-    if (!candidates.has(parameter)) return projectIrImplicitParamSlot(ctx, legacyRefinedParamSlot(ctx, parameter));
     const callSites = inferParamTypeFromCallSites(ctx, declaration.name.text, parameterIndex, sourceFile);
+    // (#7277) Off the candidate set, a slot legacy refined from real call
+    // sites is the only evidence; adopting it gives the same ABI by
+    // construction. A never-called function keeps legacy's default slot.
+    if (!candidates.has(parameter)) {
+      return callSites.sawCallSite
+        ? projectIrImplicitParamSlot(ctx, legacyRefinedParamSlot(ctx, parameter))
+        : undefined;
+    }
     if (callSites.sawCallSite && callSites.type === null) {
       return { kind: "dynamic", type: irDynamic() };
     }
