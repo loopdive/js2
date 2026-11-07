@@ -6240,3 +6240,81 @@ widens such a return to `externref` (`functionReturnsPreInitVarValue`) and the
 selector does not mirror it. No census file reaches it; it is a selector
 follow-up for both forms.
 
+
+## `<module-init>` lever L2 — the rest of the script-`var` path (plan, 2026-11-07)
+
+Stacked on lever L (`claude/7106-lever-l`, #7178). Three shapes from lever L's
+blocker table, all writes to the same `__mod_<name>` script-`var` slots.
+
+### Census (lever L head `65552ecb58`, standalone, unmasked)
+
+Population: lever L's 1,130 files plus every other ES5 file whose top-level
+code (outside functions) has one of the shapes, found by a parse-only scan
+(81 prefix updates, 369 nested `var` statements, 21 nested `for (var` heads;
+361 not yet in lever L's census), 1,491 files.
+
+| shape | refusal | carriers | sole blocker | sole except a literal home (lane C) |
+| --- | --- | --- | --- | --- |
+| (a) `++i` / `--i` | `expr-prefix-op-++` / `---` | 30 | 5 | 3 |
+| (b) `var` statement in top-level control flow | `vardecl-var-kind` | 161 | 40 | 22 |
+| (c) `for (var` head nested in a block | `for-init-var-kind` | 12 | 3 | 3 |
+| (b) and (c) together | | 173 | 43 | 25 |
+| all three | | 203 | 48 | 28 |
+
+"Sole" means `<module-init>` has no other refusal and no other unit is legacy;
+the masking caveat of lever L applies (a refused statement hides what is
+behind it). All three are taken: (b) carries the payoff, and (a) and (c) are
+small but fall out of the same two edits.
+
+### Implementation Plan
+
+1. **(b) + (c): one predicate.** `isModuleInitVarList`
+   (`src/shared/module-init-var-list.ts`) becomes structural: the list of a
+   `var` statement or of a `for (;;)` `var` head whose ancestors up to the
+   source file are all statement containers (block, `if`, loops, label,
+   `try`/`catch`, `switch`). It refuses a list inside a function, a `with` body
+   (a name there may resolve to the object), a `for-in`/`for-of` head, and a
+   `catch` clause whose parameter it re-declares (Annex B.3.5: that `var`
+   writes the parameter). `moduleInitVarLists(statement)` lists the modelled
+   lists of one top-level statement and replaces the single-list
+   `moduleInitVarList`; its consumers (`collectIrSafeModuleVarDeclarationLists`,
+   `moduleInitBindings`, from-ast's `moduleInitContainsNestedVar`) take the
+   plural, and the last one tests `isModuleInitVarList(node)` instead of
+   comparing with the one modelled list.
+   - Nothing else changes in selection or lowering: a nested `var` statement
+     already reaches `isPhase1VarDecl` → `isPhase1VarDeclarationList` and
+     `lowerVarDecl`'s module arm, and a nested head already reaches lever L's
+     `for` arm. A nested declaration is a write at its position, because the
+     prologue seeds the slot (`emitModuleVarUndefinedSeeds` walks the same
+     region) and a re-executed `var x;` is a no-op.
+   - The resolver (`isModuleBindingDeclaration`) and the ordinal enumerator
+     (`moduleInitVarBindings`) number "every declaration that is not a
+     top-level statement's own", so a nested statement's names join the leaves
+     and head names.
+   - Legacy observation: `hoistedModuleVarDeclaration` (was
+     `moduleInitHeadDeclaration`) hands every such declaration's slot to the
+     Program ABI from `registerVarDeclListGlobals`, which the hoisting walk
+     already calls for every nested list.
+2. **(a): no new arm.** `isPhase1ForUpdateExpr` admits `++i`/`--i` beside
+   `i++`/`i--` through the same branch (`identifierUpdateRefusal`); the update
+   value is discarded, and `lowerForUpdateExpr` already lowers both through
+   `lowerIncrementDecrement`. Statement-position prefix updates are already
+   admitted. A prefix update in value position (`x = ++i`) stays refused, as
+   the postfix one does.
+
+**Removed duplicates:** the single-list `moduleInitVarList` and its
+`unlabelled` walk; the "top-level `for` head" special case in the codegen
+helper; the postfix-only branch of the update arm.
+
+### Acceptance
+
+- Measured as lever L: both lanes, base = lever L head, on the 1,491 files.
+  Zero IR-only files lost, zero pass → fail, zero new post-claim errors on the
+  population; every binary without a newly claimed unit byte-identical;
+  playground identical.
+- Tests: `tests/issue-7106-lever-l2.test.ts`, both lanes: claimed nested
+  statements (loop, `while`, `do`, `if`, `try`, `switch`), nested heads,
+  prefix updates, reads before and after, redeclarations; refused: `with`
+  bodies, a catch-parameter re-declaration.
+- Code quality: one structural predicate; no new selector or lowering arm; no
+  budget grant.
