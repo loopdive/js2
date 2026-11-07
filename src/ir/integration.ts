@@ -97,8 +97,8 @@ import {
   moduleInitPrologueMayEmit,
   retireModuleInitPrologueHelper,
   irNativeI32SlotRead,
-  globalEvalRoute, // (#7106 A2c)
-  linkRuntimeEvalGlobalEval,
+  linkRuntimeEvalGlobalEval, // (#7106 A2c)
+  runtimeEvalOwnsGlobalEval,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
@@ -2618,7 +2618,7 @@ export function compileIrPathFunctions(
           }
         : {}),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
-      supportsGlobalEval: (call) => globalEvalRoute(ctx, call, jsHostExterns && !ctx.nativeStrings) !== undefined,
+      supportsGlobalEval: (call) => runtimeEvalOwnsGlobalEval(ctx, call),
       ...backendCapabilitySelectionOptions,
     });
   const integrationPopulation =
@@ -7077,10 +7077,7 @@ function makeFromAstResolver(
     supportsBackendCapability,
     globalEvalTarget(call) {
       const callee = linkRuntimeEvalGlobalEval(ctx, call);
-      if (callee !== undefined) return { ref: irRuntimeFuncRef(callee), passesIsDirect: false };
-      const functionIndex = ctx.funcMap.get("__extern_eval") ?? -1;
-      if (functionIndex !== exactCallableImportIndex(ctx, "env", "__extern_eval")) return null;
-      return { ref: irImportFuncRef("env", "__extern_eval"), passesIsDirect: true };
+      return callee === undefined ? null : irRuntimeFuncRef(callee);
     },
     isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
     ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)

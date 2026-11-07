@@ -549,6 +549,20 @@ const AV_REF = 3;
 const AV_EXT = 4;
 
 /**
+ * (#7106 A2b) When values may cross the runtime-eval boundary, a property read
+ * can return the provider's canonical carrier (an object built by eval code
+ * holds them). `__dyn_member_get` decodes it right after `__extern_get`, as
+ * every legacy read site does (`runtimeEvalSharedValueUnwrapInstrs`);
+ * caller-owned values pass through unchanged. Both helper bodies take 2 params.
+ */
+function dynMemberReadDecode(ctx: CodegenContext) {
+  const readLocals: { name: string; type: ValType }[] = [];
+  const decodeRead =
+    ctx.runtimeEvalGlobalFunctionBindings === true ? runtimeEvalSharedValueDecode(ctx, readLocals, 2) : [];
+  return { decodeRead, readLocals };
+}
+
+/**
  * (#3053 U0) Register the unified dynamic-reader carrier primitive
  * `__dyn_member_get` (+ the internal `__carrier_recv_to_extern` peel in gc/
  * standalone). Idempotent and **gated on `ctx.usesDynMemberGet`** — a no-op
@@ -566,20 +580,6 @@ const AV_EXT = 4;
  * required natives up by name and bails without emitting if any is absent (the
  * call site keeps its prior lowering — no regression).
  */
-/**
- * (#7106 A2b) When values may cross the runtime-eval boundary, a property read
- * can return the provider's canonical carrier (an object built by eval code
- * holds them). `__dyn_member_get` decodes it right after `__extern_get`, as
- * every legacy read site does (`runtimeEvalSharedValueUnwrapInstrs`);
- * caller-owned values pass through unchanged. Both helper bodies take 2 params.
- */
-function dynMemberReadDecode(ctx: CodegenContext) {
-  const readLocals: { name: string; type: ValType }[] = [];
-  const decodeRead =
-    ctx.runtimeEvalGlobalFunctionBindings === true ? runtimeEvalSharedValueDecode(ctx, readLocals, 2) : [];
-  return { decodeRead, readLocals };
-}
-
 export function ensureDynMemberGet(ctx: CodegenContext): void {
   const forceSelfTest = readEnv("JS2WASM_FORCE_DYN_MEMBER_GET") === "1";
   if (forceSelfTest) ctx.usesDynMemberGet = true;

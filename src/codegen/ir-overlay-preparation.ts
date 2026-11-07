@@ -13,7 +13,10 @@ import type { CodegenContext } from "./context/types.js";
 import { prepareIrAmbientClassCallLowering, recordIrOverlayPreparationFailure } from "./ir-imported-call-planning.js";
 import { prepareIrCompilerTimerShimCallLowering } from "./ir-timer-shim-planning.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
-import { globalEvalRoute, runtimeEvalPushPublishesCachedFunctionValues } from "./expressions/runtime-eval-provider.js";
+import {
+  runtimeEvalOwnsGlobalEval,
+  runtimeEvalPushPublishesCachedFunctionValues,
+} from "./expressions/runtime-eval-provider.js";
 import {
   applyIrFinalContextFunctionRetention,
   closeIrBlockedComponentByIdentity,
@@ -111,14 +114,13 @@ export function withdrawEvalBoundaryFunctions(
  * declarations (their own units), so it holds an eval site when one lies in
  * such a statement — including a nested function expression there. A module
  * init without one only reads the slots the pull rewrites. (#7106 A2c) A site
- * the IR's global-eval arm lowers (`globalEvalRoute`) does not count; only the
- * host-free lanes ask, so the JS-host import is never that route here.
+ * the IR's global-eval arm lowers (`runtimeEvalOwnsGlobalEval`) does not count.
  */
 export function moduleInitHoldsEvalSite(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
   const sites = ctx.runtimeEvalBoundaryPlan?.sites ?? [];
   const lowered = new Set<string>();
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && globalEvalRoute(ctx, node, false) !== undefined)
+    if (ts.isCallExpression(node) && runtimeEvalOwnsGlobalEval(ctx, node))
       lowered.add(`${node.getStart()}:${node.end}`);
     forEachChild(node, visit);
   };

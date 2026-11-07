@@ -3,8 +3,11 @@
  * (#7106 A2c) The static half of a literal eval: parsing its Script, the
  * SyntaxErrors a fold throws without running it, and whether the runtime-eval
  * provider owns its declarations. The legacy fold (`tryStaticEvalInline`) and
- * the IR's global-eval route (`globalEvalRoute`) both read these, so the IR
- * lowers a global eval statement exactly when legacy routes it to the provider.
+ * the IR's global-eval arm (`runtimeEvalOwnsGlobalEval`) both read these, so
+ * the IR lowers a global eval statement only when legacy routes it to the
+ * provider. Legacy also routes some the IR does not admit (Annex B collisions,
+ * strict scoped declarations, caller lexical collisions, const-resolved direct
+ * sources).
  */
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";

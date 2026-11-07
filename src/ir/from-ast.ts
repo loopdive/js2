@@ -512,12 +512,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
   sourceClosureCallableParameter?(node: ts.FunctionTypeNode): boolean;
-  /**
-   * (#7106 A2c) The callee of a certified global eval statement: the runtime-eval support function, or the
-   * JS-host import, which is collected only for a proven host shape (`needsHostIndirectEvalImport`) and also
-   * takes `isDirect`.
-   */
-  globalEvalTarget?(call: ts.CallExpression): { readonly ref: IrFuncRef; readonly passesIsDirect: boolean } | null;
+  /** (#7106 A2c) The runtime-eval support function a certified global eval statement calls with its source. */
+  globalEvalTarget?(call: ts.CallExpression): IrFuncRef | null;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
   /** Exact direct filter consumers of those sparse constructors. */
@@ -7680,9 +7676,11 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
         `ir/from-ast: certified global eval source is not a string (${cx.funcName})`,
       );
     }
-    const args = [cx.builder.emitCoerceToExternref(source)];
-    if (target.passesIsDirect) args.push(cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" })));
-    const result = cx.builder.emitCall(target.ref, args, irVal({ kind: "externref" }));
+    const result = cx.builder.emitCall(
+      target,
+      [cx.builder.emitCoerceToExternref(source)],
+      irVal({ kind: "externref" }),
+    );
     if (result === null) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",

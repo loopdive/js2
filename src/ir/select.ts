@@ -702,9 +702,9 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   /** Backend can materialize a fixed logical-string vector. */
   readonly supportsStringArrayLiterals?: boolean;
   /**
-   * (#7106 A2c) This global eval statement leaves the module by a static route
-   * (`globalEvalRoute`): the JS-host eval import or the runtime-eval provider.
-   * Omitted means unproven, so the selector leaves eval on the legacy path.
+   * (#7106 A2c) This global eval statement lowers through the runtime-eval
+   * support function (`runtimeEvalOwnsGlobalEval`). Omitted means unproven, so
+   * the selector leaves eval on the legacy path.
    */
   readonly supportsGlobalEval?: (call: ts.CallExpression) => boolean;
   /**

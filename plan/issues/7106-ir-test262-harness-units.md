@@ -111,7 +111,6 @@ loc-budget-allow:
   # 2026-11-01 (#7106 S5): the module-init `var` leaf binder and the slot write shared with the identifier arm, `storeModuleBinding` (+53); the list predicate, leaf walker and binding ordinals live in src/ir/module-init-vars.ts
   - src/ir/from-ast.ts
   # 2026-11-01 (boolean module slot): the `irBool` import and the i32 arm's one-line why (+2); the arms stay separate for readability
-  # 2026-11-07 (#7106 A2c): two facade imports for the resolver's global-eval target, offset by the resolver shrinking (+1)
   - src/ir/integration.ts
   # 2026-11-01 (finally abrupt exit, #7030 review): the guarded finally copy returns early when unguarded, then pushes, emits and pops its own CtrlFrame (+4)
   - src/ir/lower-generic.ts

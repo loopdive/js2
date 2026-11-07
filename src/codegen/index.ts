@@ -274,7 +274,7 @@ import {
   withdrawEvalBoundaryFunctions,
 } from "./ir-overlay-preparation.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
-import { globalEvalRoute } from "./expressions/runtime-eval-provider.js";
+import { runtimeEvalOwnsGlobalEval } from "./expressions/runtime-eval-provider.js";
 import {
   auditIrSkippedClassMemberSlots,
   auditIrSkippedFunctionSlots,
@@ -3356,7 +3356,7 @@ function planIrOverlay(
       supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
       isNativeI32SlotRead: (expr) => irNativeI32SlotRead(ctx, ast.checker, expr),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
-      supportsGlobalEval: (call) => globalEvalRoute(ctx, call, jsHostExterns && !ctx.nativeStrings) !== undefined,
+      supportsGlobalEval: (call) => runtimeEvalOwnsGlobalEval(ctx, call),
       ...backendCapabilitySelectionOptions,
       ...(hostExternSurface && legacyImportedFunctions ? { importedFunctions: legacyImportedFunctions } : {}),
       ...programCallableSelectionOptions(ctx, identityContext, ast.sourceFile),
@@ -15463,7 +15463,7 @@ export {
   IR_DYN_INSTANCEOF_HELPER,
   irDynamicInstanceOfAtLegacyParity,
 } from "./ir-dynamic-instanceof.js";
-export { globalEvalRoute, linkRuntimeEvalGlobalEval } from "./expressions/runtime-eval-provider.js"; // (#7106 A2c) ir/integration.ts
+export { linkRuntimeEvalGlobalEval, runtimeEvalOwnsGlobalEval } from "./expressions/runtime-eval-provider.js"; // (#7106 A2c) ir/integration.ts
 // (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
 export {
   buildModuleInitPrologueCall,

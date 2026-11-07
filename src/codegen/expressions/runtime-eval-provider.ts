@@ -785,6 +785,10 @@ export function ensureRuntimeEvalGlobalCall(ctx: CodegenContext, entry: RuntimeE
   const name = runtimeEvalGlobalCallName(entry);
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
+  // Every legacy site seeds the callable carrier before calling here and refuses
+  // when it cannot; an IR site has no legacy frame, so seed (and refuse) here.
+  // A no-op once seeded; the detached context discards the seed's dead closure.
+  if (!ensureRuntimeEvalCallableCarrier(ctx, runtimeEvalSyncFunctionContext(ctx, name))) return undefined;
   const externref: ValType = { kind: "externref" };
   const sources = new Array<ValType>(RUNTIME_EVAL_GLOBAL_ENTRY_ARITY[entry]).fill(externref);
   const importIdx = ensureLateImport(ctx, entry, [...sources, externref], [externref], RUNTIME_EVAL_IMPORT_MODULE);
@@ -795,9 +799,6 @@ export function ensureRuntimeEvalGlobalCall(ctx: CodegenContext, entry: RuntimeE
   pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: [], body: [], exported: false });
   ctx.funcMap.set(name, funcIdx);
   const fctx = runtimeEvalSyncFunctionContext(ctx, name, sources);
-  // Every legacy site seeds the callable carrier before calling here; an IR
-  // site has no legacy frame, so the support function seeds it (a no-op once seeded).
-  ensureRuntimeEvalCallableCarrier(ctx, fctx);
   emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
   sources.forEach((_, index) => fctx.body.push({ op: "local.get", index }));
   if (emitGlobalEnvironmentObject(ctx, fctx) === null) fctx.body.push({ op: "ref.null.extern" });
@@ -807,53 +808,51 @@ export function ensureRuntimeEvalGlobalCall(ctx: CodegenContext, entry: RuntimeE
   return ctx.funcMap.get(name);
 }
 
-type GlobalEvalRoute = "host-import" | "runtime-eval-provider";
+/** Per compile, each global eval statement's answer: a literal Script is parsed once, not per query. */
+const providerOwnedGlobalEvals = new WeakMap<CodegenContext, WeakMap<ts.CallExpression, boolean>>();
 
 /**
- * (#7106 A2c) How a global-scope eval statement (`exactGlobalEvalStatement`)
- * leaves the module, or `undefined` when it does not take one route statically:
- *
- *  - `host-import`: an indirect eval where the caller proves the JS-host
- *    `__extern_eval(source, isDirect)` ABI (`hostEvalAbi`).
- *  - `runtime-eval-provider`: a literal indirect eval, or a sloppy direct eval
- *    running at script global, whose Script legacy can only hand to the global
- *    support function — it parses, raises no static SyntaxError and declares a
- *    global var (`providerOwnsEvalDeclarations`). Any other literal may fold,
- *    so it stays with the direct frontend. The site is the one the runtime-eval
- *    boundary plan recorded; this never re-detects eval syntax.
+ * (#7106 A2c) Does a global-scope eval statement (`exactGlobalEvalStatement`)
+ * lower through the global support function? Only for a literal indirect eval,
+ * or a sloppy direct eval running at script global, whose Script legacy can
+ * only hand to the provider: it parses, raises no static SyntaxError and
+ * declares a global var (`providerOwnsEvalDeclarations`). Any other literal may
+ * fold, so it stays with the direct frontend. The site is the one the
+ * runtime-eval boundary plan recorded; this never re-detects eval syntax. The
+ * selector, `moduleInitHoldsEvalSite` and the IR resolver all read this answer.
  */
-export function globalEvalRoute(
-  ctx: CodegenContext,
-  call: ts.CallExpression,
-  hostEvalAbi: boolean,
-): GlobalEvalRoute | undefined {
+export function runtimeEvalOwnsGlobalEval(ctx: CodegenContext, call: ts.CallExpression): boolean {
+  const answers = providerOwnedGlobalEvals.get(ctx) ?? new WeakMap<ts.CallExpression, boolean>();
+  providerOwnedGlobalEvals.set(ctx, answers);
+  let answer = answers.get(call);
+  if (answer === undefined) answers.set(call, (answer = decideRuntimeEvalOwnsGlobalEval(ctx, call)));
+  return answer;
+}
+
+function decideRuntimeEvalOwnsGlobalEval(ctx: CodegenContext, call: ts.CallExpression): boolean {
   const shape = exactGlobalEvalStatement(call);
-  if (!shape) return undefined;
-  if (!shape.direct && hostEvalAbi) return "host-import";
-  if (!runtimeEvalPushPublishesCachedFunctionValues(ctx) || isRuntimeEvalProviderAbsent(ctx)) return undefined;
-  if (shape.direct && !directEvalRunsAtScriptGlobal(call, ctx)) return undefined;
+  if (!shape || !runtimeEvalPushPublishesCachedFunctionValues(ctx) || isRuntimeEvalProviderAbsent(ctx)) return false;
+  if (shape.direct && !directEvalRunsAtScriptGlobal(call, ctx)) return false;
   const start = call.getStart();
   const site = ctx.runtimeEvalBoundaryPlan?.sites.find((entry) => entry.start === start && entry.end === call.end);
   if (site?.literalSource === undefined || (site.kind !== "indirect-eval" && site.kind !== "direct-eval")) {
-    return undefined;
+    return false;
   }
   const script = parseEvalScript(ctx, call, shape.direct, site.literalSource);
   const names = foldedEvalDeclarationNames(script.sourceFile);
   const thrown = foldedEvalStaticSyntaxError(call, shape.direct, script, names, ctx.globalLexicalBindings ?? new Set());
-  return thrown === undefined && providerOwnsEvalDeclarations(script, names, true)
-    ? "runtime-eval-provider"
-    : undefined;
+  return thrown === undefined && providerOwnsEvalDeclarations(script, names, true);
 }
 
 /**
- * The callee of a `runtime-eval-provider`-routed call, linked now so it exists
- * before any IR body is emitted: the indirect-eval support function, which a
- * sloppy script-global direct eval shares. `undefined` for another route or
- * when the support function cannot link.
+ * The callee of a call `runtimeEvalOwnsGlobalEval` admits, linked now so it
+ * exists before any IR body is emitted: the indirect-eval support function,
+ * which a sloppy script-global direct eval shares. `undefined` for any other
+ * call, or when the support function cannot link.
  */
 export function linkRuntimeEvalGlobalEval(ctx: CodegenContext, call: ts.CallExpression): string | undefined {
   const entry = "__runtime_indirect_eval";
-  if (globalEvalRoute(ctx, call, false) !== "runtime-eval-provider") return undefined;
+  if (!runtimeEvalOwnsGlobalEval(ctx, call)) return undefined;
   return ensureRuntimeEvalGlobalCall(ctx, entry) === undefined ? undefined : runtimeEvalGlobalCallName(entry);
 }
 
