@@ -6366,3 +6366,60 @@ helper; the postfix-only branch of the update arm.
   bodies, a catch-parameter re-declaration.
 - Code quality: one structural predicate; no new selector or lowering arm; no
   budget grant.
+
+### Lever L2 measured (2026-11-07)
+
+Base: lever L at `4cf965aa1f` (review round 1 included), head `145ccae225`, one
+niced worker, both lanes. Population: the 1,491 files of the census above
+(1,431 compile on both sides; the rest are runner-skipped or compile errors on
+both, unchanged).
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, base → head | 44 → 55 (**+11**) | 44 → 55 (**+11**) |
+| IR-only files lost | 0 | 0 |
+| binaries changed | 11, each a newly claimed `<module-init>` | 11, the same files |
+| binaries byte-identical | 1,420 (the whole random sample included) | 1,420 |
+| units newly legacy | 0 | 0 |
+| new post-claim errors (on these files) | 0 | 0 |
+| pass → fail on the changed files | 0 (11/11 pass on both) | 0 (11/11 pass on both) |
+| playground (26 binaries) | identical | identical |
+
+The 11: `Math/ceil/S15.8.2.6_A7`, `Math/floor/S15.8.2.9_A7`,
+`Math/round/S15.8.2.15_A6`, `statements/function/S13.2.1_A8_T1`,
+`statements/try/S12.14_A1`, `_A2`, `_A11_T3`,
+`statements/variable/S12.2_A6_T1`, `_A6_T2`, `_A7`, `_A12`.
+
+**Why 11, not the census's 48.** A refused statement hid the refusals behind
+it. Over the 203 files that carried an L2 refusal, the arms `<module-init>`
+now reports are led by `vardecl-module-storage-unrepresentable` (62 files,
+17 as the sole arm: lane C's literal homes), `expr-ident-not-in-scope` (43),
+`expr-new-ctor-unknown` (25), `throw-module-scalar-unboxed` (21, lever T),
+`expr-module-extern-call-brand` (19), `expr-new-module-binding-callee` (18).
+
+**Skipped:** a prefix update in value position (`if (++x !== 1)`,
+`S11.4.4_*` / `S11.4.5_*`, 18 files still carry it). The postfix one is
+refused in value position too (#4459's discard gate), so there is no postfix
+lowering to reuse; it is a value-position update lever of its own. The census
+"prefix" count (30) was mostly these.
+
+**Known exposures, outside this population:** each claims and then withdraws,
+and each has a statement twin that does the same (or worse) on main:
+- `try { throw 1; } catch (e) { var q = 3; }`: "throw val not in slice 9"
+  (main twin `var q; try { throw 1; } catch (e) { q = 3; }`; lever T's area);
+- `for (…) { var ch = 'a'; acc += ch; }`: "typed string += requires …
+  encoding evidence" (main twin `var ch; for (…) { ch = 'a'; acc += ch; }`
+  is a hard compile error on main);
+- `if (false) { var a = 5; } a === undefined` reads `0` from an `f64` slot,
+  as legacy does (#4489's residual), so the claim keeps legacy's wrong answer.
+
+**Code.** One structural predicate, `isModuleInitVarList`, plus
+`moduleInitVarLists`, in `src/shared/var-declaration-lists.ts`; the
+single-list `moduleInitVarList` and its label walk are gone; the update arm
+admits prefix through the postfix branch. `src/ir` net 0 (+56/−56);
+`src/shared` +36; codegen +2. No new selector or lowering arm, no grant.
+Gates pass bare: loc, func (also against origin/main `5ef8f0aae5`),
+coercion, oracle, dead exports, typecheck, import cycles, standalone arms,
+IR layering, flat dir, IR fallbacks; compiler boundaries as on main.
+Tests: lever-l2, lever-l, var-pattern-heads, for-head-destructuring,
+script-var, uninitialized-var: 263/263.
