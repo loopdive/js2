@@ -506,7 +506,7 @@ const EQ_HEAP_TYPE = -19;
  *                             throw under the standalone no-host contract)
  *
  * The caller (`tryEmitJsonParsePrimitive` in expressions/calls.ts) gates this
- * on `ctx.standalone || ctx.wasi` and a string-typed argument, and returns the
+ * on the native regime and a string-typed argument, and returns the
  * `ref $AnyValue` type so the existing AnyValue→primitive coercion path in
  * type-coercion.ts unboxes it to number / boolean as the consumer requires.
  *

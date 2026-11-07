@@ -158,7 +158,7 @@ export function emitObjectProtoToStringWithSymbolTag(
   tag: string,
   proof: ObjectToStringTagProof,
 ): ValType | null | undefined {
-  if (!ctx.standalone || !ctx.nativeStrings || receiverExpr === undefined) return undefined;
+  if (!ctx.nativeStrings || receiverExpr === undefined) return undefined;
   flushLateImportShifts(ctx, fctx);
   const symbolTagIdx = ensureObjectProtoSymbolTagFn(ctx);
   if (symbolTagIdx === undefined) return undefined;
@@ -233,7 +233,7 @@ export function tryEmitTaggedToStringInvoke(
   recvExpr: ts.Expression,
   node: ts.Node,
 ): ValType | null | undefined {
-  if (!ctx.standalone || !ctx.nativeStrings || ctx.symbolTypeIdx < 0) return undefined;
+  if (!ctx.nativeStrings || ctx.symbolTypeIdx < 0) return undefined;
   if (!node.getSourceFile().text.includes("toStringTag")) return undefined;
   flushLateImportShifts(ctx, fctx);
   if (ensureObjectProtoToStringRuntimeHelper(ctx) === undefined) return undefined;

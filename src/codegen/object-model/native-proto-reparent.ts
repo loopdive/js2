@@ -93,7 +93,7 @@ const foldingNow = new WeakSet<ts.Node>();
  * armed (or already inside the fold) — compile as before.
  */
 export function reparentGetPrototypeOfHelper(ctx: CodegenContext, call: ts.CallExpression): number | undefined {
-  if (!ctx.standalone || ctx.builtinProtoReparentDirty !== true || foldingNow.has(call)) return undefined;
+  if (ctx.builtinProtoReparentDirty !== true || foldingNow.has(call)) return undefined;
   const arg0 = call.arguments[0];
   if (arg0 === undefined || !isBuiltinPrototypeRef(arg0)) return undefined;
   return ctx.funcMap.get(REPARENT_GPO);
@@ -160,7 +160,6 @@ export function isReparentObservablePrimitiveWrite(
   isStrict: () => boolean,
 ): lhs is ts.PropertyAccessExpression & { name: ts.Identifier } {
   return (
-    ctx.standalone === true &&
     ctx.builtinProtoReparentDirty === true &&
     expr.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
     ts.isPropertyAccessExpression(lhs) &&
@@ -216,7 +215,7 @@ function defineHelper(
  * and the companion store, `$NativeProto` and the prototype natives all exist.
  */
 export function spliceNativeProtoReparentArms(ctx: CodegenContext, deps: NativeProtoReparentDeps): void {
-  if (!ctx.standalone || ctx.builtinProtoReparentDirty !== true) return;
+  if (ctx.builtinProtoReparentDirty !== true) return;
   if (ctx.funcMap.has(REPARENTED)) return;
   const npTypeIdx = ctx.nativeProtoTypeIdx;
   const getProtoIdx = ctx.funcMap.get("__getPrototypeOf");

@@ -138,7 +138,7 @@ function protoDefaultPrimitive(ctx: CodegenContext, brandName: WrapperBrandName)
  * instructions. A body emitter must be all-or-nothing.
  */
 export function canEmitWrapperThisValueBody(ctx: CodegenContext, brandName: WrapperBrandName): boolean {
-  return ctx.standalone === true && ctx.funcMap.get(PRIMITIVE_PREDICATE[brandName]) !== undefined;
+  return ctx.funcMap.get(PRIMITIVE_PREDICATE[brandName]) !== undefined;
 }
 
 /**
@@ -190,7 +190,6 @@ export function emitWrapperThisValueBody(
   member: string,
   buildTail: () => Instr[],
 ): ValType | null {
-  if (!ctx.standalone) return null;
   const predicateIdx = ctx.funcMap.get(PRIMITIVE_PREDICATE[brandName]);
   if (predicateIdx === undefined) return null;
 

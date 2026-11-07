@@ -31,7 +31,7 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "../index.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "../js-errors.js";
+import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
@@ -494,7 +494,7 @@ export function emitSabConstruct(
   args: readonly ts.Expression[],
   compileExpr: (e: ts.Expression) => ValType | null,
 ): ValType | undefined {
-  if (!noJsHost(ctx) || ensureSabHelper(ctx, "construct", fctx) === undefined) return undefined;
+  if (ensureSabHelper(ctx, "construct", fctx) === undefined) return undefined;
   const locals = evalArgs(ctx, fctx, args, 2, compileExpr);
   flushLateImportShifts(ctx, fctx);
   for (const l of locals) fctx.body.push({ op: "local.get", index: l });
@@ -511,7 +511,7 @@ export function emitSabMethodCall(
   args: readonly ts.Expression[],
   compileExpr: (e: ts.Expression) => ValType | null,
 ): ValType | undefined {
-  if ((method !== "slice" && method !== "grow") || !noJsHost(ctx)) return undefined;
+  if (method !== "slice" && method !== "grow") return undefined;
   if (ensureSabHelper(ctx, method, fctx) === undefined) return undefined;
   const [recvLocal] = evalArgs(ctx, fctx, [receiver], 1, compileExpr);
   const locals = evalArgs(ctx, fctx, args, method === "slice" ? 2 : 1, compileExpr);
@@ -531,7 +531,7 @@ export function emitSabGetter(
   compileExpr: (e: ts.Expression) => ValType | null,
 ): ValType | undefined {
   const which = GETTER[prop];
-  if (which === undefined || !noJsHost(ctx) || ensureSabHelper(ctx, "get", fctx) === undefined) return undefined;
+  if (which === undefined || ensureSabHelper(ctx, "get", fctx) === undefined) return undefined;
   const [recvLocal] = evalArgs(ctx, fctx, [receiver], 1, compileExpr);
   flushLateImportShifts(ctx, fctx);
   fctx.body.push({ op: "local.get", index: recvLocal! }, { op: "i32.const", value: which });
@@ -551,7 +551,7 @@ export function sabProtoMemberParamSlots(member: string): number {
 export function emitSabProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
   const helper: SabHelper | undefined =
     member === "slice" || member === "grow" ? member : GETTER[member] !== undefined ? "get" : undefined;
-  if (helper === undefined || !noJsHost(ctx)) return null;
+  if (helper === undefined) return null;
   const idx = ensureSabHelper(ctx, helper, fctx);
   if (idx === undefined) return null;
   fctx.body.push({ op: "local.get", index: 1 });

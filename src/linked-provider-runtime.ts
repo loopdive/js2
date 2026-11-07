@@ -351,7 +351,7 @@ export function instantiateLinkedProviders(
     // environment is the same case: its consumer is a regime module too (the
     // linker compiles every provider with the consumer's options), whose
     // dynamic reads already route a missed receiver to the provider's
-    // `__js2wasm_link_*` terminals — both halves are `ctx.standalone` and the
+    // `__js2wasm_link_*` terminals — both halves lower with the native regime and the
     // provider is `exportsConsumedByWasm`. A host mirror there handed the
     // consumer a JS proxy its native MOP could only treat as an unadmitted
     // foreign object: `new Temporal.PlainTime()` read "value is not a

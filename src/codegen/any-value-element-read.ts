@@ -41,7 +41,7 @@ export function tryEmitAnyValueArrayUndefinedOobGet(
   elementType: ValType,
   lengthBoundInstrs?: Instr[],
 ): ValType | undefined {
-  if (!(ctx.standalone || ctx.wasi) || !isAnyValue(elementType, ctx) || !undefinedSingletonActive(ctx)) {
+  if (!isAnyValue(elementType, ctx) || !undefinedSingletonActive(ctx)) {
     return undefined;
   }
   if (ctx.undefinedGlobalIdx === undefined) ensureAnyValueType(ctx);

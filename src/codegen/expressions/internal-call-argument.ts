@@ -2,15 +2,9 @@
 
 import { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
-import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { getArrTypeIdxFromVec } from "../registry/types.js";
 import { compileObjectLiteralAsExternref, resolvePropertyNameText } from "../literals.js";
-import {
-  canCompilePropertyAccessForNullishObservation,
-  compilePropertyAccessForNullishObservation,
-} from "../property-access.js";
-import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
+import { compileExpression } from "../shared.js";
 
 /**
  * Compile an argument for a call that stays inside the generated module.
@@ -34,12 +28,7 @@ export function compileInternalCallArgument(
   // call site can therefore be a type the callee never saw while building its
   // tuple fast path. Re-enter the established lowering under the narrow array
   // carrier override; the default path below stays exactly unchanged.
-  if (
-    forceArrayLiteralVec &&
-    expectedType?.kind === "externref" &&
-    (ctx.standalone || ctx.wasi) &&
-    ts.isArrayLiteralExpression(expression)
-  ) {
+  if (forceArrayLiteralVec && expectedType?.kind === "externref" && ts.isArrayLiteralExpression(expression)) {
     const previous = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
     (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
     try {
@@ -70,97 +59,5 @@ export function compileInternalCallArgument(
     if (objectValue !== null) return objectValue;
   }
 
-  if (expectedType?.kind !== "externref" || ctx.standalone || ctx.wasi) {
-    return compileExpression(ctx, fctx, expression, expectedType);
-  }
-
-  let carrier = expression;
-  while (
-    ts.isParenthesizedExpression(carrier) ||
-    ts.isAsExpression(carrier) ||
-    ts.isTypeAssertionExpression(carrier) ||
-    ts.isNonNullExpression(carrier)
-  ) {
-    carrier = carrier.expression;
-  }
-  // An externref parameter deliberately preserves the full JavaScript value.
-  // Compile a property argument through the boxed dynamic reader so a missing
-  // numeric-looking field remains `undefined` instead of being narrowed to
-  // f64 NaN and then re-boxed. This is the `v1(options) -> v1Bytes(...)`
-  // nullish-default path in uuid (#4383).
-  if (ts.isPropertyAccessExpression(carrier) && canCompilePropertyAccessForNullishObservation(ctx, fctx, carrier)) {
-    return compilePropertyAccessForNullishObservation(ctx, fctx, carrier);
-  }
-  // (#4435) A closed-method dispatcher is an in-module call even though its
-  // uniform ABI uses externref. Compiling an inline array literal with an
-  // externref expectation runs the JS-host `__make_iterable` adapter and turns
-  // the Wasm vec into a real JS Array. The dispatcher then converts the value
-  // back to `anyref` and casts it to the method's vec parameter, which traps
-  // (`lexer.blockTokens(src, [])` in Marked). Preserve the raw vec carrier just
-  // like the identifier-held array arm below; the dispatcher's host fallback
-  // already wraps raw vec arguments before invoking JavaScript.
-  if (ts.isArrayLiteralExpression(carrier)) {
-    // (#3643) An unannotated binding-pattern parameter (`function f([a, b = 9])`)
-    // is widened to externref (#862), but TypeScript still gives the argument
-    // literal the pattern's contextual TUPLE type. A tuple struct behind an
-    // externref is opaque to the callee's destructure (it recognises only vec
-    // carriers, then falls back to host GetIterator, which throws). Build the
-    // vec carrier instead, as the standalone arm above already does.
-    const flags = ctx as unknown as { _arrayLiteralForceVec?: boolean };
-    const previousForceVec = flags._arrayLiteralForceVec;
-    flags._arrayLiteralForceVec = true;
-    let actualType: ValType | null;
-    try {
-      actualType = compileExpression(ctx, fctx, expression);
-    } finally {
-      flags._arrayLiteralForceVec = previousForceVec;
-    }
-    if (
-      actualType &&
-      (actualType.kind === "ref" || actualType.kind === "ref_null") &&
-      getArrTypeIdxFromVec(ctx, actualType.typeIdx) >= 0
-    ) {
-      fctx.body.push({ op: "extern.convert_any" });
-      return expectedType;
-    }
-    if (actualType && !valTypesMatch(actualType, expectedType)) {
-      coerceType(ctx, fctx, actualType, expectedType);
-      return expectedType;
-    }
-    return actualType;
-  }
-  if (!ts.isIdentifier(carrier)) {
-    return compileExpression(ctx, fctx, expression, expectedType);
-  }
-
-  const localIdx = fctx.localMap.get(carrier.text);
-  const localType = localIdx === undefined ? undefined : getLocalType(fctx, localIdx);
-  const isMaterializedArgumentsObject =
-    carrier.text === "arguments" &&
-    localIdx !== undefined &&
-    localIdx >= fctx.params.length &&
-    fctx.locals[localIdx - fctx.params.length]?.name === "arguments";
-  if (
-    isMaterializedArgumentsObject ||
-    !localType ||
-    (localType.kind !== "ref" && localType.kind !== "ref_null") ||
-    getArrTypeIdxFromVec(ctx, localType.typeIdx) < 0
-  ) {
-    return compileExpression(ctx, fctx, expression, expectedType);
-  }
-
-  const actualType = compileExpression(ctx, fctx, expression);
-  if (
-    actualType &&
-    (actualType.kind === "ref" || actualType.kind === "ref_null") &&
-    getArrTypeIdxFromVec(ctx, actualType.typeIdx) >= 0
-  ) {
-    fctx.body.push({ op: "extern.convert_any" });
-    return expectedType;
-  }
-  if (actualType && !valTypesMatch(actualType, expectedType)) {
-    coerceType(ctx, fctx, actualType, expectedType);
-    return expectedType;
-  }
-  return actualType;
+  return compileExpression(ctx, fctx, expression, expectedType);
 }

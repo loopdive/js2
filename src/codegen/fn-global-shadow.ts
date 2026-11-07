@@ -121,23 +121,6 @@ export function shiftFnShadowSlots(ctx: CodegenContext, threshold: number, delta
   }
 }
 
-/**
- * (#4648) True while the STATIC fallback arm for `name` is being compiled.
- *
- * The static arm models the binding's value before any `globalThis.<name> =`
- * write — which, for a top-level function declaration, is the compiled function
- * itself. On the JS-host lane the presence of the `globalThis.<name> =` write
- * also puts `name` in `ctx.sloppyImplicitGlobals`, so an unguarded static arm
- * re-reads the value back OFF the host global object; that read returns a
- * host-wrapped callable, and storing it in a variable (`var realDone = $DONE`)
- * makes the later `realDone()` miss the closure-struct `ref.test` and trap on a
- * null dereference. Consulting this predicate lets the static arm fall through
- * to the funcref-as-value lowering and keep the WasmGC closure.
- */
-export function isShadowStaticArmFor(name: string): boolean {
-  return staticArmNames.length > 0 && staticArmNames[staticArmNames.length - 1] === name;
-}
-
 /** Run `emit` with the shadow READ arm suppressed (for compiling the static fallback). */
 export function withShadowReadSuppressed<T>(emit: () => T, name?: string): T {
   readSuppression++;

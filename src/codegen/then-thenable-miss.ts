@@ -55,7 +55,7 @@ export function tryEmitStandaloneThenThenableMissArm(
   args: readonly (ts.Expression | undefined)[],
   missTypeError: boolean,
 ): boolean {
-  if (ctx.standalone !== true || ctx.wasi === true) return false;
+  if (ctx.wasi === true) return false;
   const hasThenIdx = ctx.funcMap.get("__promise_has_callable_then");
   const varargThenIdx = ctx.funcMap.get("__call_m_then_vararg");
   const objVecNewIdx = ctx.funcMap.get("__objvec_new");

@@ -248,7 +248,6 @@ export function ensureSuperInitializedFlagLocal(
   fctx: FunctionContext,
   ctor: ts.ConstructorDeclaration,
 ): void {
-  if (!ctx.standalone) return;
   if (!fctx.isDerivedConstructor) return;
   if (fctx.superInitializedFlagLocal !== undefined) return;
   if (!ctor.body) return;
@@ -304,7 +303,6 @@ export function emitSuperCallBindThis(ctx: CodegenContext, fctx: FunctionContext
  * returns `true` — nothing is left on the stack, the caller stops.
  */
 export function emitSuperUninitializedThisCheck(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): boolean {
-  if (!ctx.standalone) return false;
   const kind = classifyUninitializedThisAccess(fctx, expr);
   if (kind === "never") return false;
   const message = UNINITIALIZED_THIS_MESSAGE;
@@ -334,7 +332,7 @@ export function emitSuperUninitializedThisCheck(ctx: CodegenContext, fctx: Funct
  * call site has to fabricate a result; `"runtime"` tests the flag.
  */
 export function emitUninitializedThisGuard(ctx: CodegenContext, fctx: FunctionContext, node: ts.Node): void {
-  if (!ctx.standalone || !fctx.isDerivedConstructor) return;
+  if (!fctx.isDerivedConstructor) return;
   emitSuperUninitializedThisCheck(ctx, fctx, node);
 }
 
@@ -344,7 +342,7 @@ export function emitUninitializedThisGuard(ctx: CodegenContext, fctx: FunctionCo
  * set), so GetThisBinding is guarded once at their entry — before the RHS.
  */
 export function guardThisReceiver(ctx: CodegenContext, fctx: FunctionContext, receiver: ts.Expression): void {
-  if (!ctx.standalone || !fctx.isDerivedConstructor) return;
+  if (!fctx.isDerivedConstructor) return;
   const node = skipTransparentExpressions(receiver);
   if (node.kind !== ts.SyntaxKind.ThisKeyword) return;
   emitSuperUninitializedThisCheck(ctx, fctx, node);
@@ -359,7 +357,7 @@ export function guardThisReceiver(ctx: CodegenContext, fctx: FunctionContext, re
  * confirm it names a class first.
  */
 export function constructorFrameClassName(ctx: CodegenContext, fctx: FunctionContext): string | undefined {
-  if (ctx.standalone && !fctx.enclosingClassName) {
+  if (!fctx.enclosingClassName) {
     for (const suffix of ["_init", "_new"]) {
       if (!fctx.name.endsWith(suffix)) continue;
       const name = fctx.name.slice(0, -suffix.length);

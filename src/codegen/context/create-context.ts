@@ -28,10 +28,11 @@ import { ProgramAbiFnctorRegistry } from "../program-abi-fnctor-planning.js";
 import type { CodegenContext, CodegenOptions } from "./types.js";
 import { readEnv } from "../../env.js";
 
+// (#6979 S7-c) The native RegExp engine belongs to the regime, not to an
+// environment: keyed on the environment, a WASI regime build had no engine and
+// refused every RegExp the standalone and gc builds compile.
 function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
-  return targetProfile.target === "standalone" || targetProfile.environment === "javascript"
-    ? nativeLiteralRegExpEngineConfig()
-    : null;
+  return targetProfile.nativeRegime ? nativeLiteralRegExpEngineConfig() : null;
 }
 
 function createRedeclaredObjectIdentityState() {
@@ -418,7 +419,6 @@ export function createCodegenContext(
     linkNodeShims: targetProfile.target === "wasi" && linkedNamespaces.has("node:fs"),
     nodeFsReadSyncIdx: -1,
     nodeFsWriteSyncIdx: -1,
-    standalone: targetProfile.nativeRegime, // (#5385) the native semantic regime, not the environment
     ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
     standaloneScriptVarBindings: options?.standaloneScriptVarBindings,
     ...(options?.standaloneMicrotaskNotifyImport
@@ -574,5 +574,18 @@ export function createCodegenContext(
     }
   }
 
+  return assertNativeRegime(ctx, targetProfile);
+}
+
+/**
+ * (#6979 S7-c) The host-semantic lane is gone: every WasmGC build lowers with
+ * the native semantic regime, and src/codegen no longer carries a regime flag
+ * (`targetProfile.nativeRegime` is the single truth). Fail loudly if a new
+ * profile breaks the invariant instead of silently compiling host semantics.
+ */
+function assertNativeRegime(ctx: CodegenContext, targetProfile: CompileTargetProfile): CodegenContext {
+  if (targetProfile.backend === "wasmgc" && !targetProfile.nativeRegime) {
+    throw new Error(`#6979: WasmGC target '${targetProfile.target}' must lower with the native regime`);
+  }
   return ctx;
 }

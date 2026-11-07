@@ -137,17 +137,6 @@ export function classHeritageRequiresRuntimeParent(ctx: CodegenContext, classNam
   return heritageIdentifierRequiresRuntimeRegistration(ctx, base, declaration, new Set<ts.Declaration>());
 }
 
-/** Collect a top-level class only when its heritage must run at module init. */
-export function shouldCollectTopLevelClassForRuntimeHeritage(ctx: CodegenContext, statement: ts.Statement): boolean {
-  return (
-    ts.isClassDeclaration(statement) &&
-    statement.name !== undefined &&
-    !ctx.standalone &&
-    !ctx.wasi &&
-    classHeritageRequiresRuntimeParent(ctx, statement.name.text)
-  );
-}
-
 function resolveHeritageBuiltinCtorName(ctx: CodegenContext, identifier: ts.Identifier): string | undefined {
   if (ctx.oracle.typeFactOf(identifier).kind === "union") return undefined;
   const declaredName = ctx.oracle.declaredNameOf(identifier);

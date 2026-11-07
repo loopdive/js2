@@ -92,7 +92,7 @@ export function arrayMethodReadsProxyOperand(
   call: ts.CallExpression | ts.NewExpression,
   arg: ts.Expression,
 ): boolean {
-  if (!ctx.standalone || !ts.isCallExpression(call) || !ts.isPropertyAccessExpression(call.expression)) return false;
+  if (!ts.isCallExpression(call) || !ts.isPropertyAccessExpression(call.expression)) return false;
   const argIndex = call.arguments.indexOf(arg);
   if (argIndex < 0) return false;
   const callee = call.expression;
@@ -123,7 +123,7 @@ export function arrayMethodReadsProxyOperand(
  */
 export function arrayLikeLengthLimitGuard(ctx: CodegenContext, fctx: FunctionContext, arrayCreate = false): Instr[] {
   // (#6898) `arrayCreate`: the caller's result IS ArrayCreate(len) (array-like `map`), so any length can throw.
-  if (!ctx.standalone || (!arrayCreate && !ctx.proxyDirty)) return [];
+  if (!arrayCreate && !ctx.proxyDirty) return [];
   const lenF64 = allocLocal(fctx, `__vec_lenf_${fctx.locals.length}`, { kind: "f64" });
   const rangeError = buildThrowJsErrorInstrs(ctx, "RangeError", "Invalid array length", { flush: fctx });
   return [
@@ -155,5 +155,5 @@ export function arrayLikeLengthLimitGuard(ctx: CodegenContext, fctx: FunctionCon
  */
 export function arrayTypedValueMayNotBeArray(ctx: CodegenContext): boolean {
   // (#6771 S7) …and a constructor-`this` `Array.from`/`Array.of` (array-ctor-this.ts).
-  return ctx.standalone && (ctx.arraySpeciesDirty || ctx.proxyDirty === true || arrayCtorThisCallSeen(ctx));
+  return ctx.arraySpeciesDirty || ctx.proxyDirty === true || arrayCtorThisCallSeen(ctx);
 }

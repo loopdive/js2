@@ -100,7 +100,6 @@ interface ProtoAccessorDeps {
  * half-body.
  */
 function resolveProtoAccessorDeps(ctx: CodegenContext): ProtoAccessorDeps | null {
-  if (!ctx.standalone) return null;
   ensureObjectRuntime(ctx);
   ensureLateImport(ctx, "__extern_is_undefined", [EXTERNREF], [I32]);
   ensureLateImport(ctx, "__typeof_object", [EXTERNREF], [I32]);
@@ -373,7 +372,6 @@ export function emitObjectProtoProtoMemberBody(
   fctx: FunctionContext,
   member: string,
 ): ValType | null {
-  if (!ctx.standalone) return null;
   const half = member === OBJECT_PROTO_GETTER_MEMBER ? "get" : member === OBJECT_PROTO_SETTER_MEMBER ? "set" : null;
   if (half === null) return null;
   const nativeIdx = half === "get" ? ensureObjectProtoProtoGetNative(ctx) : ensureObjectProtoProtoSetNative(ctx);
@@ -455,7 +453,6 @@ export function tryEmitObjectProtoProtoAccessorGopd(
   protoBuiltinName: string | undefined,
   member: string | undefined,
 ): boolean {
-  if (!ctx.standalone) return false;
   if (protoBuiltinName !== "Object" || member !== "__proto__") return false;
   const getter = ensureObjectProtoProtoAccessorClosure(ctx, "get");
   const setter = ensureObjectProtoProtoAccessorClosure(ctx, "set");
@@ -495,7 +492,7 @@ export function tryCompileObjectProtoProtoAccessorReflectiveCall(
   gopdInfo: { builtinName: string; member: string } | undefined,
   isCall: boolean,
 ): ValType | undefined {
-  if (!ctx.standalone || !isCall) return undefined;
+  if (!isCall) return undefined;
   if (gopdInfo?.builtinName !== "Object" || gopdInfo.member !== "__proto__") return undefined;
   if (accessorName !== "get" && accessorName !== "set") return undefined;
   if (expr.arguments.some((arg) => ts.isSpreadElement(arg))) return undefined;

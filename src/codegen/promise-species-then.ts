@@ -78,7 +78,7 @@ function moduleHasPromiseRootedClass(ctx: CodegenContext): boolean {
 
 /** The one gate: can this module observe a `then` species other than `%Promise%`? */
 export function promiseSpeciesObservable(ctx: CodegenContext): boolean {
-  if (ctx.standalone !== true || ctx.wasi === true) return false;
+  if (ctx.wasi === true) return false;
   return ctx.arraySpeciesDirty === true || moduleHasPromiseRootedClass(ctx);
 }
 
@@ -507,7 +507,7 @@ export function promiseResolvePassThroughInstrs(
  * direct fulfil of a combinator aggregate and a vec-free thenable ladder.
  */
 export function arrayThenObservable(ctx: CodegenContext): boolean {
-  return ctx.standalone === true && (ctx.protoIndexDirty || ctx.protoNamedWrittenMembers.has("then"));
+  return ctx.protoIndexDirty || ctx.protoNamedWrittenMembers.has("then");
 }
 
 /**
@@ -531,7 +531,6 @@ export function aggregateSettleFuncIdx(ctx: CodegenContext, fulfillFuncIdx: numb
  * `forceExternrefCallbackParams` hook), read through the dynamic vec reader.
  */
 export function isDrainedCombinatorResultHandler(ctx: CodegenContext, handler: ts.Expression): boolean {
-  if (ctx.standalone !== true) return false;
   const call = handler.parent;
   if (!call || !ts.isCallExpression(call) || !ts.isPropertyAccessExpression(call.expression)) return false;
   const receiver = call.expression.expression;

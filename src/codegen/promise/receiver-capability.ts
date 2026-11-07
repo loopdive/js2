@@ -59,6 +59,7 @@ import {
   ensurePromiseWithResolvers,
   tryEmitNativePromiseWithResolvers,
 } from "./with-resolvers.js";
+import { regimeTarget } from "../context/types.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -299,7 +300,7 @@ function emitPromiseTry(
   fctx.body.push(
     // status = Completion(Call(callbackfn, undefined, args))
     buildTargetTaggedTry(
-      ctx,
+      regimeTarget(ctx),
       { kind: "empty" },
       [
         { op: "local.get", index: fn },

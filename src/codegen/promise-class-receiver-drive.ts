@@ -94,10 +94,10 @@ import { armConstructIsConstructorGuard } from "./construct-is-constructor-guard
 import { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from "./extern-arg-marshal.js";
 import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js";
 import { resolvePromiseSubclassName } from "./expressions/promise-subclass.js"; // (#6651 D4)
-import { noJsHost } from "./js-errors.js";
 import { promiseSubclassResolveFallbackInstrs } from "./promise-subclass-proto-link.js";
 import { shadowsGlobalValueName } from "./promise-class-receiver-settle.js";
 import { demandPromiseDynamicMember } from "./promise-dynamic-member-read.js"; // (#6651 D5)
+import { regimeTarget } from "./context/types.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -216,7 +216,7 @@ function buildFinishBody(ctx: CodegenContext, rt: ClassDriveRuntime, aggErrIdx: 
       ],
     },
     buildTargetTaggedTry(
-      ctx,
+      regimeTarget(ctx),
       { kind: "empty" },
       [
         ...S(),
@@ -449,8 +449,7 @@ export function resolveCompiledClassReceiver(ctx: CodegenContext, arg: ts.Expres
     ctx.anonClassExprNames.get(node as ts.ClassLikeDeclaration) ??
     (node.name ? (ctx.classExprNameMap.get(node.name.text) ?? node.name.text) : undefined);
   if (name === undefined || !ctx.classSet.has(name)) return undefined;
-  if (resolvePromiseSubclassName(ctx, name) !== undefined)
-    return noJsHost(ctx) && !shadowsGlobalValueName(arg) ? name : undefined;
+  if (resolvePromiseSubclassName(ctx, name) !== undefined) return !shadowsGlobalValueName(arg) ? name : undefined;
   // Transitively: a user class chain that reaches ANY other builtin keeps its own path.
   const seen = new Set<string>();
   for (let c: string | undefined = name; c !== undefined && !seen.has(c); c = ctx.classParentMap.get(c)) {
@@ -595,7 +594,7 @@ function emitClassReceiverDrive(
   const resolveFallback = promiseRooted ? (promiseSubclassResolveFallbackInstrs(ctx, fctx, L.resolveFn) ?? []) : [];
   fctx.body.push(
     buildTargetTaggedTry(
-      ctx,
+      regimeTarget(ctx),
       { kind: "empty" },
       [
         { op: "local.get", index: L.ctor },
@@ -629,7 +628,7 @@ function emitClassReceiverDrive(
       blockType: { kind: "empty" },
       then: [
         buildTargetTaggedTry(
-          ctx,
+          regimeTarget(ctx),
           { kind: "empty" },
           [
             { op: "local.get", index: L.arg },
@@ -670,7 +669,7 @@ function emitClassReceiverDrive(
       { op: "i32.const", value: 1 },
       { op: "local.set", index: L.done },
       buildTargetTaggedTry(
-        ctx,
+        regimeTarget(ctx),
         { kind: "empty" },
         [
           { op: "local.get", index: L.iter },
@@ -685,7 +684,7 @@ function emitClassReceiverDrive(
       { op: "local.get", index: L.done },
       { op: "br_if", depth: 1 },
       buildTargetTaggedTry(
-        ctx,
+        regimeTarget(ctx),
         { kind: "empty" },
         buildElementStep(ctx, method, rt, ids.arrTypeIdx, L, isCallable, typeError),
         [
@@ -707,7 +706,7 @@ function emitClassReceiverDrive(
         blockType: { kind: "empty" },
         then: [
           buildTargetTaggedTry(
-            ctx,
+            regimeTarget(ctx),
             { kind: "empty" },
             [
               { op: "local.get", index: L.iter },

@@ -54,7 +54,7 @@
 import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { emitThrowTypeError } from "./js-errors.js";
 import { compileExpression } from "./shared.js";
 import { isBuiltinTypeName } from "./builtin-tags.js";
 
@@ -72,9 +72,6 @@ export function resolveBuiltinCtorAliasName(
   rhs: ts.Expression,
   currentName: string | undefined,
 ): string | undefined {
-  // Host-free only, and never over a name that ALREADY resolved to a builtin —
-  // the gc/host lane keeps its runtime predicate byte-identically.
-  if (!noJsHost(ctx)) return undefined;
   if (currentName !== undefined && isBuiltinTypeName(currentName)) return undefined;
   if (!ts.isIdentifier(rhs)) return undefined;
   // A builtin constructor's lib.d.ts type is the nominal interface
@@ -98,7 +95,6 @@ export function tryEmitNonCallableRhsThrow(
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
 ): ValType | null {
-  if (!noJsHost(ctx)) return null;
   // (#4484 A) §13.10.2 consults @@hasInstance at step 2 and only reaches the
   // IsCallable throw at step 5. "Not callable" is therefore NOT sufficient to
   // throw: a non-callable object carrying a CALLABLE @@hasInstance is a legal

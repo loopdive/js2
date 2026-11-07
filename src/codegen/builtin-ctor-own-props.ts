@@ -58,7 +58,7 @@
  *
  * ## Scope / safety
  *
- * - **Standalone only.** Every call site is already `ctx.standalone`-gated and
+ * - **Standalone only.** Every call site is already regime-gated and
  *   this module re-checks; gc/wasi emits stay byte-identical.
  * - **Additive only.** The carriers had ZERO own properties before, so no
  *   previously-observable read changes: a dynamic `X["name"]` went from
@@ -215,7 +215,6 @@ export function pushBuiltinCtorOwnPropSeed(
   builtinName: string,
   objLocal: number,
 ): void {
-  if (!ctx.standalone) return;
   const arity = BUILTIN_CTOR_ARITY[builtinName] ?? EXTRA_CTOR_ARITY[builtinName];
   if (arity === undefined) return;
 

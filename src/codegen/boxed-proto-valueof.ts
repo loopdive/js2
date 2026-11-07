@@ -201,7 +201,6 @@ export function emitBoxedProtoValueOfBody(
   fctx: FunctionContext,
   brand: BoxedValueOfBrand,
 ): ValType | null {
-  if (!ctx.standalone) return null;
   const helperIdx = ensureBoxedValueOfHelper(ctx, brand);
   if (helperIdx < 0) return null;
 

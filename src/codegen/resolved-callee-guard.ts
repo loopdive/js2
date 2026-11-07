@@ -93,7 +93,7 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 
 /** The primitive brands a resolved callee may positively carry. */
@@ -110,7 +110,6 @@ export function buildResolvedCalleeGuard(
   ctx: CodegenContext,
   methodCallLocals: { name: string; type: ValType }[],
 ): () => Instr[] {
-  if (!noJsHost(ctx)) return () => [];
   emitWasiErrorConstructor(ctx, "TypeError", 1);
   const throwTypeError = (): Instr[] =>
     buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", { forceInModuleCtor: true });
