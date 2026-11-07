@@ -273,7 +273,7 @@ unclaimed.
 - **A `null` in a script `var`**: `var nv = null; nv;` gives a post-claim "bare 'null' in non-reference context (dynamic)", with no call.
   - The failing node is the initializer, not a call argument.
   - `writeValueMatches` (`module-bindings.ts`) accepts any value into the script dynamic home, but from-ast has no `null` producer for the carrier.
-  - `u(nv)` only reaches it.
+  - `u(nv)` only reaches it. Filed as [#7328](./7328-ir-script-var-null-dynamic-home-post-claim.md).
 - **A BigInt argument**: `function u(g) { return typeof g; } u(1n);` withdraws `u` itself ("function typeIdx parity mismatch … keeping legacy body").
   - That is a parity withdrawal, not a wrong result.
-  - With this arm, `function u(g) { g(1); } u(1n);` reaches it too.
+  - With this arm, `function u(g) { g(1); } u(1n);` reaches it too. Filed as [#7329](./7329-ir-bigint-arg-dynamic-param-typeidx-parity.md).
