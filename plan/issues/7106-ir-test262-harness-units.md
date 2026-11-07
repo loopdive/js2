@@ -5617,11 +5617,19 @@ capability.
 **What landed** (steps 1, 2 and step 3 for `.test`; step 4 moves to R2, where the IR first calls the exec helper, since moving the name now would only add codegen→ir import edges):
 - `native-regexp` replaces `standalone-native-regexp-test-carrier`.
 - `extern.regex` carries an optional provider. On a `native-regexp` lane it is
-  the per-pair wrapper `codegen/ir-regexp-literal.ts` builds over legacy's
+  the per-pair wrapper `ensureIrRegExpLiteralHelper` builds over legacy's
   static construction (`compileStandaloneStaticRegExp`, split out of the
   constructor tail); elsewhere the arm still calls `env.RegExp_new`.
-- `staticRegExpPair` (`ir/regexp-static.ts`) reads a literal or a literal
-  `new RegExp(p?, f?)`, for from-ast and the selector alike.
+  - The wrapper sits beside that construction in `codegen/regexp-standalone.ts`,
+    not in its own module as planned. `integration.ts` already imports that
+    file; a new module would add an ir→codegen edge, grow the import SCC and
+    raise `integration.ts`'s layering count.
+  - It is built with the shared `helperFunctionContext` /
+    `publishHelperFunction` (`codegen/helpers/ir-helper-function.ts`), like
+    every other IR wrapper; integration turns its name into the `IrFuncRef`.
+- `staticRegExpPair` (`shared/regexp-static.ts`) reads a literal or a literal
+  `new RegExp(p?, f?)`, for from-ast and the selector alike. It sits below
+  both layers because legacy's `parseRegExpLiteral` is the same split.
 - `.test(s)` on any IR RegExp value calls `__regexp_test_carrier`.
 
 **Where a native RegExp is admitted.** Only where R1 consumes it: the

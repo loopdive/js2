@@ -12275,7 +12275,7 @@ registerAddStringImports(addStringImports);
 registerAddUnionImports(addUnionImports);
 
 /** Parse a RegExp literal text (e.g. "/\\d+/gi") into pattern and flags — the IR's one splitter. */
-export { parseRegExpLiteralText as parseRegExpLiteral } from "../ir/regexp-static.js";
+export { parseRegExpLiteralText as parseRegExpLiteral } from "../shared/regexp-static.js";
 
 /** Math methods that need host imports (no native Wasm opcode) */
 export const MATH_HOST_METHODS_1ARG = new Set([

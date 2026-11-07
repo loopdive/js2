@@ -3,7 +3,7 @@
 // #7106 lever R1 — RegExp on the host-free lanes. A literal and
 // `new RegExp(<literal>?, <literal>?)` lower to one `extern.regex` whose
 // provider is an in-module wrapper over legacy's static construction
-// (`codegen/ir-regexp-literal.ts`); `.test(subject)` calls the existing
+// (`ensureIrRegExpLiteralHelper` in `codegen/regexp-standalone.ts`); `.test(subject)` calls the existing
 // `__regexp_test_carrier` on any IR RegExp value. No host import.
 
 import { describe, expect, it } from "vitest";

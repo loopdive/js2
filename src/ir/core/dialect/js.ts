@@ -797,7 +797,7 @@ export interface IrInstrRegExpLiteral extends IrInstrBase {
   readonly flags: string;
   /**
    * (#7106 lever R) A host-free lane's in-module construction, `() -> externref`
-   * (`codegen/ir-regexp-literal.ts`), attached by `attachIrExternSupport`.
+   * (`ensureIrRegExpLiteralHelper`, `codegen/regexp-standalone.ts`), attached by `attachIrExternSupport`.
    * Absent: the host `RegExp_new(pattern, flags)` lowering.
    */
   readonly provider?: IrFuncRef;

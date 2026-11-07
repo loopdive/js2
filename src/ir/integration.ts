@@ -101,7 +101,6 @@ import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
-import { irRegExpLiteralProvider } from "../codegen/ir-regexp-literal.js";
 import {
   ensureIrDynamicMethodCallHelper,
   irTemplateWrapperLane,
@@ -194,6 +193,7 @@ import {
 } from "../codegen/native-string-literals.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
 import {
+  ensureIrRegExpLiteralHelper,
   ensureStandaloneRegExpCarrierTestHelper,
   standaloneStaticRegExpCompiles,
 } from "../codegen/regexp-standalone.js";
@@ -2408,7 +2408,7 @@ export function compileIrPathFunctions(
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   // (#7106 lever R) A host-free lane constructs an `extern.regex` in-module.
   const regExpProvider = supportsBackendCapability("native-regexp")
-    ? (pattern: string, flags: string) => irRegExpLiteralProvider(ctx, pattern, flags)
+    ? (pattern: string, flags: string) => irRuntimeFuncRef(ensureIrRegExpLiteralHelper(ctx, pattern, flags))
     : undefined;
   const { supportsDateSnapshots, resolveHostVoidCallback, backendCapabilitySelectionOptions } =
     makeCalendarIrSelectionSupport(ctx, jsHostExterns, standaloneDomCapability, supportsBackendCapability);

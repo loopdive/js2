@@ -113,7 +113,7 @@ export function supportsIrBackendTargetCapability(
     case "standalone-function-prototype-call":
       return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
     // (#3791, #7106 lever R) The in-module RegExp: construction from a static
-    // pattern (`ir-regexp-literal.ts`) and the `$NativeRegExp` carrier helpers.
+    // pattern (`ensureIrRegExpLiteralHelper`) and the `$NativeRegExp` carrier helpers.
     case "native-regexp":
       return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
     case "standalone-wrapper-instanceof":

@@ -29,6 +29,7 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 import { emitGenericFlagsGetterBody } from "./regexp-accessor-get-arm.js"; // (#5198 Slice F)
 import { coerceType } from "./type-coercion.js";
 import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
@@ -227,7 +228,7 @@ const SUPPORTED_STANDALONE_FLAGS =
   RE_FLAG_G | RE_FLAG_I | RE_FLAG_Y | RE_FLAG_M | RE_FLAG_S | RE_FLAG_D | RE_FLAG_U | RE_FLAG_V;
 
 function reportStandaloneRegExpUnsupported(ctx: CodegenContext, node: ts.Node | undefined, detail: string): void {
-  // invariant (producer-promise): the IR's `extern.regex` wrapper (`ir-regexp-literal.ts`) has no source
+  // invariant (producer-promise): the IR's `extern.regex` wrapper (`ensureIrRegExpLiteralHelper`) has no source
   // node, and selection admitted only a pattern `standaloneStaticRegExpCompiles` accepts — #7106 lever R.
   if (node === undefined) throw new Error(`standalone RegExp wrapper reached an unsupported ${detail}`);
   reportError(
@@ -3009,7 +3010,7 @@ export function compileStandaloneRegExpConstructor(
  * pair throws SyntaxError when the construction evaluates — emit the runtime
  * throw, not a compile refusal (#1912). Regex *literals* keep the compile-time
  * diagnostic since an invalid literal is an early error. Shared with the IR's
- * `extern.regex` wrapper (`ir-regexp-literal.ts`).
+ * `extern.regex` wrapper ({@link ensureIrRegExpLiteralHelper}).
  */
 export function compileStandaloneStaticRegExp(
   ctx: CodegenContext,
@@ -3027,6 +3028,30 @@ export function compileStandaloneStaticRegExp(
   if (compiled !== null) return compiled;
   fctx.body.push({ op: "unreachable" });
   return { kind: "ref", typeIdx: ensureStandaloneRegExpStruct(ctx) };
+}
+
+const irRegExpLiteralHelpers = new WeakMap<CodegenContext, Map<string, string>>();
+
+/**
+ * (#7106 lever R) The host-free lanes' `extern.regex` provider: one `() -> externref` helper per (pattern, flags)
+ * whose body is {@link compileStandaloneStaticRegExp}, so each evaluation is a fresh `$NativeRegExp` (§13.2.7.3)
+ * or the SyntaxError an invalid pair throws. No second engine, no host import. Built while
+ * `attachIrExternSupport` prepares the final IR, before any Phase-3 body, so minting is append-safe.
+ */
+export function ensureIrRegExpLiteralHelper(ctx: CodegenContext, pattern: string, flags: string): string {
+  const byPair = irRegExpLiteralHelpers.get(ctx) ?? new Map<string, string>();
+  irRegExpLiteralHelpers.set(ctx, byPair);
+  const key = `${flags}/${pattern}`;
+  const existing = byPair.get(key);
+  if (existing !== undefined) return existing;
+  const helper = helperFunctionContext(`__ir_regexp_literal_${byPair.size}`, [], { kind: "externref" });
+  compileStandaloneStaticRegExp(ctx, helper, pattern, flags, undefined);
+  helper.body.push({ op: "extern.convert_any" });
+  // Late imports the construction registered mid-body shift every baked call index.
+  flushLateImportShifts(ctx, helper);
+  publishHelperFunction(ctx, helper);
+  byPair.set(key, helper.name);
+  return helper.name;
 }
 
 function isStandaloneRegExpValue(
