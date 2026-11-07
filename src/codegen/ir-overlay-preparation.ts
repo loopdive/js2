@@ -125,10 +125,14 @@ function runtimeEvalBoundaryCrossing(
 ): "eval-site" | "eval-visible-binding" | undefined {
   const start = declaration.getStart();
   if (sites.some((site) => site.start >= start && site.end <= declaration.end)) return "eval-site";
-  // A reference resolving outside this declaration (or nowhere) reaches the script binding.
+  // A reference resolving outside this declaration (or nowhere) reaches the
+  // script binding. So does one resolving to the declaration itself: its name
+  // is bound in the script scope, so a recursive call reads the binding eval
+  // may replace.
   const reachesScriptBinding = (id: ts.Identifier): boolean => {
     const target = ctx.oracle.valueDeclarationOf(id);
-    if (target === undefined || target.getSourceFile() !== declaration.getSourceFile()) return true;
+    if (target === undefined || target === declaration) return true;
+    if (target.getSourceFile() !== declaration.getSourceFile()) return true;
     return target.pos < declaration.pos || target.end > declaration.end;
   };
   let crosses = false;
