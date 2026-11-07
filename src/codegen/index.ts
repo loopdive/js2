@@ -15515,7 +15515,7 @@ export {
   irDynamicInstanceOfAtLegacyParity,
 } from "./ir-dynamic-instanceof.js";
 // (#7274) the IR's native ArrayBuffer adapters (ir/integration.ts).
-export { ensureIrNativeBufferAdapter, nativeBufferProvidersAvailable } from "./buffers/ir-native-buffer.js";
+export { irNativeBufferProvider, nativeBufferProvidersAvailable } from "./buffers/ir-native-buffer.js";
 // (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
 export {
   buildModuleInitPrologueCall,

@@ -2300,6 +2300,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/in-operator-helper.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/ir/analysis/contracts/allocations.ts",
       "state": "clean",
       "layer": "ir-analysis"
@@ -10712,6 +10717,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/buffers/data-view-native.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/buffers/ir-native-buffer.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12583,6 +12596,14 @@
     },
     {
       "path": "src/ir/native-buffer-surface.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/native-buffer-operands.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",

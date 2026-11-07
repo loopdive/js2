@@ -36,6 +36,8 @@ loc-budget-allow:
   - src/ir/module-bindings.ts
   - src/ir/from-ast.ts
   - src/codegen/index.ts
+  # 2026-11-07 (#7274 slice 2): +1, the import of the shared `dataViewAccessorFn` that replaces the hard-coded `__dv_m_` prefix (review finding 2)
+  - src/codegen/closed-method-dispatch.ts
 func-budget-allow:
   - src/ir/integration.ts::makeFromAstResolver
   - src/ir/integration.ts::compileIrPathFunctions
@@ -43,7 +45,7 @@ func-budget-allow:
   - src/codegen/index.ts::planIrOverlay
   - src/ir/select.ts::isPhase1Expr
 import-cycles-allow:
-  - largestSccSize: 731 # 2026-11-06 (#7274): codegen/buffers/array-buffer-native.ts holds the ArrayBuffer sequences extracted from new-indexed.ts / property-access-dispatch.ts (both in the SCC) and codegen/buffers/ir-native-buffer.ts wraps them with dataview-native.ts's slice body; both join the SCC their siblings buffers/shared-array-buffer*.ts are already in
+  - largestSccSize: 732 # 2026-11-06 (#7274 slice 2): +1, codegen/buffers/data-view-native.ts holds the DataView construct / byte-attr sequences extracted from new-indexed.ts and property-access-dispatch.ts (both in the SCC), shared with the IR adapters; it needs dataview-native.ts and type-coercion.ts like the code it was cut from. Slice 1: 2026-11-06 (#7274): codegen/buffers/array-buffer-native.ts holds the ArrayBuffer sequences extracted from new-indexed.ts / property-access-dispatch.ts (both in the SCC) and codegen/buffers/ir-native-buffer.ts wraps them with dataview-native.ts's slice body; both join the SCC their siblings buffers/shared-array-buffer*.ts are already in
 ---
 
 # IR: native ArrayBuffer / DataView / SharedArrayBuffer surface (standalone)
@@ -466,6 +468,139 @@ that uses these adapters demotes at prepared-component planning
 ABI identity). The adapters are still minted, so such a module carries them
 unused. Script files (test262) are unaffected.
 
+## Slice 2 — DataView (2026-11-07, implemented)
+
+Stacked on #7121 (a84cddb1). Base for every measurement below: a84cddb1.
+
+### What was built
+
+- **The plan is class-aware.** A certified var or producer is an
+  `ArrayBuffer` or a `DataView`; `certifyBufferVars` records the class, and a
+  member is admitted from a per-class table.
+- **`src/ir/native-buffer-operands.ts`** (new): the admission table. It holds
+  the member table per class, the operand kinds (`number`, `bound`, `flag`),
+  and the construction shapes. These are pure source predicates; the plan
+  (`native-buffer-surface.ts`) keeps receiver and var certification.
+- **Construction.** `new DataView(buf[, off[, len]])`, where `buf` is a
+  certified ArrayBuffer, lowers to `__ir_dv_new(externref, f64, externref)`.
+  An omitted length is `undefined` ("to the end"). A view consumes its buffer,
+  so the buffer producer is certified through it.
+- **Getters.** `byteLength` and `byteOffset` lower to `__ir_dv_byte_length`
+  and `__ir_dv_byte_offset`.
+- **Accessors.** The 18 non-BigInt `get*`/`set*` lower to direct calls of
+  legacy's own `__dv_m_<accessor>` helpers. No new adapter body is added;
+  the helpers are now compiler-owned handles (`ownedHelperHandle` /
+  `pushOwnedHelperFunc` in `func-space.ts`), not `ctx.funcMap` entries.
+- **One implementation of each sequence.**
+  - `src/codegen/buffers/data-view-native.ts` holds the construct emitters
+    (brand check, offset ToIndex, detached check, bounds, length, window),
+    cut from `new-indexed.ts`.
+  - It also holds `dataViewByteAttrInstrs`, cut from
+    `property-access-dispatch.ts`.
+  - Legacy and the adapters both call them.
+- **Statement-position setter.** `v.setUint8(0, 1);` reaches from-ast through
+  `lowerMethodCallWithSourcePlan`, so that entry consults the plan too.
+  Without it the certified call reached the builder as a capability-deferred
+  extern call: an invariant.
+
+Left on legacy: `buffer`, the BigInt accessors, a non-number offset (`"1"`),
+an unconsumed construction (a `new DataView(...)` statement inside `try`), and
+any var with a non-DataView write.
+
+### Measurements
+
+| Check | Result |
+| --- | --- |
+| Byte identity, raw compiles of all 561 `built-ins/DataView` files × gc / standalone / wasi / standalone-noIR / wasi-noIR | 2805/2805 identical (the legacy extraction is byte-neutral) |
+| Byte identity, playground corpus × 3 lanes and the 344-file buffer corpus × 5 lanes, vs a84cddb1 and vs main | all identical |
+| test262 A/B, all 561 `built-ins/DataView` + 221 `built-ins/ArrayBuffer` + 299 random, gc + standalone, plus wasi / standalone compile + imports | **0 status changes**, 0 compile or import differences; 52 files newly claim `<module-init>` on standalone, all 52 pass |
+| Wrapped ledger, stride 40, standalone | zero-legacy 35 → 37 (+2: `DataView/prototype/byteLength/return-bytelength.js`, `DataView/prototype/getInt32/return-values.js`, the two slice-2 targets); compileOk 1118 = 1118; invariants 0 = 0; `select:body-shape-rejected` 1924 → 1922; no other reason moves |
+| 31 adversarial probes × gc / standalone / wasi | every cell identical to base |
+| `tests/issue-7274-ir-native-arraybuffer.test.ts` + `tests/issue-4461.test.ts` | 31/31 |
+
+The probes cover:
+
+- view windows;
+- out-of-range, negative and fractional offsets;
+- `undefined` and `NaN` lengths;
+- every accessor width, with the little-endian flag absent, `undefined`, `0`
+  or `1`;
+- a setter's `undefined` result and `getUint8()` with no arguments;
+- Float16 and BigInt;
+- a detached buffer;
+- a view over a `slice` result and a view over a non-buffer;
+- a shadowed `DataView`;
+- `__dv_m_*` and `__ir_dv_*` namesakes;
+- reassignment and a mixed-class var;
+- string values and offsets;
+- `buffer`;
+- a view over a resizable buffer.
+
+**Mixed routes cannot be exercised, as in slice 1.** A user function that
+reads or writes a certified var does not claim, so module-init then refuses on
+`call-graph-closure`. In a TS module the script-var plan does not apply. The
+five mixed probes therefore run legacy on both sides (identical to base); the
+representation identity rests on the shared emitters and the shared slot.
+
+### Adversarial review (fresh context, 2026-11-07)
+
+Verdict on the first cut (c6131a0f): quality goal not met. Fixed in this PR:
+
+1. **P1, selector/builder disagreement.** A certified var read as a plain
+   value was admitted by the selector, then refused by from-ast. This is a
+   post-claim demote: the selector claims `<module-init>`, from-ast fails,
+   and the unit falls back to legacy with a warning. Probes:
+   - `var j; j = v;` failed with "assignment to module binding … got
+     extern<DataView>";
+   - `var j = v;` failed with "initializer has no supported carrier".
+
+   Slice 1 had the ArrayBuffer twin, `j = ab`, so its "no post-claim demote"
+   row was wrong. The ledger's "invariants 0" does not count demotes.
+
+   Fix: `phase1NativeBufferVerdict` now refuses any read of a native-buffer
+   binding that the plan's `consumesHandle` does not cover
+   (`expr-native-buffer-escape`). This is one rule for every position. The
+   three probes are regressions in the test file.
+2. **Accessor names had two sources of truth.** The contract re-listed
+   legacy's `DV_ACCESSORS` keys, and `__dv_m_` was hard-coded at three sites.
+   - The contract now owns `DATA_VIEW_ACCESSORS`: all 22, typed as
+     `DataViewAccessor`.
+   - Legacy's table is `Record<DataViewAccessor, DvAccessor>`, so the
+     compiler checks the two agree.
+   - `isDataViewAccessor` and `dataViewAccessorFn` are shared, and legacy
+     builds helper names with them.
+3. **The BigInt exclusion was policy living in the contract.** It moved to
+   the admission table in `native-buffer-operands.ts`.
+4. **Operations copied their member's fields** (`fn`, `result`, `arity`,
+   `resultClass`). They now carry the table member itself.
+5. **The plan was consulted twice for expression calls.** The extra hook in
+   `lowerMethodCallWithSourcePlan` is now `lowerStatementMethodCall`, used only
+   by the two statement entries that bypass `lowerExpr`.
+6. **Dead exports.** Un-exported `ensureIrNativeBufferAdapter` and the adapter
+   list; removed `isIrNativeDvAccessor`.
+9. **Stale doc** on `tryLowerNativeBufferOperation`.
+10. **Unchecked cast removed.** `accessOf` cast to a property access. The
+    sites now keep each call's member access.
+
+Rebutted or recorded:
+
+7. **Operand evaluation order.** Legacy evaluates a DataView `byteLength`
+   operand only after the detached and offset-bounds checks; the spec and the
+   IR evaluate the whole argument list first. It is not observable on the IR
+   route today (a side-effecting operand needs `try` or a call, neither of
+   which claims here). It is recorded under Follow-ups.
+8. **Redundant checks in the shared emitters.**
+   - `__ir_dv_new` always runs the offset-bounds check, where legacy skips it
+     with no offset; `0 > len` is never true, so this is behaviour-neutral.
+   - The byte-attr adapter keeps the bare-vec branch, which a certified view
+     never takes.
+   - Both are the price of one emitter per sequence; an IR-only variant would
+     duplicate it.
+
+Reviewer's gap, confirmed: with the test262 harness, `--target wasi` never
+claims `<module-init>` (`constructor-resolution-unsupported`). The wasi
+adapters are covered by compile, validation and imports only.
+
 ## Follow-ups
 
 - **Legacy `{maxByteLength: undefined}`** builds a resizable buffer with
@@ -481,10 +616,54 @@ unused. Script files (test262) are unaffected.
   instead of throwing for a value past the i32-indexed backing, and the
   resizable length has no upper bound before `array.new_default` (a trap).
   Shared by both routes.
+- **`ir-inline` recognises `__ir_map_*` by name** (`isAdapter`), so a source
+  function with one of those names skips the inliner's size budget.
+  Performance only (#7121 delta review, pre-existing).
+- **`__ir_map_*` namesakes beside a real `Map` trap** with a null
+  dereference on wasi/standalone, on main and on #7121's head alike (#7121
+  delta review, pre-existing; the compile-failure half is fixed by #7121).
 - **Legacy argument order.** Legacy validates the length before evaluating
   the `maxByteLength` expression; the spec evaluates the whole argument list
   first. The IR admits only a number-literal `maxByteLength`, so the
   difference is not observable on the IR route (#7121 review nit 2).
+
+- **Known post-claim demote on main between #7121 and #7161.**
+  - **What:** #7121 (slice 1) lets the selector claim a `<module-init>` that
+    reads a certified ArrayBuffer var as a plain value: `var j; j = ab;` or
+    `var j = ab;`. From-ast then refuses it, and the unit demotes to legacy
+    with a warning.
+  - **Impact:** the output is legacy's, so this is a demote, not a
+    miscompile.
+  - **Fix:** 1af545db (#7161). It refuses the read at selection
+    (`expr-native-buffer-escape`) for both classes. The regression
+    "an ArrayBuffer handle assignment" in `tests/issue-7274-*` covers it.
+  - **Window:** from #7121's merge until #7161's.
+- **Legacy DataView `byteLength` evaluation order.** Legacy evaluates the
+  length operand after the detached / offset-bounds checks (never, when the
+  offset is out of range); ArgumentListEvaluation evaluates it first. The
+  IR follows the spec. Not yet observable on the IR route; it will be once
+  `try` claims (slice-2 review finding 7). Filed as **#7316**.
+- **A length-tracking DataView** over a resizable buffer keeps its
+  construction-time length after `resize`. Both routes share the window
+  emitter, so they agree, and both are wrong (RV7161 N6). Filed as **#7317**.
+- **Known post-claim demote, newly reachable (RV7161 N4).**
+  - **Repro:** a DataView module-init that also contains `throw <literal>`,
+    e.g. `var v = new DataView(new ArrayBuffer(4)); try { throw 1; } catch (e) {}`.
+  - **What happens:** the module-init is now claimed, then demotes with
+    "throw val not in slice 9". The output is legacy's.
+  - **Not slice-2 logic:** `var v = 4; try { throw 1 } catch (v) {}` demotes
+    the same way on a84cddb1, with no buffer involved.
+  - **Owner:** **#7318**. #7132 lists `throw 1` under "Not taken", and #7281
+    (PR #7147) covers only the string-concat throw.
+- **Wasi reach (RV7161 N5).** With the test262 harness, `--target wasi`
+  rejects `<module-init>` at selection (`constructor-resolution-unsupported`),
+  so the wasi adapters are only reached by non-harness programs today.
+- **`DataView#buffer` and the BigInt accessors** stay on legacy (slice 2).
+  `buffer` needs the window's backing as a certified ArrayBuffer handle; the
+  BigInt accessors need a BigInt operand in the IR.
+- **A shadowing `function DataView(b) { this.n = 1; }`** returns a native view
+  on legacy (`v.n` is `undefined`), on main and on this branch alike. The IR
+  refuses the shadowed constructor, so the route is legacy.
 
 - **The 7 closure / object-literal files.** They need planned-closure bodies
   that can capture script vars and construct intrinsics (#7271 piece 1, lane
