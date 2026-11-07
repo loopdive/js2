@@ -6326,3 +6326,36 @@ loc, func (also against origin/main `5ef8f0aae5`), coercion, oracle, dead
 exports, typecheck, import cycles, standalone arms, IR layering, flat dir;
 compiler boundaries as on main. Tests: lever-l, var-pattern-heads,
 for-head-destructuring, script-var, uninitialized-var: 227/227.
+
+### Review round 2 (#7178, 2026-11-07) and main `a484c365fe`
+
+Approved, with two nits, fixed in `93eec5fe24`:
+
+1. `isPhase1VarDeclarationList` computes `isScriptVarList(list)` itself; the
+   parameter (one caller passed a literal `true`) is gone.
+2. `isModuleInitVarList` returns `boolean`, not a type guard that is false for
+   some declaration lists; `lowerForStatement` checks the initializer itself.
+
+Main `a484c365fe` (with #7292, module-init array literals) is merged in
+(`444bb4f67f`). Re-measured on it, one niced worker: base = main, head =
+lever L; standalone on the 790 `for (var` files plus 200 of the random
+sample (926 compile on both sides), gc on the 200 sample files plus every
+changed file (211):
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, main → L | 11 → 27 (**+16**, the same 16) | 11 → 27 (+16) |
+| lost / units newly legacy / new post-claim errors | 0 / 0 / 0 | 0 / 0 / 0 |
+| binaries changed | 16, each a newly claimed `<module-init>` | 16 |
+| pass → fail on the 16 | 0 (16/16 pass on both) | 0 |
+| playground (26 binaries) | identical | identical |
+
+#7292 does not move the leading blocker: `vardecl-module-storage-unrepresentable`
+is still the sole `<module-init>` refusal in 229 files of the census, led by
+`var __expected = [...]` (220 files, a string-element array) and
+`var __executed = /…/.exec(…)` (212, a RegExp match result), then `obj = {…}`
+(125), `print = …` and `$262 = …` (103 each).
+
+Equivalence gate on the merged lever L: no new regressions (4,850 passing,
+20 failing, all in the 22-row known-failures baseline; 2 baseline rows now
+pass).
