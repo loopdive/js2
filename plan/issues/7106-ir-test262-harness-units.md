@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-11-01
+updated: 2026-11-07
 priority: high
 horizon: l
 feasibility: hard
@@ -111,6 +111,7 @@ loc-budget-allow:
   # 2026-11-01 (#7106 S5): the module-init `var` leaf binder and the slot write shared with the identifier arm, `storeModuleBinding` (+53); the list predicate, leaf walker and binding ordinals live in src/ir/module-init-vars.ts
   - src/ir/from-ast.ts
   # 2026-11-01 (boolean module slot): the `irBool` import and the i32 arm's one-line why (+2); the arms stay separate for readability
+  # 2026-11-07 (#7106 A2c): two facade imports for the resolver's global-eval target, offset by the resolver shrinking (+1)
   - src/ir/integration.ts
   # 2026-11-01 (finally abrupt exit, #7030 review): the guarded finally copy returns early when unguarded, then pushes, emits and pops its own CtrlFrame (+4)
   - src/ir/lower-generic.ts
@@ -6747,3 +6748,127 @@ Where the pieces live:
     `(0, eval)("…")` at compile time (`tryStaticEvalInline`). The IR arm must
     not turn a folded literal into a runtime call. Either admit only
     computed sources, or check what legacy does for each census file.
+
+### A2c implementation (branch `claude/7106-eval-a2c`, from A2b 9525d48818)
+
+#### The fold question, settled first
+
+Legacy folds some literal eval sources at compile time (`tryStaticEvalInline`)
+and hands others to the provider. Both options from the handoff were measured
+on the 141 files (standalone, A2b head, legacy fold decisions logged per site
+by a temporary, uncommitted hook):
+
+- **Admit only computed sources: 0 files.** Top-level eval sources are
+  literal almost everywhere. Of the 141 files, 21 hold a literal top-level
+  indirect-eval statement and 19 a literal direct one; only 1 file has a
+  computed top-level direct-eval source and 4 a computed `new Function`. Not
+  one of the files whose only module-init blocker is an eval site has a
+  computed source.
+- **Match legacy per site: chosen.** In module init, legacy sends 42 of 44
+  indirect-eval compilations and 36 of 136 direct-eval compilations to the
+  provider; the rest fold (a spliced Script or a static SyntaxError throw).
+  The counts are compilations, not sites: legacy compiles some sites twice.
+
+So the IR admits a site exactly when legacy's own fold pieces say the provider
+owns it. Those pieces moved out of `tryStaticEvalInline` into
+`codegen/expressions/eval-script.ts`, so the fold and the IR read one copy:
+
+- `parseEvalScript`: the Script, its statements, `bodyIsStrict`, `evalIsStrict`;
+- `foldedEvalStaticSyntaxError`: parse failure, Script early error, then a
+  var colliding with a global lexical (§19.2.1.3 step 5.a), in spec order;
+- `providerOwnsEvalDeclarations`: a sloppy Script whose variable environment
+  is global and that declares a var or function (§19.2.1.3 step 16).
+
+A literal is admitted when it parses, raises no static SyntaxError and the
+provider owns its declarations. Any other literal may fold, so its module init
+stays direct. Measured: all 9 sites the route admits on the 141 are sites
+legacy sent to the provider (0 that legacy folds).
+
+#### One generalised arm
+
+- **Shape.** `exactIndirectEvalStatement` became `exactGlobalEvalStatement`
+  (`src/eval-call-shape.ts`): `(0, eval)(source)` or `eval(source)` as an
+  expression statement, with a `direct` flag. The JS-host import collector
+  keeps the indirect half.
+- **Route.** `globalEvalRoute(ctx, call, hostEvalAbi)`
+  (`runtime-eval-provider.ts`) answers once for every consumer:
+  - `host-import`: an indirect statement where the caller proves the
+    `__extern_eval(source, isDirect)` ABI (the old `supportsHostIndirectEval`
+    condition, `jsHostExterns && !ctx.nativeStrings`);
+  - `runtime-eval-provider`: the boundary plan recorded the site as a literal
+    `indirect-eval`/`direct-eval`; a direct eval must run at script global
+    (`directEvalRunsAtScriptGlobal`); and the fold pieces above say the
+    provider owns it. The lane question goes through
+    `runtimeEvalPushPublishesCachedFunctionValues` and
+    `isRuntimeEvalProviderAbsent`; no new lane arm.
+- **Selector.** `supportsHostIndirectEval: boolean` became
+  `supportsGlobalEval(call)` (both planning sites pass `globalEvalRoute`).
+  `certifiedHostIndirectEval` became `certifiedGlobalEval`; it serves the
+  Phase-1 call gate (`phase1GlobalEvalStatementVerdict`, reject detail
+  `expr-global-eval-statement`) and the call-graph walk, which removes the
+  `callee:eval` external call.
+- **from-ast.** The one arm takes its callee from
+  `resolver.globalEvalTarget(call)`: `{ ref, passesIsDirect }`. The JS-host
+  import keeps `(source, 0)`; the provider route calls
+  `__runtime_eval_global_call_indirect_eval` with the source alone. A sloppy
+  script-global direct eval shares that entry, as legacy's
+  `directEvalRunsAtScriptGlobal` arm does. Module init's discarded-expression
+  lowering now passes statement position for that shape too.
+- **Support function, linked before Phase 3.** The resolver links it
+  (`linkRuntimeEvalGlobalEval` → `ensureRuntimeEvalGlobalCall`) while the IR
+  body is built. `ensureRuntimeEvalGlobalCall` now seeds the callable carrier
+  itself: every legacy site seeds it first, so this is a no-op there (byte
+  identity below), and an IR-only file still gets it.
+- **Module init.** `moduleInitHoldsEvalSite(ctx, sourceFile)` skips a site
+  whose call `globalEvalRoute` routes; it is the same predicate the selector
+  and resolver read. A1's per-function `eval-site` withdrawal is unchanged: a
+  function holding even an admitted site stays direct.
+- **Not done.** `Function(…)` stays legacy: its module-init sites fold (30 of
+  52 compilations) or carry computed sources, and its §20.2.1.1 join plus
+  carrier adapter would need its own route. A value-position eval
+  (`x === eval("var x")`) stays legacy: the arm is statement-only.
+
+Size: `eval-inline.ts` 2470 → 2357. Across `src`, +320 / −235 against A2b.
+`index.ts` is line-neutral; `integration.ts` grows by 1 (two facade imports
+for the resolver, offset by the resolver shrinking); no new grant.
+
+#### A2c measurement
+
+Setup: niced, one process. Interpreter provider rebuilt for this tree.
+Byte identity is a file-copy A/B against the A2b head 9525d48818.
+
+| check | result |
+| --- | --- |
+| IR-only files on the 141 (standalone) | **0 → 6** |
+| IR units on the 141 | 830 → 836 (one `<module-init>` per IR-only file) |
+| post-claim errors on the 141 | 0 |
+| verdicts, standalone (interpreter provider) | 101 / 40, 0 pass→fail, 0 changed failure messages |
+| verdicts, JS host (interpreter provider) | 98 / 43, 0 pass→fail |
+| bytes, 141 eval files, standalone and gc | 135 / 141 identical on each lane; the 6 that differ are exactly the IR-only files |
+| bytes, 40-file control, standalone and gc | 40 / 40 identical |
+| bytes, playground examples, standalone and gc | 13 / 13 identical |
+| eval test files (41) | the only new failure was the renamed shape test, fixed; 50 failures pre-exist on the A2b head |
+
+The 6 IR-only files are Annex B `global-*` rows (2 direct, 4 indirect).
+They fail on the base too and still fail, with the same message.
+The gc lane changes too, because the default JS target compiles under the
+native regime (`ctx.standalone` is the native regime, #5385).
+
+#### What still blocks
+
+- 78 of the 141 files had `<module-init>` as their only legacy unit. 21 of
+  those had only eval sites blocking module init:
+  - 6 are now IR-only.
+  - 5 Annex B rows hold a literal whose declarations are only block
+    functions. Legacy decides those by the B.3.3 rule, which reads the
+    caller's frame (`collidesWithCaller`, `unsupportedGlobalShape`), so the
+    route does not admit them.
+  - 9 hold literals legacy folds (e.g. `S11.2.3_A1`, `cptn-nrml-*`), plus 1
+    `Function` fold.
+  - 1 has a value-position eval (`S11.9.4_A6.1`).
+- A routed module init can still be blocked by its other statements:
+  `var-env-var-non-strict` (an IIFE with a direct eval) and `S7.3_A7_T1`
+  (`throw-module-scalar-unboxed`).
+- Names that only eval declares (`(0, eval)("var z = 1"); z;`) are
+  `expr-ident-not-in-scope` for the IR. That is a separate lever: a read of an
+  unresolvable script name through the global object.
