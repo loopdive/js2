@@ -42,7 +42,7 @@ import { readonlyErasureMappedAliasTarget } from "./readonly-erasure-mapped-type
 import { isShapelessObjectType } from "./shapeless-object-type.js"; // (#5348)
 import { genericStructFactoryExpression } from "./generic-struct-factory.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
-import { selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js"; // (#7106 S3c)
+import { selfGuardedConstructorLeavesFnctor } from "./helpers/self-guarded-constructor.js"; // (#7106 S3c)
 import {
   collectIrFnctorArgumentProjectionsForPlanning,
   makeIrFnctorArgumentProjectionAuthority,
@@ -5511,12 +5511,8 @@ export function generateModule(
   // (#4235) The array + explicit `"single"` path tag. `generateMultiModule`
   // makes the identical call with the whole graph and `"multi"`; keeping the
   // two call shapes the same is what makes the parity testable.
-  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(
-    ast.checker,
-    [ast.sourceFile],
-    ctx.standalone,
-    "single",
-    selfGuardedConstructorsLeaveFnctor(ctx),
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, [ast.sourceFile], ctx.standalone, "single", (decl) =>
+    selfGuardedConstructorLeavesFnctor(ctx, decl),
   );
   // (#3673) Names the source itself defines as function-valued members, so the
   // guarded native-string method lowering can tell a genuine `String.prototype`
@@ -9987,7 +9983,6 @@ function registerReassignedFunctionGlobals(
     (ctx.standalone || ctx.wasi) &&
     ctx.runtimeEvalProviderAbsent !== true &&
     runtimeEvalPlan.sharedRealmMayContainCanonicalValues; // (#6956)
-  const dynamicSourceFragments = runtimeEvalPlan.dynamicSourceFragments;
   const hasUnknownDynamicSource = runtimeEvalPlan.unknownDynamicSource;
   const varEnvironment = (node: ts.Node): ts.Node => {
     for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
@@ -10130,25 +10125,10 @@ function registerReassignedFunctionGlobals(
       global.type = { kind: "externref" };
       global.init = [{ op: "ref.null.extern" }];
     }
-    const mentionedByDynamicSource = (name: string): boolean =>
-      dynamicSourceFragments.some((fragment) => {
-        let from = 0;
-        while (from <= fragment.length) {
-          const at = fragment.indexOf(name, from);
-          if (at < 0) return false;
-          const before = at === 0 ? "" : fragment[at - 1]!;
-          const afterAt = at + name.length;
-          const after = afterAt >= fragment.length ? "" : fragment[afterAt]!;
-          const ident = (ch: string): boolean => /[A-Za-z0-9_$]/.test(ch);
-          if (!ident(before) && !ident(after)) return true;
-          from = at + name.length;
-        }
-        return false;
-      });
     for (const name of ctx.topLevelFunctionNames) {
       const declaration = ctx.topLevelFunctionDeclarations.get(name);
       const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
-      if (canBeReboundByEval && (hasUnknownDynamicSource || mentionedByDynamicSource(name))) {
+      if (canBeReboundByEval && (hasUnknownDynamicSource || runtimeEvalPlan.dynamicSourceWrites.has(name))) {
         if (!reassigned.has(name)) (ctx.evalOnlyLiveFuncBindings ??= new Set<string>()).add(name);
         reassigned.add(name);
         if (declaration) reassignedDeclarations.add(declaration);
@@ -10881,7 +10861,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     multiAst.sourceFiles,
     ctx.standalone,
     "multi",
-    selfGuardedConstructorsLeaveFnctor(ctx),
+    (decl) => selfGuardedConstructorLeavesFnctor(ctx, decl),
   );
   try {
     // M1A: construct the checker-owned callable graph exactly once, before
