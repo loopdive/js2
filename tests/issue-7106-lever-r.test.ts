@@ -104,6 +104,13 @@ const REFUSED: Record<string, string> = {
     "var __e = /a(b)/.exec('xab');\nif (__e[-1] !== undefined) { throw new Test262Error('#1'); }",
   execFractionKeyUndefined:
     "var __e = /a(b)/.exec('xab');\nif (__e[0.5] !== undefined) { throw new Test262Error('#1'); }",
+  // A served field's own value goes only to a carrier-reading operator, a function-object call's argument
+  // or a further `.length`: `Math.max`, a string method and a loose `==` expect what the checker names.
+  execFieldMathMax:
+    "var __e = /a(b)/.exec('xab');\nif (Math.max(__e.length, 1) !== 2) { throw new Test262Error('#1'); }",
+  execFieldStringArgument:
+    "var __e = /a(b)/.exec('xab');\nif ('zab'.indexOf(__e[0]) !== 1) { throw new Test262Error('#1'); }",
+  execFieldLooseNull: "var __e = /a/.exec('a');\nif (__e[0] == null) { throw new Test262Error('#1'); }",
   // S2: the slot's one IR write is its declaration's `.exec(…)` initializer.
   execReassigned: "var __executed = /a/.exec('a');\n__executed = /b/.exec('b');\nassert.sameValue(__executed[0], 'b');",
   execRedeclared:
@@ -125,6 +132,7 @@ const REFUSED: Record<string, string> = {
 // Review round 2: a function-local `var` holding an `.exec` result is a dynamic local whose uses nothing
 // checks, so the IR refuses the initializer and `f` stays on the direct path.
 const REFUSED_IN_F: Record<string, string> = {
+  returnedField: "function f() { return /a(b)/.exec('xab').length; }\nif (f() !== 2) { throw new Test262Error('#1'); }",
   localGroups:
     "function f() { var m = /(?<x>b)/.exec('ab'); return m.groups.x; }\nif (f() !== 'b') { throw new Test262Error('#1'); }",
   localIndices:

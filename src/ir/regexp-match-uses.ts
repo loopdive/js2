@@ -7,10 +7,11 @@
  * inherits from `Array.prototype` (`join`), nor `groups` / `indices`. The
  * selector admits a match result only where its lowering reads it as legacy
  * does:
- *   - a read of `length`, `index` or `input`, or of a proven-number element
- *     key (not compared with `undefined`, which the builder's indexed read
- *     cannot prove); never a store target, a callee or a `delete` operand;
- *   - an operand of `===`, `!==`, the dynamic `+`, or `typeof`.
+ *   - an operand of `===`, `!==`, the dynamic `+`, or `typeof`;
+ *   - a plain read (no store, callee or `delete` operand) of `length`,
+ *     `index` or `input`, or of a proven-number element key not compared with
+ *     `undefined` (the builder's indexed read cannot prove that), whose own
+ *     value goes only where `regExpMatchReadValueAdmitted` says.
  * The selector adds one more for an `.exec` call: the initializer of a
  * `regexp-match` slot, whose uses this predicate checks in turn. Every other
  * use is refused at its site; today each of them fails after the claim, reads
@@ -34,7 +35,11 @@ const OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
 /** The primitive family the caller's classifier proves (`makeIrPrimitiveExpressionClassifier`). */
 type ClassifyPrimitive = (expr: ts.Expression) => string | undefined;
 
-/** True when the IR consumes the match result `use` where its lowering reads it as legacy does. */
+/**
+ * True when the IR consumes the match result `use` where its lowering reads
+ * it as legacy does. A read's own value is the selector's further question
+ * (`regExpMatchReadValueAdmitted`), which needs its function-object proof.
+ */
 export function regExpMatchUseAdmitted(use: ts.Expression, classify: ClassifyPrimitive | undefined): boolean {
   const value = outermostParenthesized(use);
   const consumer = value.parent;
@@ -44,8 +49,34 @@ export function regExpMatchUseAdmitted(use: ts.Expression, classify: ClassifyPri
     return (
       classify?.(consumer.argumentExpression) === "number" && isPlainRead(consumer) && !comparedWithUndefined(consumer)
     );
-  if (ts.isBinaryExpression(consumer)) return OPERATORS.has(consumer.operatorToken.kind);
-  return ts.isTypeOfExpression(consumer);
+  return readsCarrier(consumer);
+}
+
+/**
+ * True when the dynamic value of `read` (a served field of a match result)
+ * goes where it lowers: a consumer that reads the carrier, an argument of a
+ * call that boxes its arguments (a function-object member call such as
+ * `assert.sameValue(m[1], …)`), or a further `.length` read. Anywhere else (a
+ * `return`, a typed local, `Math.max`, a string method) the builder expects
+ * the number or string the checker names.
+ */
+export function regExpMatchReadValueAdmitted(
+  read: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  boxesArguments: (call: ts.CallExpression) => boolean,
+): boolean {
+  const value = outermostParenthesized(read);
+  const consumer = value.parent;
+  if (ts.isPropertyAccessExpression(consumer) && consumer.expression === value)
+    return consumer.name.text === "length" && regExpMatchReadValueAdmitted(consumer, boxesArguments);
+  if (ts.isCallExpression(consumer)) return consumer.expression !== value && boxesArguments(consumer);
+  return readsCarrier(consumer);
+}
+
+/** `===`, `!==`, the dynamic `+` and `typeof` read the carrier itself. */
+function readsCarrier(consumer: ts.Node): boolean {
+  return (
+    (ts.isBinaryExpression(consumer) && OPERATORS.has(consumer.operatorToken.kind)) || ts.isTypeOfExpression(consumer)
+  );
 }
 
 function isPlainRead(access: ts.PropertyAccessExpression | ts.ElementAccessExpression): boolean {

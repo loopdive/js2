@@ -170,7 +170,7 @@ import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import { matchRegExpCarrierCall, staticRegExpPair } from "../shared/regexp-static.js";
-import { regExpMatchUseAdmitted } from "./regexp-match-uses.js";
+import { regExpMatchReadValueAdmitted, regExpMatchUseAdmitted } from "./regexp-match-uses.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
@@ -8789,6 +8789,25 @@ function nativeStaticRegExp(expr: ts.Expression): boolean {
   );
 }
 
+/** (#7106 levers R2, S2) A read of a match result: an `.exec` call's, or a `regexp-match` slot's. */
+function isRegExpMatchRead(expr: ts.Expression): expr is ts.PropertyAccessExpression | ts.ElementAccessExpression {
+  if (!ts.isPropertyAccessExpression(expr) && !ts.isElementAccessExpression(expr)) return false;
+  const receiver = unwrapPhase1Parens(expr.expression);
+  if (ts.isIdentifier(receiver)) return currentModuleBindingResolver?.(receiver)?.valueKind.kind === "regexp-match";
+  const call = ts.isCallExpression(receiver) ? matchRegExpCarrierCall(receiver) : undefined;
+  return call?.method === "exec" && currentSelectionOptions?.isRegExpExpression?.(call.receiver) === true;
+}
+
+/** A function-object member call (`assert.sameValue(…)`), whose lowering boxes every argument. */
+function isFunctionObjectMemberCall(call: ts.CallExpression): boolean {
+  const callee = call.expression;
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    isFunctionObjectReceiver(callee.expression, currentSelectionOptions?.functionObjectValues)
+  );
+}
+
 /**
  * (#7106 lever S2) `call` (an `.exec`) initializes a `regexp-match` script
  * slot, whose every use the module-binding resolver checks. Any other `var`
@@ -11520,6 +11539,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     !moduleExternConsumerIsProven(expr, scope)
   ) {
     return shapeNo("expr-module-extern-consumer", expr);
+  }
+  // (#7106 levers R2, S2) A match result's served field goes only where its dynamic value lowers.
+  if (isRegExpMatchRead(expr) && !regExpMatchReadValueAdmitted(expr, isFunctionObjectMemberCall)) {
+    return capabilityNo("regexp-constructor-unsupported", "expr-regexp-match-read", expr);
   }
   if (ts.isParenthesizedExpression(expr)) return isPhase1Expr(expr.expression, scope, localClasses);
   // (#3583) Type-erased assertion wrappers emit nothing; `lowerExpr` unwraps the identical operand shape.
