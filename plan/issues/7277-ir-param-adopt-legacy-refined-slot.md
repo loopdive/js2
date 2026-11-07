@@ -166,3 +166,42 @@ A `string` projection is the non-null native string slot legacy registered
 annotated positions), so it now counts as non-fast stable as well. The
 #7242 file passes 30/30 again, and the typed corpus is still 264/264
 byte-identical.
+
+## Scope narrowed (2026-11-07, review RV7143)
+
+The `quality` failure at `da4ccbe5` was `tests/issue-1580.test.ts`. The #1580
+benchmark's exported `run(n)` is never called, and its f64 slot came from
+body inference. Projecting it made the IR claim `run`, whose string-builder
+loop is 6–10× slower than legacy's (#7291).
+
+The projection now applies only:
+- to a parameter outside the call-site candidate set, and
+- when legacy refined the slot from at least one direct call
+  (`inferParamTypeFromCallSites(...).sawCallSite`).
+
+The raw slot goes through the resolver's existing f64 / native-string arms
+(`projectIrImplicitParamSlot`), so there is no duplicated mapping.
+`legacyCallerAbiIsProjected` counts a `string` projection as stable off the
+fast lane, like f64 (`hasNonFastScalarProjection`).
+
+`verifyEqualTo` is never called (propertyHelper marks it deprecated), so it
+keeps legacy's default slot and is out of scope now.
+
+**Results vs main `c03f7d0e`** (head `183f8c4d` + test):
+
+| measure | main | head |
+| --- | --- | --- |
+| routes: legacy / ir / both | 4493 / 1213 / 8742 | 4488 / 1218 / 8742 |
+| `param-type-not-resolvable` | 978 | 776 |
+| standalone test262 A/B, 493 files, non-pass | 141 | 141 (same files) |
+
+- **Typed corpus:** 264/264 byte-identical.
+- **Newly IR-emitted:** `decimalToHexString` and `decimalToPercentHexString`
+  (`harness/decimalToHexString.js`).
+- **Moved to their next refusal:**
+  - `__consolePrintHandle__` (external call);
+  - three propertyHelper `verify*` functions (constructor resolution);
+  - `testPropertyEscapes` and two Intl shims (template substitution, #7285).
+- **Test:** `tests/issue-7277-*` pins the decimalToHexString route and its
+  harness test, value parity for call-site-refined string/f64 callees, and
+  the never-called `run(n)` staying refused.

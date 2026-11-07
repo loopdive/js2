@@ -5,9 +5,16 @@
 // projects that kind instead of being refused: the ABI is the same by
 // construction. A never-called function keeps legacy's default slot and stays
 // refused, as before (the #1580 benchmark's exported `run(n)`).
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile, type CompileOptions } from "../src/index.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./equivalence/helpers.js";
+import { assembleOriginalHarness } from "./test262-original-harness.js";
+import { originalHarnessCompileOptions, parseMeta, runTest262File } from "./test262-runner.js";
+
+/** Calls both decimalToHexString.js helpers with numbers only: legacy refines `n` to f64. */
+const DECIMAL_TO_HEX = join(__dirname, "..", "test262", "test", "harness", "decimalToHexString.js");
 
 const LANES: { name: string; options: CompileOptions }[] = [
   { name: "standalone", options: { target: "standalone" } },
@@ -32,6 +39,21 @@ async function compileJs(source: string, options: CompileOptions) {
 }
 
 describe("#7277 adopt legacy's call-site-refined parameter slot", () => {
+  it("IR-emits the decimalToHexString.js helpers and passes their harness test [standalone]", async () => {
+    const source = readFileSync(DECIMAL_TO_HEX, "utf8");
+    const meta = parseMeta(source);
+    const result = await compile(assembleOriginalHarness(source, meta).primary.source, {
+      ...originalHarnessCompileOptions(meta, "standalone"),
+      fileName: DECIMAL_TO_HEX,
+      trackIrOutcomes: true,
+    });
+    expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+    for (const unit of ["decimalToHexString", "decimalToPercentHexString"]) {
+      expect(result.irOutcomes?.find((o) => o.displayName === unit)?.kind, unit).toBe("emitted");
+    }
+    expect(await runTest262File(DECIMAL_TO_HEX, "harness", undefined, "standalone")).toMatchObject({ status: "pass" });
+  });
+
   for (const lane of LANES) {
     it(`keeps call-site-refined string / f64 callees equal to JS [${lane.name}]`, async () => {
       const result = await compileJs(SOURCE, lane.options);
