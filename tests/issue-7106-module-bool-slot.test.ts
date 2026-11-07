@@ -10,35 +10,8 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
-import { assembleHarnessBody, moduleInit } from "./helpers/harness-module-init.js";
-import { lane, TARGETS, type Target } from "./helpers/ambient-intrinsic-probe.js";
-
-/** Compile `body` behind assert.js + sta.js, run `<module-init>`, and report whether the IR claimed it. */
-async function runHarness(
-  target: Target,
-  body: string,
-  fileName = "test.js",
-  emittedUnits: readonly string[] = [],
-): Promise<boolean> {
-  const result = await compile(assembleHarnessBody(body), {
-    fileName,
-    allowJs: true,
-    skipSemanticDiagnostics: true,
-    trackIrOutcomes: true,
-    deferTopLevelInit: true,
-    ...(target ? { target } : {}),
-  });
-  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  expect(result.irPostClaimErrors ?? []).toEqual([]);
-  for (const name of emittedUnits) {
-    const outcome = result.irOutcomes?.find((unit) => unit.displayName === name);
-    expect(outcome, `${name}: ${JSON.stringify(outcome)}`).toMatchObject({ irBodyEmitted: true, kind: "emitted" });
-  }
-  const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
-  (instance.exports.__module_init as () => void)();
-  return moduleInit(result)?.irBodyEmitted === true;
-}
+import { assembleHarnessBody, runHarnessOn as runHarness } from "./helpers/harness-module-init.js";
+import { lane, TARGETS } from "./helpers/ambient-intrinsic-probe.js";
 
 const CLAIMED: Record<string, string> = {
   trueArgument: "var x = true;\nassert.sameValue(x, true);",
@@ -48,6 +21,17 @@ const CLAIMED: Record<string, string> = {
   readInFunction: "var x = false;\nfunction k() { assert.sameValue(x, false); }\nk();",
   // The main twin of the shapes S5 reaches (#7037 round 3).
   comparisonOfVar: "var a = 3;\nvar b = a > 2;\nassert.sameValue(b, true);",
+  // The selector names the slot `boolean`, as the brand does.
+  objectIs: "var x = true;\nassert.sameValue(Object.is(x, true), true);",
+};
+
+// ToNumber of a boolean is its 0 or 1, so a numeric consumer converts the
+// branded read as it converted main's bare `i32`, and keeps main's claim.
+const NUMERIC_CONSUMERS: Record<string, string> = {
+  numberResult: "let flag = true;\nexport function t(): number { return flag; }",
+  compoundField:
+    "let flag = true;\nclass C { n = 1; bump(): number { this.n += flag as unknown as number; return this.n; } }\n" +
+    "export function t(): number { return new C().bump(); }",
 };
 
 // Not a module binding on this branch; it must still never withdraw a claim.
@@ -66,11 +50,51 @@ describe("#7106 boolean module slot", () => {
       });
     });
   }
+  for (const [name, source] of Object.entries(NUMERIC_CONSUMERS)) {
+    it(`a numeric consumer converts the read on standalone: ${name}`, async () => {
+      const result = await compile(source, {
+        fileName: "t.ts",
+        target: "standalone",
+        skipSemanticDiagnostics: true,
+        trackIrOutcomes: true,
+      });
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+      expect(result.irOutcomes?.find((outcome) => outcome.displayName === "t")?.irBodyEmitted).toBe(true);
+    });
+  }
 });
 
 describe("#7106 Boolean module-slot receiving boundaries", () => {
   for (const target of TARGETS) {
     describe(lane(target), () => {
+      // A plain write stores the value itself; only ToNumber consumers convert it.
+      it("keeps a boolean written to a number field", async () => {
+        // Main withdraws `k` after its claim ("assignment to .n (f64) got
+        // i32"), so this pins the answer and that `k` is not emitted by the IR.
+        const body = "function k(b: boolean): any { var o = { n: 1 }; o.n = b as any; return o.n; }\n";
+        const result = await compile(assembleHarnessBody(`${body}assert.sameValue(k(true), true);`), {
+          fileName: "test.ts",
+          allowJs: true,
+          skipSemanticDiagnostics: true,
+          trackIrOutcomes: true,
+          deferTopLevelInit: true,
+          ...(target ? { target } : {}),
+        });
+        expect(result.irOutcomes?.find((unit) => unit.displayName === "k")?.irBodyEmitted).toBe(false);
+        const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
+        const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+        (instance.exports.__module_init as () => void)();
+      });
+
+      it("converts a boolean compound operand on both lanes", async () => {
+        await runHarness(
+          target,
+          "var flag = true;\nfunction k() { var o = { n: 1 }; o.n += flag; return o.n; }\nassert.sameValue(k(), 2);",
+          "test.js",
+          ["k"],
+        );
+      });
+
       it("preserves Boolean template spelling", async () => {
         await runHarness(target, 'var flag = true; assert.sameValue(`${flag}`, "true");');
       });
