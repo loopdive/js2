@@ -48,6 +48,8 @@ describe("#7106 A2c — global-scope eval statements in the IR", () => {
     ["an indirect eval declaring a var", 'var f = 1;\n(0, eval)("var f = 5");\n'],
     ["an indirect eval declaring a function", 'var g;\n(0, eval)("function g() { return 7; }");\n'],
     ["a sloppy direct eval at script global", 'var y;\neval("var y = 2");\n'],
+    // An unread lexical gets no module slot, so legacy and the IR have no storage to disagree on.
+    ["an unread lexical declared after the eval", '(0, eval)("var z = 1");\nlet late = 2;\n'],
   ])("claims the module init holding %s and calls the provider", async (_, source) => {
     const init = await moduleInit(source);
     expect(init.claimed, init.detail).toBe(true);
@@ -67,6 +69,11 @@ describe("#7106 A2c — global-scope eval statements in the IR", () => {
     ["a computed source", 'var src = "var c = 1";\nvar c;\n(0, eval)(src);\n'],
     // A script lexical's slot is widened to externref for eval; the IR would type it by its declaration.
     ["a script lexical the eval consumer widened", 'const S = "x";\nvar f = S;\n(0, eval)("var f = 5");\n'],
+    // The eval rebinds `f`; the IR would bind (and inline) the declaration it sees.
+    [
+      "a call of a function the eval rebinds",
+      "function f() { return 1; }\n(0, eval)('var z; f = function () { return 2; }');\nvar r = f();\n",
+    ],
   ])("keeps the module init direct for %s", async (_, source) => {
     const init = await moduleInit(source);
     expect(init.claimed).toBe(false);
