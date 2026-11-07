@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { exactIndirectEvalStatement } from "../src/eval-call-shape.js";
+import { exactGlobalEvalStatement } from "../src/eval-call-shape.js";
 import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
 import { hasActiveUnshadowedTest262Assert, rawTest262AssertShimEnabled } from "../src/runtime-eval.js";
@@ -176,11 +176,12 @@ describe("#1164 ES5 eval slice — raw Test262 assert classifier", () => {
 
 describe("#1164 ES5 eval slice — exact host IR ownership", () => {
   it("recognizes only the canonical statement spelling", () => {
-    expect(exactIndirectEvalStatement(firstCall("(0, eval)(source);"))).toBeDefined();
-    expect(exactIndirectEvalStatement(firstCall("((0), (eval))(source);"))).toBeDefined();
+    expect(exactGlobalEvalStatement(firstCall("(0, eval)(source);"))?.direct).toBe(false);
+    expect(exactGlobalEvalStatement(firstCall("((0), (eval))(source);"))?.direct).toBe(false);
+    // (#7106 A2c) the same statement shape also names a direct eval; the caller proves its scope.
+    expect(exactGlobalEvalStatement(firstCall("eval(source);"))?.direct).toBe(true);
 
     for (const source of [
-      "eval(source);",
       "const result = (0, eval)(source);",
       "(1, eval)(source);",
       "(0, eval)();",
@@ -188,7 +189,7 @@ describe("#1164 ES5 eval slice — exact host IR ownership", () => {
       "(0, eval)(...sources);",
       "(0, eval)?.(source);",
     ]) {
-      expect(exactIndirectEvalStatement(firstCall(source)), source).toBeUndefined();
+      expect(exactGlobalEvalStatement(firstCall(source)), source).toBeUndefined();
     }
   });
 

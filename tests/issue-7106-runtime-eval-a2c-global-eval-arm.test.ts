@@ -11,7 +11,23 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 
-const SUPPORT = "__runtime_eval_global_call_indirect_eval";
+const PROVIDER = "__runtime_indirect_eval_import";
+
+/**
+ * How many `call`s in the module reach the indirect-eval provider entry (the WAT names callees by index). The IR
+ * calls the support function, which the late inliner may fold into the caller; either way the entry is called.
+ */
+function providerCalls(wat: string): number {
+  const names: string[] = [];
+  const callees: number[] = [];
+  for (const line of wat.split("\n")) {
+    const declared = /^\s*\((?:import "[^"]*" "[^"]*" \()?func \$(\S+)/.exec(line);
+    if (declared) names.push(declared[1]!);
+    const call = /^\s*call (\d+)\s*$/.exec(line);
+    if (call) callees.push(Number(call[1]));
+  }
+  return callees.filter((index) => names[index] === PROVIDER).length;
+}
 
 async function moduleInit(source: string) {
   const result = await compile(source, {
@@ -32,10 +48,10 @@ describe("#7106 A2c — global-scope eval statements in the IR", () => {
     ["an indirect eval declaring a var", 'var f = 1;\n(0, eval)("var f = 5");\n'],
     ["an indirect eval declaring a function", 'var g;\n(0, eval)("function g() { return 7; }");\n'],
     ["a sloppy direct eval at script global", 'var y;\neval("var y = 2");\n'],
-  ])("claims the module init holding %s and calls the support function", async (_, source) => {
+  ])("claims the module init holding %s and calls the provider", async (_, source) => {
     const init = await moduleInit(source);
     expect(init.claimed, init.detail).toBe(true);
-    expect(init.wat).toContain(`call $${SUPPORT}`);
+    expect(providerCalls(init.wat)).toBeGreaterThan(0);
   });
 
   it.each([
@@ -56,6 +72,6 @@ describe("#7106 A2c — global-scope eval statements in the IR", () => {
 
   it("folds a literal that only assigns, with no runtime call", async () => {
     const init = await moduleInit('var x = 1;\n(0, eval)("x = 2");\n');
-    expect(init.wat).not.toContain(`call $${SUPPORT}`);
+    expect(providerCalls(init.wat)).toBe(0);
   });
 });
