@@ -6125,6 +6125,55 @@ finding was fixed in 083d99adc9.
 - The #7292 figures above come from the first build. They change by at most
   that one file.
 
+### R2 + S2 review round 2 (2026-11-07)
+
+The review of 61258cb98c found holes in the round-1 allow-list. They are
+fixed in b2d66208f2 and 570cf99a8c.
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 | an inherited `Array.prototype` member (`typeof m.join`) was read as `undefined` | The blocklist is replaced by the fields the dynamic reader serves: `length`, `index`, `input` and proven-number keys. |
+| 2 | a function-local `var m = re.exec(s)` let `m`'s uses go unchecked | An `.exec` call may initialize only a `regexp-match` script slot (`initializesRegExpMatchSlot`), whose every use the resolver checks. |
+| 3 | an indexed read compared with `undefined` failed after the claim | Refused (`comparedWithUndefined`). |
+| 3b | a probe set (below) found more post-claim failures: `Math.max(m.length, 1)`, `return re.exec(s).length`, `m[0] == null`. One more was a hard compile error: `'s'.indexOf(m[0])` | The selector also checks where a served field's own value goes (`regExpMatchReadValueAdmitted`): only to a `===` / `!==` / `+` / `typeof` operand, a function-object member call's argument, or a further `.length`. |
+| 4 | misplaced JSDoc | Restored above `isUnrepresentableModuleBinding`. |
+| 5 | inconsistent import route | Both carrier builders come through the `codegen/index.ts` facade. |
+| 6 | unnamed type | `RegExpCarrierCall` is now exported. |
+| 7 | seven copies of `ctx.mod.globals[localGlobalIdx(...)]` in `integration.ts` | Folded into `moduleGlobalDef`. |
+
+**Probe set.** 62 synthetic bodies, base and head, both lanes, each asserting
+its JS result. Their shapes:
+- inherited member reads and calls;
+- `groups` and `indices`;
+- comparisons with `undefined` / `null`;
+- function-local and returned `.exec` results;
+- truthiness, `||` and `?:`;
+- `for-in`, `Array.isArray`, `instanceof`, `String(m)` and `m + ''`;
+- array and object literal elements;
+- a stable carrier and a `g` carrier;
+- field values passed to `Math.max`, string methods, `push`, a direct call
+  and the harness.
+
+Head results:
+- **0 pass→fail.**
+- **0 new post-claim errors.**
+- **12 bodies newly claimed, all passing.** One of them,
+  `typeof m[1] === 'undefined'`, fails on base, so head fixes it.
+- The bodies are in `.tmp/r2/probes/` in the worktree; the plan does not
+  commit them.
+
+**Re-measured** over the same 858 files (base 4748040724, head 570cf99a8c).
+Both lanes give the same result:
+- 42 `<module-init>` units move to the IR, and 42 files become newly IR-only,
+  all calling `.exec`. 41 of them are ES5.
+- 0 files lose IR-only status, and there are 0 new post-claim errors.
+- The same 42 binaries change on both lanes, and all 42 pass on both trees.
+- The other 816 binaries and the playground are byte-identical.
+
+Against round 1, one file is no longer claimed:
+`built-ins/RegExp/prototype/exec/u-captured-value.js` (not ES5). It passes a
+field's value somewhere `regExpMatchReadValueAdmitted` does not admit.
+
 ## Lever A — the runtime-eval boundary, per unit (plan, 2026-11-06)
 
 ES5 census context: 14.4 % of weighted ES5 files contain a runtime-eval site
