@@ -173,8 +173,10 @@ const NOT_A_FUNCTION = "called value is not a function";
  * (#7287) Legacy's TypeError text when a script `var` callee is not callable.
  * A `var` initialized with a function expression or an arrow compiles to a typed closure
  * call, whose null check reads "Cannot access property on null or undefined"
- * for any non-callable value (before initialization, after `p = null`, …);
- * every other `var` takes the generic dynamic call's text.
+ * when the slot holds null or undefined (before initialization, after
+ * `p = null`); every other `var` takes the generic dynamic call's text. Legacy
+ * traps on a non-null non-callable value (`p = 5`), where this throws the
+ * TypeError node throws.
  */
 export function scriptVarCalleeNotCallableMessage(declaration: ts.Declaration | undefined): string {
   const initializer = declaration && ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
