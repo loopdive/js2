@@ -6588,7 +6588,8 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx, hint
   // valueOf/toString path is not entered.
   // (#7128 S1) A referenced empty literal is instead the selector's open
   // carrier: legacy's raw-externref `$Object`, which the U2 read arm serves.
-  // (#7280 S1) Into a dynamic-carrier slot it crosses onto the carrier.
+  // An open-carrier literal stored into a dynamic-carrier slot crosses onto
+  // the carrier: a property of the slot, not of the admitting arm (#7280 S1).
   if (expr.properties.length === 0 && admittedEmptyLiteralIsOpenCarrier(expr)) {
     const object = emitNewPlainObject(cx.builder, irVal({ kind: "externref" }));
     return hint?.kind === "dynamic" ? cx.builder.emitBox(object, irDynamic()) : object;

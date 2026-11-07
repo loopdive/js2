@@ -135,7 +135,7 @@ census), with the branch head before S1 as the base:
 
 | | base | S1 |
 | --- | ---: | ---: |
-| zero-legacy files (wrapped, standalone) | 0 | **1** |
+| zero-legacy files (wrapped, standalone) | 0 | **1** (of the 52-file census) |
 | `<module-init>` first refusal `objectlit-empty` | 29 | 3 |
 | post-claim withdrawals | 0 | 0 |
 | standalone verdicts (pass / fail) | 50 / 2 | 50 / 2, identical per file |
@@ -156,4 +156,33 @@ types.
   `<module-init>` route (IR on standalone only). One case is compared against
   the IR-off compile on WASI: there legacy's member read misses an inherited
   method on its own, with or without S1.
+
+## Independent review (RV7173, 6702796984): APPROVE with nits
+
+**Measured gain.** The reviewer measured the whole
+`language/expressions/assignment/member-expr-ident-name-*-escaped` family: 43
+files, all carrying `var obj = {}`. On standalone, passing zero-legacy files go
+**0 → 43**, with verdicts 43/43 pass on base and head. The census's +1 is one
+stride-40 sample of this family. On a 506-file A/B set (a stride-11 sample of
+the files with a top-level `var x = {}` plus 200 random files), gc is
+byte-identical 506/506, and standalone zero-legacy goes 24 → 28. There are 0
+post-claim withdrawals across 1,110 test262 files, and the equivalence gate
+is green.
+
+**Withdrawal paths S1 now reaches (nit 1, S3 candidates to refuse at
+selection).** These standalone shapes, outside test262, are claimed and then
+withdrawn. The verdict stays correct because the unit falls back to legacy,
+but each one is a claim-then-withdraw:
+
+| source | `irPostClaimErrors` on head | on base |
+| --- | --- | --- |
+| `var obj = {}; obj = {a: 1};` | `assignment to module binding "obj" (dynamic) got object{a:f64}` | also withdraws with `var obj;` |
+| `var obj = {}; if (obj == null) throw "a";` | `bare 'null' in non-reference context (f64)` | also withdraws with `var obj;` |
+| `var obj = {}; var u; if (obj[u] !== undefined) throw "a";` | `unproven indexed read cannot be compared with undefined` | no base shape found |
+
+The first two are older from-ast gaps that a `var obj;` binding reaches on main.
+None of the three occurs in the 1,110 files.
+
+**Nit 2:** the box in `lowerObjectLiteral` applies to every admitted
+open-carrier literal stored into a dynamic slot; its comment now says so.
 
