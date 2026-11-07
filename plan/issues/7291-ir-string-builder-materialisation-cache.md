@@ -287,3 +287,14 @@ Clean machine, median ms, build phase only, n = 2M:
   `ir/backend/string-contract.ts`. The clean `backend-wasmgc` module would
   then import an unmigrated (mixed) one, which the compiler-boundaries gate
   rejects.
+
+**Known gaps (presize analysis), from the #7168 reviews:**
+
+- **`arguments[i] = …` aliasing:** a sloppy-mode parameter bound written through
+  `arguments` is not modelled. The presize is refused there, because any
+  `arguments` reference refuses, but the value itself is wrong (3, node 5).
+  This is pre-existing and independent of the presize.
+- **Script-mode `.js` file, top-level `var` bound:** the variable is a
+  `globalThis` property, so `globalThis.n = 5` (or `this.n`, `window.n`) writes
+  it without naming the binding. The write search does not see that. Untested
+  and not blocking: the compiled inputs are modules in every measured case.
