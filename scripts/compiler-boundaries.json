@@ -13062,6 +13062,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/regexp-match-uses.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape admission for the uses of a RegExp match result (an `.exec` call or a `regexp-match` script var, #7106 levers R2/S2); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/ir/module-binding-value-kinds.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13196,6 +13204,14 @@
       "destination": "ir-core",
       "owner": "7106",
       "nextBoundary": "The one walker that lowers a destructuring plan into IR values (#7106); takes its AST-facing operations from the builder host, so it splits with from-ast's lowering seams."
+    },
+    {
+      "path": "src/shared/regexp-static.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Pure-AST static RegExp construction reader (a literal, or `new RegExp` over string literals) shared by legacy's `parseRegExpLiteral` and the IR selector and builder (#7106 lever R); becomes clean once src/ts-api.ts leaves migration debt."
     },
     {
       "path": "src/shared/named-evaluation.ts",

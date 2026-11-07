@@ -89,6 +89,8 @@ import {
   TYPED_ARRAY_NAMES,
   scriptVarHome,
   ensureIrDynamicDeleteHelper, // (#7106 propertyHelper) dynamic delete wrappers
+  ensureStandaloneRegExpCarrierExecHelper, // (#7106 levers R1, R2) the `.test` / `.exec` carrier helpers
+  ensureStandaloneRegExpCarrierTestHelper,
   IR_DYN_DELETE_SLOPPY_HELPER,
   IR_DYN_DELETE_STRICT_HELPER,
   irDeleteSiteIsStrict,
@@ -197,8 +199,8 @@ import {
   type NativeStringLiteralMaterialization,
   type StringEncoding,
 } from "../codegen/native-string-literals.js";
-import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
-import { ensureStandaloneRegExpCarrierTestHelper } from "../codegen/regexp-standalone.js";
+import type { RegExpCarrierMethod } from "../shared/regexp-static.js";
+import { ensureIrRegExpLiteralHelper, standaloneStaticRegExpCompiles } from "../codegen/regexp-standalone.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../codegen/registry/imports.js";
 import { emitWasiErrorConstructor } from "../codegen/registry/error-types.js";
 import {
@@ -2411,6 +2413,10 @@ export function compileIrPathFunctions(
       : undefined;
   const nativeBufferSurface = planIrNativeBufferSurface(ctx, sourceFile); // (#7274)
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
+  // (#7106 lever R) A host-free lane constructs an `extern.regex` in-module.
+  const regExpProvider = supportsBackendCapability("native-regexp")
+    ? (pattern: string, flags: string) => irRuntimeFuncRef(ensureIrRegExpLiteralHelper(ctx, pattern, flags))
+    : undefined;
   const { supportsDateSnapshots, resolveHostVoidCallback, backendCapabilitySelectionOptions } =
     makeCalendarIrSelectionSupport(ctx, jsHostExterns, standaloneDomCapability, supportsBackendCapability);
   const moduleBindingOptions = {
@@ -2590,6 +2596,7 @@ export function compileIrPathFunctions(
       isArrayExpression,
       classifyArrayElementFamily,
       isRegExpExpression,
+      nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
@@ -4806,7 +4813,7 @@ export function compileIrPathFunctions(
     !runGlobalPreparation(
       () =>
         (healthyForLower = healthyForLower.map((entry) => {
-          const fn = attachIrExternSupport(entry.fn);
+          const fn = attachIrExternSupport(entry.fn, regExpProvider);
           return fn === entry.fn ? entry : { ...entry, fn };
         })),
     )
@@ -6099,6 +6106,11 @@ function withoutVoidReturn(ctx: CodegenContext, body: Instr[], typeIdx: number):
   return isVoid && body.length > 1 && body.at(-1)?.op === "return" ? body.slice(0, -1) : body;
 }
 
+/** The module-defined global at absolute index `absIdx`, if any. */
+function moduleGlobalDef(ctx: CodegenContext, absIdx: number | undefined): GlobalDef | undefined {
+  return absIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, absIdx)];
+}
+
 /** Resolve a checker-owned module declaration to its exact structural/legacy slot pair. */
 function resolveModuleBindingGlobal(
   ctx: CodegenContext,
@@ -6136,7 +6148,7 @@ function resolveModuleBindingGlobal(
         `module-init: supported binding '${name}' is absent from the compatibility module-global registry`,
       );
     }
-    global = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    global = moduleGlobalDef(ctx, globalIdx);
   }
   if (!global || global.name !== globalName) {
     throw new IrInvariantError(
@@ -6248,6 +6260,13 @@ function resolveModuleBindingGlobal(
     case "class-instance":
       ({ type, storageType } = classInstanceBindingStorage(ctx, name, identity.valueKind, classShapes));
       break;
+    case "regexp-match":
+      // (#7106 lever S2) The #1914 match-result slot `scriptVarHome` named this
+      // binding's home, read and written as a dynamic value through
+      // `emitModuleSlotAdapter`: the storage is that slot by definition.
+      type = irDynamic();
+      storageType = global.type;
+      break;
   }
   const storageMatches =
     global.type.kind === storageType.kind &&
@@ -6284,7 +6303,7 @@ function resolveModuleBindingGlobal(
     }
   } else {
     const tdzGlobalIdx = ctx.tdzGlobals.get(name);
-    tdzGlobal = tdzGlobalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, tdzGlobalIdx)];
+    tdzGlobal = moduleGlobalDef(ctx, tdzGlobalIdx);
   }
   if (tdzGlobal && tdzGlobal.name !== expectedTdzGlobalName) {
     throw new IrInvariantError(
@@ -6720,7 +6739,7 @@ function resolveStandaloneRegExpTestGlobal(ctx: CodegenContext, plan: IrStaticRe
     global = observed.value;
   } else {
     const globalIdx = ctx.moduleGlobals.get(name);
-    global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    global = moduleGlobalDef(ctx, globalIdx);
   }
   if (!global || global.name !== globalName || global.type.kind !== "externref") {
     throw new IrInvariantError(
@@ -6776,7 +6795,7 @@ function resolveRetainedFunctionMethod(
     receiverGlobalDef = observed.value;
   } else {
     const globalIdx = ctx.moduleGlobals.get(plan.receiverName);
-    receiverGlobalDef = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    receiverGlobalDef = moduleGlobalDef(ctx, globalIdx);
   }
   if (
     !receiverGlobalDef ||
@@ -6861,7 +6880,7 @@ function resolveFnctorArrayMethod(
     receiverGlobalDef = observed.value;
   } else {
     const globalIdx = ctx.moduleGlobals.get(plan.receiverName);
-    receiverGlobalDef = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    receiverGlobalDef = moduleGlobalDef(ctx, globalIdx);
   }
   if (
     !receiverGlobalDef ||
@@ -6942,7 +6961,7 @@ function resolveStaticNumericArrayGlobal(
     global = observed.value;
   } else {
     const globalIdx = ctx.moduleGlobals.get(name);
-    global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    global = moduleGlobalDef(ctx, globalIdx);
   }
   const nameOf = (i: number) => ctx.typeIdxToStructName.get(i);
   if (!global || global.name !== globalName || !staticNumericArrayGlobalMatches(global.type, expected, nameOf)) {
@@ -7072,6 +7091,17 @@ function sameValType(a: ValType, b: ValType): boolean {
 }
 
 /**
+ * (#7106 levers R1, R2) Legacy's builder of a carrier method's helper
+ * (`REGEXP_CARRIER_METHODS`). A function, not a table: both builders arrive
+ * through the `codegen/index.ts` facade, inside the import cycle.
+ */
+function ensureRegExpCarrierHelper(ctx: CodegenContext, method: RegExpCarrierMethod): number | undefined {
+  return method === "test"
+    ? ensureStandaloneRegExpCarrierTestHelper(ctx)
+    : ensureStandaloneRegExpCarrierExecHelper(ctx);
+}
+
+/**
  * (#7274) The source's native ArrayBuffer plan, present only where its
  * capability row claims. The one constructor for both planning sites (here
  * and the codegen driver), so the plan's presence is the only gate selection
@@ -7099,6 +7129,7 @@ function makeFromAstResolver(
   nativeBufferSurface?: IrNativeBufferSurfacePlan, // (#7274)
 ): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
+  const isRegExpExpression = makeIrRegExpExpressionPredicate(ctx.checker);
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   // (#3526 F3-S3) Resolved once, pre-freeze: the arm below projects this value.
   const functionPrototypeCall = integrationFunctionPrototypeCallPolicy(ctx);
@@ -7144,7 +7175,7 @@ function makeFromAstResolver(
     },
     fnctorArrayMethodPlan(call: ts.CallExpression) {
       if (
-        !supportsBackendCapability("standalone-native-regexp-test-carrier") ||
+        !supportsBackendCapability("native-function-methods") ||
         !supportsBackendCapability("legacy-numeric-array-global") ||
         !moduleBindingResolver
       ) {
@@ -7155,7 +7186,7 @@ function makeFromAstResolver(
     },
     retainedFunctionMethodPlan(call: ts.CallExpression) {
       if (
-        !supportsBackendCapability("standalone-native-regexp-test-carrier") ||
+        !supportsBackendCapability("native-function-methods") ||
         !supportsBackendCapability("legacy-numeric-array-global") ||
         !moduleBindingResolver
       ) {
@@ -7164,15 +7195,22 @@ function makeFromAstResolver(
       const plan = moduleBindingResolver.retainedFunctionMethodPlan(call);
       return plan ? resolveRetainedFunctionMethod(ctx, plan) : null;
     },
-    standaloneRegExpTestPlan(receiver: ts.Expression) {
-      if (!supportsBackendCapability("standalone-native-regexp-test-carrier") || !moduleBindingResolver) return null;
-      const plan = moduleBindingResolver.staticRegExpTestPlan(receiver);
-      if (!plan) return null;
-      ensureStandaloneRegExpCarrierTestHelper(ctx);
-      return {
-        receiverGlobal: resolveStandaloneRegExpTestGlobal(ctx, plan),
-        funcName: STANDALONE_REGEXP_CARRIER_TEST_HELPER,
-      };
+    isNativeRegExpReceiver(receiver: ts.Expression) {
+      return (
+        supportsBackendCapability("native-regexp") &&
+        (moduleBindingResolver?.staticRegExpTestPlan(receiver) !== undefined || isRegExpExpression(receiver))
+      );
+    },
+    nativeRegExpMethodPlan(receiver: ts.Expression, method: RegExpCarrierMethod) {
+      if (ensureRegExpCarrierHelper(ctx, method) === undefined) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/integration: the native-regexp lane has no ${method} carrier helper`,
+        );
+      }
+      const stable = moduleBindingResolver?.staticRegExpTestPlan(receiver);
+      return stable ? { receiverGlobal: resolveStandaloneRegExpTestGlobal(ctx, stable) } : {};
     },
     classStaticFieldStorage: (owner, field) => resolveIrClassStaticFieldStorage(ctx, owner, field), // (#7233)
     staticNumericArrayRead(expression: ts.Expression, expected: IrType) {
@@ -8118,6 +8156,9 @@ function makeResolver(
       return preparedScopeLookup
         ? preparedScopeLookup.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding))
         : ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding));
+    },
+    resolveGlobalType(ref: IrGlobalRef): ValType | undefined {
+      return moduleGlobalDef(ctx, resolver.resolveGlobal(ref))?.type;
     },
     resolveType(ref: IrTypeRef): number {
       if (readEnv("JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE") === "type") {

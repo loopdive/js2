@@ -47,7 +47,10 @@ export type IrModuleBindingValueKind =
   // (#7252) A script `var` that only ever holds instances of ONE top-level
   // class: legacy stores it in a `(ref null $Class)` slot (`scriptVarHome`'s
   // `class-instance` home), and the IR reads it as that class's `class` value.
-  | { readonly kind: "class-instance"; readonly classDeclaration: ts.ClassDeclaration };
+  | { readonly kind: "class-instance"; readonly classDeclaration: ts.ClassDeclaration }
+  // (#7106 lever S2) A script `var` legacy stores in #1914's `exec` match-result
+  // slot (`(ref null $__regexp_match_vec)`); the IR reads it as a dynamic value.
+  | { readonly kind: "regexp-match" };
 
 export interface IrModuleCapabilityExternCertification {
   readonly capability: IrModuleExternCapability;
@@ -160,11 +163,13 @@ export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind
  *   - `typed`: an `f64` or `i32` slot; only a `number` / `boolean` checker type
  *     binds (an `i32` slot also holds a `Symbol`, which stays refused);
  *   - (#7252) `class-instance`: a `(ref null $Class)` slot of a user class
- *     struct; only a binding every write of which constructs that class binds.
+ *     struct; only a binding every write of which constructs that class binds;
+ *   - (#7106 lever S2) `regexp-match`: #1914's `exec` match-result slot, bound
+ *     only when the IR's one write is the declaration's `.exec(…)` initializer.
  * Any other slot (a vector, an object struct, `$Map`, `externref` in fast
  * mode) is no home: no value kind's storage is exactly that carrier.
  */
-export type IrScriptVarHome = "dynamic" | "string" | "typed" | "class-instance";
+export type IrScriptVarHome = "dynamic" | "string" | "typed" | "class-instance" | "regexp-match";
 
 export function isCapabilityExternKind(
   valueKind: IrModuleBindingValueKind,

@@ -60,6 +60,7 @@ import {
   type IrBlock,
   type IrFuncRef,
   type IrFunction,
+  type IrGlobalRef,
   type IrInstr,
   type IrInstrIntrinsic,
   type IrIntrinsicBackendComposite,
@@ -1196,6 +1197,31 @@ export function lowerIrFunctionBody<S, Slot>(
 
   const stringOperationContext: StringOperationContext<S> = { emitter, emitValue };
 
+  /**
+   * (#7252, #7106 lever S2) A module slot whose legacy ValType is narrower
+   * than the IR value it holds, adapted by (slot ValType, IR type): a class
+   * instance's `(ref null $C)` slot reads as the class's non-null ref, as
+   * legacy reads it; a typed reference slot behind a dynamic value on an
+   * externref carrier (#1914's match vector) reads through `extern.convert_any`
+   * and is written back through `any.convert_extern` and `ref.cast null`.
+   */
+  const emitModuleSlotAdapter = (
+    target: IrGlobalRef,
+    value: IrType | null,
+    direction: "read" | "write",
+    out: S,
+  ): void => {
+    if (value?.kind === "class") {
+      if (direction === "read") emitter.pushRaw(out, { op: "ref.as_non_null" }); // pushraw-ok(#7252): `(ref null $C)` slot, as legacy reads it
+      return;
+    }
+    if (value?.kind !== "dynamic" || resolver.resolveDynamic?.()?.kind !== "externref") return;
+    const slot = resolver.resolveGlobalType?.(target);
+    if (slot?.kind !== "ref_null") return;
+    if (direction === "read") emitter.emitToExternref(out);
+    else emitter.emitFromExternref({ kind: "val", val: slot }, out);
+  };
+
   const emitInstrTree = (instr: IrInstr, out: S): void => {
     switch (instr.kind) {
       case "const": {
@@ -1208,13 +1234,13 @@ export function lowerIrFunctionBody<S, Slot>(
         // physical carrier first. Without this the emitter throws "cannot
         // materialize null for IrType 'vec'" — a plain `Error`, so an untyped
         // INVARIANT and therefore a hard compile error, for a claim that is
-        // otherwise fully lowerable. Scoped to `vec`: every other non-`val`
-        // result type reaches the emitter exactly as it did before.
-        const nullVecType =
-          instr.value.kind === "null" && instr.resultType?.kind === "vec"
+        // otherwise fully lowerable.
+        // (#7106) A `dynamic` null resolves the same way, to the lane's carrier.
+        const nullCarrierType =
+          instr.value.kind === "null" && (instr.resultType?.kind === "vec" || instr.resultType?.kind === "dynamic")
             ? ({ kind: "val", val: lowerIrTypeToValType(instr.resultType, resolver, func.name) } as IrType)
             : null;
-        emitter.emitConst(nullVecType ? { ...instr, resultType: nullVecType } : instr, func.name, out);
+        emitter.emitConst(nullCarrierType ? { ...instr, resultType: nullCarrierType } : instr, func.name, out);
         return;
       }
       case "fnctor.new": {
@@ -1411,10 +1437,11 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       case "global.get":
         emitter.emitGlobalGet(resolver.resolveGlobal(instr.target), out);
-        if (instr.resultType?.kind === "class") emitter.pushRaw(out, { op: "ref.as_non_null" }); // pushraw-ok(#7252): `(ref null $C)` slot, as legacy reads it
+        emitModuleSlotAdapter(instr.target, instr.resultType, "read", out);
         return;
       case "global.set":
         emitValue(instr.value, out);
+        emitModuleSlotAdapter(instr.target, typeOf(instr.value), "write", out);
         emitter.emitGlobalSet(resolver.resolveGlobal(instr.target), out);
         return;
       case "binary": {
@@ -3454,6 +3481,11 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "extern.regex": {
+        // (#7106 lever R) A host-free lane constructs it in-module.
+        if (instr.provider) {
+          emitter.emitCall(resolver.resolveFunc(instr.provider), out);
+          return;
+        }
         // Mirror the legacy `compileRegExpLiteral` pattern (see
         // `src/codegen/typeof-delete.ts:158`):
         //   <emit pattern as string literal>

@@ -609,8 +609,13 @@ import {
 } from "./stack-balance.js";
 import { emitNativeParseNumber, fillParseNumberToStringArms } from "./parse-number-native.js";
 import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6603)
-import { inferStandaloneRegExpMatchResultType, STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
+import {
+  inferStandaloneRegExpMatchResultType,
+  STANDALONE_REGEXP_REFLECTION_PROPS,
+  standaloneStaticRegExpCompiles,
+} from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
+import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
 import { zeroArgCallPadInstrs } from "./zero-arg-method-pad.js";
@@ -3302,6 +3307,7 @@ function planIrOverlay(
       isArrayExpression,
       classifyArrayElementFamily,
       isRegExpExpression,
+      nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
       preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
@@ -4256,6 +4262,8 @@ export function scriptVarHome(
       return ctx.fast ? undefined : "dynamic";
     case "ref_null":
       if (type.typeIdx === ctx.anyStrTypeIdx) return "string";
+      // (#7106 lever S2) #1914's `exec` match-result struct, read as a dynamic value through `externref`.
+      if (type.typeIdx === ctx.structMap.get(REGEXP_MATCH_VEC_STRUCT)) return ctx.fast ? undefined : "regexp-match";
       // (#7252) The struct legacy allocated for a user class.
       return [...ctx.classSet].some((n) => ctx.structMap.get(n) === type.typeIdx) ? "class-instance" : undefined;
     case "f64":
@@ -12269,15 +12277,8 @@ registerAddStringImports(addStringImports);
 // in-module native funcs under no-JS-host mode without an import cycle.
 registerAddUnionImports(addUnionImports);
 
-/** Parse a RegExp literal text (e.g. "/\\d+/gi") into pattern and flags */
-export function parseRegExpLiteral(text: string): { pattern: string; flags: string } {
-  // The text includes the leading '/' and trailing '/flags'.
-  // Find the last '/' which separates pattern from flags.
-  const lastSlash = text.lastIndexOf("/");
-  const pattern = text.slice(1, lastSlash);
-  const flags = text.slice(lastSlash + 1);
-  return { pattern, flags };
-}
+/** Parse a RegExp literal text (e.g. "/\\d+/gi") into pattern and flags — the IR's one splitter. */
+export { parseRegExpLiteralText as parseRegExpLiteral } from "../shared/regexp-static.js";
 
 /** Math methods that need host imports (no native Wasm opcode) */
 export const MATH_HOST_METHODS_1ARG = new Set([
@@ -15495,6 +15496,9 @@ export {
   IR_DYN_INSTANCEOF_HELPER,
   irDynamicInstanceOfAtLegacyParity,
 } from "./ir-dynamic-instanceof.js";
+// (#7106 levers R1, R2) the `.test` / `.exec` carrier helpers (ir/integration.ts).
+export { ensureStandaloneRegExpCarrierExecHelper } from "./regexp-exec-carrier.js";
+export { ensureStandaloneRegExpCarrierTestHelper } from "./regexp-standalone.js";
 // (#7274) the IR's native ArrayBuffer adapters (ir/integration.ts).
 export { ensureIrNativeBufferAdapter, nativeBufferProvidersAvailable } from "./buffers/ir-native-buffer.js";
 // (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
