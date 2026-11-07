@@ -28,7 +28,7 @@ const ARRAYS: Readonly<Record<string, readonly string[]>> = {
   "[true, false, true, true]": ["true", "false"],
   "['a', 'b', 'a', 'c']": ["'a'", "'z'"],
 };
-const FROM_INDEX = ["", "1", "-2", "-100", "100", "NaN", "Infinity", "-Infinity", "-1.2"];
+const FROM_INDEX = ["", "1", "-2", "-100", "100", "NaN", "Infinity", "-Infinity", "1.7", "-1.2", "-0"];
 
 const STRING_CALLS = [
   "'undefined'.indexOf(undefined)",
