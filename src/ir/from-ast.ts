@@ -7902,7 +7902,12 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     // operand. Reuse the canonical tag-aware boxer; ambiguous refs/i32 values
     // still decline and demote through the existing assignability error.
     if (expected.kind === "dynamic" && argType.kind !== "dynamic") {
-      const boxed = boxConcreteToDynamic(argVal, argType, argExpr, cx);
+      // (#7320) A closure argument boxes as a function value, the way a
+      // dynamic call's arguments do (`functionObjectDynamicValue`).
+      const boxed =
+        argType.kind === "closure"
+          ? functionObjects.functionObjectDynamicValue(argVal, argExpr, functionObjectLoweringHost(cx))
+          : boxConcreteToDynamic(argVal, argType, argExpr, cx);
       if (boxed !== null) {
         argVal = boxed;
         argType = cx.builder.typeOf(argVal);
