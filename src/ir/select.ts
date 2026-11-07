@@ -10966,12 +10966,16 @@ const laneFormatsNumbers = (): boolean =>
   currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true;
 
 /**
- * A function's `+` over a dynamic script var: from-ast adds that var as the carrier only where it is in scope
- * (`<module-init>`); a function reads it through `resolveModuleBinding`, which `addsAsCarrier` does not consult.
+ * (#7106 lever T) A module operand's `+`: `admit` when the builder proves it at the use site (no family agreement
+ * needed); `refuse` a function's unproven `+` over a dynamic script var, since from-ast adds that var as the carrier
+ * only where it is in scope (`<module-init>`) and a function reads it through `resolveModuleBinding`, which
+ * `addsAsCarrier` does not consult; otherwise the family checks decide.
  */
-function functionAddsDynamicModuleRead(expr: ts.BinaryExpression): boolean {
+function moduleAdditionVerdict(expr: ts.BinaryExpression): "admit" | "refuse" | "families" {
+  if (expr.operatorToken.kind !== ts.SyntaxKind.PlusToken) return "families";
+  if (checkerAdditionVerdict(expr) === true) return "admit";
   const readsDynamic = (e: ts.Expression) => moduleBinding(e)?.valueKind.kind === "dynamic";
-  return !currentSubjectIsModuleInit && (readsDynamic(expr.left) || readsDynamic(expr.right));
+  return !currentSubjectIsModuleInit && (readsDynamic(expr.left) || readsDynamic(expr.right)) ? "refuse" : "families";
 }
 
 /** The builder's `+` proof (`provenAdditiveOperands`) over the checker's use-site types; `undefined` if unclassified. */
@@ -11735,11 +11739,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (leftTracksModule || rightTracksModule) {
       const leftFamily = obviousModuleValueFamily(expr.left);
       const rightFamily = obviousModuleValueFamily(expr.right);
-      // (#7106 lever T) A `+` the builder proves at the use site needs no family agreement.
-      const additive = binOp === ts.SyntaxKind.PlusToken && checkerAdditionVerdict(expr) === true;
-      if (binOp === ts.SyntaxKind.PlusToken && !additive && functionAddsDynamicModuleRead(expr)) {
-        return shapeNo("expr-module-dynamic-addition", expr);
-      }
+      const addition = moduleAdditionVerdict(expr);
+      if (addition === "refuse") return shapeNo("expr-module-dynamic-addition", expr);
       const isEquality = isEqualityOperator(binOp);
       const nullishEquality =
         isEquality &&
@@ -11747,7 +11748,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           rightFamily === "nullish" ||
           leftFamily === undefined ||
           rightFamily === undefined);
-      if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality && !additive) {
+      if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality && addition !== "admit") {
         return shapeNo("expr-module-value-representation-mismatch", expr);
       }
       const booleanModuleOperand =
@@ -11755,7 +11756,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         (rightTracksModule && (rightFamily === "boolean" || expressionTouchesBooleanModuleBinding(expr.right)));
       if (
         booleanModuleOperand &&
-        !additive &&
+        addition !== "admit" &&
         !isComparisonResultOperator(binOp) &&
         binOp !== ts.SyntaxKind.AmpersandAmpersandToken &&
         binOp !== ts.SyntaxKind.BarBarToken

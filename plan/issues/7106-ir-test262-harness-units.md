@@ -46,11 +46,11 @@ flat-dir-budget-allow:
   - src/codegen/ir-dynamic-delete.ts # 2026-10-22 (#7106 propertyHelper arm 3): the dynamic delete wrapper beside ir-dynamic-construct.ts
   - src/codegen/ir-dynamic-instanceof.ts # 2026-10-22 (#7106 dyn.instanceof): the generic dynamic instanceof wrapper beside ir-dynamic-delete.ts
 loc-budget-allow:
-  - src/ir/select.ts # 2026-11-06 (#7106 lever T): +33 net — the builder's own rules at selection (the checker `+` proof, throwOperandAdmissible, the void-call, dynamic-compound and in-function dynamic `+` refusals) and the three throw refusal codes; folding the two compound arms and the three touch walkers offsets part of it
+  - src/ir/select.ts # 2026-11-06 (#7106 lever T): +34 net — the builder's own rules at selection (the checker `+` proof, throwOperandAdmissible, the void-call, dynamic-compound and in-function dynamic `+` refusals) and the three throw refusal codes; folding the two compound arms and the three touch walkers offsets part of it
   # 2026-11-06 (#7106 lever T review round 2): +4, writeValueMatches refuses a bare null into the script dynamic home as the builder does; #7127 removes it
   - src/ir/module-bindings.ts
 func-budget-allow:
-  - src/ir/select.ts::isPhase1Expr # 2026-11-06 (#7106 lever T): +8 — the module `+` reads the builder's checker proof (`checkerAdditionVerdict`) instead of requiring equal families, a void local call operand is refused, and so is a function's unproven `+` over a dynamic script var
+  - src/ir/select.ts::isPhase1Expr # 2026-11-06 (#7106 lever T): +5 — the module `+` reads the builder's checker proof (`checkerAdditionVerdict`) instead of requiring equal families, a void local call operand is refused, and so is a function's unproven `+` over a dynamic script var
 import-cycles-allow:
   - ir->codegen: 84 # 2026-10-29 (merge-group fix, restated on main's 83 after #6977/#6979 + this borrow wrapper); 2026-10-29 (revive, restated on main's 81 + #7119's wrapper module + this borrow wrapper); 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (module-init lever A): the bridge reads legacy's Math/Number constant table (`codegen/builtin-value-read.ts`); 2026-10-22 (lever B): …and pre-registers the Number(v) provider (`codegen/helpers/ir-number-from-value.ts`); 2026-10-22 (compareArray.format): …and the Array.prototype borrow wrapper
   - codegen->ir: 301 # 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
@@ -5526,8 +5526,9 @@ the builder's rules do not use:
     from-ast takes a dynamic script var as the carrier only where it is in
     scope (`<module-init>`); a function reads it through
     `resolveModuleBinding`, which `addsAsCarrier` does not consult, so the
-    checker proof decides and refuses. `expr-module-dynamic-addition` refuses
-    it unless `checkerAdditionVerdict` proves the `+`. The same withdrawal
+    checker proof decides and refuses. `moduleAdditionVerdict`, beside
+    `checkerAdditionVerdict`, answers the module `+` once (admit, refuse as
+    `expr-module-dynamic-addition`, or leave it to the family checks). The same withdrawal
     exists on main for `return '#1: ' + x`; this refusal fixes that as well.
     Teaching `addsAsCarrier` the resolver read would claim these instead; that
     is a builder change with its own census, left as a follow-up.
@@ -5587,8 +5588,8 @@ the builder's rules do not use:
   additive verdict, `compoundWriteAdmissible` and the existing return-kind
   resolver.
 - One duplicate is folded: the two `<id> <op>= e` arms.
-- `select.ts` grows by 33 lines, `module-bindings.ts` by 4 and `isPhase1Expr`
-  by 8, granted in the frontmatter. The two refusals are new arms the builder already implied, so
+- `select.ts` grows by 34 lines, `module-bindings.ts` by 4 and `isPhase1Expr`
+  by 5, granted in the frontmatter. The two refusals are new arms the builder already implied, so
   the plan's "no growth" did not hold.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
