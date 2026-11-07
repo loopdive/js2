@@ -37,7 +37,7 @@ import {
 import { isDynamicGeneratorFunctionValue } from "../generator-function-dynamic.js"; // (#6651 A14)
 import { isAnyValue, undefinedExternInstrs, undefinedSingletonActive } from "../any-helpers.js";
 import { BUILTIN_STATIC_METHOD_ARITY } from "../builtin-fn-meta.js";
-import { ensureBuiltinProtoMemberFunc } from "../native-proto-value-read.js"; // (#7294)
+import { builtinProtoMemberInstrs } from "../native-proto-value-read.js"; // (#7294)
 import {
   ensureFunctionPrototypeCallHelper,
   tryEmitNonCallableNamespaceInvokerThrow,
@@ -3443,13 +3443,13 @@ export function compileBuiltinStaticCall(
     if (tryEmitBuiltinProtoConstructorDescriptor(ctx, fctx, gopdProtoBuiltin, propLiteral)) {
       return { kind: "externref" };
     }
-    // (#2885 Site 2 / #7294) An own glue member: the shared support function
-    // builds the descriptor (the IR calls the same one).
+    // (#2885 Site 2 / #7294) An own glue member: the shared synthesis builds
+    // the descriptor (the IR calls the support function wrapping it).
     if (gopdProtoBuiltin !== undefined && propLiteral !== undefined) {
-      const descriptorFunc = ensureBuiltinProtoMemberFunc(ctx, "descriptor", gopdProtoBuiltin, propLiteral);
-      if (descriptorFunc !== undefined) {
+      const descriptor = builtinProtoMemberInstrs(ctx, "descriptor", gopdProtoBuiltin, propLiteral);
+      if (descriptor !== undefined) {
         flushLateImportShifts(ctx, fctx);
-        fctx.body.push({ op: "call", funcIdx: descriptorFunc });
+        fctx.body.push(...descriptor);
         return { kind: "externref" };
       }
     }
