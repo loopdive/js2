@@ -3042,6 +3042,11 @@ function bodyCallsDynamicParamCallee(body: ts.Block, typeMap: TypeMap | undefine
  * (`nullValueAdmissible`), and an object literal is not `boxableIntoDynamic`.
  * Functions meet this rule through the move-only scan; `<module-init>` has no
  * parameters and so no scan, and checks it with this predicate instead.
+ *
+ * This is the syntactic negation of those two refusals at the call boundary.
+ * A value that reaches the call through a binding (`var nv = null; u(nv)`)
+ * is out of its scope: there the binding's initializer is the failing node
+ * (#7328).
  */
 function callPassesUncarriedDynamicArgument(root: ts.Node, typeMap: TypeMap | undefined): boolean {
   return someDirectLocalCall(root, (call, callee) =>
