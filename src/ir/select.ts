@@ -8780,11 +8780,22 @@ function hostRegExpUnavailable(): boolean {
   return currentSelectionOptions?.supportsBackendCapability?.("host-regexp-constructor") === false;
 }
 
-/** (#7106 lever R) A static construction (`staticRegExpPair`) a `native-regexp` lane builds in-module. */
+/**
+ * (#7106 lever R) A static construction (`staticRegExpPair`) a `native-regexp` lane builds in-module, where R1
+ * consumes it: the receiver of `.test(…)`, or a discarded statement (which still throws an invalid pair's
+ * SyntaxError). A property read (`/a/.source`), a `+` (R3's ToString) or a binding has no lowering for it yet.
+ */
 function nativeStaticRegExp(expr: ts.Expression): boolean {
   const pair = staticRegExpPair(expr);
+  const consumer = outermostParenthesized(expr).parent;
+  const testReceiver =
+    ts.isPropertyAccessExpression(consumer) &&
+    consumer.name.text === "test" &&
+    ts.isCallExpression(consumer.parent) &&
+    consumer.parent.expression === consumer;
   return (
     pair !== undefined &&
+    (testReceiver || ts.isExpressionStatement(consumer)) &&
     currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
     currentSelectionOptions.nativeRegExpCompiles?.(pair.pattern, pair.flags) === true
   );

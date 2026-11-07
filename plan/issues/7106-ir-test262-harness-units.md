@@ -5449,7 +5449,7 @@ depends on it, not for its own gain.
     reused);
   - no new function.
 
-## ES5 lever R: RegExp on the host-free lanes (plan, 2026-11-06)
+## ES5 lever R: RegExp on the host-free lanes (plan 2026-11-06; R1 implemented 2026-11-07)
 
 Lever `R` of "ES5 IR-only: ranked levers": 548 files carry it, and the census
 estimated 135 freed by R alone (not unmasked). Plan only; nothing is
@@ -5611,6 +5611,58 @@ capability.
   - R1 alone frees the `.test` / literal / constructor shapes; the 12
     `'…' + re` throw messages need R3.
   - About 25 more need `S` + R (the S15.10.2 `__executed` family).
+
+### R1 implemented (2026-11-07)
+
+**What landed** (steps 1, 2 and step 3 for `.test`; step 4 moves to R2, where the IR first calls the exec helper, since moving the name now would only add codegen→ir import edges):
+- `native-regexp` replaces `standalone-native-regexp-test-carrier`.
+- `extern.regex` carries an optional provider. On a `native-regexp` lane it is
+  the per-pair wrapper `codegen/ir-regexp-literal.ts` builds over legacy's
+  static construction (`compileStandaloneStaticRegExp`, split out of the
+  constructor tail); elsewhere the arm still calls `env.RegExp_new`.
+- `staticRegExpPair` (`ir/regexp-static.ts`) reads a literal or a literal
+  `new RegExp(p?, f?)`, for from-ast and the selector alike.
+- `.test(s)` on any IR RegExp value calls `__regexp_test_carrier`.
+
+**Where a native RegExp is admitted.** Only where R1 consumes it: the
+receiver of `.test(…)`, or a discarded statement (`new RegExp('a**');` still
+throws its SyntaxError). The first census admitted it everywhere and found
+four withdrawals and one compile error, all a RegExp value meeting a consumer
+with no lowering yet:
+- `/1/.source`: a capability-deferred extern property read, a hard compile
+  error (R3's getters);
+- `'…' + new RegExp('a**')`: the builder's `+` proof has no RegExp family
+  (R3's ToString), 6 files;
+- `var __re = new RegExp;`: a dynamic script slot has no carrier for it;
+- a local `var re = /a/g` would reach the same reads.
+
+`nativeStaticRegExp` refuses every other position, so a binding (`S`) or a
+consumer (R2/R3) widens it with its own lowering.
+
+**R3 is not in this change.** `'…' + re` needs the RegExp value as a dynamic
+`+` operand whose ToPrimitive reaches `RegExp.prototype.toString`, plus the
+selector's `+` family for it. That is more than a second commit's worth, so R1
+ships alone.
+
+**Measured** (base 245e830d49 vs head, standalone and gc):
+- **Population:** 389 files: the 60-file R probe, 100 random ES5
+  `built-ins/RegExp` files, every ES5 `String.prototype.{match,replace,split,search}`
+  file, and the lever-T non-eval sample.
+- **Newly IR-only:** +12 on both lanes (2 → 14), all `S15.10.2.*` `.test`
+  shapes. All 12 pass on both trees and both lanes.
+- **Everything else:** 377 binaries byte-identical; 0 status changes; 0 new
+  post-claim; the playground is identical. The host-RegExp lane takes the
+  unchanged `env.RegExp_new` arm.
+- **ES5 IR-only estimate:** about 33 files: the 6 probe gains, plus 6 of the
+  100 random files scaled to the 451-file pool (about 27). The String-method
+  files gain nothing yet (R4).
+
+**Tests:** `tests/issue-7106-lever-r.test.ts`, on both lanes:
+- eight claimed shapes: a literal, an anchored miss, the `m` flag, a
+  constructed pattern with and without flags, the empty pattern, an invalid
+  pair's SyntaxError, and a fresh `g` literal per evaluation;
+- six refused at selection and never withdrawn: `exec`, a dynamic pattern,
+  `.source`, a `+`, a script binding and a local binding.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 

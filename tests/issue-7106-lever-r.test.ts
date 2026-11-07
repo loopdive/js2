@@ -47,9 +47,6 @@ const CLAIMED: Record<string, string> = {
   freshPerEvaluation:
     "function f() { var n = 0; for (var i = 0; i < 3; i++) { if (/a/g.test('aa')) { n++; } } return n; }\n" +
     "if (f() !== 3) { throw new Test262Error('#1'); }",
-  // One object carries its `lastIndex` between calls.
-  stickyState:
-    "function h() { var re = /a/g; re.test('aa'); return re.test('aa'); }\nif (!h()) { throw new Test262Error('#1'); }",
 };
 
 const REFUSED: Record<string, string> = {
@@ -57,6 +54,12 @@ const REFUSED: Record<string, string> = {
   exec: "if (/a/.exec('a') === null) { throw new Test262Error('#1'); }",
   // A dynamic pattern needs the runtime compiler.
   dynamicPattern: "var p = 'a';\nif (!new RegExp(p).test('a')) { throw new Test262Error('#1'); }",
+  // R1 lowers a RegExp only as a `.test` receiver or a discarded statement: no property read, ToString (R3) or binding.
+  sourceRead: "if (/1/.source !== '1') { throw new Test262Error('#1'); }",
+  concatenated: "try { throw new Test262Error('#1: ' + new RegExp('a**')); } catch (e) {}",
+  boundScript: "var __re = new RegExp;\nif (__re.global !== false) { throw new Test262Error('#1'); }",
+  boundLocal:
+    "function h() { var re = /a/g; re.test('aa'); return re.test('aa'); }\nif (!h()) { throw new Test262Error('#1'); }",
 };
 
 describe("#7106 lever R1 — RegExp on the host-free lanes", () => {
