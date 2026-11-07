@@ -84,7 +84,7 @@ func-budget-allow:
   - src/ir/select.ts::dynamicUsesAreMoveOnly
   - src/ir/select.ts::scanExpr
   # 2026-10-31 (boolean statics, round 4): the 3-line adapter call beside the Math arms (+3)
-  # 2026-11-07 (lever W): the unary `-`/`+` wrapper-operand arm (+11)
+  # 2026-11-07 (lever W, review round 1): the unary `-`/`+` wrapper-operand arm, refusing through the shared `selectorWrapperToPrimitiveSupported` (+7)
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select.ts::collectCallGraph
   - src/ir/select.ts::whyNotIrClaimable
@@ -118,7 +118,7 @@ loc-budget-allow:
   - src/ir/runtime/verify.ts
   # 2026-10-31 (boolean statics, round 5): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+89); the rule lives in src/ir/static-predicates/
   # 2026-11-01 (#7106 S5): `moduleVarLeavesStorable`, the per-leaf slot fit of a module-init `var` pattern (+36)
-  # 2026-11-07 (lever W): the unary `-`/`+` wrapper-operand arm in isPhase1Expr, with its capability refusal inline like the 36 sibling capability checks (+11)
+  # 2026-11-07 (lever W, review round 1): the unary `-`/`+` wrapper-operand arm and `selectorWrapperToPrimitiveSupported`, the wrapper capability refusal now shared with the binary arm (+11; the binary arm nets -2)
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
@@ -6078,8 +6078,10 @@ both lanes.
 - **Still refused:** `!`, `~`, `typeof`, `void` on a wrapper, and
   `new Object()`. `selectorPrimitiveWrapperConstruction` covers only
   `String`/`Number`/`Boolean` with one argument of the matching family.
-- **Size:** +11 lines in `select.ts`, granted in the frontmatter. The
-  capability check stays inline like its 36 siblings.
+- **Size:** +11 lines in `select.ts` (+7 in `isPhase1Expr`), granted in
+  the frontmatter. The capability refusal is one helper,
+  `selectorWrapperToPrimitiveSupported`, shared with the binary wrapper arm
+  (review round 1 folded the copy the first cut had inlined).
 - **Tests:** `tests/issue-7106-lever-w-unary-wrapper.test.ts` on both lanes:
   - claimed: `-new Number(1)`, `+new String("1")`, `-new Boolean(true)`,
     `+new Boolean(false)`, `-new String("0x10")`, `+new String("x")`, each

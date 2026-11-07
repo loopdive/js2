@@ -45,12 +45,17 @@ function outcome(result: CompileResult, name: string): IrObservedOutcome | undef
   return result.irOutcomes?.find((entry) => entry.displayName === name);
 }
 
-async function compileTarget(text: string, target: CompileTarget): Promise<CompileResult> {
+async function compileTarget(
+  text: string,
+  target: CompileTarget,
+  options: { fileName?: string; allowJs?: boolean; fast?: boolean } = {},
+): Promise<CompileResult> {
   const result = await compile(text, {
     fileName: "issue-7106-lever-w-unary-wrapper.ts",
     experimentalIR: true,
     trackIrOutcomes: true,
     skipSemanticDiagnostics: true,
+    ...options,
     ...(target ? { target } : {}),
   });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
@@ -79,4 +84,30 @@ describe("#7106 lever W — unary -/+ on a primitive wrapper", () => {
       }
     },
   );
+
+  // The test262 targets (S11.4.6/S11.4.7 `_A3_T*`) are scripts whose checks
+  // run in `<module-init>`; a wrong value throws at instantiation.
+  it.each<CompileTarget>([undefined, "standalone"])("claims -/+ wrapper in <module-init> (%s)", async (target) => {
+    const script = (expected: number) => `
+      if (-new Number(1) !== ${expected}) throw "neg";
+      var plus = +new String("2");
+      if (plus !== 2) throw "plus";
+    `;
+    const options = { fileName: "lever-w-script.js", allowJs: true };
+    const result = await compileTarget(script(-1), target, options);
+    expect(outcome(result, "<module-init>")).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+    await expect(instantiate(result)).resolves.toBeDefined();
+    await expect(instantiate(await compileTarget(script(1), target, options))).rejects.toThrow();
+  });
+
+  it("refuses at selection when the backend lacks the wrapper ToPrimitive (fast)", async () => {
+    const result = await compileTarget("export function negNumber(): number { return -new Number(1); }", undefined, {
+      fast: true,
+    });
+    expect(outcome(result, "negNumber")).toMatchObject({
+      kind: "unsupported",
+      irBodyEmitted: false,
+      code: "operand-coercion-unsupported",
+    });
+  });
 });
