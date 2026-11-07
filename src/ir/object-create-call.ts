@@ -43,7 +43,7 @@
 
 import ts from "typescript";
 
-import { isUnshadowedLibGlobal } from "../shared/ambient-intrinsics.js";
+import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
@@ -107,7 +107,7 @@ export function objectCreateDescriptorMap(
   if (!ts.isObjectLiteralExpression(proto) || proto.properties.length > 0) return null;
   if (!admission.supportsBackendCapability("native-dynamic-member-read")) return null;
   const properties = descriptorMapProperties(expr.arguments[1]!);
-  if (properties === null || !isUnshadowedLibGlobal(callee.expression, admission.isLibOnlyBinding)) return null;
+  if (properties === null || !isUnshadowedLibBinding(callee.expression, admission.isLibOnlyBinding)) return null;
   return unitInKeysAreOwnOnly(expr) ? properties : null;
 }
 

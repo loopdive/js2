@@ -59,3 +59,7 @@ inherited key (`unitInKeysAreOwnOnly`, `src/ir/object-create-call.ts`).
 - The reviewer's table re-run shows zero divergences from node.
 - gc output byte-identical where the IR does not claim.
 - Once fixed, `unitInKeysAreOwnOnly` can be dropped from #7276 / #7280.
+  For `<module-init>` that refusal scans the whole source file, nested
+  functions included, so it refuses more than the call's own unit needs
+  (#7142 delta review 6702199382, nit 2): this over-refusal is what the fix
+  lifts.
