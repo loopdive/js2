@@ -6095,12 +6095,12 @@ function withoutVoidReturn(ctx: CodegenContext, body: Instr[], typeIdx: number):
   return isVoid && body.length > 1 && body.at(-1)?.op === "return" ? body.slice(0, -1) : body;
 }
 
-/** Resolve a checker-owned module declaration to its exact structural/legacy slot pair. */
 /** The module-defined global at absolute index `absIdx`, if any. */
 function moduleGlobalDef(ctx: CodegenContext, absIdx: number | undefined): GlobalDef | undefined {
   return absIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, absIdx)];
 }
 
+/** Resolve a checker-owned module declaration to its exact structural/legacy slot pair. */
 function resolveModuleBindingGlobal(
   ctx: CodegenContext,
   identity: IrModuleBindingIdentity,

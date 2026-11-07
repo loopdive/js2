@@ -11541,8 +11541,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return shapeNo("expr-module-extern-consumer", expr);
   }
   // (#7106 levers R2, S2) A match result's served field goes only where its dynamic value lowers.
-  if (isRegExpMatchRead(expr) && !regExpMatchReadValueAdmitted(expr, isFunctionObjectMemberCall)) {
-    return capabilityNo("regexp-constructor-unsupported", "expr-regexp-match-read", expr);
+  if (
+    currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
+    isRegExpMatchRead(expr) &&
+    !regExpMatchReadValueAdmitted(expr, isFunctionObjectMemberCall)
+  ) {
+    return capabilityNo("operand-coercion-unsupported", "expr-regexp-match-read", expr);
   }
   if (ts.isParenthesizedExpression(expr)) return isPhase1Expr(expr.expression, scope, localClasses);
   // (#3583) Type-erased assertion wrappers emit nothing; `lowerExpr` unwraps the identical operand shape.
