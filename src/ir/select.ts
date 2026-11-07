@@ -156,6 +156,7 @@ import {
   isIrModuleMapValueKind,
   isIrModuleNativeBufferValueKind,
   isIrModuleReferenceValueKind,
+  isStatementDynamicModuleCall,
 } from "./module-bindings.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
 import { firstConstBindingWrite } from "./const-binding-writes.js";
@@ -7158,6 +7159,12 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     }
     if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
       return shapeNo("vardecl-init-expr", d.initializer);
+    // The IR has no dynamic `null` value for a dynamic module home (#7287 review B3).
+    if (
+      directModuleBinding?.valueKind.kind === "dynamic" &&
+      binaryOperandFamily(d.initializer, initializerScope, localClasses) === "nullish"
+    )
+      return shapeNo("vardecl-module-value-flow", d.initializer);
     const initializer = unwrapPhase1Parens(d.initializer);
     const objectMethodValue = isConst ? directObjectMethodValueProjection(d, initializer, initializerScope) : null;
     const returnedCallable = objectMethodValue ? null : directReturnedCallableSignature(initializer, initializerScope);
@@ -13418,8 +13425,11 @@ export function buildLocalCallGraph(
     // mark the outer as having an external call.
     const localBindings = collectLocalClosureBindings(fn);
 
+    // (#7324) A lifted closure lowers its calls through the same plans as its
+    // enclosing unit, so they pass the same gate; calls to the closure's own
+    // parameters and locals are local, not edges.
     const visit = (node: ts.Node): void => {
-      if (node !== fn && isFunctionLike(node)) return;
+      if (node !== fn && isFunctionLike(node) && !isLiftedClosure(node)) return;
       // Slice 4 (#1169d): `new <className>(...)` is NOT a function-style
       // call; it dispatches to a legacy-compiled constructor with a
       // stable signature. Walk into the args (which may contain real
@@ -13545,7 +13555,8 @@ export function buildLocalCallGraph(
           if (
             (currentModuleBindingResolver === null && localBindings.names.has(callee)) ||
             (localDeclaration !== undefined &&
-              localClosureDeclarationsContain(localBindings.declarations, localDeclaration))
+              (localClosureDeclarationsContain(localBindings.declarations, localDeclaration) ||
+                ts.findAncestor(localDeclaration.parent, isLiftedClosure) !== undefined))
           ) {
             // Slice 3: closure / nested-fn binding within this outer.
             // Variable-backed callables use checker-resolved declaration
@@ -13589,6 +13600,15 @@ export function buildLocalCallGraph(
             return;
           } else if (isStoredObjectDescriptorAliasCall(node, (name) => localBindings.names.has(name))) {
             // (#7106 propertyHelper) likewise the stored descriptor alias.
+            for (const argument of node.arguments) visit(argument);
+            return;
+          } else if (
+            isStatementDynamicModuleCall(
+              node,
+              (callee) => currentModuleBindingResolver?.(callee)?.valueKind.kind === "dynamic",
+            )
+          ) {
+            // (#7287) Lowered by from-ast's Stage-4 dynamic call, not an edge.
             for (const argument of node.arguments) visit(argument);
             return;
           } else {
@@ -13676,6 +13696,10 @@ export function buildLocalCallGraph(
     forEachChild(fn.body, visit);
   }
   return { callers, callees, hasExternalCall, externalCallees };
+}
+
+function isLiftedClosure(node: ts.Node): node is ts.FunctionExpression | ts.ArrowFunction {
+  return ts.isFunctionExpression(node) || ts.isArrowFunction(node);
 }
 
 function parseNumberCallUsesDynamicCarrier(callerName: string, call: ts.CallExpression): boolean {
