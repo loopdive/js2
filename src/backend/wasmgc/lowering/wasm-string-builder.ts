@@ -52,6 +52,13 @@ export interface StringBuilderScratch {
   readonly index: number;
 }
 
+/** (#1761) A presized builder's f64 loop-bound local, an i32 scratch, and its units per iteration. */
+export interface StringBuilderPresize {
+  readonly bound: number;
+  readonly boundTmp: number;
+  readonly unitsPerIter: number;
+}
+
 /** A never-iterated builder wastes little; a few iterations do not grow it. */
 export const STRING_BUILDER_INITIAL_CAP = 16;
 
@@ -86,6 +93,20 @@ export const STRING_BUILDER_TRIP_COUNT_OF_F64_BOUND: readonly Instr[] = [
   { op: "f64.ceil" },
   { op: "i32.trunc_sat_f64_s" },
 ];
+
+/** (#7291) Presized init from the f64 loop bound: `ceil(bound) * unitsPerIter` units, never grown. */
+export function stringBuilderPresizedInitInstrs(
+  t: StringBuilderTypes,
+  sb: StringBuilderSlots,
+  presize: StringBuilderPresize,
+): Instr[] {
+  return [
+    { op: "local.get", index: presize.bound },
+    ...STRING_BUILDER_TRIP_COUNT_OF_F64_BOUND,
+    ...stringBuilderPresizedAllocInstrs(t, sb, presize.boundTmp, presize.unitsPerIter),
+    ...stringBuilderResetInstrs(t, sb),
+  ];
+}
 
 /**
  * (#1761) Consumes the i32 loop bound: `cap = max(0, bound) * unitsPerIter`,

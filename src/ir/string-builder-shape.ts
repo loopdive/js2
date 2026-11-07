@@ -26,10 +26,13 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { countedStringAppendCandidateLoops, type IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
-import { isFunctionScopeBoundary } from "./analysis/string-builder-presize.js";
+import {
+  isFunctionScopeBoundary,
+  planStringBuilderPresize,
+  type StringBuilderPresizeInfo,
+} from "./analysis/string-builder-presize.js";
 import { readEnv } from "../env.js";
 import type { IrCountedStringAppendLoweringPlan } from "./ast-lowering-plans.js";
-import type { IrSlotDef } from "./core/nodes.js";
 
 function isLoopStatement(node: ts.Node): node is ts.IterationStatement {
   return ts.isForStatement(node) || ts.isWhileStatement(node) || ts.isDoStatement(node);
@@ -156,7 +159,7 @@ export function containsStringBuilderLoopShape(root: ts.Node): boolean {
   return found;
 }
 
-/** What `stringBuilderSlotRole` reads of the lowering context. */
+/** What `stringBuilderSlotPlan` reads of the lowering context. */
 export interface StringBuilderSlotEvidence {
   readonly funcKind: "regular" | "generator" | "async";
   readonly checker?: ts.TypeChecker;
@@ -164,20 +167,33 @@ export interface StringBuilderSlotEvidence {
   readonly countedStringAppends?: ReadonlyMap<ts.ForStatement, IrCountedStringAppendLoweringPlan>;
 }
 
+/** A builder slot, and its #1761 presize when the build loop proves one. */
+export interface StringBuilderSlotPlan {
+  readonly presize: StringBuilderPresizeInfo | null;
+}
+
 /**
- * (#7291) The slot role of an owned-append builder (`collectOwnedStringAppendSymbols`)
+ * (#7291) The plan of an owned-append builder (`collectOwnedStringAppendSymbols`)
  * outside a resumable body, whose state machine assumes one Wasm local per
  * slot. A counted append (#3518) already lowers to one `string.repeat`.
  */
-export function stringBuilderSlotRole(
+export function stringBuilderSlotPlan(
   declaration: ts.VariableDeclaration | ts.BindingElement,
   evidence: StringBuilderSlotEvidence,
-): Pick<IrSlotDef, "stringBuilder"> {
-  if (evidence.funcKind !== "regular" || !ts.isVariableDeclaration(declaration)) return {};
-  const symbol = evidence.checker?.getSymbolAtLocation(declaration.name);
-  if (!symbol || !evidence.ownedStringAppendSymbols.has(symbol)) return {};
+): StringBuilderSlotPlan | undefined {
+  if (evidence.funcKind !== "regular" || !ts.isVariableDeclaration(declaration) || !evidence.checker) return undefined;
+  const symbol = evidence.checker.getSymbolAtLocation(declaration.name);
+  if (!symbol || !evidence.ownedStringAppendSymbols.has(symbol)) return undefined;
   for (const plan of evidence.countedStringAppends?.values() ?? []) {
-    if (plan.syntaxPlan.accumulatorSymbol === symbol) return {};
+    if (plan.syntaxPlan.accumulatorSymbol === symbol) return undefined;
   }
-  return { stringBuilder: true };
+  // The owned-append license guarantees the build loop is the next statement.
+  const statement = declaration.parent.parent;
+  const block = statement.parent;
+  const loop = ts.isBlock(block)
+    ? block.statements[block.statements.indexOf(statement as ts.Statement) + 1]
+    : undefined;
+  return {
+    presize: loop && isLoopStatement(loop) ? planStringBuilderPresize(evidence.checker, declaration, loop) : null,
+  };
 }
