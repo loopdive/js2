@@ -5677,7 +5677,7 @@ depends on it, not for its own gain.
     reused);
   - no new function.
 
-## ES5 lever R: RegExp on the host-free lanes (plan 2026-11-06; R1 implemented 2026-11-07)
+## ES5 lever R: RegExp on the host-free lanes (plan 2026-11-06; R1, R2 + S2 implemented 2026-11-07)
 
 Lever `R` of "ES5 IR-only: ranked levers": 548 files carry it, and the census
 estimated 135 freed by R alone (not unmasked). Plan only; nothing is
@@ -5961,6 +5961,102 @@ ships alone.
 so many files become IR-only only when both changes are in. The measurement
 below reports units moved, files now IR-only, and files whose only remaining
 refusal is #7292's.
+
+### R2 + S2 implemented (2026-11-07)
+
+**What landed.** The design above, plus two consumers that the census
+reached.
+
+R2: `re.exec(s)`.
+- **One shared path for `.test` and `.exec`.** The IR's `.test` and `.exec`
+  share the resolver plan `nativeRegExpMethodPlan`, the selector arm and the
+  from-ast arm `lowerNativeRegExpMethod`. `.test` answers `boolean`; `.exec`
+  answers `dynamic`.
+- **The helper name is below the IR.** `STANDALONE_REGEXP_CARRIER_EXEC_HELPER`
+  now lives in `ir/regexp-runtime-contract.ts`. That makes one new
+  codegen→ir edge, from `regexp-exec-carrier.ts`, which the
+  `import-cycles-allow` grant covers.
+- **How the IR reaches the exec helper.** `codegen/regexp-standalone.ts`
+  re-exports `ensureStandaloneRegExpCarrierExecHelper` and
+  `ensureRegexMatchVecType`. The IR imports RegExp codegen only through that
+  module, so the ir→codegen layering count stays the same.
+- **`'…' + re.exec(s)` takes the dynamic `+`.** `expressionProducesDynamic`
+  names an `.exec` call that has a native plan. The first census found 41
+  `S15.10.2.15` throw messages that the selector admitted but the builder's
+  `+` proof refused after the claim. This change removes those.
+
+S2: the result bound in a script `var`.
+- **The value kind.** `scriptVarHome` names `$__regexp_match_vec` (off fast
+  mode) as the `regexp-match` home. The new `ir/module-binding-regexp-match.ts`
+  admits two things:
+  - the declaration's `.exec(…)` initializer as the one IR write;
+  - reads anywhere.
+
+  Any other store (`=`, an update, a for-in/of head, a redeclaration) is
+  refused at its site as `regexp-match-store`.
+- **The slot boundary.** `ModuleBindingGlobal.slot` and the scope entry carry
+  the typed slot to `global.get` / `global.set`:
+  - a read lowers to `emitToExternref`;
+  - a write lowers to `emitFromExternref` on a nullable target.
+
+  `WasmGcEmitter.emitDowncast` now emits `ref.cast null` for a `ref_null`
+  IrType target. No existing caller passes one.
+- **A bare `null` argument of a function-object call** (`assert.sameValue(x,
+  null)`) now lowers as the externref `null` that `IR_DYN_CALL_BOX_FN`
+  projects.
+  - Before, it failed after the claim on every lane: "bare 'null' in
+    non-reference context (dynamic)". This is a pre-existing class that
+    `S15.10.2.13_A1_T17` reached.
+  - A probe checks the semantics: `null` is not `undefined` and not `1` to
+    `assert.sameValue`, and `/a/.exec('b')` is `null`.
+
+**Measured** (base 4748040724, which is R1 merged with main b631a4bcab;
+head cd9a9d6c6c).
+- **Population: 636 files.** Every ES5 `built-ins/{RegExp,String}` file that
+  calls `.exec` (340), plus the 389-file R1 population (100 random ES5
+  `built-ins/RegExp` files, the R probe, the String-method files and the
+  lever-T sample).
+- **Results, identical on standalone and gc:**
+
+  | measure | standalone | gc |
+  | --- | --- | --- |
+  | `<module-init>` moved legacy → IR | 42 | 42 |
+  | legacy units | 739 → 697 | 735 → 693 |
+  | newly IR-only files | +42, all `S15.10.2.*` exec shapes | +42 |
+  | IR-only files lost | 0 | 0 |
+  | new post-claim errors | 0 | 0 |
+  | changed binaries | the same 42 files | the same 42 files |
+  | pass/fail of the 42, base and head | 42/42 pass | 42/42 pass |
+
+  - The other 594 binaries are byte-identical, so there is no pass→fail.
+  - The playground is identical: 26 binaries.
+- **ES5 IR-only gain: 42 files.** The `.exec` family is enumerated
+  exhaustively, and no file outside it moved. Only two ES5 files outside
+  `RegExp`/`String` call `.exec`.
+- **Blocked by #7292.** 194 exec-family files now stop first at
+  `var __expected = [...]`.
+  - An unmasked rerun with `JS2WASM_IR_MODULE_INIT_ALL_REJECTS` over the 296
+    still-legacy files finds **no file blocked by #7292 alone**: every one
+    also carries the top-level `for (var index = 0; …)` head
+    (`for-init-var-kind`).
+  - **193 files are blocked only by #7292 plus `for-init-var-kind`.** These are
+    the S2 family's remaining gain once both land.
+  - The other refusals: 16 `__executed instanceof Array`, 16 dynamic or
+    unsupported literals (`/(?:ab|cd)\d?/`, lever R's later slices), and a
+    tail of `throw-module-scalar-unboxed` and `lastIndex` / g-flag shapes.
+
+**Tests.** `tests/issue-7106-lever-r.test.ts` runs on both lanes.
+- **Claimed:** an exec miss, captures (`length` / `index` / `[1]`), a
+  constructed pattern, the bound result (`length` / `index` / `input` /
+  `[1]`), and a bound miss through `assert.sameValue(__executed, null)`.
+- **Refused, never withdrawn:** a number subject, a reassigned binding and a
+  redeclared binding.
+
+**Not done.**
+- The fresh-context adversarial review has not run. It belongs to the PR
+  hold.
+- `__executed instanceof Array` (16 files) is the next S-family blocker
+  after #7292 and the for-var head.
 
 ## Lever A — the runtime-eval boundary, per unit (plan, 2026-11-06)
 
