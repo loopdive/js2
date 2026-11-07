@@ -57,6 +57,10 @@ const REFUSED: Record<string, string> = {
   // R1 lowers a RegExp only as a `.test` receiver or a discarded statement: no property read, ToString (R3) or binding.
   sourceRead: "if (/1/.source !== '1') { throw new Test262Error('#1'); }",
   concatenated: "try { throw new Test262Error('#1: ' + new RegExp('a**')); } catch (e) {}",
+  // A script's own `RegExp` is not the built-in, though the checker binds `new RegExp` to lib alone.
+  userRegExp:
+    "function RegExp(p) { this.test = function () { return 'mine'; }; }\n" +
+    "function h() { return new RegExp('a').test('a'); }\ntry { h(); } catch (e) {}",
   boundScript: "var __re = new RegExp;\nif (__re.global !== false) { throw new Test262Error('#1'); }",
   boundLocal:
     "function h() { var re = /a/g; re.test('aa'); return re.test('aa'); }\nif (!h()) { throw new Test262Error('#1'); }",

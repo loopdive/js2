@@ -7121,7 +7121,7 @@ function makeFromAstResolver(
     },
     fnctorArrayMethodPlan(call: ts.CallExpression) {
       if (
-        !supportsBackendCapability("native-regexp") ||
+        !supportsBackendCapability("native-function-methods") ||
         !supportsBackendCapability("legacy-numeric-array-global") ||
         !moduleBindingResolver
       ) {
@@ -7132,7 +7132,7 @@ function makeFromAstResolver(
     },
     retainedFunctionMethodPlan(call: ts.CallExpression) {
       if (
-        !supportsBackendCapability("native-regexp") ||
+        !supportsBackendCapability("native-function-methods") ||
         !supportsBackendCapability("legacy-numeric-array-global") ||
         !moduleBindingResolver
       ) {

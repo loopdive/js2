@@ -20,6 +20,7 @@ export type IrBackendTargetCapability =
   | "host-object-define-property"
   | "standalone-function-prototype-call"
   | "native-regexp"
+  | "native-function-methods"
   | "standalone-wrapper-instanceof"
   | "primitive-wrapper-to-primitive"
   | "legacy-numeric-array-global"
@@ -111,10 +112,12 @@ export function supportsIrBackendTargetCapability(
     case "host-object-define-property":
       return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
     case "standalone-function-prototype-call":
-      return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
     // (#3791, #7106 lever R) The in-module RegExp: construction from a static
     // pattern (`ensureIrRegExpLiteralHelper`) and the `$NativeRegExp` carrier helpers.
     case "native-regexp":
+    // (#3793) Fnctor array methods and retained function-object method wrappers
+    // through legacy's closed dispatcher.
+    case "native-function-methods":
       return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
     case "standalone-wrapper-instanceof":
       // The IR producer consumes the fast lane's native `$AnyValue` object
