@@ -6070,3 +6070,110 @@ Normal commit/push hooks and this PR's protected CI remain required. The
 November1 census, legacy-byte and playground results above are historical,
 not fresh receiving measurements. No fresh full-suite conformance gain is
 claimed from these focused tests.
+
+## `<module-init>` lever L — script `var` `for` heads (plan, 2026-11-07)
+
+Lever L is the S6 follow-up of the S5 `var`-pattern work: a script's top-level
+`for (var i = …; …; …)` is refused today, although its names are script `var`s
+in the same `__mod_<name>` slots a top-level `var` statement already writes.
+
+### Problem (measured)
+
+Base `b631a4bcab` (origin/main), standalone, one niced worker. The census
+compiles the runner's harness assembly with `JS2WASM_IR_SHAPE_DIAG=1
+JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, so every refused top-level statement
+reports its own refusal. Population: the 790 ES5 files (edition classifier of
+`scripts/test262-edition-ratchet.ts`, 9,174 ES5 files in all) whose source has
+a `for (var` head; 11 are skipped by the runner (negative/raw/module), 3 do not
+compile, 776 compile.
+
+| measure | files |
+| --- | --- |
+| `<module-init>` refused with `for-init-var-kind` | 343 |
+| …and it is `<module-init>`'s only refusal | 62 |
+| …and no other unit is legacy (upper bound of the IR-only gain) | 61 |
+| `for-init-var-kind` plus exactly one other `<module-init>` refusal, no other legacy unit | 30 (15 `expr-new-ctor-unknown`, 8 `vardecl-module-storage-unrepresentable`, …) |
+
+The bound is loose: a head refusal stops the `for` arm before the condition,
+update and body, and the unmasked census skips the call-graph gate, so a
+refused head can hide refusals behind it.
+
+**Why the head is refused.** `moduleInitVarList` models a `for` head only when
+every declaration is a pattern (S5 deferred identifier heads), so the head's
+list is not in `currentIrSafeVarDeclarationLists`. Three layers follow from
+that one predicate: the module-binding resolver does not know the head's
+declaration (`isModuleBindingDeclaration`), legacy never hands the head's slot
+to the Program ABI (`registerVarDeclListGlobals` calls `registerModuleGlobal`
+without the declaration), and the ordinal enumerator does not number it.
+
+### Implementation Plan
+
+One idea: **a top-level `var` `for` head is a module-init `var` list, so its
+names are script `var`s, checked and lowered by the `var` statement's own arm.**
+No new home kind, no new module, no legacy fallback.
+
+1. **The list predicate** (`src/ir/module-init-vars.ts`). `moduleInitVarList`
+   drops its pattern-only clause. `moduleInitLeaves` becomes
+   `moduleInitVarBindings`: every module-init binding that is not a top-level
+   statement's own declaration (pattern leaves and head names), in source
+   order, cached per file. `moduleBindingDeclarationOrder` appends them after
+   the statement declarations as before (no statement binding id moves), and
+   `carrierLeafReads` keeps reading only the leaf names from the same cache.
+2. **The resolver** (`src/ir/module-bindings.ts`). `isModuleBindingDeclaration`
+   folds its leaf clause into one: an identifier declaration or leaf of a
+   script's module-init `var` list. ES modules are unchanged (no playground
+   example has a top-level `for (var`).
+3. **Legacy observation** (`src/codegen/declarations.ts`).
+   `registerVarDeclListGlobals` passes a head's declaration to
+   `registerModuleGlobal` when its list is a module-init `var` list, as S5 does
+   for leaves. Observation is a map entry on the same slot; a statement's own
+   declarations stay observed by the source-order pass, so global allocation
+   order does not move.
+4. **Selection** (`src/ir/select.ts`).
+   - `isPhase1VarDecl`'s per-declaration loop becomes
+     `isPhase1VarDeclarationList`. The `for` arm calls it for a
+     `<module-init>` `var` head, so storage
+     (`vardecl-module-storage-unrepresentable`), value flow
+     (`vardecl-module-value-flow`), repeated declarations, shadowing and the
+     bare `var i;` no-op are decided by one arm for a statement and a head.
+   - The `for` arm's own loop moves into `isPhase1LoopHeadDeclarations`
+     (loop-scoped heads only). S5's pattern head now also goes through the
+     list arm, which calls the same `isPhase1DeclarationPattern`.
+   - `recordForInitLeaks` does not mark a script-`var` head's names as
+     sibling-redeclarable, so a later `for (let i …)` stays refused
+     (`for-init-shadow`) instead of writing the script slot.
+5. **Lowering** (`src/ir/from-ast.ts`): no change. `lowerForStatement` already
+   lowers its head through `lowerVarDecl`, whose module arm
+   (`storeModuleBinding`) writes the slot, and `moduleInitContainsNestedVar`
+   already skips any `moduleInitVarList`.
+
+**Reused:** `isModuleInitVarList`, the `var` statement's selector arm, the
+resolver's script-var home (#7105/#6985), `storeModuleBinding`,
+`emitModuleVarUndefinedSeeds` (it already seeds head names). **Removed
+duplicate:** the `for` arm's identifier checks no longer stand beside the
+statement arm for a module-init list; S5's twin `isModuleInitVarList` /
+pattern-only test in the predicate goes.
+
+### Semantics kept
+
+- Hoisting: the name reads `undefined` (carrier slot) before the loop.
+- `i++` / `i += k` in the update write the slot (`moduleGlobal` binding).
+- Two heads, or a head and a statement, of the same name: the first
+  declaration is the identity, the others are writes (`redeclaredModuleVar`).
+- A head that shares a function's name, a nested head (`{ for (var …) }`), a
+  `let` head after a `var` head of one name, and eval / `with` programs stay
+  refused as today.
+
+### Acceptance
+
+- **Gain** measured base vs head, both lanes, on the 790 files plus a random
+  400-file ES5 sample (seeded `shuf`).
+- **Zero** IR-only files lost, pass → fail flips, and new post-claim errors.
+- Every binary without a newly claimed unit is byte-identical; the playground
+  is identical on both lanes.
+- **Tests** (`tests/issue-7106-lever-l.test.ts`, both lanes): claimed heads
+  run correctly; the refused shapes above stay legacy and run.
+- **Code quality:** one list arm for statement and head; no new module or
+  import edge beyond `codegen/declarations.ts` → `ir/module-init-vars.ts`; no
+  new budget grant unless a gate says so (then stated here, dated); net
+  `src/ir` growth stated.
