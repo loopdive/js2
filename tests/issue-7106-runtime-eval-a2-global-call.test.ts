@@ -2,7 +2,7 @@
 //
 // #7106 A2a — one support function per global-scope provider entry. Indirect
 // eval, a sloppy script-level direct eval and `Function(...)` each call
-// `__runtime_eval_global_call<entry>`, whose body publishes the script
+// `__runtime_eval_global_call_<entry>` (e.g. `…_indirect_eval`), whose body publishes the script
 // bindings, calls the provider entry and pulls the bindings back. The call
 // sites only evaluate their sources (so the push observes every side effect of
 // the arguments, §19.2.1.1) and emit one `call`.
@@ -47,8 +47,8 @@ describe("#7106 A2a — global-scope eval through one support function per entry
     const result = await compile(SOURCE, { target: "standalone", fileName: "test.js", emitWat: true });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     const graph = callGraph(result.wat);
-    const indirect = "__runtime_eval_global_call__runtime_indirect_eval";
-    const fnctor = "__runtime_eval_global_call__runtime_new_function";
+    const indirect = "__runtime_eval_global_call_indirect_eval";
+    const fnctor = "__runtime_eval_global_call_new_function";
 
     expect(callersOf(graph, "__runtime_indirect_eval_import")).toEqual([indirect]);
     expect(callersOf(graph, "__runtime_new_function_import")).toEqual([fnctor]);

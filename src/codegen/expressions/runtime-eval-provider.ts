@@ -769,7 +769,7 @@ export type RuntimeEvalGlobalEntry = keyof typeof RUNTIME_EVAL_GLOBAL_ENTRY_ARIT
  * the entry cannot link.
  */
 export function ensureRuntimeEvalGlobalCall(ctx: CodegenContext, entry: RuntimeEvalGlobalEntry): number | undefined {
-  const name = `__runtime_eval_global_call${entry}`;
+  const name = `__runtime_eval_global_call_${entry.slice("__runtime_".length)}`;
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
   const externref: ValType = { kind: "externref" };
