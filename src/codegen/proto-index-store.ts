@@ -1329,7 +1329,7 @@ function spliceNativeProtoDirectReadArms(ctx: CodegenContext): void {
  * instances that predicate admits. Not imported from there: closure-props
  * imports this module.
  */
-function fnctorInstanceTypeIdxs(ctx: CodegenContext): number[] {
+export function fnctorInstanceTypeIdxs(ctx: CodegenContext): number[] {
   const out = [...ctx.fnctorReservedTypeIdx.values()];
   for (const [name, typeIdx] of ctx.structMap) {
     if (name.startsWith("__fnctor_") && !out.includes(typeIdx)) out.push(typeIdx);
