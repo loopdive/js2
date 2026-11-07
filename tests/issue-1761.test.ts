@@ -273,3 +273,68 @@ describe("#1761 — presize string-build buffer from static trip count", () => {
     expect(run(7)).toBe(7);
   });
 });
+
+/**
+ * (#7291 review B1/B2) A presize is the loop's exact trip count, so it is
+ * sound only when nothing but the loop's own `i++` writes the counter and
+ * nothing writes the bound while the loop runs. Each case writes one of them
+ * in a way the analysis must see. Both routes (untyped `.js` = legacy, typed
+ * `.ts` = IR) must give node's answer and must NOT presize.
+ */
+describe("#7291 presize only with a proven trip count", () => {
+  const CASES: Record<string, string> = {
+    "the body resets the counter": `let done = false; let s = "";
+  for (let i = 0; i < n; i++) { s += "abc"; if (!done && i === 1) { done = true; i = -3; } }`,
+    "a closure in the body resets the counter": `let done = false; let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; const back = (): void => { if (!done && i === 1) { done = true; i = -2; } }; back(); }`,
+    "array destructuring writes the bound": `let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i === 0) [n] = [5]; }`,
+    "object destructuring writes the bound": `let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i === 0) ({ n } = { n: 5 }); }`,
+    "a direct eval writes the bound": `let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i === 0) eval("n = 5"); }`,
+    "a for-of target writes the bound": `let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i === 0) { for (n of [5]) {} } }`,
+  };
+  const MODULE_BOUND = `let m = 0;
+function grow(): void { if (m < 6) m++; }
+export function run(n: number): number {
+  m = n;
+  let s = "";
+  for (let i = 0; i < m; i++) { s += "a"; grow(); }
+  return s.length;
+}`;
+  const sources = Object.entries(CASES).map(([title, body]): [string, string] => [
+    title,
+    `export function run(n: number): number {\n  ${body}\n  return s.length;\n}`,
+  ]);
+  sources.push(["a top-level function writes a module-level bound", MODULE_BOUND]);
+  // A module \`let\` assigned a fraction is a separate legacy bug (#7300 item 6).
+  const integerBoundsOnly = new Set(["a top-level function writes a module-level bound"]);
+  const PRESIZE = /__sb_bound_|\$slot_\w+\$bound/;
+
+  for (const [title, ts] of sources) {
+    const js = ts.replace(/: (number|void)/g, "");
+    const reference = new Function(`${js.replace(/export /g, "")}; return run;`)() as (n: number) => number;
+    for (const [route, fileName, source] of [
+      ["legacy", "t.js", js],
+      ["IR", "t.ts", ts],
+    ] as const) {
+      for (const target of ["standalone", "wasi"] as const) {
+        it(`${title} [${route}, ${target}]`, async () => {
+          const result = await compile(source, { fileName, target, nativeStrings: true });
+          expect(result.success, result.errors.map((e) => e.message).join("; ")).toBe(true);
+          expect(result.wat).not.toMatch(PRESIZE);
+          const { instance } = await WebAssembly.instantiate(
+            result.binary,
+            target === "wasi" ? { wasi_snapshot_preview1: new Proxy({}, { get: () => () => 0 }) } : {},
+          );
+          const run = instance.exports.run as (n: number) => number;
+          for (const n of integerBoundsOnly.has(title) ? [3, 2, 0] : [3, 2, 2.5, 0]) {
+            expect(run(n), `run(${n})`).toBe(reference(n));
+          }
+        });
+      }
+    }
+  }
+});

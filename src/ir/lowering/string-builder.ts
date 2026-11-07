@@ -49,22 +49,18 @@ export function createStringBuilderLowering<S>(
     const role = slot.stringBuilder;
     if (!role) continue;
     const local = (suffix: string, type: ValType): number => allocLocal(`$slot_${slot.name}$${suffix}`, type);
+    const [buf, len, cap] = [local("buf", builder.bufType), local("len", i32), local("cap", i32)];
+    const presize = role.presize && {
+      bound: slotLocal(role.presize.boundSlot),
+      boundTmp: local("boundTmp", i32),
+      unitsPerIter: role.presize.unitsPerIter,
+    };
     builders.set(slot.index, {
-      slots: {
-        buf: local("buf", builder.bufType),
-        len: local("len", i32),
-        cap: local("cap", i32),
-        mat: slotLocal(slot.index),
-        presized: role.presize !== undefined,
-      },
-      presize: role.presize && {
-        bound: slotLocal(role.presize.boundSlot),
-        boundTmp: local("boundTmp", i32),
-        unitsPerIter: role.presize.unitsPerIter,
-      },
+      slots: { buf, len, cap, mat: slotLocal(slot.index), presized: presize !== undefined },
+      presize,
       scratch: {
         needed: local("needed", i32),
-        oldBuf: role.presize ? undefined : local("oldBuf", builder.bufType),
+        oldBuf: presize ? undefined : local("oldBuf", builder.bufType),
         rhs: local("rhs", builder.flatType),
         rhsLen: local("rhsLen", i32),
         cu: local("cu", i32),

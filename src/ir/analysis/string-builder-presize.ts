@@ -5,6 +5,7 @@
  */
 import { forEachChild, ts } from "../../ts-api.js";
 import { readEnv } from "../../env.js";
+import { isFunctionScopeBoundary } from "./ast-scope.js";
 
 /**
  * #1761 — presize info for a string-builder whose final length is provably a
@@ -33,9 +34,13 @@ export interface StringBuilderPresizeInfo {
  *      rejected here for simplicity — it changes the trip count by one.)
  *   2. INIT === 0. (A non-zero start would make the count `BOUND - INIT`; we
  *      keep the common case and bail otherwise.)
- *   3. BOUND is loop-invariant: a numeric literal, or an identifier whose
- *      binding is never written inside the loop body. Evaluating it once at
- *      buffer-init time (before the loop) yields the same value the loop sees.
+ *   3. Nothing but the loop's own `i++` writes the counter, and BOUND is
+ *      loop-invariant: a numeric literal, or an identifier nothing writes
+ *      while the loop runs (the body, or any function in the bound's scope,
+ *      through any assignment form; a direct `eval` or a sloppy `arguments`
+ *      alias in that scope refuses). Evaluating BOUND once before the loop
+ *      then yields the value every test sees, and the loop runs exactly
+ *      `ceil(BOUND)` times.
  *   4. The loop body contains NO `break` / `continue` / `return` / `throw`
  *      (which could cut the iteration count short) — though a short run only
  *      *under*-fills the presized buffer, we reject to keep the bound exact
@@ -78,7 +83,8 @@ export function planStringBuilderPresize(
   // (1) incrementor `i++` / `++i` / `i += 1`.
   if (!isUnitIncrementOf(checker, loop.incrementor, counterSym)) return null;
 
-  // (3) BOUND is loop-invariant.
+  // (3) the counter and BOUND are invariant.
+  if (hasUnmodelledWriter(loop) || isWrittenDuringLoop(checker, counterSym, loop, loop.statement)) return null;
   if (!isLoopInvariantBound(checker, boundExpr, loop, counterSym)) return null;
 
   // (4) + (5): walk the body once, summing per-iteration units and rejecting
@@ -107,8 +113,9 @@ function isUnitIncrementOf(checker: ts.TypeChecker, incr: ts.Expression, counter
 
 /**
  * True if `boundExpr` is a numeric literal, or an identifier other than the
- * counter that nothing writes while the loop runs. Evaluated once before the
- * loop, it then yields the value every iteration's test sees.
+ * counter that nothing writes while the loop runs, searched over the whole
+ * scope that declares it (a module-level bound can be written by any
+ * function of the module).
  */
 function isLoopInvariantBound(
   checker: ts.TypeChecker,
@@ -119,22 +126,38 @@ function isLoopInvariantBound(
   if (ts.isNumericLiteral(boundExpr)) return true;
   if (!ts.isIdentifier(boundExpr)) return false;
   const boundSym = checker.getSymbolAtLocation(boundExpr);
-  if (!boundSym || boundSym === counterSym) return false;
-  let owner: ts.Node = loop;
-  while (owner.parent && !isFunctionScopeBoundary(owner)) owner = owner.parent;
-  return !isWrittenDuringLoop(checker, boundSym, owner, loop.statement);
+  const declaration = boundSym?.valueDeclaration;
+  if (!boundSym || !declaration || boundSym === counterSym) return false;
+  let owner: ts.Node = declaration.parent;
+  while (!isFunctionScopeBoundary(owner) && !ts.isSourceFile(owner)) owner = owner.parent;
+  return !hasUnmodelledWriter(owner) && !isWrittenDuringLoop(checker, boundSym, owner, loop.statement);
+}
+
+/** A direct `eval` or an `arguments` alias can write a binding no syntactic search sees. */
+function hasUnmodelledWriter(scope: ts.Node): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    found =
+      (ts.isIdentifier(node) && node.text === "arguments") ||
+      (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval");
+    if (!found) forEachChild(node, visit);
+  };
+  visit(scope);
+  return found;
 }
 
 /**
  * (#7291) A write to `sym` in `loopBody`, or in any function nested in `owner`:
- * a closure the loop calls can change the bound as well as the body can.
+ * a closure the loop calls can change the binding as well as the body can.
  */
 function isWrittenDuringLoop(checker: ts.TypeChecker, sym: ts.Symbol, owner: ts.Node, loopBody: ts.Node): boolean {
   let written = false;
   const visit = (node: ts.Node, counts: boolean): void => {
     if (written) return;
     const here = counts || node === loopBody || (node !== owner && isFunctionScopeBoundary(node));
-    if (here && writesSymbol(checker, node, sym)) {
+    const target = here ? assignmentTarget(node) : undefined;
+    if (target && targetWritesSymbol(checker, target, sym)) {
       written = true;
       return;
     }
@@ -144,17 +167,40 @@ function isWrittenDuringLoop(checker: ts.TypeChecker, sym: ts.Symbol, owner: ts.
   return written;
 }
 
-/** An assignment to `sym` (any assignment operator), or a prefix/postfix operator on it. */
-function writesSymbol(checker: ts.TypeChecker, node: ts.Node, sym: ts.Symbol): boolean {
-  const target =
+/** The target `node` writes: an assignment's left side, an operand of a prefix/postfix operator, or a bare `for…of`/`for…in` target. */
+function assignmentTarget(node: ts.Node): ts.Node | undefined {
+  if (
     ts.isBinaryExpression(node) &&
     node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
     node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-      ? node.left
-      : ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)
-        ? node.operand
-        : undefined;
-  return target !== undefined && ts.isIdentifier(target) && checker.getSymbolAtLocation(target) === sym;
+  ) {
+    return node.left;
+  }
+  if (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) return node.operand;
+  if ((ts.isForOfStatement(node) || ts.isForInStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) {
+    return node.initializer;
+  }
+  return undefined;
+}
+
+/** Whether an assignment target, an identifier or an array/object destructuring pattern at any depth, writes `sym`. */
+function targetWritesSymbol(checker: ts.TypeChecker, target: ts.Node, sym: ts.Symbol): boolean {
+  if (ts.isParenthesizedExpression(target) || ts.isSpreadElement(target) || ts.isSpreadAssignment(target)) {
+    return targetWritesSymbol(checker, target.expression, sym);
+  }
+  if (ts.isIdentifier(target)) return checker.getSymbolAtLocation(target) === sym;
+  if (ts.isShorthandPropertyAssignment(target)) return checker.getShorthandAssignmentValueSymbol(target) === sym;
+  if (ts.isPropertyAssignment(target)) return targetWritesSymbol(checker, target.initializer, sym);
+  // A defaulted element, `[n = 1] = …`.
+  if (ts.isBinaryExpression(target) && target.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    return targetWritesSymbol(checker, target.left, sym);
+  }
+  const parts: readonly ts.Node[] = ts.isArrayLiteralExpression(target)
+    ? target.elements
+    : ts.isObjectLiteralExpression(target)
+      ? target.properties
+      : [];
+  return parts.some((part) => targetWritesSymbol(checker, part, sym));
 }
 
 /**
@@ -360,17 +406,4 @@ function statementMutatesBuilderOrExitsLoop(checker: ts.TypeChecker, stmt: ts.No
   }
   visit(stmt);
   return bad;
-}
-
-/** A nested function scope: a builder analysis never looks inside one. */
-export function isFunctionScopeBoundary(node: ts.Node): boolean {
-  return (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isConstructorDeclaration(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    ts.isSetAccessorDeclaration(node)
-  );
 }

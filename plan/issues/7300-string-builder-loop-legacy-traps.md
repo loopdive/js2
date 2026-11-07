@@ -22,7 +22,7 @@ reproduce the same way on main `dc52abf7` and on the #7291 head: the #7291
 change does not touch these routes. Each source below is a `.ts` file
 compiled with `test()` exported.
 
-## 1. `s += r.charAt(i)` with an empty receiver traps
+## 1. `s += r.charAt(i)` out of range traps (empty receiver, or any index past the end)
 
 ```ts
 function b(n: number, r: string): string { let s = ""; for (let i = 0; i < n; i++) { s += r.charAt(i); } return s; }
@@ -30,7 +30,9 @@ export function test(): number { return b(3, "").length; }
 ```
 
 - **standalone and wasi:** `RuntimeError: array element access out of
-  bounds`. JS gives `0`.
+  bounds`. JS gives `0`. The #7168 review also hit it with a rope receiver
+  indexed past its end (`(p + "bcdef").charAt(7)`), so it is any
+  out-of-range index, not only an empty receiver.
 - **Likely cause:** legacy's #1744 single-code-unit fast path
   (`emitStringBuilderAppendCodeUnit`'s `charAt` arm in
   `src/codegen/expressions/operator-assignment.ts`) reads `data[off + i]`
@@ -91,12 +93,43 @@ export function run(n) {
 - **Cause:** #1761's loop-invariance check looked for writes only directly
   in the loop body, and only for six assignment operators. A closure
   writing the bound, or `n |= …` / `n ??= …` in the body, went unseen.
-- **Fix** (#7291 step 3, its own commit): `isLoopInvariantBound` rejects a
-  bound written in the loop body or in any nested function of the
-  enclosing function, by any assignment operator. Typed corpus and builder
-  fixtures are byte-identical; only such programs change.
+- **Fix** (#7291 step 3, `881ee24f`, completed after the #7168 review):
+  - the presize requires that nothing but the loop's own `i++` writes the
+    counter;
+  - it requires that nothing writes the bound while the loop runs:
+    - searched over the bound's whole declaring scope, so a module-level
+      bound is checked against every function of the module;
+    - through any assignment operator, array/object destructuring and
+      `for…of`/`for…in` targets;
+  - a direct `eval` or an `arguments` reference refuses the presize.
+
+  Typed corpus and builder fixtures are byte-identical; only such programs
+  change.
 - **Test:** `tests/issue-1761.test.ts` "does not presize a bound a closure
   can change …".
+
+## 6. A module `let` assigned a fractional value reads back wrong (legacy)
+
+```js
+let m = 0;
+function grow() { if (m < 6) m++; }
+export function run(n) { m = n; let s = ""; for (let i = 0; i < m; i++) { s += "a"; grow(); } return s.length; }
+```
+
+- `run(2.5)` and `run(0.5)` give `0` on gc, standalone and wasi, on main and
+  with #7291. JS gives 7 and 6.
+- The presize is not involved: since #7291 step 3 no presize is applied here,
+  and `run(3)` (which trapped on main) now gives JS's 6. Likely cause: legacy
+  narrows the module `let m` to i32 from its `0` initializer and `m++`.
+  Not traced.
+- Found by the #7168 review's module-level-bound case.
+
+## 7. An unbounded presize traps with "requested new array is too large"
+
+- Untyped `run(Infinity)` traps on main and with #7291. JS runs out of memory
+  more slowly, or throws `RangeError: Invalid string length`.
+- Suggested by the #7168 review: refuse to presize, or fall back to the
+  growing buffer, when `ceil(bound) * units` exceeds a cap.
 
 ## Acceptance
 

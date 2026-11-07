@@ -26,11 +26,8 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { countedStringAppendCandidateLoops, type IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
-import {
-  isFunctionScopeBoundary,
-  planStringBuilderPresize,
-  type StringBuilderPresizeInfo,
-} from "./analysis/string-builder-presize.js";
+import { isFunctionScopeBoundary } from "./analysis/ast-scope.js";
+import { planStringBuilderPresize, type StringBuilderPresizeInfo } from "./analysis/string-builder-presize.js";
 import { readEnv } from "../env.js";
 import type { IrCountedStringAppendLoweringPlan } from "./ast-lowering-plans.js";
 

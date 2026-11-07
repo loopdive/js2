@@ -47,11 +47,8 @@ import { compileExpression } from "./shared.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { nativeStrHelperHandle } from "./func-space.js";
 import { nativeStringBuilderTypes } from "./native-strings.js";
-import {
-  isFunctionScopeBoundary,
-  planStringBuilderPresize,
-  type StringBuilderPresizeInfo,
-} from "../ir/analysis/string-builder-presize.js";
+import { isFunctionScopeBoundary } from "../ir/analysis/ast-scope.js";
+import { planStringBuilderPresize, type StringBuilderPresizeInfo } from "../ir/analysis/string-builder-presize.js";
 
 export type { StringBuilderPresizeInfo } from "../ir/analysis/string-builder-presize.js";
 
