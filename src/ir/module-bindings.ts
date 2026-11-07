@@ -26,12 +26,13 @@ export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import * as classInstance from "./module-binding-class-instance.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
+import { isModuleInitVarList } from "../shared/module-init-var-lists.js";
 import {
   carrierLeafReads,
-  isModuleInitVarList,
   moduleBindingDeclarationOrder,
   moduleBindingLexicalFlags as lexicalFlags,
 } from "./module-init-vars.js";
+import { nullValueAdmissible } from "./analysis/operand-admissibility.js";
 import {
   IrPlanningIdentityInvariantError,
   requireIrPlanningOwnerUnitId,
@@ -944,7 +945,9 @@ function isModuleBindingDeclaration(
   if (ts.isVariableDeclaration(candidate)) {
     const list = candidate.parent;
     if (!ts.isIdentifier(candidate.name) || !ts.isVariableDeclarationList(list)) return false;
-    return ts.isVariableStatement(list.parent) && list.parent.parent === sourceFile;
+    if (ts.isVariableStatement(list.parent)) return list.parent.parent === sourceFile;
+    // (#7288) A script's modelled `for (;;)` head shares the hoisted `__mod_<name>` slot.
+    return isModuleInitVarList(list);
   }
   // (#7106 S5) A leaf binds in a script's module-init `var` list.
   return (
@@ -1585,6 +1588,11 @@ function writeValueMatches(
   resolve: (node: ts.Identifier) => IrLegacyModuleBindingIdentity | undefined,
 ): boolean {
   const valueExpr = unwrapParens(value);
+  // (#7288) A bare `null` has no representation in the dynamic carrier: the
+  // same `nullValueAdmissible` proof from-ast's `null` arm applies.
+  if (valueExpr.kind === ts.SyntaxKind.NullKeyword && targetKind.kind === "dynamic") {
+    return nullValueAdmissible("dynamic");
+  }
   // (#7106) The script dynamic home accepts any value: the IR lowers it to the
   // dynamic carrier or refuses the unit when it has no boxing producer.
   if (targetKind.kind === "dynamic" && scriptVarHomeOf(declaration, options) === "dynamic") return true;
@@ -1597,6 +1605,9 @@ function writeValueMatches(
   }
   // (#7106 S5) Only the carrier takes a carrier leaf's read: its checker type is no evidence.
   if (carrierLeafReads(valueExpr, resolve).length > 0) return false;
+  // (#7288) …nor a direct read of any binding whose slot is the carrier (a
+  // hoisted `var` read before its declaration): it lowers as a dynamic value.
+  if (ts.isIdentifier(valueExpr) && resolve(valueExpr)?.valueKind.kind === "dynamic") return false;
   if (targetKind.kind === "class-instance")
     return classInstance.classInstanceWriteMatches(checker, targetKind, valueExpr);
   if (targetKind.kind === "native-map") {

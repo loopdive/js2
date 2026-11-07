@@ -12814,6 +12814,22 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/shared/pattern-declaration.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7288",
+      "nextBoundary": "TypeScript-AST predicate for a destructuring declaration, shared by the IR binding-pattern plan and the module-initializer var-list certifier; moves with the frontend inventory split."
+    },
+    {
+      "path": "src/shared/module-init-var-lists.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7288",
+      "nextBoundary": "TypeScript-AST certifier for which top-level `var` lists the module initializer models (#7106 S5, #7288); shared by the IR resolver and legacy's slot observation, moves with the frontend inventory split."
+    },
+    {
       "path": "src/shared/ambient-intrinsics.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13156,6 +13172,14 @@
       "destination": "ir-core",
       "owner": "7128",
       "nextBoundary": "Frontend source-shape certifier for the empty-object-literal arms (#4471 inert, #7128 S1 open carrier); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/object-create-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7276",
+      "nextBoundary": "TypeScript-AST plan plus builder lowering of `Object.create({}, { <literal data descriptors> })`, shared by the selector and from-ast (#7276); moves with the frontend inventory split."
     },
     {
       "path": "src/ir/binding-pattern-plan.ts",
