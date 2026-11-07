@@ -6101,7 +6101,24 @@ lowering.
 
 ### Measured
 
-«MEAS»
+Base main 83c5c23daf against head, A/B by file copy of `select.ts`, the
+in-process runner (`runTest262File`) on both lanes, one niced worker:
+
+- **The 85 sole files:**
+  - 5 binaries change on each lane, exactly the 5 target files;
+  - those 5 are now IR-only (0 legacy units) with 0 post-claim errors on
+    both lanes, and they pass on both before and after;
+  - 0 status changes; all 85 pass on both lanes before and after;
+  - `unary-plus/S11.4.6_A3_T3` stays legacy (unchanged binary): it builds
+    `new Number("-1")`, and `selectorPrimitiveWrapperConstruction` takes only
+    an argument of the constructor's own family.
+- **Random ES5 sample** (200 files, `shuf` seeded with `yes 7106`, from the
+  10,171 ES5-named test files outside `intl402`/`annexB`):
+  - every binary is byte-identical on both lanes;
+  - 191 pass, 6 fail, 3 skip on each lane, before and after.
+- **Playground:** all 13 examples compile byte-identically on both lanes.
+- **Equivalence gate:** all 8 shards, "No new equivalence regressions"
+  (every failing file is in the baseline's known failures).
 
 ### Follow-ups (not built)
 
@@ -6116,6 +6133,15 @@ lowering.
    joins #7280).
 4. **`x op= …` on a dynamic module var.** The 145 paired files need the
    compound assignment, whatever its right-hand side.
+5. **A wrapper whose argument is another family,** such as
+   `new Number("-1")` (`unary-plus/S11.4.6_A3_T3`). Construction would apply
+   ToNumber/ToString/ToBoolean to the argument first.
+
+### Handoff (2026-11-07)
+
+Lever W is built and measured on branch `claude/7106-lever-w`. Nothing from
+this lane is in flight. Open: follow-ups 1–5 above (none claimed) and #7295,
+which stays `blocked` until follow-ups 1–3 land.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
