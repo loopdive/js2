@@ -6696,3 +6696,54 @@ Where the pieces live:
     `a1-host-base.jsonl` (98 / 43). The control list is `a1-control.txt`.
   - Rebuild the interpreter provider per tree, with
     `JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`.
+
+#### A2b progress (af4dd23233)
+
+- **Done, step 1: the decode.** `__dyn_member_get` applies the shared
+  runtime-eval value decode after `__extern_get`, in both carrier bodies.
+  - It is built by `dynMemberReadDecode` (`codegen/dyn-read.ts`) through
+    `runtimeEvalSharedValueDecode` (`codegen/global-environment.ts`).
+  - That is the builder the legacy read sites use; their
+    `runtimeEvalSharedValueUnwrapInstrs` now delegates to it, so there is no
+    second copy.
+  - It is gated on `ctx.runtimeEvalGlobalFunctionBindings`, the legacy flag.
+    There is no lane arm.
+- **Done, step 2: the refusal.** `scriptVarHomeSlot` no longer refuses script
+  vars in eval programs. A1's wholesale module-init withdrawal narrows to
+  `moduleInitHoldsEvalSite` (`codegen/ir-overlay-preparation.ts`): a
+  top-level statement, other than a function declaration, that contains a
+  site.
+- **Measured on the 141 (standalone):** 141 / 141 compile, 0 post-claim
+  errors, 830 units (unchanged), 0 IR-only files. 90 files change bytes, all
+  from the decode.
+  - Interpreter-provider verdicts: 0 pass→fail on standalone (101 / 40) and
+    on the JS host (98 / 43).
+  - The 40-file non-eval control is byte-identical to the A2a head.
+- **Why IR-only is still 0.** Every module init in the 141 holds its eval
+  site, so `moduleInitHoldsEvalSite` keeps all of them direct. Step 2 is a
+  prerequisite that nothing exercises yet.
+- **Next: lower the sites in the IR by generalising the existing host arm,
+  not by adding a second one.**
+  - The IR already lowers a certified host indirect-eval statement:
+    `certifiedHostIndirectEval` / `phase1IndirectEvalStatementVerdict`
+    (`ir/select.ts`), the `exactIndirectEvalStatement` arm in
+    `ir/from-ast.ts` (around line 7655), and the resolver's
+    `hostIndirectEvalTarget`, gated by `supportsHostIndirectEval`
+    (`ir/integration.ts` around line 2620, `codegen/index.ts` around line
+    3358).
+  - Parameterise that one arm by its target. On the JS host the target stays
+    the host import. With the runtime-eval provider it becomes the A2a
+    support function `__runtime_eval_global_call_indirect_eval`,
+    with one source argument instead of `(source, isDirect)`.
+  - Give the capability a name (`supportsGlobalIndirectEval`), not a lane
+    arm.
+  - Preregister the support function before Phase 3:
+    `ensureRuntimeEvalGlobalCall` adds a late import and flushes shifts.
+  - `moduleInitHoldsEvalSite` should then skip the sites that predicate
+    admits, by sharing the predicate rather than copying it.
+  - Then `Function(…)` and a sloppy top-level `eval(…)` (`callee:eval`) can
+    follow through the same arm.
+  - **Open question to measure first:** legacy folds a literal
+    `(0, eval)("…")` at compile time (`tryStaticEvalInline`). The IR arm must
+    not turn a folded literal into a runtime call. Either admit only
+    computed sources, or check what legacy does for each census file.
