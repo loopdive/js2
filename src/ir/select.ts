@@ -4994,7 +4994,9 @@ function isPhase1ThrowStatement(
 /**
  * True when a thrown value may carry an unboxed f64/boolean module read. A
  * `new` throws an object, so only an argument can (#7281): in
- * `new Test262Error('Actual: ' + x)` the read of `x` is a string concat.
+ * `new Test262Error('Actual: ' + x)` the read of `x` is a string concat. The
+ * family here is flow-insensitive; the argument's `+` is still proven by the
+ * checker in `isPhase1Expr` (`isModuleStringConcat`), so do not admit on it alone.
  */
 function throwValueReadsUnboxedModuleScalar(expr: ts.Expression): boolean {
   const candidate = unwrapPhase1Parens(expr);
@@ -8148,7 +8150,9 @@ function isModuleStringConcat(expr: ts.BinaryExpression): boolean {
 
 /**
  * from-ast's typing gate for `expr` over the checker's flow-sensitive operand
- * families; `undefined` when the checker classifies neither side as a primitive.
+ * families; `undefined` when the checker cannot classify a side as a primitive.
+ * `isModuleStringConcat` admits only on `true`; the element-read backstop
+ * refuses only on `false` (a proven mismatch).
  */
 function checkerProvesBinaryOperands(expr: ts.BinaryExpression): boolean | undefined {
   const classify = currentSelectionOptions?.classifyPrimitiveExpression;

@@ -16,7 +16,7 @@ goal: ir-full-coverage
 related: [7240, 7249, 7251, 7266]
 assignee: "ttraenkler/c-lane-opus"
 loc-budget-allow:
-  # 2026-11-07 (#7281): src/ir/select.ts +34 net — three small selector
+  # 2026-11-07 (#7281): src/ir/select.ts +38 net — three small selector
   # predicates beside their siblings: `throwValueReadsUnboxedModuleScalar`
   # (+11 incl. doc) next to `isPhase1ThrowStatement`, its only caller;
   # `isModuleStringConcat` (+12) and `checkerProvesBinaryOperands` (+11) next
