@@ -60,6 +60,21 @@ export function test(): number { return b(["ab", "c"]).length; }
   ir/from-ast: checker-string RHS for "s +=" has contradictory carrier
   externref`.
 
+## 4. A presized builder with a fractional bound traps — fixed in #7291 step 3
+
+```js
+export function run(n) { let s = ""; for (let i = 0; i < n; i++) { s += "abc"; } return s.length; }
+```
+
+- **Before:** `run(2.5)`, `run(0.5)` and `run(1e-9)` trap with `array element
+  access out of bounds` on gc, standalone and wasi. JS gives 9, 3 and 3.
+- **Cause:** #1761's presize compiled the bound with an i32 hint, which
+  truncates `2.5` to 2, but `i < 2.5` runs 3 times.
+- **Fix** (#7291 step 3, its own commit): a non-literal bound compiles as f64
+  and goes through `STRING_BUILDER_TRIP_COUNT_OF_F64_BOUND`, which is `ceil`
+  then a saturating truncation. Integer-literal bounds keep the i32 path.
+- **Test:** `tests/issue-1761.test.ts` "sizes a fractional bound …".
+
 ## Acceptance
 
 - All three return the JS value on standalone, wasi and gc.

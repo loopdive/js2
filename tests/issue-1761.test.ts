@@ -156,6 +156,22 @@ describe("#1761 — presize string-build buffer from static trip count", () => {
     expect((exports.run as () => number)()).toBe(15);
   });
 
+  it("sizes a fractional bound by the loop's real trip count, ceil(bound) (#7291)", async () => {
+    // `i < 2.5` runs 3 times; truncating the bound to 2 overflowed the buffer.
+    const { wat, binary } = await compileNative(`
+      export function run(n) {
+        let s = "";
+        for (let i = 0; i < n; i++) { s += "abc"; }
+        return s.length;
+      }
+    `);
+    expect(growCalls(wat)).toBe(0);
+    const run = (await instantiate(binary)).run as (n: number) => number;
+    for (const n of [2.5, 0.5, 1e-9, 3, 0, -1, Number.NaN]) {
+      expect(run(n), `run(${n})`).toBe(3 * Math.max(0, Math.ceil(n) || 0));
+    }
+  });
+
   it("preserves non-ASCII / surrogate-pair appends byte-for-byte under presize", async () => {
     // Single-char charAt over a static alphabet with an astral code point.
     // charAt is code-unit-indexed, so a verbatim i16 copy must match JS.

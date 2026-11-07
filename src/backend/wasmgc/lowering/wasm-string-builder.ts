@@ -78,6 +78,16 @@ export function stringBuilderResetInstrs(t: StringBuilderTypes, sb: StringBuilde
 }
 
 /**
+ * (#7291) An f64 bound to the i32 trip count of `for (let i = 0; i < bound; i++)`:
+ * the loop runs `ceil(bound)` times, so `2.5` runs 3 (truncating gave 2 and
+ * the presized buffer overflowed). NaN saturates to 0.
+ */
+export const STRING_BUILDER_TRIP_COUNT_OF_F64_BOUND: readonly Instr[] = [
+  { op: "f64.ceil" },
+  { op: "i32.trunc_sat_f64_s" },
+];
+
+/**
  * (#1761) Consumes the i32 loop bound: `cap = max(0, bound) * unitsPerIter`,
  * `buf = new i16[cap]`. Wasm has no `i32.max`, so the clamp is a `select`.
  */

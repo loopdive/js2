@@ -31,6 +31,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import {
   STRING_BUILDER_INITIAL_CAP,
+  STRING_BUILDER_TRIP_COUNT_OF_F64_BOUND,
   stringBuilderAppendCodeUnitInstrs,
   stringBuilderAppendStringInstrs,
   stringBuilderInitInstrs,
@@ -734,10 +735,12 @@ function emitPresizedBufferAlloc(
   // #1919 — a failed bound compile rolls back the body, locals, late imports
   // and errors it leaked.
   const snap = snapshotSpeculative(ctx, fctx);
-  const boundType = compileExpression(ctx, fctx, presize.boundExpr, { kind: "i32" });
+  // (#7291) Only an integer literal may compile as i32: an i32 hint would
+  // truncate an f64 bound, but `i < 2.5` runs 3 times.
+  const integerLiteral = ts.isNumericLiteral(presize.boundExpr) && Number.isInteger(Number(presize.boundExpr.text));
+  const boundType = compileExpression(ctx, fctx, presize.boundExpr, { kind: integerLiteral ? "i32" : "f64" });
   if (boundType?.kind === "f64") {
-    // `i < bound` with an integer counter observes the truncated bound.
-    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push(...STRING_BUILDER_TRIP_COUNT_OF_F64_BOUND);
   } else if (boundType?.kind !== "i32") {
     rollbackSpeculative(ctx, fctx, snap);
     return false;
