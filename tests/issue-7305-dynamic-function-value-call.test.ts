@@ -62,6 +62,15 @@ u(Array.isArray, []); u(String, 2);`,
   "top-level call of a parameter name": `function u(x) { x(1); }
 var caught; try { x(); } catch (e) { caught = e; }
 assert(caught instanceof ReferenceError); u(function () {});`,
+  // #7164 review B1 (6701844712): a caller's `this` after a caught throw
+  // through the dynamic call. `__apply_closure` must restore `__current_this`
+  // on the throw edge; node gives "1". Legacy gives "NaN" here too.
+  "caller this after a caught callee throw": `var out = "";
+var o = { v: 1, m: function () { try { u(f); } catch (e) {} out += this.v; } };
+var f = function () { throw 1; };
+function u(g) { g(); }
+o.m();
+assert.sameValue(out, "1");`,
   "identity is preserved": `var h0 = function () {}; var same; function u(g, h) { g(h); }
 u(function (x) { same = x === h0; }, h0); assert.sameValue(same, true);`,
 };
