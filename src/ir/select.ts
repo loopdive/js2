@@ -5018,20 +5018,29 @@ function isPhase1ThrowStatement(
 
 /**
  * The operand family of a thrown value that reads a scalar module binding. A
- * `new` throws an object, but its arguments still read the binding (#7281):
- * `new Test262Error('Actual: ' + x)` passes a string, `new Test262Error(x)` the
- * unboxed scalar itself, which makes the whole value `unknown`. The family is
- * flow-insensitive; a `+` is still proven by the checker in `isPhase1Expr`.
+ * `new` throws an object (`reference`) unless an argument passes the unboxed
+ * scalar itself (`argumentPassesUnboxedScalar`), which makes it `unknown`.
  */
 function thrownValueFamily(thrown: ts.Expression): OperandFamily {
   const value = unwrapPhase1Parens(thrown);
   if (!ts.isNewExpression(value)) return OBVIOUS_OPERAND_FAMILIES[obviousModuleValueFamily(value) ?? "unknown"];
-  const unboxed = (argument: ts.Expression): boolean => {
-    if (!expressionTouchesScalarModuleBinding(argument)) return false;
-    const family = thrownValueFamily(argument);
-    return family !== "string" && family !== "reference";
-  };
-  return value.arguments?.some(unboxed) ? "unknown" : "reference";
+  return value.arguments?.some(argumentPassesUnboxedScalar) ? "unknown" : "reference";
+}
+
+/**
+ * (#7281) A `new` argument passes an unboxed module scalar: a spread of one, an
+ * argument whose obvious family is a number, boolean or null, or a nested `new`
+ * with such an argument. `new Test262Error(x)` passes it;
+ * `new Test262Error('Actual: ' + x)` passes a string, and a `+` whose family the
+ * slots cannot name is left to the checker's proof in `isPhase1Expr`.
+ */
+function argumentPassesUnboxedScalar(argument: ts.Expression): boolean {
+  if (!expressionTouchesScalarModuleBinding(argument)) return false;
+  const value = unwrapPhase1Parens(argument);
+  if (ts.isSpreadElement(value)) return true;
+  if (ts.isNewExpression(value)) return value.arguments?.some(argumentPassesUnboxedScalar) ?? false;
+  const family = obviousModuleValueFamily(value);
+  return family === "f64" || family === "boolean" || family === "nullish";
 }
 
 /**
