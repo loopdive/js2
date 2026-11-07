@@ -1,10 +1,10 @@
 ---
 id: 7292
 title: "IR module-init: script-var array-literal storage (`var values = [2, 1, 3]`)"
-status: ready
-sprint: Backlog
+status: in-progress
+sprint: current
 created: 2026-11-06
-updated: 2026-11-06
+updated: 2026-11-07
 priority: medium
 horizon: m
 feasibility: medium
@@ -13,7 +13,7 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 related: [7252, 7128, 2949, 7274]
-assignee: "ttraenkler/c-lane-opus"
+assignee: "ttraenkler/lever-v" # handed over from c-lane-opus, 2026-11-07
 ---
 
 # #7292 — IR module-init: script-var array-literal storage
@@ -132,3 +132,104 @@ Co-occurring refusal arms in the same module-inits, by parts:
 Once `for-init-var-kind` (`for (var i = …)` in module-init) or array-method
 callbacks (`forEach(fn)`) are admitted, re-run the census above. The pair
 rows (4 + 3 files) become this admission's yield.
+
+## Lever V — as built (2026-11-07, `claude/7106-lever-v`)
+
+Handed over from lane C (claim on #6583). Stacked on #7106 lever L2
+(`claude/7106-lever-l2`, #7179), because it routes the new home through L2's
+`reachableScriptVarHome` choke point. The "When to pick this up" condition
+holds: with lever L (`for (var …)`) and #7176 (the `regexp-match` home for
+`__executed`), the S15.10.2 `exec` family is blocked only by
+`var __expected = ["…"]`.
+
+### Census (2026-11-07)
+
+A parse-only scan over the 9,174 ES5 files found 876 with a script `var`
+initialized by an array literal. Element kinds: empty 372, string 321, number
+138, other or mixed 108. Uses of the string/number ones: `.length` 571,
+`x[expr]` 336, `x[literal]` 73, an expando write and read of `index` and
+`input` 216 each (`__expected.index = 2`), `Object.defineProperty(x, …)` 84,
+`hasOwnProperty` 45, index writes 3, `length` writes 12, other methods ~40.
+On the overlay (#7176 + lever L + L2), 193 of the 199 S15.10.2 files are
+blocked only by `vardecl-module-storage-unrepresentable` on `__expected`.
+
+### What changed against the plan above
+
+- **String vecs only.** A number vec stays refused: the IR's unproven f64
+  element read answers `NaN` (the vec's out-of-bounds image), where JS — and
+  legacy — answer `undefined` (`assert.sameValue(a[5], undefined)` was claimed
+  and wrong in a probe). It needs an undefined-capable read first.
+- **Expandos are in, index writes and `push` are out.** The census population
+  writes and reads named properties on the array (216 files), never an index
+  or `push`.
+
+### Design
+
+- **Home** (`src/codegen/index.ts`, `scriptVarHome`): `"vec"` when the slot is
+  the native-string vec (`vecTypeMap` key `ref_<$AnyString>`, the key both
+  legacy's array literal and the IR's `resolveVecForElementImpl` use).
+  `reachableScriptVarHome` refuses it for a nested declaration.
+- **Value kind** (`src/ir/module-binding-value-kinds.ts`):
+  `{ kind: "vec", element: "string" }`, a struct handle beside
+  `class-instance` (`isIrModuleStructValueKind`, renamed from
+  `isIrModuleClassInstanceValueKind`): neither scalar nor extern-like.
+- **Certification** (`src/ir/module-binding-vec.ts`, new, #7252's shape):
+  - the initializer is the binding's only write anywhere in the source,
+    every element a string literal, no hole, no spread, no dynamic scope;
+  - every use follows the declaration in module-init (the shared
+    `scriptVarUseFollowsDeclaration`) and is an element read, `.length`, or a
+    named property read or plain `=` write. Every other use (passing the
+    array, a method call, `length` or index writes, `delete`, a read in a
+    function) refuses at its site (`script-var-use-site`).
+  - An element store into any module binding now asks its resolver
+    (`body-elemstore-module-storage-unrepresentable`), so `e[0] = …` refuses
+    at selection instead of failing to lower.
+- **Storage** (`src/ir/integration.ts`, `resolveModuleBindingGlobal`): the IR
+  `vec<string>` (non-null: every read follows the write, as for a class
+  instance) against the struct `resolveVecForElementImpl` registers for
+  `$AnyString`, which is legacy's.
+- **Lowering** (`src/ir/from-ast.ts`), for a script-var vec only
+  (`isScriptVarVec`: the receiver reads its module slot), all through the
+  existing dynamic carrier, as legacy reads these. A function-local vec keeps
+  main's vec-only paths: the first cut applied the dynamic read to every vec,
+  and the equivalence gate caught `typeof a[0]` on a push-built function-local
+  string vec (#7166's sweep) answering differently.
+  - a named property read on a vec (`e.index`): the boxed vec through
+    `dyn.member_get`;
+  - an unproven native-string element read (`e[i]` outside a counted loop):
+    the boxed vec through `dyn.member_get`, which answers `undefined` out of
+    bounds and for `0.5` / `-1` (it used to demote after the claim);
+  - a script-var vec's named write (`e.index = 2`): `dyn.member_set` on the
+    boxed vec through legacy's own store (`__extern_set`). The native strict
+    store keeps no expando for a vec, and the certified array never escapes,
+    so its named `[[Set]]` cannot fail.
+- **Reuse:** the vec registry key, `resolveVecForElementImpl`, the dynamic
+  reader/store and `boxToAny`, #7252's write/use certification pattern and
+  `scriptVarUseFollowsDeclaration`, L2's home choke point.
+- **Duplicates removed:** the two copies of "box the name, `dyn.member_get`"
+  (`<dynamic>.p` and `<externref>.p`) and the indexed twin now share
+  `dynamicNamedPropertyRead` / `dynamicIndexedRead`.
+
+### Measured (2026-11-07, one niced worker)
+
+Base: lever L2 + main (`4629e3db39`) with #7176 merged locally; head: the same
+with lever V. Neither overlay is pushed. Population: the 876 array-literal
+files plus 200 random ES5 files (995 compile on both sides; gc on the 200
+sample files plus every changed file, 362).
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files | 14 → 191 (**+177**, 176 of them S15.10.2) | 14 → 191 (+177) |
+| IR-only files lost / units newly legacy / new post-claim errors | 0 / 0 / 0 | 0 / 0 / 0 |
+| binaries changed | 177, each a newly claimed `<module-init>` | 177 |
+| byte-identical | 818 | 185 |
+| pass → fail on the 177 | 0 (177/177 pass on both) | 0 |
+| playground (26 binaries) | identical | identical |
+
+### Follow-ups
+
+- Number vecs: an undefined-capable unproven f64 read, then the same home.
+- Uses the census saw and this refuses: `Object.defineProperty(arr, …)`
+  (#7128 S5), `hasOwnProperty`, `forEach` / `filter` callbacks, passing the
+  array to `assert.compareArray`.
+

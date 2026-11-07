@@ -6522,9 +6522,13 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
         }
         return cx.builder.emitVecLen(recv);
       }
-      // (#7292) A named property of the array object (an expando, `a.index`):
+      // (#7292) A script-var vec's named property (an expando, `a.index`):
       // the boxed vec through the dynamic reader, as legacy reads it.
-      return dynamicNamedPropertyRead(boxVecToDynamic(recv, cx), propName, cx);
+      if (isScriptVarVec(expr.expression, cx)) return dynamicNamedPropertyRead(boxVecToDynamic(recv, cx), propName, cx);
+      demoteToLegacy(
+        "property-access-unsupported",
+        `ir/from-ast: .${propName} on vec not in slice 13 (${cx.funcName})`,
+      );
     }
   }
 
@@ -6862,6 +6866,16 @@ function dynamicNamedPropertyRead(recv: IrValueId, propName: string, cx: LowerCt
 function dynamicIndexedRead(recv: IrValueId, arg: ts.Expression, cx: LowerCtx): IrValueId {
   const index = lowerExpr(arg, cx, irVal({ kind: "f64" }));
   return cx.builder.emitDynMemberGet(recv, boxDynamicStoreOperand(index, arg, cx));
+}
+
+/**
+ * (#7292) A vec read from its script-var module slot: its uses are certified
+ * (`module-binding-vec.ts`), so its expandos and unproven reads take the
+ * dynamic carrier. A function-local vec keeps the vec-only paths.
+ */
+function isScriptVarVec(receiver: ts.Expression, cx: LowerCtx): boolean {
+  const root = peelParensExpr(receiver);
+  return ts.isIdentifier(root) && cx.scope.get(root.text)?.kind === "moduleGlobal";
 }
 
 /** (#7292) A vec as the dynamic carrier's object: the array legacy reads through the same carrier. */
@@ -7324,9 +7338,15 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
         const raw = cx.builder.emitVecGet(recv, idxI32, elemIr);
         return narrowedI32 ? cx.builder.emitUnary("f64.convert_i32_s", raw, IR_F64) : raw;
       }
-      // (#7292) An unproven native-string read may be out of bounds, where JS
-      // answers `undefined`: the boxed vec through the dynamic reader.
-      if (elemIr.kind === "string") return dynamicIndexedRead(boxVecToDynamic(recv, cx), arg, cx);
+      if (elemIr.kind === "string") {
+        // (#7292) A script-var vec's unproven read may be out of bounds, where
+        // JS answers `undefined`: the boxed vec through the dynamic reader.
+        if (isScriptVarVec(expr.expression, cx)) return dynamicIndexedRead(boxVecToDynamic(recv, cx), arg, cx);
+        demoteToLegacy(
+          "element-access-unsupported",
+          `ir/from-ast: native string vec read is not proven in bounds (${cx.funcName})`,
+        );
+      }
       // SAFE path — index not proven → bounds-checked read, no trap.
       if (narrowedI32) return emitSafeNarrowedI32VecGet(recv, idxI32, cx);
       return emitSafeVecGet(recv, idxI32, vec.elementValType, cx);
@@ -10588,10 +10608,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx, receiv
   // (`__extern_set`, the sloppy one): the native strict store keeps no expando
   // for a vec, and the binding's array literal never escapes (its uses are
   // certified), so its named `[[Set]]` cannot fail and the rule is moot.
-  const moduleVec =
-    recvType.kind === "vec" &&
-    ts.isIdentifier(lhs.expression) &&
-    cx.scope.get(lhs.expression.text)?.kind === "moduleGlobal";
+  const moduleVec = recvType.kind === "vec" && isScriptVarVec(lhs.expression, cx);
   const dynamicNamedWrite = (recvType.kind === "dynamic" && cx.functionCodeStrict !== undefined) || moduleVec;
   if (dynamicNamedWrite && ts.isPropertyAccessExpression(lhs) && ts.isIdentifier(lhs.name)) {
     const target = moduleVec ? boxVecToDynamic(recv, cx) : recv;
