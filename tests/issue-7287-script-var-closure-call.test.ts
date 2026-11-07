@@ -219,6 +219,17 @@ if (out !== "1") throw "this";`,
     expected: "completed",
     irUnits: ["h"],
   },
+  "review B2: a checker-string += over a dynamic module var compiles": {
+    source: `var out = "";
+var f;
+f = 5;
+function h() { return 1; }
+h();
+out += "a" + f;
+if (out !== "a5") throw "out";`,
+    expected: "completed",
+    irUnits: ["h"],
+  },
   "slice B: a value-position call keeps the legacy body": {
     source: `var p = function (v) { return v; };
 function h() { return p(3); }

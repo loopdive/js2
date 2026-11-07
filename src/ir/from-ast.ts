@@ -13365,9 +13365,17 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
         : storage.kind === "slot"
           ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
           : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
-    const rhsValue = lowerExpr(rhs, cx, logicalType);
+    const rhsLowered = lowerExpr(rhs, cx, logicalType);
+    const rhsString = checkerOperandFamily(rhs, cx) === "string";
+    // (#7287 review B2) A checker-string RHS over a dynamic operand
+    // (`"a" + f`, `f` a dynamic module var) is a dynamic carrier holding a
+    // string: recover the string carrier (checked, no ToString).
+    const rhsValue =
+      rhsString && cx.builder.typeOf(rhsLowered).kind === "dynamic"
+        ? cx.builder.emitDynStringCarrier(rhsLowered)
+        : rhsLowered;
     const rhsType = cx.builder.typeOf(rhsValue);
-    if (checkerOperandFamily(rhs, cx) === "string" && rhsType.kind !== "string") {
+    if (rhsString && rhsType.kind !== "string") {
       // invariant (producer-promise): the checker POSITIVELY proves the RHS is a
       // string, yet the lowered carrier is not — a producer contradiction, not a
       // capability gap. #4502's sweep initially demoted this with the rest of
