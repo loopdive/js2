@@ -209,6 +209,13 @@ try { h(); throw "no throw"; } catch (e) { if (!(e instanceof RangeError)) throw
     expected: "completed",
     irUnits: ["h"],
   },
+  "slice B: a value-position call keeps the legacy body": {
+    source: `var p = function (v) { return v; };
+function h() { return p(3); }
+if (h() !== 3) throw "p";`,
+    expected: "completed",
+    legacyUnits: ["h"],
+  },
   "slice B: p.call / new p keep the legacy body": {
     source: `var got = 0;
 var p = function (v) { got = v; };

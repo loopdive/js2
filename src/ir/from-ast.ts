@@ -7817,8 +7817,11 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   const bindingLogicalType =
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
   // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
+  // Statement position only, as the selector admits it.
   const dynamicModuleCallee =
-    binding === undefined && cx.resolver?.resolveModuleBinding?.(expr.expression)?.type.kind === "dynamic";
+    statementPosition &&
+    binding === undefined &&
+    cx.resolver?.resolveModuleBinding?.(expr.expression)?.type.kind === "dynamic";
   if (bindingLogicalType?.kind === "dynamic" || dynamicModuleCallee) {
     const callee = lowerExpr(expr.expression, cx, irDynamic());
     if (cx.builder.typeOf(callee).kind !== "dynamic") {

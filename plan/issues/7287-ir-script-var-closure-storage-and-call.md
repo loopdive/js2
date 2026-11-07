@@ -1,10 +1,11 @@
 ---
 id: 7287
 title: "IR: a script `var` holding a function expression is storable and callable from IR units"
-status: in-progress
+status: done
+completed: 2026-11-07
 sprint: current
 created: 2026-11-06
-updated: 2026-11-06
+updated: 2026-11-07
 priority: high
 horizon: l
 feasibility: hard
@@ -24,6 +25,8 @@ loc-budget-allow:
   # each side adds to its existing call dispatch (the Stage-4 dynamic-callee
   # arm also takes a dynamic module binding; the call graph treats that call as
   # a lowering, not an edge), with the message choice from the declaration.
+  # 2026-11-07 (review): from-ast +9 / select +5 net — the arm moved after the
+  # propertyHelper alias arms and limited to statement position on both sides.
   - src/ir/from-ast.ts
   - src/ir/select.ts
 func-budget-allow:
@@ -137,3 +140,69 @@ after the calling function. Lead's call.
   `<module-init>` (#7284).
 - Other callers of lib-colliding script vars: measured by the ledger A/B
   (below).
+
+## Results (2026-11-07, base `origin/main` dc52abf7)
+
+**What changed.**
+
+- Slice A (`1713793e`): `bindingDeclarationCandidates` binds a script's single
+  top-level `var` whose name only a lib declares (`print`) to that `var`.
+- Slice B (`10b21deb`, review fix `3fa3939f` + statement-position fix): a
+  **statement-position** call whose callee is a script `var` in its dynamic
+  module home is the Stage-4 dynamic call (`__apply_closure` on the slot at
+  call time). It sits after the propertyHelper alias arms on both sides, in
+  the selector's order.
+- Value-position calls (`return p(3)`) stay legacy: a lib-named `var`'s call
+  result is typed by the lib signature (`var isNaN = function () { return "U"; }`
+  then `return isNaN(1)` read as `true`), caught by the #7253 equivalence
+  cases. Pinned by a test.
+- Not-callable message (lead's decision): a function/arrow initializer gives
+  "Cannot access property on null or undefined", otherwise "called value is
+  not a function". Where legacy traps (`p = 5`), the IR throws that TypeError.
+- ES modules: unchanged (their `var`s have no script-var home; the resolver
+  rule is script-only).
+
+**Measurements.**
+
+| Check | Result |
+|---|---|
+| Typed corpus (playground, gc/standalone/wasi) | byte-identical to main |
+| Ledger, standalone, wrapped, stride 40 (1296 files) | = main: zero-legacy 32, legacy units 4750, invariants 0 (slice A, A+B, after review) |
+| test262 A/B, 833 paths (300 random + JSON + async + Object/Reflect), standalone | 658/117/32 — row-identical to main |
+| same, gc | 533/252/22 — row-identical to main |
+| 33 adversarial probes (standalone) | = legacy except the `p = 5` cases: legacy traps, IR throws TypeError |
+| `tests/issue-7287-script-var-closure-call.test.ts` | 51/51 (gc/standalone/wasi) |
+| Equivalence gate | see PR |
+
+The test262 A/B ran before the statement-position restriction, which only
+removes claims.
+
+**Yield.** 0 on its own, as planned: the async harness units also need #7277
+and #7286, and zero-legacy files stay 0 because `<module-init>` is legacy
+(#7284).
+
+**Probe routing.** IR: the prelude's `print`, a call before the definition,
+reassignment, wrong arity, `this`, recursion, `arguments`, captured script
+vars, arrows, a not-callable value. Legacy: `delete`, `.call` / `.apply`,
+`new`, a capturing inner closure, an inner shadow, a redeclared `var`, a
+`print` parameter.
+
+## Adversarial review (fresh context, 2026-11-07)
+
+Verdict: 1 must-fix, 3 should-fix, 2 nits.
+
+- **Must-fix, fixed:** the new arm ran before the #7106 S1g propertyHelper
+  alias arms, so `__hasOwnProperty(o, k)` took the generic apply instead of
+  the own-property provider. Moved after them; the repro now emits the
+  provider call, as on main.
+- **Should-fix, rebutted:** "two predicates" — from-ast's
+  `resolveModuleBinding(…).type.kind === "dynamic"` is the selector's
+  `valueKind.kind === "dynamic"` mapped by `resolveModuleBindingGlobal`, the
+  only kind that maps to `irDynamic()`; the two cannot disagree.
+- **Should-fix, fixed:** the selector arm is now an `else if` like its siblings.
+- **Should-fix, rebutted after measurement:** making `isAmbientBinding`
+  answer `false` for a shadowing script `var`. Tried; it does not change
+  routing here, and the checker-derived typing it would expose is the same
+  hazard the statement-position limit addresses. Left as is.
+- **Nits, fixed:** the message comment no longer claims legacy throws for
+  every non-callable value; the message plumbing is one conditional.

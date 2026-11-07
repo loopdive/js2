@@ -13475,9 +13475,14 @@ export function buildLocalCallGraph(
             // (#7106 propertyHelper) likewise the stored descriptor alias.
             for (const argument of node.arguments) visit(argument);
             return;
-          } else if (currentModuleBindingResolver?.(node.expression)?.valueKind.kind === "dynamic") {
+          } else if (
+            ts.isExpressionStatement(node.parent) &&
+            currentModuleBindingResolver?.(node.expression)?.valueKind.kind === "dynamic"
+          ) {
             // (#7287) A script `var` in its dynamic module home is called
-            // through the carrier (from-ast's Stage-4 dynamic call), not an edge.
+            // through the carrier (from-ast's Stage-4 dynamic call), not an
+            // edge. Statement position only: a lib-named `var`'s call result
+            // is typed by the lib signature (`var isNaN = …` reads as boolean).
             for (const argument of node.arguments) visit(argument);
             return;
           } else {

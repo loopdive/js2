@@ -477,8 +477,6 @@ export function makeIrAmbientBindingPredicate(
       const declarations = [symbol.valueDeclaration, ...(symbol.declarations ?? [])].filter(
         (declaration): declaration is ts.Declaration => declaration !== undefined,
       );
-      // A script `var` the lib also declares is the script's binding (#7287).
-      if (scriptVarBehindLibGlobal(node, declarations) !== undefined) return false;
       const isLib = (declaration: ts.Declaration): boolean => declaration.getSourceFile().isDeclarationFile;
       return quantifier === "some" ? declarations.some(isLib) : declarations.length > 0 && declarations.every(isLib);
     } catch {
