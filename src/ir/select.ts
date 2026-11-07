@@ -9134,6 +9134,12 @@ function selectorDynamicLaneIn(
   );
 }
 
+/** A fresh wrapper operand needs the backend's ToPrimitive lowering (#4208 S4); refuses at `at`. */
+function selectorWrapperToPrimitiveSupported(at: ts.Node): boolean {
+  if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") === true) return true;
+  return capabilityNo("operand-coercion-unsupported", "expr-wrapper-to-primitive-target", at);
+}
+
 /**
  * The generic binary tail (#7144, #7106). A fresh primitive wrapper operand is
  * the dynamic carrier of its ToPrimitive (#4208 S4), and compares by identity
@@ -9153,9 +9159,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
   const left = leftWrapper ? "dynamic" : binaryOperandFamily(expr.left, scope, localClasses);
   const right = rightWrapper ? "dynamic" : binaryOperandFamily(expr.right, scope, localClasses);
   if (leftWrapper || rightWrapper) {
-    if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") !== true) {
-      return capabilityNo("operand-coercion-unsupported", "expr-wrapper-to-primitive-target", expr);
-    }
+    if (!selectorWrapperToPrimitiveSupported(expr)) return false;
     const other = leftWrapper ? right : left;
     if (
       wrapperComparisonIsIdentity(binOp, leftWrapper, rightWrapper) ||
@@ -11817,6 +11821,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     if (expr.operator === ts.SyntaxKind.TildeToken && !expressionIsProvenNumber(expr.operand)) {
       return shapeNo("expr-tilde-nonnumeric", expr.operand);
+    }
+    // Unary `-`/`+` ToNumber a fresh wrapper through the binary operands' ToPrimitive (#4208 S4, #7144).
+    if (
+      (expr.operator === ts.SyntaxKind.MinusToken || expr.operator === ts.SyntaxKind.PlusToken) &&
+      selectorPrimitiveWrapperConstruction(expr.operand, scope, localClasses) !== null
+    ) {
+      return selectorWrapperToPrimitiveSupported(expr);
     }
     return isPhase1Expr(expr.operand, scope, localClasses);
   }
