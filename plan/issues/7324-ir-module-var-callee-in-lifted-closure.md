@@ -93,7 +93,7 @@ AST-site plan in t__closure_0").
       except the files main withdrew (their leftover goes away).
 - [x] test262 verdicts identical on the A/B corpus.
 
-## Follow-up (2026-11-07): an uninitialized script `var` callee is lowered by #7287
+## Resolution (2026-11-07): an uninitialized script `var` callee is subsumed by #7287
 
 #7164 (#7287) and this issue's PR (#7175) landed in parallel. `var getter;`
 lives in its dynamic module home, and #7287 lowers a statement call through it
@@ -107,4 +107,15 @@ var" row of the test moves from the refused cases to the claimed ones, and a
 runtime case pins the TypeError on all three lanes. `var getter = 3` and
 `let getter = 3` stay refused (`external-call`): this rule is unchanged for
 callees #7287 does not lower.
+
+Fixed forward in PR #7185, which changes only the test and this file. The
+semantics were verified independently by this issue's owner (R8) on merged
+main `636331310e`. With the real test262 harness (`assert.throws` checks
+`constructor === TypeError`), `var getter; assert.throws(TypeError, function
+() { getter(); })` is IR and passes on gc and standalone. An ordering probe
+(`r = 1; getter(); r = 2;`, then `assert.sameValue(r, 1)`) shows the TypeError
+is thrown at the call, after the code before it and before the code after it.
+`let getter;` stays legacy. `var getter = 3` and `var getter = null` stay
+refused (`external-call` / `vardecl-module-value-flow`). No "assigned later,
+then called" shape reaches the #7287 arm.
 
