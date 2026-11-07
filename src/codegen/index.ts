@@ -3247,7 +3247,7 @@ function planIrOverlay(
       if (projection.kind === "bool") hasBooleanProjection = true;
       else allProjectionsAreBoolean = false;
       if (projection.kind === "f64" || projection.kind === "dynamic" || projection.kind === "string") {
-        hasNonFastScalarProjection = true;
+        hasNonFastScalarProjection = true; // (#7277) not only scalars: a call-site-refined string too
       } else {
         allProjectionsAreNonFastStable = false;
       }

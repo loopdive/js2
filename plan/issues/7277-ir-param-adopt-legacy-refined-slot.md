@@ -139,9 +139,11 @@ the existing resolver; no new import, no selector change.
   `{ pass: 341, fail: 113, compile_error: 28, skip: 11 }` on both sides, with
   the same non-pass set row for row.
 - **Typed corpus:** 264/264 byte-identical to main (gc/standalone/wasi).
-- **Test:** `tests/issue-7277-ir-param-legacy-refined-slot.test.ts`.
-  verifyEqualTo is IR-emitted, its throw path keeps legacy's messages
-  (including `-0`), and `built-ins/Boolean/prop-desc.js` passes.
+- **Test** (superseded by "Scope narrowed" below: `verifyEqualTo` is never
+  called, so it keeps legacy's default slot):
+  `tests/issue-7277-ir-param-legacy-refined-slot.test.ts` showed
+  verifyEqualTo IR-emitted with legacy's messages, and
+  `built-ins/Boolean/prop-desc.js` passing.
 - **Gates** (bare, also vs `origin/main`): green.
 - **Equivalence gate:** running; the result will go on the PR.
 
@@ -149,8 +151,10 @@ the existing resolver; no new import, no selector change.
 
 **`quality`: import-cycles.** `fnctor-typed-instances.ts` value-imported
 `irVal` from `../ir/nodes.js`, which added one codegen→ir two-way edge
-(302 → 303). It now imports only the `IrType` type and writes the `f64`
-literal inline. The gate passes against the merge base.
+(302 → 303). At `da4ccbe5` it imported only the `IrType` type and wrote the
+`f64` literal inline. Since `8d9c6d8b` it imports nothing from `ir/`: it
+returns the raw `ValType` (`legacyRefinedParamSlot`), and the resolver's
+existing arms map it.
 
 **`equivalence-gate`: 14 regressions** in
 `tests/equivalence/issue-7242-ir-new-compiled-function-constructor.test.ts`,
@@ -205,3 +209,9 @@ keeps legacy's default slot and is out of scope now.
 - **Test:** `tests/issue-7277-*` pins the decimalToHexString route and its
   harness test, value parity for call-site-refined string/f64 callees, and
   the never-called `run(n)` staying refused.
+
+**Note for #7291** (review 6700525113, nit 1): an exported string-builder
+function that is also called inside the file (#1580 source + `run(10)`) now
+gets the IR body and its slower builder loop. Base has the same slowdown for
+a non-exported builder reached through another call. This PR only widens
+which functions reach the #7291 gap; #7291 carries the test case.
