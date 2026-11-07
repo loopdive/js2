@@ -24,4 +24,63 @@ assignee: "ttraenkler/c-lane-opus"
 module-init has no IR lowering (#7275 shape 2). Legacy synthesises the
 descriptor at compile time from the `$NativeProto` glue.
 
-(Measurements, plan and acceptance criteria follow.)
+## Measurement (main `c03f7d0e`, 2026-11-07): the provider alone has no file yield
+
+### The family
+
+There are **348** test262 files matching
+`getOwnPropertyDescriptor(<Ctor>.prototype, "<lit>")`, either `Object.` or
+`Reflect.` (a grep over `test262/test`). The largest directories are
+`built-ins/Object` 134, `built-ins/RegExp` 77, `built-ins/Error` 33 and
+`staging/sm` 32.
+
+| What else the file needs | Files |
+| --- | ---: |
+| reads a builtin prototype member as a VALUE (`desc.value === Array.prototype.slice`), i.e. #7275 shape 1 | 224 |
+| calls the accessor (`desc.get.call(…)`, `.get` / `.set`) | 178 |
+| includes `propertyHelper.js` / `verifyProperty`, or any other `includes:` | 97+ |
+| **none of the above** | **6**, all `staging/sm/Iterator/prototype/*/descriptor.js`, and they use `Reflect.getOwnPropertyDescriptor`, not `Object.` |
+| no accessor call and no harness include, so the descriptor plus shape 1 suffice (upper bound) | 133 |
+
+The 6 stride-40 sole-blocker files named in #7275 shape 2 are all in the
+224 / 178 columns:
+
+- `Object/getOwnPropertyDescriptor/15.2.3.3-4-{43,80,118,159}` assert
+  `desc.value === <B>.prototype.<m>`, which is shape 1.
+- `RegExp/prototype/{hasIndices,sticky}/this-val-*` call
+  `desc.get.call(RegExp.prototype)`: an accessor call with a builtin
+  prototype as `this`.
+
+An unmask probe on #7293's branch confirms it: with the namespace admitted,
+15.2.3.3-4-80 still fails in from-ast on the `String.prototype.toLocaleUpperCase`
+read.
+
+**So the descriptor provider ALONE moves 0 stride-40 files and at most 6
+corpus files to zero legacy.** Paired with #7275 shape 1 (builtin prototype
+member read as a value: the same identity-stable singleton closure that
+`pushBuiltinFnSingletonValueInstrs` materializes, which is also the
+descriptor's `.value`), the upper bound is 133 files.
+
+### What the code offers
+
+- **gc byte-identity is automatic.** `resolveBuiltinProtoGopdReceiver` returns
+  `undefined` unless `ctx.standalone`, so the legacy arm never runs on gc.
+  Lifting it into a shared helper cannot change gc bytes. It can change
+  standalone legacy bytes if the helper becomes a called function instead of
+  inline instructions.
+- **The IR has no value-producing channel for an inline legacy instruction
+  sequence.** `raw.wasm` has no SSA result, and prepared components treat it as
+  opaque ("raw.wasm is opaque to symbolic dependency discovery"). The existing
+  channel is a NAMED support function resolved by `resolver.resolveFunc` (as
+  `irRuntimeFuncRef("__unbox_number")` / `"__iterator_return"` are). So the
+  shared helper should be a compiler-support FUNCTION per (brand, member)
+  returning `externref`, which legacy and IR both `call`. Legacy's standalone
+  bytes then change (inline → call) while gc bytes stay identical.
+
+## Recommendation
+
+Do shape 1 and shape 2 in ONE lane. Both are the same provider: the
+(brand, member) singleton closure. Expose it as two compiler-support
+functions, a value getter and a descriptor builder, and add two rows to
+`src/ir/ambient-global-function-call.ts`. Built alone, shape 2 is a large
+refactor with no measurable yield.
