@@ -174,6 +174,18 @@ export function legacyParamSlotIsExternref(ctx: CodegenContext, parameter: ts.Pa
 }
 
 /**
+ * (#7277) Legacy's refined slot for an implicit-any `parameter` when it is
+ * one the IR can name: `f64` (every call site passes a number) or the
+ * non-null native string `ref $AnyString` (every call site passes a string).
+ * The filter is load-bearing: `projectIrImplicitParamSlot` would also map a
+ * bool or vec slot, which is not proven ABI-equal off the candidate set.
+ */
+export function legacyRefinedParamSlot(ctx: CodegenContext, parameter: ts.ParameterDeclaration): ValType | undefined {
+  const slot = legacyParamSlot(ctx, parameter);
+  return slot?.kind === "f64" || (slot?.kind === "ref" && isAnyStringSlot(ctx, slot)) ? slot : undefined;
+}
+
+/**
  * (#4612) Selector-facing adapter for {@link legacyPositionCarriesFnctorInstance}:
  * takes the AST node the selector is standing on (a parameter, or the owning
  * declaration for the return position) and derives the legacy slot name +
