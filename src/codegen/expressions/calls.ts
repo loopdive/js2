@@ -552,7 +552,6 @@ import {
   ensureTaDynFillHelper,
   ensureTaDynReverseHelper,
   getOrRegisterDvWindowType,
-  isDataViewAccessor,
 } from "../dataview-native.js";
 import {
   getLinearU8Buffer,
