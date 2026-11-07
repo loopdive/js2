@@ -466,6 +466,84 @@ that uses these adapters demotes at prepared-component planning
 ABI identity). The adapters are still minted, so such a module carries them
 unused. Script files (test262) are unaffected.
 
+## Slice 2 — DataView (2026-11-07, implemented)
+
+Stacked on #7121 (a84cddb1). Base for every measurement below: a84cddb1.
+
+### What was built
+
+- **The plan is class-aware.** A certified var or producer is an
+  `ArrayBuffer` or a `DataView`; `certifyBufferVars` records the class, and a
+  member is admitted from a per-class table.
+- **`src/ir/native-buffer-operands.ts`** (new): the admission table. It holds
+  the member table per class, the operand kinds (`number`, `bound`, `flag`),
+  and the construction shapes. These are pure source predicates; the plan
+  (`native-buffer-surface.ts`) keeps receiver and var certification.
+- **Construction.** `new DataView(buf[, off[, len]])`, where `buf` is a
+  certified ArrayBuffer, lowers to `__ir_dv_new(externref, f64, externref)`.
+  An omitted length is `undefined` ("to the end"). A view consumes its buffer,
+  so the buffer producer is certified through it.
+- **Getters.** `byteLength` and `byteOffset` lower to `__ir_dv_byte_length`
+  and `__ir_dv_byte_offset`.
+- **Accessors.** The 18 non-BigInt `get*`/`set*` lower to direct calls of
+  legacy's own `__dv_m_<accessor>` helpers. No new adapter body is added;
+  the helpers are now compiler-owned handles (`ownedHelperHandle` /
+  `pushOwnedHelperFunc` in `func-space.ts`), not `ctx.funcMap` entries.
+- **One implementation of each sequence.**
+  - `src/codegen/buffers/data-view-native.ts` holds the construct emitters
+    (brand check, offset ToIndex, detached check, bounds, length, window),
+    cut from `new-indexed.ts`.
+  - It also holds `dataViewByteAttrInstrs`, cut from
+    `property-access-dispatch.ts`.
+  - Legacy and the adapters both call them.
+- **Statement-position setter.** `v.setUint8(0, 1);` reaches from-ast through
+  `lowerMethodCallWithSourcePlan`, so that entry consults the plan too.
+  Without it the certified call reached the builder as a capability-deferred
+  extern call: an invariant.
+
+Left on legacy: `buffer`, the BigInt accessors, a non-number offset (`"1"`),
+an unconsumed construction (a `new DataView(...)` statement inside `try`), and
+any var with a non-DataView write.
+
+### Measurements
+
+| Check | Result |
+| --- | --- |
+| Byte identity, raw compiles of all 561 `built-ins/DataView` files × gc / standalone / wasi / standalone-noIR / wasi-noIR | 2805/2805 identical (the legacy extraction is byte-neutral) |
+| Byte identity, playground corpus × 3 lanes and the 344-file buffer corpus × 5 lanes, vs a84cddb1 and vs main | all identical |
+| test262 A/B, all 561 `built-ins/DataView` + 221 `built-ins/ArrayBuffer` + 299 random, gc + standalone, plus wasi / standalone compile + imports | **0 status changes**, 0 compile or import differences; 52 files newly claim `<module-init>` on standalone, all 52 pass |
+| Wrapped ledger, stride 40, standalone | pending (base run in progress) |
+| 31 adversarial probes × gc / standalone / wasi | every cell identical to base |
+| `tests/issue-7274-ir-native-arraybuffer.test.ts` + `tests/issue-4461.test.ts` | 31/31 |
+
+The probes cover:
+
+- view windows;
+- out-of-range, negative and fractional offsets;
+- `undefined` and `NaN` lengths;
+- every accessor width, with the little-endian flag absent, `undefined`, `0`
+  or `1`;
+- a setter's `undefined` result and `getUint8()` with no arguments;
+- Float16 and BigInt;
+- a detached buffer;
+- a view over a `slice` result and a view over a non-buffer;
+- a shadowed `DataView`;
+- `__dv_m_*` and `__ir_dv_*` namesakes;
+- reassignment and a mixed-class var;
+- string values and offsets;
+- `buffer`;
+- a view over a resizable buffer.
+
+**Mixed routes cannot be exercised, as in slice 1.** A user function that
+reads or writes a certified var does not claim, so module-init then refuses on
+`call-graph-closure`. In a TS module the script-var plan does not apply. The
+five mixed probes therefore run legacy on both sides (identical to base); the
+representation identity rests on the shared emitters and the shared slot.
+
+### Adversarial review
+
+Pending.
+
 ## Follow-ups
 
 - **Legacy `{maxByteLength: undefined}`** builds a resizable buffer with
@@ -491,6 +569,13 @@ unused. Script files (test262) are unaffected.
   the `maxByteLength` expression; the spec evaluates the whole argument list
   first. The IR admits only a number-literal `maxByteLength`, so the
   difference is not observable on the IR route (#7121 review nit 2).
+
+- **`DataView#buffer` and the BigInt accessors** stay on legacy (slice 2).
+  `buffer` needs the window's backing as a certified ArrayBuffer handle; the
+  BigInt accessors need a BigInt operand in the IR.
+- **A shadowing `function DataView(b) { this.n = 1; }`** returns a native view
+  on legacy (`v.n` is `undefined`), on main and on this branch alike. The IR
+  refuses the shadowed constructor, so the route is legacy.
 
 - **The 7 closure / object-literal files.** They need planned-closure bodies
   that can capture script vars and construct intrinsics (#7271 piece 1, lane
