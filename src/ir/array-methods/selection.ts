@@ -8,12 +8,14 @@
  *
  * Admission is deliberately the exact domain of the lowering, so a claimed
  * call never demotes at build time:
- *   - the receiver's element family is `number` or `string` (checker proof,
- *     supplied by the backend integration through
+ *   - the receiver's element family is `number`, `string` or `boolean`
+ *     (checker proof, supplied by the backend integration through
  *     {@link makeIrArrayElementFamilyClassifier}; a backend that does not
  *     supply it — the linear lane — admits nothing);
- *   - `indexOf(x)` / `includes(x)`: exactly one non-spread argument whose
- *     family equals the element family (no `fromIndex`, no coercion);
+ *   - `indexOf(x[, fromIndex])` / `lastIndexOf(x[, fromIndex])` /
+ *     `includes(x[, fromIndex])`: no spread, a search value whose family
+ *     equals the element family (no coercion), and a `fromIndex` that is a
+ *     proven number (#7313; its ToIntegerOrInfinity has no side effect);
  *   - `join()` / `join(sep)`: at most one non-spread argument, and a present
  *     separator is a proven string.
  */
@@ -24,7 +26,7 @@ import { inferEmptyArrayElementTypes, type EmptyArrayElementInference } from "..
 import { IR_VEC_SEARCH_JOIN_METHODS } from "./vec-search-join.js";
 
 /** Element family of an array-typed expression the IR can scan. */
-export type IrArrayElementFamily = "number" | "string";
+export type IrArrayElementFamily = "number" | "string" | "boolean";
 
 export interface IrVecSearchJoinSelection {
   /** Checker-backed element family of the receiver; absent ⇒ admit nothing. */
@@ -61,9 +63,13 @@ export function selectVecSearchOrJoin(
     }
     return { admitted: true };
   }
-  if (call.arguments.length !== 1) return { admitted: false, arm: "expr-array-search-shape", node: call };
-  if (options.argumentFamily(call.arguments[0]!) !== family) {
-    return { admitted: false, arm: "expr-array-search-value-family", node: call.arguments[0]! };
+  const [value, fromIndex, ...rest] = call.arguments;
+  if (value === undefined || rest.length > 0) return { admitted: false, arm: "expr-array-search-shape", node: call };
+  if (options.argumentFamily(value) !== family) {
+    return { admitted: false, arm: "expr-array-search-value-family", node: value };
+  }
+  if (fromIndex !== undefined && options.argumentFamily(fromIndex) !== "number") {
+    return { admitted: false, arm: "expr-array-search-from-index", node: fromIndex };
   }
   return { admitted: true };
 }
@@ -74,11 +80,15 @@ function primitiveFamily(type: ts.Type): IrArrayElementFamily | undefined {
   for (const member of members) {
     const flags = member.flags;
     const memberFamily: IrArrayElementFamily | undefined =
-      (flags & ts.TypeFlags.NumberLike) !== 0 && (flags & ts.TypeFlags.EnumLike) === 0
-        ? "number"
-        : (flags & ts.TypeFlags.StringLike) !== 0 && (flags & ts.TypeFlags.EnumLike) === 0
-          ? "string"
-          : undefined;
+      (flags & ts.TypeFlags.EnumLike) !== 0
+        ? undefined
+        : (flags & ts.TypeFlags.NumberLike) !== 0
+          ? "number"
+          : (flags & ts.TypeFlags.StringLike) !== 0
+            ? "string"
+            : (flags & ts.TypeFlags.BooleanLike) !== 0
+              ? "boolean"
+              : undefined;
     if (memberFamily === undefined || (family !== undefined && family !== memberFamily)) return undefined;
     family = memberFamily;
   }
@@ -95,13 +105,14 @@ function isDenseArrayLiteral(node: ts.Node | undefined): boolean {
 }
 
 /**
- * A string vec is only scanned when the IR itself materialized it: an array
- * literal, or a `const` bound to one. A `string[]` that crosses a call or a
- * module boundary keeps its elements in the boxed externref carrier, which
- * this slice does not unbox — so it is refused here rather than claimed and
- * demoted at build time.
+ * A string or boolean vec is only scanned when the IR itself materialized it:
+ * an array literal, or a `const` bound to one. A `string[]` that crosses a
+ * call or a module boundary keeps its elements in the boxed externref carrier,
+ * which this slice does not unbox, and a `boolean[]` from legacy has no proven
+ * element carrier — so both are refused here rather than claimed and demoted at
+ * build time.
  */
-function isLiteralStringVec(node: ts.Expression, checker: ts.TypeChecker): boolean {
+function isLiteralVec(node: ts.Expression, checker: ts.TypeChecker): boolean {
   if (isDenseArrayLiteral(node)) return true;
   if (!ts.isIdentifier(node)) return false;
   const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
@@ -170,10 +181,11 @@ function isInferredStringVec(
 
 /**
  * Checker-backed element family of an expression whose type is a plain
- * `Array<T>` (not a tuple, not a union of arrays) with `T` entirely `number`
- * or entirely `string` (the latter only for an IR-materialized literal vec,
- * see {@link isLiteralStringVec}, or an empty literal the inference closes as
- * `string[]`, see {@link isInferredStringVec}).
+ * `Array<T>` (not a tuple, not a union of arrays) with `T` entirely `number`,
+ * entirely `string` or entirely `boolean` (the last two only for an
+ * IR-materialized literal vec, see {@link isLiteralVec}, or — strings — an
+ * empty literal the inference closes as `string[]`, see
+ * {@link isInferredStringVec}).
  */
 export function makeIrArrayElementFamilyClassifier(
   checker: ts.TypeChecker,
@@ -189,7 +201,7 @@ export function makeIrArrayElementFamilyClassifier(
       if (!checker.isArrayType(type)) return undefined;
       const element = checker.getTypeArguments(type as ts.TypeReference)[0];
       const family = element === undefined ? undefined : primitiveFamily(element);
-      return family === "string" && !isLiteralStringVec(node, checker) ? undefined : family;
+      return family !== "number" && !isLiteralVec(node, checker) ? undefined : family;
     } catch {
       return undefined;
     }

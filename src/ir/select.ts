@@ -9342,15 +9342,14 @@ function stringMethodSelection(
 }
 
 /**
- * A literal with a static ToNumber stands for a position or a length; an
- * `undefined` fill is the omitted one (a space). The builder folds both.
+ * A literal with static conversions (`undefined`, `null`, `true`, `false`)
+ * stands for any role: the builder folds its ToNumber for a position or a
+ * length, its ToString for a search or a fill (#7313), and an `undefined`
+ * that has an omitted value takes it.
  */
 function stringMethodArgumentProven(role: StringArgumentRole, arg: ts.Expression, scope: ReadonlySet<string>): boolean {
-  const literal = staticStringMethodArgument(arg, (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope));
-  if (literal === undefined) {
-    return role === "search" || role === "fill" ? expressionIsClassifiedString(arg) : expressionIsProvenNumber(arg);
-  }
-  return literal === "undefined" ? role !== "search" : role === "position" || role === "length";
+  if (staticStringMethodArgument(arg, (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope))) return true;
+  return role === "search" || role === "fill" ? expressionIsClassifiedString(arg) : expressionIsProvenNumber(arg);
 }
 
 function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
