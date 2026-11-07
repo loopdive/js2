@@ -23,7 +23,7 @@ export function isVarDeclarationList(list: ts.VariableDeclarationList): boolean 
  * parameter it re-declares (Annex B.3.5: that `var` writes the parameter) is
  * not, nor is a `for-in` / `for-of` head.
  */
-export function isModuleInitVarList(node: ts.Node | undefined): node is ts.VariableDeclarationList {
+export function isModuleInitVarList(node: ts.Node | undefined): boolean {
   if (node === undefined || !ts.isVariableDeclarationList(node) || !isVarDeclarationList(node)) return false;
   const owner = node.parent;
   if (!ts.isVariableStatement(owner) && !(ts.isForStatement(owner) && owner.initializer === node)) return false;
@@ -39,7 +39,7 @@ export function moduleInitVarLists(statement: ts.Statement): ts.VariableDeclarat
   const lists: ts.VariableDeclarationList[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
-    if (isModuleInitVarList(node)) lists.push(node);
+    if (ts.isVariableDeclarationList(node) && isModuleInitVarList(node)) lists.push(node);
     node.forEachChild(visit);
   };
   visit(statement);
