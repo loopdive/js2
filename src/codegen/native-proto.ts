@@ -329,11 +329,12 @@ export function withProvisionalNativeProtoGlue<T>(ctx: CodegenContext, query: ()
   const registry = slot.__nativeProtoGlue;
   const brandNames = new Set(brandMap?.keys());
   const brands = new Set(registry?.keys());
+  const provisional = slot.__nativeProtoGlueProvisional;
   slot.__nativeProtoGlueProvisional = true;
   try {
     return query();
   } finally {
-    slot.__nativeProtoGlueProvisional = undefined;
+    slot.__nativeProtoGlueProvisional = provisional;
     if (brandMap === undefined) ctx.builtinBrandMap = undefined;
     else for (const name of [...brandMap.keys()]) if (!brandNames.has(name)) brandMap.delete(name);
     if (registry === undefined) slot.__nativeProtoGlue = undefined;

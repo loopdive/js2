@@ -120,24 +120,42 @@ const DECLINED_BUILTINS = [
   "Boolean",
   "Date",
   "RegExp",
+  "Promise",
+  "Function",
+  "Symbol",
+  "BigInt",
   "Error",
   "TypeError",
-  "Promise",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "EvalError",
+  "URIError",
+  "AggregateError",
   "Map",
   "Set",
   "WeakMap",
   "WeakSet",
   "WeakRef",
   "FinalizationRegistry",
-  "Function",
-  "Symbol",
-  "BigInt",
+  "Iterator",
+  "DisposableStack",
+  "AsyncDisposableStack",
   "ArrayBuffer",
   "SharedArrayBuffer",
   "DataView",
   "Int8Array",
   "Float64Array",
 ];
+// One declined unit per builtin: a combined unit can hide a leak, because the
+// unit's own legacy registrations may then reserve the same functions in the
+// same order. `%TypedArray%` is reached through the views, whose glue
+// registers the intrinsic's.
+function declinedSource(builtin: string): string {
+  return `var d = Object.getOwnPropertyDescriptor(${builtin}.prototype, "then");
+var v = ${builtin}.prototype.toString === ${builtin}.prototype.toString;
+var o = {}; with (o) { d; v; }`;
+}
 
 async function binaryHash(source: string, options: CompileOptions, experimentalIR: boolean) {
   const result = await compile(source, {
@@ -152,14 +170,24 @@ async function binaryHash(source: string, options: CompileOptions, experimentalI
 
 describe("#7294 builtin-prototype member support functions", () => {
   for (const lane of VALUE_LANES) {
-    for (const builtin of DECLINED_BUILTINS) {
-      it(`a declined unit compiles as with the IR off: ${builtin} (${lane.name})`, async () => {
-        const source = `var d = Object.getOwnPropertyDescriptor(${builtin}.prototype, "then");
-var v = ${builtin}.prototype.toString === ${builtin}.prototype.toString;
-var o = {}; with (o) { d; v; }`;
-        expect(await binaryHash(source, lane.options, true)).toBe(await binaryHash(source, lane.options, false));
-      });
-    }
+    it(
+      `a declined unit compiles as with the IR off, every builtin prototype (${lane.name})`,
+      {
+        timeout: 600_000,
+      },
+      async () => {
+        const leaks: string[] = [];
+        for (const builtin of DECLINED_BUILTINS) {
+          const source = declinedSource(builtin);
+          if ((await binaryHash(source, lane.options, true)) !== (await binaryHash(source, lane.options, false))) {
+            leaks.push(builtin);
+          }
+          // Yield between compiles so the worker keeps answering the runner.
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        expect(leaks).toEqual([]);
+      },
+    );
   }
   for (const [label, body] of Object.entries(VALUE_CASES)) {
     for (const lane of VALUE_LANES) {
