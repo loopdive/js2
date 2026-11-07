@@ -1,7 +1,8 @@
 ---
 id: 7328
 title: "IR: `var nv = null` in the script dynamic home is claimed, then rejected by from-ast"
-status: ready
+status: done
+completed: 2026-11-07
 sprint: Backlog
 created: 2026-11-07
 updated: 2026-11-07
@@ -51,3 +52,21 @@ There are two options:
   `dyn.undefined`).
 
 Either way, pin a bare compile of the repro with `irPostClaimErrors` empty.
+
+## Resolution (2026-11-07)
+
+Fixed by #7164 (`c0dcb01a`, review round 3), which this branch now merges. The
+selector's var-declaration arm (`src/ir/select.ts`) refuses a `null`
+initializer into a script var's dynamic module home (`vardecl-module-value-flow`),
+the same rule from-ast applies: the IR has no dynamic `null`. The unit keeps the
+legacy body instead of claiming and withdrawing. Both repros give
+`irPostClaimErrors` `[]` on standalone, wasi and gc:
+
+```js
+var nv = null; nv;
+var nv = null; function u(g) { g(1); } u(nv);
+```
+
+The `null` producer option (`dyn.null`) is not taken. The related literal
+`null` into an `f64` context is #7332.
+
