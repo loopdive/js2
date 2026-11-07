@@ -2,7 +2,7 @@
 id: 7289
 title: "IR: relational comparison on dynamic operands skips ToPrimitive for objects (`0 >= []` → false)"
 status: ready
-sprint: current
+sprint: Backlog
 created: 2026-11-07
 updated: 2026-11-07
 priority: high
