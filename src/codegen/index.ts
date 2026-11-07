@@ -269,6 +269,7 @@ import {
   finalizePreparedIrSelection,
   prepareHostDateSnapshotPreflight,
   synchronizeIrSafeFunctionSelection,
+  moduleInitHoldsEvalSite,
   runtimeEvalBoundaryFailure,
   withdrawEvalBoundaryFunctions,
 } from "./ir-overlay-preparation.js";
@@ -3543,18 +3544,18 @@ function planIrOverlay(
   // crosses it stays direct (`withdrawEvalBoundaryFunctions`), and the
   // value the global push publishes for every other one is planned before its
   // component seals (`collectPreparedTopLevelFunctionValueTargetUnitIds`).
-  // Module init and class members share the push/pull seam with the direct
-  // carrier, so they stay direct as a whole.
+  // Class members, and a module init holding an eval site, stay direct whole.
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
     const failure = runtimeEvalBoundaryFailure();
     withdrawEvalBoundaryFunctions(ctx, ast.sourceFile, identityPlan, safeSelection.funcs, recordPreparationFailure);
     for (const name of safeSelection.classMembers ?? []) recordPreparationFailure(name, failure);
-    if (safeSelection.moduleInit?.reason === null && safeSelection.moduleInit.stmtCount > 0) {
-      recordPreparationFailure(MODULE_INIT_UNIT_NAME, failure);
+    if (moduleInitHoldsEvalSite(ast.sourceFile, ctx.runtimeEvalBoundaryPlan.sites)) {
+      if (safeSelection.moduleInit?.reason === null && safeSelection.moduleInit.stmtCount > 0)
+        recordPreparationFailure(MODULE_INIT_UNIT_NAME, failure);
+      safeSelection.moduleInit = undefined;
     }
     safeSelection.classMembers = new Set();
     safeSelection.classMemberUnitIds = new Set();
-    safeSelection.moduleInit = undefined;
   }
   // (#2023) The IR `new C(...)` lowering does not thread the new.target
   // class-id (that machinery lives only on the legacy path). When the
@@ -4233,11 +4234,11 @@ function compileMultiIrOverlaySource(
  * (#7105) The carrier of a SCRIPT-goal top-level `var`'s `__mod_<name>` slot
  * (`IrScriptVarHome`) when the IR may share that slot as the binding's sole
  * home. Legacy allocates it for scripts exactly as for modules, and a plain
- * read or write is `global.get`/`global.set` on it. Three script-only arms
+ * read or write is `global.get`/`global.set` on it. A runtime-eval consumer
+ * widens every script `var` to `externref` (`registerReassignedFunctionGlobals`),
+ * the `dynamic` home; the pull decodes what eval writes back, and the IR's
+ * dynamic read decodes eval-built values (#7106 A2b). Two script-only arms
  * move the binding's home away from the slot, and each answers `undefined`:
- *   - a runtime-eval consumer widens every script `var` to `externref`
- *     (`registerReassignedFunctionGlobals`), so the slot's type no longer
- *     matches the checker type the IR would resolve;
  *   - a name in `sloppyImplicitGlobals` (an undeclared `p = v` or a top-level
  *     `this.p = v`) resolves bare reads through the global-environment object;
  *   - a slot the declaration collector has not placed is not a home at all.
@@ -4265,15 +4266,7 @@ export function scriptVarHome(
 function scriptVarHomeSlot(ctx: CodegenContext, declaration: IrModuleBindingDeclaration) {
   if (!ts.isIdentifier(declaration.name)) return undefined;
   const name = declaration.name.text;
-  const plan = ctx.runtimeEvalBoundaryPlan;
-  if (plan === undefined || ctx.sloppyImplicitGlobals === undefined) return undefined;
-  if (
-    (ctx.standalone || ctx.wasi) &&
-    ctx.runtimeEvalProviderAbsent !== true &&
-    plan.sharedRealmMayContainCanonicalValues
-  ) {
-    return undefined;
-  }
+  if (ctx.runtimeEvalBoundaryPlan === undefined || ctx.sloppyImplicitGlobals === undefined) return undefined;
   if (ctx.sloppyImplicitGlobals.has(name)) return undefined;
   // (#7106) `var g` merged with `function g` owns the function's slot; (#7189) a same-named object-runtime
   // helper (`__getOwnPropertyNames`) is not that `function` and can enter `funcMap` after selection.

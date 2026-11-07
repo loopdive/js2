@@ -107,6 +107,20 @@ export function withdrawEvalBoundaryFunctions(
 }
 
 /** (#2928) Why an owner of a runtime-eval program stays direct; `why` is the per-function reason. */
+/**
+ * (#7106 A2b) Module init owns every top-level statement except function
+ * declarations (their own units), so it holds an eval site when one lies in
+ * such a statement — including a nested function expression there. A module
+ * init without one only reads the slots the pull rewrites.
+ */
+export function moduleInitHoldsEvalSite(sourceFile: ts.SourceFile, sites: readonly IrRuntimeEvalSite[]): boolean {
+  return sourceFile.statements.some(
+    (statement) =>
+      !ts.isFunctionDeclaration(statement) &&
+      sites.some((site) => site.start >= statement.getStart() && site.end <= statement.end),
+  );
+}
+
 export function runtimeEvalBoundaryFailure(why?: string): IrPreparationFailure {
   const detail = "the linked runtime-eval callable carrier is still owned by the direct frontend";
   return {
