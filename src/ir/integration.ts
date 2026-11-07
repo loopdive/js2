@@ -567,6 +567,7 @@ import {
   IR_STRING_REPEAT_FN,
 } from "./string-runtime.js";
 import { readEnv } from "../env.js";
+import { IN_HAS_PROPERTY } from "../shared/contracts/in-operator-helper.js";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -8976,7 +8977,7 @@ function preregisterInOperatorSupport(ctx: CodegenContext, fns: readonly BuiltFn
           if (
             instr.kind === "call" &&
             instr.target.binding.kind === "runtime" &&
-            instr.target.binding.symbol === "__extern_has"
+            (instr.target.binding.symbol === "__extern_has" || instr.target.binding.symbol === IN_HAS_PROPERTY)
           ) {
             used = true;
           }
