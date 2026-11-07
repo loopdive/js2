@@ -33,6 +33,11 @@ export interface IrVecSearchJoinSelection {
   readonly elementFamily?: (receiver: ts.Expression) => IrArrayElementFamily | undefined;
   /** Proven primitive family of an argument expression. */
   readonly argumentFamily: (argument: ts.Expression) => string | undefined;
+  /**
+   * (#7313) A `fromIndex` the lowering takes as a number. Unlike the checker's
+   * family, this sees every write to a module binding (`n = "1"`).
+   */
+  readonly isProvenNumber: (argument: ts.Expression) => boolean;
 }
 
 export type IrVecSearchJoinVerdict =
@@ -68,10 +73,20 @@ export function selectVecSearchOrJoin(
   if (options.argumentFamily(value) !== family) {
     return { admitted: false, arm: "expr-array-search-value-family", node: value };
   }
-  if (fromIndex !== undefined && options.argumentFamily(fromIndex) !== "number") {
+  if (fromIndex !== undefined && !options.isProvenNumber(fromIndex)) {
     return { admitted: false, arm: "expr-array-search-from-index", node: fromIndex };
   }
   return { admitted: true };
+}
+
+const FLAG_FAMILIES: readonly (readonly [ts.TypeFlags, IrArrayElementFamily])[] = [
+  [ts.TypeFlags.NumberLike, "number"],
+  [ts.TypeFlags.StringLike, "string"],
+  [ts.TypeFlags.BooleanLike, "boolean"],
+];
+
+function flagFamily(flags: ts.TypeFlags): IrArrayElementFamily | undefined {
+  return FLAG_FAMILIES.find(([flag]) => (flags & flag) !== 0)?.[1];
 }
 
 function primitiveFamily(type: ts.Type): IrArrayElementFamily | undefined {
@@ -79,16 +94,7 @@ function primitiveFamily(type: ts.Type): IrArrayElementFamily | undefined {
   let family: IrArrayElementFamily | undefined;
   for (const member of members) {
     const flags = member.flags;
-    const memberFamily: IrArrayElementFamily | undefined =
-      (flags & ts.TypeFlags.EnumLike) !== 0
-        ? undefined
-        : (flags & ts.TypeFlags.NumberLike) !== 0
-          ? "number"
-          : (flags & ts.TypeFlags.StringLike) !== 0
-            ? "string"
-            : (flags & ts.TypeFlags.BooleanLike) !== 0
-              ? "boolean"
-              : undefined;
+    const memberFamily = (flags & ts.TypeFlags.EnumLike) !== 0 ? undefined : flagFamily(flags);
     if (memberFamily === undefined || (family !== undefined && family !== memberFamily)) return undefined;
     family = memberFamily;
   }

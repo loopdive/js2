@@ -8324,7 +8324,9 @@ function expressionIsProvenNumber(expr: ts.Expression, seen = new Set<ts.Variabl
     // `new Date().getFullYear()` are intentionally outside this helper's
     // narrow call-expression recursion, but their module slot is still an
     // exact f64 value.
-    if (moduleBinding(candidate)?.valueKind.kind === "f64") return true;
+    // (#7313) A module binding is a number only when its slot is (not after `n = "1"`).
+    const binding = moduleBinding(candidate);
+    if (binding) return binding.valueKind.kind === "f64";
     const checkerProvesNumber = currentSelectionOptions?.classifyPrimitiveExpression?.(candidate) === "number";
     if (currentModuleBindingResolver?.scalarExpressionFamily(candidate) !== "f64" && !checkerProvesNumber) return false;
     const declaration = currentModuleBindingResolver?.localVariableDeclaration(candidate);
@@ -11358,6 +11360,7 @@ function isPhase1ArraySearchOrJoin(
     argumentFamily: (argument) =>
       currentSelectionOptions?.classifyPrimitiveExpression?.(argument) ??
       (expressionIsProvenNumber(argument) ? "number" : expressionIsProvenString(argument) ? "string" : undefined),
+    isProvenNumber: (argument) => expressionIsProvenNumber(argument),
   });
   if (verdict === undefined) return undefined;
   if (!verdict.admitted) return capabilityNo("array-method-unsupported", verdict.arm, verdict.node);

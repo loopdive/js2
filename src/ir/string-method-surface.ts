@@ -172,13 +172,13 @@ export function isStringMethodHelper(symbol: string): boolean {
   return Object.values(ROWS).some((row) => row.helpers.wasmgc === symbol || row.asciiHelper === symbol);
 }
 
+type StaticStringMethodArgument = "undefined" | "null" | "true" | "false";
+
 /**
  * A literal argument whose conversions are static: `undefined` (or `void 0`),
  * `null`, `true` or `false`; the value is its ToString. A shadowed
  * `undefined` (`isGlobalUndefined` false) is a value.
  */
-type StaticStringMethodArgument = "undefined" | "null" | "true" | "false";
-
 export function staticStringMethodArgument(
   expression: ts.Expression,
   isGlobalUndefined: (identifier: ts.Identifier) => boolean,

@@ -86,6 +86,7 @@ async function legacyUnits(path: string): Promise<string[]> {
     trackIrOutcomes: true,
   });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(result.irPostClaimErrors ?? [], path).toEqual([]);
   return (result.irOutcomes ?? [])
     .filter((outcome) => !outcome.irBodyEmitted)
     .map((outcome) => `${outcome.displayName}: ${outcome.detail ?? outcome.code}`);
@@ -131,6 +132,18 @@ describe("#7313 literal array-search and string-method rows", () => {
     ] as const) {
       const units = await legacyUnits(fixture(name, [call]));
       expect(units.join("\n"), name).toContain(part);
+    }
+  });
+
+  it("refuses, before the claim, a fromIndex module binding the script also writes a string to", async () => {
+    const path = join(dir, "written-string.js");
+    writeFileSync(
+      path,
+      `/*---\ndescription: issue-7313\n---*/\nvar n = 0;\nn = "1";\nassert.sameValue([1, 2, 1].indexOf(1, n), 2);\n`,
+    );
+    expect((await legacyUnits(path)).join("\n")).toContain("array-method-unsupported");
+    for (const lane of LANES) {
+      expect(await runTest262File(path, "issue-7313", undefined, lane)).toMatchObject({ status: "pass" });
     }
   });
 });

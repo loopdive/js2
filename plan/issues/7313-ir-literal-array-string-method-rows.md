@@ -20,6 +20,11 @@ loc-budget-allow:
   # literal now folds to its ToString text, beside the existing ToNumber fold
   # for a position; the (role, literal) dispatch is that function's job.
   - src/ir/from-ast.ts
+  # 2026-11-07 (#7313 review B2): +2 in select.ts's expressionIsProvenNumber
+  # (a module binding proves a number only by its f64 slot) and the
+  # fromIndex predicate passed to the vec-search selection. Both live in the
+  # functions they correct.
+  - src/ir/select.ts
 ---
 
 # #7313 — literal array-search and string-method rows
@@ -105,6 +110,33 @@ Base `cc27f70dfd` (main), head = this branch.
 - **Compile time:** about 1.35× base on the array probe, and linear (50–400
   asserts). The full 990-assert probe hit the runner's timeout only while
   another A/B run loaded the box.
+
+## Review fixes (RV7170, 6702857643)
+
+- **B1, test timeout.** Already fixed by `13a0cc67`: the array fixture was
+  trimmed and runs in 18 s against the 35 s limit. The timeout is not
+  raised.
+- **B2, claim then withdraw.**
+  - Repro: `var n = 0; n = "1"; [1, 2, 1].indexOf(1, n)` was claimed, then
+    failed at build with "fromIndex did not lower to a number".
+  - The selector now proves `fromIndex` with `expressionIsProvenNumber`,
+    not the checker-first family.
+  - That predicate itself trusted the checker's declared `number` for a
+    module binding, so it now accepts a module binding only when its slot
+    is f64.
+  - The same hole closed for string `position` arguments: on base,
+    `'abc'.charAt(n)` was claimed and then failed verification
+    ("i32.trunc_sat_f64_s operand is dynamic"). Both now refuse before
+    the claim.
+  - The stride-40 ledger is unchanged by this fix (36 zero-legacy files,
+    0 per-file changes).
+  - The search value of an array search has the same pre-existing hole,
+    checked through the checker-first family. Noted here, not widened.
+- **Nits:**
+  - The JSDoc in `string-method-surface.ts` now sits on the function.
+  - `primitiveFamily` uses a flag table instead of a nested ternary.
+- **#7327 filed:** `__str_replaceAll` with an empty search inserts `$`
+  patterns literally. The bug predates this PR; this PR's row inherits it.
 
 ## Tests
 
