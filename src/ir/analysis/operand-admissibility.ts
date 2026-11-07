@@ -39,6 +39,9 @@ import { ts } from "../../ts-api.js";
  *   reads (`- * / %`, the relationals, the bitwise operators, an equality
  *   against an f64) and wrong wherever the VALUE is observed (any other
  *   equality, `+`, a box into the carrier, a slot write, a loose `== null`).
+ * - `regexp` — (#7106 lever R3) a native static RegExp construction on a
+ *   `native-regexp` lane. Only `+` beside a string reads it, as its
+ *   `RegExp.prototype.toString` (`"/" + source + "/" + flags`).
  * - `other` — any other IR representation (unions, packed values, …).
  * - `unknown` — the selector has no proof. Refused by every predicate.
  */
@@ -56,6 +59,7 @@ export type OperandFamily =
   | "reference"
   | "nullish"
   | "undefined"
+  | "regexp"
   | "other"
   | "unknown";
 
@@ -64,9 +68,10 @@ export type PrimitiveProof = "number" | "string" | "boolean" | "unprovable";
 
 /**
  * The `+` operand proof (#2781): the checker's primitive proof, or the operand
- * produces the dynamic carrier (which takes the dynamic `+`).
+ * produces the dynamic carrier (which takes the dynamic `+`), or (#7106 lever
+ * R3) it is a native static RegExp, which concatenates as its ToString.
  */
-export type AdditiveProof = PrimitiveProof | "dynamic";
+export type AdditiveProof = PrimitiveProof | "dynamic" | "regexp";
 
 /**
  * `tryLowerUndefinedCompare`'s `undefined` operand of a strict equality: the
@@ -165,8 +170,9 @@ export function boxableIntoDynamic(family: OperandFamily): boolean {
  * string, `+` concatenates the other side's ToString (ES2024 13.15.3;
  * ToPrimitive is the identity on a primitive): a string, a boolean, or a
  * number where the lane formats numbers, but no boolean or number that may be
- * an element read ({@link mayBeElementRead}). Otherwise both sides must be
- * numbers, the unboxed add.
+ * an element read ({@link mayBeElementRead}); or a native static RegExp, whose
+ * ToPrimitive is `RegExp.prototype.toString` (#7106 lever R3). Otherwise both
+ * sides must be numbers, the unboxed add.
  */
 export function additiveOperandsProvable(
   expr: ts.BinaryExpression,
@@ -178,6 +184,7 @@ export function additiveOperandsProvable(
   if (left === "string" || right === "string") {
     const concatenable = (operand: ts.Expression, proof: AdditiveProof): boolean =>
       proof === "string" ||
+      proof === "regexp" ||
       ((proof === "boolean" || (proof === "number" && lane.numberToString)) &&
         !mayBeElementRead(operand, lane.leafReadsElement));
     return concatenable(expr.left, left) && concatenable(expr.right, right);
@@ -190,7 +197,11 @@ export function additiveOperandsProvable(
  * brand has not reached, so it proves nothing.
  */
 function additiveProofOf(family: OperandFamily): AdditiveProof {
-  return family === "number" || family === "string" || family === "boolean" || family === "dynamic"
+  return family === "number" ||
+    family === "string" ||
+    family === "boolean" ||
+    family === "dynamic" ||
+    family === "regexp"
     ? family
     : "unprovable";
 }

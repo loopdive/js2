@@ -171,6 +171,7 @@ import type { IrFnctorAdmission, IrFnctorSelectionAdmissionResolver, LatticeType
 import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
+import { staticRegExpPair } from "../shared/regexp-static.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
@@ -674,6 +675,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * standalone codegen instead of selecting the host-extern IR ABI.
    */
   readonly isRegExpExpression?: (expr: ts.Expression) => boolean;
+  /** (#7106 lever R) Legacy's static RegExp compiler builds this pair (`standaloneStaticRegExpCompiles`). */
+  readonly nativeRegExpCompiles?: (pattern: string, flags: string) => boolean;
   /**
    * Checker-only ambient identity proof used by Math call selection when a
    * backend deliberately does not install the module-binding capability.
@@ -859,7 +862,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "host-regexp-constructor"
       | "host-object-define-property"
       | "standalone-function-prototype-call"
-      | "standalone-native-regexp-test-carrier"
+      | "native-regexp"
+      | "native-function-methods"
       | "standalone-wrapper-instanceof"
       | "primitive-wrapper-to-primitive"
       | "legacy-numeric-array-global"
@@ -8831,6 +8835,29 @@ function hostRegExpUnavailable(): boolean {
   return currentSelectionOptions?.supportsBackendCapability?.("host-regexp-constructor") === false;
 }
 
+/**
+ * (#7106 lever R) A static construction (`staticRegExpPair`) a `native-regexp` lane builds in-module, where the IR
+ * consumes it: the receiver of `.test(…)`, a discarded statement (which still throws an invalid pair's SyntaxError),
+ * or (R3) an operand of `+`, which the `+` rule admits only beside a string (its `RegExp.prototype.toString`). A
+ * property read (`/a/.source`) or a binding has no lowering for it yet.
+ */
+function nativeStaticRegExp(expr: ts.Expression): boolean {
+  const pair = staticRegExpPair(expr, (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true);
+  const consumer = outermostParenthesized(expr).parent;
+  const testReceiver =
+    ts.isPropertyAccessExpression(consumer) &&
+    consumer.name.text === "test" &&
+    ts.isCallExpression(consumer.parent) &&
+    consumer.parent.expression === consumer;
+  const additionOperand = ts.isBinaryExpression(consumer) && consumer.operatorToken.kind === ts.SyntaxKind.PlusToken;
+  return (
+    pair !== undefined &&
+    (testReceiver || additionOperand || ts.isExpressionStatement(consumer)) &&
+    currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
+    currentSelectionOptions.nativeRegExpCompiles?.(pair.pattern, pair.flags) === true
+  );
+}
+
 const NO_LOCALS: ReadonlySet<string> = new Set();
 
 /**
@@ -9159,6 +9186,7 @@ function binaryOperandFamily(
   if (isCarrierAddition(candidate, (side) => selectorCarrierValue(side, scope, localClasses))) return "dynamic";
   if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
   if (isUnshadowedUndefinedIdentifier(candidate, scope) || isVoidZero(candidate)) return "undefined";
+  if (nativeStaticRegExp(candidate)) return "regexp";
   const proven = provenIrFamily(operand, scope);
   return proven === "unknown" && obviousSelectorValueFamily(operand, scope) === "reference" ? "reference" : proven;
 }
@@ -11322,7 +11350,7 @@ function phase1NewExpression(
     return true;
   }
   if (ctorName === "RegExp" && isAmbientConstructor && hostRegExpUnavailable()) {
-    return capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr);
+    return nativeStaticRegExp(expr) || capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr);
   }
   if (!isLocalClass && isKnownExternClass(ctorName) && !isAmbientConstructor) {
     return capabilityNo("constructor-resolution-unsupported", "expr-new-extern-identity", expr.expression);
@@ -11625,7 +11653,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // `src/codegen/index.ts:3274-3278`). Only the host-RegExp lane registers
   // `env.RegExp_new`; elsewhere legacy's native engine owns the literal.
   if (expr.kind === ts.SyntaxKind.RegularExpressionLiteral) {
-    return hostRegExpUnavailable() ? capabilityNo("regexp-constructor-unsupported", "expr-regexp-literal", expr) : true;
+    if (!hostRegExpUnavailable() || nativeStaticRegExp(expr)) return true;
+    return capabilityNo("regexp-constructor-unsupported", "expr-regexp-literal", expr);
   }
   // Slice 1 (issue #1168): claim string literals and `null` so that
   // `typeof x === "string"` / `x === null` / `x == null` patterns can
@@ -12216,7 +12245,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // lowering uses the existing closed dispatcher so `new this(...)`,
       // retained closure identity, and later property reads stay unchanged.
       if (
-        currentSelectionOptions?.supportsBackendCapability?.("standalone-native-regexp-test-carrier") === true &&
+        currentSelectionOptions?.supportsBackendCapability?.("native-function-methods") === true &&
         currentSelectionOptions.supportsBackendCapability?.("legacy-numeric-array-global") === true
       ) {
         const receiverFirstMethod = receiverFirstDynamicMethodPlan(expr);
@@ -12232,24 +12261,22 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
         hostRegExpUnavailable()
       ) {
-        // #3791 — host-free `.test` is claimable only for an exact stable
-        // top-level static RegExp whose real legacy externref carrier can be
-        // loaded and passed to the in-module native helper. This deliberately
-        // bypasses the generic receiver walk: the binding is not a general IR
-        // module value, and `.exec`, g/y stateful carriers, reassigned
-        // bindings, non-string subjects, and all other shapes keep the
-        // established target-capability refusal.
-        const nativePlan =
-          expr.expression.name.text === "test" &&
-          currentSelectionOptions?.supportsBackendCapability?.("standalone-native-regexp-test-carrier") === true
-            ? currentModuleBindingResolver?.staticRegExpTestPlan(expr.expression.expression)
-            : undefined;
+        // #3791, #7106 lever R — host-free `.test(subject)` calls the in-module
+        // carrier helper. An exact stable top-level carrier passes its real
+        // legacy externref global (that binding is not a general IR module
+        // value, so it bypasses the receiver walk); any other receiver must be
+        // an IR value. `.exec`, non-string subjects and all other shapes keep
+        // the established target-capability refusal.
+        const receiver = expr.expression.expression;
         if (
-          nativePlan !== undefined &&
+          expr.expression.name.text === "test" &&
+          currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
           expr.arguments.length === 1 &&
           !ts.isSpreadElement(expr.arguments[0]!) &&
           (expressionIsProvenString(expr.arguments[0]!) ||
-            currentSelectionOptions?.classifyPrimitiveExpression?.(expr.arguments[0]!) === "string")
+            currentSelectionOptions?.classifyPrimitiveExpression?.(expr.arguments[0]!) === "string") &&
+          (currentModuleBindingResolver?.staticRegExpTestPlan(receiver) !== undefined ||
+            isPhase1Expr(receiver, scope, localClasses))
         ) {
           return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
         }
