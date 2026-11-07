@@ -6089,7 +6089,7 @@ compile, 776 compile.
 
 | measure | files |
 | --- | --- |
-| `<module-init>` refused with `for-init-var-kind` | 343 |
+| `<module-init>` refused with `for-init-var-kind` (309 as its shape refusal, 34 behind an earlier constructor / RegExp refusal) | 343 |
 | …and it is `<module-init>`'s only refusal | 62 |
 | …and no other unit is legacy (upper bound of the IR-only gain) | 61 |
 | `for-init-var-kind` plus exactly one other `<module-init>` refusal, no other legacy unit | 30 (15 `expr-new-ctor-unknown`, 8 `vardecl-module-storage-unrepresentable`, …) |
@@ -6177,3 +6177,66 @@ pattern-only test in the predicate goes.
   import edge beyond `codegen/declarations.ts` → `ir/module-init-vars.ts`; no
   new budget grant unless a gate says so (then stated here, dated); net
   `src/ir` growth stated.
+
+### Measured (2026-11-07, as built)
+
+Base `b631a4bcab` (origin/main), head `c7df95521c`, one niced worker. Census
+population: the 790 `for (var` files plus 400 random ES5 files (`shuf
+--random-source=<(yes 7106)`), 1,130 distinct; 1,103 compile on both sides
+(the rest are runner-skipped or compile errors on both, unchanged).
+Pass/fail is `runTest262File` (sloppy run plus strict rerun). Census scripts:
+the lever worktree's `.tmp/l/` (`census.mts`, `cmp.py`, `run.mts`).
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, base → head | 25 → 41 (**+16**) | 25 → 41 (**+16**) |
+| …of them in the random sample | 0 | 0 |
+| IR-only files lost | 0 | 0 |
+| binaries changed | 16, each a newly claimed `<module-init>` | 16, the same files |
+| binaries byte-identical | 1,087 (the whole random sample included) | 1,087 |
+| units newly legacy | 0 | 0 |
+| new post-claim errors | 0 | 0 |
+| pass → fail on the changed files | 0 (16/16 pass on both) | 0 (16/16 pass on both) |
+| playground (26 binaries, both lanes) | identical | identical |
+
+The 16: `statements/break/12.8-1`, `statements/continue/12.7-1`,
+`statements/for/12.6.3_2-3-a-ii-{11,13..21}`,
+`statements/for/head-init-var-check-empty-inc-empty-syntax`,
+`statements/try/S12.14_A11_T{2,4}`, `statements/variable/S12.2_A10`.
+
+**What blocks the rest.** The census bound (61) was loose, as expected: a head
+refusal hid the loop's own refusals. Over the 309 files whose shape refusal was
+`for-init-var-kind`, 16 now claim `<module-init>`; of the rest, by the
+refusal the head now reports (a file counts once per arm):
+
+| files | arm | sole arm, no other legacy unit |
+| --- | --- | --- |
+| 269 | `vardecl-module-storage-unrepresentable`: a script `var` whose home the resolver cannot place, overwhelmingly an array / object / RegExp-match literal (`var __expected = [...]` 260, `__executed = /…/.exec(…)` 226, `obj = {...}` 126) | 199 |
+| 28 | `throw-module-scalar-unboxed` | 6 |
+| 15 | `expr-binary-op-instanceof` | 0 |
+| 12 | `for-init-var-kind` (a nested head, `{ for (var …) }`) | 3 |
+| 12 | `expr-prefix-op-++` (`++i` on a script `var`) | 0 |
+| 11 | `vardecl-var-kind` (a `var` statement in the loop body) | 5 |
+
+The 199 are lane C's object/array literal homes (#7280/#7292), not this lever.
+The next lever-L-adjacent arms are `var` statements nested in top-level
+control flow (`vardecl-var-kind`) and prefix updates of a script `var`.
+
+**Code.** Net `src/ir` +4 lines (+109/−105); the list predicates (37 lines)
+moved to `src/shared/module-init-var-list.ts` so legacy's registration reads
+them without a new codegen→ir edge; `codegen/module-global-registration.ts`
++10. No budget grant: loc, func (also against `origin/main`), coercion,
+oracle, dead exports, typecheck, import cycles, standalone arms, IR layering,
+flat dir, IR fallbacks all pass; compiler boundaries reports the same
+`inventory-valid-architecture-incomplete` as main, with the new module
+classified (owner 7106).
+
+**Not done here.** The adversarial fresh-context review the IR rule requires
+is the lead's to run before the hold is released. A function declared above a
+head that returns its name (`function g() { return i; } for (var i = 0;;)`)
+is claimed and then withdrawn on main's ABI parity check, as its statement
+twin (`function g() { return i; } var i = 0;`) already is on main: legacy
+widens such a return to `externref` (`functionReturnsPreInitVarValue`) and the
+selector does not mirror it. No census file reaches it; it is a selector
+follow-up for both forms.
+
