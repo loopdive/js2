@@ -14,6 +14,7 @@
 // answers are pre-existing, #7294 notes).
 // ROUTES: the shapes the admission must decline, asserting the `<module-init>`
 // route on standalone.
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { compile, type CompileOptions } from "../src/index.js";
 import { instantiateWithRuntime } from "./equivalence/helpers.js";
@@ -107,7 +108,59 @@ export function test() { return d === undefined ? 0 : 1; }`,
   },
 };
 
+// The selection-time query consults a builtin's native-proto glue; a unit the
+// IR then declines (here: `with`) must compile to the same module as with the
+// IR off, for every builtin prototype (#7294 review: Promise's glue reserved a
+// dispatch function on registration).
+const DECLINED_BUILTINS = [
+  "Array",
+  "Object",
+  "String",
+  "Number",
+  "Boolean",
+  "Date",
+  "RegExp",
+  "Error",
+  "TypeError",
+  "Promise",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "WeakRef",
+  "FinalizationRegistry",
+  "Function",
+  "Symbol",
+  "BigInt",
+  "ArrayBuffer",
+  "SharedArrayBuffer",
+  "DataView",
+  "Int8Array",
+  "Float64Array",
+];
+
+async function binaryHash(source: string, options: CompileOptions, experimentalIR: boolean) {
+  const result = await compile(source, {
+    fileName: "issue-7294.js",
+    skipSemanticDiagnostics: true,
+    experimentalIR,
+    ...options,
+  });
+  expect(result.success).toBe(true);
+  return createHash("sha256").update(result.binary).digest("hex");
+}
+
 describe("#7294 builtin-prototype member support functions", () => {
+  for (const lane of VALUE_LANES) {
+    for (const builtin of DECLINED_BUILTINS) {
+      it(`a declined unit compiles as with the IR off: ${builtin} (${lane.name})`, async () => {
+        const source = `var d = Object.getOwnPropertyDescriptor(${builtin}.prototype, "then");
+var v = ${builtin}.prototype.toString === ${builtin}.prototype.toString;
+var o = {}; with (o) { d; v; }`;
+        expect(await binaryHash(source, lane.options, true)).toBe(await binaryHash(source, lane.options, false));
+      });
+    }
+  }
   for (const [label, body] of Object.entries(VALUE_CASES)) {
     for (const lane of VALUE_LANES) {
       it(`${label} (${lane.name})`, async () => {

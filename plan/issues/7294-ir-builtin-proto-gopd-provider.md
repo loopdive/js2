@@ -30,6 +30,11 @@ loc-budget-allow:
   - src/ir/integration.ts
   - src/codegen/index.ts
   - src/codegen/builtin-value-read.ts
+  # 2026-11-07 (#7294, RV7167 B2): array-object-proto.ts +5: Promise's
+  # dispatch reservation moves into its glue's `onRegister` hook (the
+  # object-spread registration and the hook's 3 lines), so the provisional
+  # selection-time query no longer mints `__call_m_then_vararg`.
+  - src/codegen/array-object-proto.ts
 standalone-arms-allow:
   # 2026-11-07 (#7294): builtinProtoMemberProvided repeats the SAME
   # `ctx.standalone` gate legacy's synthesis already sits behind
