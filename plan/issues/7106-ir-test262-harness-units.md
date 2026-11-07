@@ -5897,6 +5897,68 @@ ships alone.
 - six refused at selection and never withdrawn: `exec`, a dynamic pattern,
   `.source`, a `+`, a script binding and a local binding.
 
+### R2 + S2 design (2026-11-07)
+
+**R2: `re.exec(s)`.** It lowers like `.test`: a call to the existing
+`__regexp_exec_carrier(recv, subject)` with an `externref` result, typed
+`dynamic` in the IR, the same as `lowerReceiverFirstDynamicMethod`'s result.
+- The helper's name moves to `ir/regexp-runtime-contract.ts`, beside the test
+  helper's name (plan step 4).
+- The resolver's `nativeRegExpTestPlan` becomes `nativeRegExpMethodPlan(receiver,
+  method)`, so `test` and `exec` share one plan, one selector arm and one
+  from-ast arm. They differ only in helper and result type.
+- `nativeStaticRegExp` admits an `.exec(…)` receiver as well as a `.test(…)`
+  receiver.
+
+**S2: the result bound in a script `var`.**
+- **The slot.** For `var __executed = /re/.exec(s)`, legacy types
+  `__mod___executed` as `(ref null $__regexp_match_vec)`. This is #1914's
+  `inferStandaloneRegExpMatchResultType`, which proves that every write in the
+  source is a match result. It picks the capture subtype, or the flat
+  native-string vec if any write is a global `match`.
+- **Design question.** The carrier gives an `externref`, but the slot is a
+  typed struct. How does the IR value get into it?
+- **Decision.** Bind legacy's slot as the `regexp-match` value kind, following
+  #7252 (`class-instance`).
+  - `scriptVarHome` names the slot `regexp-match` when its type is one of the
+    two match-result carriers.
+  - The binding's IR type is `dynamic`. The existing dynamic arms then read it:
+    `.length`, `.index`, `.input`, `[i]` and `=== null`. These are the same
+    runtime readers legacy uses for an exec result whose static type was erased
+    (#6672: marked's untyped `exec`).
+  - The slot boundary converts in both directions:
+    - a read is `global.get` then `extern.convert_any`;
+    - a write is `any.convert_extern`, `ref.cast null $slot`, then `global.set`.
+- **How the conversion reaches lowering.** `ModuleBindingGlobal` carries the
+  typed slot (`slot`). from-ast hands it to `global.get` / `global.set`, and
+  lowering calls the emitter's existing `emitToExternref` /
+  `emitFromExternref`.
+  - A nullable target type makes `emitDowncast` emit `ref.cast null`.
+  - Every current caller passes a type index, so no existing output changes.
+- **Why the cast cannot trap.** The IR admits a write only when the written
+  value is a `.exec(…)` call on a RegExp receiver. That value is `null` or the
+  capture subtype, which is the slot's type or a subtype of the flat base.
+  Writes outside the IR are legacy's, and #1914 proves them.
+- **Lane condition.** Only lanes where `dynamic` is `externref`, so not fast
+  mode. This is the same condition as the `dynamic` home.
+
+**Rejected alternatives.**
+- **Use the exact `val (ref null $match_vec)` as the IR type,** as the
+  `native-map` kind does. No IR consumer reads a match vector, so `.index` and
+  `[i]` would refuse, and the write would still need the same cast.
+- **Admit only results that legacy also types as `externref`.** Legacy types
+  every `var __executed = …exec(…)` slot as the vector, so this frees none of
+  the S15.10.2 family. It is left to the unbound shapes R2 already covers:
+  `/a/.exec(s) === null` and `/a/.exec(s)[0]`.
+- **Add a typed-result twin of the carrier.** That would be a second exec entry
+  point for one user.
+
+**Dependency.** The S15.10.2 family also writes `var __expected = [...]` and
+`__expected.index = n`. These are lane C's #7292 (script-var array literals),
+so many files become IR-only only when both changes are in. The measurement
+below reports units moved, files now IR-only, and files whose only remaining
+refusal is #7292's.
+
 ## Lever A — the runtime-eval boundary, per unit (plan, 2026-11-06)
 
 ES5 census context: 14.4 % of weighted ES5 files contain a runtime-eval site
