@@ -56,7 +56,7 @@
 
 import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
-import { exactIndirectEvalStatement } from "../eval-call-shape.js";
+import { exactGlobalEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import {
   isStoredObjectDescriptorAliasCall,
@@ -706,11 +706,11 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   /** Backend can materialize a fixed logical-string vector. */
   readonly supportsStringArrayLiterals?: boolean;
   /**
-   * The active backend has both the JS-host eval capability and the host
-   * externref string carrier needed by the exact indirect-eval import ABI.
-   * Omitted means unproven, so the selector leaves eval on the legacy path.
+   * (#7106 A2c) This global eval statement lowers through the runtime-eval
+   * support function (`runtimeEvalOwnsGlobalEval`). Omitted means unproven, so
+   * the selector leaves eval on the legacy path.
    */
-  readonly supportsHostIndirectEval?: boolean;
+  readonly supportsGlobalEval?: (call: ts.CallExpression) => boolean;
   /**
    * (#3053 U2) True iff the unified gc member-read primitive `__dyn_member_get`
    * (#3053 U0) has a SOUND body in this compile config. The gc `$AnyValue` body
@@ -9263,19 +9263,18 @@ function expressionIsClassifiedString(expr: ts.Expression): boolean {
 }
 
 /**
- * Every selection-side consumer of the host eval import uses this exact
+ * Every selection-side consumer of a global eval statement uses this exact
  * predicate. The optional scope argument adds the function-local shadow proof
  * owned by Phase 1; the call graph has checker identity instead.
  */
-function certifiedHostIndirectEval(
+function certifiedGlobalEval(
   expr: ts.CallExpression,
   scope?: ReadonlySet<string>,
-): ReturnType<typeof exactIndirectEvalStatement> {
-  const shape = exactIndirectEvalStatement(expr);
+): ReturnType<typeof exactGlobalEvalStatement> {
+  const shape = exactGlobalEvalStatement(expr);
   if (
     !shape ||
-    !jsHostExternsEnabled(currentSelectionOptions) ||
-    currentSelectionOptions?.supportsHostIndirectEval !== true ||
+    currentSelectionOptions?.supportsGlobalEval?.(expr) !== true ||
     !selectorSeesAmbientBinding(shape.evalIdentifier) ||
     (scope?.has("eval") ?? false) ||
     !expressionIsClassifiedString(shape.source)
@@ -11342,17 +11341,16 @@ function phase1NewExpression(
   return true;
 }
 
-/** Preserve the existing exact indirect-eval source proof at the call gate. */
-function phase1IndirectEvalStatementVerdict(
+/** Preserve the existing exact global-eval source proof at the call gate. */
+function phase1GlobalEvalStatementVerdict(
   expr: ts.CallExpression,
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean | undefined {
-  const indirectEvalStatement = exactIndirectEvalStatement(expr);
-  if (indirectEvalStatement) {
-    const certified = certifiedHostIndirectEval(expr, scope);
+  if (exactGlobalEvalStatement(expr)) {
+    const certified = certifiedGlobalEval(expr, scope);
     if (!certified) {
-      return capabilityNo("call-resolution-unsupported", "expr-indirect-eval-host-statement", expr);
+      return capabilityNo("call-resolution-unsupported", "expr-global-eval-statement", expr);
     }
     return isPhase1Expr(certified.source, scope, localClasses);
   }
@@ -12013,8 +12011,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       (spread) => shapeNo("expr-program-callable-spread", spread),
     );
     if (programCallableVerdict !== undefined) return programCallableVerdict;
-    const indirectEvalVerdict = phase1IndirectEvalStatementVerdict(expr, scope, localClasses);
-    if (indirectEvalVerdict !== undefined) return indirectEvalVerdict;
+    const globalEvalVerdict = phase1GlobalEvalStatementVerdict(expr, scope, localClasses);
+    if (globalEvalVerdict !== undefined) return globalEvalVerdict;
     // #3000-E: `super(args)` — a derived ctor chaining to its parent. `super` is
     // a keyword, not an identifier/property-access the generic receiver checks
     // below handle, so recognise the shape here. Args must be Phase-1 exprs; the
@@ -13434,9 +13432,9 @@ export function buildLocalCallGraph(
           )
         )
           return;
-        const indirectEval = certifiedHostIndirectEval(node);
-        if (indirectEval) {
-          visit(indirectEval.source);
+        const globalEval = certifiedGlobalEval(node);
+        if (globalEval) {
+          visit(globalEval.source);
           return;
         }
         if (ts.isIdentifier(node.expression)) {

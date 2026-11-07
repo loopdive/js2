@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-11-01
+updated: 2026-11-07
 priority: high
 horizon: l
 feasibility: hard
@@ -5876,6 +5876,247 @@ the eval rows fail locally with "quickjs provider is not built".
   base. The other failures there match base (353 failing tests, mostly
   `issue-3518` receipt history and the missing QuickJS provider).
 
+### A1 forward fix — a self-reference crosses the boundary (2026-11-07)
+
+- **Bug.** `runtimeEvalBoundaryCrossing` counted a reference as local when
+  its declaration lay inside the function's own range. A recursive `f(n - 1)`
+  resolves to that same `FunctionDeclaration`, whose name is bound in the
+  script scope. So a function eval may rebind kept a static self-call on the
+  IR. An alias call (`var saved = f; …; saved(1)`) leaves no call-graph edge
+  that would rescue it.
+- **Fix.** A reference that resolves to the declaration itself reaches the
+  script binding. Declarations nested in it, and a named function
+  expression's own name, stay local. Admission stays per unit.
+- **Tests:** `tests/issue-7106-runtime-eval-a1-selfref.test.ts`.
+  - The recursive function stays direct (`eval-visible-binding`). This row
+    fails on the base.
+  - Two controls stay IR: a named function expression that recurses on its
+    own name, and a call to a nested same-named declaration.
+- **Measured** (base c03f7d0e3f vs fix, standalone):
+  - all 141 eval files and the 40-file control are byte-identical;
+  - IR units unchanged (513 on the 141, 344 on the control);
+  - 0 new post-claim errors;
+  - the interpreter provider built from each tree is byte-identical, so the
+    verdicts cannot differ.
+
+  None of the 141 has the shape: the fix only changes programs where an
+  eval-visible top-level function calls itself.
+- **The end-to-end answer is blocked by a provider gap, not by this fix.**
+  With the interpreter provider, the repro answers 1 on standalone and
+  overflows the stack on the JS host, before and after the fix. The same
+  holds for a direct `f(1)` after the rebind, and for `(0, eval)("f = …")`.
+  - So the eval rebinding of a top-level function declaration is not
+    observed even by legacy code: the gap A3's focused probes recorded.
+  - The test therefore pins the boundary decision, not the value.
+
+### A3 implementation — write-precise eval liveness (2026-11-06)
+
+Branch `claude/7106-eval-a3`, stacked on A1 (#7136, da9e4611b0), because A3
+relies on A1's per-unit boundary and pre-seal value targets. It follows the
+plan on `claude/7106-eval-a2-plan` (bcfdb27dbb).
+
+#### Changes
+
+- **One literal-source write scan.** `literalSourceWrites`
+  (`src/ir/runtime-eval-boundary-plan.ts`) parses each literal fragment
+  once. The plan exposes the result as `dynamicSourceWrites`, and folds an
+  unnameable fragment into `unknownDynamicSource`.
+  - A name counts as written when it is an assignment, `++`/`--` or
+    `for-in`/`of` target, a declared name, an object-literal key or a string
+    literal.
+  - A fragment is unnameable when it has a computed assignment target, a
+    `defineProperty`/`defineProperties`/`assign`/`set` call, or a nested
+    `eval`/`Function`.
+  - `registerReassignedFunctionGlobals` drops its inline
+    `mentionedByDynamicSource` substring search and reads
+    `dynamicSourceWrites`. `dynamicSourceFragments` leaves the plan, since it
+    had no other reader.
+- **`(0, eval)`.** `isDirectCalleeIntrinsicValue` now walks through the
+  parentheses, so the comma callee is the indirect eval's callee, not an
+  escaped `eval` value. A bare `eval` read anywhere else still escapes.
+- **Function-object values under the push.**
+  - The blanket `runtimeEvalGlobalFunctionBindings` checks in
+    `ir-imported-call-planning.ts` go:
+    - `makeIrFunctionObjectValueResolver`;
+    - `hasPreparedFunctionObjectReference`;
+    - the receiver planner;
+    - `planIrFunctionValueResolverState`.
+  - Their per-declaration `reassignedFunctionDeclarations` checks already
+    refuse every live function.
+  - A fifth copy sat in `planMemberClosure`
+    (`function-member-closure-planning.ts`). It becomes
+    `runtimeEvalMayRebindClosureSite`: refused only when a source is computed
+    or a literal one writes the member or var name.
+  - That fifth copy was the "closure-return-type on
+    `assert._isSameValue = function (a, b) {…}`" blocker the plan asked to
+    diagnose: the member closure had no plan under the push. It is part of
+    this lever, not a separate one.
+- **S3c self-guarded constructor.**
+  - `selfGuardedConstructorsLeaveFnctor(ctx)` (whole-program) becomes
+    `selfGuardedConstructorLeavesFnctor(ctx, decl)`.
+  - It stands down only when a computed source exists, or a literal source
+    writes that constructor's name. The pr-6844 identity split needs a live
+    binding, so this keeps the guard exact.
+  - Its users all pass the declaration: the escape gate's `leavesFnctor`
+    parameter, `calleeIsStandaloneSelfGuardedConstructor`,
+    `irFunctionThisStrictness` and `irSelfGuardedConstructorValue`.
+- **Shared-wrapper identity: not needed.** The focused identity probes
+  (below) pass with the push unchanged, so neither the shared wrapper nor
+  the mention-based fallback was implemented.
+  - I did not trace why the published carrier compares equal to the IR
+    value. The probes are the evidence, not a proof of the mechanism.
+  - If a later shape breaks identity, add the shared wrapper then.
+- **Left for A2.** One more blanket check stays:
+  `preparedModuleInitMemberEvidence` in `ir-imported-call-planning.ts`. It
+  is module-init only, and A1 still withdraws module init in eval programs.
+
+#### Measurement
+
+Setup: niced, one process, standalone unless stated. The verdicts use the
+interpreter provider (`JS2WASM_EVAL_ENGINE=interpreter
+TEST262_FULL_RUNTIME_EVAL=1`), built per tree.
+
+| check | result |
+| --- | --- |
+| 141 eval files, standalone verdicts | 0 pass→fail (101 pass / 40 fail, same as base) |
+| 141 eval files, JS host verdicts | 0 pass→fail (98 pass / 43 fail, same as base) |
+| 141 eval files, compile (standalone and JS host) | 141 / 141 each, 0 post-claim errors |
+| IR units on the 141 | 513 → 830. `assert` IR in 89 files, `compareArray` 90, `Test262Error` 90, `isNegativeZero` back to 91 |
+| IR-only files on the 141 | 0 (expected: module init is still withdrawn wholesale until A2) |
+| 40-file non-eval control | 40 / 40 byte-identical to the A1 head da9e4611b0 |
+
+13 focused probes, run on standalone and the JS host against the A1 head:
+
+- identical verdicts on both lanes;
+- passing: `assert === (0,eval)("assert")`, `e.constructor === Test262Error`
+  on both the IR side and the eval side, an eval-written `assert.extraProp`
+  visible to IR, a read-only mention, and a computed source;
+- failing on base as well:
+  - eval rebinding of a top-level function (`f = …`, `defineProperty`,
+    an Annex B block function, `Function(...)`, `this['f']`);
+  - `assert.throws` called from inside eval code.
+
+  These are legacy provider gaps, not A3.
+
+60-file census (`JS2WASM_IR_SHAPE_DIAG=1`):
+
+- `assert`, `compareArray` and `Test262Error` are IR in 36 / 60 files.
+- In the other 24, every function stays live (a computed source, or an
+  unnameable fragment).
+- `<module-init>` is the sole blocker in 32 files. What is left is A2's
+  ground: eval-visible slots, sites, and direct eval inside functions.
+
+#### Tests
+
+- New: `tests/issue-7106-runtime-eval-a3-liveness.test.ts`. It pins:
+  - a read-only mention leaves `f`, `g` and `run` on the IR;
+  - each write form, plus computed, nested and escaped sources, keeps them
+    live;
+  - the harness function objects stay on the IR under the push;
+  - an eval-written `Test262Error` keeps the constructor off the
+    self-guarded route.
+
+#### Review round 1 (#7146)
+
+- **Soundness.** A fragment could reach `eval` / `Function` without naming
+  them (`(function(){}).constructor(…)`, `[].constructor.constructor(…)`,
+  `this["ev" + "al"](…)`), so its writes went unseen.
+  - The fragment scan now runs the plan's own site visitor
+    (`visitRuntimeEvalSites`, extracted from the builder). A literal nested
+    source is scanned recursively; a computed one is unnameable.
+  - Any `.constructor(…)` call and any computed-member call in a fragment is
+    unnameable.
+  - The six review repros, plus the generator-constructor spelling, keep
+    `f` and `g` live (test rows).
+- **Fewer walkers.** Write targets come from the shared
+  `identifierWritesOf` / `isStoreTarget` (`src/shared/binding-writes.ts`).
+  The private declared-name, string-literal and object-key rules are gone.
+- **Program-level reaches (pre-existing).**
+  - `globalThis.eval(src)` / `this.eval` / `globalThis["eval"]` now record
+    their argument as a fragment; any other use counts as a computed source.
+  - `(function(){}).constructor(src)` in the program records a
+    `function-constructor` site.
+- **Nits.** Dropped the impossible `decl.name?.text ?? ""` fallback;
+  `isPropertyDefiningCall` matches `.set` only on `Reflect`.
+- **Measured** (head fd24068b24): units on the 141 unchanged at 830, 141 /
+  141 compile with 0 post-claim errors, the 40-file control byte-identical.
+  Interpreter-provider verdicts: 0 pass→fail on standalone (101 / 40) and on
+  the JS host (98 / 43).
+
+#### Review round 2 (#7146)
+
+- **HIGH — a variable member key.** `this[k] = …` recorded the variable `k`
+  as the written name.
+  - Now `memberKeyName` names a property access by its `.name`, and an
+    element access only by a string-literal key.
+  - Any other key is unknown.
+- **MEDIUM — `%Function%` through a stored or forwarded `.constructor`.**
+  `var c = (…).constructor; c(…)`, `Object.constructor`, `.call` / `.apply`,
+  and `new (Object.constructor)(…)` escaped the call-only check.
+  - Any `.constructor` read in a fragment (`X.constructor` or
+    `X["constructor"]`) now makes the fragment unknown, called or not.
+  - That read replaces the call-only test, and the scan has one fewer rule.
+- **LOW — member closures.**
+  - A `delete` of `X.m` / `X["m"]` counts as a write of `m`.
+  - `__defineGetter__` / `__defineSetter__` join the property-defining calls,
+    which count as unknown.
+- **LOW — program-level `.constructor` reaches: follow-up, not fixed here.**
+  The cases are `Object.constructor("…")()`, `g.constructor("…")()`,
+  `var c = (…).constructor; c(…)` and `.call`.
+  - The fragment rule ("any `.constructor` read") is not cheap at program
+    level: the harness itself reads `.constructor` (`assert.throws`,
+    `e.constructor === Test262Error`). Every eval file would become unknown,
+    and A3's gain would be lost.
+  - A precise version needs a receiver test (a value that is a function) that
+    the oracle can answer, plus a site kind for a non-call escape. That is
+    its own change.
+- **Nit.** The "single immutable runtime-eval routing authority" comment is
+  back above `buildIrRuntimeEvalBoundaryPlan`.
+- **Also ported:** the A1 self-reference forward fix
+  (`claude/7106-eval-a1-selfref`), by merging that branch. It brings in
+  origin/main.
+- **Tests:** eight new rows: the variable key, the five `.constructor`
+  spellings, a member delete, and a getter definition. All eight fail on the
+  round-1 scan.
+- **Measured** (base = round 1 merged with origin/main, 61c6fb5d67):
+  - the 141 eval files and the 40-file control are byte-identical (standalone);
+  - IR units unchanged at 830 on the 141 and 344 on the control, with 0
+    post-claim errors on the 141;
+  - the interpreter provider built from each tree is byte-identical, so the
+    verdicts cannot differ from the base.
+
+  None of the 141 has these spellings in an eval string, so the stricter
+  scan costs nothing measurable.
+
+#### Review round 3 (#7146)
+
+- **Token-level `constructor` rule.** `mayNameConstructor` replaces the
+  `.constructor` read rule. A fragment is unknown when any token in it may
+  name `constructor`:
+  - the identifier or property name itself (a member, a destructuring key,
+    a `with`-scoped call);
+  - a string literal containing it (`Reflect.get(f, "constructor")`,
+    `getOwnPropertyDescriptor(…, "constructor")`);
+  - a name the scan cannot read without evaluating it: a `+` / `+=` with a
+    string operand, or a template with substitutions.
+- **Concatenation is not evaluated, so the operator itself counts as
+  unknown.** `'constr' + 'uctor'` and `` `constr${x}` `` count as unknown.
+- **Not caught (recorded follow-up).** A name built without `+`
+  (`["constr", "uctor"].join("")`, `String.fromCharCode(…)`), then used as a
+  computed member key or passed to a reflective API.
+  - A first cut also counted every computed member READ as unknown.
+  - That over-fired on `arr[ind]` in `for-in/S12.6.4_A3.1.js` (8 → 2 units),
+    so it was dropped. A computed member store stays unknown.
+  - Closing this residue needs real evaluation, or a rule that every call
+    and computed key can build a name.
+- **Tests:** five new rows (concatenated key, `Reflect.get`, destructuring,
+  `with`, the descriptor `.value`), all failing on round 2.
+- **Measured** (against round 2, 0db798be87):
+  - the 141 eval files and the 40-file control are byte-identical
+    (standalone);
+  - IR units are 830 on the 141 and 344 on the control;
+  - 0 post-claim errors on the 141.
+
 ### A2 and A3 (outline; each gets its own measured plan before code)
 
 - **A2.**
@@ -6107,3 +6348,645 @@ Normal commit/push hooks and this PR's protected CI remain required. The
 November1 census, legacy-byte and playground results above are historical,
 not fresh receiving measurements. No fresh full-suite conformance gain is
 claimed from these focused tests.
+
+## Lever A2 — global-scope eval sites in IR (plan, 2026-11-06)
+
+This continues "Lever A — the runtime-eval boundary, per unit" (A1, PR #7136,
+head 843236bc12). Plan only: a fresh agent implements it. A3 (write-precise
+eval-string liveness) is specified here only as far as A2 depends on it.
+
+### Census (A1 head 843236bc12, standalone)
+
+- **Sample:** 60 of the 141 eval files (every 7k+0/2/4/6 line of
+  `evalA-sample.txt`), one process, `nice`.
+- **Flags:** `JS2WASM_IR_SHAPE_DIAG=1` and
+  `JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`.
+- **Classification:** each file goes in the lightest class that clears every
+  one of its legacy units.
+- **IR-only today:** 0 / 60.
+
+| class | files (of 60) | ~ of 141 | what clears it |
+| --- | --- | --- | --- |
+| direct eval inside a function (`(function(){ eval(…) })()`) | 15 (25 %) | ~35 | never in lever A: stays legacy by design |
+| IR-only after A3 alone | 10 (17 %) | ~24 | A3 |
+| IR-only after A2 + A3 | 19 (32 %) | ~45 | A2 and A3 |
+| also needs a non-eval lever | 16 (27 %) | ~38 | e.g. `Object.defineProperty(fnGlobalObject(), …)` (8), `param-dynamic-carrier-diverges-from-legacy` (5), logical value family (4) |
+
+Blocker shares per unit, out of 60 files:
+
+- **`assert`, `compareArray`, `<module-init>` (60 / 60):**
+  `expr-ident-not-in-scope «assert» / «compareArray» / «Test262Error»`.
+  - Cause: `planIrFunctionValueResolverState` turns the function-object value
+    resolver off whenever `ctx.runtimeEvalGlobalFunctionBindings` is set, so
+    a harness function used as a value (`assert.sameValue`) has no IR binding.
+  - Owner: A3.
+- **`Test262Error` (60 / 60):** `return-type-unresolved(lattice=dynamic)`.
+  The same unit is IR in non-eval files, so the likely cause is the same
+  resolver. Owner: A3, to be verified first.
+- **`<module-init>` eval-visible storage (27 / 60):**
+  `vardecl-module-storage-unrepresentable` (`print = function…`, `$262 = {…}`,
+  `__isArray = Array.isArray`, …).
+  - `registerReassignedFunctionGlobals` widens every eval-visible script
+    var/lexical slot to externref; the IR module-binding resolver refuses that
+    slot.
+  - The follow-on `expr-ident-not-in-scope «__globalObject» /
+    «nonIndexNumericPropertyName» / «verifyPrimordialProperty»` comes from the
+    same slots.
+  - `vardecl-noinit` (`var after;`, 11 files) is probably the same cause;
+    verify first.
+  - Owner: A2.
+- **`<module-init>` eval sites:**
+  - `call-resolution-unsupported@expr-indirect-eval-host-statement`
+    (`(0,eval)(…)`, 11 / 60);
+  - `vardecl-var-kind «var f = new Function(p, body)»` (3).
+  - Owner: A2.
+- **Test functions (35 / 60):**
+  - A1's `eval-visible-binding` (70 units) and `boundary-closure` (33 units);
+  - `new Test262Error` with `expr-new-ctor-unknown` (27).
+  - Owner: A3 (liveness and function values), plus A2's eval-visible slot
+    typing.
+
+Caveats:
+
+- The "A3 alone" files hold only a literal top-level direct eval or
+  `Function(…)` that no module-init reject names. Static eval inlining
+  probably folds those today. The implementer must confirm this before
+  counting them as A3-only.
+- Every share is an upper bound. The census sees only the rejects reported
+  today, and a cleared blocker can uncover the next one.
+
+### Order
+
+1. **A3 first.** It is the only lever that pays off alone. Its blockers (the
+   harness function names, `Test262Error`) sit in all 60 files, so A2
+   without A3 makes 0 files IR-only. Static classification: A3 ≤ 10 / 60, then
+   A2 + A3 ≤ 29 / 60 (~68 / 141). The A3 prototype (see "Lever A3", Gain)
+   measured A3 alone at 0 / 60, and exposed one more module-init blocker.
+2. **The `(0,eval)` escaped-value liveness belongs in A3.**
+   - `buildIrRuntimeEvalBoundaryPlan` also records the bare `eval` in
+     `(0, eval)(…)` as an `intrinsic-value` site, which sets
+     `unknownDynamicSource`. `registerReassignedFunctionGlobals` then makes
+     every top-level function live (A1 measured this: `(0,eval)("literal")`
+     turned `helper`, `shadow`, … live).
+   - Of the 19 A2+A3 files, 8 contain that shape. While every function stays
+     live, A3's function-value resolver cannot turn `assert` back on.
+   - A3 must therefore classify the comma-callee `eval` as the callee of an
+     indirect eval: the same carve-out `isDirectCalleeIntrinsicValue` gives a
+     direct callee. A literal source then contributes a fragment, not an
+     unknown source.
+3. **A2 after A3**, as its own PR.
+
+### A3 scope that A2 relies on (outline; A3 writes its own measured plan)
+
+- **(a) Write-precise liveness.** A literal fragment makes a function live
+  only when it **writes** the name: an assignment target, or a `function`,
+  `var`, `let` or `const` declaration of it. A mere mention does not. Parse
+  the fragment with the TypeScript parser and walk only assignment targets
+  and declarations.
+- **(b) The `(0, eval)` callee carve-out** described in Order, step 2.
+- **(c) Function-object values for non-live names.**
+  `planIrFunctionValueResolverState` keeps
+  `makeIrFunctionObjectValueResolver` on when the push is active, and the
+  resolver refuses only live names (`ctx.liveFuncBindingGlobals`). This is
+  safe because the push publishes the same cached singleton
+  `prepareTopLevelFunctionValueTargetSupport` plans: A1 made every top-level
+  function a value target.
+- **(d) A1's `eval-visible-binding` rule** then narrows to live functions
+  only, once A2's slot typing covers the var/lexical half. Until then it
+  keeps both halves.
+
+### A2 design
+
+#### What A2 lowers
+
+- **Indirect eval anywhere:** `(0, eval)(src)`, `(eval)` with a comma callee,
+  and a `globalThis.eval` read through a realm-object receiver. It always
+  runs global code (§19.2.1.1, `direct` false).
+- **`Function(…)` and `new Function(…)` anywhere.** CreateDynamicFunction
+  always closes over the global environment (§20.2.1.1.1), so a site inside
+  a function body is global-scoped too.
+- **Direct `eval(src)` only at sloppy script top level.** There PerformEval
+  with `direct = true` uses the global variable environment and the global
+  `this`, exactly like indirect eval. So it lowers through the same helper,
+  passing the caller's strictness (sloppy).
+- **Still refused at select:**
+  - a strict script's top-level direct eval (eval code is then strict, and
+    its `var`s stay local to it);
+  - every direct eval inside a function, arrow or method;
+  - a module-init whose nested function expression contains a direct eval.
+
+  The strict test262 variant therefore keeps its top-level direct-eval rows
+  on legacy.
+
+#### Module and reuse: one support function per provider entry
+
+- **The duplicate it removes.** `emitStandaloneIndirectEvalRuntime` and
+  `emitStandaloneGlobalScriptEvalRuntime` (`codegen/expressions/eval-inline.ts`,
+  a god file at its 2544-line budget) are the same sequence, differing only
+  in the import name. Each does:
+  1. seed: `emitRuntimeEvalGlobalBindingSeed` = `__runtime_eval_push_globals`
+     plus provider-active;
+  2. source: coerce to externref, and evaluate-and-drop the extra arguments;
+  3. `emitGlobalEnvironmentObject`;
+  4. the provider import call;
+  5. `emitRuntimeEvalResultUnwrap` = `__runtime_eval_pull_globals`,
+     provider-inactive, envelope decode, rethrow on the caller's tag.
+
+  The `Function` route
+  (`eval-inline.ts`, `__runtime_new_function`) repeats steps 1 and 3 to 5
+  around its own parameter/body string join.
+- **The new helper.** It lives in
+  `codegen/expressions/runtime-eval-provider.ts`, which already owns push,
+  pull, seed and unwrap.
+  - It mints a compiler-support function per provider entry with the
+    signature `(source…: externref) -> externref`: `__runtime_indirect_eval`,
+    `__runtime_script_eval` and `__runtime_new_function`.
+  - The function's body is steps 1 and 3 to 5. Its arguments are the
+    already-evaluated strings.
+- **One parameterised legacy path.** The two legacy emitters become one,
+  parameterised by the entry. Each evaluates the source and extra arguments,
+  then emits one `call` to the support function. The `Function` emitter
+  keeps its §20.2.1.1 ToString/join, then calls its support function, then
+  applies its existing interpreted-callable adapter and prototype seed.
+- **IR uses the same function.** It is named through a runtime symbol (the
+  `irRuntimeFuncRef` pattern already used for e.g. `__str_replaceAll`,
+  declared in `src/ir/runtime/callable-declarations.ts`). There is no second
+  copy of push, pull or unwrap.
+- **Evaluation-order fix.** Legacy indirect eval seeds *before* it evaluates
+  the source argument. With the support function, the source is evaluated
+  first and the seed happens inside the call. That is the order §19.2.1.1
+  requires (argument evaluation precedes PerformEval), and it matches what
+  the `Function` route already does: its comment explains why the seed must
+  follow every user coercion.
+  - Repro to pin: `var x = 1; (0, eval)((x = 2, "x"))` returns 2.
+- **IR side: a new small module `src/ir/runtime-eval-sites.ts`.**
+  - It holds the selection predicate and the from-ast lowering arm, the same
+    layout as `ir-dynamic-construct`'s split.
+  - The predicate reads the existing `IrRuntimeEvalBoundaryPlan.sites`, so
+    the IR never re-detects eval syntax. A site is admitted when its `kind`
+    and position are in the "What A2 lowers" list above.
+  - The arm lowers the arguments as dynamic values, then emits one
+    `emitCall` to the runtime symbol, with an externref result.
+  - `new Function`'s carrier adapter stays a codegen step behind the same
+    symbol. If that does not fit the call ABI, keep `Function` sites legacy
+    and say so; do not inline the adapter in the IR.
+- **A1 boundary changes.**
+  - The `eval-site` arm of `withdrawEvalBoundaryFunctions` refuses only the
+    sites the predicate does not admit, by sharing that predicate rather than
+    a second copy.
+  - The wholesale module-init withdrawal in `planIrOverlay` lifts for a
+    module-init the predicate fully admits.
+- **Eval-visible slots: the 27 / 60 module-init blocker.**
+  - The IR module-binding resolver types an eval-visible var/lexical slot by
+    the legacy global's actual (widened) type, an externref/dynamic slot, the
+    #7132 dynamic-slot route. It must not re-infer f64.
+  - IR reads and writes those slots through `global.get`/`global.set` at
+    every use, never forwarding a value across an eval call: the pull
+    rewrites them.
+  - Once this lands, A1's `eval-visible-binding` refusal can drop the
+    var/lexical half; that is A3 (d).
+
+### Acceptance
+
+- **Correctness**, on the 141 eval files with the interpreter provider built
+  per tree (`JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`):
+  - 0 pass→fail on standalone and on the JS host;
+  - linked-harness lane: 141 / 141 compile.
+- **Focused tests**, both lanes:
+  - indirect-eval `var` leaks to the global (`(0,eval)("var z = 1"); z === 1`);
+  - an assignment inside eval code is visible to IR code afterwards
+    (`var x = 1; (0,eval)("x = 2"); x === 2`);
+  - `Function("return typeof local")` sees the global, not the caller's
+    local;
+  - `new Function` gives a constructible function with a fresh `prototype`;
+  - a SyntaxError thrown inside eval is caught by an IR `try`;
+  - the source-before-seed order (repro above);
+  - a sloppy top-level direct eval leaks its `var`;
+  - a strict top-level direct eval and a direct eval inside a function stay
+    legacy.
+- **0 claim-then-demote:** `irPostClaimErrors` stays empty on the 141 files
+  and on the focused tests.
+- **Non-eval byte identity:** the A1 40-file control and the playground
+  examples are byte-identical on gc and standalone.
+- **Report:**
+  - the IR-only file count on the 141 (expected: about what A3 left, plus up
+    to 19 / 60 ≈ 45);
+  - IR units moved;
+  - the census classes re-run.
+- **Code quality:**
+  - **One support function per provider entry**, shared by legacy and IR:
+    the indirect/script emitter pair collapses into one parameterised path
+    (`eval-inline.ts` shrinks).
+  - **One site classifier.** The IR site predicate reads
+    `IrRuntimeEvalBoundaryPlan.sites`, and A1's withdrawal reuses it; there
+    is no second eval-syntax scanner.
+  - **No new arms or growth.** No new `ctx.standalone`/`ctx.wasi` arms
+    (lane questions go through `runtimeEvalPushPublishesCachedFunctionValues`
+    or an equally capability-named predicate); `index.ts` and `planIrOverlay`
+    do not grow.
+  - **No new flat `src/codegen` file, no grants.** The new IR module sits
+    under `src/ir/`, and the codegen half goes in `runtime-eval-provider.ts`.
+    The cycle, flat-dir and LOC gates pass with no grant.
+
+### A2 split (2026-11-06)
+
+A2 turned out large, so it ships in two slices:
+
+- **A2a (this branch):** the support functions and the evaluation-order fix.
+  Legacy only. No IR change and no unit change.
+- **A2b (next):** IR site lowering through `src/ir/runtime-eval-sites.ts`
+  plus module-init admission. It needs one more seam, which this plan did not
+  name (see "A2b blocker" below).
+
+### A2a implementation
+
+- **One support function per provider entry.**
+  - `ensureRuntimeEvalGlobalCall(ctx, entry)` in `runtime-eval-provider.ts`
+    mints `__runtime_eval_global_call_<entry>` (the entry without its
+    `__runtime_` prefix, e.g. `__runtime_eval_global_call_indirect_eval`), typed
+    `(source…: externref) -> externref`.
+  - `RUNTIME_EVAL_GLOBAL_ENTRY_ARITY` gives each entry its argument count:
+    indirect eval and script eval take 1, `__runtime_new_function` takes 2.
+  - The body runs: seed (push plus provider-active), the sources, the global
+    environment object, the entry import, then the pull and unwrap.
+    `runtimeEvalSyncFunctionContext` gained a `params` argument for it.
+- **One legacy emitter.**
+  - `emitStandaloneIndirectEvalRuntime` and
+    `emitStandaloneGlobalScriptEvalRuntime` became
+    `emitStandaloneGlobalEvalRuntime(ctx, fctx, entry, args, sourceLocal?)`.
+  - It evaluates the source and any extra arguments, then emits one `call`.
+  - The `Function` route keeps its §20.2.1.1 join and its carrier adapter, but
+    replaces its own seed / environment / unwrap copy with a call to the
+    `__runtime_new_function` support function.
+  - Callers updated: `calls.ts`, `eval-spread-args.ts`,
+    `generator-function-dynamic.ts` and the helper registry.
+  - `eval-inline.ts` shrank 2544 → 2470 lines. Across `src`: +79 / −113.
+- **Evaluation order.** Each site now evaluates its sources before the push,
+  which happens inside the support function (§19.2.1.1).
+  - The repro `var x = 1; (0, eval)((x = 2, "x"))` passed on the base as
+    well, so the old order was not observable through it.
+  - The new test pins the structure instead: no site calls the push itself.
+- **Test:** `tests/issue-7106-runtime-eval-a2-global-call.test.ts`. It reads
+  the call graph from the WAT and checks:
+  - each provider import is called only from its support function;
+  - the support functions push, and their call sites do not;
+  - two indirect sites and a script-level direct eval share one support
+    function.
+
+#### A2a measurement
+
+Setup: niced, one process, interpreter provider built per tree. The final
+tree is A2a merged with the A3 head 2b231a5b67 (round 3, which includes
+origin/main and the A1 self-reference fix).
+
+| check | result |
+| --- | --- |
+| 141 eval files, standalone verdicts | 0 pass→fail (101 / 40, same as base) |
+| 141 eval files, JS host verdicts | 0 pass→fail (98 / 43, same as base) |
+| 141 eval files, compile | 141 / 141, 0 post-claim errors, IR units unchanged at 830, 82 files change bytes (eval sites only) |
+| 40-file non-eval control | 40 / 40 byte-identical to the A3 head 2b231a5b67 |
+| 11 focused probes (`.tmp/a2t`), both lanes | identical verdicts to the A3 head 6756a64218 |
+
+The standalone run was paused at 71 / 141 and resumed after the merge.
+That is sound because the merge left all 141 binaries byte-identical to the
+paused tree.
+
+The JS host lane does not reach the support function at all:
+`emitStandaloneGlobalEvalRuntime` answers only for the native provider, as
+`emitStandaloneIndirectEvalRuntime` did before.
+
+### A2b blocker: canonical values from the shared realm
+
+Module init in an eval program cannot be admitted by typing the widened
+slots alone.
+
+- `scriptVarHomeSlot` (`codegen/index.ts`) refuses every script `var` when
+  the provider is present and `plan.sharedRealmMayContainCanonicalValues`
+  holds. That refusal is what the census reports as
+  `vardecl-module-storage-unrepresentable` and `vardecl-noinit` (`var after;`).
+- The slot itself is safe to share: the pull decodes and coerces every value
+  it writes back (`emitRuntimeEvalGlobalBindingPullBody`).
+- **The unsafe part is reads through those values.** An object built by eval
+  code holds canonical provider values. Legacy decodes them at about seven
+  read sites, all behind `ctx.runtimeEvalGlobalFunctionBindings`, through
+  `emitRuntimeEvalSharedValueUnwrap` / `runtimeEvalSharedValueUnwrapInstrs`:
+  - dynamic member gets (`property-access-dispatch.ts` ×5,
+    `property-access-exact-shapes.ts`);
+  - primitive-prototype member gets (`primitive-proto-member-get.ts`);
+  - captured direct-eval cells (`identifiers.ts`);
+  - compound assignment (`operator-assignment.ts`);
+  - the typed-lane overlay route.
+
+  The IR's dynamic member-read lowering has no such step.
+- **Seam A2b needs:**
+  - in programs where values may cross the provider boundary, the IR's
+    dynamic member read applies the same unwrap;
+  - it reaches it through one codegen helper, named by a runtime symbol;
+  - it is gated by a capability-named predicate, not by a lane arm.
+
+  Only then can `scriptVarHomeSlot` drop its eval refusal.
+- **What this changes for the gain.** Under that seam, the reachable files
+  are the module-init-only ones whose remaining blockers are top-level eval
+  sites (`callee:eval`, `expr-indirect-eval-host-statement`, `Function`) or
+  eval-visible slots. That is about 13 of the 60-file census.
+  - The 14 files whose module init holds `(function () { eval(…) })()` stay
+    legacy by design.
+
+### A2b handoff (branch `claude/7106-eval-a2b`, from A2a 06962e1289)
+
+Where the pieces live:
+
+- **Decode seam.** The IR's dynamic member and element read is ONE helper,
+  `__dyn_member_get`, built by `ensureDynMemberGet` (`codegen/dyn-read.ts`).
+  - It has two bodies: the `ctx.fast` `$AnyValue` carrier around line 790,
+    and the externref carrier around line 850. Each calls `__extern_get`.
+  - The decode belongs right after that call:
+    `buildRuntimeEvalValueUnwrap(ctx, locals, paramCount)`
+    (`codegen/runtime-eval-boundary.ts`). Legacy reaches the same builder
+    through `runtimeEvalSharedValueUnwrapInstrs` (`codegen/global-environment.ts`).
+  - Gate it on `ctx.runtimeEvalGlobalFunctionBindings === true`, the flag
+    every legacy decode site uses. It is set in
+    `registerReassignedFunctionGlobals`, before IR preregistration.
+- **Refusal to lift.** `scriptVarHomeSlot` (`codegen/index.ts`, near the
+  `scriptVarHome` doc comment) has the clause
+  `(standalone || wasi) && provider present && plan.sharedRealmMayContainCanonicalValues`.
+  Only that clause is A2b's. Lever S (afc4f80) owns the non-eval rest.
+- **Second gate, also needed for module init.** A1's wholesale withdrawal in
+  `planIrOverlay` (`codegen/index.ts`, the `callableBoundaryRequired` block)
+  sets `safeSelection.moduleInit = undefined`.
+- **Why IR-only files need more than the decode.** Almost every eval
+  program's module init holds the eval site itself (`(0,eval)(…)`,
+  `Function(…)`, a top-level `eval(…)`). So a file becomes IR-only only once
+  the IR lowers those sites. That is the A2 design's
+  `src/ir/runtime-eval-sites.ts` arm:
+  - it calls the A2a support function `__runtime_eval_global_call<entry>`
+    (`ensureRuntimeEvalGlobalCall`) through a runtime symbol;
+  - the IR's current refusal of these sites is
+    `phase1IndirectEvalStatementVerdict` (`ir/select.ts`,
+    `expr-indirect-eval-host-statement`) and the `callee:eval` external-call
+    gate in the module-init assessment.
+- **Measuring.**
+  - Scripts live in `.tmp/` of the agent worktree: `a1-probe.mts` for
+    compile, sha and units; `a1-host.mts` for verdicts (`LANE=host` for the
+    JS host); `sa-cmp.mjs` and `a1-cmp.mjs` for diffs.
+  - Base verdicts are `a1-int-base.jsonl` (101 / 40) and
+    `a1-host-base.jsonl` (98 / 43). The control list is `a1-control.txt`.
+  - Rebuild the interpreter provider per tree, with
+    `JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`.
+
+#### A2b progress (af4dd23233)
+
+- **Done, step 1: the decode.** `__dyn_member_get` applies the shared
+  runtime-eval value decode after `__extern_get`, in both carrier bodies.
+  - It is built by `dynMemberReadDecode` (`codegen/dyn-read.ts`) through
+    `runtimeEvalSharedValueDecode` (`codegen/global-environment.ts`).
+  - That is the builder the legacy read sites use; their
+    `runtimeEvalSharedValueUnwrapInstrs` now delegates to it, so there is no
+    second copy.
+  - It is gated on `ctx.runtimeEvalGlobalFunctionBindings`, the legacy flag.
+    There is no lane arm.
+- **Done, step 2: the refusal.** `scriptVarHomeSlot` no longer refuses script
+  vars in eval programs. A1's wholesale module-init withdrawal narrows to
+  `moduleInitHoldsEvalSite` (`codegen/ir-overlay-preparation.ts`): a
+  top-level statement, other than a function declaration, that contains a
+  site.
+- **Measured on the 141 (standalone):** 141 / 141 compile, 0 post-claim
+  errors, 830 units (unchanged), 0 IR-only files. 90 files change bytes, all
+  from the decode.
+  - Interpreter-provider verdicts: 0 pass→fail on standalone (101 / 40) and
+    on the JS host (98 / 43).
+  - The 40-file non-eval control is byte-identical to the A2a head.
+- **Why IR-only is still 0.** Every module init in the 141 holds its eval
+  site, so `moduleInitHoldsEvalSite` keeps all of them direct. Step 2 is a
+  prerequisite that nothing exercises yet.
+- **Next: lower the sites in the IR by generalising the existing host arm,
+  not by adding a second one.**
+  - The IR already lowers a certified host indirect-eval statement:
+    `certifiedHostIndirectEval` / `phase1IndirectEvalStatementVerdict`
+    (`ir/select.ts`), the `exactIndirectEvalStatement` arm in
+    `ir/from-ast.ts` (around line 7655), and the resolver's
+    `hostIndirectEvalTarget`, gated by `supportsHostIndirectEval`
+    (`ir/integration.ts` around line 2620, `codegen/index.ts` around line
+    3358).
+  - Parameterise that one arm by its target. On the JS host the target stays
+    the host import. With the runtime-eval provider it becomes the A2a
+    support function `__runtime_eval_global_call_indirect_eval`,
+    with one source argument instead of `(source, isDirect)`.
+  - Give the capability a name (`supportsGlobalIndirectEval`), not a lane
+    arm.
+  - Preregister the support function before Phase 3:
+    `ensureRuntimeEvalGlobalCall` adds a late import and flushes shifts.
+  - `moduleInitHoldsEvalSite` should then skip the sites that predicate
+    admits, by sharing the predicate rather than copying it.
+  - Then `Function(…)` and a sloppy top-level `eval(…)` (`callee:eval`) can
+    follow through the same arm.
+  - **Open question to measure first:** legacy folds a literal
+    `(0, eval)("…")` at compile time (`tryStaticEvalInline`). The IR arm must
+    not turn a folded literal into a runtime call. Either admit only
+    computed sources, or check what legacy does for each census file.
+
+### A2c implementation (branch `claude/7106-eval-a2c`, from A2b 9525d48818)
+
+#### The fold question, settled first
+
+Legacy folds some literal eval sources at compile time (`tryStaticEvalInline`)
+and hands others to the provider. Both options from the handoff were measured
+on the 141 files (standalone, A2b head, legacy fold decisions logged per site
+by a temporary, uncommitted hook):
+
+- **Admit only computed sources: 0 files.** Top-level eval sources are
+  literal almost everywhere. Of the 141 files, 21 hold a literal top-level
+  indirect-eval statement and 19 a literal direct one; only 1 file has a
+  computed top-level direct-eval source and 4 a computed `new Function`. Not
+  one of the files whose only module-init blocker is an eval site has a
+  computed source.
+- **Match legacy per site: chosen.** In module init, legacy sends 42 of 44
+  indirect-eval compilations and 36 of 136 direct-eval compilations to the
+  provider; the rest fold (a spliced Script or a static SyntaxError throw).
+  The counts are compilations, not sites: legacy compiles some sites twice.
+
+So the IR admits a site exactly when legacy's own fold pieces say the provider
+owns it. Those pieces moved out of `tryStaticEvalInline` into
+`codegen/expressions/eval-script.ts`, so the fold and the IR read one copy:
+
+- `parseEvalScript`: the Script, its statements, `bodyIsStrict`, `evalIsStrict`;
+- `foldedEvalStaticSyntaxError`: parse failure, Script early error, then a
+  var colliding with a global lexical (§19.2.1.3 step 5.a), in spec order;
+- `providerOwnsEvalDeclarations`: a sloppy Script whose variable environment
+  is global and that declares a var or function (§19.2.1.3 step 16).
+
+A literal is admitted when it parses, raises no static SyntaxError and the
+provider owns its declarations. Any other literal may fold, so its module init
+stays direct. Measured: all 9 sites the route admits on the 141 are sites
+legacy sent to the provider (0 that legacy folds).
+
+#### One generalised arm
+
+- **Shape.** `exactIndirectEvalStatement` became `exactGlobalEvalStatement`
+  (`src/eval-call-shape.ts`): `(0, eval)(source)` or `eval(source)` as an
+  expression statement, with a `direct` flag. The JS-host import collector
+  keeps the indirect half.
+- **Route.** `globalEvalRoute(ctx, call, hostEvalAbi)`
+  (`runtime-eval-provider.ts`) answers once for every consumer:
+  - `host-import`: an indirect statement where the caller proves the
+    `__extern_eval(source, isDirect)` ABI (the old `supportsHostIndirectEval`
+    condition, `jsHostExterns && !ctx.nativeStrings`);
+  - `runtime-eval-provider`: the boundary plan recorded the site as a literal
+    `indirect-eval`/`direct-eval`; a direct eval must run at script global
+    (`directEvalRunsAtScriptGlobal`); and the fold pieces above say the
+    provider owns it. The lane question goes through
+    `runtimeEvalPushPublishesCachedFunctionValues` and
+    `isRuntimeEvalProviderAbsent`; no new lane arm.
+- **Selector.** `supportsHostIndirectEval: boolean` became
+  `supportsGlobalEval(call)` (both planning sites pass `globalEvalRoute`).
+  `certifiedHostIndirectEval` became `certifiedGlobalEval`; it serves the
+  Phase-1 call gate (`phase1GlobalEvalStatementVerdict`, reject detail
+  `expr-global-eval-statement`) and the call-graph walk, which removes the
+  `callee:eval` external call.
+- **from-ast.** The one arm takes its callee from
+  `resolver.globalEvalTarget(call)`: `{ ref, passesIsDirect }`. The JS-host
+  import keeps `(source, 0)`; the provider route calls
+  `__runtime_eval_global_call_indirect_eval` with the source alone. A sloppy
+  script-global direct eval shares that entry, as legacy's
+  `directEvalRunsAtScriptGlobal` arm does. Module init's discarded-expression
+  lowering now passes statement position for that shape too.
+- **Support function, linked before Phase 3.** The resolver links it
+  (`linkRuntimeEvalGlobalEval` → `ensureRuntimeEvalGlobalCall`) while the IR
+  body is built. `ensureRuntimeEvalGlobalCall` now seeds the callable carrier
+  itself: every legacy site seeds it first, so this is a no-op there (byte
+  identity below), and an IR-only file still gets it.
+- **Module init.** `moduleInitHoldsEvalSite(ctx, sourceFile)` skips a site
+  whose call `globalEvalRoute` routes; it is the same predicate the selector
+  and resolver read. A1's per-function `eval-site` withdrawal is unchanged: a
+  function holding even an admitted site stays direct.
+- **Not done.** `Function(…)` stays legacy: its module-init sites fold (30 of
+  52 compilations) or carry computed sources, and its §20.2.1.1 join plus
+  carrier adapter would need its own route. A value-position eval
+  (`x === eval("var x")`) stays legacy: the arm is statement-only.
+
+Size: `eval-inline.ts` 2470 → 2357. Across `src`, +320 / −235 against A2b.
+`index.ts` is line-neutral; `integration.ts` grows by 1 (two facade imports
+for the resolver, offset by the resolver shrinking); no new grant.
+
+#### A2c measurement
+
+Setup: niced, one process. Interpreter provider rebuilt for this tree.
+Byte identity is a file-copy A/B against the A2b head 9525d48818.
+
+| check | result |
+| --- | --- |
+| IR-only files on the 141 (standalone) | **0 → 6** |
+| IR units on the 141 | 830 → 836 (one `<module-init>` per IR-only file) |
+| post-claim errors on the 141 | 0 |
+| verdicts, standalone (interpreter provider) | 101 / 40, 0 pass→fail, 0 changed failure messages |
+| verdicts, JS host (interpreter provider) | 98 / 43, 0 pass→fail |
+| bytes, 141 eval files, standalone and gc | 135 / 141 identical on each lane; the 6 that differ are exactly the IR-only files |
+| bytes, 40-file control, standalone and gc | 40 / 40 identical |
+| bytes, playground examples, standalone and gc | 13 / 13 identical |
+| eval test files (41) | the only new failure was the renamed shape test, fixed; 50 failures pre-exist on the A2b head |
+| equivalence gate, 8 shards | no new regressions in any shard |
+
+The 6 IR-only files are Annex B `global-*` rows (2 direct, 4 indirect).
+They fail on the base too and still fail, with the same message.
+The gc lane changes too, because the default JS target compiles under the
+native regime (`ctx.standalone` is the native regime, #5385).
+
+#### What still blocks
+
+- 78 of the 141 files had `<module-init>` as their only legacy unit. 21 of
+  those had only eval sites blocking module init:
+  - 6 are now IR-only.
+  - 5 Annex B rows hold a literal whose declarations are only block
+    functions. Legacy decides those by the B.3.3 rule, which reads the
+    caller's frame (`collidesWithCaller`, `unsupportedGlobalShape`), so the
+    route does not admit them.
+  - 9 hold literals legacy folds (e.g. `S11.2.3_A1`, `cptn-nrml-*`), plus 1
+    `Function` fold.
+  - 1 has a value-position eval (`S11.9.4_A6.1`).
+- A routed module init can still be blocked by its other statements:
+  `var-env-var-non-strict` (an IIFE with a direct eval) and `S7.3_A7_T1`
+  (`throw-module-scalar-unboxed`).
+- Names that only eval declares (`(0, eval)("var z = 1"); z;`) are
+  `expr-ident-not-in-scope` for the IR. That is a separate lever: a read of an
+  unresolvable script name through the global object.
+
+#### Review of #7177 (fresh context, 2026-11-07): APPROVE, quality fixes applied
+
+No correctness bug. The reviewer saw 0 post-claim errors over 208 compile
+pairs. Each finding was fixed in 27630b3237:
+
+1. **Unreachable JS-host route.** The host half of the arm needs
+   `!nativeStrings`, which is always on for the JS target since #6979. The
+   #1164 test "owns a proven-string indirect statement through IR" fails on
+   both the A2b head and A2c. The selector checked the host route first and
+   the resolver the provider route first, so the two could disagree.
+   - Every reader now asks one question, `runtimeEvalOwnsGlobalEval(ctx, call)`.
+   - The resolver's `globalEvalTarget` returns only the support function.
+   - `passesIsDirect` and the `hostEvalAbi` parameter are gone.
+   - The legacy import collector's `__extern_eval` pre-scan stays. It retires
+     with the JS-host lane, not here.
+2. **Carrier seeding was unchecked.** `ensureRuntimeEvalGlobalCall` now seeds
+   the callable carrier before it builds the support function, and returns
+   `undefined` when seeding fails, as legacy's callers refuse. The seed runs
+   in a detached context: for legacy it is a no-op, because the carrier is
+   already seeded.
+3. **The literal Script was re-parsed per query.** The answer is now memoized
+   per call node (a `WeakMap` per compile), so a Script is parsed once rather
+   than once each for the selector, `moduleInitHoldsEvalSite` and the
+   resolver.
+4. **Doc order in `dyn-read.ts`.** `dynMemberReadDecode` and its doc now sit
+   above `ensureDynMemberGet`'s doc block.
+5. **Wording in `eval-script.ts`.** It now says the IR lowers a statement
+   *only* when legacy routes it to the provider. The IR set is a strict
+   subset: legacy also routes Annex B collisions, strict scoped declarations,
+   caller lexical collisions and const-resolved direct sources.
+
+`integration.ts` no longer grows, so its A2c rationale line is dropped.
+
+Re-measured on 27630b3237, file-copy A/B against the A2b head 9525d48818:
+
+| check | result |
+| --- | --- |
+| bytes, 141 eval files, standalone and gc | 135 / 141 identical on each lane; the 6 that differ are the IR-only files, whose `<module-init>` is IR on both lanes |
+| bytes, 40-file control and 13 playground examples, both lanes | identical |
+| verdicts of the 6 IR-only files, both lanes (provider rebuilt) | fail as on the base; the standalone messages are identical |
+| focused tests (A2c, A2a, A1 unit boundary) | 13 / 13 pass |
+
+#### Follow-up: eval-declared vars read after the eval (interpreter engine only, local runs)
+
+A program that declares a var through eval and then reads it fails locally:
+`(0, eval)("var z = 1"); z;` throws in Wasm, while node passes. The reviewer
+saw it on both the A2b head and A2c (25 / 25 verdicts equal).
+
+This is a gap in the **interpreter** eval engine, and it appears only in local
+runs. It is not a compiler or shared-path bug, and it does not cap lever A in
+CI:
+
+- CI's standalone shards evaluate eval code with QuickJS
+  (`JS2WASM_EVAL_ENGINE` defaults to `quickjs` in `test262-sharded.yml`).
+  Local runs here used `JS2WASM_EVAL_ENGINE=interpreter`, because QuickJS is
+  not built in the container.
+- CI's standalone baseline (fetched 2026-11-07, built from main) passes
+  **141 / 141** of the eval files. That includes every one of the 40 that
+  fail locally, and the 6 A2c IR-only files.
+- The 40 local standalone failures, by message:
+
+  | files | message |
+  | --- | --- |
+  | 31 | `undefined` (the read-back shape above) |
+  | 6 | `ReferenceError: intrinsicErrorConstructor is not defined` |
+  | 2 | `SyntaxError: Binding rvalue` |
+  | 1 | `Thrown value was not an object!` |
+
+Local verdicts taken with the interpreter engine therefore **undercount**.
+The pass→fail comparisons in this plan stay valid, since base and head ran
+on the same engine. Absolute pass counts and lever A's gain must come from a
+QuickJS run, i.e. CI. Closing these interpreter gaps is its own issue against
+the interpreter provider, not lever A work.
+
+#### Follow-up: JS-host hostEval shadowed assert
+
+- JS-host `hostEval` shim: a raw `assert` beside a parameter that shadows
+  `assert` throws a non-Error value from the child Wasm module (`it.fails` in
+  `tests/issue-1164-es5-eval-slice.test.ts`). JS-host lane; file as its own
+  issue once ids can be allocated.
