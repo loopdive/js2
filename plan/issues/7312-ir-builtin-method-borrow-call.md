@@ -13,7 +13,6 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 related: [7294, 7275, 7106, 7287, 7310]
-depends_on: [7294]
 assignee: "ttraenkler/c-lead"
 ---
 
