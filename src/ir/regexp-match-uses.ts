@@ -2,17 +2,19 @@
 /**
  * (#7106 levers R2, S2) Where the IR consumes a RegExp match result: an
  * `re.exec(s)` call (R2) or a read of a `regexp-match` script `var` (S2). Both
- * are the dynamic carrier holding the match array or null. The selector admits
- * one only where the dynamic lowering reads it as legacy does:
- *   - a property or element read: never a store target, a callee or a
- *     `delete` operand; the key is a number or a name other than `groups` /
- *     `indices`, two fields of the native match vector that the dynamic
- *     reader does not serve;
- *   - an operand of `===`, `!==`, the dynamic `+`, or `typeof`;
- *   - a `var` initializer.
- * Every other use is refused at its site. Today each of them either fails
- * after the claim (a call argument beside an array literal, a loose `!=`
- * against `null`, a property store) or traps (an element store).
+ * are the dynamic carrier holding the match array or null, and the dynamic
+ * reader serves only the match vector's own fields, not the members it
+ * inherits from `Array.prototype` (`join`), nor `groups` / `indices`. The
+ * selector admits a match result only where its lowering reads it as legacy
+ * does:
+ *   - a read of `length`, `index` or `input`, or of a proven-number element
+ *     key (not compared with `undefined`, which the builder's indexed read
+ *     cannot prove); never a store target, a callee or a `delete` operand;
+ *   - an operand of `===`, `!==`, the dynamic `+`, or `typeof`.
+ * The selector adds one more for an `.exec` call: the initializer of a
+ * `regexp-match` slot, whose uses this predicate checks in turn. Every other
+ * use is refused at its site; today each of them fails after the claim, reads
+ * the wrong value or traps.
  *
  * A `regexp-match` slot is legacy's #1914 `(ref null $__regexp_match_vec)`.
  * Legacy typed it only after proving every write in the source a match
@@ -22,7 +24,7 @@
 import { ts } from "../ts-api.js";
 import { isStoreTarget, outermostParenthesized, stripParens } from "../shared/binding-writes.js";
 
-const UNSERVED_FIELDS: ReadonlySet<string> = new Set(["groups", "indices"]);
+const SERVED_FIELDS: ReadonlySet<string> = new Set(["length", "index", "input"]);
 const OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.EqualsEqualsEqualsToken,
   ts.SyntaxKind.ExclamationEqualsEqualsToken,
@@ -37,12 +39,13 @@ export function regExpMatchUseAdmitted(use: ts.Expression, classify: ClassifyPri
   const value = outermostParenthesized(use);
   const consumer = value.parent;
   if (ts.isPropertyAccessExpression(consumer) && consumer.expression === value)
-    return !UNSERVED_FIELDS.has(consumer.name.text) && isPlainRead(consumer);
+    return SERVED_FIELDS.has(consumer.name.text) && isPlainRead(consumer);
   if (ts.isElementAccessExpression(consumer) && consumer.expression === value)
-    return classify?.(consumer.argumentExpression) === "number" && isPlainRead(consumer);
+    return (
+      classify?.(consumer.argumentExpression) === "number" && isPlainRead(consumer) && !comparedWithUndefined(consumer)
+    );
   if (ts.isBinaryExpression(consumer)) return OPERATORS.has(consumer.operatorToken.kind);
-  if (ts.isTypeOfExpression(consumer)) return true;
-  return ts.isVariableDeclaration(consumer) && consumer.initializer === value;
+  return ts.isTypeOfExpression(consumer);
 }
 
 function isPlainRead(access: ts.PropertyAccessExpression | ts.ElementAccessExpression): boolean {
@@ -53,6 +56,14 @@ function isPlainRead(access: ts.PropertyAccessExpression | ts.ElementAccessExpre
     !ts.isDeleteExpression(parent) &&
     !(ts.isCallExpression(parent) && parent.expression === outer)
   );
+}
+
+function comparedWithUndefined(read: ts.Expression): boolean {
+  const outer = outermostParenthesized(read);
+  const comparison = outer.parent;
+  if (!ts.isBinaryExpression(comparison)) return false;
+  const other = stripParens(comparison.left === outer ? comparison.right : comparison.left);
+  return (ts.isIdentifier(other) && other.text === "undefined") || ts.isVoidExpression(other);
 }
 
 /** True when `value` is an `.exec(…)` call: with legacy's proof above, the one write shape the IR lowers. */

@@ -15492,8 +15492,9 @@ export {
   IR_DYN_INSTANCEOF_HELPER,
   irDynamicInstanceOfAtLegacyParity,
 } from "./ir-dynamic-instanceof.js";
-// (#7106 lever R2) the `exec` twin of the `.test` carrier helper (ir/integration.ts).
+// (#7106 levers R1, R2) the `.test` / `.exec` carrier helpers (ir/integration.ts).
 export { ensureStandaloneRegExpCarrierExecHelper } from "./regexp-exec-carrier.js";
+export { ensureStandaloneRegExpCarrierTestHelper } from "./regexp-standalone.js";
 // (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
 export {
   buildModuleInitPrologueCall,

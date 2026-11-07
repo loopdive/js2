@@ -8253,7 +8253,6 @@ function moduleExternConsumerIsProven(expr: ts.Expression, scope: ReadonlySet<st
   return false;
 }
 
-/** A real module lexical whose legacy storage has no sound IR representation. */
 /**
  * (#2856 C2) An element store's receiver: a plain in-scope identifier or a
  * stable dynamic root. (#7106 lever S2) A module binding answers for its own
@@ -8264,6 +8263,7 @@ function elementStoreReceiverAdmitted(receiver: ts.Expression, scope: ReadonlySe
   return stableDynamicStoreReceiverHasAdmittedRoot(receiver);
 }
 
+/** A real module lexical whose legacy storage has no sound IR representation. */
 function isUnrepresentableModuleBinding(node: ts.Identifier): boolean {
   const resolver = currentModuleBindingResolver;
   return resolver !== null && resolver(node) === undefined && resolver.isDirectModuleBinding(node);
@@ -8786,6 +8786,22 @@ function nativeStaticRegExp(expr: ts.Expression): boolean {
     (methodReceiver || ts.isExpressionStatement(consumer)) &&
     currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
     currentSelectionOptions.nativeRegExpCompiles?.(pair.pattern, pair.flags) === true
+  );
+}
+
+/**
+ * (#7106 lever S2) `call` (an `.exec`) initializes a `regexp-match` script
+ * slot, whose every use the module-binding resolver checks. Any other `var`
+ * (a function local) would be a dynamic local whose uses nothing checks.
+ */
+function initializesRegExpMatchSlot(call: ts.CallExpression): boolean {
+  const value = outermostParenthesized(call);
+  const declaration = value.parent;
+  return (
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer === value &&
+    ts.isIdentifier(declaration.name) &&
+    currentModuleBindingResolver?.(declaration.name, call)?.valueKind.kind === "regexp-match"
   );
 }
 
@@ -12172,7 +12188,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           (expressionIsProvenString(call.subject) ||
             currentSelectionOptions?.classifyPrimitiveExpression?.(call.subject) === "string") &&
           (call.method === "test" ||
-            regExpMatchUseAdmitted(expr, currentSelectionOptions?.classifyPrimitiveExpression)) &&
+            regExpMatchUseAdmitted(expr, currentSelectionOptions?.classifyPrimitiveExpression) ||
+            initializesRegExpMatchSlot(expr)) &&
           (currentModuleBindingResolver?.staticRegExpTestPlan(call.receiver) !== undefined ||
             isPhase1Expr(call.receiver, scope, localClasses))
         ) {

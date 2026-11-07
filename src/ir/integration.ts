@@ -86,7 +86,8 @@ import {
   TYPED_ARRAY_NAMES,
   scriptVarHome,
   ensureIrDynamicDeleteHelper, // (#7106 propertyHelper) dynamic delete wrappers
-  ensureStandaloneRegExpCarrierExecHelper, // (#7106 lever R2) the `.test` helper's `exec` twin
+  ensureStandaloneRegExpCarrierExecHelper, // (#7106 levers R1, R2) the `.test` / `.exec` carrier helpers
+  ensureStandaloneRegExpCarrierTestHelper,
   IR_DYN_DELETE_SLOPPY_HELPER,
   IR_DYN_DELETE_STRICT_HELPER,
   irDeleteSiteIsStrict,
@@ -194,11 +195,7 @@ import {
   type StringEncoding,
 } from "../codegen/native-string-literals.js";
 import type { RegExpCarrierMethod } from "../shared/regexp-static.js";
-import {
-  ensureIrRegExpLiteralHelper,
-  ensureStandaloneRegExpCarrierTestHelper,
-  standaloneStaticRegExpCompiles,
-} from "../codegen/regexp-standalone.js";
+import { ensureIrRegExpLiteralHelper, standaloneStaticRegExpCompiles } from "../codegen/regexp-standalone.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../codegen/registry/imports.js";
 import { emitWasiErrorConstructor } from "../codegen/registry/error-types.js";
 import {
@@ -6099,6 +6096,11 @@ function withoutVoidReturn(ctx: CodegenContext, body: Instr[], typeIdx: number):
 }
 
 /** Resolve a checker-owned module declaration to its exact structural/legacy slot pair. */
+/** The module-defined global at absolute index `absIdx`, if any. */
+function moduleGlobalDef(ctx: CodegenContext, absIdx: number | undefined): GlobalDef | undefined {
+  return absIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, absIdx)];
+}
+
 function resolveModuleBindingGlobal(
   ctx: CodegenContext,
   identity: IrModuleBindingIdentity,
@@ -6135,7 +6137,7 @@ function resolveModuleBindingGlobal(
         `module-init: supported binding '${name}' is absent from the compatibility module-global registry`,
       );
     }
-    global = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    global = moduleGlobalDef(ctx, globalIdx);
   }
   if (!global || global.name !== globalName) {
     throw new IrInvariantError(
@@ -6285,7 +6287,7 @@ function resolveModuleBindingGlobal(
     }
   } else {
     const tdzGlobalIdx = ctx.tdzGlobals.get(name);
-    tdzGlobal = tdzGlobalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, tdzGlobalIdx)];
+    tdzGlobal = moduleGlobalDef(ctx, tdzGlobalIdx);
   }
   if (tdzGlobal && tdzGlobal.name !== expectedTdzGlobalName) {
     throw new IrInvariantError(
@@ -6721,7 +6723,7 @@ function resolveStandaloneRegExpTestGlobal(ctx: CodegenContext, plan: IrStaticRe
     global = observed.value;
   } else {
     const globalIdx = ctx.moduleGlobals.get(name);
-    global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    global = moduleGlobalDef(ctx, globalIdx);
   }
   if (!global || global.name !== globalName || global.type.kind !== "externref") {
     throw new IrInvariantError(
@@ -6777,7 +6779,7 @@ function resolveRetainedFunctionMethod(
     receiverGlobalDef = observed.value;
   } else {
     const globalIdx = ctx.moduleGlobals.get(plan.receiverName);
-    receiverGlobalDef = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    receiverGlobalDef = moduleGlobalDef(ctx, globalIdx);
   }
   if (
     !receiverGlobalDef ||
@@ -6862,7 +6864,7 @@ function resolveFnctorArrayMethod(
     receiverGlobalDef = observed.value;
   } else {
     const globalIdx = ctx.moduleGlobals.get(plan.receiverName);
-    receiverGlobalDef = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    receiverGlobalDef = moduleGlobalDef(ctx, globalIdx);
   }
   if (
     !receiverGlobalDef ||
@@ -6943,7 +6945,7 @@ function resolveStaticNumericArrayGlobal(
     global = observed.value;
   } else {
     const globalIdx = ctx.moduleGlobals.get(name);
-    global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    global = moduleGlobalDef(ctx, globalIdx);
   }
   const nameOf = (i: number) => ctx.typeIdxToStructName.get(i);
   if (!global || global.name !== globalName || !staticNumericArrayGlobalMatches(global.type, expected, nameOf)) {
@@ -7074,8 +7076,8 @@ function sameValType(a: ValType, b: ValType): boolean {
 
 /**
  * (#7106 levers R1, R2) Legacy's builder of a carrier method's helper
- * (`REGEXP_CARRIER_METHODS`). A function, not a table: the `exec` builder
- * arrives through the `codegen/index.ts` facade, inside the import cycle.
+ * (`REGEXP_CARRIER_METHODS`). A function, not a table: both builders arrive
+ * through the `codegen/index.ts` facade, inside the import cycle.
  */
 function ensureRegExpCarrierHelper(ctx: CodegenContext, method: RegExpCarrierMethod): number | undefined {
   return method === "test"
@@ -8117,7 +8119,7 @@ function makeResolver(
         : ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding));
     },
     resolveGlobalType(ref: IrGlobalRef): ValType | undefined {
-      return ctx.mod.globals[localGlobalIdx(ctx, resolver.resolveGlobal(ref))]?.type;
+      return moduleGlobalDef(ctx, resolver.resolveGlobal(ref))?.type;
     },
     resolveType(ref: IrTypeRef): number {
       if (readEnv("JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE") === "type") {

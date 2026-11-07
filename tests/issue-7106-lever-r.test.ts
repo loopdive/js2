@@ -15,8 +15,11 @@ import { buildImports } from "../src/runtime.js";
 import { lane, TARGETS, type Target } from "./helpers/ambient-intrinsic-probe.js";
 import { assembleHarnessBody, moduleInit } from "./helpers/harness-module-init.js";
 
-/** Run `body`'s `<module-init>` on `target` (an assert failure throws); report whether the IR claimed it. */
-async function runBody(target: Target, body: string): Promise<boolean> {
+/**
+ * Run `body`'s `<module-init>` on `target` (an assert failure throws); report whether the IR claimed
+ * `unit` (default: the `<module-init>`).
+ */
+async function runBody(target: Target, body: string, unit?: string): Promise<boolean> {
   const result = await compile(assembleHarnessBody(body), {
     fileName: "test.js",
     allowJs: true,
@@ -31,7 +34,8 @@ async function runBody(target: Target, body: string): Promise<boolean> {
   const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
   (instance.exports.__module_init as () => void)();
-  return moduleInit(result)?.irBodyEmitted === true;
+  const outcome = unit ? result.irOutcomes?.find((entry) => entry.displayName === unit) : moduleInit(result);
+  return outcome?.irBodyEmitted === true;
 }
 
 const CLAIMED: Record<string, string> = {
@@ -89,6 +93,17 @@ const REFUSED: Record<string, string> = {
   execLengthStore: "var __executed = /a/.exec('a');\n__executed.length = 1;",
   execIndexStore: "var __executed = /a/.exec('a');\n__executed.index = 7;",
   execExpandoStore: "var __executed = /a/.exec('a');\n__executed.foo = 7;",
+  // Review round 2: the dynamic reader serves `length`, `index`, `input` and number keys only — not an
+  // inherited `Array.prototype` member — and an indexed read compared with `undefined` has no proof.
+  execInheritedMember: "if (typeof /a(b)/.exec('xab').join !== 'function') { throw new Test262Error('#1'); }",
+  execBoundInheritedMember:
+    "var __e = /a(b)/.exec('xab');\nif (typeof __e.join !== 'function') { throw new Test262Error('#1'); }",
+  execElementUndefined: "var __e = /a(b)/.exec('xab');\nif (__e[1] === undefined) { throw new Test262Error('#1'); }",
+  execOutOfRangeUndefined: "var __e = /a(b)/.exec('xab');\nif (__e[5] !== undefined) { throw new Test262Error('#1'); }",
+  execNegativeKeyUndefined:
+    "var __e = /a(b)/.exec('xab');\nif (__e[-1] !== undefined) { throw new Test262Error('#1'); }",
+  execFractionKeyUndefined:
+    "var __e = /a(b)/.exec('xab');\nif (__e[0.5] !== undefined) { throw new Test262Error('#1'); }",
   // S2: the slot's one IR write is its declaration's `.exec(…)` initializer.
   execReassigned: "var __executed = /a/.exec('a');\n__executed = /b/.exec('b');\nassert.sameValue(__executed[0], 'b');",
   execRedeclared:
@@ -107,6 +122,15 @@ const REFUSED: Record<string, string> = {
     "function h() { var re = /a/g; re.test('aa'); return re.test('aa'); }\nif (!h()) { throw new Test262Error('#1'); }",
 };
 
+// Review round 2: a function-local `var` holding an `.exec` result is a dynamic local whose uses nothing
+// checks, so the IR refuses the initializer and `f` stays on the direct path.
+const REFUSED_IN_F: Record<string, string> = {
+  localGroups:
+    "function f() { var m = /(?<x>b)/.exec('ab'); return m.groups.x; }\nif (f() !== 'b') { throw new Test262Error('#1'); }",
+  localIndices:
+    "function f() { var m = /a(b)/d.exec('xab'); return m.indices[1][0]; }\nif (f() !== 2) { throw new Test262Error('#1'); }",
+};
+
 describe("#7106 lever R — RegExp on the host-free lanes", () => {
   for (const target of TARGETS) {
     describe(lane(target), () => {
@@ -118,6 +142,11 @@ describe("#7106 lever R — RegExp on the host-free lanes", () => {
       for (const [name, body] of Object.entries(REFUSED)) {
         it(`refuses at selection, never withdraws: ${name}`, async () => {
           expect(await runBody(target, body)).toBe(false);
+        });
+      }
+      for (const [name, body] of Object.entries(REFUSED_IN_F)) {
+        it(`refuses f at selection, never withdraws: ${name}`, async () => {
+          expect(await runBody(target, body, "f")).toBe(false);
         });
       }
     });

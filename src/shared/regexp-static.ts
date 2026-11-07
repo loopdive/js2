@@ -43,14 +43,19 @@ export function staticRegExpPair(
 /** (#7106 levers R1, R2) The RegExp methods the host-free lanes run through an in-module carrier helper. */
 export type RegExpCarrierMethod = "test" | "exec";
 
+/** A carrier method call's parts. */
+export interface RegExpCarrierCall {
+  readonly receiver: ts.Expression;
+  readonly subject: ts.Expression;
+  readonly method: RegExpCarrierMethod;
+}
+
 /**
  * `re.test(s)` / `re.exec(s)`: a one-argument, non-spread call of a carrier
  * method, split into its parts. Whether `re` is a RegExp is the caller's
  * question (the selector's and the resolver's `isRegExpExpression`).
  */
-export function matchRegExpCarrierCall(
-  expr: ts.CallExpression,
-): { receiver: ts.Expression; subject: ts.Expression; method: RegExpCarrierMethod } | undefined {
+export function matchRegExpCarrierCall(expr: ts.CallExpression): RegExpCarrierCall | undefined {
   const callee = expr.expression;
   if (!ts.isPropertyAccessExpression(callee) || expr.arguments.length !== 1 || ts.isSpreadElement(expr.arguments[0]!))
     return undefined;

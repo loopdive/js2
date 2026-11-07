@@ -119,7 +119,12 @@ import {
   matchArrayPrototypeBorrowCall,
 } from "./array-prototype-borrow-call.js";
 import { REGEXP_CARRIER_METHODS } from "./regexp-runtime-contract.js";
-import { matchRegExpCarrierCall, type RegExpCarrierMethod, staticRegExpPair } from "../shared/regexp-static.js";
+import {
+  matchRegExpCarrierCall,
+  type RegExpCarrierCall,
+  type RegExpCarrierMethod,
+  staticRegExpPair,
+} from "../shared/regexp-static.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "../codegen/ir-native-map.js"; // (#4461) native $Map adapter ABI
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
@@ -8935,7 +8940,7 @@ function tryLowerConsoleMethodCall(
 
 /** (#3791, #7106 lever R) `re.test(s)` / `re.exec(s)`: the method's in-module carrier helper (`REGEXP_CARRIER_METHODS`). */
 function lowerRegExpCarrierCall(
-  { receiver: receiverExpr, subject: subjectExpr, method }: NonNullable<ReturnType<typeof matchRegExpCarrierCall>>,
+  { receiver: receiverExpr, subject: subjectExpr, method }: RegExpCarrierCall,
   cx: LowerCtx,
 ): IrValueId {
   const plan = cx.resolver!.nativeRegExpMethodPlan!(receiverExpr, method);
@@ -8964,7 +8969,7 @@ function lowerRegExpCarrierCall(
 }
 
 /** (#7106 lever R) `expr` is a carrier call the host-free lanes lower in-module (`lowerRegExpCarrierCall`). */
-function nativeRegExpCarrierCall(expr: ts.CallExpression, cx: LowerCtx): ReturnType<typeof matchRegExpCarrierCall> {
+function nativeRegExpCarrierCall(expr: ts.CallExpression, cx: LowerCtx): RegExpCarrierCall | undefined {
   const call = matchRegExpCarrierCall(expr);
   return call && cx.resolver?.isNativeRegExpReceiver?.(call.receiver) === true ? call : undefined;
 }
