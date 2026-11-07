@@ -329,6 +329,17 @@ export function booleanReadAsNumber(op: ts.SyntaxKind, left: OperandFamily, righ
   return (left === "boolean" && partnerIsNumeric(right)) || (right === "boolean" && partnerIsNumeric(left));
 }
 
+/**
+ * (#7282) A numeric reader ToNumbers a boolean beside an operand that lowers to
+ * the carrier: `undefined`, a dynamic, or one the selector cannot type (an
+ * `any` module binding), which from-ast lowers as the carrier.
+ */
+export function booleanReadBesideCarrier(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
+  if (!isNumericReaderOperator(op)) return false;
+  const carrier = (family: OperandFamily) => family === "undefined" || family === "dynamic" || family === "unknown";
+  return (left === "boolean" && carrier(right)) || (right === "boolean" && carrier(left));
+}
+
 function isI32Carrier(family: OperandFamily): boolean {
   return family === "boolean" || family === "int32";
 }

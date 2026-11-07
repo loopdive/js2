@@ -157,10 +157,16 @@ Expected zero-legacy delta stated before coding: **+1**
   the one conversion site both branches of `lowerBinaryOperands` share), and a
   boolean beside `undefined` / the carrier in a prepared component (an ES
   module's module-init) refuses at selection instead of failing late
-  preparation. Still pre-existing and unchanged in kind: `true < d` with `d` an
-  `any` module binding is claimed and then withdrawn (on main at build, here at
-  late preparation), because the selector types that binding `unknown`, as it
-  does for main's `1 < d`.
+  preparation. (RV7150 delta) The same refusal covers a boolean beside an
+  operand the selector types `unknown` (`true < d`, `d` an `any` module
+  binding, which from-ast lowers as the carrier): main claimed it and withdrew
+  it at build (`requires matching operand types`); the first cut of this PR
+  widened it to a late-preparation withdrawal; it now refuses at selection, one
+  predicate (`booleanReadBesideCarrier`, beside `booleanReadAsNumber`). What is
+  widened from main for a boolean: only units that are not prepared components
+  (scripts and top-level functions) now take the IR beside `undefined`, a
+  dynamic or a wrapper. Still pre-existing: main's own `1 < d` in a module-init
+  is claimed and withdrawn at late preparation, untouched here.
 - (review) Two boolean-operand residuals still demote at build, as on main:
   a boolean-returning CALL (`g() - 1`) lowers to an i32 the IR does not brand
   boolean, so `irOperandFamily` names it `int32` and no conversion runs; and

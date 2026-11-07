@@ -7,6 +7,7 @@ import type { IrFunctionBuilder } from "./builder.js";
 import type { IrFromAstResolver } from "./from-ast.js";
 import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
 import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
+import { lowersAsPreparedComponent } from "./prepared-component-ownership.js";
 import type { IrSelectionOptions } from "./select.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
 
@@ -127,19 +128,6 @@ export function admitAmbientGlobalFunctionCall(
   const escapeFamily = call.name === "escape" || call.name === "unescape";
   if (escapeFamily && lowersAsPreparedComponent(expr)) return null;
   return expr.arguments;
-}
-
-/**
- * Does `node` lower inside a prepared component — an ES module unit other than
- * a top-level function declaration (`<module-init>`, class members, closures)?
- * Its Program ABI has no identity for some runtime supports (`__escape`,
- * `dyn.string_carrier`, `dyn.undefined`'s support reference), measured as
- * `late-preparation-unsupported`. Scripts never are.
- */
-export function lowersAsPreparedComponent(node: ts.Node): boolean {
-  if (!ts.isExternalModule(node.getSourceFile())) return false;
-  const unit = ts.findAncestor(node.parent, ts.isFunctionLike);
-  return !(unit !== undefined && ts.isFunctionDeclaration(unit) && ts.isSourceFile(unit.parent));
 }
 
 /** What the lowering needs from from-ast (no import of the lowerer itself). */

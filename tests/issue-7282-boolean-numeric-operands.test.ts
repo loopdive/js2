@@ -57,6 +57,11 @@ function irRoute(result: Awaited<ReturnType<typeof compile>>, unit: string): boo
   return result.irOutcomes?.find((o) => o.displayName === unit)?.irBodyEmitted;
 }
 
+/** A prepared module-init is refused at selection, never claimed and withdrawn later. */
+function refusedAtSelection(result: Awaited<ReturnType<typeof compile>>, unit: string): boolean {
+  return result.irOutcomes?.find((o) => o.displayName === unit)?.detail?.includes("rejected by IR selection") === true;
+}
+
 interface Case {
   readonly source: string;
   readonly fileName: string;
@@ -150,6 +155,12 @@ export function test() { return (a ? 1 : 0) + (b ? 10 : 0) + (c ? 100 : 0) + (d 
 export function test() { return (a ? 1 : 0) + (b ? 10 : 0); }`,
     legacyUnits: ["<module-init>"],
   },
+  "module: a boolean beside an `any` binding keeps the legacy module-init": {
+    fileName: "issue-7282.ts",
+    source: `let d: any = 3; let mt: boolean = true; const a = mt < d; const b = true >= d;
+export function test() { return (a ? 1 : 0) + (b ? 10 : 0); }`,
+    legacyUnits: ["<module-init>"],
+  },
   "a boolean beside a string keeps the legacy unit": {
     fileName: "issue-7282.ts",
     source: `export function test(): number { const t = true; return t & ("3" as any); }`,
@@ -167,7 +178,10 @@ describe("#7282 boolean operands of numeric readers", () => {
         expect(value).toBe(expected);
         if (lane.options.target !== undefined) {
           for (const unit of testCase.irUnits ?? []) expect(irRoute(result, unit), unit).toBe(true);
-          for (const unit of testCase.legacyUnits ?? []) expect(irRoute(result, unit), unit).toBe(false);
+          for (const unit of testCase.legacyUnits ?? []) {
+            expect(irRoute(result, unit), unit).toBe(false);
+            if (unit === "<module-init>") expect(refusedAtSelection(result, unit), unit).toBe(true);
+          }
         }
       });
     }
