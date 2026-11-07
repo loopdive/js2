@@ -108,7 +108,7 @@ import {
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
 import { admitAmbientGlobalFunctionCall } from "./ambient-global-function-call.js";
-import { objectCreateDescriptorMap } from "./object-create-call.js";
+import { objectCreateDescriptorMap, unitInKeysAreOwnOnly } from "./object-create-call.js";
 import {
   isAffineThreeDeepElementAccess,
   unwrapTypeErasedExpression,
@@ -12875,6 +12875,7 @@ function isPhase1ObjectLiteral(
     if (binding !== undefined && (binding.references.length === 0 || isOpenCarrierBinding(binding, owner))) {
       return true;
     }
+    if (isDynamicHomeOpenCarrier(expr)) return true;
     return shapeNo("objectlit-empty", expr);
   }
 
@@ -12995,6 +12996,33 @@ function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node
   }
   currentOpenCarrierNames.add(binding.name.text);
   admittedOpenCarrierLiterals.add(binding.literal);
+  return true;
+}
+
+/**
+ * (#7280 S1) A script `var` whose `__mod_` slot is the dynamic carrier,
+ * initialized by `{}`: legacy keeps exactly this literal as an open `$Object`
+ * in an `externref` slot (`isOpenObjectBinding`), which is the object #7128's
+ * open-carrier lowering builds, on the lane that supplies `isOpenObjectBinding`
+ * (standalone). Every use then reads it as the carrier through the ordinary
+ * dynamic arms. An `in` that may reach an inherited
+ * `%Object.prototype%` key keeps the unit legacy (`unitInKeysAreOwnOnly`, as for
+ * `Object.create`). The lowering is the open-carrier literal's.
+ */
+function isDynamicHomeOpenCarrier(literal: ts.ObjectLiteralExpression): boolean {
+  const decl = literal.parent;
+  if (
+    !ts.isVariableDeclaration(decl) ||
+    decl.initializer !== literal ||
+    !ts.isIdentifier(decl.name) ||
+    !isModuleInitVarList(decl.parent) ||
+    currentModuleBindingResolver?.(decl.name)?.valueKind.kind !== "dynamic" ||
+    currentSelectionOptions?.isOpenObjectBinding?.(decl) !== true ||
+    !unitInKeysAreOwnOnly(literal)
+  ) {
+    return false;
+  }
+  admittedOpenCarrierLiterals.add(literal);
   return true;
 }
 
