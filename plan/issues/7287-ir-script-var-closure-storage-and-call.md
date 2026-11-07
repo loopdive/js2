@@ -187,6 +187,27 @@ vars, arrows, a not-callable value. Legacy: `delete`, `.call` / `.apply`,
 `new`, a capturing inner closure, an inner shadow, a redeclared `var`, a
 `print` parameter.
 
+**Legacy defect the IR corrects: a non-callable, non-null value.** Repro
+(standalone; gc and WASI the same):
+
+```js
+var print = function () {};
+print = 5;
+function h() { print(); }
+h();
+```
+
+Legacy compiles `print()` as a typed closure call and traps with
+`RuntimeError: dereferencing a null pointer` (uncatchable by JS `try`). The
+IR's dynamic call checks callability and throws a catchable TypeError
+("Cannot access property on null or undefined"), as node throws a TypeError.
+The head throws where the base traps; there is no case where the head traps
+and the base throws. Pinned by "message: function-initialized, reassigned to
+a number".
+
+The compiler-boundaries inventory gate (`node scripts/check-compiler-boundaries.mjs
+--mode inventory --base origin/main`) passes: this change adds no module.
+
 ## Adversarial review (fresh context, 2026-11-07)
 
 Verdict: 1 must-fix, 3 should-fix, 2 nits.
