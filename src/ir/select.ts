@@ -3070,9 +3070,14 @@ function calleeHasAnyDynamicParam(calleeName: string, typeMap: TypeMap | undefin
 
 /** Resolve whether local function `calleeName`'s return is dynamic. */
 function calleeReturnIsDynamic(calleeName: string, typeMap: TypeMap | undefined): boolean {
+  return calleeReturnKind(calleeName, typeMap) === "dynamic";
+}
+
+/** The resolved return of a local function declaration the scan may call directly. */
+function calleeReturnKind(calleeName: string, typeMap: TypeMap | undefined): ResolvedKind {
   const decl = currentDynScanDecls?.get(calleeName);
-  if (!decl || decl.asteriskToken) return false;
-  return resolveReturnType(decl, typeMap?.get(calleeName)?.returnType) === "dynamic";
+  if (!decl || decl.asteriskToken) return null;
+  return resolveReturnType(decl, typeMap?.get(calleeName)?.returnType);
 }
 
 /**
@@ -3812,7 +3817,12 @@ function dynamicUsesAreMoveOnly(
         if (!dynNames.has(e.left.text)) return scanExpr(e.right, false);
         if (isDynShaped(e.right)) return scanExpr(e.right, true);
         const concrete = unwrap(e.right);
-        return concreteDynamicAssignmentOperandIsBuildable(concrete) && scanExpr(concrete, false);
+        // (#7265) A local call's boolean result boxes onto the carrier like a comparison.
+        const boolCall =
+          ts.isCallExpression(concrete) &&
+          ts.isIdentifier(concrete.expression) &&
+          calleeReturnKind(concrete.expression.text, typeMap) === "bool";
+        return (boolCall || concreteDynamicAssignmentOperandIsBuildable(concrete)) && scanExpr(concrete, false);
       }
       if (op === ts.SyntaxKind.PlusToken && (leftIsDyn || rightIsDyn)) {
         if (!currentDynamicRuntimeBuildable) return false;
@@ -3990,6 +4000,11 @@ function dynamicUsesAreMoveOnly(
         const key = unwrap(e.argumentExpression);
         if (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)) return true;
         if (ts.isIdentifier(key) && dynNames.has(key.text)) return true; // dynamic index → used as-is
+        // (#7265) Any other dynamic key (`verifyProp || name`); kept off a body with
+        // a member call (#7261).
+        const dynamicKey = isDynShaped(key);
+        needsNoDynamicMethodCall ||= dynamicKey;
+        if (dynamicKey) return scanExpr(key, true);
         // (#7106 item 1) a PROVEN-number index (`b[i]` in a counted loop):
         // the producer lowers it f64 and boxes it tag-3 (`boxConcreteToDynamic`),
         // so the key is never null.
@@ -4993,10 +5008,23 @@ function isPhase1ThrowStatement(
   if (expressionTouchesModuleMapGetAlias(stmt.expression)) {
     return shapeNo("throw-module-map-get-alias", stmt.expression);
   }
-  if (expressionTouchesScalarModuleBinding(stmt.expression) && obviousModuleValueFamily(stmt.expression) !== "string") {
+  if (throwValueReadsUnboxedModuleScalar(stmt.expression)) {
     return shapeNo("throw-module-scalar-unboxed", stmt.expression);
   }
   return isPhase1Expr(stmt.expression, scope, localClasses);
+}
+
+/**
+ * True when a thrown value may carry an unboxed f64/boolean module read. A
+ * `new` throws an object, so only an argument can (#7281): in
+ * `new Test262Error('Actual: ' + x)` the read of `x` is a string concat. The
+ * family here is flow-insensitive; the argument's `+` is still proven by the
+ * checker in `isPhase1Expr` (`isModuleStringConcat`), so do not admit on it alone.
+ */
+function throwValueReadsUnboxedModuleScalar(expr: ts.Expression): boolean {
+  const candidate = unwrapPhase1Parens(expr);
+  if (ts.isNewExpression(candidate)) return candidate.arguments?.some(throwValueReadsUnboxedModuleScalar) ?? false;
+  return expressionTouchesScalarModuleBinding(candidate) && obviousModuleValueFamily(candidate) !== "string";
 }
 
 /**
@@ -8163,6 +8191,34 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
 }
 
 /**
+ * A proven string `+` applies ToString to its scalar side, so mixed operand
+ * families are no mismatch (#7281). The slot family is flow-insensitive, so the
+ * checker must also prove the `+` at this site: `typeof x !== 'number'`
+ * narrows `x` to `never`, which from-ast's `+` gate refuses.
+ */
+function isModuleStringConcat(expr: ts.BinaryExpression): boolean {
+  return (
+    expr.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+    obviousModuleValueFamily(expr) === "string" &&
+    checkerProvesBinaryOperands(expr) === true
+  );
+}
+
+/**
+ * from-ast's typing gate for `expr` over the checker's flow-sensitive operand
+ * families; `undefined` when the checker cannot classify a side as a primitive.
+ * `isModuleStringConcat` admits only on `true`; the element-read backstop
+ * refuses only on `false` (a proven mismatch).
+ */
+function checkerProvesBinaryOperands(expr: ts.BinaryExpression): boolean | undefined {
+  const classify = currentSelectionOptions?.classifyPrimitiveExpression;
+  const left = classify?.(expr.left);
+  const right = classify?.(expr.right);
+  if (!left || !right) return undefined;
+  return provenBinaryOperandsAdmissible(expr, left, right, additiveLane());
+}
+
+/**
  * Prove that every module-derived value which determines this expression's
  * condition representation is already boolean. Non-module subexpressions are
  * left to the existing selector/build type checks.
@@ -9093,10 +9149,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
     !carrierOperand &&
     (mayBeElementRead(expr.left, selectorLeafReadsElement) || mayBeElementRead(expr.right, selectorLeafReadsElement))
   ) {
-    const classify = currentSelectionOptions?.classifyPrimitiveExpression;
-    const leftProof = classify?.(expr.left);
-    const rightProof = classify?.(expr.right);
-    if (leftProof && rightProof && !provenBinaryOperandsAdmissible(expr, leftProof, rightProof, additiveLane())) {
+    if (checkerProvesBinaryOperands(expr) === false) {
       return capabilityNo("operand-coercion-unsupported", "expr-binary-element-concat-proof", expr);
     }
   }
@@ -11771,7 +11824,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           rightFamily === "nullish" ||
           leftFamily === undefined ||
           rightFamily === undefined);
-      if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality) {
+      if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality && !isModuleStringConcat(expr)) {
         return shapeNo("expr-module-value-representation-mismatch", expr);
       }
       const booleanModuleOperand =
