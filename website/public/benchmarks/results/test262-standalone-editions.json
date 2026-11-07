@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4574,
+    "pass": 4583,
     "fail": 197,
-    "ce": 150,
+    "ce": 141,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4475,
+        "pass": 4484,
         "fail": 106,
-        "ce": 30,
+        "ce": 21,
         "skip": 0,
         "total": 4611,
         "pct": 97
@@ -3607,9 +3607,9 @@
       },
       {
         "name": "arrow-function",
-        "pass": 172,
+        "pass": 173,
         "fail": 5,
-        "ce": 1,
+        "ce": 0,
         "skip": 0,
         "total": 178,
         "pct": 97
@@ -3789,12 +3789,12 @@
   },
   {
     "edition": "ES2027",
-    "pass": 388,
-    "fail": 360,
+    "pass": 392,
+    "fail": 356,
     "ce": 149,
     "skip": 0,
     "total": 897,
-    "pct": 43,
+    "pct": 44,
     "features": [
       {
         "name": "explicit-resource-management",
@@ -3816,12 +3816,12 @@
       },
       {
         "name": "joint-iteration",
-        "pass": 14,
-        "fail": 21,
+        "pass": 18,
+        "fail": 17,
         "ce": 47,
         "skip": 0,
         "total": 82,
-        "pct": 17
+        "pct": 22
       },
       {
         "name": "immutable-arraybuffer",

@@ -322,6 +322,35 @@ function numberIfNullOrUndefined(family: OperandFamily): OperandFamily {
   return family === "undefined" || family === "nullish" ? "number" : family;
 }
 
+/**
+ * (#7282) ToNumber(boolean) is 0 / 1. A numeric reader reads a boolean as an
+ * f64 beside an operand it ToNumbers too: a number, the `null` / `undefined`
+ * it reads as one, or the dynamic carrier (`undefined` is one on the native
+ * lanes); `- * / %` read a boolean pair as two f64s (bitwise and relational
+ * operators take that pair as i32s). from-ast's `lowerBinaryOperands`
+ * converts each boolean operand, on the RAW lowered families (an f64
+ * `undefined` sentinel, an f64 `null` +0), so this predicate normalizes them
+ * itself rather than relying on the nullish / undefined arms below.
+ */
+export function booleanReadAsNumber(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
+  if (!isNumericReaderOperator(op)) return false;
+  if (left === "boolean" && right === "boolean") return isNumericArithmeticOperator(op);
+  const partnerIsNumeric = (family: OperandFamily) =>
+    numberIfNullOrUndefined(family) === "number" || family === "dynamic";
+  return (left === "boolean" && partnerIsNumeric(right)) || (right === "boolean" && partnerIsNumeric(left));
+}
+
+/**
+ * (#7282) A numeric reader ToNumbers a boolean beside an operand that lowers to
+ * the carrier: `undefined`, a dynamic, or one the selector cannot type (an
+ * `any` module binding), which from-ast lowers as the carrier.
+ */
+export function booleanReadBesideCarrier(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
+  if (!isNumericReaderOperator(op)) return false;
+  const carrier = (family: OperandFamily) => family === "undefined" || family === "dynamic" || family === "unknown";
+  return (left === "boolean" && carrier(right)) || (right === "boolean" && carrier(left));
+}
+
 function isI32Carrier(family: OperandFamily): boolean {
   return family === "boolean" || family === "int32";
 }
@@ -331,6 +360,8 @@ function isI32Carrier(family: OperandFamily): boolean {
  * LOWERED operand families (after the `+` proof of
  * {@link additiveOperandsProvable}, and after the operator-specific arms for a
  * `null` / `undefined` operand):
+ * - a numeric reader ToNumbers a boolean beside a number, `null`, `undefined`
+ *   or the carrier ({@link booleanReadAsNumber}), checked first;
  * - a `null` operand of a numeric reader is +0; `+` and the equalities have no
  *   `null` arm here (`tryFoldNullCompare` owns `== null`).
  * - a dynamic operand: equality and `+` box the other side (`tryLowerDynamicEq`,
@@ -344,6 +375,7 @@ function isI32Carrier(family: OperandFamily): boolean {
  *   equality and bitwise take f64 or i32.
  */
 export function binaryOperandsAdmissible(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
+  if (booleanReadAsNumber(op, left, right)) return true;
   if (left === "nullish" || right === "nullish") {
     if (!isNumericReaderOperator(op)) return false;
     return binaryOperandsAdmissible(op, numberIfNullOrUndefined(left), numberIfNullOrUndefined(right));
@@ -724,8 +756,9 @@ export function switchDiscriminantAdmissible(discriminant: OperandFamily): boole
  * parameter called as a function, a method of a carrier value): every
  * argument crosses into the carrier's any-typed parameter list, where a vec
  * has no representation ("array literal flows into a widening/heterogeneous
- * sink"). Other families keep their existing argument lowering.
+ * sink"), and nor does a bare `null`: the IR has no dynamic `null` value
+ * (#7287 review B3). Other families keep their existing argument lowering.
  */
 export function dynamicCallArgumentAdmissible(argument: OperandFamily): boolean {
-  return argument !== "vec<number>" && argument !== "vec<other>";
+  return argument !== "vec<number>" && argument !== "vec<other>" && argument !== "nullish";
 }

@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import ts from "typescript";
+
 import type { IrClassId, IrTerminalUnitRecord, IrUnitId, IrUnitInventory } from "./identity.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiIntent } from "./program-abi.js";
 
@@ -78,4 +80,17 @@ export function terminalOwnerForIntent(
   }
   if (intent.kind === "class") return ownership.classTerminalOwner.get(intent.classId) ?? null;
   return null;
+}
+
+/**
+ * Does `node` lower inside a prepared component — an ES module unit other than
+ * a top-level function declaration (`<module-init>`, class members, closures)?
+ * Its Program ABI has no identity for some runtime supports (`__escape`,
+ * `dyn.string_carrier`, `dyn.undefined`'s support reference), measured as
+ * `late-preparation-unsupported`. Scripts never are.
+ */
+export function lowersAsPreparedComponent(node: ts.Node): boolean {
+  if (!ts.isExternalModule(node.getSourceFile())) return false;
+  const unit = ts.findAncestor(node.parent, ts.isFunctionLike);
+  return !(unit !== undefined && ts.isFunctionDeclaration(unit) && ts.isSourceFile(unit.parent));
 }

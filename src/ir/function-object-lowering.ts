@@ -142,7 +142,7 @@ export function lowerFunctionObjectMemberCall(
         irDynamic(JS_TAG_IDS.String),
       );
   const callee = cx.builder.emitDynMemberGet(receiver, key);
-  return applyDynamicCallee(callee, receiver, expr.arguments, "Value is not callable", cx);
+  return applyDynamicCallee(callee, receiver, expr.arguments, notCallable("Value is not callable"), cx);
 }
 
 /**
@@ -158,19 +158,48 @@ export function lowerDynamicValueCall(
   expr: ts.CallExpression,
   callee: IrValueId,
   cx: FunctionObjectLoweringHost,
+  notCallableMessages: NotCallableMessages = notCallable(NOT_A_FUNCTION),
 ): IrValueId {
   if (expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) {
     demoteToLegacy("call-resolution-unsupported", "optional/spread dynamic value call is unsupported");
   }
   const receiver = cx.builder.emitDynUndefined();
-  return applyDynamicCallee(callee, receiver, expr.arguments, "called value is not a function", cx);
+  return applyDynamicCallee(callee, receiver, expr.arguments, notCallableMessages, cx);
+}
+
+const NOT_A_FUNCTION = "called value is not a function";
+
+/** The TypeError text for a callee that is null/undefined, and for any other non-callable value. */
+export interface NotCallableMessages {
+  readonly nullish: string;
+  readonly other: string;
+}
+
+function notCallable(message: string): NotCallableMessages {
+  return { nullish: message, other: message };
+}
+
+/**
+ * (#7287) Legacy's TypeError text when a script `var` callee is not callable.
+ * A `var` initialized with a function expression or an arrow compiles to a
+ * typed closure call, whose null check reads "Cannot access property on null
+ * or undefined" when the slot holds null or undefined (before initialization,
+ * after `p = null`). Any other non-callable value, and every other `var`,
+ * takes the generic dynamic call's text (legacy traps on `p = 5`; this throws
+ * the TypeError node throws).
+ */
+export function scriptVarCalleeNotCallableMessages(declaration: ts.Declaration | undefined): NotCallableMessages {
+  const initializer = declaration && ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+  return initializer !== undefined && (ts.isFunctionExpression(initializer) || ts.isArrowFunction(initializer))
+    ? { nullish: "Cannot access property on null or undefined", other: NOT_A_FUNCTION }
+    : notCallable(NOT_A_FUNCTION);
 }
 
 function applyDynamicCallee(
   callee: IrValueId,
   receiver: IrValueId,
   argumentSources: readonly ts.Expression[],
-  notCallableMessage: string,
+  notCallableMessages: NotCallableMessages,
   cx: FunctionObjectLoweringHost,
 ): IrValueId {
   const args = cx.builder.emitCall(irRuntimeFuncRef("__objvec_new"), [], irVal({ kind: "externref" }));
@@ -198,12 +227,29 @@ function applyDynamicCallee(
   if (externalCallee === null || externalReceiver === null) throw new Error("native call projection returned void");
   const callable = cx.builder.emitCall(irRuntimeFuncRef("__is_callable"), [externalCallee], irVal({ kind: "i32" }));
   if (callable === null) throw new Error("native callable classifier returned void");
-  const refusal = cx.builder.collectBodyInstrs(() => {
-    const message = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst(notCallableMessage));
-    const error = cx.builder.emitCall(irRuntimeFuncRef("__new_TypeError"), [message], irVal({ kind: "externref" }));
-    if (error === null) throw new Error("native TypeError constructor returned void");
-    cx.builder.emitThrow(error);
-  });
+  const throwNotCallable = (text: string) =>
+    cx.builder.collectBodyInstrs(() => {
+      const message = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst(text));
+      const error = cx.builder.emitCall(irRuntimeFuncRef("__new_TypeError"), [message], irVal({ kind: "externref" }));
+      if (error === null) throw new Error("native TypeError constructor returned void");
+      cx.builder.emitThrow(error);
+    });
+  const refusal =
+    notCallableMessages.nullish === notCallableMessages.other
+      ? throwNotCallable(notCallableMessages.other)
+      : cx.builder.collectBodyInstrs(() => {
+          const nullish = cx.builder.emitBinary(
+            "i32.or",
+            cx.builder.emitTagTest(callee, JS_TAG_IDS.Undefined),
+            cx.builder.emitTagTest(callee, JS_TAG_IDS.Null),
+            irVal({ kind: "i32" }),
+          );
+          cx.builder.emitIfStmt({
+            cond: nullish,
+            then: throwNotCallable(notCallableMessages.nullish),
+            else: throwNotCallable(notCallableMessages.other),
+          });
+        });
   cx.builder.emitIfStmt({
     cond: cx.builder.emitUnary("i32.eqz", callable, irVal({ kind: "i32" })),
     then: refusal,
