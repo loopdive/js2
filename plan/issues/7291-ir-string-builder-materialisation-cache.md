@@ -35,6 +35,7 @@ func-budget-allow:
   - src/ir/integration.ts::makeResolver
 import-cycles-allow:
   - ir->backend: 26 # 2026-11-07 (#7291): +1 edge over base 25 — ir/backend/wasmgc-emitter.ts (destined for backend-wasmgc) calls the shared builder sequences in backend/wasmgc/lowering/wasm-string-builder.ts
+  - codegen->ir: 304 # 2026-11-07 (#7291 step 3): +1 edge over base 303 — legacy codegen/string-builder.ts imports the shared presize analysis from ir/analysis/string-builder-presize.ts; #7157 grants the same pair, so whichever merges second re-states its grant as base+1
 ---
 
 # IR string-builder loop is 6–10× slower than legacy's buffer

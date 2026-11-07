@@ -26,21 +26,10 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { countedStringAppendCandidateLoops, type IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
+import { isFunctionScopeBoundary } from "./analysis/string-builder-presize.js";
 import { readEnv } from "../env.js";
 import type { IrCountedStringAppendLoweringPlan } from "./ast-lowering-plans.js";
 import type { IrSlotDef } from "./core/nodes.js";
-
-function isFunctionScopeBoundary(node: ts.Node): boolean {
-  return (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isConstructorDeclaration(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    ts.isSetAccessorDeclaration(node)
-  );
-}
 
 function isLoopStatement(node: ts.Node): node is ts.IterationStatement {
   return ts.isForStatement(node) || ts.isWhileStatement(node) || ts.isDoStatement(node);
