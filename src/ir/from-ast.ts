@@ -320,6 +320,7 @@ import { openCarrierDefinePlan } from "./empty-object-literal.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
 import {
+  isStatementDynamicModuleCall,
   localValueDeclaration,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrPrimitiveExpressionClassifier,
@@ -7817,18 +7818,19 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   const bindingLogicalType =
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
   // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
-  // Statement position only, as the selector admits it.
   const dynamicModuleCallee =
-    statementPosition &&
     binding === undefined &&
-    cx.resolver?.resolveModuleBinding?.(expr.expression)?.type.kind === "dynamic";
+    isStatementDynamicModuleCall(
+      expr,
+      (callee) => cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic",
+    );
   if (bindingLogicalType?.kind === "dynamic" || dynamicModuleCallee) {
     const callee = lowerExpr(expr.expression, cx, irDynamic());
     if (cx.builder.typeOf(callee).kind !== "dynamic") {
       demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
     }
     const message = dynamicModuleCallee
-      ? functionObjects.scriptVarCalleeNotCallableMessage(
+      ? functionObjects.scriptVarCalleeNotCallableMessages(
           cx.checker && localValueDeclaration(expr.expression, cx.checker),
         )
       : undefined;

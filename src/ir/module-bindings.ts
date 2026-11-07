@@ -929,6 +929,22 @@ function bindingDeclarationCandidates(
 }
 
 /**
+ * (#7287) A call `v(…)` in statement position whose callee is a script `var`
+ * in its dynamic module home: the Stage-4 dynamic call through that home, not
+ * a call-graph edge. Statement position only: a lib-named `var`'s call result
+ * is typed by the lib signature. The selector and from-ast each pass their
+ * own resolver's answer for the callee.
+ */
+export function isStatementDynamicModuleCall(
+  call: ts.CallExpression,
+  isDynamicModuleBinding: (callee: ts.Identifier) => boolean,
+): boolean {
+  return (
+    ts.isExpressionStatement(call.parent) && ts.isIdentifier(call.expression) && isDynamicModuleBinding(call.expression)
+  );
+}
+
+/**
  * (#7287) A script's top-level `var NAME` and a lib global of the same name
  * (the test262 prelude's `var print = …` against lib.dom's
  * `declare function print`) are a duplicate identifier to the checker, which

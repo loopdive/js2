@@ -153,6 +153,7 @@ import {
   isIrModuleClassInstanceValueKind,
   isIrModuleMapValueKind,
   isIrModuleReferenceValueKind,
+  isStatementDynamicModuleCall,
 } from "./module-bindings.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
 import { firstConstBindingWrite } from "./const-binding-writes.js";
@@ -13476,13 +13477,12 @@ export function buildLocalCallGraph(
             for (const argument of node.arguments) visit(argument);
             return;
           } else if (
-            ts.isExpressionStatement(node.parent) &&
-            currentModuleBindingResolver?.(node.expression)?.valueKind.kind === "dynamic"
+            isStatementDynamicModuleCall(
+              node,
+              (callee) => currentModuleBindingResolver?.(callee)?.valueKind.kind === "dynamic",
+            )
           ) {
-            // (#7287) A script `var` in its dynamic module home is called
-            // through the carrier (from-ast's Stage-4 dynamic call), not an
-            // edge. Statement position only: a lib-named `var`'s call result
-            // is typed by the lib signature (`var isNaN = …` reads as boolean).
+            // (#7287) Lowered by from-ast's Stage-4 dynamic call, not an edge.
             for (const argument of node.arguments) visit(argument);
             return;
           } else {

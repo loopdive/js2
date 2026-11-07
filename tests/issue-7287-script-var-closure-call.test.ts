@@ -196,7 +196,7 @@ var p = function () {};`,
 p = 5;
 function h() { p(1); }
 try { h(); throw "no throw"; } catch (e) {
-  if (!(e instanceof TypeError) || e.message !== "Cannot access property on null or undefined") throw "msg";
+  if (!(e instanceof TypeError) || e.message !== "called value is not a function") throw "msg";
 }`,
     expected: "completed",
     legacyTraps: true,
