@@ -16,6 +16,12 @@ goal: ir-full-coverage
 parent: 7250
 related: [7190, 7106, 7258, 7265, 7266, 7272]
 assignee: "ttraenkler/c-r11"
+loc-budget-allow:
+  # 2026-11-07: +4 in select.ts after main's post-merge baseline refresh lowered
+  # the ceiling: the vardecl alias-call exemption sits next to the sibling
+  # vardecl arms in the move-only scan and the alias expression arm next to
+  # the other callee arms.
+  - src/ir/select.ts
 ---
 
 # IR: propertyHelper.js alias-call vardecls (#7250 steps 1–2)

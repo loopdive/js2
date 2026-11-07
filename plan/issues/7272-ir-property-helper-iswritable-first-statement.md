@@ -16,6 +16,14 @@ goal: ir-full-coverage
 parent: 7250
 related: [7269, 2949, 7266, 7106, 5092, 7289]
 assignee: "ttraenkler/c-r11"
+func-budget-allow:
+  # 2026-11-07: after main's post-merge baseline refresh lowered the ceilings,
+  # +7 in dynamicUsesAreMoveOnly / +4 in its scanExprInner closure (the #7269 +
+  # #7272 scan arms: alias-call vardecl exemptions, the mixed-conditional
+  # carrier local and its logical-operand read), placed beside their sibling
+  # arms. Splitting the ~890-line #2949 scan is #7307.
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::scanExprInner
 ---
 
 # IR: propertyHelper isWritable's first statement
