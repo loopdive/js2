@@ -68,12 +68,30 @@ export function isAmbientIntrinsicValueUse(
 ): boolean {
   return (
     isAmbientIntrinsicName(node.text) &&
-    isLibOnlyBinding(node) &&
-    !declaredNames(node.getSourceFile()).has(node.text) &&
+    isUnshadowedLibBinding(node, isLibOnlyBinding) &&
     (isOpaqueIntrinsicUse(node) ||
       isExactStaticMethodValueRead(node) ||
       (seed?.builtinProtoCompanionSeeded?.() === true && isExactProtoMethodValueRead(node)))
   );
+}
+
+/**
+ * Every declaration of `node`'s symbol is a lib one AND nothing in its file
+ * declares the name: a script's top-level `function Error() {}` is reported by
+ * the checker as the lib declarations alone. (#7274) Also the native
+ * ArrayBuffer surface's constructor identity, and (#7276) the `Object.create`
+ * admission (`ir/object-create-call.ts`).
+ */
+export function isUnshadowedLibBinding(
+  node: ts.Identifier,
+  isLibOnlyBinding: (node: ts.Identifier) => boolean,
+): boolean {
+  return isLibOnlyBinding(node) && !declaredNames(node.getSourceFile()).has(node.text);
+}
+
+/** (#7274) `undefined` read as the global value: nothing in the file declares the name. */
+export function isUnshadowedUndefined(node: ts.Expression): boolean {
+  return ts.isIdentifier(node) && node.text === "undefined" && !declaredNames(node.getSourceFile()).has("undefined");
 }
 
 const declaredNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();

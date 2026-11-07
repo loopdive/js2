@@ -85,8 +85,12 @@ export function classInstanceWriteMatches(
   return constructedTopLevelClass(checker, value) === target.classDeclaration;
 }
 
-/** True when `node` is the declaration itself or a module-init use that runs after it. */
-export function classInstanceUseFollowsDeclaration(
+/**
+ * True when `node` is the declaration itself or a module-init use that runs
+ * after it, so the script var's slot has been written. (#7274) Shared with the
+ * native-buffer script vars, which certify their writes the same way.
+ */
+export function scriptVarUseFollowsDeclaration(
   node: ts.Identifier,
   declaration: ts.VariableDeclaration | ts.BindingElement,
 ): boolean {

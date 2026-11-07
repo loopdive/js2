@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { hostFreeEnvironment } from "./context/types.js";
+import type { Instr, ValType } from "../ir/types.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { IN_HAS_PROPERTY } from "../shared/contracts/in-operator-helper.js";
 /**
  * (#4491 wave-5 T4) `"valueOf" in {}` answered **false**.
  *
@@ -144,4 +148,152 @@ export function hasExplicitNullObjectPrototype(
     if (initializer && initializer !== current) return hasExplicitNullObjectPrototype(ctx, initializer, seen);
   }
   return false;
+}
+
+/**
+ * (#7304) The runtime half of the same name set: the body of
+ * `__object_proto_name_key(key) -> i32`, 1 when `key` is a string naming an
+ * own member of %Object.prototype%. The `in` helper
+ * (`__extern_has_with_implicit_object_proto`) asks it after a HasProperty
+ * miss, so a dynamic key or receiver answers what the static fold above
+ * answers. `__extern_has` itself never asks: ToPrimitive and descriptor reads
+ * share it and need the walk's own answer.
+ *
+ * params: 0=key(externref); locals: 1=any(anyref) 2=flat(ref null $NativeString)
+ */
+export function objectProtoNameKeyBody(
+  ctx: CodegenContext,
+  flattenIdx: number,
+  equalsIdx: number,
+): { locals: { name: string; type: ValType }[]; body: Instr[] } {
+  // A member the program deletes (`delete Object.prototype.toString`) is not answered.
+  const present = [...OBJECT_PROTOTYPE_OWN_NAMES].filter(
+    (name) => !ctx.deletedBuiltinPrototypeMembers?.has(`Object.prototype.${name}`),
+  );
+  const nameArms: Instr[] = present.flatMap((name): Instr[] => [
+    { op: "local.get", index: 2 },
+    { op: "ref.as_non_null" },
+    ...nativeStringLiteralInstrs(ctx, name),
+    { op: "call", funcIdx: equalsIdx },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+  ]);
+  return {
+    locals: [
+      { name: "any", type: { kind: "anyref" } },
+      { name: "flat", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+    ],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: 1 },
+      { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+          { op: "call", funcIdx: flattenIdx },
+          { op: "local.set", index: 2 },
+          ...nameArms,
+        ],
+      },
+      { op: "i32.const", value: 0 },
+    ],
+  };
+}
+
+/**
+ * (#7304) Register the `in` helpers' natives on a host-free lane: the IR's `in`
+ * entry (filled at finalize by `fillInHelperBuiltinTerminal`) and
+ * `__object_proto_name_key`, whose index is returned. The js lane (gc) keeps its
+ * pre-#7304 bytes: the IR's `in` is an alias of the plain HasProperty, and the
+ * result is `undefined`.
+ */
+export function registerInHelperNatives(
+  ctx: CodegenContext,
+  registerNative: (
+    name: string,
+    params: ValType[],
+    results: ValType[],
+    locals: { name: string; type: ValType }[],
+    body: Instr[],
+  ) => number,
+  flattenIdx: number,
+  equalsIdx: number,
+): number | undefined {
+  if (!hostFreeEnvironment(ctx)) {
+    ctx.funcMap.set(IN_HAS_PROPERTY, ctx.funcMap.get("__extern_has")!);
+    return undefined;
+  }
+  registerNative(IN_HAS_PROPERTY, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }], [], []);
+  const { locals, body } = objectProtoNameKeyBody(ctx, flattenIdx, equalsIdx);
+  return registerNative("__object_proto_name_key", [{ kind: "externref" }], [{ kind: "i32" }], locals, body);
+}
+
+/**
+ * (#7304) The `in` helper's step after its HasProperty miss: a key the
+ * implicit %Object.prototype% does not own is absent (key in param 1). The
+ * js lane, which passes only those names, has no such step.
+ */
+export function objectProtoNameMissInstrs(nameKeyIdx: number | undefined): Instr[] {
+  if (nameKeyIdx === undefined) return [];
+  return [
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: nameKeyIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+  ];
+}
+
+/**
+ * (#7304, option b) Finalize fill of the `in` helpers' last answer, for a
+ * receiver that is neither a `$Object` nor a rooted fnctor. A builtin carrier
+ * whose chain is known to end at the implicit %Object.prototype% answers the
+ * name set: a vec (Array.prototype), a closure / Date / RegExp
+ * (`__is_closure_prop_carrier`), a Map-family collection, an Error, a Promise.
+ * A fnctor instance without a `$Object` root (WASI's struct link) answers 0.
+ *
+ * Any other carrier, e.g. a closed struct literal whose `setPrototypeOf` the
+ * runtime does not record (#7326), keeps each caller's base answer: the legacy
+ * helper's permissive 1, and 0 for the IR, whose `in` used `__extern_has`. So
+ * the IR entry `IN_HAS_PROPERTY` is the legacy helper's body with that one
+ * answer changed. `fnctorInstanceTypeIdxs` comes from the caller, since this
+ * module cannot import proto-index-store. On the js lane (gc) the IR entry is
+ * an alias of `__extern_has`, as before, and the legacy helper keeps its bytes.
+ */
+export function fillInHelperBuiltinTerminal(ctx: CodegenContext, fnctorInstanceTypeIdxs: readonly number[]): void {
+  const helper = ctx.mod.functions.find((fn) => fn.name === "__extern_has_with_implicit_object_proto");
+  const irEntry = ctx.mod.functions.find((fn) => fn.name === IN_HAS_PROPERTY);
+  if (!helper || !irEntry) return; // the js lane aliases the IR entry to `__extern_has`
+  const last = helper.body.length - 1;
+  if (helper.body[last]?.op !== "i32.const") throw new Error("the in helper no longer ends at its terminal constant");
+  const receiver: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }];
+  const when = (typeIdx: number | undefined, value: number): Instr[] =>
+    typeIdx === undefined || typeIdx < 0
+      ? []
+      : [
+          ...receiver,
+          { op: "ref.test", typeIdx },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value }, { op: "return" }] },
+        ];
+  const isClosureCarrier = ctx.funcMap.get("__is_closure_prop_carrier");
+  const terminal = (unknownCarrier: number): Instr[] => [
+    ...fnctorInstanceTypeIdxs.flatMap((typeIdx) => when(typeIdx, 0)),
+    ...[ctx.vecPropBaseTypeIdx, ctx.mapTypeIdx, ctx.errorStructTypeIdx, ctx.structMap.get("$Promise")].flatMap(
+      (typeIdx) => when(typeIdx, 1),
+    ),
+    ...(isClosureCarrier === undefined
+      ? []
+      : [
+          { op: "local.get", index: 0 } as Instr,
+          { op: "call", funcIdx: isClosureCarrier } as Instr,
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] } as Instr,
+        ]),
+    { op: "i32.const", value: unknownCarrier },
+  ];
+  const walk = helper.body.slice(0, last);
+  irEntry.locals = structuredClone(helper.locals);
+  irEntry.body = [...structuredClone(walk), ...terminal(0)];
+  helper.body = [...walk, ...terminal(1)];
 }
