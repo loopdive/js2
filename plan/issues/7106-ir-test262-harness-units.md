@@ -6142,10 +6142,11 @@ No new home kind, no new module, no legacy fallback.
    - `recordForInitLeaks` does not mark a script-`var` head's names as
      sibling-redeclarable, so a later `for (let i …)` stays refused
      (`for-init-shadow`) instead of writing the script slot.
-5. **Lowering** (`src/ir/from-ast.ts`): no change. `lowerForStatement` already
-   lowers its head through `lowerVarDecl`, whose module arm
-   (`storeModuleBinding`) writes the slot, and `moduleInitContainsNestedVar`
-   already skips any `moduleInitVarList`.
+5. **Lowering** (`src/ir/from-ast.ts`): `lowerForStatement` lowers its head
+   through `lowerVarDecl`, whose module arm (`storeModuleBinding`) writes the
+   slot, and `moduleInitContainsNestedVar` already skips any
+   `moduleInitVarList`. *Corrected in review round 1:* the head must bind in
+   the enclosing scope, not the loop's copy (see below).
 
 **Reused:** `isModuleInitVarList`, the `var` statement's selector arm, the
 resolver's script-var home (#7105/#6985), `storeModuleBinding`,
@@ -6195,7 +6196,7 @@ the lever worktree's `.tmp/l/` (`census.mts`, `cmp.py`, `run.mts`).
 | binaries changed | 16, each a newly claimed `<module-init>` | 16, the same files |
 | binaries byte-identical | 1,087 (the whole random sample included) | 1,087 |
 | units newly legacy | 0 | 0 |
-| new post-claim errors | 0 | 0 |
+| new post-claim errors (on these 1,103 files) | 0 | 0 |
 | pass → fail on the changed files | 0 (16/16 pass on both) | 0 (16/16 pass on both) |
 | playground (26 binaries, both lanes) | identical | identical |
 
@@ -6240,3 +6241,51 @@ widens such a return to `externref` (`functionReturnsPreInitVarValue`) and the
 selector does not mirror it. No census file reaches it; it is a selector
 follow-up for both forms.
 
+
+### Review round 1 (#7178, 2026-11-07)
+
+The verdict was changes requested: one bug, one inherited reach, two quality
+findings and three nits. Fixed in `fa9eecdddb` + `bab312aea8` (the first
+commit carries only the rename because a failed `git add` left the rest
+unstaged; the second carries the changes its message lists).
+
+1. **Fixed — claim-then-demote after the loop.** The head bound its
+   `moduleGlobal` in the loop's scope copy, so `i++`, `i--`, `i += k` or
+   `while (…) i++` after the loop was claimed and then failed to lower
+   ("undeclared"). A `<module-init>` `var` head now lowers in the enclosing
+   scope (`lowerForInitializer`, split out of `lowerForStatement`), as a `var`
+   statement does. The four shapes (and `--i`) are in
+   `tests/issue-7106-lever-l.test.ts`, claimed and correct on both lanes.
+2. **Scoped, not fixed — inherited reach.** `for (var j = i, i = 2;;)`,
+   `for (var i = k;;){} var k = 5` and `function g(){ return i } for (var i …)`
+   are claimed and then withdrawn ("initializer is dynamic but its global is
+   f64", or the ABI parity check). Their statement twins do the same on main
+   with identical bytes; the root is the selector's missing pre-initialization
+   (`undefined`) value flow for a script `var`, shared by statements and
+   heads. "0 new post-claim errors" above is now scoped to the census files,
+   where none of these shapes occurs. Follow-up: one selector refusal for a
+   read of a script `var` that can observe its pre-initialization value,
+   for statements and heads alike; a head-only refusal would leave the twins.
+3. **Fixed — misplaced predicate.** The shared module is now
+   `src/shared/var-declaration-lists.ts`: the general `isVarDeclarationList`
+   and the module-init list predicates. The three inline copies of its flag
+   test (`ir/with-environment.ts`, `ir/analysis/loop-shape.ts`,
+   `codegen/declarations/object-shape-widening.ts`) call it. The plan's "no
+   new module" was wrong: the module exists so legacy's registration reads the
+   list predicate without a new codegen→ir import edge.
+4. **Fixed — repeated condition.** `isScriptVarList(list)` in select.ts serves
+   all four sites; the `var` statement and the `for` arm compute it once and
+   pass it to `isPhase1VarDeclarationList`.
+5. **Fixed.** The codegen helper is a predicate, `isScriptForHeadVar`, with
+   the resolver's script-only test; the call site keeps the ternary.
+6. **Fixed.** `isModuleBindingDeclaration` branches on the declaration kind.
+7. **Fixed.** Stale import tag removed; `moduleInitBindings` doc names heads.
+
+**Re-measured** at `bab312aea8`, same 1,103 files, both lanes: identical to
+the first head (every binary byte-identical to `c7df95521c`'s), so the table
+above holds: +16 IR-only per lane, 0 lost, 0 new post-claim errors, 16/16
+pass on both sides, playground 26/26 identical (re-run). Gates pass bare:
+loc, func (also against origin/main `5ef8f0aae5`), coercion, oracle, dead
+exports, typecheck, import cycles, standalone arms, IR layering, flat dir;
+compiler boundaries as on main. Tests: lever-l, var-pattern-heads,
+for-head-destructuring, script-var, uninitialized-var: 227/227.
