@@ -269,7 +269,7 @@ import {
   finalizePreparedIrSelection,
   prepareHostDateSnapshotPreflight,
   synchronizeIrSafeFunctionSelection,
-  moduleInitHoldsEvalSite,
+  moduleInitCrossesEvalBoundary,
   runtimeEvalBoundaryFailure,
   withdrawEvalBoundaryFunctions,
 } from "./ir-overlay-preparation.js";
@@ -3548,7 +3548,7 @@ function planIrOverlay(
     const failure = runtimeEvalBoundaryFailure();
     withdrawEvalBoundaryFunctions(ctx, ast.sourceFile, identityPlan, safeSelection.funcs, recordPreparationFailure);
     for (const name of safeSelection.classMembers ?? []) recordPreparationFailure(name, failure);
-    if (moduleInitHoldsEvalSite(ctx, ast.sourceFile)) {
+    if (moduleInitCrossesEvalBoundary(ctx, ast.sourceFile)) {
       if (safeSelection.moduleInit?.reason === null && safeSelection.moduleInit.stmtCount > 0)
         recordPreparationFailure(MODULE_INIT_UNIT_NAME, failure);
       safeSelection.moduleInit = undefined;

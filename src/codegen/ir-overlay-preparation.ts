@@ -111,12 +111,20 @@ export function withdrawEvalBoundaryFunctions(
 
 /**
  * (#7106 A2b) Module init owns every top-level statement except function
- * declarations (their own units), so it holds an eval site when one lies in
- * such a statement — including a nested function expression there. A module
- * init without one only reads the slots the pull rewrites. (#7106 A2c) A site
- * the IR's global-eval arm lowers (`runtimeEvalOwnsGlobalEval`) does not count.
+ * declarations (their own units), so it crosses the runtime-eval boundary when
+ * an eval site lies in such a statement — including a nested function
+ * expression there. A module init without one only reads the slots the pull
+ * rewrites. (#7106 A2c) A site the IR's global-eval arm lowers
+ * (`runtimeEvalOwnsGlobalEval`) does not count.
+ *
+ * It also crosses it when it declares a script lexical binding the runtime-eval
+ * consumer widened (`registerReassignedFunctionGlobals` gives every
+ * `let`/`const`/`class` slot `externref` storage): the IR types that binding by
+ * its declaration, so its slot would disagree with legacy's. This is A1's
+ * `eval-visible-binding` rule for module init, which declares them all.
  */
-export function moduleInitHoldsEvalSite(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
+export function moduleInitCrossesEvalBoundary(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
+  if (ctx.runtimeEvalGlobalFunctionBindings === true && (ctx.globalLexicalBindings?.size ?? 0) > 0) return true;
   const sites = ctx.runtimeEvalBoundaryPlan?.sites ?? [];
   const lowered = new Set<string>();
   const visit = (node: ts.Node): void => {

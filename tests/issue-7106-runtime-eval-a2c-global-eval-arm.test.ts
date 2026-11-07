@@ -65,6 +65,8 @@ describe("#7106 A2c — global-scope eval statements in the IR", () => {
     ["a direct eval in a strict script", '"use strict";\nvar s;\neval("var s = 1");\n'],
     // Not a literal: the site has no recorded source.
     ["a computed source", 'var src = "var c = 1";\nvar c;\n(0, eval)(src);\n'],
+    // A script lexical's slot is widened to externref for eval; the IR would type it by its declaration.
+    ["a script lexical the eval consumer widened", 'const S = "x";\nvar f = S;\n(0, eval)("var f = 5");\n'],
   ])("keeps the module init direct for %s", async (_, source) => {
     const init = await moduleInit(source);
     expect(init.claimed).toBe(false);

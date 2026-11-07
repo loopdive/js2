@@ -819,7 +819,7 @@ const providerOwnedGlobalEvals = new WeakMap<CodegenContext, WeakMap<ts.CallExpr
  * declares a global var (`providerOwnsEvalDeclarations`). Any other literal may
  * fold, so it stays with the direct frontend. The site is the one the
  * runtime-eval boundary plan recorded; this never re-detects eval syntax. The
- * selector, `moduleInitHoldsEvalSite` and the IR resolver all read this answer.
+ * selector, `moduleInitCrossesEvalBoundary` and the IR resolver all read this answer.
  */
 export function runtimeEvalOwnsGlobalEval(ctx: CodegenContext, call: ts.CallExpression): boolean {
   const answers = providerOwnedGlobalEvals.get(ctx) ?? new WeakMap<ts.CallExpression, boolean>();
