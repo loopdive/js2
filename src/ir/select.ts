@@ -107,6 +107,7 @@ import {
 } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
+import { lowersAsPreparedComponent } from "./prepared-component-ownership.js";
 import { admitAmbientGlobalFunctionCall } from "./ambient-global-function-call.js";
 import {
   isAffineThreeDeepElementAccess,
@@ -204,6 +205,7 @@ import {
   isCarrierAddition,
   additiveResultFamily,
   provenBinaryOperandsAdmissible,
+  booleanReadBesideCarrier,
   isComparisonResultOperator,
   isEqualityOperator,
   isGlobalUndefinedIdentifier,
@@ -5049,10 +5051,23 @@ function isPhase1ThrowStatement(
   if (expressionTouchesModuleMapGetAlias(stmt.expression)) {
     return shapeNo("throw-module-map-get-alias", stmt.expression);
   }
-  if (expressionTouchesScalarModuleBinding(stmt.expression) && obviousModuleValueFamily(stmt.expression) !== "string") {
+  if (throwValueReadsUnboxedModuleScalar(stmt.expression)) {
     return shapeNo("throw-module-scalar-unboxed", stmt.expression);
   }
   return isPhase1Expr(stmt.expression, scope, localClasses);
+}
+
+/**
+ * True when a thrown value may carry an unboxed f64/boolean module read. A
+ * `new` throws an object, so only an argument can (#7281): in
+ * `new Test262Error('Actual: ' + x)` the read of `x` is a string concat. The
+ * family here is flow-insensitive; the argument's `+` is still proven by the
+ * checker in `isPhase1Expr` (`isModuleStringConcat`), so do not admit on it alone.
+ */
+function throwValueReadsUnboxedModuleScalar(expr: ts.Expression): boolean {
+  const candidate = unwrapPhase1Parens(expr);
+  if (ts.isNewExpression(candidate)) return candidate.arguments?.some(throwValueReadsUnboxedModuleScalar) ?? false;
+  return expressionTouchesScalarModuleBinding(candidate) && obviousModuleValueFamily(candidate) !== "string";
 }
 
 /**
@@ -8209,6 +8224,34 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
 }
 
 /**
+ * A proven string `+` applies ToString to its scalar side, so mixed operand
+ * families are no mismatch (#7281). The slot family is flow-insensitive, so the
+ * checker must also prove the `+` at this site: `typeof x !== 'number'`
+ * narrows `x` to `never`, which from-ast's `+` gate refuses.
+ */
+function isModuleStringConcat(expr: ts.BinaryExpression): boolean {
+  return (
+    expr.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+    obviousModuleValueFamily(expr) === "string" &&
+    checkerProvesBinaryOperands(expr) === true
+  );
+}
+
+/**
+ * from-ast's typing gate for `expr` over the checker's flow-sensitive operand
+ * families; `undefined` when the checker cannot classify a side as a primitive.
+ * `isModuleStringConcat` admits only on `true`; the element-read backstop
+ * refuses only on `false` (a proven mismatch).
+ */
+function checkerProvesBinaryOperands(expr: ts.BinaryExpression): boolean | undefined {
+  const classify = currentSelectionOptions?.classifyPrimitiveExpression;
+  const left = classify?.(expr.left);
+  const right = classify?.(expr.right);
+  if (!left || !right) return undefined;
+  return provenBinaryOperandsAdmissible(expr, left, right, additiveLane());
+}
+
+/**
  * Prove that every module-derived value which determines this expression's
  * condition representation is already boolean. Non-module subexpressions are
  * left to the existing selector/build type checks.
@@ -9232,10 +9275,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
     !carrierOperand &&
     (mayBeElementRead(expr.left, selectorLeafReadsElement) || mayBeElementRead(expr.right, selectorLeafReadsElement))
   ) {
-    const classify = currentSelectionOptions?.classifyPrimitiveExpression;
-    const leftProof = classify?.(expr.left);
-    const rightProof = classify?.(expr.right);
-    if (leftProof && rightProof && !provenBinaryOperandsAdmissible(expr, leftProof, rightProof, additiveLane())) {
+    if (checkerProvesBinaryOperands(expr) === false) {
       return capabilityNo("operand-coercion-unsupported", "expr-binary-element-concat-proof", expr);
     }
   }
@@ -9250,6 +9290,11 @@ function selectorPrimitiveWrapperOrGenericBinary(
       !isSlotFreeI32IdentityLowered(expr));
   if (judged && !provenBinaryOperandsAdmissible(expr, left, right, additiveLane())) {
     return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
+  }
+  // (#7282) A boolean ToNumber'd beside the carrier needs carrier supports a
+  // prepared component cannot name.
+  if (booleanReadBesideCarrier(binOp, left, right) && lowersAsPreparedComponent(expr)) {
+    return capabilityNo("operand-coercion-unsupported", "expr-boolean-carrier-prepared-unit", expr);
   }
   return (
     (leftWrapper || isPhase1Expr(expr.left, scope, localClasses)) &&
@@ -11909,7 +11954,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           rightFamily === "nullish" ||
           leftFamily === undefined ||
           rightFamily === undefined);
-      if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality) {
+      if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality && !isModuleStringConcat(expr)) {
         return shapeNo("expr-module-value-representation-mismatch", expr);
       }
       const booleanModuleOperand =
