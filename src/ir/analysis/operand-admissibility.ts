@@ -331,11 +331,39 @@ function isI32Carrier(family: OperandFamily): boolean {
  *   relationals need a string on both sides.
  * - otherwise one carrier on both sides: `+ - * / %` need f64; relational,
  *   equality and bitwise take f64 or i32.
+ * - (#7106 lever B) else a numeric reader over primitives and the carrier
+ *   boxes its boolean / string sides ({@link carrierNumericReaderOperands}).
  */
 export function binaryOperandsAdmissible(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
+  return typedOperandsAdmissible(op, left, right) || carrierNumericReaderOperands(op, left, right);
+}
+
+/**
+ * (#7106 lever B) A numeric reader's pair that the typed arms refuse, over
+ * numbers, the carrier, `null` / `undefined` (read as numbers) and at least
+ * one boolean or string: `lowerBinary` boxes each boolean / string side into
+ * the dynamic carrier, which keeps its ToNumber and its type, and the dynamic
+ * arm runs (`dyn.to_number`, or the carrier relationals, whose IsLessThan
+ * compares two strings as strings).
+ */
+export function carrierNumericReaderOperands(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
+  const boxed = (family: OperandFamily): boolean => family === "boolean" || family === "string";
+  const read = (family: OperandFamily): boolean =>
+    boxed(family) || family === "number" || family === "dynamic" || family === "nullish" || family === "undefined";
+  return (
+    isNumericReaderOperator(op) &&
+    (boxed(left) || boxed(right)) &&
+    read(left) &&
+    read(right) &&
+    !typedOperandsAdmissible(op, left, right)
+  );
+}
+
+/** The pairs `lowerBinary` lowers on the operands' own carriers (see {@link binaryOperandsAdmissible}). */
+function typedOperandsAdmissible(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
   if (left === "nullish" || right === "nullish") {
     if (!isNumericReaderOperator(op)) return false;
-    return binaryOperandsAdmissible(op, numberIfNullOrUndefined(left), numberIfNullOrUndefined(right));
+    return typedOperandsAdmissible(op, numberIfNullOrUndefined(left), numberIfNullOrUndefined(right));
   }
   if (left === "undefined" || right === "undefined") {
     // The NaN sentinel is ToNumber(undefined): exact for the numeric readers.
@@ -344,7 +372,7 @@ export function binaryOperandsAdmissible(op: ts.SyntaxKind, left: OperandFamily,
     // carrier, a string or another `void` it is not. `+` never is.
     const other = left === "undefined" ? right : left;
     if (op === ts.SyntaxKind.PlusToken || (isEqualityOperator(op) && other !== "number")) return false;
-    return binaryOperandsAdmissible(op, numberIfNullOrUndefined(left), numberIfNullOrUndefined(right));
+    return typedOperandsAdmissible(op, numberIfNullOrUndefined(left), numberIfNullOrUndefined(right));
   }
   if (left === "dynamic" || right === "dynamic") {
     const other = left === "dynamic" ? right : left;
