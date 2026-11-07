@@ -62,6 +62,7 @@ import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-tar
 import {
   additiveOperandsProvable,
   binaryOperandsAdmissible,
+  booleanReadAsNumber,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
   isCarrierAddition,
@@ -15343,7 +15344,8 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
 
 /**
  * Lower an eager operator's operands, left then right. A `null` operand of a
- * numeric reader is ToNumber(null) = +0. A fresh primitive wrapper becomes the
+ * numeric reader is ToNumber(null) = +0, and a boolean beside a number its
+ * ToNumber 0 / 1 (#7282). A fresh primitive wrapper becomes the
  * carrier of its ToPrimitive only after BOTH operands are evaluated, where the
  * operator's own ToPrimitive runs (#4208 S4, #7106). An operator that
  * ToNumerics its operands completes the left one before the right one's
@@ -15374,7 +15376,7 @@ function lowerBinaryOperands(
   const rhs = lower(expr.right, additiveProofs?.[0]);
   const leftWrapper = primitiveWrapperConstructorName(expr.left, cx) !== null;
   const rightWrapper = primitiveWrapperConstructorName(expr.right, cx) !== null;
-  if (!leftWrapper && !rightWrapper) return [lhs, rhs];
+  if (!leftWrapper && !rightWrapper) return booleansReadAsNumbers(expr, op, lhs, rhs, cx);
   if (wrapperComparisonIsIdentity(op, leftWrapper, rightWrapper)) {
     // invariant (producer-promise): selection refuses an identity comparison of a fresh wrapper.
     throw new IrInvariantError("selection-preparation-mismatch", "build", "ir/from-ast: fresh-wrapper identity");
@@ -15386,7 +15388,28 @@ function lowerBinaryOperands(
       : primitive;
   };
   const left = operand(leftWrapper, lhs);
-  return [left, operand(rightWrapper, rhs)];
+  return booleansReadAsNumbers(expr, op, left, operand(rightWrapper, rhs), cx);
+}
+
+/**
+ * (#7282) The one site where a numeric reader ToNumbers a boolean operand
+ * ({@link booleanReadAsNumber}) — after a fresh wrapper became its carrier, so
+ * `new Boolean(true) < true` converts the boolean beside that carrier too.
+ */
+function booleansReadAsNumbers(
+  expr: ts.BinaryExpression,
+  op: ts.SyntaxKind,
+  lhs: IrValueId,
+  rhs: IrValueId,
+  cx: LowerCtx,
+): readonly [IrValueId, IrValueId] {
+  const leftFamily = irOperandFamily(typeOfValue(lhs, cx), expr.left);
+  const rightFamily = irOperandFamily(typeOfValue(rhs, cx), expr.right);
+  if (!booleanReadAsNumber(op, leftFamily, rightFamily)) return [lhs, rhs];
+  // Signed and unsigned agree on 0 / 1; `f64.convert_i32_s` is the IR's i32→f64 unop.
+  const toNumber = (value: IrValueId, family: OperandFamily): IrValueId =>
+    family === "boolean" ? cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64) : value;
+  return [toNumber(lhs, leftFamily), toNumber(rhs, rightFamily)];
 }
 
 /**
@@ -16136,9 +16159,10 @@ function tryLowerDynamicRelational(
  * relational compare and the numeric-arithmetic arm): a dynamic carrier
  * ToNumbers via `dyn.to_number`; a concrete `f64` is used as-is. Any other
  * concrete kind (i32/ref/string) returns `null` so the caller demotes cleanly —
- * these slices only convert the dynamic side, and add no i32/string→number
- * coercion (numeric literals lower to `f64` under the f64 hint the operands
- * were lowered with, so `dyn > 0` / `dyn - 1` are covered).
+ * these slices only convert the dynamic side (numeric literals lower to `f64`
+ * under the f64 hint the operands were lowered with, so `dyn > 0` / `dyn - 1`
+ * are covered; a boolean partner arrives already converted by
+ * `lowerBinaryOperands`, #7282).
  */
 function relOperandToF64(v: IrValueId, t: IrType, cx: LowerCtx): IrValueId | null {
   if (t.kind === "dynamic") return cx.builder.emitDynToNumber(v);

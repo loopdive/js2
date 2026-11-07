@@ -7,6 +7,7 @@ import type { IrFunctionBuilder } from "./builder.js";
 import type { IrFromAstResolver } from "./from-ast.js";
 import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
 import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
+import { lowersAsPreparedComponent } from "./prepared-component-ownership.js";
 import type { IrSelectionOptions } from "./select.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
 
@@ -125,13 +126,8 @@ export function admitAmbientGlobalFunctionCall(
   const call = ambientGlobalFunctionCall(expr, classify);
   if (call === null || !isLibOnlyBinding(call.callee)) return null;
   const escapeFamily = call.name === "escape" || call.name === "unescape";
-  if (escapeFamily && ts.isExternalModule(expr.getSourceFile()) && !inTopLevelFunctionDeclaration(expr)) return null;
+  if (escapeFamily && lowersAsPreparedComponent(expr)) return null;
   return expr.arguments;
-}
-
-function inTopLevelFunctionDeclaration(node: ts.Node): boolean {
-  const unit = ts.findAncestor(node.parent, ts.isFunctionLike);
-  return unit !== undefined && ts.isFunctionDeclaration(unit) && ts.isSourceFile(unit.parent);
 }
 
 /** What the lowering needs from from-ast (no import of the lowerer itself). */
