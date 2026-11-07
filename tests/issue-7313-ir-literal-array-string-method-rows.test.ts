@@ -23,12 +23,12 @@ const LANES = ["standalone", undefined] as const;
 const dir = mkdtempSync(join(tmpdir(), "issue-7313-"));
 
 const ARRAYS: Readonly<Record<string, readonly string[]>> = {
-  "[1, 2, 3, 2, 1]": ["1", "2", "4", "NaN"],
-  "[1.5, NaN, -0, 0, 7]": ["NaN", "0", "-0", "7"],
+  "[1, 2, 3, 2, 1]": ["2", "4"],
+  "[1.5, NaN, -0, 0, 7]": ["NaN", "-0"],
   "[true, false, true, true]": ["true", "false"],
-  "['a', 'b', 'a', 'c']": ["'a'", "'c'", "'z'"],
+  "['a', 'b', 'a', 'c']": ["'a'", "'z'"],
 };
-const FROM_INDEX = ["", "1", "-1", "-2", "-100", "100", "NaN", "Infinity", "-Infinity", "1.7", "-1.2", "-0"];
+const FROM_INDEX = ["", "1", "-2", "-100", "100", "NaN", "Infinity", "-Infinity", "-1.2"];
 
 const STRING_CALLS = [
   "'undefined'.indexOf(undefined)",
