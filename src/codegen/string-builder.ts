@@ -30,6 +30,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import {
+  STRING_BUILDER_INITIAL_CAP,
   stringBuilderAppendCodeUnitInstrs,
   stringBuilderAppendStringInstrs,
   stringBuilderInitInstrs,
@@ -38,7 +39,7 @@ import {
   stringBuilderResetInstrs,
   type StringBuilderSlots,
   type StringBuilderTypes,
-} from "./string-builder-emit.js";
+} from "../ir/backend/wasm-string-builder.js";
 import { collectReferencedIdentifiers } from "./closures.js";
 import { allocLocal } from "./context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
@@ -702,8 +703,6 @@ export function compileStringBuilderInit(
   name: string,
   presize?: StringBuilderPresizeInfo,
 ): void {
-  // A never-iterated builder wastes little; a few iterations do not grow it.
-  const initialCap = 16;
   const slots = {
     buf: allocLocal(fctx, `${name}$buf`, { kind: "ref_null", typeIdx: ctx.nativeStrDataTypeIdx }),
     len: allocLocal(fctx, `${name}$len`, { kind: "i32" }),
@@ -714,7 +713,9 @@ export function compileStringBuilderInit(
   // #1761: presize when the bound compiles to a number, else keep doubling.
   const presized = presize !== undefined && emitPresizedBufferAlloc(ctx, fctx, presize, { ...slots, presized: true });
   const sb: StringBuilderInfo = { ...slots, presized };
-  fctx.body.push(...(presized ? stringBuilderResetInstrs(t, sb) : stringBuilderInitInstrs(t, sb, initialCap)));
+  fctx.body.push(
+    ...(presized ? stringBuilderResetInstrs(t, sb) : stringBuilderInitInstrs(t, sb, STRING_BUILDER_INITIAL_CAP)),
+  );
   if (!fctx.stringBuilders) fctx.stringBuilders = new Map();
   fctx.stringBuilders.set(name, sb);
 }
@@ -746,7 +747,7 @@ function emitPresizedBufferAlloc(
   return true;
 }
 
-/** The slots of a `let s = ""` builder; the instruction shapes live in `string-builder-emit.ts`. */
+/** The slots of a `let s = ""` builder; the instruction shapes live in `ir/backend/wasm-string-builder.ts`. */
 export type StringBuilderInfo = StringBuilderSlots;
 
 /**

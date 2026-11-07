@@ -16,6 +16,7 @@ import type {
 } from "../nodes.js";
 import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
 import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
+import type { StringBuilderLowering } from "./wasm-string-builder.js";
 import type {
   IrBoxedLowering,
   IrClassLowering,
@@ -233,6 +234,11 @@ export interface IrLowerResolver {
   /** Typed character operations consume an already-normalized i32 index. */
   emitStringCharAt?(alloc?: AllocSiteId, inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[];
   emitStringCharCodeAt?(inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[];
+  /**
+   * (#7291) The native builder's types and helpers, when the frozen
+   * owned-append concat provider is the native arm.
+   */
+  resolveStringBuilderLowering?(): StringBuilderLowering | undefined;
   /**
    * Slice 9 (#1169h): resolve (and lazily register) the shared `__exn`
    * exception tag. The tag carries an `externref` payload — every

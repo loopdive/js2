@@ -14,6 +14,23 @@ area: ir
 goal: ir-full-coverage
 related: [1210, 1580, 1761, 3740, 3744, 3518, 7277]
 assignee: "ttraenkler/c-r7"
+loc-budget-allow:
+  # 2026-11-07 (#7291 step 2). The lowering, verifier rule and slot-role
+  # predicate live in their own modules; these are the remaining seams.
+  # nodes.ts: the role field, and collectTerminatorUses folded in from the
+  # identical copies in verify.ts and lower-generic.ts. integration.ts: the
+  # native resolver hook, which needs the codegen helper registry.
+  - src/ir/core/nodes.ts
+  - src/ir/integration.ts
+  - src/ir/from-ast.ts
+  - src/ir/lower-generic.ts
+func-budget-allow:
+  # 2026-11-07 (#7291 step 2): one-line hooks to src/ir/lowering/string-builder.ts.
+  - src/ir/lower-generic.ts::lowerIrFunctionBody
+  - src/ir/lower-generic.ts::emitInstrTree
+  - src/ir/integration.ts::makeResolver
+import-cycles-allow:
+  - codegen->ir: 304 # 2026-11-07 (#7291): legacy codegen/string-builder.ts imports the shared builder sequences from ir/backend/wasm-string-builder.ts (the IR layering gate forbids the reverse)
 ---
 
 # IR string-builder loop is 6–10× slower than legacy's buffer
@@ -73,7 +90,7 @@ backend, ~700–900 LOC).
 - The read loop snapshots the slot once through `__str_flatten`.
 
 ### Step 1 — shared emitters (done, `ebbdafbb`)
-`src/codegen/string-builder-emit.ts`.
+`src/ir/backend/wasm-string-builder.ts`.
 
 ### Step 2 — slot role + WasmGC scalar replacement
 1. **IR fact.** `IrSlotDef` (core/nodes.ts) gains
@@ -140,7 +157,7 @@ backend, ~700–900 LOC).
   - async/generator (refused);
   - a surrogate pair split by `charAt`.
 - **Quality:**
-  - every instruction sequence comes from `string-builder-emit.ts`;
+  - every instruction sequence comes from `ir/backend/wasm-string-builder.ts`;
   - the role check lives in one verifier arm;
   - fresh-context adversarial review recorded in the PR body.
 
@@ -162,8 +179,10 @@ is legacy; typed `run(n: number)` is IR.
 | base | `run(n: number)` (IR) | 12.1 | 11.5 | 8.9 |
 | 1 | `run(n)` (legacy) | 2.0 | 2.0 | 2.0 |
 | 1 | `run(n: number)` (IR) | 10.6 | 9.8 | 10.1 |
+| 2 | `run(n)` (legacy) | 2.0 | 2.0 | 2.1 |
+| 2 | `run(n: number)` (IR) | 4.4 | 3.6–3.9 | 3.7–3.9 |
 
-**Step 1** (shared emitters, `src/codegen/string-builder-emit.ts`). Legacy
+**Step 1** (shared emitters, `src/ir/backend/wasm-string-builder.ts`). Legacy
 output is byte-identical:
 - typed corpus 264/264 (gc/standalone/wasi);
 - 234 compiles of the builder fixtures extracted from the #1004/#1210/#1580/
@@ -177,3 +196,31 @@ The step also:
   appends;
 - drops `compileStringBuilderAppend`'s unused `rhsAnyStrType` parameter;
 - gives `fctx.stringBuilders` the shared `StringBuilderSlots` type.
+
+**Step 2** (slot role + WasmGC scalar replacement), measured 2026-11-07:
+
+- **Route:** IR `run(n: number)` now keeps `text` as buffer locals, with no
+  `__str_concat_owned` or `__str_charAt` call in the loop.
+- **Speed:** 2.5–3× faster than step 1, and about 1.8× slower than legacy.
+  The remaining gap is legacy's presized buffer, which removes the growth
+  check (step 3), plus a per-append `__str_flatten` of the constant
+  `charAt` receiver.
+- **Byte identity:**
+  - typed corpus 264/264;
+  - the 27 changed builder-fixture compiles are all modules with an
+    IR-claimed builder function. Besides that function, the only changes are
+    helpers that became dead (stubbed `unreachable` by the existing pass) or
+    live, and inliner counter names (`__inl3` → `__inl2`) shifting because
+    one fewer call is inlined.
+- **Not marked:** linear, bytecode and porffor never see the hook. A
+  counted append (#3518) keeps its single `string.repeat`.
+- **Tests:**
+  - new `tests/issue-7291-ir-string-builder-locals.test.ts`: 18/18 on
+    standalone and gc. Cases: the #1580 shape; `charAt` out of range and at
+    NaN; a split surrogate pair; multi-unit appends across growth;
+    `break`/`continue`; a throwing append; a closure read; a generator; a
+    number append, which the IR refuses on its own.
+  - `tests/issue-3744-*` now asserts the buffer locals instead of
+    `__str_concat_owned`.
+- **Cleanup:** `collectTerminatorUses` is folded into `core/nodes.ts` from
+  identical copies in `verify.ts` and `lower-generic.ts`.

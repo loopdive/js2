@@ -1,14 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7291) Instruction sequences of the #1210 string builder, shared by the
- * legacy rewrite (`string-builder.ts`) and the IR builder lowering.
+ * legacy rewrite (`codegen/string-builder.ts`) and the IR builder lowering.
  *
  * A builder is four locals: an i16 `buf`, its used `len`, its `cap`, and `mat`,
  * a cached `$NativeString` view of `buf[0..len)` that every append clears
  * (#1580). Each emitter is pure: the caller owns local allocation and passes
  * the slot indices in, so both front-ends emit the same bytes.
  */
-import type { Instr } from "../ir/types.js";
+import type { Instr } from "../types.js";
 
 export interface StringBuilderSlots {
   readonly buf: number;
@@ -34,6 +34,9 @@ export interface StringBuilderAppendScratch {
   readonly needed: number;
   readonly oldBuf?: number;
 }
+
+/** A never-iterated builder wastes little; a few iterations do not grow it. */
+export const STRING_BUILDER_INITIAL_CAP = 16;
 
 /** Empty doubling builder: `buf = new i16[cap]`, `len = 0`, `mat = null`. */
 export function stringBuilderInitInstrs(t: StringBuilderTypes, sb: StringBuilderSlots, initialCap: number): Instr[] {
@@ -149,6 +152,45 @@ export function stringBuilderAppendCodeUnitInstrs(
 }
 
 /**
+ * Consumes a `ref $AnyString` receiver and an i32 index and appends
+ * `receiver.charAt(index)` as one code unit; an index out of range appends
+ * nothing, since `charAt` then yields `""`.
+ */
+export function stringBuilderAppendCharAtInstrs(
+  t: StringBuilderTypes,
+  sb: StringBuilderSlots,
+  scratch: StringBuilderAppendScratch & { readonly receiver: number; readonly index: number; readonly cu: number },
+  helpers: { readonly flatten: number; readonly nextCap: number },
+): Instr[] {
+  const { receiver, index } = scratch;
+  const field = (fieldIdx: number): Instr[] => [
+    { op: "local.get", index: receiver },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: t.flat, fieldIdx },
+  ];
+  return [
+    { op: "local.set", index },
+    { op: "call", funcIdx: helpers.flatten },
+    { op: "local.set", index: receiver },
+    { op: "local.get", index },
+    ...field(0),
+    { op: "i32.lt_u" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...field(2),
+        ...field(1),
+        { op: "local.get", index },
+        { op: "i32.add" },
+        { op: "array.get_u", typeIdx: t.data },
+        ...stringBuilderAppendCodeUnitInstrs(t, sb, scratch, helpers.nextCap),
+      ],
+    },
+  ];
+}
+
+/**
  * (#1580) Pushes `ref $NativeString` for the current contents, materialising
  * it into `mat` only when an append has cleared the cache.
  */
@@ -221,4 +263,27 @@ function stringBuilderCommitInstrs(t: StringBuilderTypes, sb: StringBuilderSlots
     { op: "ref.null", typeIdx: t.any },
     { op: "local.set", index: sb.mat },
   ];
+}
+
+/** The native helpers a builder calls. */
+export interface StringBuilderHelpers {
+  readonly flatten: number;
+  readonly nextCap: number;
+}
+
+/** What the WasmGC resolver answers when the native string builder applies. */
+export interface StringBuilderLowering {
+  readonly types: StringBuilderTypes;
+  readonly helpers: StringBuilderHelpers;
+}
+
+/** One builder's scratch locals, shared by all of its appends. */
+export interface StringBuilderScratch {
+  readonly needed: number;
+  readonly oldBuf: number;
+  readonly rhs: number;
+  readonly rhsLen: number;
+  readonly cu: number;
+  readonly receiver: number;
+  readonly index: number;
 }

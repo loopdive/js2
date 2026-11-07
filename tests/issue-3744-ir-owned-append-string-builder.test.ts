@@ -124,14 +124,16 @@ describe("#3744 IR owned-append string-builder fast path", () => {
     process.env.JS2WASM_IR_STRING_BUILDER = ORIGINAL;
   });
 
-  it("default: IR claims this shape and uses the owned-append fast path", async () => {
+  it("default: IR claims this shape and keeps the builder as buffer locals (#7291)", async () => {
     process.env.JS2WASM_IR_STRING_BUILDER = undefined;
     const { irCompiledFuncs, wat } = await compileAndInstantiate(BUILDER_SRC, {
       target: "wasi",
       nativeStrings: true,
     });
     expect(irCompiledFuncs ?? []).toContain("run");
-    expect(functionBodyWithCallNames(wat, "run")).toContain(";; __str_concat_owned");
+    const body = functionBodyWithCallNames(wat, "run");
+    expect(body).toMatch(/\$slot_s\$buf/);
+    expect(body).not.toContain(";; __str_concat_owned");
   });
 
   it("JS2WASM_IR_STRING_BUILDER=0: kill switch defers this shape to legacy", async () => {

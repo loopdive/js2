@@ -10,7 +10,7 @@ import { ts } from "../../ts-api.js";
 import type { TypeOracle } from "../../checker/oracle.js";
 import type { UsageInference } from "../../checker/usage-inference.js";
 import type { IrUnitId } from "../../ir/identity.js";
-import type { StringBuilderSlots } from "../string-builder-emit.js";
+import type { StringBuilderSlots } from "../../ir/backend/wasm-string-builder.js";
 import type {
   FieldDef,
   FuncHandle,

@@ -29,6 +29,15 @@ import {
 import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
 import type { BlockType, Instr, ValType } from "../types.js";
 import { buildStandardTryTable } from "../try-table.js";
+import type { StringBuilderEmitter } from "./string-contract.js";
+import {
+  STRING_BUILDER_INITIAL_CAP,
+  stringBuilderAppendCharAtInstrs,
+  stringBuilderAppendCodeUnitInstrs,
+  stringBuilderAppendStringInstrs,
+  stringBuilderInitInstrs,
+  stringBuilderReadInstrs,
+} from "./wasm-string-builder.js";
 import type {
   BackendEmitter,
   BackendI32BitwiseOp,
@@ -121,6 +130,23 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     const ops = this.stringRuntime?.emitStringCharCodeAt?.(_inputEncoding, provider);
     if (!ops) throw new Error("WasmGcEmitter: string.char_code_at runtime is unavailable");
     out.push(...ops);
+  }
+
+  stringBuilder(): StringBuilderEmitter<Instr[]> | undefined {
+    const lowering = this.stringRuntime?.resolveStringBuilderLowering?.();
+    if (!lowering) return undefined;
+    const { types: t, helpers } = lowering;
+    return {
+      bufType: { kind: "ref_null", typeIdx: t.data },
+      flatType: { kind: "ref_null", typeIdx: t.flat },
+      init: (sb, out) => out.push(...stringBuilderInitInstrs(t, sb, STRING_BUILDER_INITIAL_CAP)),
+      appendString: (sb, scratch, out) => out.push(...stringBuilderAppendStringInstrs(t, sb, scratch, helpers)),
+      appendCodeUnit: (sb, scratch, out) =>
+        out.push(...stringBuilderAppendCodeUnitInstrs(t, sb, scratch, helpers.nextCap)),
+      appendCharAt: (sb, scratch, out) => out.push(...stringBuilderAppendCharAtInstrs(t, sb, scratch, helpers)),
+      read: (sb, out) => out.push(...stringBuilderReadInstrs(t, sb)),
+      length: (sb, out) => out.push({ op: "local.get", index: sb.len }, { op: "f64.convert_i32_s" }),
+    };
   }
 
   // ---- vec (array) ----------------------------------------------------
