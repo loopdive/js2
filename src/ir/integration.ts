@@ -104,7 +104,7 @@ import {
   nativeBufferProvidersAvailable,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
-import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
+import { emitJsonParseText, emitJsonStringifyValue, JSON_PARSE_TEXT_FN } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
 import {
@@ -187,6 +187,7 @@ import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import {
   ambientGlobalFunctionProviderSymbol,
+  jsonParseTextFoldsAtCompileTime,
   ensureNativeStringHelpers,
   STANDALONE_STDOUT_APPEND_FN,
 } from "../codegen/native-strings.js";
@@ -2587,6 +2588,7 @@ export function compileIrPathFunctions(
       resolveModuleBinding: moduleBindingResolver,
       classifyPrimitiveExpression,
       classifyDeclaredPrimitiveExpression,
+      jsonParseFoldsAtCompileTime: (call: ts.CallExpression) => jsonParseTextFoldsAtCompileTime(ctx, call),
       isArrayExpression,
       classifyArrayElementFamily,
       isRegExpExpression,
@@ -7202,7 +7204,9 @@ function makeFromAstResolver(
     dynamicCarrierIsExternref() {
       return !ctx.fast;
     },
+    jsonParseFoldsAtCompileTime: (call) => jsonParseTextFoldsAtCompileTime(ctx, call),
     ambientGlobalFunctionTarget(name) {
+      if (name === "JSON.parse") return irRuntimeFuncRef(JSON_PARSE_TEXT_FN); // (#7267) pre-registered at finalize
       const symbol = ambientGlobalFunctionProviderSymbol(ctx, name); // (#7253)
       return symbol === null ? null : irRuntimeFuncRef(symbol);
     },
@@ -9334,6 +9338,8 @@ function preregisterDynamicSupport(
   let usesDynJsonStringify = false;
   // (#7106 S1c) `dyn.object_tag` calls the standalone runtime classifier.
   let usesDynObjectTag = false;
+  // (#7267) `JSON.parse(text)` calls the native codec's parse entry.
+  let usesJsonParseText = false;
   // (#7106 module-init lever B) `js.number.from-value` calls the template-built provider.
   let usesNumberFromValue = false;
   // (#7106 S3a) `dyn.construct` calls the per-arity construct driver wrapper.
@@ -9458,6 +9464,9 @@ function preregisterDynamicSupport(
                 break;
               case "__getOwnPropertyDescriptor":
                 usesOwnPropertyDescriptor = true;
+                break;
+              case JSON_PARSE_TEXT_FN:
+                usesJsonParseText = true;
                 break;
               // (#4461) native `$Map` module-binding storage.
               case IR_DYN_DELETE_STRICT_HELPER:
@@ -9654,6 +9663,11 @@ function preregisterDynamicSupport(
     emitJsonStringifyValue(ctx);
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, "__json_stringify_root");
+  }
+  if (usesJsonParseText && ctx.nativeStrings && !ctx.fast) {
+    emitJsonParseText(ctx);
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, JSON_PARSE_TEXT_FN);
   }
   if (usesDynToString && !ctx.fast) {
     if (ctx.nativeStrings) {

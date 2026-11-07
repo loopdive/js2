@@ -688,6 +688,7 @@ import {
   nativeStringType,
   nativeStringTypeNullable,
   stringConstantExternrefInstrs,
+  jsonParseTextFoldsAtCompileTime,
 } from "./native-strings.js";
 import { isAnyStringSlot } from "./native-strings-shared.js";
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
@@ -3316,6 +3317,7 @@ function planIrOverlay(
       ...(resolveModuleBinding ? { resolveModuleBinding } : {}),
       classifyPrimitiveExpression,
       classifyDeclaredPrimitiveExpression,
+      jsonParseFoldsAtCompileTime: (call) => jsonParseTextFoldsAtCompileTime(ctx, call), // (#7267)
       isArrayExpression,
       classifyArrayElementFamily,
       isRegExpExpression,

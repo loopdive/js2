@@ -79,7 +79,8 @@ export function isAmbientIntrinsicValueUse(
  * Every declaration of `node`'s symbol is a lib one AND nothing in its file
  * declares the name: a script's top-level `function Error() {}` is reported by
  * the checker as the lib declarations alone. (#7274) Also the native
- * ArrayBuffer surface's constructor identity.
+ * ArrayBuffer surface's constructor identity, and the #7253 / #7267
+ * ambient-call admission (`ir/ambient-global-function-call.ts`).
  */
 export function isUnshadowedLibBinding(
   node: ts.Identifier,
@@ -103,7 +104,9 @@ function declaredNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
   const visit = (node: ts.Node): void => {
     if (
       (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
         ts.isClassDeclaration(node) ||
+        ts.isClassExpression(node) ||
         ts.isVariableDeclaration(node) ||
         ts.isParameter(node) ||
         ts.isBindingElement(node)) &&
