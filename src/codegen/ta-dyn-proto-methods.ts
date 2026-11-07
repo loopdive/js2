@@ -25,7 +25,7 @@ import {
   emitTaDynViewToVec,
   emitTaDynViewValidate,
   i32ByteVec,
-  makeTaDynHelperFctx,
+  makeHelperFctx,
   pushTaDynMethodPreamble,
   pushTaDynRelativeIndex,
   pushTaDynViewInBoundsLen,
@@ -200,7 +200,7 @@ function ensureTaDynSubarrayHelper(ctx: CodegenContext): number | undefined {
   const byteVecIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" });
   if (byteVecIdx < 0) return undefined;
 
-  const fctx = makeTaDynHelperFctx(helperName, [
+  const fctx = makeHelperFctx(helperName, [
     { name: "recv", type: { kind: "externref" } },
     { name: "begin", type: { kind: "externref" } },
     { name: "end", type: { kind: "externref" } },
@@ -766,7 +766,7 @@ function ensureTaDynSearchHelper(ctx: CodegenContext, method: string): number | 
   const backward = method === "lastIndexOf";
   const wantsBoolean = method === "includes";
 
-  const fctx = makeTaDynHelperFctx(helperName, [
+  const fctx = makeHelperFctx(helperName, [
     { name: "recv", type: { kind: "externref" } },
     { name: "searchElement", type: { kind: "externref" } },
     { name: "fromIndex", type: { kind: "externref" } },
@@ -1106,7 +1106,7 @@ function ensureTaDynIteratorHelper(ctx: CodegenContext, method: string): number 
   const dynIdx = getOrRegisterTaDynViewType(ctx);
   if (dynIdx < 0) return undefined;
 
-  const fctx = makeTaDynHelperFctx(helperName, [
+  const fctx = makeHelperFctx(helperName, [
     { name: "recv", type: { kind: "externref" } },
     { name: "unused0", type: { kind: "externref" } },
     { name: "unused1", type: { kind: "externref" } },

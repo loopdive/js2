@@ -14,8 +14,28 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 import { assembleOriginalHarness } from "./test262-original-harness.js";
 import { originalHarnessCompileOptions, parseMeta, runTest262File } from "./test262-runner.js";
+
+// (#7120 review) Annotated and inferred Boolean-returning callees assigned into
+// a dynamic local: the annotated return keeps its Boolean brand
+// (`resolvePositionType`), so each carrier is IR-emitted and holds a real JS
+// Boolean. Each export returns 10 for `typeof v === "boolean"` plus 1 for true,
+// 2 for false.
+const BOOL_CALLS = `function annT(): boolean { return true; }
+function annF(): boolean { return false; }
+function infT() { return 1 === 1; }
+function infF() { return 1 === 2; }
+function viaAnnT(seed: any): any { var r; r = annT(); return r; }
+function viaAnnF(seed: any): any { var r; r = annF(); return r; }
+function viaInfT(seed: any): any { var r; r = infT(); return r; }
+function viaInfF(seed: any): any { var r; r = infF(); return r; }
+export function annotatedTrue(): number { var v = viaAnnT(undefined); return (typeof v === "boolean" ? 10 : 0) + (v === true ? 1 : v === false ? 2 : 3); }
+export function annotatedFalse(): number { var v = viaAnnF(undefined); return (typeof v === "boolean" ? 10 : 0) + (v === true ? 1 : v === false ? 2 : 3); }
+export function inferredTrue(): number { var v = viaInfT(undefined); return (typeof v === "boolean" ? 10 : 0) + (v === true ? 1 : v === false ? 2 : 3); }
+export function inferredFalse(): number { var v = viaInfF(undefined); return (typeof v === "boolean" ? 10 : 0) + (v === true ? 1 : v === false ? 2 : 3); }
+`;
 
 const BODY = `function isSameValue(a, b) { if (a === 0 && b === 0) return 1 / a === 1 / b; if (a !== a && b !== b) return true; return a === b; }
 function isWritable(obj, name, verifyProp, value) {
@@ -87,6 +107,24 @@ describe("#7265 boolean call result into a dynamic var, dynamic computed key", (
       const outcome = (await irOutcomes(path)).find((o) => o.displayName === "isWritable");
       expect(outcome?.irBodyEmitted).toBe(claimed);
       expect(await runTest262File(path, "issue-7265", undefined, "standalone")).toMatchObject({ status: "pass" });
+    });
+  }
+
+  for (const target of ["standalone", "gc"] as const) {
+    it(`boxes annotated and inferred Boolean call results as JS Booleans on ${target}`, async () => {
+      const result = await compile(BOOL_CALLS, { fileName: "issue-7265-bool.ts", target, trackIrOutcomes: true });
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      for (const name of ["viaAnnT", "viaAnnF", "viaInfT", "viaInfF"]) {
+        expect(result.irOutcomes?.find((o) => o.displayName === name)?.irBodyEmitted, name).toBe(true);
+      }
+      const imports = target === "gc" ? buildImports(result.imports ?? [], undefined, result.stringPool ?? []) : {};
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      const exports = instance.exports as Record<string, () => number>;
+      (instance.exports.__module_init as (() => void) | undefined)?.();
+      expect(exports.annotatedTrue!()).toBe(11);
+      expect(exports.annotatedFalse!()).toBe(12);
+      expect(exports.inferredTrue!()).toBe(11);
+      expect(exports.inferredFalse!()).toBe(12);
     });
   }
 });

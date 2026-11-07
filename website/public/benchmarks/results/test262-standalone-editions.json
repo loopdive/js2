@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4346,
-    "fail": 1245,
+    "pass": 4347,
+    "fail": 1244,
     "ce": 201,
     "skip": 0,
     "total": 5792,
@@ -2276,8 +2276,8 @@
       },
       {
         "name": "resizable-arraybuffer",
-        "pass": 158,
-        "fail": 272,
+        "pass": 159,
+        "fail": 271,
         "ce": 2,
         "skip": 0,
         "total": 432,
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4584,
+    "pass": 4574,
     "fail": 197,
-    "ce": 140,
+    "ce": 150,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4485,
+        "pass": 4475,
         "fail": 106,
-        "ce": 20,
+        "ce": 30,
         "skip": 0,
         "total": 4611,
         "pct": 97
@@ -3607,9 +3607,9 @@
       },
       {
         "name": "arrow-function",
-        "pass": 173,
+        "pass": 172,
         "fail": 5,
-        "ce": 0,
+        "ce": 1,
         "skip": 0,
         "total": 178,
         "pct": 97
