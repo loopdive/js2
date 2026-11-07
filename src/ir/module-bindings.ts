@@ -25,11 +25,7 @@ import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fncto
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import * as classInstance from "./module-binding-class-instance.js";
-import {
-  isModuleInitVarList,
-  isTopLevelStatementDeclaration,
-  isTopLevelVarList,
-} from "../shared/var-declaration-lists.js";
+import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
   carrierLeafReads,
@@ -1034,7 +1030,8 @@ function scriptVarHomeOf(
 ): IrScriptVarHome | undefined {
   if (lexicalFlags(declaration) !== 0) return undefined;
   if (ts.isExternalModule(declaration.getSourceFile())) return undefined;
-  return options?.scriptVarHome?.(declaration);
+  // (#7106 lever L2) Every home passes the one rule for a declaration that may never run.
+  return bindingValue.reachableScriptVarHome(declaration, options?.scriptVarHome?.(declaration));
 }
 
 /**
@@ -1052,8 +1049,6 @@ function scriptVarReferenceKind(
   declaredType: ts.Type,
   checker: ts.TypeChecker,
 ): IrModuleBindingValueKind | undefined {
-  // (#7106 lever L2) A reference slot reads as written, so a nested declaration that may never run binds none.
-  if (!isTopLevelVarList(bindingDeclarationList(declaration))) return undefined;
   if (home === "class-instance") return classInstance.classInstanceValueKind(checker, declaration, declaredType);
   return home === "string" && isModuleStringStorageType(declaredType, checker) ? { kind: "string" } : undefined;
 }

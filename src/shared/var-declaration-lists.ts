@@ -38,7 +38,8 @@ export function isModuleInitVarList(node: ts.Node | undefined): boolean {
  * Whether a modelled `list` (`bindingDeclarationList`'s answer, so possibly
  * absent) belongs to a top-level statement (a `var` statement or a `for (;;)`
  * head, labelled or not), which runs before every later top-level statement.
- * A nested one may never run (lever L2).
+ * A nested one may never run (lever L2). A label does not change whether its
+ * statement runs, so this walks through labels.
  */
 export function isTopLevelVarList(list: ts.VariableDeclarationList | undefined): boolean {
   if (list === undefined) return false;
@@ -47,7 +48,13 @@ export function isTopLevelVarList(list: ts.VariableDeclarationList | undefined):
   return ts.isSourceFile(statement.parent);
 }
 
-/** Whether `declaration` is a top-level `VariableStatement`'s own, numbered and observed with the statements. */
+/**
+ * Whether `declaration` is a top-level `VariableStatement`'s own, numbered and
+ * observed with the statements. Unlike {@link isTopLevelVarList} it does not
+ * see through labels: it mirrors legacy's source-order pass and the Program
+ * ABI's statement numbering, which take only direct children of the source
+ * file (a labelled `var` statement is registered by the hoisting walk).
+ */
 export function isTopLevelStatementDeclaration(declaration: ts.Node): boolean {
   const statement = ts.isVariableDeclaration(declaration) ? declaration.parent.parent : undefined;
   return statement !== undefined && ts.isVariableStatement(statement) && ts.isSourceFile(statement.parent);
