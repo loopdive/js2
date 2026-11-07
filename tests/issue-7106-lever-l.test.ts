@@ -46,6 +46,11 @@ const CLAIMED: Record<string, string> = {
   labelled: "outer: for (var i = 0; i < 3; i++) { if (i === 1) break outer; }\nassert.sameValue(i, 1);",
   emptyCondition: "var x = 0;\nfor (var i = 0; ; ) { x++; if (x > 2) break; }\nassert.sameValue(i, 0);",
   booleanHead: "for (var b = true; b; b = false) { }\nassert.sameValue(b, false);",
+  // Review round 1: the head binds in the enclosing scope, so an update after the loop is a slot write.
+  incrementAfter: "for (var i = 0; i < 2; i++) { }\ni++;\nassert.sameValue(i, 3);",
+  decrementAfter: "for (var i = 0; i < 2; i++) { }\n--i;\nassert.sameValue(i, 1);",
+  compoundAfter: "for (var i = 0; i < 2; i++) { }\ni += 5;\nassert.sameValue(i, 7);",
+  whileAfter: "for (var i = 0; i < 2; i++) { }\nwhile (i < 5) i++;\nassert.sameValue(i, 5);",
   // A function reads and writes the head's slot.
   readFromFunction: "for (var i = 0; i < 4; i++) { }\nfunction g() { return i; }\nassert.sameValue(g(), 4);",
   writeFromFunction: "function w() { i = 10; }\nfor (var i = 0; i < 4; i++) { w(); }\nassert.sameValue(i, 11);",

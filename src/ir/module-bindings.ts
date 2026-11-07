@@ -25,7 +25,7 @@ import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fncto
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import * as classInstance from "./module-binding-class-instance.js";
-import { isModuleInitVarList } from "../shared/module-init-var-list.js";
+import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
   carrierLeafReads,
@@ -935,8 +935,10 @@ function isModuleBindingDeclaration(
   const declaration = ts.isVariableDeclaration(candidate) || ts.isBindingElement(candidate) ? candidate : undefined;
   if (!declaration || !ts.isIdentifier(declaration.name)) return false;
   const list = bindingDeclarationList(declaration);
-  const statement = ts.isVariableDeclaration(declaration) ? list?.parent : undefined;
-  if (statement && ts.isVariableStatement(statement)) return statement.parent === sourceFile;
+  // A `VariableStatement`'s own name binds when the statement is top-level, in a script or an ES module.
+  if (ts.isVariableDeclaration(declaration) && list && ts.isVariableStatement(list.parent)) {
+    return list.parent.parent === sourceFile;
+  }
   // (#7106 S5, lever L) A leaf, or a `for` head's name, binds in a script's module-init `var` list.
   return !ts.isExternalModule(sourceFile) && isModuleInitVarList(list);
 }
