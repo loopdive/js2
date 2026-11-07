@@ -226,6 +226,52 @@ sample files plus every changed file, 362).
 | pass → fail on the 177 | 0 (177/177 pass on both) | 0 |
 | playground (26 binaries) | identical | identical |
 
+### Review round 1 (PR #7186, 2026-11-07)
+
+Four findings, all fixed in `0de7df41cc`:
+
+- **Inherited names.** `a.constructor === Array` read `false` and
+  `a.join === undefined` read `true`: the dynamic reader sees only own
+  properties of the boxed vec. `vecUseSupported` now admits a named read only
+  for a name an earlier top-level `<binding>.<name> = …` statement wrote (an own
+  expando); every other name, inherited ones included, refuses at its site.
+- **Claim-then-demote shapes.** `a["01"]`, `a["-0"]`, `a["length"]`,
+  `a["foo"]`, `a[undefined]`, `a[k]` with a string `k`, `a[null]`,
+  `a[0].length`, `a[9] === undefined`, `a.foo + 1`, `a.foo + a.bar` were
+  claimed, then demoted or answered wrongly. An element read now needs a
+  checker-number key, and an element or expando read is admitted only as a
+  call argument (the IR boxes whatever it lowers to), so an `undefined` answer
+  never reaches a typed consumer. All refuse at select; each is a test row on
+  both lanes.
+- **Duplication.** The "every write of this script var" scan the vec and
+  class-instance homes each carried is one cached `scriptVarWrites` in
+  `module-binding-class-instance.ts`; both certify their own predicate over it.
+- **Comment** at the vec named-write arm shrunk to a pointer to
+  `vecUseSupported`.
+
+Re-measured after the fixes (base: lever L2 + main `636331310e` with #7176
+merged locally; head: lever V `ac75acf28f`, same overlay; neither overlay is
+pushed). Population, rebuilt after the container reset: the 576 test262 files
+with a top-level `var` initialized by a non-empty all-string array literal,
+plus a seeded random 200 from all of test262 (775 distinct), compiled as the
+runner does (`assembleOriginalHarness` + `originalHarnessCompileOptions`).
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files | 5 → 182 (**+177**, 176 S15.10.2 + one annexB RegExp) | 4 → 181 (+177) |
+| IR-only files lost / new post-claim errors | 0 / 0 | 0 / 0 |
+| module-init newly claimed / newly refused | 177 / 0 | 177 / 0 |
+| binaries changed | 177, each a newly claimed `<module-init>` | 177 |
+| byte-identical | 597 of the other 598 | 597 of 598 |
+| pass → fail on the changed files | 0 (177/177 pass on both sides) | 0 |
+| random 200 | 0 changes | 0 changes |
+
+The one other differing binary (`staging/sm/String/match-GetMethod.js`, still
+legacy, a skipped staging file) is a measurement artifact: compiled alone it is
+byte-identical on both sides; the census resumed the base run in a fresh
+process after a restart, and that file's binary depends on what the same
+process compiled before it.
+
 ### Follow-ups
 
 - Number vecs: an undefined-capable unproven f64 read, then the same home.
