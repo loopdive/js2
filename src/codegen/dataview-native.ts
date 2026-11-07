@@ -1296,7 +1296,7 @@ export function emitArrayBufferProtoMemberBody(
   fctx: FunctionContext,
   member: string,
 ): ValType | null {
-  if (member === "slice") return emitArrayBufferProtoSliceBody(ctx, fctx);
+  if (member === "slice") return emitArrayBufferSliceParamsBody(ctx, fctx, 1);
   if (member !== "transfer" && member !== "transferToFixedLength") return null;
   const helperIdx = ensureArrayBufferTransferHelper(ctx, member);
   if (helperIdx === undefined) return null;
@@ -1320,12 +1320,16 @@ export function emitArrayBufferProtoMemberBody(
  * become one brand test — `$__resizable_ab` subtypes the byte vec, a
  * SharedArrayBuffer / TypedArray / plain object does not — then the same byte
  * pipeline the direct `ab.slice(…)` call uses, fed from the params
- * (param 0 = wrapper, 1 = this, 2 = start, 3 = end; omitted ones are padded
- * with `undefined` by the reflective call site).
+ * (this, start, end from `recvSlot`: 1 after the closure's wrapper, 0 in the IR's
+ * `__ir_ab_slice` adapter, #7274; an omitted one reads as `undefined`).
  */
-function emitArrayBufferProtoSliceBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+export function emitArrayBufferSliceParamsBody(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvSlot: number,
+): ValType | null {
   const { vecTypeIdx } = i32ByteVec(ctx);
-  fctx.body.push({ op: "local.get", index: 1 }, { op: "any.convert_extern" });
+  fctx.body.push({ op: "local.get", index: recvSlot }, { op: "any.convert_extern" });
   fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx }, { op: "i32.eqz" });
   fctx.body.push({
     op: "if",
@@ -1340,9 +1344,9 @@ function emitArrayBufferProtoSliceBody(ctx: CodegenContext, fctx: FunctionContex
   const recv = ts.factory.createIdentifier("this");
   const args = [ts.factory.createIdentifier("start"), ts.factory.createIdentifier("end")];
   const slotOf = new Map<ts.Expression, number>([
-    [recv, 1],
-    [args[0]!, 2],
-    [args[1]!, 3],
+    [recv, recvSlot],
+    [args[0]!, recvSlot + 1],
+    [args[1]!, recvSlot + 2],
   ]);
   return emitArrayBufferSlice(
     ctx,
@@ -8057,7 +8061,7 @@ export function ensureTaDynSetHelper(ctx: CodegenContext): number | undefined {
 
   const dynIdx = getOrRegisterTaDynViewType(ctx);
   const { vecTypeIdx: byteVecIdx, arrTypeIdx: byteArrIdx } = i32ByteVec(ctx);
-  const fctx = makeTaDynHelperFctx(helperName, [
+  const fctx = makeHelperFctx(helperName, [
     { name: "recv", type: { kind: "externref" } },
     { name: "source", type: { kind: "externref" } },
     { name: "offset", type: { kind: "externref" } },
@@ -8649,13 +8653,17 @@ export function pushTaDynRelativeIndex(
   fctx.body.push({ op: "local.set", index: outLocal });
 }
 
-export function makeTaDynHelperFctx(helperName: string, params: { name: string; type: ValType }[]): FunctionContext {
+export function makeHelperFctx(
+  helperName: string,
+  params: { name: string; type: ValType }[],
+  returnType: ValType = { kind: "externref" },
+): FunctionContext {
   return {
     name: helperName,
     params,
     locals: [],
     localMap: new Map(),
-    returnType: { kind: "externref" },
+    returnType,
     body: [],
     blockDepth: 0,
     breakStack: [],
@@ -8696,7 +8704,7 @@ export function ensureTaDynCopyWithinHelper(ctx: CodegenContext): number | undef
   const funcIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set(helperName, funcIdx);
 
-  const fctx = makeTaDynHelperFctx(helperName, [
+  const fctx = makeHelperFctx(helperName, [
     { name: "recv", type: { kind: "externref" } },
     { name: "target", type: { kind: "externref" } },
     { name: "start", type: { kind: "externref" } },
@@ -8897,7 +8905,7 @@ export function ensureTaDynReverseHelper(ctx: CodegenContext): number | undefine
   const funcIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set(helperName, funcIdx);
 
-  const fctx = makeTaDynHelperFctx(helperName, [
+  const fctx = makeHelperFctx(helperName, [
     { name: "recv", type: { kind: "externref" } },
     { name: "v1", type: { kind: "externref" } },
     { name: "v2", type: { kind: "externref" } },

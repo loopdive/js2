@@ -145,6 +145,7 @@ import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
 import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import type { IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
@@ -152,6 +153,7 @@ import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   isIrModuleClassInstanceValueKind,
   isIrModuleMapValueKind,
+  isIrModuleNativeBufferValueKind,
   isIrModuleReferenceValueKind,
 } from "./module-bindings.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
@@ -613,6 +615,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * source component and authorizes only its recorded AST nodes.
    */
   readonly standaloneDomCapability?: IrStandaloneDomCapabilityPlan;
+  /** (#7274) The native ArrayBuffer surface plan; present only where its capability row claims. */
+  readonly nativeBufferSurface?: IrNativeBufferSurfacePlan;
   /**
    * Proven primitive value family used by coercion-sensitive builtin
    * acceptance. Invalid local annotations and type assertions return
@@ -1716,6 +1720,8 @@ let currentDeferredHostGlobalResolver: ((node: ts.Identifier) => string | undefi
 // resolvers so a DOM plan cannot accidentally arm `window`, `performance`, or
 // an unregistered extern member.
 let currentStandaloneDomCapability: IrStandaloneDomCapabilityPlan | null = null;
+// (#7274) The native ArrayBuffer surface; its presence is the capability gate.
+let currentNativeBufferSurface: IrNativeBufferSurfacePlan | null = null;
 
 /**
  * (#4457) Arm both host-global resolvers for a selector run: the live one when
@@ -1755,6 +1761,7 @@ function armHostGlobalResolvers(sourceFile: ts.SourceFile, options: IrSelectionO
     !jsHostExternsEnabled(options)
       ? candidate
       : null;
+  currentNativeBufferSurface = options?.nativeBufferSurface ?? null;
 }
 
 function standaloneDomOperation(node: ts.Node): IrStandaloneDomOperation | undefined {
@@ -3816,7 +3823,12 @@ function dynamicUsesAreMoveOnly(
         if (!dynNames.has(e.left.text)) return scanExpr(e.right, false);
         if (isDynShaped(e.right)) return scanExpr(e.right, true);
         const concrete = unwrap(e.right);
-        return concreteDynamicAssignmentOperandIsBuildable(concrete) && scanExpr(concrete, false);
+        // (#7265) A local call's boolean result boxes onto the carrier like a comparison.
+        const boolCall =
+          ts.isCallExpression(concrete) &&
+          ts.isIdentifier(concrete.expression) &&
+          calleeReturnKind(concrete.expression.text, typeMap) === "bool";
+        return (boolCall || concreteDynamicAssignmentOperandIsBuildable(concrete)) && scanExpr(concrete, false);
       }
       if (op === ts.SyntaxKind.PlusToken && (leftIsDyn || rightIsDyn)) {
         if (!currentDynamicRuntimeBuildable) return false;
@@ -3994,6 +4006,11 @@ function dynamicUsesAreMoveOnly(
         const key = unwrap(e.argumentExpression);
         if (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)) return true;
         if (ts.isIdentifier(key) && dynNames.has(key.text)) return true; // dynamic index → used as-is
+        // (#7265) Any other dynamic key (`verifyProp || name`); kept off a body with
+        // a member call (#7261).
+        const dynamicKey = isDynShaped(key);
+        needsNoDynamicMethodCall ||= dynamicKey;
+        if (dynamicKey) return scanExpr(key, true);
         // (#7106 item 1) a PROVEN-number index (`b[i]` in a counted loop):
         // the producer lowers it f64 and boxes it tag-3 (`boxConcreteToDynamic`),
         // so the key is never null.
@@ -4986,19 +5003,35 @@ function isPhase1ThrowStatement(
   if (expressionTouchesModuleMapGetAlias(stmt.expression)) {
     return shapeNo("throw-module-map-get-alias", stmt.expression);
   }
-  // (#7106 lever T) `throwOperandAdmissible` judges a thrown value that reads a scalar module binding (a
-  // construction is an object). Its `+` is judged by `checkerAdditionVerdict` in `isPhase1Expr`; this arm
+  // (#7106 lever T) `throwOperandAdmissible` judges a thrown value that reads a scalar module binding by its
+  // family (`thrownValueFamily`). Its `+` is judged by `checkerProvesBinaryOperands` in `isPhase1Expr`; this arm
   // only names the result family. A top-level throw is withdrawn by integration after the claim outside WASI.
   const thrown = unwrapPhase1Parens(stmt.expression);
   if (expressionTouchesScalarModuleBinding(thrown)) {
-    const family = ts.isNewExpression(thrown)
-      ? "reference"
-      : OBVIOUS_OPERAND_FAMILIES[obviousModuleValueFamily(thrown) ?? "unknown"];
+    const family = thrownValueFamily(thrown);
     if (family === "nullish") return shapeNo("throw-module-nullish", stmt.expression);
     if (!throwOperandAdmissible(family)) return shapeNo("throw-module-scalar-unboxed", stmt.expression);
     if (ts.isSourceFile(stmt.parent)) return shapeNo("throw-module-top-level", stmt.expression);
   }
   return isPhase1Expr(stmt.expression, scope, localClasses);
+}
+
+/**
+ * The operand family of a thrown value that reads a scalar module binding. A
+ * `new` throws an object, but its arguments still read the binding (#7281):
+ * `new Test262Error('Actual: ' + x)` passes a string, `new Test262Error(x)` the
+ * unboxed scalar itself, which makes the whole value `unknown`. The family is
+ * flow-insensitive; a `+` is still proven by the checker in `isPhase1Expr`.
+ */
+function thrownValueFamily(thrown: ts.Expression): OperandFamily {
+  const value = unwrapPhase1Parens(thrown);
+  if (!ts.isNewExpression(value)) return OBVIOUS_OPERAND_FAMILIES[obviousModuleValueFamily(value) ?? "unknown"];
+  const unboxed = (argument: ts.Expression): boolean => {
+    if (!expressionTouchesScalarModuleBinding(argument)) return false;
+    const family = thrownValueFamily(argument);
+    return family !== "string" && family !== "reference";
+  };
+  return value.arguments?.some(unboxed) ? "unknown" : "reference";
 }
 
 /**
@@ -7960,12 +7993,19 @@ function expressionMayBeModuleExtern(expr: ts.Expression): boolean {
   return false;
 }
 
-/** True when any value position in an expression refers to a module extern. */
+/**
+ * True when any value position in an expression refers to a module extern.
+ * (#7274) A native-buffer handle the plan consumes in a certified operation is not one.
+ */
 function expressionTouchesModuleExtern(expr: ts.Expression): boolean {
   let touched = false;
   const visit = (node: ts.Node): void => {
     if (touched) return;
-    if (ts.isIdentifier(node) && moduleExternBinding(node)) {
+    if (
+      ts.isIdentifier(node) &&
+      moduleExternBinding(node) &&
+      currentNativeBufferSurface?.consumesHandle(node) !== true
+    ) {
       touched = true;
       return;
     }
@@ -8107,6 +8147,22 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
   if (ts.isCallExpression(candidate) && isExactF64ScalarToStringCall(candidate)) return "string";
   if (ts.isCallExpression(candidate) && exactModuleMapMethod(candidate) === "get") return "extern";
   return currentModuleBindingResolver?.scalarExpressionFamily(candidate);
+}
+
+/**
+ * from-ast's typing gate for `expr` over the checker's flow-sensitive operand
+ * families; `undefined` when the checker cannot classify a side as a primitive.
+ * `moduleAdditionVerdict` admits only on `true`; the element-read backstop
+ * refuses only on `false` (a proven mismatch). The slot family is
+ * flow-insensitive: `typeof x !== 'number'` narrows `x` to `never`, which this
+ * proof refuses (#7281).
+ */
+function checkerProvesBinaryOperands(expr: ts.BinaryExpression): boolean | undefined {
+  const classify = currentSelectionOptions?.classifyPrimitiveExpression;
+  const left = classify?.(expr.left);
+  const right = classify?.(expr.right);
+  if (!left || !right) return undefined;
+  return provenBinaryOperandsAdmissible(expr, left, right, additiveLane());
 }
 
 /**
@@ -9040,7 +9096,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
     !carrierOperand &&
     (mayBeElementRead(expr.left, selectorLeafReadsElement) || mayBeElementRead(expr.right, selectorLeafReadsElement))
   ) {
-    if (checkerAdditionVerdict(expr) === false) {
+    if (checkerProvesBinaryOperands(expr) === false) {
       return capabilityNo("operand-coercion-unsupported", "expr-binary-element-concat-proof", expr);
     }
   }
@@ -10952,18 +11008,9 @@ const laneFormatsNumbers = (): boolean =>
  */
 function moduleAdditionVerdict(expr: ts.BinaryExpression): "admit" | "refuse" | "families" {
   if (expr.operatorToken.kind !== ts.SyntaxKind.PlusToken) return "families";
-  if (checkerAdditionVerdict(expr) === true) return "admit";
+  if (checkerProvesBinaryOperands(expr) === true) return "admit";
   const readsDynamic = (e: ts.Expression) => moduleBinding(e)?.valueKind.kind === "dynamic";
   return !currentSubjectIsModuleInit && (readsDynamic(expr.left) || readsDynamic(expr.right)) ? "refuse" : "families";
-}
-
-/** The builder's `+` proof (`provenAdditiveOperands`) over the checker's use-site types; `undefined` if unclassified. */
-function checkerAdditionVerdict(expr: ts.BinaryExpression): boolean | undefined {
-  const classify = currentSelectionOptions?.classifyPrimitiveExpression;
-  const left = classify?.(expr.left);
-  const right = classify?.(expr.right);
-  if (left === undefined || right === undefined) return undefined;
-  return provenBinaryOperandsAdmissible(expr, left, right, additiveLane());
 }
 
 /** (#7066) An array-pattern leaf the selector resolves reads an element (`patternLeafReadsElement`). */
@@ -11499,7 +11546,44 @@ function functionObjectCallIsPhase1(
   );
 }
 
+/**
+ * (#7274) The plan-certified native ArrayBuffer operations, ahead of the
+ * module-extern consumer gate (a buffer var is a capability-extern binding):
+ * the operands must be Phase-1 and a var receiver must resolve to the
+ * native-buffer storage kind. A certified receiver's member outside the plan
+ * is refused here by name. `undefined` = not a buffer expression.
+ */
+function phase1NativeBufferVerdict(
+  expr: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  const surface = currentNativeBufferSurface;
+  if (surface === null) return undefined;
+  const op = surface.operation(expr);
+  if (op === undefined) {
+    const access = ts.isCallExpression(expr) ? expr.expression : expr;
+    return ts.isPropertyAccessExpression(access) && surface.isReceiver(access.expression)
+      ? capabilityNo("host-surface-unavailable", "expr-native-buffer-member", expr)
+      : undefined;
+  }
+  if (op.kind === "construct") {
+    return [op.length, op.maxByteLength].every((e) => e === undefined || isPhase1Expr(e, scope, localClasses));
+  }
+  const receiver = unwrapPhase1Parens(op.receiver);
+  if (ts.isIdentifier(receiver)) {
+    const kind = moduleBinding(receiver)?.valueKind;
+    if (kind === undefined || !isIrModuleNativeBufferValueKind(kind)) {
+      return shapeNo("expr-native-buffer-receiver", receiver);
+    }
+  }
+  if (!isPhase1Expr(op.receiver, scope, localClasses)) return false;
+  return op.kind === "get" || op.bounds.every((bound) => isPhase1Expr(bound, scope, localClasses));
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
+  const nativeBuffer = phase1NativeBufferVerdict(expr, scope, localClasses);
+  if (nativeBuffer !== undefined) return nativeBuffer;
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
     !moduleExternConsumerIsProven(expr, scope)

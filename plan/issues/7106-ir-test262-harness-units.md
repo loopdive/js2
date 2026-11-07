@@ -5635,9 +5635,29 @@ the claim: "function member operand has no canonical carrier".
 **Change.** One arm in `src/ir/integration.ts`, `resolveModuleBindingGlobal`:
 the `i32` kind reads as `irBool()`.
 - It reuses the #4503 boolean brand (`boolean-brand.ts`). The brand changes
-  no representation, and `irTypeEquals` erases it, so no join, slot write or
-  verifier check changes. No second boolean rule is added; the value kind
-  already says `boolean`.
+  no representation, and `irTypeEquals` erases it, so no join or verifier
+  check changes. No second boolean rule is added; the value kind already says
+  `boolean`.
+- **Numeric coercion did change** (review round 1). `isNumericIrSlot` refuses
+  a boolean, so a branded read stopped converting into a number result
+  (`let flag = true; function t(): number { return flag; }`) and into a
+  numeric compound field write. Standalone withdrew both after the claim,
+  where main converts the bare `i32`.
+  - `coerceIrToNumber` (`numeric-slot-coercion.ts`) is ToNumber into a
+    numeric slot: a numeric slot's value, or a boolean, whose ToNumber is its
+    0 or 1. Only its real ToNumber consumers take it: a compound field
+    update's operands (`numericFieldUpdate`) and a declared number result.
+  - `coerceIrNumeric` stays slot to slot, so a plain field write keeps the
+    boolean itself (`o.n = true` stores `true`; review round 2 found that
+    widening it stored 1).
+  - The compound write's right-side gate accepts a boolean on both lanes,
+    since its ToNumber needs no recovered domain. The field slot check is
+    main's `laneNumericSlot`.
+  - A boolean is still no numeric target. So a branded read converts exactly
+    where main's bare one did.
+- The selector's `provenIrFamily` names the slot `boolean`, not `int32`, as
+  the brand does. That newly claims `Object.is(x, true)` on both lanes, with
+  the right answer.
 - The `f64` and `i32` arms stay separate. `integration.ts` grows by 2 lines
   (the import and the one-line why), under its existing grant with a dated
   note.
@@ -5668,13 +5688,30 @@ depends on it, not for its own gain.
 **Acceptance.**
 - **Correctness:** no claim-then-demote for a boolean module `var`, 0 flips
   on both lanes, and legacy bytes and the playground identical.
-- **Tests:** `tests/issue-7106-module-bool-slot.test.ts`, both lanes: six
-  claimed shapes, and the S5 boolean-leaf shape, which withdraws nothing.
+- **Tests:** `tests/issue-7106-module-bool-slot.test.ts`:
+  - on both lanes, seven claimed shapes, and the S5 boolean-leaf shape, which
+    withdraws nothing;
+  - on standalone, two numeric consumers that keep main's claim;
+  - on both lanes, a boolean written to an object's number field keeps
+    `true`, and a boolean compound operand (`o.n += flag`) converts, claimed.
+
+  It and `issue-7106-for-head-destructuring.test.ts` share
+  `compileHarnessOn` / `runHarnessOn`
+  (`tests/helpers/harness-module-init.ts`), which take the lane.
 - **Code quality:**
   - one arm changed;
-  - no new predicate or boolean rule (the existing brand and value kind are
-    reused);
-  - no new function.
+  - one conversion added, `coerceIrToNumber`, sharing
+    `coerceIrNumeric`'s body and used by its two ToNumber consumers;
+  - no second boolean rule (the existing brand and value kind are reused).
+
+**Follow-ups.**
+- **Latent: a conditional keeps its true arm's type.** `lowerConditional`
+  keeps the true arm's `IrType`, brand included. So `c ? flag : k`, with `k`
+  a native `i32`, would box `k` as a boolean if it were ever claimed. It is
+  not claimed today, and literal `true` arms on main already carry the same
+  hazard.
+- Once this and #7037 have landed, S5 can drop its boolean-leaf refusal, and
+  its test can use the shared `runHarnessOn`.
 
 ## ES5 lever T: `throw new Test262Error('…' + x)` over a script scalar (implemented, 2026-11-06)
 
