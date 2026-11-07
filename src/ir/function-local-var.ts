@@ -4,10 +4,7 @@
 // with its existing lexical local/slot model.
 
 import { forEachChild, ts } from "../ts-api.js";
-
-export function isVarDeclarationList(list: ts.VariableDeclarationList): boolean {
-  return (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) === 0;
-}
+import { isVarDeclarationList } from "../shared/module-init-var-lists.js";
 
 function isFunctionBoundary(node: ts.Node): boolean {
   return (

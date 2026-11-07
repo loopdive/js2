@@ -36,19 +36,6 @@ func-budget-allow:
   # 2026-11-06 (#7288): the one observe call in the for-head arm of
   # `walkModuleStmtForVars`, which is nested in `collectDeclarations`.
   - src/codegen/declarations.ts::collectDeclarations
-import-cycles-allow:
-  # 2026-11-07 (#7288): module-global-registration.ts → ir/module-init-vars.ts.
-  # Legacy must observe exactly the hoisted heads the IR resolves; a second
-  # copy of the rule in codegen would let the two drift, which is the
-  # hard-compile-error class the review found. The edge cannot be cut:
-  #   - moving the predicate below both is not possible, because
-  #     module-init-vars.ts depends on IR modules (binding-pattern-plan,
-  #     function-local-var);
-  #   - injecting it would thread a callback through `collectDeclarations`
-  #     (already over its budget) only to hide the same dependency.
-  # codegen already imports the IR's module-init identity (declarations.ts →
-  # ir/module-init.js), so the direction is not new; only the file pair is.
-  - codegen->ir: 303 # 2026-11-07 (#7288): legacy observes exactly the for-heads the IR resolves, through the IR's one predicate (see above)
 ---
 
 # #7288: nested top-level `var` in `<module-init>`
@@ -106,7 +93,8 @@ So the claim-then-withdraw is exactly the for-in head. The selector binds that h
   - from-ast's `moduleInitContainsNestedVar`, which skips modelled lists.
 - **The selector checks a hoisted head as the `var` statement it lowers as.** The for-init arm routes a module-init head through `isPhase1VarDecl`, whose "direct module declaration" test becomes `isDirectModuleDeclaration`. So storage, value flow and closure checks are the statement's own, with no partial copy. from-ast lowers the head in the enclosing scope (`lowerForInitializer`) for the same reason (added after review, findings 2 and 4).
 - **Legacy observation.** `observeHoistedForHeadVars` (`module-global-registration.ts`) observes the head's by-name slot under its exact declaration, only for lists `isModuleInitVarList` models. It shares `observeModuleGlobal` with `registerModuleGlobal`'s existing-global branch. No new slot is allocated, so no wasm output changes.
-- **for-in.** `isPhase1ForInStatement` refuses a `<module-init>` head that hoists into its module slot (`forin-head-module-var`). There is no claim-then-withdraw left.
+- **for-in.** `isPhase1ForInStatement` refuses a `<module-init>` head that hoists into its module slot (`forin-head-module-var`). That for-in claim-then-withdraw is gone. The two the hoisted head inherited from the `var`-statement arm are fixed at selection (second review, below). One function-arm withdrawal remains, the same as on main for the statement form.
+- **Where the predicate lives.** `moduleInitVarList` / `isModuleInitVarList` (with `isVarDeclarationList`) are in `src/shared/module-init-var-lists.ts`, below both the IR and codegen. So legacy's observation and the IR's resolver read one rule, and no `codegen → ir` import edge is added (second review, item 2).
 - **Code-quality criterion.** No sibling declaration arm: the head lowers through the existing module-binding declaration path (`lowerVariableDeclaration` → module slot). One predicate decides modelled lists on both the IR and the legacy side.
 
 ## Result (2026-11-07, base: #7276 tip d634f60f, head 2f7f7110)
@@ -147,4 +135,16 @@ Found correct by the reviewer:
 - nested and closure-captured heads and `eval` refused up front;
 - function-scoped `for` and `for-in` unaffected;
 - the for-in check placed correctly.
+
+## Second review (fresh context, PR comment 6700645480): APPROVE with nits, all fixed
+
+1. **Fixed (must-fix by the #7147 standard).** Two claim-then-withdraw shapes were inherited from the `var`-statement arm, on main in their statement form too: `for (var u = null; …)` and `var pre = i; for (var i = 0; …)`. Both are now refused at selection, by the write check the statement and head forms share (`writeValueMatches`, `module-bindings.ts`):
+   - a bare `null` into the dynamic carrier answers from-ast's own `nullValueAdmissible` proof;
+   - a direct read of a binding whose slot is the carrier is no typed value.
+
+   Both forms are covered in the test, which now asserts `irPostClaimErrors` is empty for every case. That assertion found a third shape: a top-level `function f() { return i; }` next to a head. `f` is withdrawn on a type-index parity mismatch (IR return f64, legacy slot externref), exactly as `function f() { return i; } var i = 0;` is on main. That is the function arm's return typing, not this arm, so the case is marked `knownPostClaimWithdrawal` and left as a follow-up.
+2. **Fixed.** No import-cycle grant is needed any more. The predicate moved to `src/shared/module-init-var-lists.ts`, so the `codegen → ir` edge does not grow (`check:import-cycles` OK without a grant).
+3. **Fixed.** Merged `origin/main`.
+4. **Fixed.** The guards that could never fail are dropped (`cx.moduleBindings !== undefined` in from-ast's for-init, `currentSubjectIsModuleInit` in the selector's): `isModuleInitVarList` already implies a top-level statement, which only `<module-init>` lowers.
+5. **Fixed.** `forHeadDeclarations` is cached per source file, like `moduleInitLeaves`.
 

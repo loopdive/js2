@@ -293,7 +293,7 @@ import {
 } from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
-import { isModuleInitVarList, moduleInitVarList } from "./module-init-vars.js";
+import { isModuleInitVarList, moduleInitVarList } from "../shared/module-init-var-lists.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   boundedMixedConditionalPrimitiveFamily,
@@ -12247,7 +12247,7 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
   // 1. Init — emit inline before the for.loop instr. (#7288) A module-init
   // head is hoisted: it binds in the enclosing scope, like a top-level `var`
   // statement, so a read after the loop sees the same module slot.
-  const hoistedHead = cx.moduleBindings !== undefined && isModuleInitVarList(stmt.initializer);
+  const hoistedHead = isModuleInitVarList(stmt.initializer);
   if (hoistedHead) lowerForInitializer(stmt.initializer, cx);
   const innerCx: LowerCtx = { ...cx, scope: new Map(cx.scope), pendingLoopLabel: undefined };
   if (stmt.initializer && !hoistedHead) lowerForInitializer(stmt.initializer, innerCx);

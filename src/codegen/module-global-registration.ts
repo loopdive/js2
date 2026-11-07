@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { GlobalDef, Instr, ValType } from "../ir/types.js";
-import { isModuleInitVarList } from "../ir/module-init-vars.js";
+import { isModuleInitVarList } from "../shared/module-init-var-lists.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
 import type { CodegenContext } from "./context/types.js";

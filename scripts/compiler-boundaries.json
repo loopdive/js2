@@ -12777,6 +12777,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/shared/module-init-var-lists.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7288",
+      "nextBoundary": "TypeScript-AST certifier for which top-level `var` lists the module initializer models (#7106 S5, #7288); shared by the IR resolver and legacy's slot observation, moves with the frontend inventory split."
+    },
+    {
       "path": "src/shared/ambient-intrinsics.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

@@ -16,36 +16,8 @@
 // represent.
 
 import { ts } from "../ts-api.js";
-import { isPatternDeclaration, patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
-import { isVarDeclarationList } from "./function-local-var.js";
-
-/** The `var` list `statement` contributes to the module initializer, if it models one. */
-export function moduleInitVarList(statement: ts.Node): ts.VariableDeclarationList | undefined {
-  const loop = unlabelled(statement);
-  const list = ts.isVariableStatement(statement)
-    ? statement.declarationList
-    : ts.isForStatement(loop) && loop.initializer && ts.isVariableDeclarationList(loop.initializer)
-      ? loop.initializer
-      : undefined;
-  if (!list || !isVarDeclarationList(list)) return undefined;
-  // (#7288) An identifier head binds a module global in a script only; an ES module keeps the S5 pattern heads.
-  const script = !ts.isExternalModule(statement.getSourceFile());
-  return ts.isVariableStatement(statement) || script || list.declarations.every(isPatternDeclaration)
-    ? list
-    : undefined;
-}
-
-/** Whether `node` is the `var` list of a top-level statement that {@link moduleInitVarList} models. */
-export function isModuleInitVarList(node: ts.Node | undefined): node is ts.VariableDeclarationList {
-  if (node === undefined || !ts.isVariableDeclarationList(node)) return false;
-  let statement: ts.Node = node.parent;
-  while (ts.isLabeledStatement(statement.parent)) statement = statement.parent;
-  return ts.isSourceFile(statement.parent) && moduleInitVarList(statement) === node;
-}
-
-function unlabelled(statement: ts.Node): ts.Node {
-  return ts.isLabeledStatement(statement) ? unlabelled(statement.statement) : statement;
-}
+import { isModuleInitVarList, moduleInitVarList } from "../shared/module-init-var-lists.js";
+import { patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
 
 /** The {@link moduleInitVarList} of every module-init statement. */
 export function collectIrSafeModuleVarDeclarationLists(
@@ -107,14 +79,21 @@ function moduleInitLeaves(sourceFile: ts.SourceFile): ModuleInitLeaves {
   return cached;
 }
 
+const forHeadsBySource = new WeakMap<ts.SourceFile, readonly ts.VariableDeclaration[]>();
+
 /** (#7288) The identifier declarations of the modelled `for (;;)` heads of `sourceFile`, in source order. */
-function forHeadDeclarations(sourceFile: ts.SourceFile): ts.VariableDeclaration[] {
-  return sourceFile.statements
-    .filter((statement) => !ts.isVariableStatement(statement))
-    .flatMap(moduleInitBindings)
-    .flatMap((binding) =>
-      "name" in binding && ts.isVariableDeclaration(binding.declaration) ? [binding.declaration] : [],
-    );
+function forHeadDeclarations(sourceFile: ts.SourceFile): readonly ts.VariableDeclaration[] {
+  let cached = forHeadsBySource.get(sourceFile);
+  if (!cached) {
+    cached = sourceFile.statements
+      .filter((statement) => !ts.isVariableStatement(statement))
+      .flatMap(moduleInitBindings)
+      .flatMap((binding) =>
+        "name" in binding && ts.isVariableDeclaration(binding.declaration) ? [binding.declaration] : [],
+      );
+    forHeadsBySource.set(sourceFile, cached);
+  }
+  return cached;
 }
 
 /**

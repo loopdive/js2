@@ -61,6 +61,11 @@ interface Case {
   readonly fileName?: string;
   /** The lanes on which `<module-init>` takes the IR body; on the others it keeps legacy's. */
   readonly irOn: readonly string[];
+  /**
+   * A post-claim withdrawal the statement form has on main too (a function's
+   * return-type parity, not this arm); every other case must claim cleanly.
+   */
+  readonly knownPostClaimWithdrawal?: boolean;
 }
 
 const ALL = ["standalone", "wasi", "gc (default)"];
@@ -135,6 +140,19 @@ for (var i = a; i < 3; i++) {}
 if (i !== 3) throw "carrier";`,
     irOn: [],
   },
+  // Refused at selection by the shared write check (`writeValueMatches`), not
+  // withdrawn after the claim; the statement forms share it.
+  "a null head": {
+    source: `for (var u = null; false; ) {}
+if (u !== null) throw "null";`,
+    irOn: [],
+  },
+  "a read of the head before its declaration": {
+    source: `var pre = i;
+for (var i = 0; i < 2; i++) {}
+if (i !== 2) throw "pre";`,
+    irOn: [],
+  },
   "a head named like a top-level function": {
     source: `function i() {}
 for (var i = 0; i < 2; i++) {}
@@ -163,7 +181,10 @@ for (var i = 0; i < 2; i++) {}
 if (i !== 2) throw "stmt+head";`,
     irOn: ALL,
   },
+  // `f`'s IR return type (f64) differs from legacy's slot (externref): the
+  // function arm withdraws `f` after the claim, exactly as for `var i = 0;` on main.
   "a function reads the counter after the loop": {
+    knownPostClaimWithdrawal: true,
     source: `function f() { return i; }
 for (var i = 0; i < 3; i++) {}
 if (f() !== 3) throw "fn";`,
@@ -177,6 +198,7 @@ describe("#7288 top-level for-head var in module-init", () => {
       it(`${label} (${lane.name})`, async () => {
         const fileName = testCase.fileName ?? "issue-7288.js";
         const { result, value } = await compileAndRun(testCase.source, lane.options, fileName);
+        if (!testCase.knownPostClaimWithdrawal) expect(result.irPostClaimErrors ?? []).toEqual([]);
         if (fileName.endsWith(".js")) expect(value).toBe(scriptVerdict(testCase.source));
         else expect(value).toBe("completed");
         expect(route(result, "<module-init>")).toBe(testCase.irOn.includes(lane.name));

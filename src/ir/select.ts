@@ -81,7 +81,8 @@ import {
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
-import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists, isModuleInitVarList } from "./module-init-vars.js";
+import { isModuleInitVarList } from "../shared/module-init-var-lists.js";
+import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
@@ -5564,7 +5565,7 @@ function isPhase1ForStatementInScope(
 
   // Init: optional. Variable declaration adds bindings; expression init
   // doesn't. Both must be Phase-1.
-  if (stmt.initializer && currentSubjectIsModuleInit && isModuleInitVarList(stmt.initializer)) {
+  if (isModuleInitVarList(stmt.initializer)) {
     // (#7288) A hoisted module-init head is checked as the top-level `var`
     // statement it lowers as (from-ast's `lowerForInitializer`).
     const head = ts.factory.createVariableStatement(undefined, stmt.initializer);
