@@ -352,7 +352,7 @@ export function answer(): number { return 42; }
   });
 
   it("records the compiler-injected timer wrapper as an exact IR terminal", async () => {
-    // (#7313) The host-assisted pin is a compile error since #6979. Under the
+    // (#7325) The host-assisted pin is a compile error since #6979. Under the
     // native profile an arrow callback gets no closure plan (`closure-return-type`),
     // so the fixture uses a function expression; the ledger contract under test
     // is profile-independent.
