@@ -192,10 +192,14 @@ import {
   type NativeStringLiteralMaterialization,
   type StringEncoding,
 } from "../codegen/native-string-literals.js";
-import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
+import {
+  STANDALONE_REGEXP_CARRIER_TEST_HELPER,
+  STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER,
+} from "./regexp-runtime-contract.js";
 import {
   ensureIrRegExpLiteralHelper,
   ensureStandaloneRegExpCarrierTestHelper,
+  ensureStandaloneRegExpCarrierToStringHelper,
   standaloneStaticRegExpCompiles,
 } from "../codegen/regexp-standalone.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../codegen/registry/imports.js";
@@ -7890,6 +7894,8 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNumberToFixedProvider(ctx, fuseNativeNumberFormatCarriers);
   } else if (ref.binding.kind === "intrinsic" && parseIrDateSnapshotGetter(symbol) !== undefined) {
     index = ensureDateCivilHelper(ctx);
+  } else if (ref.binding.kind === "runtime" && symbol === STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER) {
+    index = ensureStandaloneRegExpCarrierToStringHelper(ctx);
   } else if (ref.binding.kind === "runtime" && symbol === "__str_replaceAll") {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);

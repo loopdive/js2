@@ -98,7 +98,10 @@ import { emitRegExpProtoToStringBody } from "./regexp-proto-to-string.js";
 import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
-import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
+import {
+  STANDALONE_REGEXP_CARRIER_TEST_HELPER,
+  STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER,
+} from "../ir/regexp-runtime-contract.js";
 import { integrityVarKey } from "./widened-var-key.js";
 import { emitRegExpSymbolMatchBody, emitRegExpSymbolSearchBody } from "./regexp-exec-protocol.js";
 import { emitRegExpSymbolReplaceBody } from "./regexp-replace-protocol.js";
@@ -5739,6 +5742,25 @@ export function ensureStandaloneRegExpToStringDyn(ctx: CodegenContext): number |
     exported: false,
   });
   return funcIdx;
+}
+
+/**
+ * (#7106 lever R3) `__regexp_to_string_carrier(externref) -> ref $AnyString`: the IR's ToString of a native RegExp
+ * in a string `+`. The carrier ABI of `__regexp_test_carrier` over {@link ensureStandaloneRegExpToStringDyn}'s
+ * rendering; the IR passes only a `$NativeRegExp` it constructed.
+ */
+export function ensureStandaloneRegExpCarrierToStringHelper(ctx: CodegenContext): number | undefined {
+  const existing = ctx.funcMap.get(STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER);
+  if (existing !== undefined) return existing;
+  const toStringDyn = ensureStandaloneRegExpToStringDyn(ctx);
+  if (toStringDyn === undefined) return undefined;
+  const helper = helperFunctionContext(
+    STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER,
+    [{ name: "recv", type: { kind: "externref" } }],
+    { kind: "ref", typeIdx: ctx.anyStrTypeIdx },
+  );
+  helper.body.push({ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "call", funcIdx: toStringDyn });
+  return publishHelperFunction(ctx, helper);
 }
 
 /** (#4465) The `$__StandaloneRegExp` struct type index, when the module has one. */

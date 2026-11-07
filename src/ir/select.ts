@@ -8765,9 +8765,10 @@ function hostRegExpUnavailable(): boolean {
 }
 
 /**
- * (#7106 lever R) A static construction (`staticRegExpPair`) a `native-regexp` lane builds in-module, where R1
- * consumes it: the receiver of `.test(…)`, or a discarded statement (which still throws an invalid pair's
- * SyntaxError). A property read (`/a/.source`), a `+` (R3's ToString) or a binding has no lowering for it yet.
+ * (#7106 lever R) A static construction (`staticRegExpPair`) a `native-regexp` lane builds in-module, where the IR
+ * consumes it: the receiver of `.test(…)`, a discarded statement (which still throws an invalid pair's SyntaxError),
+ * or (R3) an operand of `+`, which the `+` rule admits only beside a string (its `RegExp.prototype.toString`). A
+ * property read (`/a/.source`) or a binding has no lowering for it yet.
  */
 function nativeStaticRegExp(expr: ts.Expression): boolean {
   const pair = staticRegExpPair(expr);
@@ -8777,9 +8778,10 @@ function nativeStaticRegExp(expr: ts.Expression): boolean {
     consumer.name.text === "test" &&
     ts.isCallExpression(consumer.parent) &&
     consumer.parent.expression === consumer;
+  const additionOperand = ts.isBinaryExpression(consumer) && consumer.operatorToken.kind === ts.SyntaxKind.PlusToken;
   return (
     pair !== undefined &&
-    (testReceiver || ts.isExpressionStatement(consumer)) &&
+    (testReceiver || additionOperand || ts.isExpressionStatement(consumer)) &&
     currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
     currentSelectionOptions.nativeRegExpCompiles?.(pair.pattern, pair.flags) === true
   );
@@ -9116,6 +9118,7 @@ function binaryOperandFamily(
   if (isCarrierAddition(candidate, (side) => selectorCarrierValue(side, scope, localClasses))) return "dynamic";
   if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
   if (isUnshadowedUndefinedIdentifier(candidate, scope) || isVoidZero(candidate)) return "undefined";
+  if (nativeStaticRegExp(candidate)) return "regexp";
   const proven = provenIrFamily(operand, scope);
   return proven === "unknown" && obviousSelectorValueFamily(operand, scope) === "reference" ? "reference" : proven;
 }
