@@ -172,10 +172,10 @@ after the calling function. Lead's call.
 | same, gc | 533/252/22 — row-identical to main |
 | 33 adversarial probes (standalone) | = legacy except the `p = 5` cases: legacy traps, IR throws TypeError |
 | `tests/issue-7287-script-var-closure-call.test.ts` | 51/51 (gc/standalone/wasi) |
-| Equivalence gate | see PR |
+| Equivalence gate (`dfd8c404`) | 4850 pass, 20 fail all baseline-known, 0 new regressions |
 
-The test262 A/B ran before the statement-position restriction, which only
-removes claims.
+The test262 A/B was re-run on the final code (`dfd8c404`): both lanes
+row-identical to main again.
 
 **Yield.** 0 on its own, as planned: the async harness units also need #7277
 and #7286, and zero-legacy files stay 0 because `<module-init>` is legacy
