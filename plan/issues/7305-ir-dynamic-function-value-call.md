@@ -126,10 +126,13 @@ All paths are under `src/`.
 
 ## 3. The smallest general extension, and what it unblocks
 
-**Extension.** Let a *top-level* subject take `dynamicValueCallTarget` when
-the callee is one of its own dynamic-carrier locals (a `dynNames` entry: a
-dynamic parameter or a `var`/`const` aliasing a dynamic value), in statement
-position. The lowering and runtime are unchanged. Value position stays
+**Extension.** Let a top-level function declaration take `dynamicValueCallTarget` when
+the callee is one of its own dynamic **parameters** (`currentDynamicParamNames`,
+the membership S3a's `new g()` already uses), in statement position in its own
+body, and it has no ambient `this`. `var`/`const` aliases of a dynamic value are
+deferred: whether a local is dynamic is only known once the move-only scan has
+run (`dynNames` grows there), after the Phase-1 call check. Class members are
+out of scope. The lowering and runtime are unchanged. Value position stays
 refused, as in #7287. The receiver is undefined.
 
 **Consumers**, measured with a throwaway admission that bypassed (a) the
@@ -165,8 +168,8 @@ The rule to add:
 
 That rule is *already* `dynamicValueCallTarget`. The extension should widen
 **that one predicate's membership test** from "a planned closure's dynamic
-parameter or read local" to "…or a top-level subject's dynamic-carrier
-local". It should not add a sibling predicate or a second arm.
+parameter or read local" to "…or a top-level function declaration's own
+dynamic parameter" (§3). It should not add a sibling predicate or a second arm.
 
 `dynamicUsesAreMoveOnly` then needs one sink line: "the callee of a bare
 statement call when `dynamicValueCallTarget` holds". It reads the same
@@ -223,3 +226,17 @@ will not claim it. Constraints carried over from #7287:
 
 The widening in §4 touches the same predicate family but not R9's
 module-binding arm.
+
+## Adversarial review (fresh context, 2026-11-07)
+
+Verdict: no blockers, sound in every compiled probe (`irPostClaimErrors`
+empty, standalone and gc pass).
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 (should-fix) | the arm also claimed class instance / static methods (`currentDynamicParamNames` holds their parameters); sound, but undocumented and untested | owner restricted to a `FunctionDeclaration`; methods pinned as refused, `new u(f)` pinned as claimed |
+| 2 (should-fix) | §3/§4 promised `var`/`const` aliases; the code admits parameters only | §3/§4 now say parameters only, and why aliases are deferred |
+| 3 (nit) | `decls.has(callee)` runs before the structural check, so a parameter shadowing a top-level function still adds a graph edge | kept: moving the check ahead of `decls.has` would also put it ahead of the propertyHelper alias arms (#7287's ordering rule), and the extra edge only makes the unit more conservative |
+| 4 (nit) | the closure-or-primitive box choice appears at two from-ast boundaries | kept: two users; folding it is a follow-up if a third appears |
+| 5 (nit) | the catch-binding paragraph read as covering the new arm | now says it describes the closure arm |
+

@@ -6667,8 +6667,8 @@ function closureFunctionObjectReadLocals(
  * `this`: it then cannot read `this` after a callee throws. Statement position
  * only: a call result would be typed by the callee's checker signature (#7287).
  *
- * The match is by identifier text, so a catch binding that shadows the
- * parameter (`catch (func) { func(); }`) also takes the arm; that is sound,
+ * In the closure arm the match is by identifier text, so a catch binding that
+ * shadows the parameter (`catch (func) { func(); }`) also takes it; that is sound,
  * because the catch binding is itself the dynamic carrier on these lanes
  * (`catchIsCarrier`). `var`/`let` shadows are refused at select; nested
  * functions are refused by the plan.
@@ -6688,12 +6688,14 @@ function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
 
 /**
  * (#7305) A statement call through one of `owner`'s own parameters, in
- * `owner`'s own body. The call graph reads it too: such a call is the dynamic
- * call above, never an edge, and a non-dynamic parameter is refused at Phase-1.
+ * `owner`'s own body, where `owner` is a top-level function declaration (class
+ * members are out of scope). The call graph reads it too: such a call is the
+ * dynamic call above, never an edge, and a non-dynamic parameter is refused at Phase-1.
  */
 function ownParameterStatementCall(expr: ts.CallExpression, owner: ts.SignatureDeclaration | null): boolean {
   const callee = expr.expression;
-  if (owner === null || !ts.isIdentifier(callee) || !ts.isExpressionStatement(expr.parent)) return false;
+  if (owner === null || !ts.isFunctionDeclaration(owner) || !ts.isIdentifier(callee)) return false;
+  if (!ts.isExpressionStatement(expr.parent)) return false;
   let enclosing: ts.Node | undefined = expr.parent;
   while (enclosing !== undefined && !ts.isFunctionLike(enclosing)) enclosing = enclosing.parent;
   return enclosing === owner && owner.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === callee.text);

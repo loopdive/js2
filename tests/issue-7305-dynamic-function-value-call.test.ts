@@ -71,6 +71,8 @@ var f = function () { throw 1; };
 function u(g) { g(); }
 o.m();
 assert.sameValue(out, "1");`,
+  "a function declaration used as a constructor": `var seen; function u(g) { g(); }
+var called = 0; new u(function () { called++; }); assert.sameValue(called, 1);`,
   "identity is preserved": `var h0 = function () {}; var same; function u(g, h) { g(h); }
 u(function (x) { same = x === h0; }, h0); assert.sameValue(same, true);`,
 };
@@ -80,6 +82,8 @@ const REFUSED: Record<string, string> = {
   "subject reads this": "function u(g) { g(); return this; }",
   "new g()": "function u(g) { new g(); }",
   "var alias": "function u(g) { var h = g; h(); }",
+  "class instance method (C_u)": "class C { u(g) { g(); } } new C().u(function () {});",
+  "class static method (C_u)": "class C { static u(g) { g(); } } C.u(function () {});",
   "nested function": "function u(g) { var f = function () { g(); }; f(); }",
 };
 
@@ -100,7 +104,8 @@ describe("#7305 statement call through a top-level dynamic parameter", () => {
   }
   for (const [name, body] of Object.entries(REFUSED)) {
     it(`${name} stays legacy`, async () => {
-      expect(await unitIsIr(fixture(`refused-${name.replace(/\W+/g, "-")}`, body), "u")).toBe(false);
+      const unit = /\((\w+)\)$/.exec(name)?.[1] ?? "u";
+      expect(await unitIsIr(fixture(`refused-${name.replace(/\W+/g, "-")}`, body), unit)).toBe(false);
     }, 60000);
   }
 });
