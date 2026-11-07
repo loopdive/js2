@@ -12506,6 +12506,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         // wins even though the builder cannot lower this forward reference.
         return capabilityNo("call-resolution-unsupported", "expr-nested-call-before-binding", expr.expression);
       }
+      // (#7324) Out of scope, the call lowers through a direct-call plan, which
+      // only a function declaration has: a variable callee read from a lifted
+      // closure (`var getter = 3; … function () { getter(); }`) has no binding
+      // there and from-ast would withdraw the claimed unit.
+      if (currentModuleBindingResolver?.localVariableDeclaration(expr.expression) !== undefined) {
+        return capabilityNo("call-resolution-unsupported", "expr-variable-callee-out-of-scope", expr.expression);
+      }
       const declaration = currentDynScanDecls?.get(calleeName);
       if (declaration && hasFixedIrParameters(declaration.parameters)) {
         if (
