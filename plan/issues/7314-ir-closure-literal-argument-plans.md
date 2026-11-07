@@ -129,6 +129,31 @@ The first refusal is first-wins, so a file can carry more blockers behind it.
 Zero is therefore an exact count, not a lower bound: no file in this
 population becomes zero-legacy.
 
+**Arrow-only scope (R11's split: 54 arrow units vs 68 function-expression
+units, 2026-11-07).** The probe was widened to every arrow:
+
+- positions: argument, `=` and `:`;
+- parameters: zero, parenthesised and bare.
+
+It ran on all 70 stride files whose only legacy unit is `<module-init>` and
+which contain an arrow.
+
+**Result: 0 of 70 reach zero legacy, and no file stops on a closure part
+any more.** First refusals:
+
+| refusal | files |
+| --- | ---: |
+| module storage | 24 |
+| `new X` value flow (Temporal and others) | 21 |
+| `expr-ident-not-in-scope` | 4 |
+| `CallExpression` value flow | 3 |
+| class expressions | 3 |
+| standalone `Intl` compile errors | 5 |
+| others | the rest |
+
+So the arrow plan path is a structural prerequisite, but it is never the
+last blocker in this population.
+
 R14's #7308 measurement agrees from the other side: admitting arrows to the
 planner flips 0 of the 19 single-lever closure files.
 
