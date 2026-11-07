@@ -6006,6 +6006,51 @@ TEST262_FULL_RUNTIME_EVAL=1`), built per tree.
   Interpreter-provider verdicts: 0 pass→fail on standalone (101 / 40) and on
   the JS host (98 / 43).
 
+#### Review round 2 (#7146)
+
+- **HIGH — a variable member key.** `this[k] = …` recorded the variable `k`
+  as the written name.
+  - Now `memberKeyName` names a property access by its `.name`, and an
+    element access only by a string-literal key.
+  - Any other key is unknown.
+- **MEDIUM — `%Function%` through a stored or forwarded `.constructor`.**
+  `var c = (…).constructor; c(…)`, `Object.constructor`, `.call` / `.apply`,
+  and `new (Object.constructor)(…)` escaped the call-only check.
+  - Any `.constructor` read in a fragment (`X.constructor` or
+    `X["constructor"]`) now makes the fragment unknown, called or not.
+  - That read replaces the call-only test, and the scan has one fewer rule.
+- **LOW — member closures.**
+  - A `delete` of `X.m` / `X["m"]` counts as a write of `m`.
+  - `__defineGetter__` / `__defineSetter__` join the property-defining calls,
+    which count as unknown.
+- **LOW — program-level `.constructor` reaches: follow-up, not fixed here.**
+  The cases are `Object.constructor("…")()`, `g.constructor("…")()`,
+  `var c = (…).constructor; c(…)` and `.call`.
+  - The fragment rule ("any `.constructor` read") is not cheap at program
+    level: the harness itself reads `.constructor` (`assert.throws`,
+    `e.constructor === Test262Error`). Every eval file would become unknown,
+    and A3's gain would be lost.
+  - A precise version needs a receiver test (a value that is a function) that
+    the oracle can answer, plus a site kind for a non-call escape. That is
+    its own change.
+- **Nit.** The "single immutable runtime-eval routing authority" comment is
+  back above `buildIrRuntimeEvalBoundaryPlan`.
+- **Also ported:** the A1 self-reference forward fix
+  (`claude/7106-eval-a1-selfref`), by merging that branch. It brings in
+  origin/main.
+- **Tests:** eight new rows: the variable key, the five `.constructor`
+  spellings, a member delete, and a getter definition. All eight fail on the
+  round-1 scan.
+- **Measured** (base = round 1 merged with origin/main, 61c6fb5d67):
+  - the 141 eval files and the 40-file control are byte-identical (standalone);
+  - IR units unchanged at 830 on the 141 and 344 on the control, with 0
+    post-claim errors on the 141;
+  - the interpreter provider built from each tree is byte-identical, so the
+    verdicts cannot differ from the base.
+
+  None of the 141 has these spellings in an eval string, so the stricter
+  scan costs nothing measurable.
+
 ### A2 and A3 (outline; each gets its own measured plan before code)
 
 - **A2.**
