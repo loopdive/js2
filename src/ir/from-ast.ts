@@ -62,7 +62,7 @@ import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-tar
 import {
   additiveOperandsProvable,
   binaryOperandsAdmissible,
-  carrierNumericReaderOperands,
+  numericReaderOperandsBoxed,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
   isCarrierAddition,
@@ -15393,7 +15393,7 @@ function lowerBinaryOperands(
 }
 
 /**
- * (#7106 lever B) A pair `carrierNumericReaderOperands` admits: box each
+ * (#7106 lever B) A pair `numericReaderOperandsBoxed` names: box each
  * boolean / string operand into the dynamic carrier (no side effect; ToNumber
  * and the type survive), so the pair takes `lowerBinary`'s dynamic arm.
  */
@@ -15406,7 +15406,7 @@ function boxNumericReaderOperands(
     irOperandFamily(cx.builder.typeOf(operands[0]), expr.left),
     irOperandFamily(cx.builder.typeOf(operands[1]), expr.right),
   ] as const;
-  if (!carrierNumericReaderOperands(expr.operatorToken.kind, families[0], families[1])) return operands;
+  if (!numericReaderOperandsBoxed(expr.operatorToken.kind, families[0], families[1])) return operands;
   const box = (value: IrValueId, family: OperandFamily, source: ts.Expression): IrValueId => {
     if (family !== "boolean" && family !== "string") return value;
     const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), source, cx);

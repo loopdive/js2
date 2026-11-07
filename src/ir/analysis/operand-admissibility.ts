@@ -339,24 +339,26 @@ export function binaryOperandsAdmissible(op: ts.SyntaxKind, left: OperandFamily,
 }
 
 /**
- * (#7106 lever B) A numeric reader's pair that the typed arms refuse, over
- * numbers, the carrier, `null` / `undefined` (read as numbers) and at least
- * one boolean or string: `lowerBinary` boxes each boolean / string side into
+ * (#7106 lever B) A numeric reader's pair over numbers, the carrier, `null` /
+ * `undefined` (read as numbers) and at least one boolean or string. Where the
+ * typed arms refuse it, `lowerBinary` boxes each boolean / string side into
  * the dynamic carrier, which keeps its ToNumber and its type, and the dynamic
  * arm runs (`dyn.to_number`, or the carrier relationals, whose IsLessThan
  * compares two strings as strings).
  */
-export function carrierNumericReaderOperands(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
+function carrierNumericReaderOperands(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
   const boxed = (family: OperandFamily): boolean => family === "boolean" || family === "string";
-  const read = (family: OperandFamily): boolean =>
-    boxed(family) || family === "number" || family === "dynamic" || family === "nullish" || family === "undefined";
-  return (
-    isNumericReaderOperator(op) &&
-    (boxed(left) || boxed(right)) &&
-    read(left) &&
-    read(right) &&
-    !typedOperandsAdmissible(op, left, right)
-  );
+  const read = (family: OperandFamily): boolean => boxableIntoDynamic(numberIfNullOrUndefined(family));
+  return isNumericReaderOperator(op) && (boxed(left) || boxed(right)) && read(left) && read(right);
+}
+
+/**
+ * (#7106 lever B) The builder's side of {@link carrierNumericReaderOperands}:
+ * the pair takes the boxing only where the typed arms refuse it, so a pair
+ * they lower (two strings under a relational, two i32s) keeps its own arm.
+ */
+export function numericReaderOperandsBoxed(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
+  return !typedOperandsAdmissible(op, left, right) && carrierNumericReaderOperands(op, left, right);
 }
 
 /** The pairs `lowerBinary` lowers on the operands' own carriers (see {@link binaryOperandsAdmissible}). */
