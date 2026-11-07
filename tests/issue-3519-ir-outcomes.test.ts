@@ -516,10 +516,6 @@ export function second(x: number): number { return x + 2; }`,
   });
 
   it("does not demote unexpected imported-call planning throws", async () => {
-    // (#7108) Pinned to host-assisted for the same #6708 default flip: under
-    // native-first this cross-module call is planned through the program
-    // callable graph (`planProgramCallableCall`), so the injection inside the
-    // module-import certification arm is never reached and nothing throws.
     process.env.JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW = "run";
     const result = await compileMulti(
       {
@@ -528,7 +524,7 @@ export function second(x: number): number { return x + 2; }`,
 export function run(value: number): number { return imported(value); }`,
       },
       "main.ts",
-      { trackIrOutcomes: true, semanticProviders: "host-assisted" },
+      { trackIrOutcomes: true },
     );
     expectInvariantWarning(result, "unexpected-internal-throw"); // (#7002) see the Promise case above
     expect(terminal(result).find((outcome) => outcome.displayName === "run")).toMatchObject({
