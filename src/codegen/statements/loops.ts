@@ -25,7 +25,7 @@ import {
   emitResolvedIdentifierWriteFromStack,
   tryEmitForOfIdentifierWrite,
 } from "../expressions/identifier-assignment.js";
-import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
 import {
   addIteratorImports,
@@ -45,13 +45,8 @@ import { flatStringType, stringConstantExternrefInstrs } from "../native-strings
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { ensureObjVecBuilders, ensureObjectRuntime } from "../object-runtime.js";
 import { coercionInstrs, defaultValueInstrs } from "../type-coercion.js";
-import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
-import {
-  addFuncType,
-  getArrTypeIdxFromVec,
-  getOrRegisterRefCellType,
-  getOrRegisterVecBaseType,
-} from "../registry/types.js";
+import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
+import { getArrTypeIdxFromVec, getOrRegisterRefCellType, getOrRegisterVecBaseType } from "../registry/types.js";
 import { overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { reserveVecIndexEnumerable } from "../vec-index-enumerable.js"; // (#4491) overlay-aware index [[Enumerable]]
 import { coerceType, compileExpression, compileStatement, valTypesMatch } from "../shared.js";
@@ -3626,14 +3621,12 @@ function emitForInMemberTargetWrite(
   target: ts.PropertyAccessExpression | ts.ElementAccessExpression,
   keyLocal: number,
 ): void {
-  let setIdx = ctx.funcMap.get("__extern_set");
-  if (setIdx === undefined) {
-    const importsBefore = ctx.numImportFuncs;
-    const setType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
-    addImport(ctx, "env", "__extern_set", { kind: "func", typeIdx: setType });
-    shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-    setIdx = ctx.funcMap.get("__extern_set");
-  }
+  // (#6979 S7-b) Through the late-import chokepoint, which routes `__extern_set`
+  // to the native object runtime's defined function. The raw `env::__extern_set`
+  // import this used to add is a retired host-semantic import (a compile error).
+  const ext = { kind: "externref" } as const;
+  const setIdx = ensureLateImport(ctx, "__extern_set", [ext, ext, ext], []);
+  flushLateImportShifts(ctx, fctx);
   if (setIdx === undefined) return;
 
   // Receiver

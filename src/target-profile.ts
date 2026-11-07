@@ -219,9 +219,11 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
           : "off";
 
   // (#5385 S5, #6708 S6, #6979 S7) The regime is the only semantic
-  // implementation in a JavaScript environment that permits host imports, as
-  // it is host-free. The S6 kill switch `JS2WASM_NATIVE_REGIME_JS` is gone.
-  const nativeRegime = target === "standalone" || (target === "gc" && capabilityPolicy === "ambient-js");
+  // implementation in a JavaScript environment, with or without ambient host
+  // imports: S7-b moved the strict (`strictNoHostImports`) gc build onto it,
+  // because the host-semantic arms it used to run are retired. WASI keeps its
+  // own lowering until S7-c classifies the remaining `ctx.standalone` arms.
+  const nativeRegime = target === "standalone" || target === "gc";
 
   return Object.freeze({
     target,

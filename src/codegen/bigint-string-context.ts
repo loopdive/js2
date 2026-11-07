@@ -40,7 +40,7 @@
  *
  * `bigIntToStringIdx` answers `undefined` unless the operand actually carries
  * the `bigint` brand, the lane emits the NATIVE number formatters
- * (`usesNativeNumberFormat` — standalone / WASI / native-strings, where
+ * (always since #6979 — the regime and WASI, where
  * `bigint_toString` is a defined function rather than a host `env` import) and
  * the module demanded the helper. Every caller keeps its existing f64 arm as
  * the fallthrough, so a module that does not meet all three conditions
@@ -60,7 +60,6 @@
  */
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { usesNativeNumberFormat } from "./number-format-native.js";
 import { emitNarrowedCarrierToString } from "./bigint-wide.js";
 
 /**
@@ -69,7 +68,6 @@ import { emitNarrowedCarrierToString } from "./bigint-wide.js";
  */
 export function bigIntToStringIdx(ctx: CodegenContext, opType: ValType | undefined): number | undefined {
   if (!opType || opType.kind !== "i64" || opType.bigint !== true) return undefined;
-  if (!usesNativeNumberFormat(ctx)) return undefined;
   return ctx.funcMap.get("bigint_toString");
 }
 
@@ -77,16 +75,12 @@ export function bigIntToStringIdx(ctx: CodegenContext, opType: ValType | undefin
  * Import-collector side of the same decision: register the exact formatter for
  * a string context whose operand is statically `bigint`.
  *
- * The `usesNativeNumberFormat` gate is the load-bearing half. In the JS-host
- * lane `finalizeUnifiedCollector` turns this demand into an `env` IMPORT, and a
- * new import shifts every function index — so a module that merely PRINTS a
- * bigint would move bytes in a lane whose bigints do not even use the i64
- * carrier. `bigIntToStringIdx` declines symmetrically, so the two halves can
- * never disagree.
+ * (#6979) The formatter is always native now (the JS-host `env` formatter lane
+ * is retired), so the demand is registered unconditionally and
+ * `bigIntToStringIdx` finds it.
  */
 export function registerBigIntToStringDemand(ctx: CodegenContext, needed: Set<string>, isBigIntOperand: boolean): void {
   if (!isBigIntOperand) return;
-  if (!usesNativeNumberFormat(ctx)) return;
   needed.add("bigint_toString");
 }
 

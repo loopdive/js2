@@ -68,12 +68,7 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { emitNewBooleanToBooleanArg } from "../new-boolean-tobooleanarg.js"; // (#4619)
 import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
 import { emitHostTypedArrayCarrierRegistration } from "./typed-array-host-carrier.js";
-import {
-  emitHostTaBufferConstruct,
-  hostTaBufferArgSymName,
-  isStringTypedArg,
-  resolvesToAmbientGlobal,
-} from "./new-super.js";
+import { isStringTypedArg, resolvesToAmbientGlobal } from "./new-super.js";
 import { tryEmitStandaloneDateCtorValueArg } from "../date-ctor-value-arg.js"; // (#5156) §21.4.2.2 step 4
 import { emitStandaloneBooleanConstructorValue } from "./standalone-primitive-tail.js";
 
@@ -1751,16 +1746,6 @@ export function tryCompileBuiltinGlobalNew(
         emitHostTypedArrayCarrierRegistration(ctx, fctx, typedArrayName, resultType);
         return resultType;
       };
-
-      // (#3097) JS-host lane `new <TA>(buffer[, byteOffset[, length]])`:
-      // route through the host construct bridge (real host TypedArray view
-      // over the canonical host ArrayBuffer) instead of the numeric-length
-      // fallback below, which coerced the buffer struct to NaN → a length-0
-      // vec. Standalone keeps the native `$__ta_view` paths (B1/B2 below).
-      if (hostTaBufferArgSymName(ctx, args) !== undefined) {
-        const hostTa = emitHostTaBufferConstruct(ctx, fctx, typedArrayName, args);
-        if (hostTa) return hostTa;
-      }
 
       if (args.length === 0) {
         // new TypedArray() → empty array, length 0
