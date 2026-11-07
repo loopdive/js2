@@ -76,16 +76,21 @@ export function isAmbientIntrinsicValueUse(
 }
 
 /**
- * `node` names the built-in: the checker binds it to lib declarations only, and
- * the file declares no binding of that name. Both are needed, because a script's
- * `function RegExp() {}` does not join lib's symbol: the checker still answers
- * lib-only for `new RegExp(…)`.
+ * Every declaration of `node`'s symbol is a lib one AND nothing in its file
+ * declares the name: a script's top-level `function Error() {}` is reported by
+ * the checker as the lib declarations alone. (#7274) Also the native
+ * ArrayBuffer surface's constructor identity.
  */
 export function isUnshadowedLibBinding(
   node: ts.Identifier,
   isLibOnlyBinding: (node: ts.Identifier) => boolean,
 ): boolean {
   return isLibOnlyBinding(node) && !declaredNames(node.getSourceFile()).has(node.text);
+}
+
+/** (#7274) `undefined` read as the global value: nothing in the file declares the name. */
+export function isUnshadowedUndefined(node: ts.Expression): boolean {
+  return ts.isIdentifier(node) && node.text === "undefined" && !declaredNames(node.getSourceFile()).has("undefined");
 }
 
 const declaredNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();

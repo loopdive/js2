@@ -2,10 +2,16 @@
 
 import { ts } from "../ts-api.js";
 
+/**
+ * The explicit providers that own an externref module slot: the standalone
+ * DOM component (#4576) and the native `ArrayBuffer` surface (#7274).
+ */
+export type IrModuleExternCapability = "dom" | "native-buffer";
+
 /** Opaque externref whose producer and uses belong to one explicit provider. */
 export interface IrModuleCapabilityExternValueKind {
   readonly kind: "capability-extern";
-  readonly capability: "dom";
+  readonly capability: IrModuleExternCapability;
   readonly className: string;
 }
 
@@ -47,7 +53,7 @@ export type IrModuleBindingValueKind =
   | { readonly kind: "regexp-match" };
 
 export interface IrModuleCapabilityExternCertification {
-  readonly capability: "dom";
+  readonly capability: IrModuleExternCapability;
   readonly className: string;
 }
 
@@ -61,6 +67,50 @@ export type IrModuleCapabilityExternResolver = (
   declaration: ts.VariableDeclaration,
   writeValue?: ts.Expression,
 ) => IrModuleCapabilityExternCertification | undefined;
+
+/** (#7274) A script var certified as native-`ArrayBuffer` storage. */
+export function isIrModuleNativeBufferValueKind(valueKind: IrModuleBindingValueKind): boolean {
+  return valueKind.kind === "capability-extern" && valueKind.capability === "native-buffer";
+}
+
+/**
+ * The capability a binding's global is ABI-pinned to: only the DOM
+ * provider's slots are required capability globals (#4576); a native-buffer
+ * slot is ordinary module storage.
+ */
+export function abiPinnedCapability(valueKind: IrModuleBindingValueKind): "dom" | undefined {
+  return valueKind.kind === "capability-extern" && valueKind.capability === "dom" ? "dom" : undefined;
+}
+
+/** A provider that owns externref module slots (the DOM plan, the native-buffer plan). */
+export interface IrModuleCapabilityProvider {
+  readonly moduleBinding: IrModuleCapabilityExternResolver;
+  /** True when a read of one of its vars hands the handle to the provider's own operation. */
+  readonly consumesHandle?: (node: ts.Identifier) => boolean;
+}
+
+/**
+ * (#7274) The module-binding resolver options for every provider present.
+ * The first provider that certifies a declaration answers; both planning
+ * sites (selection, lowering) build their options here so they agree.
+ */
+export function capabilityExternBindingOptions(...providers: readonly (IrModuleCapabilityProvider | undefined)[]): {
+  readonly resolveCapabilityExternBinding?: IrModuleCapabilityExternResolver;
+  readonly consumesCapabilityHandle?: (node: ts.Identifier) => boolean;
+} {
+  const present = providers.filter((p): p is IrModuleCapabilityProvider => p !== undefined);
+  if (present.length === 0) return {};
+  return {
+    resolveCapabilityExternBinding: (declaration, writeValue) => {
+      for (const provider of present) {
+        const certified = provider.moduleBinding(declaration, writeValue);
+        if (certified) return certified;
+      }
+      return undefined;
+    },
+    consumesCapabilityHandle: (node) => present.some((provider) => provider.consumesHandle?.(node) === true),
+  };
+}
 
 /** True for either carrier of a builtin `Map` module binding (#4461). */
 export function isIrModuleMapValueKind(valueKind: IrModuleBindingValueKind): boolean {
