@@ -165,7 +165,11 @@ export function objectProtoNameKeyBody(
   flattenIdx: number,
   equalsIdx: number,
 ): { locals: { name: string; type: ValType }[]; body: Instr[] } {
-  const nameArms: Instr[] = [...OBJECT_PROTOTYPE_OWN_NAMES].flatMap((name): Instr[] => [
+  // A member the program deletes (`delete Object.prototype.toString`) is not answered.
+  const present = [...OBJECT_PROTOTYPE_OWN_NAMES].filter(
+    (name) => !ctx.deletedBuiltinPrototypeMembers?.has(`Object.prototype.${name}`),
+  );
+  const nameArms: Instr[] = present.flatMap((name): Instr[] => [
     { op: "local.get", index: 2 },
     { op: "ref.as_non_null" },
     ...nativeStringLiteralInstrs(ctx, name),

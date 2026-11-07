@@ -69,3 +69,15 @@ describe("#7304 `in` sees the implicit Object.prototype terminal's names", () =>
           }
         });
 });
+
+describe("#7304 a deleted Object.prototype member is not answered", () => {
+  for (const removal of ["delete Object.prototype.toString;", "Reflect.deleteProperty(Object.prototype, 'toString');"])
+    it(`${removal} (standalone)`, async () => {
+      const source = `${removal}
+function h(p, k) { return k in p; }
+export function test() { return (h({}, "toString") ? 1 : 0) * 10 + (h({}, "valueOf") ? 1 : 0); }
+`;
+      const node = new Function(`${source.replace("export function", "function")}return test();`)();
+      expect(await run(source, { target: "standalone" })).toBe(node);
+    });
+});
