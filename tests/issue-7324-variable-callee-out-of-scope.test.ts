@@ -1,15 +1,20 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7324 — a lifted module-init closure that calls a module VARIABLE has no
-// binding for it and no direct-call plan, so selection refuses the unit instead
-// of claiming it and letting from-ast withdraw it. A function declaration
-// callee keeps its direct-call plan and its IR route.
+// #7324 — calls inside a lifted module-init closure pass the same call-graph
+// gate as the module-init's own calls. A variable, an ambient function or an
+// unclaimed function declaration called from the closure has no direct-call
+// plan, so selection refuses the unit instead of claiming it and letting
+// from-ast withdraw it. A claimed function declaration and a call through the
+// closure's own parameter keep the IR route. On main each refused case was
+// claimed and then withdrawn by from-ast ("no exact AST-site plan"), so the
+// selection-refusal assertion is what tells the two apart; runtime values are
+// covered by the test262 A/B (the routes are legacy on both sides).
 import { describe, expect, it } from "vitest";
 import { compile, type CompileOptions } from "../src/index.js";
-import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
+// The test262 `assert.throws` shape, minus what the IR refuses on its own.
 const HARNESS = `function assert(v) {}
-assert.throws = function (C, f) { try { f(); } catch (e) { return; } throw new Error("no throw"); };
+assert.throws = function (C, f) { try { f(); } catch (e) { return; } };
 `;
 
 const LANES: { name: string; options: CompileOptions }[] = [
@@ -18,15 +23,22 @@ const LANES: { name: string; options: CompileOptions }[] = [
 ];
 
 const REFUSED: Record<string, string> = {
-  "var holding a number": `var getter = 3;`,
-  "let holding a number": `let getter = 3;`,
-  "uninitialized var": `var getter;`,
-  "var holding a call result": `var getter = parseInt("3");`,
+  "var holding a number": `var getter = 3; assert.throws(TypeError, function () { getter(); });`,
+  "let holding a number": `let getter = 3; assert.throws(TypeError, function () { getter(); });`,
+  "uninitialized var": `var getter; assert.throws(TypeError, function () { getter(); });`,
+  "an ambient function": `assert.throws(SyntaxError, function () { RegExp("(?-m:a)"); });`,
+  "an unclaimed function declaration": `function f({ w: { x } = undefined }) {}
+assert.throws(TypeError, function () { f(); });`,
 };
 
-async function compileCase(decl: string, options: CompileOptions) {
-  const source = `${HARNESS}${decl}\nassert.throws(TypeError, function () { getter(); });`;
-  const result = await compile(source, {
+const CLAIMED: Record<string, string> = {
+  "a claimed function declaration": `function getter() { return 1; }
+assert.throws(TypeError, function () { getter(); });`,
+  "the closure's own parameter": `assert.throws(TypeError, function (g) { if (g) g(); });`,
+};
+
+async function compileCase(body: string, options: CompileOptions) {
+  const result = await compile(HARNESS + body, {
     fileName: "issue-7324.js",
     trackIrOutcomes: true,
     skipSemanticDiagnostics: true,
@@ -36,37 +48,25 @@ async function compileCase(decl: string, options: CompileOptions) {
   return result;
 }
 
-async function completes(result: Awaited<ReturnType<typeof compile>>, options: CompileOptions) {
-  try {
-    const instance =
-      options.target === "standalone"
-        ? (await WebAssembly.instantiate(result.binary, {})).instance
-        : await instantiateWithRuntime(result);
-    (instance.exports as Record<string, () => unknown>).__module_init?.();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function moduleInit(result: Awaited<ReturnType<typeof compile>>) {
   return result.irOutcomes?.find((o) => o.displayName === "<module-init>");
 }
 
-describe("#7324 out-of-scope variable callee in a lifted closure", () => {
-  for (const [label, decl] of Object.entries(REFUSED)) {
+describe("#7324 calls inside a lifted module-init closure", () => {
+  for (const [label, body] of Object.entries(REFUSED)) {
     for (const lane of LANES) {
-      it(`${label}: refused at selection, still throws TypeError (${lane.name})`, async () => {
-        const result = await compileCase(decl, lane.options);
+      it(`${label}: refused at selection (${lane.name})`, async () => {
+        const result = await compileCase(body, lane.options);
         const unit = moduleInit(result);
         expect(unit?.irBodyEmitted).toBe(false);
         expect(unit?.detail).toContain("rejected by IR selection");
-        expect(await completes(result, lane.options)).toBe(true);
       });
     }
   }
-  it("a function declaration callee keeps its direct-call plan (standalone)", async () => {
-    const result = await compileCase(`function getter() { return 1; }`, { target: "standalone" });
-    expect(moduleInit(result)?.irBodyEmitted).toBe(true);
-  });
+  for (const [label, body] of Object.entries(CLAIMED)) {
+    it(`${label}: keeps the IR route (standalone)`, async () => {
+      const result = await compileCase(body, { target: "standalone" });
+      expect(moduleInit(result)?.irBodyEmitted, moduleInit(result)?.detail).toBe(true);
+    });
+  }
 });

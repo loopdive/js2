@@ -12506,13 +12506,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         // wins even though the builder cannot lower this forward reference.
         return capabilityNo("call-resolution-unsupported", "expr-nested-call-before-binding", expr.expression);
       }
-      // (#7324) Out of scope, the call lowers through a direct-call plan, which
-      // only a function declaration has: a variable callee read from a lifted
-      // closure (`var getter = 3; … function () { getter(); }`) has no binding
-      // there and from-ast would withdraw the claimed unit.
-      if (currentModuleBindingResolver?.localVariableDeclaration(expr.expression) !== undefined) {
-        return capabilityNo("call-resolution-unsupported", "expr-variable-callee-out-of-scope", expr.expression);
-      }
       const declaration = currentDynScanDecls?.get(calleeName);
       if (declaration && hasFixedIrParameters(declaration.parameters)) {
         if (
@@ -13308,9 +13301,13 @@ export function buildLocalCallGraph(
     // closure dispatch, not the legacy call-graph), so they must NOT
     // mark the outer as having an external call.
     const localBindings = collectLocalClosureBindings(fn);
+    // (#7324) A lifted module-init closure lowers its calls through the same
+    // plans as the module-init itself, so they pass the same gate; calls to
+    // the closure's own parameters and locals are local, not edges.
+    const liftsClosures = callerName === MODULE_INIT_UNIT_NAME;
 
     const visit = (node: ts.Node): void => {
-      if (node !== fn && isFunctionLike(node)) return;
+      if (node !== fn && isFunctionLike(node) && !(liftsClosures && isLiftedClosure(node))) return;
       // Slice 4 (#1169d): `new <className>(...)` is NOT a function-style
       // call; it dispatches to a legacy-compiled constructor with a
       // stable signature. Walk into the args (which may contain real
@@ -13436,7 +13433,8 @@ export function buildLocalCallGraph(
           if (
             (currentModuleBindingResolver === null && localBindings.names.has(callee)) ||
             (localDeclaration !== undefined &&
-              localClosureDeclarationsContain(localBindings.declarations, localDeclaration))
+              (localClosureDeclarationsContain(localBindings.declarations, localDeclaration) ||
+                (liftsClosures && ts.findAncestor(localDeclaration.parent, isLiftedClosure) !== undefined)))
           ) {
             // Slice 3: closure / nested-fn binding within this outer.
             // Variable-backed callables use checker-resolved declaration
@@ -13567,6 +13565,10 @@ export function buildLocalCallGraph(
     forEachChild(fn.body, visit);
   }
   return { callers, callees, hasExternalCall, externalCallees };
+}
+
+function isLiftedClosure(node: ts.Node): node is ts.FunctionExpression | ts.ArrowFunction {
+  return ts.isFunctionExpression(node) || ts.isArrowFunction(node);
 }
 
 function parseNumberCallUsesDynamicCarrier(callerName: string, call: ts.CallExpression): boolean {
