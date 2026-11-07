@@ -47,7 +47,7 @@ function b(n: number): string { let s = ""; for (let i = 0; i < n; i++) { s += i
 export function test(): number { return b(2).length; }
 ```
 
-- **standalone and wasi:** `RuntimeError: illegal cast`. JS gives `"0truenullundefined1truenullundefined".length`.
+- **gc, standalone and wasi:** `RuntimeError: illegal cast` (gc confirmed by the #7156 review, 6700897010). JS gives `"0truenullundefined1truenullundefined".length`.
 
 ## 3. `for…of` over `string[]` with string appends fails to compile
 
