@@ -99,10 +99,12 @@ describe("#7324 calls inside a lifted closure", () => {
     }
   }
   for (const [label, testCase] of Object.entries(CLAIMED)) {
-    it(`${label}: keeps the IR route (standalone)`, async () => {
-      const unit = await unitOutcome(testCase, { target: "standalone" });
-      expect(unit?.irBodyEmitted, unit?.detail).toBe(true);
-    });
+    for (const lane of LANES) {
+      it(`${label}: keeps the IR route (${lane.name})`, async () => {
+        const unit = await unitOutcome(testCase, lane.options);
+        expect(unit?.irBodyEmitted, unit?.detail).toBe(true);
+      });
+    }
   }
 });
 
