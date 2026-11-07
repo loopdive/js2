@@ -74,6 +74,8 @@ const STORED_STATICS: Readonly<
   // (#7283) `var __getOwnPropertyNames = Object.getOwnPropertyNames;`: the
   // object runtime's own-key list, exactly legacy's
   // `emitStoredObjectIntrospectionCall`. The result is a dynamic array value.
+  // It shares the descriptor read's capability because both come from the
+  // same native object-introspection runtime on the same lanes.
   getOwnPropertyNames: {
     receiver: "Object",
     arity: 1,
@@ -298,6 +300,11 @@ export function certifiedAliasCall(
   if (alias.form === "uncurried") return call.arguments.length === 2 ? { ...alias, ...UNCURRIED } : undefined;
   const { arity, result, capability, provider } = STORED_STATICS[alias.method];
   return call.arguments.length === arity ? { ...alias, result, capability, provider } : undefined;
+}
+
+/** `call` invokes a certified alias whose native lowering answers an exact boolean. */
+export function isCertifiedBooleanAliasCall(call: ts.CallExpression, shadowed: (name: string) => boolean): boolean {
+  return certifiedAliasCall(call, shadowed)?.result === "boolean";
 }
 
 /**

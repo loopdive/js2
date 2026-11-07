@@ -59,7 +59,11 @@ import { localIsRewritten } from "./lattice-param-facts.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
-import { certifiedAliasCall, isStoredObjectDescriptorMemberRead } from "./uncurried-object-alias.js";
+import {
+  certifiedAliasCall,
+  isCertifiedBooleanAliasCall,
+  isStoredObjectDescriptorMemberRead,
+} from "./uncurried-object-alias.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
 import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
@@ -3180,8 +3184,6 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
       isComparisonResultOperator(op) || op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken
     );
   }
-  // (#7283) boxed like a comparison.
-  if (isModuleBooleanAliasCall(candidate)) return true;
   return (
     ts.isConditionalExpression(candidate) &&
     concreteDynamicAssignmentOperandIsBuildable(candidate.whenTrue) &&
@@ -3376,11 +3378,16 @@ function dynamicUsesAreMoveOnly(
     return access.expression;
   };
 
-  /** (#7265) A local direct call whose result is an exact boolean: boxes onto the carrier like a comparison. */
-  const isLocalBoolCall = (concrete: ts.Expression): boolean =>
-    ts.isCallExpression(concrete) &&
-    ts.isIdentifier(concrete.expression) &&
-    calleeReturnKind(concrete.expression.text, typeMap) === "bool";
+  /**
+   * (#7265, #7283) A call whose result is an exact boolean, which boxes onto
+   * the carrier like a comparison: a local direct call that returns a
+   * boolean, or a certified boolean alias call through its module binding.
+   */
+  const isBoolCallResult = (concrete: ts.Expression): boolean =>
+    isModuleBooleanAliasCall(concrete) ||
+    (ts.isCallExpression(concrete) &&
+      ts.isIdentifier(concrete.expression) &&
+      calleeReturnKind(concrete.expression.text, typeMap) === "bool");
   const isDynShaped = (e: ts.Expression): boolean => {
     e = unwrap(e);
     if (e.kind === ts.SyntaxKind.ThisKeyword) return subjectHasAmbientThis();
@@ -3503,7 +3510,8 @@ function dynamicUsesAreMoveOnly(
       //
       // Admission is exactly the operand family `boxConcreteToDynamic`
       // accepts, so the claim can never withdraw on a missing box.
-      if (!argumentIsDynamic && expectedKind === "dynamic" && concreteDynamicAssignmentOperandIsBuildable(unwrap(a))) {
+      const boxable = concreteDynamicAssignmentOperandIsBuildable(unwrap(a)) || isBoolCallResult(unwrap(a));
+      if (!argumentIsDynamic && expectedKind === "dynamic" && boxable) {
         if (!scanExpr(a, false)) return false;
         continue;
       }
@@ -3830,7 +3838,7 @@ function dynamicUsesAreMoveOnly(
         if (isDynShaped(e.right)) return scanExpr(e.right, true);
         const concrete = unwrap(e.right);
         return (
-          (isLocalBoolCall(concrete) || concreteDynamicAssignmentOperandIsBuildable(concrete)) &&
+          (isBoolCallResult(concrete) || concreteDynamicAssignmentOperandIsBuildable(concrete)) &&
           scanExpr(concrete, false)
         );
       }
@@ -3879,11 +3887,14 @@ function dynamicUsesAreMoveOnly(
             // A scalar parameter projected from the direct declaration ABI is
             // just as boxable as a literal: from-ast has its exact f64/bool/
             // string IrType and emits the canonical box before dyn.eq. So is
-            // (#7283) a local call's boolean result under strict equality
-            // (`desc.writable !== isWritable(obj, name)`).
+            // (#7283) a boolean call result under STRICT equality
+            // (`desc.writable !== isWritable(obj, name)`): strict equality
+            // compares the boxed tag and value. Loose `==` would ToNumber the
+            // boolean against an object, which the dynamic loose path is
+            // not proven for.
             return (
               (concreteDynamicEqualityOperandIsBuildable(concrete, isStrictEqualityOperator(op)) ||
-                (isStrictEqualityOperator(op) && isLocalBoolCall(concrete))) &&
+                (isStrictEqualityOperator(op) && isBoolCallResult(concrete))) &&
               scanExpr(concrete, false)
             );
           };
@@ -4116,7 +4127,9 @@ function dynamicUsesAreMoveOnly(
         return scanDirectCallArgs(e, e.expression.text);
       }
       // (#7283) Likewise a member call on a stable function object
-      // (`assert.sameValue(desc, undefined, msg)`): its dynamic result is dropped.
+      // (`assert.sameValue(desc, undefined, msg)`): its dynamic result is
+      // dropped. Only this dynamic-call shape is opened here; the other
+      // dyn-shaped calls keep their own statement handling.
       if (ts.isCallExpression(e) && functionObjectMemberCallee(e) !== null) return scanExpr(e, true);
       return scanExpr(s.expression, false);
     }
@@ -8208,7 +8221,6 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
   if (ts.isConditionalExpression(candidate)) {
     return trackedModuleInfluenceIsBoolean(candidate.whenTrue) && trackedModuleInfluenceIsBoolean(candidate.whenFalse);
   }
-  if (isModuleBooleanAliasCall(candidate)) return true;
   if (ts.isCallExpression(candidate)) {
     if (expressionIsModuleBindingRootedCall(candidate)) return false;
     return currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "boolean";
@@ -8218,16 +8230,14 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
 
 /**
  * (#7283) A certified boolean alias call through the module binding itself
- * (`__hasOwnProperty(obj, name)`, not a local that shadows it), whose
- * arguments read no module value: its result is the provider's exact
- * boolean, never the module slot.
+ * (`__hasOwnProperty(obj, name)`), not through a local that shadows it: the
+ * binding resolver answers only for the module declaration.
  */
 function isModuleBooleanAliasCall(candidate: ts.Expression): boolean {
   return (
     ts.isCallExpression(candidate) &&
     moduleBinding(candidate.expression) !== undefined &&
-    certifiedAliasCall(candidate, () => false)?.result === "boolean" &&
-    !candidate.arguments.some(expressionTouchesTrackedModuleValue)
+    isCertifiedBooleanAliasCall(candidate, () => false)
   );
 }
 
@@ -8359,7 +8369,10 @@ function isPhase1ConditionExpr(
   }
   // A bare `null` lowers only into a reference (`nullValueAdmissible`), never the i32 a condition reads.
   if (truthinessOperand.kind === ts.SyntaxKind.NullKeyword) return shapeNo("condition-null", expr);
-  if (!trackedModuleInfluenceIsBoolean(truthinessOperand) && !isTruthinessTestableModuleBinding(truthinessOperand)) {
+  if (
+    !moduleInfluenceIsExactBoolean(truthinessOperand, scope) &&
+    !isTruthinessTestableModuleBinding(truthinessOperand)
+  ) {
     return shapeNo("condition-module-value-nonbool", expr);
   }
   // Reached only through conditional / nullish wrappers of module values.
@@ -8597,7 +8610,7 @@ export function mixedPrimitiveConditionalArms(
 
 function booleanResultCondition(expr: ts.Expression, shadowed: (name: string) => boolean): boolean {
   const e = unwrapPhase1Parens(expr);
-  if (ts.isCallExpression(e)) return certifiedAliasCall(e, shadowed)?.result === "boolean";
+  if (ts.isCallExpression(e)) return isCertifiedBooleanAliasCall(e, shadowed);
   if (ts.isPrefixUnaryExpression(e)) {
     return e.operator === ts.SyntaxKind.ExclamationToken && booleanResultCondition(e.operand, shadowed);
   }
@@ -11145,7 +11158,7 @@ function declaredExpressionHasExactFamily(
   if (
     expected === "boolean" &&
     ts.isCallExpression(candidate) &&
-    certifiedAliasCall(candidate, (name) => scope.has(name))?.result === "boolean"
+    isCertifiedBooleanAliasCall(candidate, (name) => scope.has(name))
   ) {
     return true;
   }

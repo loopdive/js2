@@ -16,6 +16,21 @@ goal: ir-full-coverage
 parent: 7250
 related: [7269, 7272, 7266, 2949, 7106, 7127]
 depends_on: [7127]
+loc-budget-allow:
+  # 2026-11-07: the five scan admissions (#7283) plus the shared
+  # isBoolCallResult / isModuleBooleanAliasCall helpers live next to their
+  # siblings in select.ts's move-only scan and condition rules. Restates the
+  # stacked #7265/#7272 grants on this file so they do not strand.
+  - src/ir/select.ts
+func-budget-allow:
+  # 2026-11-07: dynamicUsesAreMoveOnly gains the statement-position
+  # function-object call arm and the shared isBoolCallResult closure (used at
+  # the assignment, strict-equality and direct-call-argument sites);
+  # scanExprInner the strict-equality bool-call operand. Splitting the
+  # ~900-line scan (its statement walk is the natural seam) is a separate
+  # refactor of shared #2949 code, not this slice. Restates #7265's grant.
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::scanExprInner
 assignee: "ttraenkler/c-r11"
 ---
 
@@ -99,6 +114,29 @@ each throw Test262Error.
 | 5 | `__push(failures, …)` / `__join(failures, '; ')`: uncurried `Array.prototype` aliases on a local array | next slice |
 | 7 | `desc.enumerable !== undefined` and `names[i] === "value"`: dynamic member reads as equality operands in a value-used function | **#2949** contract question (the lead's proposal on #6583: module-var aliases that are only read, never called through the carrier, should not make the function value-used) |
 | 8 | `__defineProperty(obj, name, originalDesc)` (`options.restore`): the stored `Object.defineProperty` alias | next slice |
+
+## Review (fresh context, 2026-11-07)
+
+The verdict was **approve on correctness**: about 45 probes, head = legacy on
+standalone and gc, wasi validates. The reviewer also found **quality not
+met**:
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 | "certified alias call with a boolean result" restated five times | fixed: one exported `isCertifiedBooleanAliasCall` serves every site |
+| 2 | (i) duplicated `moduleInfluenceIsExactBoolean` through a scope-less path | fixed: the condition rule calls `moduleInfluenceIsExactBoolean(operand, scope)`; the `trackedModuleInfluenceIsBoolean` arm is removed |
+| 3 | the module-value-argument clause guarded nothing its comment named | fixed: dropped |
+| 4 | (h) widened `concreteDynamicAssignmentOperandIsBuildable` (~10 callers), while (j) was or-ed at two sites | fixed: one closure, `isBoolCallResult` (local bool call or module bool alias call), used at the three sites that need it (assignment, strict equality, direct-call argument); the module predicate is unwidened; the strict-only reason is stated |
+| 5 | func-budget grants stranded against the #7272 base | fixed: `loc-budget-allow` / `func-budget-allow` restated in this file |
+| 6 | `getOwnPropertyNames` reuses the descriptor capability | the row says why: same native introspection runtime on the same lanes |
+| 7 | statement-position arm narrower than the dyn-shaped rule | the comment says the narrowing is deliberate |
+| 8 | fragment comment | removed together with the arm |
+
+Divergences from node that legacy shares, so not regressions of this PR:
+- `__getOwnPropertyNames(null)` does not throw, and a `Uint8Array` lists
+  `length` (the provider is at fault);
+- a side-effecting bool callee in `d !== h(d)`;
+- `__hasOwnProperty` on a null receiver does not throw.
 
 ## Decisions (recorded)
 
