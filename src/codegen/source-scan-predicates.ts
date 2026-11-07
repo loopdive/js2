@@ -59,6 +59,15 @@ function scanMemberDeletes(
   let anyDelete = false;
   const receiverNames = new Set<string>();
   const builtinPrototypeMembers = new Set<string>();
+  /** `X.prototype` receiver → `X.prototype.<member>` in `builtinPrototypeMembers`. */
+  function recordBuiltinPrototypeMember(receiver: ts.Expression, member: string): void {
+    if (
+      ts.isPropertyAccessExpression(receiver) &&
+      receiver.name.text === "prototype" &&
+      ts.isIdentifier(receiver.expression)
+    )
+      builtinPrototypeMembers.add(`${receiver.expression.text}.prototype.${member}`);
+  }
   function walk(node: ts.Node): void {
     // Short-circuit only when the names are not wanted — otherwise the walk
     // must run to completion to see every deleted-from receiver.
@@ -69,15 +78,8 @@ function scanMemberDeletes(
         anyDelete = true;
         const receiver = target.expression;
         if (collectReceivers && ts.isIdentifier(receiver)) receiverNames.add(receiver.text);
-        if (collectReceivers && ts.isPropertyAccessExpression(target) && ts.isPropertyAccessExpression(receiver)) {
-          const prototype = receiver;
-          if (
-            prototype.name.text === "prototype" &&
-            ts.isIdentifier(prototype.expression) &&
-            ts.isIdentifier(target.name)
-          ) {
-            builtinPrototypeMembers.add(`${prototype.expression.text}.prototype.${target.name.text}`);
-          }
+        if (collectReceivers && ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.name)) {
+          recordBuiltinPrototypeMember(receiver, target.name.text);
         }
         if (!collectReceivers) return;
       }
@@ -97,6 +99,10 @@ function scanMemberDeletes(
       anyDelete = true;
       const receiver = node.arguments[0];
       if (collectReceivers && ts.isIdentifier(receiver)) receiverNames.add(receiver.text);
+      const key = node.arguments[1];
+      // (#7304) `Reflect.deleteProperty(X.prototype, "m")` removes the same member as `delete X.prototype.m`.
+      if (collectReceivers && receiver && key && ts.isStringLiteralLike(key))
+        recordBuiltinPrototypeMember(receiver, key.text);
       if (!collectReceivers) return;
     }
     forEachChild(node, walk);
