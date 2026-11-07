@@ -627,6 +627,17 @@ adapters are covered by compile, validation and imports only.
   first. The IR admits only a number-literal `maxByteLength`, so the
   difference is not observable on the IR route (#7121 review nit 2).
 
+- **Known post-claim demote on main between #7121 and #7161.**
+  - **What:** #7121 (slice 1) lets the selector claim a `<module-init>` that
+    reads a certified ArrayBuffer var as a plain value: `var j; j = ab;` or
+    `var j = ab;`. From-ast then refuses it, and the unit demotes to legacy
+    with a warning.
+  - **Impact:** the output is legacy's, so this is a demote, not a
+    miscompile.
+  - **Fix:** 1af545db (#7161). It refuses the read at selection
+    (`expr-native-buffer-escape`) for both classes. The regression
+    "an ArrayBuffer handle assignment" in `tests/issue-7274-*` covers it.
+  - **Window:** from #7121's merge until #7161's.
 - **Legacy DataView `byteLength` evaluation order.** Legacy evaluates the
   length operand after the detached / offset-bounds checks (never, when the
   offset is out of range); ArgumentListEvaluation evaluates it first. The
