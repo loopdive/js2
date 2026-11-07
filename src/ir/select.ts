@@ -153,6 +153,7 @@ import {
   isIrModuleClassInstanceValueKind,
   isIrModuleMapValueKind,
   isIrModuleReferenceValueKind,
+  isStatementDynamicModuleCall,
 } from "./module-bindings.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
 import { firstConstBindingWrite } from "./const-binding-writes.js";
@@ -7121,6 +7122,12 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     }
     if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
       return shapeNo("vardecl-init-expr", d.initializer);
+    // The IR has no dynamic `null` value for a dynamic module home (#7287 review B3).
+    if (
+      directModuleBinding?.valueKind.kind === "dynamic" &&
+      binaryOperandFamily(d.initializer, initializerScope, localClasses) === "nullish"
+    )
+      return shapeNo("vardecl-module-value-flow", d.initializer);
     const initializer = unwrapPhase1Parens(d.initializer);
     const objectMethodValue = isConst ? directObjectMethodValueProjection(d, initializer, initializerScope) : null;
     const returnedCallable = objectMethodValue ? null : directReturnedCallableSignature(initializer, initializerScope);
@@ -13473,6 +13480,15 @@ export function buildLocalCallGraph(
             return;
           } else if (isStoredObjectDescriptorAliasCall(node, (name) => localBindings.names.has(name))) {
             // (#7106 propertyHelper) likewise the stored descriptor alias.
+            for (const argument of node.arguments) visit(argument);
+            return;
+          } else if (
+            isStatementDynamicModuleCall(
+              node,
+              (callee) => currentModuleBindingResolver?.(callee)?.valueKind.kind === "dynamic",
+            )
+          ) {
+            // (#7287) Lowered by from-ast's Stage-4 dynamic call, not an edge.
             for (const argument of node.arguments) visit(argument);
             return;
           } else {
