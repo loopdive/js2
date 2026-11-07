@@ -59,8 +59,10 @@ import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import {
+  isCertifiedObjectAliasCall,
   isStoredObjectDescriptorAliasCall,
   isStoredObjectDescriptorMemberRead,
+  isUncurriedObjectAliasCall,
   uncurriedObjectAliasMethod,
 } from "./uncurried-object-alias.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
@@ -81,7 +83,8 @@ import {
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
-import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists, isModuleInitVarList } from "./module-init-vars.js";
+import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
@@ -108,6 +111,7 @@ import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imp
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
 import { lowersAsPreparedComponent } from "./prepared-component-ownership.js";
 import { admitAmbientGlobalFunctionCall } from "./ambient-global-function-call.js";
+import { objectCreateDescriptorMap } from "./object-create-call.js";
 import {
   isAffineThreeDeepElementAccess,
   unwrapTypeErasedExpression,
@@ -5620,26 +5624,11 @@ function isPhase1ForStatementInScope(
       const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
       if (!isLexical && !currentIrSafeVarDeclarationLists.has(stmt.initializer))
         return shapeNo("for-init-var-kind", stmt.initializer);
-      const isConst = !!(flags & ts.NodeFlags.Const);
-      for (const d of stmt.initializer.declarations) {
-        if (isPatternDeclaration(d)) {
-          if (!isPhase1DeclarationPattern(d, isConst, innerScope, localClasses)) return false;
-          continue;
-        }
-        if (!ts.isIdentifier(d.name)) return shapeNo("for-init-name", d.name);
-        if (!d.initializer) return shapeNo("for-init-noinit", d);
-        // (#2856) A name a SIBLING for-init leaked into the flat scope set is
-        // NOT a genuine duplicate — from-ast scopes each for-init in its own
-        // innerCx copy, so `for (let i...) {} for (let i...) {}` builds fine.
-        // Genuine outer bindings still reject (build-side redeclaration).
-        if (innerScope.has(d.name.text) && !forInitLeakedNames.has(d.name.text))
-          return shapeNo("for-init-shadow", d.name); // duplicate
-        clearProjectionBinding(d.name.text);
-        innerScope.add(d.name.text);
-        if (!isPhase1Expr(d.initializer, innerScope, localClasses)) return shapeNo("for-init-expr", d.initializer);
-        const className = localClassNameForExpression(d.initializer, innerScope);
-        if (className !== null) currentClassBindings.set(d.name.text, className);
-      }
+      // (#7106 lever L) A `<module-init>` `var` head declares script `var`s, as a `var` statement does.
+      const declared = isScriptVarList(stmt.initializer)
+        ? isPhase1VarDeclarationList(stmt.initializer, innerScope, localClasses)
+        : isPhase1LoopHeadDeclarations(stmt.initializer, innerScope, localClasses);
+      if (!declared) return false;
     } else {
       // Expression init.
       if (!isPhase1Expr(stmt.initializer, innerScope, localClasses)) return shapeNo("for-init-expr", stmt.initializer);
@@ -5673,6 +5662,34 @@ function isPhase1ForStatementInScope(
   }
 }
 
+/** A `for (;;)` head's loop-scoped declarations; each name enters `innerScope`. */
+function isPhase1LoopHeadDeclarations(
+  list: ts.VariableDeclarationList,
+  innerScope: Set<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const isConst = !!(list.flags & ts.NodeFlags.Const);
+  for (const d of list.declarations) {
+    if (isPatternDeclaration(d)) {
+      if (!isPhase1DeclarationPattern(d, isConst, innerScope, localClasses)) return false;
+      continue;
+    }
+    if (!ts.isIdentifier(d.name)) return shapeNo("for-init-name", d.name);
+    if (!d.initializer) return shapeNo("for-init-noinit", d);
+    // (#2856) A name a SIBLING for-init leaked into the flat scope set is
+    // NOT a genuine duplicate — from-ast scopes each for-init in its own
+    // innerCx copy, so `for (let i...) {} for (let i...) {}` builds fine.
+    // Genuine outer bindings still reject (build-side redeclaration).
+    if (innerScope.has(d.name.text) && !forInitLeakedNames.has(d.name.text)) return shapeNo("for-init-shadow", d.name);
+    clearProjectionBinding(d.name.text);
+    innerScope.add(d.name.text);
+    if (!isPhase1Expr(d.initializer, innerScope, localClasses)) return shapeNo("for-init-expr", d.initializer);
+    const className = localClassNameForExpression(d.initializer, innerScope);
+    if (className !== null) currentClassBindings.set(d.name.text, className);
+  }
+  return true;
+}
+
 /**
  * Add a for-init's identifier names to the outer flat scope, so later
  * statements may read the loop counter, and record the leak so a SIBLING
@@ -5680,10 +5697,12 @@ function isPhase1ForStatementInScope(
  */
 function recordForInitLeaks(stmt: ts.ForStatement, scope: Set<string>): void {
   if (!stmt.initializer || !ts.isVariableDeclarationList(stmt.initializer)) return;
+  // (#7106 lever L) A `<module-init>` `var` head's names are script `var`s, which no sibling head may shadow.
+  const scriptVars = isScriptVarList(stmt.initializer);
   for (const d of stmt.initializer.declarations) {
     if (ts.isIdentifier(d.name) && !scope.has(d.name.text)) {
       scope.add(d.name.text);
-      forInitLeakedNames.add(d.name.text);
+      if (!scriptVars) forInitLeakedNames.add(d.name.text);
     }
   }
 }
@@ -7007,19 +7026,36 @@ function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical
 }
 
 function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localClasses: ReadonlySet<string>): boolean {
-  const flags = stmt.declarationList.flags;
-  const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
+  const isLexical = !!(stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
   if (!isLexical && !currentIrSafeVarDeclarationLists.has(stmt.declarationList)) {
     return shapeNo("vardecl-var-kind", stmt);
   }
   if (stmt.modifiers && stmt.modifiers.length > 0) return shapeNo("vardecl-modifier", stmt);
+  return isPhase1VarDeclarationList(stmt.declarationList, scope, localClasses);
+}
+
+/** (#7106 S5, lever L) A `<module-init>` `var` list: its names are script `var`s in their `__mod_<name>` slots. */
+function isScriptVarList(list: ts.Node): boolean {
+  return currentSubjectIsModuleInit && isModuleInitVarList(list);
+}
+
+/**
+ * The declarations of a `VariableStatement`, or of a `<module-init>` `var`
+ * `for` head (#7106 lever L): both declare the same script `var`s, each in its
+ * `__mod_<name>` slot, so one arm checks them.
+ */
+function isPhase1VarDeclarationList(
+  list: ts.VariableDeclarationList,
+  scope: Set<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const moduleVarList = isScriptVarList(list);
+  const flags = list.flags;
+  const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
   const isConst = !!(flags & ts.NodeFlags.Const);
-  for (const d of stmt.declarationList.declarations) {
+  for (const d of list.declarations) {
     if (isPatternDeclaration(d)) {
-      // A `<module-init>` statement's leaves are module globals: only a module-init `var` list writes them (S5).
-      if (currentSubjectIsModuleInit && !isModuleInitVarList(stmt.declarationList)) {
-        return shapeNo("vardecl-module-destructuring", d.name);
-      }
+      if (currentSubjectIsModuleInit && !moduleVarList) return shapeNo("vardecl-module-destructuring", d.name);
       if (!isPhase1DeclarationPattern(d, isConst, scope, localClasses)) return false;
       continue;
     }
@@ -7028,10 +7064,8 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     // declaration: it is a write to that slot (or, without an initializer, a
     // no-op), never a new binding.
     const redeclaredModuleVar =
-      currentSubjectIsModuleInit &&
-      !isLexical &&
+      moduleVarList &&
       scope.has(d.name.text) &&
-      ts.isSourceFile(stmt.parent) &&
       currentModuleBindingResolver?.(d.name)?.declaration !== undefined &&
       currentModuleBindingResolver(d.name)!.declaration !== d;
     if (redeclaredModuleVar && !d.initializer) continue;
@@ -7041,9 +7075,8 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       // prologue already seeded the slot (`emitModuleVarUndefinedSeeds`).
       // (#7111) An untyped function-local `var x;` is the dynamic carrier's
       // `undefined`; that predicate refuses module-init, so the arms are disjoint.
-      const scriptVar = currentSubjectIsModuleInit && !isLexical && ts.isSourceFile(stmt.parent);
       if (
-        scriptVar
+        moduleVarList
           ? currentModuleBindingResolver?.(d.name) === undefined
           : !uninitializedVarIsDynamicUndefined(d, isLexical)
       ) {
@@ -7074,12 +7107,8 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       currentPreparedClassBindingNames.add(d.name.text);
       continue;
     }
-    const declarationList = d.parent;
-    const declarationStatement = ts.isVariableDeclarationList(declarationList) ? declarationList.parent : undefined;
     const directModuleDeclaration =
-      declarationStatement !== undefined &&
-      ts.isVariableStatement(declarationStatement) &&
-      ts.isSourceFile(declarationStatement.parent);
+      moduleVarList || (ts.isVariableStatement(list.parent) && ts.isSourceFile(list.parent.parent));
     // The synthetic module-init builder must map every direct declaration to
     // an already-allocated legacy slot. Shape-only primitive acceptance is not
     // enough in a mode whose storage ABI differs (ordinary fast numbers) or
@@ -7106,7 +7135,14 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     if (!currentSubjectIsModuleInit) {
       const initializer = unwrapPhase1Parens(d.initializer);
       const exactMapGetAlias = ts.isCallExpression(initializer) && exactModuleMapMethod(initializer) === "get";
-      if (expressionTouchesTrackedModuleValue(d.initializer) && !exactMapGetAlias) {
+      // (#7269) `var hadValue = __hasOwnProperty(obj, name)`: the callee is a
+      // certified alias whose result is the provider's, not module storage.
+      // Its arguments still obey the alias rule.
+      const certifiedAliasCall =
+        ts.isCallExpression(initializer) &&
+        isCertifiedObjectAliasCall(initializer, (name) => scope.has(name)) &&
+        !initializer.arguments.some(expressionTouchesTrackedModuleValue);
+      if (expressionTouchesTrackedModuleValue(d.initializer) && !exactMapGetAlias && !certifiedAliasCall) {
         const family = obviousModuleValueFamily(d.initializer);
         if (!isConst || (family !== "f64" && family !== "boolean")) {
           return shapeNo("vardecl-module-binding-alias", d.initializer);
@@ -7233,7 +7269,7 @@ function isPhase1DeclarationPattern(
   if (declarationBindingWritten(d)) return shapeNo("vardecl-dstr-leaf-written", pattern);
   const literalPlan = planLiteralPattern(pattern, d.initializer);
   if (literalPlan) {
-    const moduleVars = currentSubjectIsModuleInit && isModuleInitVarList(d.parent);
+    const moduleVars = isScriptVarList(d.parent);
     if (moduleVars && !moduleVarLeavesStorable(pattern, scope)) return false;
     return isPhase1LiteralPattern(pattern, literalPlanExpressions(literalPlan), scope, localClasses);
   }
@@ -8724,6 +8760,16 @@ function isAmbientIntrinsicValue(expr: ts.Identifier): boolean {
     currentDynMemberReadBuildable &&
     currentSelectionOptions?.supportsBackendCapability?.("native-current-this") === true
   );
+}
+
+/** (#7276) The shared `Object.create` plan, on the selector's lane and binding facts. */
+function selectorObjectCreateDescriptorMap(expr: ts.CallExpression) {
+  const resolver = currentModuleBindingResolver;
+  return objectCreateDescriptorMap(expr, {
+    supportsBackendCapability: (capability) =>
+      currentSelectionOptions?.supportsBackendCapability?.(capability) === true,
+    isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding(node) === true,
+  });
 }
 
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
@@ -12038,12 +12084,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
     // `__propertyIsEnumerable(obj, name)` aliases: the lane's own-property
     // provider over two carriers (legacy's `call-object-builtins.ts` arm).
-    if (
-      expr.arguments.length === 2 &&
-      !expr.questionDotToken &&
-      !expr.arguments.some(ts.isSpreadElement) &&
-      uncurriedObjectAliasMethod(expr.expression, (name) => scope.has(name)) !== undefined
-    ) {
+    if (isUncurriedObjectAliasCall(expr, (name) => scope.has(name))) {
       if (
         !currentDynamicRuntimeBuildable ||
         currentSelectionOptions?.supportsBackendCapability?.("native-own-property-test") !== true
@@ -12340,6 +12381,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           (arg) => !ts.isSpreadElement(arg) && expressionIsProvenNumber(arg) && isPhase1Expr(arg, scope, localClasses),
         );
       }
+      // (#7276) `Object.create({}, { <literal data descriptors> })`: literal operands only.
+      if (selectorObjectCreateDescriptorMap(expr) !== null) return true;
       // ES5 Object.defineProperty — an exact ambient static call is a
       // symbolic host-helper operation, not an instance method on a value
       // named `Object`. Reject shadowed bindings and host-free targets before
