@@ -27,6 +27,13 @@ import { buildThrowJsErrorInstrs } from "./helpers.js";
 import { compileOneElementArray, widenDenseArrayElementType } from "./array-constructor-carrier.js";
 import { inferArrayElementType } from "./new-super.js";
 import { emitSabConstruct } from "../buffers/shared-array-buffer.js"; // (#7011)
+import {
+  emitArrayBufferAllocFixed,
+  emitArrayBufferLengthToIndex,
+  emitResizableAbAlloc,
+  emitResizableAbLength,
+  emitResizableAbMaxLength,
+} from "../buffers/array-buffer-native.js"; // (#7274) shared with the IR adapters
 
 /** Sentinel: the `new` target is not one of the indexed built-in constructors. */
 export const NEW_INDEXED_FALLTHROUGH = Symbol("new-indexed-fallthrough");
@@ -84,91 +91,10 @@ export function tryCompileIndexedBuiltinNew(
       // byteLength (arg 0) → i32, with the same non-negative-integer RangeError
       // guard the plain path uses.
       compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
-      const lenF64 = allocLocal(fctx, `__rab_len_f64_${fctx.locals.length}`, { kind: "f64" });
-      fctx.body.push({ op: "local.tee", index: lenF64 });
-      fctx.body.push({ op: "local.get", index: lenF64 });
-      fctx.body.push({ op: "f64.floor" });
-      fctx.body.push({ op: "f64.ne" });
-      fctx.body.push({ op: "local.get", index: lenF64 });
-      fctx.body.push({ op: "f64.const", value: 0 });
-      fctx.body.push({ op: "f64.lt" });
-      fctx.body.push({ op: "i32.or" });
-      {
-        const rangeErrMsg = "RangeError: Invalid array buffer length";
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
-          else: [],
-        });
-      }
-      const lenI32 = allocLocal(fctx, `__rab_len_i32_${fctx.locals.length}`, { kind: "i32" });
-      fctx.body.push({ op: "local.get", index: lenF64 });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      fctx.body.push({ op: "local.set", index: lenI32 });
-
-      // maxByteLength (options) → i32 via ToIndex: NaN→0, truncate toward zero,
-      // and `< 0` → RangeError (the upper 2^53-1 bound is subsumed by the i32 cap).
+      const lenI32 = emitResizableAbLength(ctx, fctx);
       compileExpression(ctx, fctx, maxByteLenInit, { kind: "f64" });
-      const maxF64 = allocLocal(fctx, `__rab_max_f64_${fctx.locals.length}`, { kind: "f64" });
-      fctx.body.push({ op: "local.set", index: maxF64 });
-      // NaN → 0
-      fctx.body.push({ op: "local.get", index: maxF64 });
-      fctx.body.push({ op: "local.get", index: maxF64 });
-      fctx.body.push({ op: "f64.ne" });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "f64.const", value: 0 },
-          { op: "local.set", index: maxF64 },
-        ],
-        else: [],
-      });
-      // truncate toward zero
-      fctx.body.push({ op: "local.get", index: maxF64 });
-      fctx.body.push({ op: "f64.trunc" });
-      fctx.body.push({ op: "local.set", index: maxF64 });
-      // maxByteLength < 0 → RangeError
-      fctx.body.push({ op: "local.get", index: maxF64 });
-      fctx.body.push({ op: "f64.const", value: 0 });
-      fctx.body.push({ op: "f64.lt" });
-      {
-        const rangeErrMsg = "RangeError: Invalid array buffer max byte length";
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
-          else: [],
-        });
-      }
-      const maxI32 = allocLocal(fctx, `__rab_max_i32_${fctx.locals.length}`, { kind: "i32" });
-      fctx.body.push({ op: "local.get", index: maxF64 });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      fctx.body.push({ op: "local.set", index: maxI32 });
-
-      // AllocateArrayBuffer: byteLength > maxByteLength → RangeError.
-      fctx.body.push({ op: "local.get", index: lenI32 });
-      fctx.body.push({ op: "local.get", index: maxI32 });
-      fctx.body.push({ op: "i32.gt_s" });
-      {
-        const rangeErrMsg = "RangeError: ArrayBuffer byteLength exceeds maxByteLength";
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
-          else: [],
-        });
-      }
-
-      // struct.new $__resizable_ab { length = byteLength, data = new i8[byteLength],
-      // maxByteLength }. The backing array is sized to the CURRENT byteLength (GC
-      // arrays are fixed-length; `.resize()` reallocs + swaps `data`, per A.2).
-      fctx.body.push({ op: "local.get", index: lenI32 });
-      fctx.body.push({ op: "local.get", index: lenI32 });
-      fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
-      fctx.body.push({ op: "local.get", index: maxI32 });
-      fctx.body.push({ op: "struct.new", typeIdx: rabTypeIdx });
+      const maxI32 = emitResizableAbMaxLength(ctx, fctx);
+      emitResizableAbAlloc(ctx, fctx, arrTypeIdx, rabTypeIdx, lenI32, maxI32);
       // Return the PARENT vec type: a `$__resizable_ab` IS-A `$__vec_i32_byte`, so
       // every downstream buffer consumer (byteLength, DataView, TA views, slice)
       // treats it identically — only `.resize()`/`.maxByteLength`/`.resizable`
@@ -201,57 +127,13 @@ export function tryCompileIndexedBuiltinNew(
         else if (lenTy.kind !== "f64") coerceType(ctx, fctx, lenTy, { kind: "f64" });
       }
 
-      // RangeError validation: byteLength must be a non-negative integer < 2^31
-      // (We use i32 internally so cap at i32 max)
-      const lenF64Local = allocLocal(fctx, `__ab_len_f64_${fctx.locals.length}`, { kind: "f64" });
-      fctx.body.push({ op: "local.tee", index: lenF64Local });
-      // (#5150) ToIndex maps NaN (and `undefined`) to 0 and TRUNCATES toward
-      // zero; it does not reject a fractional length. The old `len !== floor(len)`
-      // test rejected both, so `new ArrayBuffer(1.9)` threw where the spec wants
-      // a 1-byte buffer.
-      fctx.body.push({ op: "f64.const", value: 0 });
-      fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "f64.eq" }); // false only for NaN
-      fctx.body.push({ op: "select" });
-      fctx.body.push({ op: "f64.trunc" });
-      fctx.body.push({ op: "local.set", index: lenF64Local });
-      // Check len < 0 (ToIndex step 2b)
-      fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "f64.const", value: 0 });
-      fctx.body.push({ op: "f64.lt" });
-      // (#5150) …and an upper bound BEFORE `array.new_default`, which otherwise
-      // traps uncatchably ("requested new array is too large" —
-      // `allocation-limit.js` / `length-is-too-large-throws.js`). §25.1.3.1
-      // permits a RangeError for any length the implementation cannot allocate;
-      // the backing vec is i32-indexed, so 2^31-1 is the ceiling.
-      fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "f64.const", value: 2147483647 });
-      fctx.body.push({ op: "f64.gt" });
-      fctx.body.push({ op: "i32.or" });
-      {
-        const rangeErrMsg = "RangeError: Invalid array buffer length";
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
-          else: [],
-        });
-      }
-
-      fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+      // ToIndex + the RangeError bounds check (array-buffer-native.ts).
+      emitArrayBufferLengthToIndex(ctx, fctx);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }
 
-    const sizeLocal = allocLocal(fctx, `__ab_size_${fctx.locals.length}`, {
-      kind: "i32",
-    });
-    fctx.body.push({ op: "local.tee", index: sizeLocal });
-    fctx.body.push({ op: "local.get", index: sizeLocal });
-    fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
-    fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+    emitArrayBufferAllocFixed(fctx, vecTypeIdx, arrTypeIdx);
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 

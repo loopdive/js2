@@ -35,7 +35,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
   emitTaDynSpeciesCreate,
   emitTaDynViewValidate,
-  makeTaDynHelperFctx,
+  makeHelperFctx,
   pushTaDynMethodPreamble,
 } from "./dataview-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -407,7 +407,7 @@ export function beginTaDynProducer(
   const dynIdx = getOrRegisterTaDynViewType(ctx);
   if (dynIdx < 0) return undefined;
   const ext: ValType = { kind: "externref" };
-  const fctx = makeTaDynHelperFctx(helperName, [
+  const fctx = makeHelperFctx(helperName, [
     { name: "recv", type: ext },
     ...paramNames.map((name) => ({ name, type: ext })),
     { name: "argc", type: { kind: "i32" } },
