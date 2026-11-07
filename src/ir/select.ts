@@ -172,6 +172,13 @@ import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-type
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
+  staticStringMethodArgument,
+  stringMethodPlan,
+  type StringArgumentRole,
+  type StringMethodPlan,
+} from "./string-method-surface.js";
+import type { IrBackendKind } from "./analysis/backend-legality.js";
+import {
   isPatternDeclaration,
   isPhase1BindingPattern,
   patternLeaves,
@@ -196,6 +203,7 @@ import {
   provenBinaryOperandsAdmissible,
   isComparisonResultOperator,
   isEqualityOperator,
+  isGlobalUndefinedIdentifier,
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   isTypedBinaryOperator,
@@ -830,6 +838,11 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * externref slot with no widened struct? Absent → no open-carrier literal.
    */
   readonly isOpenObjectBinding?: (decl: ts.VariableDeclaration) => boolean;
+  /**
+   * The backend that builds the selection (`IrBackendTargetProfile.backend`):
+   * a string method is claimed only where its plan exists. Absent: WasmGC.
+   */
+  readonly backendTargetProfile?: { readonly backend: IrBackendKind };
   /**
    * #3529 P1/P4 structural target-capability seam. P1 stays independent of
    * backend/legality.ts; P4 wires its exported capability predicate here.
@@ -7789,9 +7802,11 @@ function isUnshadowedUndefinedIdentifier(expr: ts.Expression, scope: ReadonlySet
   const candidate = unwrapPhase1Parens(expr);
   return (
     ts.isIdentifier(candidate) &&
-    candidate.text === "undefined" &&
-    !scope.has("undefined") &&
-    currentModuleBindingResolver?.isDirectModuleBinding(candidate) !== true
+    isGlobalUndefinedIdentifier(
+      candidate,
+      scope,
+      (id) => currentModuleBindingResolver?.isDirectModuleBinding(id) === true,
+    )
   );
 }
 
@@ -9225,12 +9240,11 @@ function expressionIsProvenString(expr: ts.Expression, seen = new Set<ts.Variabl
 }
 
 /**
- * Eval needs a string value whose IR carrier is known to be the host
- * externref string. The shared primitive classifier proves typed parameters
- * and valid local flows; the literal-proven helper preserves the existing
- * diagnostics-off guard for malformed local annotations.
+ * A string value: the shared primitive classifier proves typed parameters and
+ * valid local flows; the literal-proven helper keeps the diagnostics-off guard
+ * for malformed local annotations. Eval and string-method arguments read it.
  */
-function expressionIsProvenHostEvalString(expr: ts.Expression): boolean {
+function expressionIsClassifiedString(expr: ts.Expression): boolean {
   return expressionIsProvenString(expr) || currentSelectionOptions?.classifyPrimitiveExpression?.(expr) === "string";
 }
 
@@ -9250,7 +9264,7 @@ function certifiedHostIndirectEval(
     currentSelectionOptions?.supportsHostIndirectEval !== true ||
     !selectorSeesAmbientBinding(shape.evalIdentifier) ||
     (scope?.has("eval") ?? false) ||
-    !expressionIsProvenHostEvalString(shape.source)
+    !expressionIsClassifiedString(shape.source)
   ) {
     return undefined;
   }
@@ -9297,54 +9311,46 @@ function typeNodeIsStrictNumberOnly(typeNode: ts.TypeNode): boolean {
   return false;
 }
 
-function isLiteralStringReplaceCall(expr: ts.CallExpression): boolean {
-  if (!ts.isPropertyAccessExpression(expr.expression) || expr.expression.name.text !== "replace") return false;
-  if (expr.arguments.length !== 2) return false;
+/** A `literalArguments` plan's call: a proven-string receiver and only literal string arguments. */
+function hasLiteralStringMethodArguments(expr: ts.CallExpression): boolean {
   return (
+    ts.isPropertyAccessExpression(expr.expression) &&
     expressionIsProvenString(expr.expression.expression) &&
     expr.arguments.every((arg) => ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))
   );
 }
 
-// #3529 P1 — exact String producer surface mirrored from from-ast's
-// STRING_METHOD_TABLE, narrowed to the calls some backend's `stringMethodPlan`
-// lowers: with native strings (every IR lane since #6979) `startsWith` /
-// `endsWith` and a two-argument `indexOf` / `includes` have no plan, so
-// admitting them only demoted after the claim. Lowering remains the owner of
-// representation-specific argument plans.
-//
-// (#7106) `positional` methods take only ToIntegerOrInfinity positions
-// (`charAt(pos)`, `slice(start, end)`). The lowering truncates a value that is
-// already a number and nothing else: it has no ToNumber and no "an undefined
-// end is the length" rule, so a claimed `charAt(undefined)` or `slice("e")`
-// reached `i32.trunc_sat_f64_s` with a dynamic or string operand. As for
-// Math.* and String.fromCharCode, selection requires the numeric proof.
-const IR_STRING_METHOD_SURFACE: Readonly<Record<string, readonly [min: number, max: number, positional: boolean]>> =
-  Object.freeze({
-    toUpperCase: [0, 0, false],
-    toLowerCase: [0, 0, false],
-    trim: [0, 0, false],
-    charAt: [0, 1, true],
-    slice: [1, 2, true],
-    substring: [0, 2, true],
-    charCodeAt: [0, 1, true],
-    indexOf: [1, 1, false],
-    includes: [1, 1, false],
-    replace: [2, 2, false],
-  });
-
-function stringMethodHasSupportedArity(name: string, args: readonly ts.Expression[]): boolean {
-  // Own-property lookup is deliberate: `toString` / `valueOf` must not hit
-  // Object.prototype through a plain Record index.
-  if (!Object.prototype.hasOwnProperty.call(IR_STRING_METHOD_SURFACE, name)) return false;
-  const [min, max] = IR_STRING_METHOD_SURFACE[name]!;
-  return args.length >= min && args.length <= max && !args.some(ts.isSpreadElement);
+/**
+ * (#7106) A `String.prototype` call is claimed exactly when the backend that
+ * builds it has a plan (`string-method-surface.ts`) and every argument is
+ * proven for its role: a position or a length a number, a search or a fill a
+ * string. The builder then lowers the plan with no conversion of its own.
+ */
+function stringMethodSelection(
+  expr: ts.CallExpression,
+  method: string,
+  scope: ReadonlySet<string>,
+): StringMethodPlan | false {
+  const backend = currentSelectionOptions?.backendTargetProfile?.backend ?? "wasmgc";
+  const plan = expr.arguments.some(ts.isSpreadElement)
+    ? null
+    : stringMethodPlan(backend, method, expr.arguments.length);
+  if (plan === null) return capabilityNo("string-method-unsupported", "expr-string-method-surface", expr);
+  const unproven = expr.arguments.find((arg, i) => !stringMethodArgumentProven(plan.parameters[i]!.role, arg, scope));
+  if (unproven !== undefined) return capabilityNo("string-method-unsupported", "expr-string-method-argument", unproven);
+  return plan;
 }
 
-/** The first argument of an arity-checked positional call that is not a proven number. */
-function unprovenStringMethodPosition(name: string, args: readonly ts.Expression[]): ts.Expression | undefined {
-  const [, , positional] = IR_STRING_METHOD_SURFACE[name]!;
-  return positional ? args.find((arg) => !expressionIsProvenNumber(arg)) : undefined;
+/**
+ * A literal with a static ToNumber stands for a position or a length; an
+ * `undefined` fill is the omitted one (a space). The builder folds both.
+ */
+function stringMethodArgumentProven(role: StringArgumentRole, arg: ts.Expression, scope: ReadonlySet<string>): boolean {
+  const literal = staticStringMethodArgument(arg, (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope));
+  if (literal === undefined) {
+    return role === "search" || role === "fill" ? expressionIsClassifiedString(arg) : expressionIsProvenNumber(arg);
+  }
+  return literal === "undefined" ? role !== "search" : role === "position" || role === "length";
 }
 
 function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
@@ -12276,22 +12282,18 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         return capabilityNo("function-invocation-method-unsupported", "expr-function-invocation-method", expr);
       }
       if (isStringReceiver) {
-        if (!stringMethodHasSupportedArity(expr.expression.name.text, expr.arguments)) {
-          return capabilityNo("string-method-unsupported", "expr-string-method-surface", expr);
+        // The linked parser's exact `replace` (#3521) has its own lowering.
+        if (currentSelectionOptions?.fnctorNativeStringReplace?.(expr) === true) {
+          if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;
+          return expr.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
         }
-        const unprovenPosition = unprovenStringMethodPosition(expr.expression.name.text, expr.arguments);
-        if (unprovenPosition !== undefined) {
-          return capabilityNo("string-method-unsupported", "expr-string-method-position", unprovenPosition);
-        }
-        if (expr.expression.name.text === "replace") {
-          if (currentSelectionOptions?.fnctorNativeStringReplace?.(expr) === true) {
-            if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;
-            return expr.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
-          }
+        const plan = stringMethodSelection(expr, expr.expression.name.text, scope);
+        if (plan === false) return false;
+        if (plan.literalArguments) {
           if (currentSelectionOptions?.supportsLiteralStringReplace !== true) {
             return capabilityNo("string-method-unsupported", "expr-string-replace-backend", expr);
           }
-          if (!isLiteralStringReplaceCall(expr)) {
+          if (!hasLiteralStringMethodArguments(expr)) {
             return capabilityNo("string-method-unsupported", "expr-string-replace-shape", expr);
           }
           if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;
