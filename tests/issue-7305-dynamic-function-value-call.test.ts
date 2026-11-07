@@ -87,7 +87,26 @@ const REFUSED: Record<string, string> = {
   "nested function": "function u(g) { var f = function () { g(); }; f(); }",
 };
 
+// #7166 review B1 (6702803650): with `u` claimed, `<module-init>` must not be
+// claimed over an argument from-ast cannot carry into `g`. A bare compile (the
+// CLI route, no harness options) is where these reproduced.
+const BARE_MODULE_INIT: Record<string, string> = {
+  "null argument": "function u(g) { g(1); }\nu(null);",
+  "null argument in try": 'var R = ""; function u(g) { g(1); }\ntry { u(null); } catch (e) { R += "x"; }',
+  "object literal argument": "function u(g) { g(1); }\nu({ a: 1 });",
+};
+
 describe("#7305 statement call through a top-level dynamic parameter", () => {
+  for (const [name, source] of Object.entries(BARE_MODULE_INIT)) {
+    it(`bare compile, ${name}: no post-claim error`, async () => {
+      for (const target of ["standalone", "wasi", "gc"] as const) {
+        const result = await compile(source, { target, fileName: "x.js", trackIrOutcomes: true });
+        expect(result.success, target).toBe(true);
+        expect(result.irPostClaimErrors ?? [], target).toEqual([]);
+        expect(result.irOutcomes?.find((o) => o.displayName === "u")?.irBodyEmitted, target).toBe(true);
+      }
+    }, 60000);
+  }
   for (const [name, body] of Object.entries(RUNTIME)) {
     it(
       name,

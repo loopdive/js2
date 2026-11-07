@@ -14,6 +14,11 @@ area: ir
 goal: ir-full-coverage
 related: [7305, 7130, 7195, 7198]
 assignee: "ttraenkler/c-lane-opus"
+func-budget-allow:
+  # 2026-11-07 (#7166 review M1): lowerCall +5. The closure arm of the
+  # direct-call argument coercion (`functionObjectDynamicValue`) sits beside
+  # `boxConcreteToDynamic` in the one per-argument loop it fixes.
+  - src/ir/from-ast.ts::lowerCall
 ---
 
 # #7320 — closure literal → dynamic parameter: claim-then-refuse

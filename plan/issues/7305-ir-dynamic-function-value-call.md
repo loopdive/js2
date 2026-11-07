@@ -22,15 +22,26 @@ loc-budget-allow:
   # from-ast.ts +5: the closure-argument box at the direct-call boundary.
   # Restated here because the #7287 grants this branch stacks on are
   # stranded once #7287 merges.
+  # 2026-11-07 (#7166 review B1): select-identity.ts +2. The identity
+  # selector hands its helper type map to the module-init assessment, which
+  # needs callee parameter kinds for the carrier-boundary gate.
   - src/ir/select.ts
   - src/ir/from-ast.ts
+  - src/ir/select-identity.ts
 func-budget-allow:
   # 2026-11-07 (#7305): dynamicUsesAreMoveOnly +4. It gains one sink (the
   # callee and arguments of a statement call through a dynamic value), and
   # the argument loop is now shared with S3a's `new g()` arm. The scan's arms
   # are closures over its state (`dynNames`, `isDynShaped`, `scanExpr`), so
   # this sink cannot move out without the scan refactor #2949 tracks.
+  # 2026-11-07 (#7166 review M1): buildLocalCallGraph +4 is the
+  # own-parameter statement-call arm, a sibling of #7287's script-var arm
+  # (the walk is one visitor; its arms cannot leave it without splitting the
+  # graph). planIrCompilationByIdentity +1 passes `helperTypes` to the
+  # module-init assessment (#7166 review B1).
   - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::buildLocalCallGraph
+  - src/ir/select-identity.ts::planIrCompilationByIdentity
 ---
 
 # #7305: function values in dynamic slots, and calling them
