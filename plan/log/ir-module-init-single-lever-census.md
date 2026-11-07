@@ -18,6 +18,11 @@ that moved zero files. This census uses the **complete** refusal set of each
 - **Caveat:** one part per top-level statement. A statement with two
   refusals inside it shows only its first, so a "single part" is an upper
   bound on how close a file is.
+- **Measured consequence (#7310):** the refusals inside a lever's own
+  arguments are hidden too. Stubbing the ambient static call in its 8
+  passing files flipped none: their arguments (`{}`, `JSON`, `URIError`,
+  `Symbol(1)`) refuse on their own. Before briefing a lever from this table,
+  stub it and re-check the unit.
 - **Grouping:** parts are grouped into families by arm plus a coarse class
   of the construct, e.g. `vardecl-module-storage-unrepresentable` split by
   initializer kind. Scratch scripts (not committed):
