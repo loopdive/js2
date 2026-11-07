@@ -219,6 +219,14 @@ if (out !== "1") throw "this";`,
     expected: "completed",
     irUnits: ["h"],
   },
+  "review B1: legacy f.call / f.apply of a throwing closure restore the receiver": {
+    source: `var out = "";
+var f = function () { throw 1; };
+var o = { v: 1, m: function () { try { f.call(null); } catch (e) {} try { f.apply(null, []); } catch (e) {} out += this.v; } };
+o.m();
+if (out !== "1") throw "this";`,
+    expected: "completed",
+  },
   "review B2: a checker-string += over a dynamic module var compiles": {
     source: `var out = "";
 var f;
