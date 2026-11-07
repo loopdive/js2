@@ -30,6 +30,7 @@ import type { ClosureInfo, CodegenContext } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { addUnionImports } from "./registry/imports.js";
+import { restoreThisOnUnwind } from "./named-this-call.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
@@ -1679,24 +1680,37 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   body.push({ op: "local.get", index: prevThisLocal });
   body.push({ op: "global.set", index: currentThisGlobalIdx });
   body.push({ op: "local.get", index: resultSaveLocal });
-  body.push(restoreThisOnThrow(body.splice(guardedFrom), prevThisLocal, currentThisGlobalIdx));
+  const locals: WasmFunction["locals"] = [
+    { name: "__any", type: { kind: "anyref" } },
+    { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
+    { name: "__funcref", type: { kind: "funcref" } },
+    { name: "__prev_this", type: { kind: "externref" } },
+    { name: "__result", type: { kind: "externref" } },
+    // (#3673 round 10) declared arity read off the root wrapper for the
+    // arity-bucketed signature dispatch (-1 = not root-readable).
+    { name: "__declared_arity", type: { kind: "i32" } },
+    { name: "__fallback_args", type: { kind: "externref" } },
+    ...(applyTail ? [applyTail.local] : []),
+    { name: "__thrown", type: { kind: "externref" } },
+  ];
+  const thrownLocal = totalParams + locals.findIndex((local) => local.name === "__thrown");
+  // (#7287 review B1) A caller that catches the dispatch's exception reads its own `this`.
+  body.push(
+    restoreThisOnUnwind(
+      ctx,
+      { kind: "val", type: { kind: "externref" } },
+      body.splice(guardedFrom),
+      prevThisLocal,
+      currentThisGlobalIdx,
+      thrownLocal,
+    ),
+  );
 
   const internalOnly = arity > CLOSURE_METHOD_CALL_PUBLISHED_MAX_ARITY;
   const dispatcherFunc = {
     name: exportName,
     typeIdx: exportFuncTypeIdx,
-    locals: [
-      { name: "__any", type: { kind: "anyref" } },
-      { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
-      { name: "__funcref", type: { kind: "funcref" } },
-      { name: "__prev_this", type: { kind: "externref" } },
-      { name: "__result", type: { kind: "externref" } },
-      // (#3673 round 10) declared arity read off the root wrapper for the
-      // arity-bucketed signature dispatch (-1 = not root-readable).
-      { name: "__declared_arity", type: { kind: "i32" } },
-      { name: "__fallback_args", type: { kind: "externref" } },
-      ...(applyTail ? [applyTail.local] : []),
-    ],
+    locals,
     body,
     exported: !internalOnly,
   } as WasmFunction;
@@ -1753,25 +1767,6 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
     name: argcExportName,
     desc: { kind: "func", index: argcFuncIdx },
   });
-}
-
-/**
- * (#7287 review B1) Run a method dispatch whose `__current_this` was installed
- * so that an exception unwinding through it restores the caller's receiver
- * before it propagates: a caller that catches it reads its own `this`.
- */
-function restoreThisOnThrow(dispatch: Instr[], prevThisLocal: number, currentThisGlobalIdx: number): Instr {
-  return {
-    op: "try",
-    blockType: { kind: "val", type: { kind: "externref" } },
-    body: dispatch,
-    catches: [],
-    catchAll: [
-      { op: "local.get", index: prevThisLocal },
-      { op: "global.set", index: currentThisGlobalIdx },
-      { op: "rethrow", depth: 0 },
-    ],
-  };
 }
 
 /**

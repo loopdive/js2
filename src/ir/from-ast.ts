@@ -320,6 +320,7 @@ import { openCarrierDefinePlan } from "./empty-object-literal.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
 import {
+  isStatementDynamicModuleCall,
   localValueDeclaration,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrPrimitiveExpressionClassifier,
@@ -7817,18 +7818,19 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   const bindingLogicalType =
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
   // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
-  // Statement position only, as the selector admits it.
   const dynamicModuleCallee =
-    statementPosition &&
     binding === undefined &&
-    cx.resolver?.resolveModuleBinding?.(expr.expression)?.type.kind === "dynamic";
+    isStatementDynamicModuleCall(
+      expr,
+      (callee) => cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic",
+    );
   if (bindingLogicalType?.kind === "dynamic" || dynamicModuleCallee) {
     const callee = lowerExpr(expr.expression, cx, irDynamic());
     if (cx.builder.typeOf(callee).kind !== "dynamic") {
       demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
     }
     const message = dynamicModuleCallee
-      ? functionObjects.scriptVarCalleeNotCallableMessage(
+      ? functionObjects.scriptVarCalleeNotCallableMessages(
           cx.checker && localValueDeclaration(expr.expression, cx.checker),
         )
       : undefined;
@@ -13370,15 +13372,29 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
         : storage.kind === "slot"
           ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
           : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
-    const rhsLowered = lowerExpr(rhs, cx, logicalType);
+    const rhsValue = lowerExpr(rhs, cx, logicalType);
     const rhsString = checkerOperandFamily(rhs, cx) === "string";
-    // (#7287 review B2) A checker-string RHS over a dynamic operand
-    // (`"a" + f`, `f` a dynamic module var) is a dynamic carrier holding a
-    // string: recover the string carrier (checked, no ToString).
-    const rhsValue =
-      rhsString && cx.builder.typeOf(rhsLowered).kind === "dynamic"
-        ? cx.builder.emitDynStringCarrier(rhsLowered)
-        : rhsLowered;
+    const store = (result: IrValueId, stringEncoding: Encoding) => {
+      if (storage.kind === "moduleGlobal") {
+        cx.builder.emitGlobalSet(storage.globalRef, result);
+      } else if (storage.kind === "slot") {
+        cx.builder.emitSlotWrite(storage.slotIndex, result);
+      } else {
+        cx.builder.emitRefCellSet(storage.value, result);
+      }
+      cx.scope.set(id.text, { ...storage, stringEncoding });
+    };
+    if (rhsString && cx.builder.typeOf(rhsValue).kind === "dynamic") {
+      // (#7287 review B2, S3) A checker-string RHS can lower to the dynamic
+      // carrier: `"a" + f` over a dynamic module var, or a JS `var` the checker
+      // types from its string initializer that the program reassigns
+      // (`s = 5`). Append through the dynamic `+` the dynamic-slot arm below
+      // uses (ToPrimitive, then ToString); with a string on its left it yields
+      // a string, whose code units are unknown.
+      const boxedLhs = cx.builder.emitBox(lhs, irDynamic(JS_TAG_IDS.String));
+      store(cx.builder.emitDynStringCarrier(emitDynamicAdd(boxedLhs, rhsValue, cx)), "wtf16");
+      return;
+    }
     const rhsType = cx.builder.typeOf(rhsValue);
     if (rhsString && rhsType.kind !== "string") {
       // invariant (producer-promise): the checker POSITIVELY proves the RHS is a
@@ -13403,15 +13419,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     }
     const symbol = cx.checker?.getSymbolAtLocation(id);
     const concatMode = symbol && cx.ownedStringAppendSymbols.has(symbol) ? "owned-append" : "immutable";
-    const result = cx.builder.emitStringConcat(lhs, rhsValue, proof.resultEncoding, concatMode);
-    if (storage.kind === "moduleGlobal") {
-      cx.builder.emitGlobalSet(storage.globalRef, result);
-    } else if (storage.kind === "slot") {
-      cx.builder.emitSlotWrite(storage.slotIndex, result);
-    } else {
-      cx.builder.emitRefCellSet(storage.value, result);
-    }
-    cx.scope.set(id.text, { ...storage, stringEncoding: proof.resultEncoding });
+    store(cx.builder.emitStringConcat(lhs, rhsValue, proof.resultEncoding, concatMode), proof.resultEncoding);
     return;
   }
   // (#7106 Stage 4) `message += …` on a dynamic slot (assert.js's reassigned
@@ -13436,9 +13444,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     const dynamicRhs = rhsType.kind === "dynamic" ? rhsValue : boxConcreteToDynamic(rhsValue, rhsType, rhs, cx);
     // invariant (producer-promise): `compoundWriteAdmissible` admits only boxable operands — #7144.
     if (dynamicRhs === null) throw new Error(`ir/from-ast: admitted dynamic "+=" operand did not box (${cx.funcName})`);
-    const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [lhs, dynamicRhs], irDynamic());
-    if (added === null) throw new Error(`ir/from-ast: dynamic '+=' produced no result in ${cx.funcName}`);
-    cx.builder.emitSlotWrite(storage.slotIndex, added);
+    cx.builder.emitSlotWrite(storage.slotIndex, emitDynamicAdd(lhs, dynamicRhs, cx));
     return;
   }
   // f64 arithmetic: the slot and the operator decide before the RHS is
@@ -15142,10 +15148,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
       const dynL = lt.kind === "dynamic" ? lhs : boxConcreteToDynamic(lhs, lt, expr.left, cx);
       const dynR = rt.kind === "dynamic" ? rhs : boxConcreteToDynamic(rhs, rt, expr.right, cx);
       if (dynL !== null && dynR !== null) {
-        const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [dynL, dynR], irDynamic());
-        // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-        if (added === null) throw new Error(`ir/from-ast: dynamic '+' produced no result in ${cx.funcName}`);
-        return added;
+        return emitDynamicAdd(dynL, dynR, cx);
       }
     }
     // #2949 S5.3 — dynamic relational: `<`/`>`/`<=`/`>=` where either operand
@@ -16051,6 +16054,14 @@ function isValueVoid(operand: ts.Expression): boolean {
     candidate = peelParensExpr(candidate.right);
   }
   return ts.isVoidExpression(candidate);
+}
+
+/** The dynamic `+` (`IR_DYN_ADD_FN`) over two carrier operands: the binary `+` and both `+=` arms. */
+function emitDynamicAdd(left: IrValueId, right: IrValueId, cx: LowerCtx): IrValueId {
+  const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [left, right], irDynamic());
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+  if (added === null) throw new Error(`ir/from-ast: dynamic '+' produced no result in ${cx.funcName}`);
+  return added;
 }
 
 /**

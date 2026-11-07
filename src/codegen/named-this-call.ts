@@ -20,7 +20,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { TypeFact } from "../checker/oracle.js";
-import type { FuncHandle, Instr, ValType, WasmFunction } from "../ir/types.js";
+import type { BlockType, FuncHandle, Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { explicitNullReceiverLane, explicitNullThisExternInstrs } from "./explicit-null-receiver.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -328,36 +328,14 @@ function installAndCallFrame(ctx: CodegenContext, frame: ReceiverInstallFrame, r
   // do not move.
   const parkResultInLocal = standardizedEh && (resultType?.kind === "ref" || resultType?.kind === "ref_null");
   const tryBlockType = parkResultInLocal ? ({ kind: "empty" } as const) : blockType;
-  const protectedCall: Instr = standardizedEh
-    ? buildStandardTryTable(
-        tryBlockType,
-        parkResultInLocal ? [...frame.exactCall(), { op: "local.set", index: resultLocal }] : frame.exactCall(),
-        [
-          {
-            kind: "catch",
-            tagIdx: ensureExnTag(ctx),
-            payloadType: { kind: "externref" },
-            body: [
-              { op: "local.set", index: unwindExnLocal },
-              { op: "local.get", index: prevThisLocal },
-              { op: "global.set", index: currentThisGlobalIdx },
-              { op: "local.get", index: unwindExnLocal },
-              { op: "throw", tagIdx: ensureExnTag(ctx) },
-            ],
-          },
-        ],
-      )
-    : {
-        op: "try",
-        blockType,
-        body: frame.exactCall(),
-        catches: [],
-        catchAll: [
-          { op: "local.get", index: prevThisLocal },
-          { op: "global.set", index: currentThisGlobalIdx },
-          { op: "rethrow", depth: 0 },
-        ],
-      };
+  const protectedCall = restoreThisOnUnwind(
+    ctx,
+    tryBlockType,
+    parkResultInLocal ? [...frame.exactCall(), { op: "local.set", index: resultLocal }] : frame.exactCall(),
+    prevThisLocal,
+    currentThisGlobalIdx,
+    unwindExnLocal,
+  );
   return [
     { op: "global.get", index: currentThisGlobalIdx },
     { op: "local.set", index: prevThisLocal },
@@ -370,6 +348,52 @@ function installAndCallFrame(ctx: CodegenContext, frame: ReceiverInstallFrame, r
     { op: "global.set", index: currentThisGlobalIdx },
     ...(resultLocal < 0 ? [] : ([{ op: "local.get", index: resultLocal }] satisfies Instr[])),
   ];
+}
+
+/**
+ * Whether this module throws with exnref `try_table` rather than legacy
+ * `try`/`catch_all`. A module may not mix the two, so every handler a helper
+ * emits must follow this one choice.
+ */
+function usesStandardEh(ctx: CodegenContext): boolean {
+  return ctx.wasi || ctx.standalone;
+}
+
+/**
+ * `body` protected so that a throw out of it puts `__current_this` back to the
+ * caller's value (held in `prevThisLocal`) before the exception propagates.
+ * `unwindExnLocal` is an externref local that holds the payload on the
+ * standard form; the legacy form rethrows without it.
+ */
+export function restoreThisOnUnwind(
+  ctx: CodegenContext,
+  blockType: BlockType,
+  body: Instr[],
+  prevThisLocal: number,
+  currentThisGlobalIdx: number,
+  unwindExnLocal: number,
+): Instr {
+  const restore: Instr[] = [
+    { op: "local.get", index: prevThisLocal },
+    { op: "global.set", index: currentThisGlobalIdx },
+  ];
+  if (!usesStandardEh(ctx)) {
+    return { op: "try", blockType, body, catches: [], catchAll: [...restore, { op: "rethrow", depth: 0 }] };
+  }
+  const tagIdx = ensureExnTag(ctx);
+  return buildStandardTryTable(blockType, body, [
+    {
+      kind: "catch",
+      tagIdx,
+      payloadType: { kind: "externref" },
+      body: [
+        { op: "local.set", index: unwindExnLocal },
+        ...restore,
+        { op: "local.get", index: unwindExnLocal },
+        { op: "throw", tagIdx },
+      ],
+    },
+  ]);
 }
 
 /** The `__previous_this` / `__result` / `__unwind_exception` local set both trampolines declare. */
@@ -415,7 +439,7 @@ function ensureNamedThisCallTrampoline(
   const prevThisLocal = trampolineParams.length;
   const resultType = results[0];
   const resultLocal = resultType === undefined ? -1 : prevThisLocal + 1;
-  const standardizedEh = ctx.wasi || ctx.standalone;
+  const standardizedEh = usesStandardEh(ctx);
   const unwindExnLocal = resultType === undefined ? prevThisLocal + 1 : resultLocal + 1;
   const exactCall = (): Instr[] => callTarget(targetFuncIdx, params.length);
 
@@ -507,7 +531,7 @@ function ensureNamedPlainCallTrampoline(
   const prevThisLocal = params.length;
   const resultType = results[0];
   const resultLocal = resultType === undefined ? -1 : prevThisLocal + 1;
-  const standardizedEh = ctx.wasi || ctx.standalone;
+  const standardizedEh = usesStandardEh(ctx);
   const unwindExnLocal = resultType === undefined ? prevThisLocal + 1 : resultLocal + 1;
   const frame: ReceiverInstallFrame = {
     currentThisGlobalIdx,

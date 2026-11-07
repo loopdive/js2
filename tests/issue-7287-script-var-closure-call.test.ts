@@ -196,7 +196,7 @@ var p = function () {};`,
 p = 5;
 function h() { p(1); }
 try { h(); throw "no throw"; } catch (e) {
-  if (!(e instanceof TypeError) || e.message !== "Cannot access property on null or undefined") throw "msg";
+  if (!(e instanceof TypeError) || e.message !== "called value is not a function") throw "msg";
 }`,
     expected: "completed",
     legacyTraps: true,
@@ -219,6 +219,14 @@ if (out !== "1") throw "this";`,
     expected: "completed",
     irUnits: ["h"],
   },
+  "review B1: legacy f.call / f.apply of a throwing closure restore the receiver": {
+    source: `var out = "";
+var f = function () { throw 1; };
+var o = { v: 1, m: function () { try { f.call(null); } catch (e) {} try { f.apply(null, []); } catch (e) {} out += this.v; } };
+o.m();
+if (out !== "1") throw "this";`,
+    expected: "completed",
+  },
   "review B2: a checker-string += over a dynamic module var compiles": {
     source: `var out = "";
 var f;
@@ -229,6 +237,31 @@ out += "a" + f;
 if (out !== "a5") throw "out";`,
     expected: "completed",
     irUnits: ["h"],
+  },
+  "review B2: a checker-string += of a recovered carrier in module code compiles": {
+    source: `var R = "";
+try { R += "no"; } catch (e) { R += (e instanceof TypeError) + ":" + e.message; }`,
+    expected: "completed",
+    irUnits: ["<module-init>"],
+  },
+  "review B3: a null argument keeps the legacy body": {
+    source: `var f = function (a) {};
+var print = function (a) {};
+function h() { f(null); }
+function g() { print(null); }
+function k() { f([1]); }
+h(); g(); k();`,
+    expected: "completed",
+    legacyUnits: ["h", "g", "k"],
+  },
+  "review S3: += of a checker-string var the program reassigns appends its ToString": {
+    source: `var out = "";
+var s = "x";
+s = 5;
+try { out += s; } catch (e) { out = "caught"; }`,
+    expected: "completed",
+    irUnits: ["<module-init>"],
+    skipSemanticDiagnostics: true,
   },
   "slice B: a value-position call keeps the legacy body": {
     source: `var p = function (v) { return v; };
@@ -262,6 +295,8 @@ describe("#7287 script-var closures callable from IR units", () => {
         const irRoute = !(testCase.wasiLegacy && lane.options.target === "wasi");
         for (const unit of testCase.irUnits ?? []) expect(route(result, unit), unit).toBe(irRoute);
         for (const unit of testCase.legacyUnits ?? []) expect(route(result, unit), unit).toBe(false);
+        // A unit the selector admits lowers: no claim is withdrawn after it (#7287 review B3).
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
       });
     }
   }

@@ -7,6 +7,7 @@
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
+import { dynamicCallArgumentAdmissible, type OperandFamily } from "./analysis/operand-admissibility.js";
 import * as bindingValue from "./module-binding-value-kinds.js";
 import { updateRetypesModuleBinding } from "./update-retyped-bindings.js";
 import { isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
@@ -926,6 +927,33 @@ function bindingDeclarationCandidates(
   const oracle = bindingOracle(source);
   const candidates = [oracle.valueDeclarationOf(node), ...oracle.declarationsOf(node)];
   return scriptVarBehindLibGlobal(node, candidates) ?? candidates;
+}
+
+/**
+ * (#7287) A call `v(…)` in statement position whose callee is a script `var`
+ * in its dynamic module home: the Stage-4 dynamic call through that home, not
+ * a call-graph edge. Statement position only: a lib-named `var`'s call result
+ * is typed by the lib signature. Every argument must cross into the carrier
+ * (`dynamicCallArgumentAdmissible`). The selector and from-ast each pass their
+ * own resolver's answer for the callee.
+ */
+export function isStatementDynamicModuleCall(
+  call: ts.CallExpression,
+  isDynamicModuleBinding: (callee: ts.Identifier) => boolean,
+): boolean {
+  return (
+    ts.isExpressionStatement(call.parent) &&
+    ts.isIdentifier(call.expression) &&
+    isDynamicModuleBinding(call.expression) &&
+    call.arguments.every((argument) => dynamicCallArgumentAdmissible(syntacticArgumentFamily(argument)))
+  );
+}
+
+/** The families `dynamicCallArgumentAdmissible` refuses that an argument shows syntactically. */
+function syntacticArgumentFamily(argument: ts.Expression): OperandFamily {
+  const value = unwrapParens(argument);
+  if (value.kind === ts.SyntaxKind.NullKeyword) return "nullish";
+  return ts.isArrayLiteralExpression(value) ? "vec<other>" : "unknown";
 }
 
 /**
