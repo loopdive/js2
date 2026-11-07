@@ -6694,8 +6694,8 @@ function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
 function ownParameterStatementCall(expr: ts.CallExpression, owner: ts.SignatureDeclaration | null): boolean {
   const callee = expr.expression;
   if (owner === null || !ts.isIdentifier(callee) || !ts.isExpressionStatement(expr.parent)) return false;
-  let enclosing: ts.Node = expr.parent;
-  while (!ts.isFunctionLike(enclosing)) enclosing = enclosing.parent;
+  let enclosing: ts.Node | undefined = expr.parent;
+  while (enclosing !== undefined && !ts.isFunctionLike(enclosing)) enclosing = enclosing.parent;
   return enclosing === owner && owner.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === callee.text);
 }
 
