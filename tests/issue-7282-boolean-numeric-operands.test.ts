@@ -127,6 +127,29 @@ export function test(): number { return b + (d === 0 ? 10 : 0) + (e ? 100 : 0); 
     source: `function f(x: any, b: boolean): number { return (b - x) + (x * b) * 10 + (8 >> b) * 100; }
 export function test(): number { return f(3, true) + f("2", false) * 10000; }`,
   },
+  // test262 less-than/S11.8.1_A3.1_T1.1 and greater-than/S11.8.2_A3.1_T1.1
+  // shapes: the boolean is converted beside the wrapper's carrier too.
+  "script: fresh Boolean wrapper beside a boolean": {
+    fileName: "issue-7282.js",
+    source: `var a = new Boolean(true) < true; var b = true < new Boolean(true);
+var c = new Boolean(false) >= false; var d = true > new Boolean(false);`,
+    irUnits: ["<module-init>"],
+  },
+  "module: fresh Boolean wrapper beside a boolean (values)": {
+    fileName: "issue-7282.ts",
+    source: `const a = new Boolean(true) < true; const b = true < new Boolean(true);
+const c = new Boolean(false) >= false; const d = true > new Boolean(false);
+export function test() { return (a ? 1 : 0) + (b ? 10 : 0) + (c ? 100 : 0) + (d ? 1000 : 0); }`,
+    legacyUnits: ["<module-init>"],
+  },
+  // A prepared component (an ES module's module-init) has no identity for the
+  // carrier supports, so selection refuses the boolean beside the carrier.
+  "module: a boolean beside undefined keeps the legacy module-init": {
+    fileName: "issue-7282.ts",
+    source: `const a = true < undefined; const b = undefined >= false;
+export function test() { return (a ? 1 : 0) + (b ? 10 : 0); }`,
+    legacyUnits: ["<module-init>"],
+  },
   "a boolean beside a string keeps the legacy unit": {
     fileName: "issue-7282.ts",
     source: `export function test(): number { const t = true; return t & ("3" as any); }`,

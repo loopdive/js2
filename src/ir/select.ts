@@ -106,7 +106,7 @@ import {
 } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
-import { admitAmbientGlobalFunctionCall } from "./ambient-global-function-call.js";
+import { admitAmbientGlobalFunctionCall, lowersAsPreparedComponent } from "./ambient-global-function-call.js";
 import {
   isAffineThreeDeepElementAccess,
   unwrapTypeErasedExpression,
@@ -194,6 +194,7 @@ import {
   isCarrierAddition,
   additiveResultFamily,
   provenBinaryOperandsAdmissible,
+  booleanReadAsNumber,
   isComparisonResultOperator,
   isEqualityOperator,
   isNumberCompoundAssignOperator,
@@ -9055,6 +9056,16 @@ function selectorPrimitiveWrapperOrGenericBinary(
       !isSlotFreeI32IdentityLowered(expr));
   if (judged && !provenBinaryOperandsAdmissible(expr, left, right, additiveLane())) {
     return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
+  }
+  // (#7282) A boolean ToNumber'd beside the carrier (`undefined`, a dynamic or
+  // a fresh wrapper) needs carrier supports a prepared component cannot name.
+  const carrierPartner = (family: OperandFamily) => family === "undefined" || family === "dynamic";
+  if (
+    booleanReadAsNumber(binOp, left, right) &&
+    (carrierPartner(left) || carrierPartner(right)) &&
+    lowersAsPreparedComponent(expr)
+  ) {
+    return capabilityNo("operand-coercion-unsupported", "expr-boolean-carrier-prepared-unit", expr);
   }
   return (
     (leftWrapper || isPhase1Expr(expr.left, scope, localClasses)) &&

@@ -21,6 +21,11 @@ loc-budget-allow:
   # imports it (+1); its doc names the new ToNumber case (+1). The conversion
   # belongs beside the existing `null` -> +0 numeric-reader arm it extends.
   - src/ir/from-ast.ts
+  # 2026-11-07 (#7282 review RV7150): select.ts +11 — the generic binary tail
+  # refuses a boolean beside the carrier in a prepared component
+  # (`lowersAsPreparedComponent`, shared with the escape/unescape arm), the
+  # one place both operand families are known before claim.
+  - src/ir/select.ts
 ---
 
 # #7282 — IR module-init: small sole-blocker families
@@ -131,7 +136,7 @@ Expected zero-legacy delta stated before coding: **+1**
 
 - Playground corpus (13 files × gc / standalone / wasi): byte-identical.
 - `tests/issue-7282-boolean-numeric-operands.test.ts` (standalone / wasi / gc
-  vs JS): 27/27 on head; 8 of them fail on main (IR-route assertions).
+  vs JS): 36/36 on head; 8 of them fail on main (IR-route assertions).
   Covers bitwise, shifts, `-0` (`false * -1`), NaN, Infinity, `2^32 + 1`
   ToInt32 wrap, `null` / `undefined` / dynamic partners, and the refused
   string partner.
@@ -147,6 +152,15 @@ Expected zero-legacy delta stated before coding: **+1**
   undefined` hits `late-preparation-unsupported`
   (`implicit-support-reference-unavailable`) for the `dyn.undefined` support
   reference; `1 & undefined` does so on main too.
+- (RV7150) A boolean beside a fresh wrapper (`new Boolean(true) < true`) is
+  now converted beside the wrapper's carrier too (`booleansReadAsNumbers`,
+  the one conversion site both branches of `lowerBinaryOperands` share), and a
+  boolean beside `undefined` / the carrier in a prepared component (an ES
+  module's module-init) refuses at selection instead of failing late
+  preparation. Still pre-existing and unchanged in kind: `true < d` with `d` an
+  `any` module binding is claimed and then withdrawn (on main at build, here at
+  late preparation), because the selector types that binding `unknown`, as it
+  does for main's `1 < d`.
 - (review) Two boolean-operand residuals still demote at build, as on main:
   a boolean-returning CALL (`g() - 1`) lowers to an i32 the IR does not brand
   boolean, so `irOperandFamily` names it `int32` and no conversion runs; and

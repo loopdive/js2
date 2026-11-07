@@ -125,13 +125,21 @@ export function admitAmbientGlobalFunctionCall(
   const call = ambientGlobalFunctionCall(expr, classify);
   if (call === null || !isLibOnlyBinding(call.callee)) return null;
   const escapeFamily = call.name === "escape" || call.name === "unescape";
-  if (escapeFamily && ts.isExternalModule(expr.getSourceFile()) && !inTopLevelFunctionDeclaration(expr)) return null;
+  if (escapeFamily && lowersAsPreparedComponent(expr)) return null;
   return expr.arguments;
 }
 
-function inTopLevelFunctionDeclaration(node: ts.Node): boolean {
+/**
+ * Does `node` lower inside a prepared component — an ES module unit other than
+ * a top-level function declaration (`<module-init>`, class members, closures)?
+ * Its Program ABI has no identity for some runtime supports (`__escape`,
+ * `dyn.string_carrier`, `dyn.undefined`'s support reference), measured as
+ * `late-preparation-unsupported`. Scripts never are.
+ */
+export function lowersAsPreparedComponent(node: ts.Node): boolean {
+  if (!ts.isExternalModule(node.getSourceFile())) return false;
   const unit = ts.findAncestor(node.parent, ts.isFunctionLike);
-  return unit !== undefined && ts.isFunctionDeclaration(unit) && ts.isSourceFile(unit.parent);
+  return !(unit !== undefined && ts.isFunctionDeclaration(unit) && ts.isSourceFile(unit.parent));
 }
 
 /** What the lowering needs from from-ast (no import of the lowerer itself). */
