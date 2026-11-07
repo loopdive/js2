@@ -195,6 +195,7 @@ const ENCODING_PRESERVING_METHODS: ReadonlySet<string> = new Set([
   "trimLeft",
   "trimRight",
   "normalize",
+  // Follow-up (#7106 S2 review): the result also holds the fill (`args[2]`), whose encoding is not joined here.
   "padStart",
   "padEnd",
   "repeat",
