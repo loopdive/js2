@@ -154,8 +154,8 @@ live).
   (Backlog); literal-only builder loops still 1–2.6 ms slower than legacy at
   n=2M on wasi/gc (follow-up candidate); #7285 unlock is upstream (one
   `dyn.to_string` engine with the boxed-Boolean pre-check).
-- Numbers: `plan/issues/7291-*.md` (Progress table, review notes),
-  `7277-*.md` ("Scope narrowed"), `7300-*.md` (repros), `7285-*.md`
+- Numbers: the #7291 issue file (Progress table, review notes),
+  the #7277 issue file ("Scope narrowed"), the #7300 issue file (repros), the #7285 issue file
   (census); PR bodies #7156/#7168; raw logs in that lane's `.tmp/`
   (`ab7291*.txt`, `ab7277*.txt`, `equiv7277e.log`, `equiv7291s3.log`,
   `corpus-*.txt`, `sbfix-*.txt`; bench scripts `perf3.mts`, `frac3.mts`,
@@ -212,7 +212,7 @@ live).
 - Open: slice 3 (SharedArrayBuffer: `new SharedArrayBuffer()/(n)` via
   `emitSabConstruct` + `byteLength`, target `SharedArrayBuffer/length-is-absent.js`)
   not started; mixed-route proof not exercisable until closures (#7271).
-- Numbers: `plan/issues/7274-*.md` ("Slice 1"/"Slice 2": measurements,
+- Numbers: the #7274 issue file ("Slice 1"/"Slice 2": measurements,
   review records, follow-ups); PR bodies; equivalence results as PR comments.
 
 ### R14 (C-opus) — #7281, #7305, docs PR #7159, censuses
