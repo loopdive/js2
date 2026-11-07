@@ -51,6 +51,8 @@ export interface IrStaticPredicateSelection {
    * unannotated local that `localIsRewritten` clears.
    */
   readonly localDeclaration: (identifier: ts.Identifier) => ts.VariableDeclaration | undefined;
+  /** Canonical checker binding identity, including parameter shadows and repeated var declarations. */
+  readonly valueDeclaration?: (identifier: ts.Identifier) => ts.Declaration | undefined;
   /** The representation family the selector proves any other expression lowers to; `unknown` without a proof. */
   readonly family: (expression: ts.Expression) => OperandFamily;
   /** How the lane judges a `+` (`additiveOperandsProvable`). */
@@ -128,7 +130,8 @@ function expressionFamily(
   if (ts.isIdentifier(candidate)) {
     const local = options.localDeclaration(candidate);
     if (local !== undefined && local.type === undefined) {
-      if (local.initializer === undefined || seen.has(local) || localIsRewritten(local)) return "unknown";
+      if (local.initializer === undefined || seen.has(local) || localIsRewritten(local, options.valueDeclaration))
+        return "unknown";
       return expressionFamily(local.initializer, options, new Set(seen).add(local));
     }
   }
@@ -194,7 +197,7 @@ function booleanAnswerConsumed(answer: ts.Expression, options: IrStaticPredicate
   if (ts.isVariableDeclaration(parent)) {
     if (!ts.isIdentifier(parent.name)) return false;
     if (parent.type !== undefined) return annotatedLocalTakesBoolean(parent.name, options);
-    return options.localDeclaration(parent.name) !== undefined && !localIsRewritten(parent);
+    return options.localDeclaration(parent.name) !== undefined && !localIsRewritten(parent, options.valueDeclaration);
   }
   if (ts.isReturnStatement(parent)) {
     const declared = effectiveIrReturnTypeNode(ts.findAncestor(parent, ts.isFunctionLike)!);

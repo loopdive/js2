@@ -11384,14 +11384,14 @@ function isPhase1StaticPredicateCall(
     isAmbientNamespace: (receiver) => !scope.has(receiver.text) && selectorSeesAmbientBinding(receiver),
     isGlobalUndefined: (operand) => isUnshadowedUndefinedIdentifier(operand, scope),
     localDeclaration: closureLocalDeclaration,
+    valueDeclaration: (identifier) => currentModuleBindingResolver?.localValueDeclaration(identifier),
     family: (expression) => provenIrFamily(expression, scope),
     additiveLane: additiveLane(),
     isStringMethodCall: (call) =>
       ts.isPropertyAccessExpression(call.expression) &&
       currentSelectionOptions?.classifyPrimitiveExpression?.(call.expression.expression) === "string",
     declaredSlotFamily: (type) => resolvedKindFamily(resolveReturnTypeNode(type)),
-    // A top-level function's parameter takes the verdict its own claim resolves its signature with; any
-    // other callee the source declares (a local, a module `const h = (b) => …`) is not resolved here.
+    // Top-level calls use their claimed parameter signature; other source-declared callees stay unresolved.
     argumentSlotFamily: (call, index) => {
       if (!ts.isIdentifier(call.expression)) return undefined;
       const name = call.expression.text;
