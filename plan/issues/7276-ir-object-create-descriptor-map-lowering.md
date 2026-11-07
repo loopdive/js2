@@ -25,12 +25,19 @@ loc-budget-allow:
   #     the arm at `lowerMethodCallWithSourcePlan` (the seam both call entries
   #     share) and `lowerDataDescriptorFields`, which the #7128 open-carrier
   #     define now shares instead of keeping its own copy.
+  #   - integration.ts +1 (2026-11-07, review 2): `<module-init>` is told its
+  #     code strictness (`functionCodeStrict`), the one option line beside
+  #     `moduleInitUnit`; the rule itself lives in `irFunctionCodeStrictness`.
   - src/ir/select.ts
   - src/ir/from-ast.ts
+  - src/ir/integration.ts
 func-budget-allow:
   # 2026-11-06 (#7276): one sibling arm in the flat call dispatch, beside
   # `Object.defineProperty`'s; splitting the dispatcher is its own refactor.
   - src/ir/select.ts::isPhase1Expr
+  # 2026-11-07 (#7276 review 2): the same one option line, inside the
+  # module-init lowering call of `compileIrPathFunctions`.
+  - src/ir/integration.ts::compileIrPathFunctions
 ---
 
 # #7276: `Object.create(proto, {descriptor map})` in the IR

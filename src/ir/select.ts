@@ -180,13 +180,8 @@ import {
   type StringMethodPlan,
 } from "./string-method-surface.js";
 import type { IrBackendKind } from "./analysis/backend-legality.js";
-import {
-  isPatternDeclaration,
-  isPhase1BindingPattern,
-  patternLeaves,
-  type BindingLeaf,
-  type PatternDeclaration,
-} from "./binding-pattern-plan.js";
+import { isPhase1BindingPattern, patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
+import { isPatternDeclaration, type PatternDeclaration } from "../shared/pattern-declaration.js";
 import {
   literalLeafSource,
   literalPlanExpressions,

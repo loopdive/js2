@@ -12777,6 +12777,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/shared/pattern-declaration.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7288",
+      "nextBoundary": "TypeScript-AST predicate for a destructuring declaration, shared by the IR binding-pattern plan and the module-initializer var-list certifier; moves with the frontend inventory split."
+    },
+    {
       "path": "src/shared/module-init-var-lists.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

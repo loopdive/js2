@@ -7,6 +7,7 @@
 // (`codegen/module-global-registration.ts`), and the IR resolves them there.
 
 import { ts } from "../ts-api.js";
+import { isPatternDeclaration } from "./pattern-declaration.js";
 
 /** A `var` list (not `let` / `const` / `using`). */
 export function isVarDeclarationList(list: ts.VariableDeclarationList): boolean {
@@ -24,9 +25,7 @@ export function moduleInitVarList(statement: ts.Node): ts.VariableDeclarationLis
   if (!list || !isVarDeclarationList(list)) return undefined;
   // (#7288) An identifier head binds a module global in a script only; an ES module keeps the S5 pattern heads.
   const script = !ts.isExternalModule(statement.getSourceFile());
-  return ts.isVariableStatement(statement) ||
-    script ||
-    list.declarations.every((declaration) => !ts.isIdentifier(declaration.name))
+  return ts.isVariableStatement(statement) || script || list.declarations.every(isPatternDeclaration)
     ? list
     : undefined;
 }
