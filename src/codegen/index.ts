@@ -56,6 +56,7 @@ import {
 } from "./ir-fnctor-parameter-planning.js";
 import {
   legacyParamSlotIsExternref,
+  legacyRefinedParamSlot,
   makeIrDynamicCarrierDivergenceProbe,
   resolveFnctorInstanceType,
 } from "./fnctor-typed-instances.js";
@@ -100,6 +101,7 @@ import {
   compileIrPathFunctions,
   irAmbientNamespaceConstant, // (#7106 module-init lever A)
   irNumberConversionPlan, // (#7106 module-init lever B)
+  planIrNativeBufferSurface, // (#7274)
   type IrIntegrationError,
   type IrIntegrationReport,
 } from "../ir/integration.js";
@@ -197,6 +199,7 @@ import {
   makeIrArrayExpressionPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrLocalClassExpressionResolver,
+  capabilityExternBindingOptions,
   makeIrModuleBindingResolver,
   makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
@@ -1371,7 +1374,7 @@ function resolvePositionType(
       return resolvePositionType(node.type, mapped, ctx, classShapes);
     }
     if (node.kind === ts.SyntaxKind.NumberKeyword) return irVal({ kind: "f64" });
-    if (node.kind === ts.SyntaxKind.BooleanKeyword) return irVal({ kind: "i32" });
+    if (node.kind === ts.SyntaxKind.BooleanKeyword) return irVal({ kind: "i32", boolean: true }); // (#7265) branded
     if (node.kind === ts.SyntaxKind.StringKeyword) return { kind: "string" };
     // (#2949 slice 3b) AnyKeyword IS the dynamic type. The historical #1228
     // mapping (externref in ALL modes) diverged from legacy's fast-mode
@@ -2881,34 +2884,50 @@ function makeIrImplicitParamTypeResolver(
       }
       candidatesByDeclaration.set(declaration, candidates);
     }
-    if (!candidates.has(parameter)) return undefined;
     const parameterFact = ctx.oracle.typeFactOf(parameter);
     if (parameterFact.kind !== "any" && parameterFact.kind !== "unknown") return undefined;
     const parameterIndex = declaration.parameters.indexOf(parameter);
     if (parameterIndex < 0) return undefined;
     const callSites = inferParamTypeFromCallSites(ctx, declaration.name.text, parameterIndex, sourceFile);
+    // (#7277) Off the candidate set, a slot legacy refined from real call
+    // sites is the only evidence; adopting it gives the same ABI by
+    // construction. A never-called function keeps legacy's default slot.
+    if (!candidates.has(parameter)) {
+      return callSites.sawCallSite
+        ? projectIrImplicitParamSlot(ctx, legacyRefinedParamSlot(ctx, parameter))
+        : undefined;
+    }
     if (callSites.sawCallSite && callSites.type === null) {
       return { kind: "dynamic", type: irDynamic() };
     }
-    const inferred = inferImplicitAnyParamType(ctx, declaration.name.text, parameterIndex, sourceFile, declaration);
-    if (inferred?.kind === "f64") return { kind: "f64", type: irVal(inferred) };
-    if (inferred?.kind === "i32" && inferred.boolean === true) {
-      return { kind: "bool", type: irVal(inferred) };
-    }
-    if (inferred?.kind === "ref" && isAnyStringSlot(ctx, inferred)) {
-      return { kind: "string", type: { kind: "string" } };
-    }
-    if (inferred?.kind === "ref" || inferred?.kind === "ref_null") {
-      const structName = ctx.typeIdxToStructName.get(inferred.typeIdx);
-      if (structName === "__vec_f64") {
-        return { kind: "object", type: irVec(irVal({ kind: "f64" }), true) };
-      }
-      if (structName?.startsWith("__vec_") || structName?.startsWith("__arr_")) {
-        return { kind: "object", type: irVal(inferred) };
-      }
-    }
-    return undefined;
+    return projectIrImplicitParamSlot(
+      ctx,
+      inferImplicitAnyParamType(ctx, declaration.name.text, parameterIndex, sourceFile, declaration),
+    );
   };
+}
+
+function projectIrImplicitParamSlot(
+  ctx: CodegenContext,
+  inferred: ValType | null | undefined,
+): IrImplicitParamProjection | undefined {
+  if (inferred?.kind === "f64") return { kind: "f64", type: irVal(inferred) };
+  if (inferred?.kind === "i32" && inferred.boolean === true) {
+    return { kind: "bool", type: irVal(inferred) };
+  }
+  if (inferred?.kind === "ref" && isAnyStringSlot(ctx, inferred)) {
+    return { kind: "string", type: { kind: "string" } };
+  }
+  if (inferred?.kind === "ref" || inferred?.kind === "ref_null") {
+    const structName = ctx.typeIdxToStructName.get(inferred.typeIdx);
+    if (structName === "__vec_f64") {
+      return { kind: "object", type: irVec(irVal({ kind: "f64" }), true) };
+    }
+    if (structName?.startsWith("__vec_") || structName?.startsWith("__arr_")) {
+      return { kind: "object", type: irVal(inferred) };
+    }
+  }
+  return undefined;
 }
 
 function resolveIrOverrideParamType(
@@ -3061,6 +3080,7 @@ function planIrOverlay(
   const platformExternClass = irPlatformExternClassPredicate(ctx);
   const hostExternSurface = jsHostExterns || platformExternClass !== undefined;
   const standaloneDomCapability = planStandaloneDomCapability(ctx, ast.checker, ast.sourceFile);
+  const nativeBufferSurface = planIrNativeBufferSurface(ctx, ast.sourceFile); // (#7274)
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   const calendarResolvers = planIrCalendarResolvers(
     ast.checker,
@@ -3090,7 +3110,7 @@ function planIrOverlay(
             // in the WasmGC `$Map` struct, so the binding is representable
             // here even though the extern handle is not.
             allowNativeMapStorage: ctx.nativeStrings,
-            resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
+            ...capabilityExternBindingOptions(standaloneDomCapability, nativeBufferSurface),
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
             scriptVarHome: (declaration) => scriptVarHome(ctx, declaration),
@@ -3229,8 +3249,8 @@ function planIrOverlay(
       if (projection.kind === "object") hasIndexedCarrier = true;
       if (projection.kind === "bool") hasBooleanProjection = true;
       else allProjectionsAreBoolean = false;
-      if (projection.kind === "f64" || projection.kind === "dynamic") {
-        hasNonFastScalarProjection = true;
+      if (projection.kind === "f64" || projection.kind === "dynamic" || projection.kind === "string") {
+        hasNonFastScalarProjection = true; // (#7277) not only scalars: a call-site-refined string too
       } else {
         allProjectionsAreNonFastStable = false;
       }
@@ -3268,6 +3288,7 @@ function planIrOverlay(
       jsHostExterns,
       ...(platformExternClass ? { platformExternClass, platformHostGlobal: isJsEnvironmentPlatformGlobalName } : {}),
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
+      ...(nativeBufferSurface ? { nativeBufferSurface } : {}),
       dynMemberReadBuildable,
       builtinProtoCompanionSeeded: ctx.protoMemberDirty, // (#7127)
       ...functionValueSelectionOptions(),
@@ -15471,6 +15492,8 @@ export {
   IR_DYN_INSTANCEOF_HELPER,
   irDynamicInstanceOfAtLegacyParity,
 } from "./ir-dynamic-instanceof.js";
+// (#7274) the IR's native ArrayBuffer adapters (ir/integration.ts).
+export { irNativeBufferProvider, nativeBufferProvidersAvailable } from "./buffers/ir-native-buffer.js";
 // (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
 export {
   buildModuleInitPrologueCall,
