@@ -1,7 +1,8 @@
 ---
 id: 7265
 title: "IR move-only scan: local boolean call result into a dynamic var; dynamic computed element key (#7250 rule b)"
-status: in-progress
+status: done
+completed: 2026-11-06
 sprint: current
 created: 2026-11-06
 updated: 2026-11-06
@@ -22,10 +23,11 @@ loc-budget-allow:
   # closure state lives in select.ts.
   - src/ir/select.ts
 func-budget-allow:
-  # 2026-11-06: +6 in scanExprInner, for the bool-call operand in the
-  # dynamic-local assignment arm and the dynamic-key read arm. Each sits next
-  # to its sibling key and operand checks. Restates #7258/#7260's #7261-guard
-  # grant.
+  # 2026-11-06: scanExprInner measures +10 against origin/main `8b349439`
+  # (the gate's figure, not a hand count): the bool-call operand in the
+  # dynamic-local assignment arm, and the dynamic-key read arm with its #7261
+  # flag. Each sits next to its sibling key and operand checks.
+  # dynamicUsesAreMoveOnly restates #7258/#7260's #7261-guard grant.
   - src/ir/select.ts::scanExprInner
   - src/ir/select.ts::dynamicUsesAreMoveOnly
 ---
@@ -94,7 +96,7 @@ admission sits next to its sibling checks in the same arm.
 - Standalone test262 A/B on propertyHelper includers plus 300 random: no
   pass→fail, no new trap.
 
-## Results (2026-11-06; base = #7260 head `217cbd51`, head `4bdbc499`; corpus on `30856ab9`)
+## Results (2026-11-06; measured at `4bdbc499` against #7260 `217cbd51`, corpus at `30856ab9`; the review-fix head `e76868b6` re-checked below)
 
 - **isWritable:** in the real harness it still stops first at #7250 step 1
   (`vardecl-module-binding-alias`, the `__isArray(obj) && …` conditional),
@@ -121,3 +123,33 @@ admission sits next to its sibling checks in the same arm.
   compile_error: 43, skip: 11 }` on both sides, with the same non-pass set.
 - **Typed corpus:** 264/264 byte-identical (gc/standalone/wasi).
 - **Tests:** 13/13 (#7265, #7260, #7258). Gates bare green.
+
+## Review fix (2026-11-06, PR #7120 review 5798191801)
+
+**Finding (P2): annotated Boolean calls were claimed, then demoted.**
+`resolvePositionType(BooleanKeyword)` (`src/codegen/index.ts`) returned a
+bare `i32`, while `typeNodeToIr` and the inferred lattice producer keep the
+Boolean brand. A callee annotated `(): boolean` therefore reached the new
+(b1) arm as an unbranded i32, which `boxConcreteToDynamic` cannot box as a
+Boolean.
+
+Reproduced before the fix: `function b(): boolean { return true; }` and
+`function use(seed: any): any { var r; r = b(); return r; }`, standalone and
+gc. `use` was claimed, then fell back with "assignment to "r" (dynamic) got
+i32". The inferred `function bi() { return 1 === 1; }` was emitted fine.
+
+The fix is at the canonical annotation producer: `BooleanKeyword` now
+returns `irVal({ kind: "i32", boolean: true })`. The physical ABI is still
+i32. The producer also serves Boolean parameters, so both projections were
+re-checked:
+
+- **Typed corpus** (88 files × gc/standalone/wasi): 264/264 byte-identical
+  to current main `8b349439`.
+- **Boolean parameter/return probe** (string concat, template, ternary,
+  `+ 1`, `!b`, `===`, `x > 1` return; 13 functions, all IR-emitted on both
+  sides): identical values on gc, standalone and wasi, and byte-identical
+  binaries on all three.
+- **Test:** annotated and inferred true/false callees assigned into a
+  dynamic local. All four carriers are IR-emitted on head (legacy on main),
+  and each yields a JS Boolean with the right value (`typeof === "boolean"`,
+  `=== true` / `=== false`), on standalone and gc.
