@@ -1,4 +1,6 @@
 import { NATIVE_GENERATOR_PROTO_VIEW } from "./generators-native-protocol.js";
+import { fillInHelperBuiltinTerminal } from "./object-proto-name-in.js";
+import { fnctorInstanceTypeIdxs } from "./proto-index-store.js";
 import { closedCarrierPrototypeStatus } from "./object-model/closed-carrier-prototype-status.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
@@ -63,6 +65,7 @@ export const OBJECT_PROTO_SINGLETON = "__object_proto_singleton";
  * `fillObjectProtoSingleton`.
  */
 export function fillObjectProtoSingleton(ctx: CodegenContext): void {
+  fillInHelperBuiltinTerminal(ctx, fnctorInstanceTypeIdxs(ctx)); // (#7304) the `in` helpers' implicit terminal
   const fn = ctx.mod.functions.find((f) => f.name === OBJECT_PROTO_SINGLETON);
   if (!fn) return;
   const instrs = buildLazyNativeProtoGetInstrs(ctx, BUILTIN_BRAND_TABLE.Object);
