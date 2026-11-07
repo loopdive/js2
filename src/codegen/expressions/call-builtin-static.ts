@@ -36,7 +36,8 @@ import {
 } from "../generator-function-intrinsic.js";
 import { isDynamicGeneratorFunctionValue } from "../generator-function-dynamic.js"; // (#6651 A14)
 import { isAnyValue, undefinedExternInstrs, undefinedSingletonActive } from "../any-helpers.js";
-import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
+import { BUILTIN_STATIC_METHOD_ARITY } from "../builtin-fn-meta.js";
+import { ensureBuiltinProtoMemberFunc } from "../native-proto-value-read.js"; // (#7294)
 import {
   ensureFunctionPrototypeCallHelper,
   tryEmitNonCallableNamespaceInvokerThrow,
@@ -100,12 +101,7 @@ import {
 } from "../literals.js";
 import { emitCollectionIteratorVec, ensureMapGroupBy } from "../map-runtime.js";
 import { ensureIterRecPrototypeHelper } from "../iterator-proto-next.js"; // (#6484 S1)
-import {
-  emitBrandCheckTypeError,
-  emitLazyNativeProtoGet,
-  ensureStandaloneNativeMethodClosure,
-  getNativeProtoBuiltinGlue,
-} from "../native-proto.js";
+import { emitBrandCheckTypeError, emitLazyNativeProtoGet } from "../native-proto.js";
 import {
   ensureNativeStringExternBridge,
   ensureNativeStringHelpers,
@@ -3447,61 +3443,14 @@ export function compileBuiltinStaticCall(
     if (tryEmitBuiltinProtoConstructorDescriptor(ctx, fctx, gopdProtoBuiltin, propLiteral)) {
       return { kind: "externref" };
     }
+    // (#2885 Site 2 / #7294) An own glue member: the shared support function
+    // builds the descriptor (the IR calls the same one).
     if (gopdProtoBuiltin !== undefined && propLiteral !== undefined) {
-      const protoBuiltin = gopdProtoBuiltin;
-      const protoMember = propLiteral;
-      const protoBrand = tryEnsureNativeProtoBrand(ctx, protoBuiltin);
-      const protoGlue = protoBrand !== undefined ? getNativeProtoBuiltinGlue(ctx, protoBrand) : undefined;
-      if (protoBrand !== undefined && protoGlue && protoGlue.memberCsv.split(",").includes(protoMember)) {
-        const memberKind = protoGlue.memberKind(protoMember);
-        // (#2984 Phase 2) Un-wired members use identity-stable throwing
-        // closures so descriptors remain spec-shaped.
-        const protoClosure = ensureStandaloneNativeMethodClosure(ctx, protoBrand, protoMember, memberKind, {
-          refusalBodyFallback: true,
-        });
-        if (protoClosure) {
-          if (memberKind === "getter") {
-            // Accessor descriptor: get=<closure>, set=undefined, configurable, non-enumerable.
-            const createAccIdx = ensureLateImport(
-              ctx,
-              "__create_accessor_descriptor",
-              [{ kind: "externref" }, { kind: "externref" }, { kind: "i32" }],
-              [{ kind: "externref" }],
-            );
-            flushLateImportShifts(ctx, fctx);
-            if (createAccIdx !== undefined) {
-              // (#2175 V2-S2) Identity-stable getter singleton so the accessor's
-              // `.get` is the SAME function object across repeated gOPD calls and
-              // the syntactic getter-invocation self (property-access.ts Site 3).
-              fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, protoClosure));
-              fctx.body.push({ op: "extern.convert_any" }); // get
-              fctx.body.push({ op: "ref.null.extern" }); // set = undefined
-              fctx.body.push({ op: "i32.const", value: 0x04 }); // FLAG_CONFIGURABLE
-              fctx.body.push({ op: "call", funcIdx: createAccIdx });
-              return { kind: "externref" };
-            }
-          } else {
-            // Data descriptor: value=<method closure>, writable/configurable, non-enumerable.
-            const createIdx = ensureLateImport(
-              ctx,
-              "__create_descriptor",
-              [{ kind: "externref" }, { kind: "i32" }],
-              [{ kind: "externref" }],
-            );
-            flushLateImportShifts(ctx, fctx);
-            if (createIdx !== undefined) {
-              // (#2175 V2-S2) Identity-stable method singleton so the data
-              // descriptor's `.value` is the SAME function object as the syntactic
-              // read `RegExp.prototype.exec` (property-access.ts method arm):
-              // `gOPD(p,"exec").value === RegExp.prototype.exec`.
-              fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, protoClosure));
-              fctx.body.push({ op: "extern.convert_any" }); // value
-              fctx.body.push({ op: "i32.const", value: 0x05 }); // FLAG_WRITABLE | FLAG_CONFIGURABLE
-              fctx.body.push({ op: "call", funcIdx: createIdx });
-              return { kind: "externref" };
-            }
-          }
-        }
+      const descriptorFunc = ensureBuiltinProtoMemberFunc(ctx, "descriptor", gopdProtoBuiltin, propLiteral);
+      if (descriptorFunc !== undefined) {
+        flushLateImportShifts(ctx, fctx);
+        fctx.body.push({ op: "call", funcIdx: descriptorFunc });
+        return { kind: "externref" };
       }
     }
 

@@ -38,6 +38,12 @@
 import type { CodegenContext } from "./context/types.js";
 import { getNativeProtoBuiltinGlue, ensureStandaloneNativeMethodClosure } from "./native-proto.js";
 import { ensureObjectNativeProtoGlue } from "./array-object-proto.js";
+import type { Instr, ValType } from "../ir/types.js";
+import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { tryEnsureNativeProtoBrand } from "./property-access.js";
+import { addFuncType } from "./registry/types.js";
+import { ensureLateImport } from "./shared.js";
 
 /** The `{ type, funcIdx }` closure handle the native-method factory returns. */
 export type NativeProtoClosure = { type: { kind: "ref"; typeIdx: number }; funcIdx: number };
@@ -112,4 +118,143 @@ export function resolveStandaloneProtoMemberValueClosure(
 
   // Tier 3 — unknown member: dynamic fall-through.
   return null;
+}
+
+/**
+ * (#7294) Compiler-support functions for an OWN member of a standalone builtin
+ * prototype (`<B>.prototype.<m>`), keyed by (builtin, member):
+ *
+ *   - the VALUE getter returns the member's identity-stable singleton closure
+ *     (`pushBuiltinFnSingletonValueInstrs`), the same function object every
+ *     other `<B>.prototype.<m>` value read and the prototype companion seeder
+ *     materialize;
+ *   - the DESCRIPTOR builder returns `Object.getOwnPropertyDescriptor(
+ *     <B>.prototype, "<m>")`: a data descriptor `{value, writable, configurable}`
+ *     for a method, an accessor descriptor `{get, configurable}` for a getter,
+ *     with the value getter's closure as `value` / `get`.
+ *
+ * Both are named functions so legacy's `gOPD(<B>.prototype, "<m>")` arm and the
+ * IR (through `resolver.resolveFunc` on the runtime symbol) call the SAME
+ * synthesis. Only the standalone lanes reach them: the native-proto glue is
+ * standalone-only, and the IR resolves the runtime symbol only after the
+ * selector's standalone-gated admission.
+ */
+const EXTERNREF: ValType = { kind: "externref" };
+const I32: ValType = { kind: "i32" };
+/** §6.1.7.1 attribute bits `__create_descriptor` / `__create_accessor_descriptor` read. */
+const FLAG_WRITABLE = 0x01;
+const FLAG_CONFIGURABLE = 0x04;
+
+export type BuiltinProtoMemberRole = "value" | "descriptor";
+
+const SYMBOL_PREFIX: Readonly<Record<BuiltinProtoMemberRole, string>> = {
+  value: "__builtin_proto_value$",
+  descriptor: "__builtin_proto_gopd$",
+};
+
+/** The runtime symbol naming one (builtin, member) support function. */
+export function builtinProtoMemberSymbol(role: BuiltinProtoMemberRole, builtin: string, member: string): string {
+  return `${SYMBOL_PREFIX[role]}${builtin}$${member}`;
+}
+
+/** Inverse of {@link builtinProtoMemberSymbol}; `undefined` for any other symbol. */
+export function parseBuiltinProtoMemberSymbol(
+  symbol: string,
+): { readonly role: BuiltinProtoMemberRole; readonly builtin: string; readonly member: string } | undefined {
+  for (const role of ["value", "descriptor"] as const) {
+    if (!symbol.startsWith(SYMBOL_PREFIX[role])) continue;
+    const key = symbol.slice(SYMBOL_PREFIX[role].length);
+    const split = key.indexOf("$"); // a builtin name never contains `$`; a member key may
+    return split > 0 && split < key.length - 1
+      ? { role, builtin: key.slice(0, split), member: key.slice(split + 1) }
+      : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * The member's kind when `<builtin>.prototype` OWNS `member` in the registered
+ * native-proto glue (registering the glue on demand), else `undefined`. An
+ * inherited member is not own, so `gOPD` must not answer it from here.
+ */
+export function builtinProtoOwnMemberKind(
+  ctx: CodegenContext,
+  builtin: string,
+  member: string,
+): "method" | "getter" | undefined {
+  const brand = tryEnsureNativeProtoBrand(ctx, builtin);
+  const glue = brand === undefined ? undefined : getNativeProtoBuiltinGlue(ctx, brand);
+  return glue?.memberCsv.split(",").includes(member) ? glue.memberKind(member) : undefined;
+}
+
+/**
+ * The support function for `role`, minted once per (builtin, member);
+ * `undefined` when the member is not an own glue member or its natives are
+ * unavailable. May register late imports: a caller with a function body in
+ * flight flushes the import shifts before it pushes the call.
+ */
+export function ensureBuiltinProtoMemberFunc(
+  ctx: CodegenContext,
+  role: BuiltinProtoMemberRole,
+  builtin: string,
+  member: string,
+): number | undefined {
+  const name = builtinProtoMemberSymbol(role, builtin, member);
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const kind = builtinProtoOwnMemberKind(ctx, builtin, member);
+  if (kind === undefined) return undefined;
+  const body = role === "value" ? valueBody(ctx, builtin, member, kind) : descriptorBody(ctx, builtin, member, kind);
+  if (body === undefined) return undefined;
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name,
+    typeIdx: addFuncType(ctx, [], [EXTERNREF], `$${name}_type`),
+    locals: [],
+    body,
+    exported: false,
+  });
+  ctx.funcMap.set(name, funcIdx);
+  return funcIdx;
+}
+
+function valueBody(
+  ctx: CodegenContext,
+  builtin: string,
+  member: string,
+  kind: "method" | "getter",
+): Instr[] | undefined {
+  const brand = tryEnsureNativeProtoBrand(ctx, builtin)!;
+  // (#2984 Phase 2) Un-wired members use identity-stable throwing closures so
+  // the value and the descriptor stay spec-shaped.
+  const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, kind, { refusalBodyFallback: true });
+  return closure ? [...pushBuiltinFnSingletonValueInstrs(ctx, closure), { op: "extern.convert_any" }] : undefined;
+}
+
+function descriptorBody(
+  ctx: CodegenContext,
+  builtin: string,
+  member: string,
+  kind: "method" | "getter",
+): Instr[] | undefined {
+  // The value function first: the descriptor's `value` / `get` IS that singleton.
+  const valueIdx = ensureBuiltinProtoMemberFunc(ctx, "value", builtin, member);
+  if (valueIdx === undefined) return undefined;
+  if (kind === "getter") {
+    const createIdx = ensureLateImport(ctx, "__create_accessor_descriptor", [EXTERNREF, EXTERNREF, I32], [EXTERNREF]);
+    if (createIdx === undefined) return undefined;
+    return [
+      { op: "call", funcIdx: valueIdx }, // get
+      { op: "ref.null.extern" }, // set = undefined
+      { op: "i32.const", value: FLAG_CONFIGURABLE },
+      { op: "call", funcIdx: createIdx },
+    ];
+  }
+  const createIdx = ensureLateImport(ctx, "__create_descriptor", [EXTERNREF, I32], [EXTERNREF]);
+  if (createIdx === undefined) return undefined;
+  return [
+    { op: "call", funcIdx: valueIdx }, // value
+    { op: "i32.const", value: FLAG_WRITABLE | FLAG_CONFIGURABLE },
+    { op: "call", funcIdx: createIdx },
+  ];
 }
