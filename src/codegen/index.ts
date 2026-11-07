@@ -613,6 +613,7 @@ import {
   standaloneStaticRegExpCompiles,
 } from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
+import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
 import { zeroArgCallPadInstrs } from "./zero-arg-method-pad.js";
@@ -4257,6 +4258,8 @@ export function scriptVarHome(
       return ctx.fast ? undefined : "dynamic";
     case "ref_null":
       if (type.typeIdx === ctx.anyStrTypeIdx) return "string";
+      // (#7106 lever S2) #1914's `exec` match-result struct, read as a dynamic value through `externref`.
+      if (type.typeIdx === ctx.structMap.get(REGEXP_MATCH_VEC_STRUCT)) return ctx.fast ? undefined : "regexp-match";
       // (#7252) The struct legacy allocated for a user class.
       return [...ctx.classSet].some((n) => ctx.structMap.get(n) === type.typeIdx) ? "class-instance" : undefined;
     case "f64":

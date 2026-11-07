@@ -390,6 +390,8 @@ export interface ModuleBindingGlobal {
   readonly globalName: string;
   readonly tdzGlobalName: string | null;
   readonly type: IrType;
+  /** (#7106 lever S2) The typed reference slot behind a `dynamic` value (`IrInstrGlobalGet.slot`). */
+  readonly slot?: ValType;
   /** Explicit provider provenance for an externref that is not generic host authority. */
   readonly capability?: "dom";
   /** Exact owner-qualified proof that this use executes only after Wasm start. */

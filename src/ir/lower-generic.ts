@@ -1412,9 +1412,11 @@ export function lowerIrFunctionBody<S, Slot>(
       case "global.get":
         emitter.emitGlobalGet(resolver.resolveGlobal(instr.target), out);
         if (instr.resultType?.kind === "class") emitter.pushRaw(out, { op: "ref.as_non_null" }); // pushraw-ok(#7252): `(ref null $C)` slot, as legacy reads it
+        if (instr.slot) emitter.emitToExternref(out);
         return;
       case "global.set":
         emitValue(instr.value, out);
+        if (instr.slot) emitter.emitFromExternref({ kind: "val", val: instr.slot }, out);
         emitter.emitGlobalSet(resolver.resolveGlobal(instr.target), out);
         return;
       case "binary": {

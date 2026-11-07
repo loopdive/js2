@@ -25,6 +25,7 @@ import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fncto
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import * as classInstance from "./module-binding-class-instance.js";
+import * as regExpMatch from "./module-binding-regexp-match.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
   carrierLeafReads,
@@ -658,6 +659,7 @@ export type IrModuleBindingRefusalArm =
   | "no-value-kind"
   | "write-value-mismatch"
   | "class-instance-use-site"
+  | "regexp-match-store"
   | "destructuring-pattern"
   | "inspection-threw";
 
@@ -1038,6 +1040,8 @@ function scriptVarHomeOf(
  * when the checker type agrees. A `dynamic` home needs no such agreement and
  * a `typed` one resolves through `scalarKind`. (#7252) A `class-instance` home
  * binds only when every write constructs the one class the checker names.
+ * (#7106 lever S2) A `regexp-match` home needs no checker agreement: legacy's
+ * #1914 inference already proved every write a match result.
  */
 function scriptVarReferenceKind(
   home: IrScriptVarHome | undefined,
@@ -1046,6 +1050,7 @@ function scriptVarReferenceKind(
   checker: ts.TypeChecker,
 ): IrModuleBindingValueKind | undefined {
   if (home === "class-instance") return classInstance.classInstanceValueKind(checker, declaration, declaredType);
+  if (home === "regexp-match") return { kind: "regexp-match" };
   return home === "string" && isModuleStringStorageType(declaredType, checker) ? { kind: "string" } : undefined;
 }
 
@@ -1564,6 +1569,7 @@ function writeValueMatches(
   if (carrierLeafReads(valueExpr, resolve).length > 0) return false;
   if (targetKind.kind === "class-instance")
     return classInstance.classInstanceWriteMatches(checker, targetKind, valueExpr);
+  if (targetKind.kind === "regexp-match") return regExpMatch.regExpMatchWriteMatches(valueExpr);
   if (targetKind.kind === "native-map") {
     // The native `$Map` carrier has exactly one producer in this slice.
     return isNativeMapConstruction(checker, valueExpr);
@@ -2302,6 +2308,8 @@ export function makeIrLegacyModuleBindingResolver(
     if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
     if (valueKind.kind === "class-instance" && !classInstance.classInstanceUseFollowsDeclaration(node, declaration))
       return { kind: "unsupported", declaration, arm: "class-instance-use-site" };
+    if (valueKind.kind === "regexp-match" && !regExpMatch.regExpMatchUseSupported(node, declaration.name))
+      return { kind: "unsupported", declaration, arm: "regexp-match-store" };
     if (
       writeValue !== undefined &&
       !writeValueMatches(checker, declaration, valueKind, writeValue, options, classifyPrimitiveExpression, resolve)

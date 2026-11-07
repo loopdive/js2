@@ -284,6 +284,12 @@ export interface IrInstrIntrinsic extends IrInstrBase {
 export interface IrInstrGlobalGet extends IrInstrBase {
   readonly kind: "global.get";
   readonly target: IrGlobalRef;
+  /**
+   * (#7106 lever S2) The legacy slot's typed reference carrier behind a
+   * `dynamic` value (a RegExp match-result slot): a read converts it to
+   * `externref`, a write casts the `externref` back (`ref.cast null`).
+   */
+  readonly slot?: ValType;
 }
 
 /** Write a global by symbolic reference. Void-result. */
@@ -291,6 +297,8 @@ export interface IrInstrGlobalSet extends IrInstrBase {
   readonly kind: "global.set";
   readonly target: IrGlobalRef;
   readonly value: IrValueId;
+  /** (#7106 lever S2) As {@link IrInstrGlobalGet.slot}. */
+  readonly slot?: ValType;
 }
 
 /**

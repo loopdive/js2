@@ -8766,21 +8766,21 @@ function hostRegExpUnavailable(): boolean {
 }
 
 /**
- * (#7106 lever R) A static construction (`staticRegExpPair`) a `native-regexp` lane builds in-module, where R1
- * consumes it: the receiver of `.test(…)`, or a discarded statement (which still throws an invalid pair's
- * SyntaxError). A property read (`/a/.source`), a `+` (R3's ToString) or a binding has no lowering for it yet.
+ * (#7106 lever R) A static construction (`staticRegExpPair`) a `native-regexp` lane builds in-module, where R1/R2
+ * consume it: the receiver of `.test(…)` / `.exec(…)`, or a discarded statement (which still throws an invalid
+ * pair's SyntaxError). A property read (`/a/.source`), a `+` (R3's ToString) or a binding has no lowering for it yet.
  */
 function nativeStaticRegExp(expr: ts.Expression): boolean {
   const pair = staticRegExpPair(expr, (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true);
   const consumer = outermostParenthesized(expr).parent;
-  const testReceiver =
+  const methodReceiver =
     ts.isPropertyAccessExpression(consumer) &&
-    consumer.name.text === "test" &&
+    (consumer.name.text === "test" || consumer.name.text === "exec") &&
     ts.isCallExpression(consumer.parent) &&
     consumer.parent.expression === consumer;
   return (
     pair !== undefined &&
-    (testReceiver || ts.isExpressionStatement(consumer)) &&
+    (methodReceiver || ts.isExpressionStatement(consumer)) &&
     currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
     currentSelectionOptions.nativeRegExpCompiles?.(pair.pattern, pair.flags) === true
   );
@@ -12154,15 +12154,14 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
         hostRegExpUnavailable()
       ) {
-        // #3791, #7106 lever R — host-free `.test(subject)` calls the in-module
-        // carrier helper. An exact stable top-level carrier passes its real
-        // legacy externref global (that binding is not a general IR module
-        // value, so it bypasses the receiver walk); any other receiver must be
-        // an IR value. `.exec`, non-string subjects and all other shapes keep
-        // the established target-capability refusal.
+        // #3791, #7106 lever R — host-free `.test(subject)` / `.exec(subject)`
+        // call the in-module carrier helper. An exact stable top-level carrier
+        // passes its real legacy externref global (that binding is not a
+        // general IR module value, so it bypasses the receiver walk); any other
+        // receiver must be an IR value. Non-string subjects and all other
+        // shapes keep the established target-capability refusal.
         const receiver = expr.expression.expression;
         if (
-          expr.expression.name.text === "test" &&
           currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
           expr.arguments.length === 1 &&
           !ts.isSpreadElement(expr.arguments[0]!) &&

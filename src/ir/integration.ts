@@ -192,9 +192,14 @@ import {
   type NativeStringLiteralMaterialization,
   type StringEncoding,
 } from "../codegen/native-string-literals.js";
-import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
+import {
+  STANDALONE_REGEXP_CARRIER_EXEC_HELPER,
+  STANDALONE_REGEXP_CARRIER_TEST_HELPER,
+} from "./regexp-runtime-contract.js";
 import {
   ensureIrRegExpLiteralHelper,
+  ensureRegexMatchVecType,
+  ensureStandaloneRegExpCarrierExecHelper,
   ensureStandaloneRegExpCarrierTestHelper,
   standaloneStaticRegExpCompiles,
 } from "../codegen/regexp-standalone.js";
@@ -6153,6 +6158,7 @@ function resolveModuleBindingGlobal(
 
   let type: IrType;
   let storageType: ValType;
+  let slot: ValType | undefined;
   switch (identity.valueKind.kind) {
     case "f64":
       type = { kind: "val", val: { kind: "f64" } };
@@ -6241,6 +6247,11 @@ function resolveModuleBindingGlobal(
     case "class-instance":
       ({ type, storageType } = classInstanceBindingStorage(ctx, name, identity.valueKind, classShapes));
       break;
+    case "regexp-match":
+      // (#7106 lever S2) Legacy's #1914 match-result slot, read and written as a dynamic value.
+      type = irDynamic();
+      storageType = slot = { kind: "ref_null", typeIdx: ensureRegexMatchVecType(ctx) };
+      break;
   }
   const storageMatches =
     global.type.kind === storageType.kind &&
@@ -6315,6 +6326,7 @@ function resolveModuleBindingGlobal(
     globalName,
     tdzGlobalName,
     type,
+    ...(slot ? { slot } : {}),
     ...(capability ? { capability } : {}),
     ...(postWasmStartTdzSafeBindingsByOwnerUnitId?.get(identity.ownerUnitId)?.has(identity.globalBindingId)
       ? { omitTdzReadCheck: true as const }
@@ -7141,14 +7153,16 @@ function makeFromAstResolver(
       const plan = moduleBindingResolver.retainedFunctionMethodPlan(call);
       return plan ? resolveRetainedFunctionMethod(ctx, plan) : null;
     },
-    nativeRegExpTestPlan(receiver: ts.Expression) {
+    nativeRegExpMethodPlan(receiver: ts.Expression, method: "test" | "exec") {
       if (!supportsBackendCapability("native-regexp")) return null;
       const stable = moduleBindingResolver?.staticRegExpTestPlan(receiver);
       if (!stable && !isRegExpExpression(receiver)) return null;
-      ensureStandaloneRegExpCarrierTestHelper(ctx);
+      const funcIdx =
+        method === "test" ? ensureStandaloneRegExpCarrierTestHelper(ctx) : ensureStandaloneRegExpCarrierExecHelper(ctx);
+      if (funcIdx === undefined) return null;
       return {
         ...(stable ? { receiverGlobal: resolveStandaloneRegExpTestGlobal(ctx, stable) } : {}),
-        funcName: STANDALONE_REGEXP_CARRIER_TEST_HELPER,
+        funcName: method === "test" ? STANDALONE_REGEXP_CARRIER_TEST_HELPER : STANDALONE_REGEXP_CARRIER_EXEC_HELPER,
       };
     },
     classStaticFieldStorage: (owner, field) => resolveIrClassStaticFieldStorage(ctx, owner, field), // (#7233)

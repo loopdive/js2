@@ -13,3 +13,5 @@
  * its own, so the move is pure relocation.
  */
 export const STANDALONE_REGEXP_CARRIER_TEST_HELPER = "__regexp_test_carrier";
+/** (#6672, #7106 lever R2) The `exec` twin: `(recv, subject) -> externref`, the match array or null. */
+export const STANDALONE_REGEXP_CARRIER_EXEC_HELPER = "__regexp_exec_carrier";
