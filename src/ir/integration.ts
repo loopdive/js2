@@ -58,7 +58,7 @@ import {
 import { makeCalendarIrSelectionSupport } from "./calendar-selection-support.js";
 import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "./dom-capability.js";
 import { makeIrNativeBufferSurfacePlan, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
-import { isIrNativeBufferFn, type IrNativeBufferFn } from "../shared/contracts/native-buffer-adapters.js";
+import { isIrNativeBufferRuntimeSymbol } from "../shared/contracts/native-buffer-adapters.js";
 import { irBackendCapabilityQuery, projectIrBackendTargetProfile } from "./backend/legality.js";
 import { nativeBufferSurfaceCapability } from "./capability.js";
 
@@ -100,7 +100,7 @@ import {
   moduleInitPrologueMayEmit,
   retireModuleInitPrologueHelper,
   irNativeI32SlotRead,
-  ensureIrNativeBufferAdapter, // (#7274) native ArrayBuffer adapters
+  irNativeBufferProvider, // (#7274) native ArrayBuffer / DataView providers
   nativeBufferProvidersAvailable,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
@@ -9269,11 +9269,12 @@ function buildTemplateWrapperFamily(
   flushLateImportShifts(ctx, null);
 }
 
-/** (#7274) Mint the native ArrayBuffer adapters the bodies call, before Phase 3 bakes a funcIdx. */
-function reserveNativeBufferAdapters(ctx: CodegenContext, symbols: ReadonlySet<IrNativeBufferFn>): void {
+/** (#7274) Mint the native ArrayBuffer / DataView providers the bodies call, before Phase 3 bakes a funcIdx. */
+function reserveNativeBufferAdapters(ctx: CodegenContext, symbols: ReadonlySet<string>): void {
   if (symbols.size === 0) return;
   for (const symbol of [...symbols].sort()) {
-    observeNativeRuntimeProvider(ctx, symbol, ensureIrNativeBufferAdapter(ctx, symbol));
+    const handle = irNativeBufferProvider(ctx, symbol);
+    if (handle !== undefined) observeNativeRuntimeProvider(ctx, symbol, handle);
   }
   flushLateImportShifts(ctx, null);
 }
@@ -9324,7 +9325,7 @@ function preregisterDynamicSupport(
   // Both are REAL Wasm functions on this lane, so they are reserved here —
   // before any Phase-3 body bakes a funcIdx — exactly like the union family.
   let usesNativeMapAdapters = false;
-  const nativeBufferAdapters = new Set<IrNativeBufferFn>();
+  const nativeBufferAdapters = new Set<string>();
   let usesNativeExternIsUndefined = false;
   // (#7104) `dyn.undefined` on the host externref carrier needs the
   // `__get_undefined` import reserved BEFORE Phase 3 bakes funcIdxs.
@@ -9448,7 +9449,7 @@ function preregisterDynamicSupport(
             if (methodWrapper !== undefined) dynamicMethodCallWrappers.set(symbol, methodWrapper);
             const borrowWrapper = parseIrArrayPrototypeBorrowHelperName(symbol);
             if (borrowWrapper !== undefined) arrayPrototypeBorrowWrappers.set(symbol, borrowWrapper);
-            if (isIrNativeBufferFn(symbol)) nativeBufferAdapters.add(symbol); // (#7274)
+            if (isIrNativeBufferRuntimeSymbol(symbol)) nativeBufferAdapters.add(symbol); // (#7274)
             switch (symbol) {
               case "__extern_set_strict":
                 usesFunctionMemberStrictSet = true;

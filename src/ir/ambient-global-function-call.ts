@@ -8,6 +8,7 @@ import type { IrFunctionBuilder } from "./builder.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
 import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
 import { asVal, irDynamic, irVal, type IrFuncRef, type IrType, type IrValueId } from "./nodes.js";
+import { lowersAsPreparedComponent } from "./prepared-component-ownership.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
 
 const F64: IrType = irVal({ kind: "f64" });
@@ -38,12 +39,12 @@ export type IrAmbientGlobalFunctionCapability = Extract<
  * Where a row's call may be lowered (the unit the call's nearest function-like
  * ancestor names; none for top-level code):
  *   - `any`;
- *   - `es-module-top-level-function` (#7114): in an ES module, only a top-level
- *     function declaration. Every other unit there (`<module-init>`, class
- *     members, closures) lowers as a prepared component, whose Program ABI has
- *     no identity for the `__escape` / `__unescape` runtime callables nor for
- *     `dyn.string_carrier` (measured: `late-preparation-unsupported`). Scripts —
- *     every test262 body — are unaffected;
+ *   - `es-module-top-level-function` (#7114): never a unit that
+ *     `lowersAsPreparedComponent` (an ES module unit other than a top-level
+ *     function declaration), whose Program ABI has no identity for the
+ *     `__escape` / `__unescape` runtime callables nor for `dyn.string_carrier`
+ *     (measured: `late-preparation-unsupported`). Scripts — every test262
+ *     body — are unaffected;
  *   - `plain-unit` (#7267): that, and in a script never a class member (also a
  *     prepared component: "has no resolvable Program ABI binding") nor a
  *     closure nested in another function (a capturing closure whose body reads
@@ -101,10 +102,10 @@ const PLANS: ReadonlyMap<IrAmbientGlobalFunctionName, AmbientGlobalFunctionPlan>
 /** Does `scope` admit a call at `expr`? See {@link UnitScope}. */
 function unitScopeAdmits(scope: UnitScope, expr: ts.CallExpression): boolean {
   if (scope === "any") return true;
+  if (lowersAsPreparedComponent(expr)) return false;
+  if (scope === "es-module-top-level-function" || ts.isExternalModule(expr.getSourceFile())) return true;
   const unit = ts.findAncestor(expr.parent, ts.isFunctionLike);
-  const topLevelFunction = unit !== undefined && ts.isFunctionDeclaration(unit) && ts.isSourceFile(unit.parent);
-  if (ts.isExternalModule(expr.getSourceFile())) return topLevelFunction;
-  if (scope === "es-module-top-level-function" || unit === undefined || topLevelFunction) return true;
+  if (unit === undefined || (ts.isFunctionDeclaration(unit) && ts.isSourceFile(unit.parent))) return true;
   return !ts.isClassElement(unit) && ts.findAncestor(unit.parent, ts.isFunctionLike) === undefined;
 }
 
