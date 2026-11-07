@@ -13,6 +13,7 @@
 // legacy on both sides).
 import { describe, expect, it } from "vitest";
 import { compile, type CompileOptions } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // The test262 `assert.throws` shape, minus what the IR refuses on its own.
 const HARNESS = `function assert(v) {}
@@ -101,6 +102,38 @@ describe("#7324 calls inside a lifted closure", () => {
     it(`${label}: keeps the IR route (standalone)`, async () => {
       const unit = await unitOutcome(testCase, { target: "standalone" });
       expect(unit?.irBodyEmitted, unit?.detail).toBe(true);
+    });
+  }
+});
+
+// (#7287) The claimed closure's dynamic call throws a TypeError a caller
+// catches: a harness that accepts only that error completes on every lane.
+describe("#7324 × #7287 an uninitialized script var called from a lifted closure", () => {
+  const source = `function assert(v) {}
+assert.typeError = function (f) { try { f(); } catch (e) { if (e instanceof TypeError) return; throw "wrong error"; } throw "no throw"; };
+var getter;
+assert.typeError(function () { getter(); });
+`;
+  const wasiStub = new Proxy({}, { get: () => () => 0 });
+  for (const lane of [...LANES, { name: "wasi", options: { target: "wasi" } as CompileOptions }]) {
+    it(`claims and throws a catchable TypeError (${lane.name})`, async () => {
+      const result = await compile(source, {
+        fileName: "issue-7324.js",
+        trackIrOutcomes: true,
+        skipSemanticDiagnostics: true,
+        ...lane.options,
+      });
+      expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+      expect(result.irOutcomes?.find((o) => o.displayName === "<module-init>")?.irBodyEmitted).toBe(true);
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+      const instance =
+        lane.options.target === "standalone"
+          ? (await WebAssembly.instantiate(result.binary, {})).instance
+          : lane.options.target === "wasi"
+            ? (await WebAssembly.instantiate(result.binary, { wasi_snapshot_preview1: wasiStub })).instance
+            : await instantiateWithRuntime(result);
+      const exports = instance.exports as Record<string, () => unknown>;
+      expect(() => (exports.__module_init ?? exports._start)?.()).not.toThrow();
     });
   }
 });
