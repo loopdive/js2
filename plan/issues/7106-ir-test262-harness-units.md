@@ -6872,3 +6872,57 @@ native regime (`ctx.standalone` is the native regime, #5385).
 - Names that only eval declares (`(0, eval)("var z = 1"); z;`) are
   `expr-ident-not-in-scope` for the IR. That is a separate lever: a read of an
   unresolvable script name through the global object.
+
+#### Review of #7177 (fresh context, 2026-11-07): APPROVE, quality fixes applied
+
+No correctness bug. The reviewer saw 0 post-claim errors over 208 compile
+pairs. Each finding was fixed in 27630b3237:
+
+1. **Unreachable JS-host route.** The host half of the arm needs
+   `!nativeStrings`, which is always on for the JS target since #6979. The
+   #1164 test "owns a proven-string indirect statement through IR" fails on
+   both the A2b head and A2c. The selector checked the host route first and
+   the resolver the provider route first, so the two could disagree.
+   - Every reader now asks one question, `runtimeEvalOwnsGlobalEval(ctx, call)`.
+   - The resolver's `globalEvalTarget` returns only the support function.
+   - `passesIsDirect` and the `hostEvalAbi` parameter are gone.
+   - The legacy import collector's `__extern_eval` pre-scan stays. It retires
+     with the JS-host lane, not here.
+2. **Carrier seeding was unchecked.** `ensureRuntimeEvalGlobalCall` now seeds
+   the callable carrier before it builds the support function, and returns
+   `undefined` when seeding fails, as legacy's callers refuse. The seed runs
+   in a detached context: for legacy it is a no-op, because the carrier is
+   already seeded.
+3. **The literal Script was re-parsed per query.** The answer is now memoized
+   per call node (a `WeakMap` per compile), so a Script is parsed once rather
+   than once each for the selector, `moduleInitHoldsEvalSite` and the
+   resolver.
+4. **Doc order in `dyn-read.ts`.** `dynMemberReadDecode` and its doc now sit
+   above `ensureDynMemberGet`'s doc block.
+5. **Wording in `eval-script.ts`.** It now says the IR lowers a statement
+   *only* when legacy routes it to the provider. The IR set is a strict
+   subset: legacy also routes Annex B collisions, strict scoped declarations,
+   caller lexical collisions and const-resolved direct sources.
+
+`integration.ts` no longer grows, so its A2c rationale line is dropped.
+
+Re-measured on 27630b3237, file-copy A/B against the A2b head 9525d48818:
+
+| check | result |
+| --- | --- |
+| bytes, 141 eval files, standalone and gc | 135 / 141 identical on each lane; the 6 that differ are the IR-only files, whose `<module-init>` is IR on both lanes |
+| bytes, 40-file control and 13 playground examples, both lanes | identical |
+| verdicts of the 6 IR-only files, both lanes (provider rebuilt) | fail as on the base; the standalone messages are identical |
+| focused tests (A2c, A2a, A1 unit boundary) | 13 / 13 pass |
+
+#### Follow-up: eval-declared vars read after the eval (provider/harness gap, pre-existing)
+
+A program that declares a var through eval and then reads it throws in Wasm,
+while node passes. The minimal shape is `(0, eval)("var z = 1"); z;`.
+
+- The reviewer measured 25 / 25 verdicts equal on the A2b head and on A2c, so
+  this PR does not cause it.
+- It caps what lever A can pay: the 6 IR-only files are all of this shape and
+  still fail.
+- It belongs to the provider/harness pull path, not the IR. File it before
+  counting lever A's pass-rate gain.
