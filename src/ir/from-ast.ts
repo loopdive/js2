@@ -291,14 +291,8 @@ import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts }
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import { collectPatternBindingNames } from "./analysis/ast-scope.js";
-import {
-  isPatternDeclaration,
-  planElementReads,
-  planPropertyReads,
-  type BindingLeaf,
-  type PatternDeclaration,
-  type SourceReadPlan,
-} from "./binding-pattern-plan.js";
+import { isPatternDeclaration, type PatternDeclaration } from "../shared/pattern-declaration.js";
+import { planElementReads, planPropertyReads, type BindingLeaf, type SourceReadPlan } from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
 import { isModuleInitVarList, moduleInitVarList } from "../shared/module-init-var-lists.js";

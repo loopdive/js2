@@ -62,8 +62,8 @@ interface Case {
   /** The lanes on which `<module-init>` takes the IR body; on the others it keeps legacy's. */
   readonly irOn: readonly string[];
   /**
-   * A post-claim withdrawal the statement form has on main too (a function's
-   * return-type parity, not this arm); every other case must claim cleanly.
+   * A post-claim withdrawal in the function arm's return typing, not this arm
+   * (#7315); every other case must claim cleanly.
    */
   readonly knownPostClaimWithdrawal?: boolean;
 }
@@ -181,8 +181,11 @@ for (var i = 0; i < 2; i++) {}
 if (i !== 2) throw "stmt+head";`,
     irOn: ALL,
   },
-  // `f`'s IR return type (f64) differs from legacy's slot (externref): the
-  // function arm withdraws `f` after the claim, exactly as for `var i = 0;` on main.
+  // #7315: `f`'s IR return type (f64) differs from legacy's slot (externref),
+  // so the function arm withdraws `f` after the claim. The statement form
+  // `var i = 0;` does so on main too; for this for-head form the exposure is
+  // new (main refused it at select), and the withdrawn attempt leaves an extra
+  // type in the binary on every lane.
   "a function reads the counter after the loop": {
     knownPostClaimWithdrawal: true,
     source: `function f() { return i; }

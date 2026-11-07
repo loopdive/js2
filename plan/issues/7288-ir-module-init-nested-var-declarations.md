@@ -13,7 +13,7 @@ reasoning_effort: high
 task_type: implementation
 area: ir
 goal: ir-full-coverage
-related: [7276, 3523]
+related: [7276, 3523, 7315]
 assignee: "ttraenkler/c-lead"
 loc-budget-allow:
   # 2026-11-06 (#7288): one shared predicate, `isModuleInitVarList`, decides
@@ -148,3 +148,18 @@ Found correct by the reviewer:
 4. **Fixed.** The guards that could never fail are dropped (`cx.moduleBindings !== undefined` in from-ast's for-init, `currentSubjectIsModuleInit` in the selector's): `isModuleInitVarList` already implies a top-level statement, which only `<module-init>` lowers.
 5. **Fixed.** `forHeadDeclarations` is cached per source file, like `moduleInitLeaves`.
 
+
+## Third review (PR comment 6701393374): APPROVE with nits, both addressed
+
+- The declared known withdrawal (`function f() { return i; }` beside a
+  for-head `var i`) is new exposure for the for-head form: main refused it at
+  select, now the function arm claims `f` and withdraws it on typeIdx parity,
+  leaving an extra type in the binary on all three lanes. The fix belongs in
+  the function arm's return typing, not here: filed as #7315 and linked from
+  the test's `knownPostClaimWithdrawal` comment.
+- `src/shared/module-init-var-lists.ts` inlined a copy of
+  `isPatternDeclaration`. Importing it from `ir/binding-pattern-plan.ts` would
+  close an import cycle (shared → ir), so the predicate and its
+  `PatternDeclaration` type moved down to `src/shared/pattern-declaration.ts`,
+  and the IR (`select.ts`, `from-ast.ts`) imports it from there: one
+  definition.
