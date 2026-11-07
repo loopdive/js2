@@ -7915,7 +7915,6 @@ function trackedModuleAliasHasName(name: string): boolean {
   return false;
 }
 
-/** True when any value position refers to a checker-owned module binding. */
 /** Whether any identifier in `expr` satisfies `matches`. */
 function expressionTouchesIdentifier(expr: ts.Expression, matches: (node: ts.Identifier) => boolean): boolean {
   let touched = false;
@@ -7931,6 +7930,7 @@ function expressionTouchesIdentifier(expr: ts.Expression, matches: (node: ts.Ide
   return touched;
 }
 
+/** True when any value position refers to a checker-owned module binding. */
 function expressionTouchesModuleBinding(expr: ts.Expression): boolean {
   return expressionTouchesIdentifier(expr, (node) => moduleBinding(node) !== undefined);
 }
