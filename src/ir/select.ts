@@ -145,6 +145,7 @@ import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
 import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import type { IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
@@ -152,6 +153,7 @@ import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   isIrModuleClassInstanceValueKind,
   isIrModuleMapValueKind,
+  isIrModuleNativeBufferValueKind,
   isIrModuleReferenceValueKind,
 } from "./module-bindings.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
@@ -612,6 +614,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * source component and authorizes only its recorded AST nodes.
    */
   readonly standaloneDomCapability?: IrStandaloneDomCapabilityPlan;
+  /** (#7274) The native ArrayBuffer surface plan; present only where its capability row claims. */
+  readonly nativeBufferSurface?: IrNativeBufferSurfacePlan;
   /**
    * Proven primitive value family used by coercion-sensitive builtin
    * acceptance. Invalid local annotations and type assertions return
@@ -1715,6 +1719,8 @@ let currentDeferredHostGlobalResolver: ((node: ts.Identifier) => string | undefi
 // resolvers so a DOM plan cannot accidentally arm `window`, `performance`, or
 // an unregistered extern member.
 let currentStandaloneDomCapability: IrStandaloneDomCapabilityPlan | null = null;
+// (#7274) The native ArrayBuffer surface; its presence is the capability gate.
+let currentNativeBufferSurface: IrNativeBufferSurfacePlan | null = null;
 
 /**
  * (#4457) Arm both host-global resolvers for a selector run: the live one when
@@ -1754,6 +1760,7 @@ function armHostGlobalResolvers(sourceFile: ts.SourceFile, options: IrSelectionO
     !jsHostExternsEnabled(options)
       ? candidate
       : null;
+  currentNativeBufferSurface = options?.nativeBufferSurface ?? null;
 }
 
 function standaloneDomOperation(node: ts.Node): IrStandaloneDomOperation | undefined {
@@ -7972,12 +7979,19 @@ function expressionMayBeModuleExtern(expr: ts.Expression): boolean {
   return false;
 }
 
-/** True when any value position in an expression refers to a module extern. */
+/**
+ * True when any value position in an expression refers to a module extern.
+ * (#7274) A native-buffer handle the plan consumes in a certified operation is not one.
+ */
 function expressionTouchesModuleExtern(expr: ts.Expression): boolean {
   let touched = false;
   const visit = (node: ts.Node): void => {
     if (touched) return;
-    if (ts.isIdentifier(node) && moduleExternBinding(node)) {
+    if (
+      ts.isIdentifier(node) &&
+      moduleExternBinding(node) &&
+      currentNativeBufferSurface?.consumesHandle(node) !== true
+    ) {
       touched = true;
       return;
     }
@@ -11468,7 +11482,44 @@ function functionObjectCallIsPhase1(
   );
 }
 
+/**
+ * (#7274) The plan-certified native ArrayBuffer operations, ahead of the
+ * module-extern consumer gate (a buffer var is a capability-extern binding):
+ * the operands must be Phase-1 and a var receiver must resolve to the
+ * native-buffer storage kind. A certified receiver's member outside the plan
+ * is refused here by name. `undefined` = not a buffer expression.
+ */
+function phase1NativeBufferVerdict(
+  expr: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  const surface = currentNativeBufferSurface;
+  if (surface === null) return undefined;
+  const op = surface.operation(expr);
+  if (op === undefined) {
+    const access = ts.isCallExpression(expr) ? expr.expression : expr;
+    return ts.isPropertyAccessExpression(access) && surface.isReceiver(access.expression)
+      ? capabilityNo("host-surface-unavailable", "expr-native-buffer-member", expr)
+      : undefined;
+  }
+  if (op.kind === "construct") {
+    return [op.length, op.maxByteLength].every((e) => e === undefined || isPhase1Expr(e, scope, localClasses));
+  }
+  const receiver = unwrapPhase1Parens(op.receiver);
+  if (ts.isIdentifier(receiver)) {
+    const kind = moduleBinding(receiver)?.valueKind;
+    if (kind === undefined || !isIrModuleNativeBufferValueKind(kind)) {
+      return shapeNo("expr-native-buffer-receiver", receiver);
+    }
+  }
+  if (!isPhase1Expr(op.receiver, scope, localClasses)) return false;
+  return op.kind === "get" || op.bounds.every((bound) => isPhase1Expr(bound, scope, localClasses));
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
+  const nativeBuffer = phase1NativeBufferVerdict(expr, scope, localClasses);
+  if (nativeBuffer !== undefined) return nativeBuffer;
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
     !moduleExternConsumerIsProven(expr, scope)

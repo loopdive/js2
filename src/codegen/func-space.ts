@@ -215,6 +215,39 @@ export function pushDefinedFunc(ctx: CodegenContext, funcIdx: FuncHandle, fn: Wa
   appendDefinedFunc(ctx.mod, fn);
 }
 
+/** Compiler-issued helpers by name, per compile: never `ctx.funcMap`, which source declarations share. */
+const ownedHelpers = new WeakMap<CodegenContext, Map<string, WasmFunction>>();
+
+/**
+ * Mint the compiler-owned, unexported helper `name` once and return its
+ * handle. Ownership is the exact function object this call minted, so a
+ * source declaration that happens to share the name (`function
+ * __ir_ab_new() {}`) is neither returned nor displaced: the helper is not
+ * entered in `ctx.funcMap`, and callers register the returned handle with
+ * their provider. Type and body are built only on the first call, after the
+ * handle is minted, so a late import the body registers cannot stale it.
+ * (#7274) Shared by the IR's native adapter families (`ir-native-map.ts`,
+ * `buffers/ir-native-buffer.ts`).
+ */
+export function ensureNamedHelperFunc(
+  ctx: CodegenContext,
+  name: string,
+  typeIdx: () => number,
+  build: () => Pick<WasmFunction, "locals" | "body">,
+): FuncHandle {
+  let owned = ownedHelpers.get(ctx);
+  if (owned === undefined) ownedHelpers.set(ctx, (owned = new Map()));
+  const existing = owned.get(name);
+  const existingHandle = existing === undefined ? undefined : definedFuncHandleOf(ctx, existing);
+  if (existingHandle !== undefined) return existingHandle;
+  const type = typeIdx();
+  const funcIdx = mintDefinedFunc(ctx);
+  const fn: WasmFunction = { name, typeIdx: type, ...build(), exported: false };
+  pushDefinedFunc(ctx, funcIdx, fn);
+  owned.set(name, fn);
+  return funcIdx;
+}
+
 /**
  * The function signature (`FuncTypeDef`) for an absolute function handle,
  * covering BOTH index subspaces: imports (scanned in import-declaration

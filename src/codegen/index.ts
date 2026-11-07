@@ -100,6 +100,7 @@ import {
   compileIrPathFunctions,
   irAmbientNamespaceConstant, // (#7106 module-init lever A)
   irNumberConversionPlan, // (#7106 module-init lever B)
+  planIrNativeBufferSurface, // (#7274)
   type IrIntegrationError,
   type IrIntegrationReport,
 } from "../ir/integration.js";
@@ -197,6 +198,7 @@ import {
   makeIrArrayExpressionPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrLocalClassExpressionResolver,
+  capabilityExternBindingOptions,
   makeIrModuleBindingResolver,
   makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
@@ -3063,6 +3065,7 @@ function planIrOverlay(
   const platformExternClass = irPlatformExternClassPredicate(ctx);
   const hostExternSurface = jsHostExterns || platformExternClass !== undefined;
   const standaloneDomCapability = planStandaloneDomCapability(ctx, ast.checker, ast.sourceFile);
+  const nativeBufferSurface = planIrNativeBufferSurface(ctx, ast.sourceFile); // (#7274)
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   const calendarResolvers = planIrCalendarResolvers(
     ast.checker,
@@ -3092,7 +3095,7 @@ function planIrOverlay(
             // in the WasmGC `$Map` struct, so the binding is representable
             // here even though the extern handle is not.
             allowNativeMapStorage: ctx.nativeStrings,
-            resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
+            ...capabilityExternBindingOptions(standaloneDomCapability, nativeBufferSurface),
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
             scriptVarHome: (declaration) => scriptVarHome(ctx, declaration),
@@ -3270,6 +3273,7 @@ function planIrOverlay(
       jsHostExterns,
       ...(platformExternClass ? { platformExternClass, platformHostGlobal: isJsEnvironmentPlatformGlobalName } : {}),
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
+      ...(nativeBufferSurface ? { nativeBufferSurface } : {}),
       dynMemberReadBuildable,
       builtinProtoCompanionSeeded: ctx.protoMemberDirty, // (#7127)
       ...functionValueSelectionOptions(),
@@ -15464,6 +15468,8 @@ export {
   irDynamicInstanceOfAtLegacyParity,
 } from "./ir-dynamic-instanceof.js";
 export { linkRuntimeEvalGlobalEval, runtimeEvalOwnsGlobalEval } from "./expressions/runtime-eval-provider.js"; // (#7106 A2c) ir/integration.ts
+// (#7274) the IR's native ArrayBuffer adapters (ir/integration.ts).
+export { ensureIrNativeBufferAdapter, nativeBufferProvidersAvailable } from "./buffers/ir-native-buffer.js";
 // (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
 export {
   buildModuleInitPrologueCall,
