@@ -47,6 +47,7 @@ import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from 
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
 import { irPlatformExternClassPredicate } from "./host-extern.js"; // (#7091)
 import { irBool } from "./boolean-brand.js";
+import { isStringMethodHelper, stringMethodPlan as planStringMethod } from "./string-method-surface.js";
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
 import { irTypeKey } from "./type-key.js";
 export { irTypeKey } from "./type-key.js";
@@ -127,6 +128,7 @@ import {
   IR_GLOBAL_OBJECT_HELPER,
   irDynamicConstructCalleeIsPlain,
   irDynamicConstructHelperName,
+  irFunctionCodeStrictness,
   irFunctionThisStrictness,
   irInstanceOfFunctionHelperName,
   irSelfGuardedConstructorValue,
@@ -177,7 +179,11 @@ import {
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
 import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
-import { ensureNativeStringHelpers, STANDALONE_STDOUT_APPEND_FN } from "../codegen/native-strings.js";
+import {
+  ambientGlobalFunctionProviderSymbol,
+  ensureNativeStringHelpers,
+  STANDALONE_STDOUT_APPEND_FN,
+} from "../codegen/native-strings.js";
 import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
 import {
   nativeStringLiteralMaterialization,
@@ -240,7 +246,6 @@ import {
   IR_STRING_COMPARE_FN,
   lowerFunctionAstToIr,
   lowerImplicitConstructorAstToIr,
-  STRING_METHOD_TABLE,
   type AstToIrOptions,
   type IrFromAstResolver,
   type LoweredFunctionResult,
@@ -471,6 +476,7 @@ import {
   IR_NUMBER_TO_FIXED_FN,
   IR_NUMBER_TO_STRING_FN,
 } from "./number-to-string-provider.js";
+import { classInstanceBindingStorage, exactClassStructTypeIdx } from "./class-instance-storage.js";
 import {
   classifyIrFailure,
   IrInvariantError,
@@ -2577,6 +2583,7 @@ export function compileIrPathFunctions(
       preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
+      functionCodeStrictness: (fn) => irFunctionCodeStrictness(ctx, fn), // (#7260)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
       // (#7106 compareArray.format)
       arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
@@ -3199,6 +3206,7 @@ export function compileIrPathFunctions(
   // -------------------------------------------------------------------------
   const fromAstResolver = makeFromAstResolver(
     ctx,
+    classShapes,
     moduleBindingResolver,
     loweringPlans?.postWasmStartTdzSafeBindingsByOwnerUnitId,
     standaloneDomCapability,
@@ -3279,6 +3287,7 @@ export function compileIrPathFunctions(
           funcName: name,
           ownerUnitId,
           ...(ambientThisStrict === undefined ? {} : { ambientThisStrict }),
+          functionCodeStrict: irFunctionCodeStrictness(ctx, stmt), // (#7260)
           directCalls: directCallsFor(stmt, ownerUnitId),
           fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
           fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
@@ -3903,7 +3912,8 @@ export function compileIrPathFunctions(
           }
         }
       }
-      const moduleBindings = buildModuleBindingsMap(ctx, population, moduleBindingResolver);
+      const moduleInitClassShapes = moduleInitInput.classShapes ?? classShapes;
+      const moduleBindings = buildModuleBindingsMap(ctx, population, moduleBindingResolver, moduleInitClassShapes);
       const synthetic = makeModuleInitSynthetic(population);
       for (const statement of population) directCallsFor(statement, moduleInitUnitId);
       const sourceLoweringPlans = moduleInitInput.loweringPlans ?? loweringPlans;
@@ -3923,7 +3933,7 @@ export function compileIrPathFunctions(
         hostDateSnapshots: sourceLoweringPlans?.hostDateSnapshots,
         hostDateGetters: sourceLoweringPlans?.hostDateGetters,
         identityContext: moduleBindingIdentityContext,
-        classShapes: moduleInitInput.classShapes ?? classShapes,
+        classShapes: moduleInitClassShapes,
         resolver: fromAstResolver,
         allocRegistry,
         checker: ctx.checker,
@@ -6079,6 +6089,7 @@ function withoutVoidReturn(ctx: CodegenContext, body: Instr[], typeIdx: number):
 function resolveModuleBindingGlobal(
   ctx: CodegenContext,
   identity: IrModuleBindingIdentity,
+  classShapes: ReadonlyMap<string, IrClassShape> | undefined,
   postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
 ): ModuleBindingGlobal {
   const declaration = identity.declaration;
@@ -6215,19 +6226,22 @@ function resolveModuleBindingGlobal(
       type = { kind: "string" };
       break;
     }
+    case "class-instance":
+      ({ type, storageType } = classInstanceBindingStorage(ctx, name, identity.valueKind, classShapes));
+      break;
   }
   const storageMatches =
     global.type.kind === storageType.kind &&
     ((global.type.kind !== "ref" && global.type.kind !== "ref_null") ||
       (storageType.kind === global.type.kind && storageType.typeIdx === global.type.typeIdx));
-  if (!storageMatches && identity.valueKind.kind === "dynamic") {
+  if (!storageMatches && (identity.valueKind.kind === "dynamic" || identity.valueKind.kind === "class-instance")) {
     // (#7014) `const a: any = x` (x a number const) is NARROWED to f64 by the
     // #4178 const-chain trace; #5289 (163eb5bc5c) assumed the dynamic carrier.
     // A contradicted admission, not a corrupt ABI: demote the module-init.
     throw new IrUnsupportedError(
       "module-init-legacy-coupling",
       "build",
-      `module-init: dynamic binding ${globalName} uses narrowed legacy ${global.type.kind} storage`,
+      `module-init: ${identity.valueKind.kind} binding ${globalName} uses narrowed legacy ${global.type.kind} storage`,
     );
   }
   if (!storageMatches) {
@@ -6306,6 +6320,7 @@ function buildModuleBindingsMap(
   ctx: CodegenContext,
   population: readonly ts.Statement[],
   resolveModuleBinding: IrModuleBindingResolver,
+  classShapes: ReadonlyMap<string, IrClassShape> | undefined,
 ): Map<string, ModuleBindingGlobal> {
   const map = new Map<string, ModuleBindingGlobal>();
   for (const stmt of population) {
@@ -6334,7 +6349,7 @@ function buildModuleBindingsMap(
         );
       }
       const observed = ctx.programAbiGlobals?.moduleBinding(entry.declaration);
-      const binding = resolveModuleBindingGlobal(ctx, inspected.identity);
+      const binding = resolveModuleBindingGlobal(ctx, inspected.identity, classShapes);
       // The lowering map must consume the allocator object authenticated for
       // this exact declaration.  A name-compatible global, or a global already
       // owned by another binding, would let a rebuilt/foreign storage census
@@ -7039,6 +7054,7 @@ function sameValType(a: ValType, b: ValType): boolean {
 
 function makeFromAstResolver(
   ctx: CodegenContext,
+  classShapes: ReadonlyMap<string, IrClassShape> | undefined,
   moduleBindingResolver?: IrModuleBindingResolver,
   postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
   standaloneDomCapability?: IrStandaloneDomCapabilityPlan,
@@ -7145,6 +7161,10 @@ function makeFromAstResolver(
     dynamicCarrierIsExternref() {
       return !ctx.fast;
     },
+    ambientGlobalFunctionTarget(name) {
+      const symbol = ambientGlobalFunctionProviderSymbol(ctx, name); // (#7253)
+      return symbol === null ? null : irRuntimeFuncRef(symbol);
+    },
     dynamicMethodCallWrapper(method: string, arity: number) {
       return irTemplateWrapperLane(ctx) && irWrapperSymbolIsNameable(method, arity);
     },
@@ -7163,85 +7183,15 @@ function makeFromAstResolver(
         fnctorParameterPreselectionIsCurrent?.() === true
       );
     },
-    // (#2955 slice 5) No raw `nativeStrings()` here anymore — from-ast's
-    // interface no longer carries the mode discriminator; every mode
-    // decision flows through the named capability/rep/strategy queries.
-    // (#2955 slice 2) The WHOLE string-prototype-method mode decision table,
-    // relocated here from from-ast's `lowerStringMethodCall` so the front-end
-    // reads no `nativeStrings` at that site. Byte-inert by construction: the
-    // returned plan reproduces exactly the decisions the old inline reads
-    // made — same demotes (null), same target names, same index reps, same
-    // pad strategy — so the emitted IR per mode is unchanged. The demote
-    // half MUST stay a build-time answer (there is no lower-time demote
-    // channel), which is why this is a resolver callback and not an
-    // abstract-instr lowering case; promoting the rep half into a true
-    // `str.method` instr is #2955's follow-up slice.
+    // The WasmGC plan is the surface's (`string-method-surface.ts`); the
+    // proven-ASCII case helper only picks a name, it never admits or refuses.
     stringMethodPlan(method: string, argCount: number, receiverEncoding: StringEncoding | undefined) {
-      const native = ctx.nativeStrings;
-      // (#3156) charCodeAt — BOTH modes lower to a guarded defined helper
-      // `(recv, i32 idx) -> f64` (src/codegen/char-code-at-helpers.ts;
-      // materialized on demand by resolveFunc below). NOT the bare
-      // `wasm:js-string charCodeAt` builtin: that one traps out-of-range
-      // (#2003) and its bare funcMap name is shadowable by a user function
-      // named `charCodeAt` (#1072). An omitted position pads i32 0.
-      if (method === "charCodeAt") {
-        return {
-          funcName: native ? "__str_charCodeAt" : "__jsstr_charCodeAt",
-          indexArgRep: "i32" as const,
-          padOmitted: "charcode-zero" as const,
-        };
-      }
-      // #4576 — the native search helpers already own the exact one-argument
-      // JS defaults: pass an explicit i32 zero for the omitted position. Keep
-      // two-argument calls on legacy until the plan models indexOf's boxed host
-      // fromIndex independently from the native helper's i32 representation.
-      if (native && argCount === 1 && (method === "indexOf" || method === "includes")) {
-        return {
-          funcName: `__str_${method}`,
-          indexArgRep: "i32" as const,
-          padOmitted: "search-zero" as const,
-          resultRep: method === "indexOf" ? ("i32-number" as const) : undefined,
-        };
-      }
-      // #2002 — the native string backend lowers the position arg via its
-      // own __str_* helpers (src/codegen/string-ops.ts); defer to the legacy
-      // native path rather than re-implement position handling in the IR.
-      if (
-        native &&
-        (method === "indexOf" || method === "includes" || method === "startsWith" || method === "endsWith")
-      ) {
-        return null;
-      }
-      const sig = STRING_METHOD_TABLE[method];
-      if (!sig) return null;
-      const omitted = argCount < sig.hostArgs.length;
-      // Both substring helpers take i32 indices and enforce JS clamp/swap semantics.
-      if (method === "substring") {
-        return native
-          ? {
-              funcName: "__str_substring",
-              indexArgRep: "i32" as const,
-              padOmitted: "native-substring" as const,
-            }
-          : {
-              funcName: JSSTR_SUBSTRING_FN,
-              indexArgRep: "i32" as const,
-              padOmitted: "native-substring" as const,
-            };
-      }
-      // #1248 — native mode only lowers fully-specified call sites, except
-      // `slice(start)` whose implicit end defaults to recv.length.
-      if (native && omitted && !(method === "slice" && argCount === 1)) return null;
-      const provenAsciiCaseHelper =
-        native &&
+      const plan = planStringMethod("wasmgc", method, argCount);
+      const ascii =
+        plan?.asciiHelper !== undefined &&
         receiverEncoding === "ascii" &&
-        readEnv("JS2WASM_NATIVE_PROVEN_ASCII_CASE") !== "0" &&
-        (method === "toUpperCase" || method === "toLowerCase");
-      return {
-        funcName: native ? `__str_${method}${provenAsciiCaseHelper ? "_ascii" : ""}` : `string_${method}`,
-        indexArgRep: (native ? "i32" : "f64") as "i32" | "f64",
-        padOmitted: (native ? "native-slice-len" : "host") as "native-slice-len" | "host",
-      };
+        readEnv("JS2WASM_NATIVE_PROVEN_ASCII_CASE") !== "0";
+      return plan && ascii ? { ...plan, helper: plan.asciiHelper! } : plan;
     },
     preferLegacyFlatSubstringCharCodeAt(receiver: ts.Expression) {
       let current = receiver;
@@ -7456,7 +7406,7 @@ function makeFromAstResolver(
     resolveModuleBinding(node: ts.Identifier, writeValue?: ts.Expression) {
       const identity = moduleBindingResolver?.(node, writeValue);
       return identity
-        ? resolveModuleBindingGlobal(ctx, identity, postWasmStartTdzSafeBindingsByOwnerUnitId)
+        ? resolveModuleBindingGlobal(ctx, identity, classShapes, postWasmStartTdzSafeBindingsByOwnerUnitId)
         : undefined;
     },
     isDirectModuleBinding(node: ts.Identifier): boolean {
@@ -7887,7 +7837,7 @@ function resolveAndObserveCallableProvider(
       ensureNativeStringHelpers(ctx);
       index = nativeStrHelperHandle(ctx, "__str_charAt_cp");
     }
-  } else if (ref.binding.kind === "intrinsic" && (symbol === "__str_indexOf" || symbol === "__str_includes")) {
+  } else if (ref.binding.kind === "intrinsic" && isStringMethodHelper(symbol)) {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);
       index = nativeStrHelperHandle(ctx, symbol);
@@ -10765,8 +10715,7 @@ class ClassRegistry {
     if (this.ctx.classExternrefBackedSet.has(shape.className)) return null;
 
     const classLayout = this.ctx.programAbiTypes?.layoutForClass(classId);
-    const structTypeIdx =
-      classLayout?.typeIdx ?? (this.ctx.programAbiTypes ? undefined : this.ctx.structMap.get(shape.className));
+    const structTypeIdx = exactClassStructTypeIdx(this.ctx, classId, shape.className);
     if (structTypeIdx === undefined) return null;
     const layoutFields =
       classLayout?.type.fields ?? (this.ctx.programAbiTypes ? undefined : this.ctx.structFields.get(shape.className));

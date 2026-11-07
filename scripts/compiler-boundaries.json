@@ -4795,12 +4795,12 @@
       "nextBoundary": "The JS best-effort class-shape rule of buildIrClassShapes (#7233); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
     },
     {
-      "path": "src/codegen/classes/ir-lib-interface-root-heritage.ts",
+      "path": "src/codegen/classes/ir-root-struct-heritage.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "The lib-interface root-heritage read-back of buildIrClassShapes (#7241); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
+      "nextBoundary": "The root-struct heritage read-back of buildIrClassShapes (#7241 lib interface, #7244 compiled function); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
     },
     {
       "path": "src/codegen/classes/missing-super-return.ts",
@@ -12313,6 +12313,14 @@
       "nextBoundary": "Pure TypeScript-AST fold shared by the selector and from-ast (#7106 S1b); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/ambient-global-function-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "TypeScript-AST shape plus builder lowering of the ambient parse/escape/isNaN calls shared by the selector and from-ast (#7253); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/numeric-slot-coercion.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12402,6 +12410,14 @@
     },
     {
       "path": "src/ir/class-instance-initializers.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/class-instance-storage.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -12953,6 +12969,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/module-binding-class-instance.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
       "path": "src/ir/module-binding-value-kinds.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13071,6 +13095,14 @@
       "destination": "frontend-ts",
       "owner": "7106",
       "nextBoundary": "Frontend source-shape classifier for the top-level `var` lists the module initializer models and the bindings they declare (#7106 S5); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/string-method-surface.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "The one `String.prototype` method plan read by the selector, the builder and both backend resolvers (#7106); its static-argument classifier is source shape, so it moves with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/binding-pattern-lowering.ts",

@@ -3,7 +3,7 @@
 import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { ensureAnyHelpers } from "../any-helpers.js";
-import { emitCachedFuncClosureAccess } from "../closures.js";
+import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "../closures.js";
 import { emitBuiltinNamespaceObject } from "../builtin-static-globals.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -213,6 +213,32 @@ function reserveRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
   refreshRuntimeEvalCallableTrampolines(ctx);
 }
 
+/**
+ * §19.1 value properties of the global object. These are non-writable AND
+ * non-configurable, so a define that specifies any attribute throws — which
+ * the module mirror's `configurable: true` does.
+ *
+ * `var undefined;` at module scope is a common idiom in published packages
+ * (axios pulls in several through `get-intrinsic`/`function-bind`). These
+ * names therefore keep the pre-existing `configurable: false` spelling, which
+ * matches the descriptor already there and so defines without throwing. They
+ * are dropped from the MODULE carve-out only, never from the mirror itself —
+ * the push and pull helpers must publish the same set of names or the pull's
+ * lexical-cell invariant traps.
+ */
+const IMMUTABLE_GLOBAL_PROPERTY_NAMES: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
+
+/**
+ * (#7106 A1) Does the global push publish each top-level function through its
+ * cached singleton? Preparation plans that singleton before a component seals
+ * (`collectPreparedTopLevelFunctionValueTargetUnitIds`); the per-site closure
+ * of the other route cannot be planned, so its lane keeps the whole-program
+ * runtime-eval withdrawal (`withdrawEvalBoundaryFunctions`).
+ */
+export function runtimeEvalPushPublishesCachedFunctionValues(ctx: CodegenContext): boolean {
+  return ctx.standalone;
+}
+
 function emitRuntimeEvalGlobalBindingPushBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -326,7 +352,9 @@ function emitRuntimeEvalGlobalBindingPushBody(
           const isOrdinary =
             declaration.asteriskToken === undefined &&
             !(declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
-          valueType = emitCachedFuncClosureAccess(ctx, fctx, name, funcIdx, isOrdinary);
+          valueType = runtimeEvalPushPublishesCachedFunctionValues(ctx)
+            ? emitCachedFuncClosureAccess(ctx, fctx, name, funcIdx, isOrdinary)
+            : emitFuncRefAsClosure(ctx, fctx, name, funcIdx, isOrdinary);
           needsAotAdapter = true;
         }
       }

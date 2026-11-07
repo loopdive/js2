@@ -11,7 +11,11 @@ import {
   ensureGlobalEnvironmentOperation,
 } from "./global-environment.js";
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
-import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
+import {
+  irFunctionCodeStrictness,
+  irFunctionThisStrictness,
+  irSelfGuardedConstructorValue,
+} from "./ir-dynamic-construct.js"; // (#7106 S3c, #7260)
 import { irDynamicInstanceOfAtLegacyParity } from "./ir-dynamic-instanceof.js"; // (#7106) generic dynamic instanceof
 import { irOpenObjectSelectionOption } from "./declarations/ir-open-object-binding.js"; // (#7128 S1)
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
@@ -236,7 +240,7 @@ import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-s
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
 import { irJsInstanceMethodMaySkip } from "./classes/ir-class-member-projection.js"; // (#7233)
-import { irClassExtendsLibInterfaceAsRoot } from "./classes/ir-lib-interface-root-heritage.js"; // (#7241)
+import { irClassHeritageIsRootStruct } from "./classes/ir-root-struct-heritage.js"; // (#7241 / #7244)
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import {
   planIrImportedCalls,
@@ -264,6 +268,8 @@ import {
   finalizePreparedIrSelection,
   prepareHostDateSnapshotPreflight,
   synchronizeIrSafeFunctionSelection,
+  runtimeEvalBoundaryFailure,
+  withdrawEvalBoundaryFunctions,
 } from "./ir-overlay-preparation.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import {
@@ -1791,10 +1797,10 @@ function buildIrClassShapes(
     // (`src/ir/select.ts`) so a claimed subclass member always finds a shape here.
     let parentShape: import("../ir/nodes.js").IrClassShape | undefined;
     const parentClassId = resolveIrParentClassId(ctx.checker, stmt, identityContext);
-    // (#7241) `extends <lib interface>` that legacy lays out as a root struct
-    // projects flat, like an `implements`-only class.
-    const libInterfaceRoot = parentClassId === undefined && irClassExtendsLibInterfaceAsRoot(ctx, stmt, className);
-    if (parentClassId !== null && !libInterfaceRoot) {
+    // (#7241 / #7244) `extends <lib interface | compiled function>` that legacy
+    // lays out as a root struct projects flat, like an `implements`-only class.
+    const rootStructHeritage = parentClassId === undefined && irClassHeritageIsRootStruct(ctx, stmt, className);
+    if (parentClassId !== null && !rootStructHeritage) {
       const parentPosition = parentClassId === undefined ? undefined : collectionPosition.get(parentClassId);
       const currentPosition = collectionPosition.get(classId)!;
       // Dependency ordering may move a later type-position dependency before
@@ -2165,7 +2171,7 @@ function buildIrClassShapes(
       ...(constructorInitTarget ? { constructorInitTarget } : {}),
       // #3000-E: present only for a single-level subclass of a local user class.
       ...(parentShape ? { parent: parentShape } : {}),
-      ...(libInterfaceRoot ? { libInterfaceRoot: true as const } : {}),
+      ...(rootStructHeritage ? { rootStructHeritage: true as const } : {}),
     };
     const provisional = provisionalEntries.get(classId);
     if (provisional) {
@@ -2782,7 +2788,13 @@ function collectIrImplicitParamProjectionCandidates(
     }
     if (ts.isElementAccessExpression(parent) && parent.expression === child) return true;
     if (ts.isConditionalExpression(parent) && parent.condition === child) return true;
-    return false;
+    // (#7251) A `||` / `&&` left operand is a ToBoolean test, like a conditional's.
+    return (
+      ts.isBinaryExpression(parent) &&
+      (parent.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) &&
+      parent.left === child
+    );
   };
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {
@@ -3051,6 +3063,7 @@ function planIrOverlay(
     ctx.requiresStandaloneClockCapability === true,
   );
   const backendCapabilitySelectionOptions = {
+    backendTargetProfile: { backend: "wasmgc" } as const,
     supportsBackendCapability: (capability: IrBackendTargetCapability): boolean =>
       capability === "host-date-snapshot"
         ? calendarResolvers.supportsDateSnapshots
@@ -3282,6 +3295,7 @@ function planIrOverlay(
       preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
+      functionCodeStrictness: (fn) => irFunctionCodeStrictness(ctx, fn), // (#7260)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
       // (#7106 compareArray.format)
       arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
@@ -3517,26 +3531,19 @@ function planIrOverlay(
     // `calleeTypes` from safeSelection.funcs, so this unit returns to legacy.
     moduleInit: selection.moduleInit,
   };
-  // (#2928) The linked runtime-eval carrier is currently owned by the legacy
-  // WasmGC closure/object runtime. Its recursive cross-module types may be
-  // registered while module-init writes are compiled, after legacy function
-  // signatures but before the IR overlay is installed; mixing the two paths
-  // would violate IR/legacy type-index parity. Keep the whole runtime-eval unit
-  // on one backend until the typed IR owns this carrier explicitly.
-  if (ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
-    const failure: IrPreparationFailure = {
-      kind: "unsupported",
-      code: "late-preparation-unsupported",
-      stage: "resolve",
-      detail: "the linked runtime-eval callable carrier is still owned by the direct frontend",
-    };
-    for (const name of safeSelection.funcs) recordPreparationFailure(name, failure);
+  // (#2928, #7106 A1) Runtime eval is a per-unit boundary: only a function that
+  // crosses it stays direct (`withdrawEvalBoundaryFunctions`), and the
+  // value the global push publishes for every other one is planned before its
+  // component seals (`collectPreparedTopLevelFunctionValueTargetUnitIds`).
+  // Module init and class members share the push/pull seam with the direct
+  // carrier, so they stay direct as a whole.
+  if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
+    const failure = runtimeEvalBoundaryFailure();
+    withdrawEvalBoundaryFunctions(ctx, ast.sourceFile, identityPlan, safeSelection.funcs, recordPreparationFailure);
     for (const name of safeSelection.classMembers ?? []) recordPreparationFailure(name, failure);
     if (safeSelection.moduleInit?.reason === null && safeSelection.moduleInit.stmtCount > 0) {
       recordPreparationFailure(MODULE_INIT_UNIT_NAME, failure);
     }
-    safeSelection.funcs.clear();
-    identityPlan.safeFunctionUnitIds.clear();
     safeSelection.classMembers = new Set();
     safeSelection.classMemberUnitIds = new Set();
     safeSelection.moduleInit = undefined;
@@ -4234,7 +4241,9 @@ export function scriptVarHome(
     case "externref":
       return ctx.fast ? undefined : "dynamic";
     case "ref_null":
-      return type.typeIdx === ctx.anyStrTypeIdx ? "string" : undefined;
+      if (type.typeIdx === ctx.anyStrTypeIdx) return "string";
+      // (#7252) The struct legacy allocated for a user class.
+      return [...ctx.classSet].some((n) => ctx.structMap.get(n) === type.typeIdx) ? "class-instance" : undefined;
     case "f64":
     case "i32":
       return "typed";

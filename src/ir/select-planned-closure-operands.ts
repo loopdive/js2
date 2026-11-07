@@ -286,8 +286,7 @@ export function plannedClosureOperandRefusal(
     if (plan.dynamicParameterIndices.has(index)) dynamicParameterNames.add(parameter.name.text);
     else if (type?.kind === "val" && type.val.kind === "f64") numericParameterNames.add(parameter.name.text);
   });
-  // Slot bindings: name → initializer (`null` = declared without one) or the
-  // `"carrier"` marker for a catch binding. Parameters are resolved from the plan.
+  // Locals map to initializer, null (bare var), or "carrier" (catch); parameters use the plan.
   const locals = new Map<string, ts.Expression | null | "carrier">();
   const collect = (node: ts.Node): void => {
     if (node !== fn && ts.isFunctionLike(node)) return;
@@ -339,9 +338,7 @@ export function plannedClosureOperandRefusal(
     }
   };
 
-  // A call through a dynamic parameter or function-object read local
-  // (`dynamicValueCallTarget`): its arguments are boxed and its result is the
-  // carrier (`expressionProducesDynamic` follows the callee binding).
+  // Calls through dynamic slots box arguments and return the carrier.
   const callsThroughCarrier = (name: string): boolean =>
     (parameterNames.has(name) || sources.functionObjectReadLocals?.has(name) === true) &&
     slotProof(name).family === "dynamic";
@@ -351,8 +348,7 @@ export function plannedClosureOperandRefusal(
     if (ts.isIdentifier(expr) && isClosureSlot(expr.text)) return slotProof(expr.text);
     // (#7115) A plan whose body reads `this` binds it at entry through `dyn.current_this`.
     if (expr.kind === ts.SyntaxKind.ThisKeyword) return DYNAMIC;
-    // (#7113) The unshadowed global `undefined` lowers to the carrier's
-    // `dyn.undefined` on the host-free lanes that mint a plan.
+    // Unshadowed undefined uses dyn.undefined on these lanes (#7113).
     if (ts.isIdentifier(expr) && expr.text === "undefined" && isGlobalUndefined(expr)) {
       return { family: "dynamic", additive: "unprovable" };
     }
@@ -418,10 +414,14 @@ export function plannedClosureOperandRefusal(
   const binaryProof = (expr: ts.BinaryExpression): OperandProof => {
     const op = expr.operatorToken.kind;
     if (op === ts.SyntaxKind.CommaToken) return operandProof(expr.right);
-    // A write's value is its slot's (a chained `s = t = v` stores one value
-    // into slots that must share the family).
+    // Compound writes retain the slot family; plain assignment returns its RHS.
     if (isAssignmentOperator(op)) {
       const target = unwrapParens(expr.left);
+      if (
+        op === ts.SyntaxKind.EqualsToken &&
+        (ts.isIdentifier(target) || ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target))
+      )
+        return operandProof(expr.right);
       return ts.isIdentifier(target) ? operandProof(target) : UNKNOWN;
     }
     if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
