@@ -6,30 +6,19 @@
  * that vec. Like #7252's class instance, every IR read must see the written
  * slot:
  *   - the declaration's initializer is the binding's only write anywhere in the
- *     source, its elements are all string literals, with no hole and no
- *     spread, and no `with` / direct `eval` resolves a name outside checker
- *     identity;
- *   - every use is a module-init use after the declaration (the shared
- *     `scriptVarUseFollowsDeclaration`), and one the IR vec lowers: an element
- *     read, `.length`, or a named (expando) property read or write, which goes
- *     through the dynamic carrier as legacy's does.
+ *     source (`scriptVarWrites`), its elements are all string literals, with no
+ *     hole and no spread;
+ *   - every use follows the declaration in module-init and is one the IR vec
+ *     lowers to the value JS reads (`vecUseSupported`).
  * A use anywhere else is refused at its site and stays on the direct path,
  * which reads the same slot.
  */
 import { ts } from "../ts-api.js";
-import {
-  hasDynamicScope,
-  identifierWritesOf,
-  isStoreTarget,
-  outermostParenthesized,
-  stripParens,
-} from "../shared/binding-writes.js";
-import { scriptVarUseFollowsDeclaration } from "./module-binding-class-instance.js";
+import { isStoreTarget, outermostParenthesized, stripParens } from "../shared/binding-writes.js";
+import { scriptVarUseFollowsDeclaration, scriptVarWrites } from "./module-binding-class-instance.js";
 import type { IrModuleBindingValueKind } from "./module-binding-value-kinds.js";
 
 export type VecValueKind = Extract<IrModuleBindingValueKind, { kind: "vec" }>;
-
-const vecKindCache = new WeakMap<ts.VariableDeclaration, VecValueKind | null>();
 
 /** Whether every element of `literal` is a string literal (no hole, no spread). */
 function isStringLiteralList(literal: ts.ArrayLiteralExpression): boolean {
@@ -39,41 +28,18 @@ function isStringLiteralList(literal: ts.ArrayLiteralExpression): boolean {
   });
 }
 
-function computeVecKind(checker: ts.TypeChecker, declaration: ts.VariableDeclaration): VecValueKind | undefined {
-  if (!ts.isIdentifier(declaration.name) || declaration.initializer === undefined) return undefined;
-  const literal = stripParens(declaration.initializer);
-  if (!ts.isArrayLiteralExpression(literal) || literal.elements.length === 0 || !isStringLiteralList(literal)) {
-    return undefined;
-  }
-  const sourceFile = declaration.getSourceFile();
-  if (hasDynamicScope(sourceFile)) return undefined;
-  const bindingSymbol = checker.getSymbolAtLocation(declaration.name);
-  let onlyWrite = true;
-  const visit = (node: ts.Node): void => {
-    if (!onlyWrite) return;
-    for (const write of identifierWritesOf(node)) {
-      if (write.target !== declaration.name && checker.getSymbolAtLocation(write.target) === bindingSymbol) {
-        onlyWrite = false;
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(sourceFile, visit);
-  return onlyWrite ? { kind: "vec", element: "string" } : undefined;
-}
-
 /** The kind of a binding whose one write is a string array literal, or `undefined`. */
 export function vecValueKind(
   checker: ts.TypeChecker,
   declaration: ts.VariableDeclaration | ts.BindingElement,
 ): VecValueKind | undefined {
-  if (!ts.isVariableDeclaration(declaration)) return undefined;
-  let cached = vecKindCache.get(declaration);
-  if (cached === undefined) {
-    cached = computeVecKind(checker, declaration) ?? null;
-    vecKindCache.set(declaration, cached);
+  if (!ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) return undefined;
+  const literal = stripParens(declaration.initializer);
+  if (!ts.isArrayLiteralExpression(literal) || literal.elements.length === 0 || !isStringLiteralList(literal)) {
+    return undefined;
   }
-  return cached ?? undefined;
+  const writes = scriptVarWrites(checker, declaration);
+  return writes?.every((write) => write.target === declaration.name) ? { kind: "vec", element: "string" } : undefined;
 }
 
 /** True when `node` writes a vec binding through its own (certified) initializer. */
@@ -88,22 +54,58 @@ export function vecWriteMatches(
   );
 }
 
-/** True when `node` is the declaration, or a use after it that the IR vec lowers. */
-export function vecUseSupported(node: ts.Identifier, declaration: ts.VariableDeclaration | ts.BindingElement): boolean {
+/**
+ * True when `node` is the declaration, or a use after it that the IR vec lowers
+ * to the value JS reads:
+ *   - `.length`, anywhere it is read;
+ *   - an element read with a number key, and a named property read that an
+ *     earlier top-level statement wrote (an own expando, never an inherited
+ *     `Array.prototype` name, which the dynamic reader cannot see). Either may
+ *     answer `undefined`, so either is admitted only as a call argument, which
+ *     the IR boxes whatever it lowers to;
+ *   - a plain `=` write of a named property (an expando).
+ */
+export function vecUseSupported(
+  node: ts.Identifier,
+  declaration: ts.VariableDeclaration | ts.BindingElement,
+  checker: ts.TypeChecker,
+): boolean {
   if (node === declaration.name) return true;
   if (!scriptVarUseFollowsDeclaration(node, declaration)) return false;
   const receiver = outermostParenthesized(node);
   const access = receiver.parent;
   if (!(ts.isElementAccessExpression(access) || ts.isPropertyAccessExpression(access))) return false;
   if (access.expression !== receiver) return false;
+  if (ts.isPropertyAccessExpression(access) && access.name.text === "length") return !isStoreTarget(access);
   const use = outermostParenthesized(access).parent;
-  if (ts.isDeleteExpression(use) || (ts.isCallExpression(use) && use.expression === outermostParenthesized(access))) {
+  if (ts.isPropertyAccessExpression(access) && isStoreTarget(access)) {
+    return ts.isBinaryExpression(use) && use.operatorToken.kind === ts.SyntaxKind.EqualsToken && !isStoreTarget(use);
+  }
+  if (isStoreTarget(access) || !ts.isCallExpression(use) || use.expression === outermostParenthesized(access)) {
     return false;
   }
-  if (ts.isElementAccessExpression(access) || access.name.text === "length") return !isStoreTarget(access);
-  // A named property is an expando on the array object: a read, or a plain `=` write.
-  return (
-    !isStoreTarget(access) ||
-    (ts.isBinaryExpression(use) && use.operatorToken.kind === ts.SyntaxKind.EqualsToken && !isStoreTarget(use))
-  );
+  return ts.isElementAccessExpression(access)
+    ? isNumberKey(access.argumentExpression, checker)
+    : expandoWrittenBefore(node, access.name.text);
+}
+
+function isNumberKey(key: ts.Expression, checker: ts.TypeChecker): boolean {
+  const type = checker.getTypeAtLocation(key);
+  return !type.isUnion() && (type.flags & ts.TypeFlags.NumberLike) !== 0;
+}
+
+/** Whether a top-level `<binding>.<name> = …;` statement runs before `node`'s statement. */
+function expandoWrittenBefore(node: ts.Identifier, name: string): boolean {
+  return node.getSourceFile().statements.some((statement) => {
+    if (statement.end > node.pos || !ts.isExpressionStatement(statement)) return false;
+    const write = stripParens(statement.expression);
+    return (
+      ts.isBinaryExpression(write) &&
+      write.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(write.left) &&
+      write.left.name.text === name &&
+      ts.isIdentifier(write.left.expression) &&
+      write.left.expression.text === node.text
+    );
+  });
 }

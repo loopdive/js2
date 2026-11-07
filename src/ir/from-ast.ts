@@ -10629,11 +10629,9 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx, receiv
   // (#7106 S3c) `<dynamic>.name = v` in a function whose code strictness the
   // lowering knows (an ambient-`this` subject): `dyn.member_set` with the name
   // boxed as a string key, PutValue's strict/sloppy failure rule preserved.
-  // (#7292) A script-var vec's named property (an expando, `a.index = 2`) is
-  // the same write on the boxed vec, through legacy's own store
-  // (`__extern_set`, the sloppy one): the native strict store keeps no expando
-  // for a vec, and the binding's array literal never escapes (its uses are
-  // certified), so its named `[[Set]]` cannot fail and the rule is moot.
+  // (#7292) A script-var vec's expando (`a.index = 2`) is the same write on the
+  // boxed vec, through legacy's sloppy `__extern_set`: the native strict store
+  // keeps no expando for a vec, and `vecUseSupported` keeps the array private.
   const moduleVec = recvType.kind === "vec" && isScriptVarVec(lhs.expression, cx);
   const dynamicNamedWrite = (recvType.kind === "dynamic" && cx.functionCodeStrict !== undefined) || moduleVec;
   if (dynamicNamedWrite && ts.isPropertyAccessExpression(lhs) && ts.isIdentifier(lhs.name)) {

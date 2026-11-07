@@ -2407,7 +2407,7 @@ export function makeIrLegacyModuleBindingResolver(
       !classInstance.scriptVarUseFollowsDeclaration(node, declaration)
     )
       return { kind: "unsupported", declaration, arm: "script-var-use-site" };
-    if (valueKind.kind === "vec" && !vecUseSupported(node, declaration))
+    if (valueKind.kind === "vec" && !vecUseSupported(node, declaration, checker))
       return { kind: "unsupported", declaration, arm: "script-var-use-site" };
     if (
       writeValue !== undefined &&

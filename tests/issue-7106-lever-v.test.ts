@@ -33,18 +33,16 @@ async function runHarness(target: Target, body: string): Promise<boolean> {
 }
 
 const CLAIMED: Record<string, string> = {
-  // The S15.10.2 expectation object: an array with two expandos, read in a counted loop.
+  // The S15.10.2 expectation object: an array with two expandos, compared element-wise in a counted loop.
   expectationArray:
-    'var __expected = ["abc", "d"];\n__expected.index = 2;\n__expected.input = "x";\n' +
+    'var __expected = ["abc", "d"];\n__expected.index = 2;\n__expected.input = "x";\nvar __pieces = ["abc", "d"];\n' +
     "assert.sameValue(__expected.length, 2);\nassert.sameValue(__expected.index, 2);\n" +
     'assert.sameValue(__expected.input, "x");\n' +
-    'for (var index = 0; index < __expected.length; index++) { assert.sameValue(typeof __expected[index], "string"); }',
+    "for (var index = 0; index < __expected.length; index++) { assert.sameValue(__expected[index], __pieces[index]); }",
   literalIndex: 'var e = ["a", "b"];\nassert.sameValue(e[1], "b");',
   // An unproven read answers `undefined` out of bounds, for a fractional and a negative index too.
   outOfBounds:
     'var e = ["a"];\nassert.sameValue(e[3], undefined);\nassert.sameValue(e[0.5], undefined);\nassert.sameValue(e[-1], undefined);',
-  expandoReadBeforeWrite:
-    'var e = ["a"];\nassert.sameValue(e.index, undefined);\ne.index = 1;\nassert.sameValue(e.index, 1);',
   strictExpando: '"use strict";\nvar e = ["a"];\ne.index = 2;\nassert.sameValue(e.index, 2);',
 };
 
@@ -62,7 +60,44 @@ const REFUSED: Record<string, string> = {
   readBeforeDeclaration: 'var r = typeof e;\nvar e = ["a"];\nassert.sameValue(r, "undefined");',
   nested: 'if (true) { var e = ["a"]; }\nassert.sameValue(e[0], "a");',
   readInFunction: 'var e = ["a"];\nfunction f() { return e[0]; }\nassert.sameValue(f(), "a");',
+  // Review round 1: an inherited name, and an expando read before its write.
+  inheritedConstructor: 'var a = ["a", "b"];\nassert.sameValue(a.constructor === Array, true);',
+  inheritedJoinTypeof: 'var a = ["a", "b"];\nassert.sameValue(typeof a.join, "function");',
+  expandoReadBeforeWrite:
+    'var e = ["a"];\nassert.sameValue(e.index, undefined);\ne.index = 1;\nassert.sameValue(e.index, 1);',
 };
+
+// Review round 1: refused at selection, never claimed and then withdrawn. Compiled only:
+// legacy answers some of these differently from node, which is not this lever's to fix.
+const REFUSED_COMPILE: Record<string, string> = {
+  inheritedJoin: 'var a = ["a", "b"];\nassert.sameValue(a.join === undefined, false);',
+  keyLeadingZero: 'var a = ["a", "b"];\nassert.sameValue(a["01"], undefined);',
+  keyMinusZero: 'var a = ["a", "b"];\nassert.sameValue(a["-0"], undefined);',
+  keyLength: 'var a = ["a", "b"];\nassert.sameValue(a["length"], 2);',
+  keyFoo: 'var a = ["a", "b"];\nassert.sameValue(a["foo"], undefined);',
+  keyUndefined: 'var a = ["a", "b"];\nassert.sameValue(a[undefined], undefined);',
+  keyStringVar: 'var a = ["a", "b"];\nvar k;\nk = "0";\nassert.sameValue(a[k], "a");',
+  keyNull: 'var a = ["a", "b"];\nassert.sameValue(a[null], undefined);',
+  elementLength: 'var a = ["ab"];\nvar n = a[0].length;\nassert.sameValue(n, 2);',
+  comparedWithUndefined: 'var a = ["a"];\nassert.sameValue(a[9] === undefined, true);',
+  expandoPlusOne: 'var a = ["a"];\nassert.sameValue(a.foo + 1, NaN);',
+  expandoPlusExpando: 'var a = ["a"];\nassert.sameValue(a.foo + a.bar, NaN);',
+  expandoWrittenPlusOne: 'var a = ["a"];\na.foo = 1;\nassert.sameValue(a.foo + 1, 2);',
+};
+
+async function compileHarness(target: Target, body: string): Promise<boolean> {
+  const result = await compile(assembleHarnessBody(body), {
+    fileName: "test.js",
+    allowJs: true,
+    skipSemanticDiagnostics: true,
+    trackIrOutcomes: true,
+    deferTopLevelInit: true,
+    ...(target ? { target } : {}),
+  });
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(result.irPostClaimErrors ?? []).toEqual([]);
+  return moduleInit(result)?.irBodyEmitted === true;
+}
 
 describe("#7292 lever V: script-var string-array literals", () => {
   for (const target of TARGETS) {
@@ -75,6 +110,11 @@ describe("#7292 lever V: script-var string-array literals", () => {
       for (const [name, body] of Object.entries(REFUSED)) {
         it(`stays legacy and runs: ${name}`, async () => {
           expect(await runHarness(target, body)).toBe(false);
+        });
+      }
+      for (const [name, body] of Object.entries(REFUSED_COMPILE)) {
+        it(`refused at selection: ${name}`, async () => {
+          expect(await compileHarness(target, body)).toBe(false);
         });
       }
     });

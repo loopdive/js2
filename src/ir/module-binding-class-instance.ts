@@ -15,12 +15,16 @@
  * which reads the same slot.
  */
 import { ts } from "../ts-api.js";
-import { hasDynamicScope, identifierWritesOf, outermostParenthesized, stripParens } from "../shared/binding-writes.js";
+import {
+  hasDynamicScope,
+  identifierWritesOf,
+  outermostParenthesized,
+  stripParens,
+  type IdentifierWrite,
+} from "../shared/binding-writes.js";
 import type { IrModuleBindingValueKind } from "./module-binding-value-kinds.js";
 
 type ClassInstanceKind = Extract<IrModuleBindingValueKind, { kind: "class-instance" }>;
-
-const bindingClassCache = new WeakMap<ts.VariableDeclaration, ts.ClassDeclaration | null>();
 
 /** The top-level class of this source that `expr` constructs (`new X(...)`), if any. */
 function constructedTopLevelClass(checker: ts.TypeChecker, expr: ts.Expression): ts.ClassDeclaration | undefined {
@@ -35,29 +39,57 @@ function constructedTopLevelClass(checker: ts.TypeChecker, expr: ts.Expression):
     : undefined;
 }
 
+const scriptVarWritesCache = new WeakMap<ts.VariableDeclaration, readonly IdentifierWrite[] | null>();
+
+/**
+ * Every write of the script var `declaration` anywhere in its source (the
+ * declaration's own included), or `undefined` when a `with` / direct `eval`
+ * could write it outside checker identity. Shared by the script-var homes
+ * that certify their writes (class instance, #7292's string vec).
+ */
+export function scriptVarWrites(
+  checker: ts.TypeChecker,
+  declaration: ts.VariableDeclaration,
+): readonly IdentifierWrite[] | undefined {
+  let cached = scriptVarWritesCache.get(declaration);
+  if (cached === undefined) {
+    cached = collectScriptVarWrites(checker, declaration) ?? null;
+    scriptVarWritesCache.set(declaration, cached);
+  }
+  return cached ?? undefined;
+}
+
+function collectScriptVarWrites(
+  checker: ts.TypeChecker,
+  declaration: ts.VariableDeclaration,
+): IdentifierWrite[] | undefined {
+  const sourceFile = declaration.getSourceFile();
+  if (!ts.isIdentifier(declaration.name) || hasDynamicScope(sourceFile)) return undefined;
+  const bindingSymbol = checker.getSymbolAtLocation(declaration.name);
+  const writes: IdentifierWrite[] = [];
+  const visit = (node: ts.Node): void => {
+    for (const write of identifierWritesOf(node)) {
+      if (checker.getSymbolAtLocation(write.target) === bindingSymbol) writes.push(write);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return writes;
+}
+
 function computeBindingClass(
   checker: ts.TypeChecker,
   declaration: ts.VariableDeclaration,
   declaredType: ts.Type,
 ): ts.ClassDeclaration | undefined {
-  if (!ts.isIdentifier(declaration.name) || declaration.initializer === undefined) return undefined;
+  if (declaration.initializer === undefined) return undefined;
   const classDeclaration = constructedTopLevelClass(checker, declaration.initializer);
   if (classDeclaration === undefined) return undefined;
   const classSymbol = checker.getSymbolAtLocation(classDeclaration.name!);
   if (declaredType.isUnion() || declaredType.getSymbol() !== classSymbol) return undefined;
-  const sourceFile = declaration.getSourceFile();
-  if (hasDynamicScope(sourceFile)) return undefined;
-  const bindingSymbol = checker.getSymbolAtLocation(declaration.name);
-  let exact = true;
-  const visit = (node: ts.Node): void => {
-    if (!exact) return;
-    for (const write of identifierWritesOf(node)) {
-      if (checker.getSymbolAtLocation(write.target) !== bindingSymbol) continue;
-      if (write.kind !== "value" || constructedTopLevelClass(checker, write.expr) !== classDeclaration) exact = false;
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(sourceFile, visit);
+  const exact = scriptVarWrites(checker, declaration)?.every(
+    (write) => write.kind === "value" && constructedTopLevelClass(checker, write.expr) === classDeclaration,
+  );
   return exact ? classDeclaration : undefined;
 }
 
@@ -68,12 +100,8 @@ export function classInstanceValueKind(
   declaredType: ts.Type,
 ): ClassInstanceKind | undefined {
   if (!ts.isVariableDeclaration(declaration)) return undefined;
-  let cached = bindingClassCache.get(declaration);
-  if (cached === undefined) {
-    cached = computeBindingClass(checker, declaration, declaredType) ?? null;
-    bindingClassCache.set(declaration, cached);
-  }
-  return cached ? { kind: "class-instance", classDeclaration: cached } : undefined;
+  const classDeclaration = computeBindingClass(checker, declaration, declaredType);
+  return classDeclaration ? { kind: "class-instance", classDeclaration } : undefined;
 }
 
 /** True when `value` constructs exactly the binding's class. */
