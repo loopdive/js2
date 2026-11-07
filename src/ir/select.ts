@@ -3429,6 +3429,13 @@ function dynamicUsesAreMoveOnly(
     return false;
   };
 
+  /** Arguments that each become a dynamic carrier: a concrete one must box onto it. */
+  const scanCarrierArguments = (args: readonly ts.Expression[]): boolean =>
+    args.every((argument) => {
+      const dynamic = isDynShaped(argument);
+      return (dynamic || concreteOperandBoxesOntoCarrier(unwrap(argument))) && scanExpr(argument, dynamic);
+    });
+
   /** Scan a direct-call's arguments against the callee's per-param verdicts. */
   const scanDirectCallArgs = (e: ts.CallExpression, calleeName: string): boolean => {
     for (let i = 0; i < e.arguments.length; i++) {
@@ -3515,14 +3522,7 @@ function dynamicUsesAreMoveOnly(
     // argument is a dynamic carrier (a concrete one boxes like a member-store
     // value); the result is dynamic.
     if (ts.isNewExpression(e) && dynamicConstructCallee(e) !== null) {
-      if (!expectDyn || !currentDynamicRuntimeBuildable) return false;
-      for (const argument of e.arguments ?? []) {
-        const dynamic = isDynShaped(argument);
-        const concrete = unwrap(argument);
-        if (!dynamic && !concreteOperandBoxesOntoCarrier(concrete)) return false;
-        if (!scanExpr(argument, dynamic)) return false;
-      }
-      return true;
+      return expectDyn && currentDynamicRuntimeBuildable && scanCarrierArguments(e.arguments ?? []);
     }
     if (ts.isCallExpression(e)) {
       // (#7128 S1) A U1 define: literal key and descriptor, result dropped.
@@ -4073,6 +4073,10 @@ function dynamicUsesAreMoveOnly(
       // return is fine here regardless of the callee's return verdict.
       if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
         return scanDirectCallArgs(e, e.expression.text);
+      }
+      // (#7305) A call through a dynamic value: callee and arguments are `__apply_closure` carriers.
+      if (ts.isCallExpression(e) && dynamicValueCallTarget(e)) {
+        return scanExpr(e.expression, true) && scanCarrierArguments(e.arguments);
       }
       return scanExpr(s.expression, false);
     }
@@ -6655,10 +6659,13 @@ function closureFunctionObjectReadLocals(
  * `currentClosureDynamicParamNames` is non-empty only inside a closure that
  * `planMemberClosure` (function-member-closure-planning.ts) minted, and that
  * plan already requires non-fast, native-first, standalone|wasi and the
- * externref dynamic carrier. A top-level subject is never admitted because
- * this set is empty outside a planned closure — and independently, its
- * Phase-1 shape check already refuses `func()` at `expr-local-call-target`
- * (`call-resolution-unsupported`) before the move-only scan runs.
+ * externref dynamic carrier.
+ *
+ * (#7305) A top-level subject takes the arm for its own dynamic PARAMETER
+ * (`currentDynamicParamNames`, the membership `new g()` already uses, #7106
+ * S3a) called in statement position in its own body, when it has no ambient
+ * `this`: it then cannot read `this` after a callee throws. Statement position
+ * only: a call result would be typed by the callee's checker signature (#7287).
  *
  * The match is by identifier text, so a catch binding that shadows the
  * parameter (`catch (func) { func(); }`) also takes the arm; that is sound,
@@ -6669,9 +6676,27 @@ function closureFunctionObjectReadLocals(
 function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
   const callee = expr.expression;
   if (!ts.isIdentifier(callee) || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) return false;
-  if (!currentClosureDynamicParamNames.has(callee.text) && !currentClosureFunctionObjectReadLocals.has(callee.text))
-    return false;
+  const closureCarrier =
+    currentClosureDynamicParamNames.has(callee.text) || currentClosureFunctionObjectReadLocals.has(callee.text);
+  const subjectCarrier =
+    currentDynamicParamNames.has(callee.text) &&
+    !subjectHasAmbientThis() &&
+    ownParameterStatementCall(expr, currentSelectionSubject);
+  if (!closureCarrier && !subjectCarrier) return false;
   return currentDynamicRuntimeBuildable;
+}
+
+/**
+ * (#7305) A statement call through one of `owner`'s own parameters, in
+ * `owner`'s own body. The call graph reads it too: such a call is the dynamic
+ * call above, never an edge, and a non-dynamic parameter is refused at Phase-1.
+ */
+function ownParameterStatementCall(expr: ts.CallExpression, owner: ts.SignatureDeclaration | null): boolean {
+  const callee = expr.expression;
+  if (owner === null || !ts.isIdentifier(callee) || !ts.isExpressionStatement(expr.parent)) return false;
+  let enclosing: ts.Node = expr.parent;
+  while (!ts.isFunctionLike(enclosing)) enclosing = enclosing.parent;
+  return enclosing === owner && owner.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === callee.text);
 }
 
 /**
@@ -13483,6 +13508,10 @@ export function buildLocalCallGraph(
             // through the carrier (from-ast's Stage-4 dynamic call), not an
             // edge. Statement position only: a lib-named `var`'s call result
             // is typed by the lib signature (`var isNaN = …` reads as boolean).
+            for (const argument of node.arguments) visit(argument);
+            return;
+          } else if (ownParameterStatementCall(node, fn)) {
+            // (#7305) A statement call through the caller's own parameter.
             for (const argument of node.arguments) visit(argument);
             return;
           } else {
