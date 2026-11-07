@@ -352,16 +352,13 @@ export function answer(): number { return 42; }
   });
 
   it("records the compiler-injected timer wrapper as an exact IR terminal", async () => {
-    // (#7108) Pinned to the profile this fixture was written for. #6708 S6
-    // (612cea9864) flipped the DEFAULT `semanticProviders` to native-first,
-    // where the unannotated `() => {}` callback is refused `closure-return-type`,
-    // `delayed` stays legacy and the injected `setTimeout` follows it
-    // (`call-graph-closure`) — so the default profile has no IR timer terminal
-    // to record. The ledger contract under test is profile-independent.
-    const result = await compile(`export function delayed(): void { setTimeout(() => {}, 1); }`, {
+    // (#7313) The host-assisted pin is a compile error since #6979. Under the
+    // native profile an arrow callback gets no closure plan (`closure-return-type`),
+    // so the fixture uses a function expression; the ledger contract under test
+    // is profile-independent.
+    const result = await compile(`export function delayed(): void { setTimeout(function () { return; }, 1); }`, {
       fileName: "timer.ts",
       trackIrOutcomes: true,
-      semanticProviders: "host-assisted",
     });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(terminal(result)).toHaveLength(2);
