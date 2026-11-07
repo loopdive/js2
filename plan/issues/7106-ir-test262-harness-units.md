@@ -6915,14 +6915,34 @@ Re-measured on 27630b3237, file-copy A/B against the A2b head 9525d48818:
 | verdicts of the 6 IR-only files, both lanes (provider rebuilt) | fail as on the base; the standalone messages are identical |
 | focused tests (A2c, A2a, A1 unit boundary) | 13 / 13 pass |
 
-#### Follow-up: eval-declared vars read after the eval (provider/harness gap, pre-existing)
+#### Follow-up: eval-declared vars read after the eval (interpreter engine only, local runs)
 
-A program that declares a var through eval and then reads it throws in Wasm,
-while node passes. The minimal shape is `(0, eval)("var z = 1"); z;`.
+A program that declares a var through eval and then reads it fails locally:
+`(0, eval)("var z = 1"); z;` throws in Wasm, while node passes. The reviewer
+saw it on both the A2b head and A2c (25 / 25 verdicts equal).
 
-- The reviewer measured 25 / 25 verdicts equal on the A2b head and on A2c, so
-  this PR does not cause it.
-- It caps what lever A can pay: the 6 IR-only files are all of this shape and
-  still fail.
-- It belongs to the provider/harness pull path, not the IR. File it before
-  counting lever A's pass-rate gain.
+This is a gap in the **interpreter** eval engine, and it appears only in local
+runs. It is not a compiler or shared-path bug, and it does not cap lever A in
+CI:
+
+- CI's standalone shards evaluate eval code with QuickJS
+  (`JS2WASM_EVAL_ENGINE` defaults to `quickjs` in `test262-sharded.yml`).
+  Local runs here used `JS2WASM_EVAL_ENGINE=interpreter`, because QuickJS is
+  not built in the container.
+- CI's standalone baseline (fetched 2026-11-07, built from main) passes
+  **141 / 141** of the eval files. That includes every one of the 40 that
+  fail locally, and the 6 A2c IR-only files.
+- The 40 local standalone failures, by message:
+
+  | files | message |
+  | --- | --- |
+  | 31 | `undefined` (the read-back shape above) |
+  | 6 | `ReferenceError: intrinsicErrorConstructor is not defined` |
+  | 2 | `SyntaxError: Binding rvalue` |
+  | 1 | `Thrown value was not an object!` |
+
+Local verdicts taken with the interpreter engine therefore **undercount**.
+The pass→fail comparisons in this plan stay valid, since base and head ran
+on the same engine. Absolute pass counts and lever A's gain must come from a
+QuickJS run, i.e. CI. Closing these interpreter gaps is its own issue against
+the interpreter provider, not lever A work.
