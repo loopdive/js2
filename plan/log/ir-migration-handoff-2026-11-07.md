@@ -236,3 +236,15 @@ live).
   6701393374; #7315 file + `isPatternDeclaration` dedupe push pending),
   #7280 S1 PR being opened (stacked on #7157; L's merged-declaration fix is
   the dependency for 23 files), #7304 issue file.
+
+## Retroactive review of #6924 (ordered by the project lead, 2026-11-07)
+
+Verdict (PR #6924 comment 6702097137): **SOUND with findings.** The bug is
+real and the merge closes it (31 trap points, filling and sealed phases);
+intact on main b631a4bc; output unchanged (ledger identical, 624/624
+binaries, equivalence clean); the PR's tests test the fix (4/6 fail before,
+6/6 after). Findings: a narrower trap window inside the re-audit's own body
+walk (pre-existing, compiler-internal data only) → #7321 with the proposed
+copy-on-fill fix; the test pins one trap point; the review the PR body cited
+was never recorded. Lesson applied this session: every review verdict is a
+PR comment, cited in the PR body.
