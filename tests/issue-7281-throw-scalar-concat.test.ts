@@ -35,6 +35,8 @@ async function moduleInitIsIr(path: string): Promise<boolean | undefined> {
     fileName: path,
     trackIrOutcomes: true,
   });
+  // The selector and from-ast must agree: a claim from-ast then refuses is a post-claim error.
+  expect(result.irPostClaimErrors ?? []).toEqual([]);
   return result.irOutcomes?.find((o) => o.displayName === "<module-init>")?.irBodyEmitted;
 }
 
@@ -77,6 +79,15 @@ const CASES: Record<string, Case> = {
   },
   "boolean binding concat stays refused": {
     body: "var b = true; var s = 'a' + b; if (s !== 'atrue') { throw new Test262Error('bad'); }",
+    ir: false,
+  },
+  // The slot is f64 but the checker narrows `x` to `never`, which from-ast's `+` gate refuses.
+  "narrowed-away binding stays refused": {
+    body: "var x = 1; if (typeof x !== 'number') { throw new Test262Error('#1: ' + (x)); }",
+    ir: false,
+  },
+  "narrowed-away binding in a function stays refused": {
+    body: "var x = 1; function f() { if (typeof x === 'string') return 'a' + x; return ''; } f();",
     ir: false,
   },
   "scalar argument stays refused": {

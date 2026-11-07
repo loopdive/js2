@@ -8117,9 +8117,30 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
   return currentModuleBindingResolver?.scalarExpressionFamily(candidate);
 }
 
-/** A proven string `+` applies ToString to its scalar side, so mixed operand families are no mismatch (#7281). */
+/**
+ * A proven string `+` applies ToString to its scalar side, so mixed operand
+ * families are no mismatch (#7281). The slot family is flow-insensitive, so the
+ * checker must also prove the `+` at this site: `typeof x !== 'number'`
+ * narrows `x` to `never`, which from-ast's `+` gate refuses.
+ */
 function isModuleStringConcat(expr: ts.BinaryExpression): boolean {
-  return expr.operatorToken.kind === ts.SyntaxKind.PlusToken && obviousModuleValueFamily(expr) === "string";
+  return (
+    expr.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+    obviousModuleValueFamily(expr) === "string" &&
+    checkerProvesBinaryOperands(expr) === true
+  );
+}
+
+/**
+ * from-ast's typing gate for `expr` over the checker's flow-sensitive operand
+ * families; `undefined` when the checker classifies neither side as a primitive.
+ */
+function checkerProvesBinaryOperands(expr: ts.BinaryExpression): boolean | undefined {
+  const classify = currentSelectionOptions?.classifyPrimitiveExpression;
+  const left = classify?.(expr.left);
+  const right = classify?.(expr.right);
+  if (!left || !right) return undefined;
+  return provenBinaryOperandsAdmissible(expr, left, right, additiveLane());
 }
 
 /**
@@ -9053,10 +9074,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
     !carrierOperand &&
     (mayBeElementRead(expr.left, selectorLeafReadsElement) || mayBeElementRead(expr.right, selectorLeafReadsElement))
   ) {
-    const classify = currentSelectionOptions?.classifyPrimitiveExpression;
-    const leftProof = classify?.(expr.left);
-    const rightProof = classify?.(expr.right);
-    if (leftProof && rightProof && !provenBinaryOperandsAdmissible(expr, leftProof, rightProof, additiveLane())) {
+    if (checkerProvesBinaryOperands(expr) === false) {
       return capabilityNo("operand-coercion-unsupported", "expr-binary-element-concat-proof", expr);
     }
   }
