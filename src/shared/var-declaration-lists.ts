@@ -27,7 +27,7 @@ export function moduleInitVarList(statement: ts.Node): ts.VariableDeclarationLis
 }
 
 /** Whether `node` is the `var` list of a top-level statement that {@link moduleInitVarList} models. */
-export function isModuleInitVarList(node: ts.Node | undefined): node is ts.VariableDeclarationList {
+export function isModuleInitVarList(node: ts.Node | undefined): boolean {
   if (node === undefined || !ts.isVariableDeclarationList(node)) return false;
   let statement: ts.Node = node.parent;
   while (ts.isLabeledStatement(statement.parent)) statement = statement.parent;

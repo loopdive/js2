@@ -12030,7 +12030,7 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
   // `<module-init>` `var` head declares script `var`s, so it binds them in the
   // enclosing scope, as a `var` statement does; any other head binds in the loop's.
   const scriptVarHead = cx.moduleBindings !== undefined && isModuleInitVarList(stmt.initializer);
-  if (scriptVarHead) lowerForInitializer(stmt.initializer, { ...cx, pendingLoopLabel: undefined });
+  if (stmt.initializer && scriptVarHead) lowerForInitializer(stmt.initializer, { ...cx, pendingLoopLabel: undefined });
   const innerCx: LowerCtx = { ...cx, scope: new Map(cx.scope), pendingLoopLabel: undefined };
   if (stmt.initializer && !scriptVarHead) lowerForInitializer(stmt.initializer, innerCx);
 

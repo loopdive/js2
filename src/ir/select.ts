@@ -5585,7 +5585,7 @@ function isPhase1ForStatementInScope(
         return shapeNo("for-init-var-kind", stmt.initializer);
       // (#7106 lever L) A `<module-init>` `var` head declares script `var`s, as a `var` statement does.
       const declared = isScriptVarList(stmt.initializer)
-        ? isPhase1VarDeclarationList(stmt.initializer, true, innerScope, localClasses)
+        ? isPhase1VarDeclarationList(stmt.initializer, innerScope, localClasses)
         : isPhase1LoopHeadDeclarations(stmt.initializer, innerScope, localClasses);
       if (!declared) return false;
     } else {
@@ -6990,7 +6990,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     return shapeNo("vardecl-var-kind", stmt);
   }
   if (stmt.modifiers && stmt.modifiers.length > 0) return shapeNo("vardecl-modifier", stmt);
-  return isPhase1VarDeclarationList(stmt.declarationList, isScriptVarList(stmt.declarationList), scope, localClasses);
+  return isPhase1VarDeclarationList(stmt.declarationList, scope, localClasses);
 }
 
 /** (#7106 S5, lever L) A `<module-init>` `var` list: its names are script `var`s in their `__mod_<name>` slots. */
@@ -7001,15 +7001,14 @@ function isScriptVarList(list: ts.Node): boolean {
 /**
  * The declarations of a `VariableStatement`, or of a `<module-init>` `var`
  * `for` head (#7106 lever L): both declare the same script `var`s, each in its
- * `__mod_<name>` slot, so one arm checks them. `moduleVarList` is
- * {@link isScriptVarList} of `list`.
+ * `__mod_<name>` slot, so one arm checks them.
  */
 function isPhase1VarDeclarationList(
   list: ts.VariableDeclarationList,
-  moduleVarList: boolean,
   scope: Set<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  const moduleVarList = isScriptVarList(list);
   const flags = list.flags;
   const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
   const isConst = !!(flags & ts.NodeFlags.Const);
