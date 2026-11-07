@@ -1,7 +1,8 @@
 ---
 id: 7324
-title: "IR: calls inside a lifted module-init closure escape the call-graph gate (claim-then-demote)"
-status: in-progress
+title: "IR: calls inside a lifted closure escape the call-graph gate (claim-then-demote)"
+status: done
+completed: 2026-11-07
 sprint: current
 created: 2026-11-07
 updated: 2026-11-07
@@ -15,18 +16,18 @@ goal: ir-full-coverage
 related: [7294, 7167]
 assignee: "ttraenkler/c-lane-opus"
 loc-budget-allow:
-  # 2026-11-07 (#7324): select.ts +9 in buildLocalCallGraph: the walk's
-  # closure condition and its 3-line comment, the closure-local skip clause,
-  # and the 3-line `isLiftedClosure` predicate the two share.
+  # 2026-11-07 (#7324): select.ts +8 net (+10/-2): the walk's 3-line
+  # comment and widened closure condition, the closure-local skip clause, and
+  # the 3-line `isLiftedClosure` predicate the two share.
   - src/ir/select.ts
 func-budget-allow:
-  # 2026-11-07 (#7324): buildLocalCallGraph +3 (303 > 300): the
-  # `liftsClosures` flag, its comment and the widened local-callee clause;
-  # the rule is the gate's own walk, so it cannot live outside it.
+  # 2026-11-07 (#7324): buildLocalCallGraph +4 (298 -> 302, ceiling 300):
+  # the 3-line comment and the widened local-callee clause; the rule is the
+  # gate's own walk, so it cannot live outside it.
   - src/ir/select.ts::buildLocalCallGraph
 ---
 
-# #7324 — calls inside a lifted module-init closure escape the call-graph gate
+# #7324 — calls inside a lifted closure escape the call-graph gate
 
 ## Problem
 
@@ -57,16 +58,19 @@ stride-40 ledger on main shows the other two kinds in
 `isPhase1Expr`'s call arm sends an out-of-scope identifier callee down the
 direct-call branch and leaves it to the call-graph gate (`buildLocalCallGraph`)
 to reject a callee that is external or not claimed. That walk stops at every
-nested function-like, so a call inside a lifted module-init closure is never
-checked, while from-ast lowers that closure's calls through the same direct-call
-plans as the module-init's own.
+nested function-like, so a call inside a lifted closure is never checked, while
+from-ast lowers that closure's calls through the same direct-call plans as its
+enclosing unit's own. This holds for the module-init and for ordinary functions
+alike (RV7175: `function t(x) { const c = (y) => f(y); return c(x); }` with an
+unclaimed `f`, or `RegExp("a")` in the arrow, withdraws `t` with "no exact
+AST-site plan in t__closure_0").
 
 ## Implementation Plan
 
 - **Module:** `src/ir/select.ts`, `buildLocalCallGraph`, the gate itself.
-- **Rule:** for the `<module-init>` synthetic, the walk descends into lifted
-  closures (function expressions and arrows), so their calls get the same
-  edge / external classification as the module-init's own. A callee that
+- **Rule:** for every caller, the walk descends into lifted closures
+  (function expressions and arrows), so their calls get the same edge /
+  external classification as the enclosing unit's own. A callee that
   resolves to a declaration inside a lifted closure (its parameters and
   locals) is local, not an edge, exactly as the existing nested-binding
   clause treats closure bindings.
@@ -74,16 +78,17 @@ plans as the module-init's own.
   resolver's `localValueDeclaration`; one shared `isLiftedClosure` predicate.
   No selector special case per callee kind (a first cut refused only variable
   callees in `isPhase1Expr`; it was replaced by this rule).
-- **Scope:** module-init only. Ordinary units' nested closures keep the
-  current walk; the stride shows no claim-then-demote there.
+- **Scope:** every unit. A first cut gated the rule on `<module-init>`; review
+  (RV7175) reproduced the same withdrawal in ordinary functions, and dropping
+  the gate costs no unit on the stride ledger.
 - **Quality criterion:** one rule in the gate, no sibling arm.
 
 ## Acceptance criteria
 
-- [ ] The three main repros refuse at selection (`external-call` /
+- [x] The three main repros refuse at selection (`external-call` /
       `call-graph-closure`) with identical runtime values; a claimed function
       declaration and a closure parameter call keep the IR route.
-- [ ] Wrapped stride-40 ledger: no file gains or loses an IR unit; invariants 0.
-- [ ] gc and standalone bytes identical wherever the route set is unchanged,
+- [x] Wrapped stride-40 ledger: no file gains or loses an IR unit; invariants 0.
+- [x] gc and standalone bytes identical wherever the route set is unchanged,
       except the files main withdrew (their leftover goes away).
-- [ ] test262 verdicts identical on the A/B corpus.
+- [x] test262 verdicts identical on the A/B corpus.

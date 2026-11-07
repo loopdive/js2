@@ -13314,13 +13314,12 @@ export function buildLocalCallGraph(
     // closure dispatch, not the legacy call-graph), so they must NOT
     // mark the outer as having an external call.
     const localBindings = collectLocalClosureBindings(fn);
-    // (#7324) A lifted module-init closure lowers its calls through the same
-    // plans as the module-init itself, so they pass the same gate; calls to
-    // the closure's own parameters and locals are local, not edges.
-    const liftsClosures = callerName === MODULE_INIT_UNIT_NAME;
 
+    // (#7324) A lifted closure lowers its calls through the same plans as its
+    // enclosing unit, so they pass the same gate; calls to the closure's own
+    // parameters and locals are local, not edges.
     const visit = (node: ts.Node): void => {
-      if (node !== fn && isFunctionLike(node) && !(liftsClosures && isLiftedClosure(node))) return;
+      if (node !== fn && isFunctionLike(node) && !isLiftedClosure(node)) return;
       // Slice 4 (#1169d): `new <className>(...)` is NOT a function-style
       // call; it dispatches to a legacy-compiled constructor with a
       // stable signature. Walk into the args (which may contain real
@@ -13447,7 +13446,7 @@ export function buildLocalCallGraph(
             (currentModuleBindingResolver === null && localBindings.names.has(callee)) ||
             (localDeclaration !== undefined &&
               (localClosureDeclarationsContain(localBindings.declarations, localDeclaration) ||
-                (liftsClosures && ts.findAncestor(localDeclaration.parent, isLiftedClosure) !== undefined)))
+                ts.findAncestor(localDeclaration.parent, isLiftedClosure) !== undefined))
           ) {
             // Slice 3: closure / nested-fn binding within this outer.
             // Variable-backed callables use checker-resolved declaration
