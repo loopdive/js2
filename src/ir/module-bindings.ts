@@ -7,6 +7,7 @@
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
+import { dynamicCallArgumentAdmissible, type OperandFamily } from "./analysis/operand-admissibility.js";
 import * as bindingValue from "./module-binding-value-kinds.js";
 import { updateRetypesModuleBinding } from "./update-retyped-bindings.js";
 import { isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
@@ -933,7 +934,66 @@ function bindingDeclarationCandidates(
   source: BindingQuerySource,
 ): readonly (ts.Declaration | undefined)[] {
   const oracle = bindingOracle(source);
-  return [oracle.valueDeclarationOf(node), ...oracle.declarationsOf(node)];
+  const candidates = [oracle.valueDeclarationOf(node), ...oracle.declarationsOf(node)];
+  return scriptVarBehindLibGlobal(node, candidates) ?? candidates;
+}
+
+/**
+ * (#7287) A call `v(…)` in statement position whose callee is a script `var`
+ * in its dynamic module home: the Stage-4 dynamic call through that home, not
+ * a call-graph edge. Statement position only: a lib-named `var`'s call result
+ * is typed by the lib signature. Every argument must cross into the carrier
+ * (`dynamicCallArgumentAdmissible`). The selector and from-ast each pass their
+ * own resolver's answer for the callee.
+ */
+export function isStatementDynamicModuleCall(
+  call: ts.CallExpression,
+  isDynamicModuleBinding: (callee: ts.Identifier) => boolean,
+): boolean {
+  return (
+    ts.isExpressionStatement(call.parent) &&
+    ts.isIdentifier(call.expression) &&
+    isDynamicModuleBinding(call.expression) &&
+    call.arguments.every((argument) => dynamicCallArgumentAdmissible(syntacticArgumentFamily(argument)))
+  );
+}
+
+/** The families `dynamicCallArgumentAdmissible` refuses that an argument shows syntactically. */
+function syntacticArgumentFamily(argument: ts.Expression): OperandFamily {
+  const value = unwrapParens(argument);
+  if (value.kind === ts.SyntaxKind.NullKeyword) return "nullish";
+  return ts.isArrayLiteralExpression(value) ? "vec<other>" : "unknown";
+}
+
+/**
+ * (#7287) A script's top-level `var NAME` and a lib global of the same name
+ * (the test262 prelude's `var print = …` against lib.dom's
+ * `declare function print`) are a duplicate identifier to the checker, which
+ * binds every use to the lib declaration alone. At run time the script `var`
+ * IS the global binding — legacy binds its `__mod_NAME` slot by name — so a
+ * use whose every declaration is a lib one takes the file's unique top-level
+ * `var` of that name. A redeclared `var` stays unresolved, as an ordinary
+ * redeclaration does without `allowRedeclaredVar`.
+ */
+function scriptVarBehindLibGlobal(
+  node: ts.Identifier,
+  candidates: readonly (ts.Declaration | undefined)[],
+): readonly IrModuleBindingDeclaration[] | undefined {
+  const sourceFile = node.getSourceFile();
+  if (ts.isExternalModule(sourceFile)) return undefined;
+  const declared = candidates.filter((candidate) => candidate !== undefined);
+  if (declared.length === 0 || !declared.every((candidate) => candidate.getSourceFile().isDeclarationFile)) {
+    return undefined;
+  }
+  const vars = sourceFile.statements.flatMap((statement) =>
+    ts.isVariableStatement(statement)
+      ? statement.declarationList.declarations.filter(
+          (declaration) =>
+            ts.isIdentifier(declaration.name) && declaration.name.text === node.text && lexicalFlags(declaration) === 0,
+        )
+      : [],
+  );
+  return vars.length === 1 ? vars : undefined;
 }
 
 function isModuleBindingDeclaration(
