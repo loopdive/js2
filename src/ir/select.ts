@@ -59,8 +59,10 @@ import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import {
+  isCertifiedObjectAliasCall,
   isStoredObjectDescriptorAliasCall,
   isStoredObjectDescriptorMemberRead,
+  isUncurriedObjectAliasCall,
   uncurriedObjectAliasMethod,
 } from "./uncurried-object-alias.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
@@ -7090,7 +7092,14 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     if (!currentSubjectIsModuleInit) {
       const initializer = unwrapPhase1Parens(d.initializer);
       const exactMapGetAlias = ts.isCallExpression(initializer) && exactModuleMapMethod(initializer) === "get";
-      if (expressionTouchesTrackedModuleValue(d.initializer) && !exactMapGetAlias) {
+      // (#7269) `var hadValue = __hasOwnProperty(obj, name)`: the callee is a
+      // certified alias whose result is the provider's, not module storage.
+      // Its arguments still obey the alias rule.
+      const certifiedAliasCall =
+        ts.isCallExpression(initializer) &&
+        isCertifiedObjectAliasCall(initializer, (name) => scope.has(name)) &&
+        !initializer.arguments.some(expressionTouchesTrackedModuleValue);
+      if (expressionTouchesTrackedModuleValue(d.initializer) && !exactMapGetAlias && !certifiedAliasCall) {
         const family = obviousModuleValueFamily(d.initializer);
         if (!isConst || (family !== "f64" && family !== "boolean")) {
           return shapeNo("vardecl-module-binding-alias", d.initializer);
@@ -11981,12 +11990,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
     // `__propertyIsEnumerable(obj, name)` aliases: the lane's own-property
     // provider over two carriers (legacy's `call-object-builtins.ts` arm).
-    if (
-      expr.arguments.length === 2 &&
-      !expr.questionDotToken &&
-      !expr.arguments.some(ts.isSpreadElement) &&
-      uncurriedObjectAliasMethod(expr.expression, (name) => scope.has(name)) !== undefined
-    ) {
+    if (isUncurriedObjectAliasCall(expr, (name) => scope.has(name))) {
       if (
         !currentDynamicRuntimeBuildable ||
         currentSelectionOptions?.supportsBackendCapability?.("native-own-property-test") !== true
