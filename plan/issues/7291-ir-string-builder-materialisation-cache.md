@@ -59,45 +59,90 @@ is a literal (10.4 vs 1.3 ms).
 
 ## Implementation Plan
 
-Target: the IR lowers the #1210 builder shape to the same scalarised buffer
-legacy uses, so a claimed builder loop performs no allocation per append.
+Target: a claimed builder loop is lowered to the same scalarised buffer
+legacy uses, with no allocation per append. No new IR ops (design review
+2026-11-07: new `string.builder_*` ops would touch 15+ files and every
+backend, ~700–900 LOC).
 
-1. **Module.** A builder dialect next to the existing owned-append support.
-   - The shape license stays in `src/ir/string-builder-shape.ts`, which already
-     detects `let s = ""` + append-only loop.
-   - from-ast lowers the licensed variable to builder slots `buf/len/cap/mat`
-     instead of a `string` local.
-   - Each `s += e` becomes a `string.builder_append` op.
-   - Each read of `s` becomes `string.builder_read` (materialise-once into
-     `mat`, cleared by an append).
-2. **Reuse, no duplication.**
-   - The append lowering calls the legacy helpers that already emit these
-     instruction sequences, i.e. buffer growth (`__str_buf_next_cap`), the
-     single-code-unit `charAt` arm and the presize bound, by extracting them
-     from `src/codegen/string-builder.ts` into a shared emitter. It does not
-     re-implement them.
-   - `__str_concat_owned` remains for appends the builder cannot see (it is
-     the fallback the license already covers).
-3. **Order of work.**
-   1. Extract the legacy emitters (byte-identical legacy output, proven by the
-      typed corpus on gc/standalone/wasi).
-   2. Add the IR ops and lowering.
-   3. Switch the license to the builder lowering.
-4. **Acceptance.**
-   - IR `run(n: number)` is equal to or faster than legacy on wasi, standalone
-     and gc (ms stated per lane).
-   - Legacy byte-identical for unclaimed functions.
-   - Typed corpus A/B.
-   - Ledger A/B.
-   - Standalone test262 A/B incl. `built-ins/String` + template-literal files.
-   - `tests/issue-1580.test.ts` extended to assert the IR route's builder
-     locals as well as legacy's.
-   - Adversarial probes: a read inside the loop, an append of a non-string,
-     `s` captured by a closure (license must refuse), a `break`/`continue`
-     mid-loop, an exception thrown by an appended expression.
-   - **Quality:** no second copy of the buffer-growth / `charAt` emitters; the
-     new ops sit beside `string.concat` in the same shape.
-   - Fresh-context adversarial quality review recorded in the PR body.
+**IR today** (`run(n: number)`, standalone):
+- `text` is a slot (`$slot_text`, `ref null $AnyString`).
+- Each `text += e` is `slot.read` → `string.concat{owned-append}` →
+  `slot.write` (from-ast.ts compound-assignment string arm; licensed by
+  `collectOwnedStringAppendSymbols`).
+- `alphabet.charAt(a)` is `string.char_at`.
+- The read loop snapshots the slot once through `__str_flatten`.
+
+### Step 1 — shared emitters (done, `ebbdafbb`)
+`src/codegen/string-builder-emit.ts`.
+
+### Step 2 — slot role + WasmGC scalar replacement
+1. **IR fact.** `IrSlotDef` (core/nodes.ts) gains
+   `stringBuilder?: { presize?: { capacitySlot, unitsPerIter } }`.
+   `IrFunctionBuilder.declareSlot` accepts it. This is the same
+   producer-declares-role pattern as `concatMode` and `i32Storage` (#3741).
+2. **from-ast** marks the slot in `bindLocalName` when:
+   - its symbol is in `cx.ownedStringAppendSymbols`, and
+   - the function is neither async nor a generator.
+
+   Captured variables are ref cells, so they never qualify.
+3. **Verifier** (runtime/verify.ts, beside the slot checks). A builder slot's
+   writes are either the initial `string.const ""`, or a single-use
+   `string.concat{owned-append}` whose `lhs` is a single-use `slot.read` of
+   the same slot. A builder slot in a function with an `asyncPlan` is refused.
+4. **Resolver hook** in backend/lower-contracts.ts:
+   `resolveStringBuilderLowering?()` → `{ types, flatten, nextCap }`.
+   - integration.ts answers it only when the frozen owned-append concat
+     provider is the native arm.
+   - Linear, bytecode, porffor and the host-string lane keep today's path
+     byte-for-byte.
+5. **Lowering**, a new `src/ir/lowering/string-builder.ts` beside
+   `string-operations.ts`, delegated to from lower-generic's slot-local
+   allocation and its `slot.read`/`slot.write` arms:
+   - a builder slot gets `buf/len/cap/mat` locals;
+   - the init write → init (or presized alloc + reset);
+   - a concat write → append (rhs only);
+   - other reads → the cached read;
+   - `string.len` of a single-use builder `slot.read` → `len`.
+   - **Code-unit fast path**, for a single-use rhs:
+     - a 1-unit `string.const` → `i32.const`;
+     - `string.char_at` → a bounds-checked `array.get_u` on the receiver's
+       flat data. The bounds check is needed because `charAt` out of range is
+       `""`. Legacy omits it; the IR must not.
+6. **Inliner.** inline-small `appendCalleeSlots` copies the role and remaps a
+   presize slot.
+
+### Step 3 — presize (#1761)
+- Move the checker-only part of legacy's `computePresizeInfo` into
+  `src/ir/analysis/string-builder-presize.ts`, shared by legacy and IR.
+- from-ast writes the clamped capacity into a sibling i32 slot.
+- Keep the grow guard on the IR path: `n = 2.5` with `i < n` runs 3
+  iterations, while the truncated bound gives 2. Measure the guard's cost.
+
+### Acceptance
+- **Performance:** IR `run(n: number)` is equal to or faster than legacy on
+  wasi, standalone and gc (ms per step in the table below).
+- **Byte identity:**
+  - legacy byte-identical;
+  - the linear/bytecode/porffor backends byte-identical;
+  - typed corpus A/B.
+- **Conformance and routing:**
+  - ledger A/B;
+  - standalone test262 A/B incl. `built-ins/String` and template-literal
+    files;
+  - `tests/issue-1580.test.ts` extended to assert the IR route's builder
+    locals.
+- **Adversarial probes:**
+  - `charAt` out of range or with a NaN index;
+  - a non-string rhs;
+  - an exception thrown mid-append;
+  - `break`/`continue`;
+  - a closure capture (refused);
+  - async/generator (refused);
+  - a surrogate pair split by `charAt`.
+- **Quality:**
+  - every instruction sequence comes from `string-builder-emit.ts`;
+  - the role check lives in one verifier arm;
+  - fresh-context adversarial review recorded in the PR body.
 
 ### Rejected interim
 
