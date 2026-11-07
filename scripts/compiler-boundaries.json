@@ -13153,6 +13153,14 @@
       "nextBoundary": "Frontend source-shape classifier for the top-level `var` lists the module initializer models and the bindings they declare (#7106 S5); move with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
+      "path": "src/ir/string-method-surface.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "The one `String.prototype` method plan read by the selector, the builder and both backend resolvers (#7106); its static-argument classifier is source shape, so it moves with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/ir/binding-pattern-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
