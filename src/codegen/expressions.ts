@@ -97,9 +97,7 @@ import { compileCallExpression } from "./expressions/calls.js";
 import { isForeignEvalNode } from "./expressions/eval-source.js";
 
 import { compileClassExpression, compileNewExpression } from "./expressions/new-super.js";
-import { emitNewTargetClassId } from "./new-target.js"; // (#2023)
 import { compileNewTargetValue } from "./expressions/new-target-value.js"; // (#6774 S4)
-import { boxNullRefAsUndefined } from "./null-ref-undefined-box.js"; // (#1058)
 
 import { compileConditionalExpression, compileYieldExpression } from "./expressions/misc.js";
 
@@ -122,6 +120,7 @@ import { compileTaggedTemplateExpression, compileTemplateExpression } from "./st
 import { compileDeleteExpression, compileRegExpLiteral, compileTypeofExpression } from "./typeof-delete.js";
 import { describeInternalError } from "./internal-error.js";
 import { isNodeBuiltinNamedImportCallee } from "./expressions/node-builtin-named-import.js"; // (#6450)
+import { regimeTarget } from "./context/types.js";
 
 // ── Public re-exports (preserves the external API) ────────────────────
 
@@ -215,32 +214,6 @@ function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): bo
   // exact lockstep with the route actually emitted; the legacy host route
   // (producer modules, gc/host lane) never marks and KEEPS the wrap.
   if (ctx.standaloneNativeFinallyNodes?.has(expr) === true) return false;
-  // (#2623 P-7 / B-5) `.finally(...)` on the gc/host lane must NOT get the
-  // fulfilled-wrap either. §27.2.5.3 defines `finally` via
-  // `Invoke(promise, "then", «thenFinally, catchFinally»)`: an abrupt
-  // completion from reading a poisoned `then` accessor or invoking a throwing
-  // patched `then` propagates SYNCHRONOUSLY out of `.finally()`
-  // (test262 `finally/this-value-then-{poisoned,throws}.js` assert #2), and
-  // the result IS whatever the receiver's own `then` returned
-  // (`finally/invokes-then-with-*.js` — `result === returnValue` identity).
-  // The wrap broke both: its try/catch_all converted the sync throw into a
-  // `Promise_reject`, and its `Promise_resolve(result)` re-wrap destroyed the
-  // return-value identity for a patched `then`. The STANDALONE producer-module
-  // lane is deliberately excluded — the #2903 measurement found the
-  // subclass-`finally` tests pass through that host route only WITH the wrap.
-  if (
-    ctx.standalone !== true &&
-    ctx.wasi !== true &&
-    ts.isPropertyAccessExpression(expr.expression) &&
-    (expr.expression.name.text === "finally" ||
-      // `Promise.prototype.finally.call(target, …)` / `.apply(target, …)` —
-      // the same §27.2.5.3 entry reached reflectively.
-      ((expr.expression.name.text === "call" || expr.expression.name.text === "apply") &&
-        ts.isPropertyAccessExpression(expr.expression.expression) &&
-        expr.expression.expression.name.text === "finally"))
-  ) {
-    return false;
-  }
   // Built-in Promise static methods already return a Promise object. Wrapping
   // `Promise.resolve(v)` in another `Promise.resolve(...)` is harmless in the
   // JS host due to native assimilation, but standalone `$Promise` currently has
@@ -502,8 +475,7 @@ function calleeIsDriveLowered(ctx: CodegenContext, expr: ts.CallExpression): boo
   // the for-await-over-async-gen files whose consumer drives natively but whose
   // call site still pulled in the host Promise machinery. Plain awaits / Promise
   // statics stay on the legacy path pending the #2980 carrier widen.
-  if (ctx.standalone === true) return asyncGenConsumerNeedsDrive(ctx, decl, plan);
-  return false;
+  return asyncGenConsumerNeedsDrive(ctx, decl, plan);
 }
 
 /**
@@ -651,7 +623,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
   }
   fctx.body.push(
     buildTargetTaggedTry(
-      ctx,
+      regimeTarget(ctx),
       { kind: "val", type: { kind: "externref" } },
       inner,
       [{ tagIdx, body: catchExn }],
@@ -660,7 +632,6 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
   );
   releaseTempLocal(fctx, reasonLocal);
   if (rejectedLocal !== undefined) releaseTempLocal(fctx, rejectedLocal);
-  return;
 }
 
 // ── Recursion depth guard ──────────────────────────────────────────────
@@ -957,7 +928,6 @@ function compileExpressionBody(
         }
       }
       coerceType(ctx, fctx, result, expectedType);
-      if (expectedType.kind === "externref") boxNullRefAsUndefined(ctx, fctx, expr, result);
       return expectedType;
     }
     if (
@@ -1606,23 +1576,7 @@ function compileExpressionInner(
       fctx.body.push({ op: "local.get", index: ordinaryTarget });
       return { kind: "externref" };
     }
-    if (ctx.standalone) return compileNewTargetValue(ctx, fctx); // (#6774 S4) the constructor OBJECT
-    if (fctx.isConstructor) {
-      // (#2023) Read the live new.target class-id (set at the outermost `new`
-      // site, preserved through super()). Non-zero inside a construction, so
-      // truthiness uses (`if (new.target)`) stay correct; identity comparisons
-      // (`new.target === SomeClass`) are handled in compileBinaryExpression and
-      // never reach here.
-      if (ctx.usesNewTarget) {
-        emitNewTargetClassId(ctx, fctx.body);
-        return { kind: "i32" };
-      }
-      fctx.body.push({ op: "i32.const", value: 1 });
-      return { kind: "i32" };
-    } else {
-      emitUndefined(ctx, fctx);
-      return { kind: "externref" };
-    }
+    return compileNewTargetValue(ctx, fctx);
   }
 
   if (ts.isMetaProperty(expr) && expr.keywordToken === ts.SyntaxKind.ImportKeyword && expr.name.text === "meta") {

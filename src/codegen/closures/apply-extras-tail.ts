@@ -140,7 +140,7 @@ export function applyTailDispatch(
   vecTypeIdx: number,
 ): ApplyTailDispatch | undefined {
   if (ctx.applyClosureReserved !== true || minHostArity !== 0 || arity < 5 || arity > 8) return undefined;
-  if (!ctx.standalone && !ctx.wasi) return undefined;
+
   if (tailGlobalIdx(ctx) === undefined) {
     ctx.mod.globals.push({
       name: TAIL_GLOBAL,

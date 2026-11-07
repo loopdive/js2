@@ -274,7 +274,6 @@ export function prepareHostVoidCallbackLoweringByIdentity(
   const blocked = new Set<IrUnitId>();
   const hasStandaloneDomDispatcher =
     ctx.requiresStandaloneDomInteractionCapability === true &&
-    ctx.standalone &&
     !ctx.wasi &&
     ctx.nativeStrings &&
     ctx.targetProfile.environment === "none";
@@ -531,7 +530,6 @@ export function prepareHostDateSnapshotLoweringByIdentity(
   if (
     needed.has("__date_now") &&
     ctx.requiresStandaloneClockCapability === true &&
-    ctx.standalone &&
     !ctx.wasi &&
     ctx.targetProfile.environment === "none" &&
     [...plans].some((plan) => retained.has(plan.ownerUnitId))
@@ -592,13 +590,7 @@ export function preparePromiseDelayLoweringByIdentity(
   let boxExact = false;
   let callExact = false;
   if (standaloneNative) {
-    if (
-      !ctx.standalone ||
-      !ctx.nativeStrings ||
-      ctx.wasi ||
-      !timerExact ||
-      !canEnsureIrNativePromiseDelayProvider(ctx)
-    ) {
+    if (!ctx.nativeStrings || ctx.wasi || !timerExact || !canEnsureIrNativePromiseDelayProvider(ctx)) {
       for (const delay of activePlans) blocked.add(delay.ownerUnitId);
     }
   } else {

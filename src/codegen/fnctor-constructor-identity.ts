@@ -215,13 +215,12 @@ export function emitFnctorFieldInitializers(
   // (#6951 G3) Evaluate the snapshot BEFORE any field operand is pushed: the
   // vivify can register helpers, and nothing it emits may land between the
   // `struct.new` operands.
-  const protoSnapshotLocal =
-    ctx.standalone && fields.some((field) => field.name === FNCTOR_PROTO_FIELD)
-      ? emitFnctorProtoSnapshot(ctx, fctx)
-      : undefined;
+  const protoSnapshotLocal = fields.some((field) => field.name === FNCTOR_PROTO_FIELD)
+    ? emitFnctorProtoSnapshot(ctx, fctx)
+    : undefined;
   for (const field of fields) {
     let instr: Instr;
-    if (ctx.standalone && field.name === FNCTOR_CONSTRUCTOR_FIELD) {
+    if (field.name === FNCTOR_CONSTRUCTOR_FIELD) {
       instr = { op: "local.get", index: constructorIdentityParamIdx };
     } else if (field.name === FNCTOR_PROTO_FIELD && protoSnapshotLocal !== undefined) {
       instr = { op: "local.get", index: protoSnapshotLocal };
@@ -307,8 +306,7 @@ export function emitFnctorConstructorArguments(
   // sees the real arity. Standalone/WASI only — the JS-host lane routes the
   // same shape through `emitDynamicSpreadCall`, and widening here would
   // change its bytes for no behavioural gain.
-  const args: readonly ts.Expression[] =
-    ctx.standalone || ctx.wasi ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs) : rawArgs;
+  const args: readonly ts.Expression[] = resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs;
   let constructorIdentityLocal: number | undefined;
   if (!ctx.wasi) {
     const valueType = compileExpression(ctx, fctx, callee, { kind: "externref" });

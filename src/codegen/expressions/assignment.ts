@@ -74,7 +74,6 @@ import { tryEmitFnctorTypedFieldSet } from "../fnctor-typed-reads.js"; // (#4155
 import { tryEmitTypedThisFieldSet } from "../typed-this.js"; // (#3683 S2) typed-`this` field write
 import { guardThisReceiver } from "../classes/derived-ctor-this-guard.js"; // (#6772 S1b)
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/#2686 A3) pre-check set dispatcher
-import { boxNullRefAsUndefined } from "../null-ref-undefined-box.js"; // (#1058)
 import { tryEmitTypedF64MemberSet } from "../member-set-f64.js"; // (#4157 A) typed f64 write twin
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for compound
 import {
@@ -87,7 +86,6 @@ import {
   isNumericIndexExpression,
   isProvablyNonNull,
   isSafeBoundsEliminated,
-  tryEmitDeleteAwareDynamicSet,
   typeErrorThrowInstrs,
 } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
@@ -130,7 +128,6 @@ import {
   emitWebCompatCallAssignmentTarget,
   getFuncParamTypes,
   isConstIdentifierAssignmentTarget,
-  noJsHost,
   resolvePrivateThisFieldCarrier,
   updateLocalType,
   widenLocalToNullable,
@@ -1727,8 +1724,8 @@ function compileDestructuringAssignment(
         targetExpr.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
         (ts.isIdentifier(targetExpr.left) ||
           // (#6774 S11) `{ x: holder.y = d }` — a member target with an initializer
-          (ctx.standalone &&
-            (ts.isPropertyAccessExpression(targetExpr.left) || ts.isElementAccessExpression(targetExpr.left))))
+          ts.isPropertyAccessExpression(targetExpr.left) ||
+          ts.isElementAccessExpression(targetExpr.left))
       ) {
         defaultExpr = targetExpr.right;
         targetExpr = targetExpr.left;
@@ -2566,7 +2563,6 @@ function compileExternrefArrayDestructuringAssignment(
   // registering `__iterator` demands. Standalone keeps its native drain.
   structIterable = false,
 ): InnerResult {
-  const hostStrictIter = structIterable && !ctx.standalone && !ctx.wasi;
   // Store externref in temp local
   const tmpLocal = allocLocal(fctx, `__ext_arr_destruct_${fctx.locals.length}`, resultType);
   fctx.body.push({ op: "local.set", index: tmpLocal });
@@ -2615,10 +2611,10 @@ function compileExternrefArrayDestructuringAssignment(
   // immediately (§13.15.5.2), so the empty-pattern gate is gone.
   if (resultType.kind === "externref") {
     const matStepCount = patternIteratorStepCount(target.elements);
-    if (hostStrictIter) ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
+
     const matIterIdx = ensureLateImport(
       ctx,
-      hostStrictIter ? "__array_from_iter_n_strict" : "__array_from_iter_n",
+      "__array_from_iter_n",
       [{ kind: "externref" }, { kind: "f64" }],
       [{ kind: "externref" }],
     );
@@ -2635,26 +2631,14 @@ function compileExternrefArrayDestructuringAssignment(
   // (#3100 S4) Standalone/WASI element reads use the carrier-aware native
   // `__extern_get_idx(mat, f64 i)` (#2190 vec/$ObjVec arms) — the native
   // `__extern_get` is string-keyed and misses vec carriers. Host byte-identical.
-  const useIdxReads = ctx.standalone || ctx.wasi;
-  const readName = useIdxReads ? "__extern_get_idx" : "__extern_get";
-  const keyType: ValType = useIdxReads ? { kind: "f64" } : { kind: "externref" };
+  const readName = "__extern_get_idx";
+  const keyType: ValType = { kind: "f64" };
   ensureLateImport(ctx, readName, [{ kind: "externref" }, keyType], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   let getIdx = ctx.funcMap.get(readName);
   if (getIdx === undefined) return null;
 
-  // __box_number: host mode only — it boxes the index key for `__extern_get`.
-  let boxIdx = ctx.funcMap.get("__box_number");
-  if (!useIdxReads && boxIdx === undefined) {
-    const importsBefore = ctx.numImportFuncs;
-    const boxType = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "__box_number", { kind: "func", typeIdx: boxType });
-    shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-    boxIdx = ctx.funcMap.get("__box_number");
-    // Also refresh getIdx since it may have shifted
-    getIdx = ctx.funcMap.get(readName);
-  }
-  if ((!useIdxReads && boxIdx === undefined) || getIdx === undefined) return null;
+  if (getIdx === undefined) return null;
 
   for (let i = 0; i < target.elements.length; i++) {
     const element = target.elements[i]!;
@@ -2674,7 +2658,6 @@ function compileExternrefArrayDestructuringAssignment(
           ensureLateImport(ctx, "__extern_slice", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
           flushLateImportShifts(ctx, fctx);
           sliceIdx = ctx.funcMap.get("__extern_slice");
-          boxIdx = ctx.funcMap.get("__box_number");
           getIdx = ctx.funcMap.get(readName);
         }
         if (sliceIdx !== undefined) {
@@ -2696,7 +2679,7 @@ function compileExternrefArrayDestructuringAssignment(
 
     fctx.body.push({ op: "local.get", index: matLocal });
     fctx.body.push({ op: "f64.const", value: i });
-    if (!useIdxReads) fctx.body.push({ op: "call", funcIdx: boxIdx! });
+
     fctx.body.push({ op: "call", funcIdx: getIdx! });
 
     const elemType: ValType = { kind: "externref" };
@@ -3054,7 +3037,7 @@ export function emitAssignToTarget(
         ],
         else: [],
       });
-    } else if (ctx.standalone) {
+    } else {
       // (#6774 S21) A non-vec struct receiver (`t()[k]` where `t` returns an
       // object): the write used to be dropped. PutValue through the generic set.
       emitDynamicElementSet(ctx, fctx, target, arrType, valueLocal, valueType);
@@ -4024,10 +4007,8 @@ function tryEmitPinnedStructMemberSet(
     getArrTypeIdxFromVec(ctx, (valResult as { typeIdx: number }).typeIdx) >= 0
   ) {
     fctx.body.push({ op: "extern.convert_any" });
-    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   } else if (valResult && valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
-    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   } else if (!valResult) {
     fctx.body.push({ op: "ref.null.extern" });
   }
@@ -4240,7 +4221,6 @@ function compilePropertyAssignment(
   // throw it is supposed to propagate never happened. That row is the only
   // thing this whole slice regressed, and it is the reason for this clause.
   if (
-    ctx.standalone &&
     !ts.isPrivateIdentifier(target.name) &&
     target.name.text !== "__proto__" &&
     tracesToProxyValue(ctx, target.expression)
@@ -4422,14 +4402,10 @@ function compilePropertyAssignment(
     // own `__proto__` DATA property such a write creates on an extensible
     // null-prototype object — node reports `getOwnPropertyNames` `["__proto__"]`.
     // That is a pre-existing gap in the ordinary write path, unchanged here.
-    const receiverHasNullProto = ctx.standalone && hasExplicitNullObjectPrototype(ctx, target.expression);
-    const protoSetIdx = ctx.standalone && !receiverHasNullProto ? ensureObjectProtoProtoSetNative(ctx) : -1;
+    const receiverHasNullProto = hasExplicitNullObjectPrototype(ctx, target.expression);
+    const protoSetIdx = !receiverHasNullProto ? ensureObjectProtoProtoSetNative(ctx) : -1;
     if (protoSetIdx < 0) {
-      if (
-        ctx.standalone &&
-        ts.isIdentifier(target.expression) &&
-        ctx.nonExtensibleVars.has(integrityVarKey(ctx, target.expression))
-      ) {
+      if (ts.isIdentifier(target.expression) && ctx.nonExtensibleVars.has(integrityVarKey(ctx, target.expression))) {
         const objResult = compileExpression(ctx, fctx, target.expression, externRef);
         if (!objResult) return null;
         if (objResult.kind !== "externref") coerceType(ctx, fctx, objResult, externRef);
@@ -4446,20 +4422,11 @@ function compilePropertyAssignment(
     // proto (externref). Standalone reifies an inline-literal proto into a
     // native `$Object` (compileProtoArg) so __object_setPrototypeOf's
     // `ref.test $Object` succeeds; gc/host stores the externref as-is.
-    if (ctx.standalone) {
-      compileProtoArg(ctx, fctx, value);
-    } else {
-      const protoResult = compileExpression(ctx, fctx, value, externRef);
-      if (protoResult) {
-        if (protoResult.kind !== "externref") coerceType(ctx, fctx, protoResult, externRef);
-      } else {
-        fctx.body.push({ op: "ref.null.extern" });
-      }
-    }
+    compileProtoArg(ctx, fctx, value);
     // Save the RHS (assignment result) before it is consumed by the call.
     const tmpVal = allocTempLocal(fctx, externRef);
     fctx.body.push({ op: "local.tee", index: tmpVal });
-    const helperName = ctx.standalone ? "__object_setPrototypeOf" : "__host_set_struct_proto";
+    const helperName = "__object_setPrototypeOf";
     const idx =
       protoSetIdx >= 0
         ? (ctx.funcMap.get("__object_proto_set") ?? protoSetIdx)
@@ -4547,7 +4514,6 @@ function compilePropertyAssignment(
           });
         }
         if (
-          (ctx.standalone || ctx.wasi) &&
           selfParamType &&
           recvResult.kind === "externref" &&
           selfParamType.kind !== "externref" &&
@@ -4774,29 +4740,17 @@ function compilePropertyAssignment(
     // re-evaluated.
     if (isShadowedTopLevelFn(ctx, propName)) {
       const slot = fnShadowSlot(ctx, propName);
-      if (ctx.standalone || ctx.wasi) {
-        const gtTy = withShadowReadSuppressed(() => emitNativeGlobalThisObject(ctx, fctx));
-        if (gtTy) {
-          const getIdx = ctx.funcMap.get("__extern_get");
-          if (getIdx !== undefined) {
-            addStringConstantGlobal(ctx, propName);
-            for (const instr of stringConstantExternrefInstrs(ctx, propName)) fctx.body.push(instr);
-            fctx.body.push({ op: "call", funcIdx: getIdx });
-            fctx.body.push({ op: "global.set", index: slot });
-          } else {
-            fctx.body.push({ op: "drop" });
-          }
+      const gtTy = withShadowReadSuppressed(() => emitNativeGlobalThisObject(ctx, fctx));
+      if (gtTy) {
+        const getIdx = ctx.funcMap.get("__extern_get");
+        if (getIdx !== undefined) {
+          addStringConstantGlobal(ctx, propName);
+          for (const instr of stringConstantExternrefInstrs(ctx, propName)) fctx.body.push(instr);
+          fctx.body.push({ op: "call", funcIdx: getIdx });
+          fctx.body.push({ op: "global.set", index: slot });
+        } else {
+          fctx.body.push({ op: "drop" });
         }
-      } else if (externSetTy !== null && externSetTy !== VOID_RESULT && externSetTy.kind === "externref") {
-        // (#4648) JS-host lane: `globalThis` is the host global object, so the
-        // read-back hop the standalone arm uses (native singleton +
-        // `__extern_get`) has no counterpart here. The assignment expression's
-        // own result is already the stored value on top of the stack, so tee
-        // it into the slot — same observable aliasing, no extra host call.
-        const tmp = allocLocal(fctx, `__fnshadow_set_${fctx.locals.length}`, { kind: "externref" });
-        fctx.body.push({ op: "local.tee", index: tmp });
-        fctx.body.push({ op: "global.set", index: slot });
-        fctx.body.push({ op: "local.get", index: tmp });
       }
     }
     return externSetTy;
@@ -4943,21 +4897,6 @@ function compilePropertyAssignment(
     }
   }
 
-  // (#2731) Symmetric tombstone-aware WRITE routing. In a `delete`-using module,
-  // any-receiver READS already route through the tombstone-aware host
-  // `__extern_get` (`tryEmitDeleteAwareDynamicGet`); the WRITE must match. Without
-  // this, `o.x = 9` after `delete o.x` takes the native `struct.set` fast-path
-  // below (`resolveStructNameForExpr` resolves the shape-inferred anon struct),
-  // bypassing `_safeSet`'s tombstone-clear — so the re-added key stays suppressed
-  // in `__extern_get` / `__for_in_*` / `__object_keys`. Runs BEFORE the
-  // struct-name resolution so the native struct.set is skipped for `any`
-  // receivers; concrete-typed receivers and reserved/callable props decline.
-  {
-    const dynPropName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
-    const dynSet = tryEmitDeleteAwareDynamicSet(ctx, fctx, target, value, objType, dynPropName);
-    if (dynSet !== undefined) return dynSet;
-  }
-
   let typeName = resolveStructNameForExpr(ctx, fctx, target.expression, target.name, resolveWasmType(ctx, objType));
   if (ts.isPrivateIdentifier(target.name)) {
     typeName = resolvePrivateThisFieldCarrier(ctx, fctx, target.name, target.expression) ?? typeName;
@@ -4983,8 +4922,7 @@ function compilePropertyAssignment(
   // closure globals only exist for Object.defineProperty(o,…)/objlit receivers
   // (always a struct instance), so the proto/class-object dummy path is not a
   // concern here.
-  const closureAccSet =
-    S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone ? ctx.structAccessorClosure.get(accessorKey)?.setGlobal : undefined;
+  const closureAccSet = S5C_STRUCT_ACCESSOR_CLOSURE ? ctx.structAccessorClosure.get(accessorKey)?.setGlobal : undefined;
   if (closureAccSet !== undefined) {
     // recv: struct instance → externref
     const recvResult = compileExpression(ctx, fctx, target.expression);
@@ -5099,41 +5037,36 @@ function compilePropertyAssignment(
   // object to `$Error_struct` and TRAP. See class-proto-toplevel-write.ts.
   const receiverIsClassPrototype = targetReceiverIsPrototypeAccess(target);
   if (ctx.classExternrefBackedSet.has(typeName) && !receiverIsClassPrototype) {
-    if (ctx.standalone) {
-      const ownWrite = emitExternrefBackedOwnFieldWrite(ctx, fctx, target, value, fieldName, typeName);
-      if (ownWrite !== undefined) return ownWrite;
-      // (#5383 S2b) `undefined` means the class has NO known native backing —
-      // an Array/TypedArray/String/… carrier rather than an `$Error_struct` or
-      // a native `$Object` (`externrefBackedOwnFieldBacking`). The struct path
-      // below is not merely unhelpful there, it is UNREACHABLE-BY-DESIGN: the
-      // instance is an externref carrier and never a `$typeName` WasmGC struct,
-      // so its `ref.test $typeName` always misses. The receiver then narrows to
-      // `ref.null $typeName` and the #2084 null guard throws
-      // `TypeError: Cannot access property on null or undefined` — which is
-      // exactly what `class B extends Array { constructor(n, s) { super(n);
-      // this.sign = s; } }` did on this lane, and (via jsbi's `class JSBI
-      // extends Array`) what stopped the standalone @js-temporal/polyfill's
-      // `__module_init`.
-      //
-      // The field only reaches the struct path at all because the constructor's
-      // own `this.sign = …` FLOW-GROWS a `sign` slot onto the vestigial `$B`
-      // struct; an assignment from outside the class (`b.sign = 1`) finds no
-      // slot, takes the #4149 `fieldIdx === -1` arm below, and has always
-      // worked. So route the unknown-backing case to the SAME dynamic store the
-      // outside write already uses — one behaviour for both, instead of a slot
-      // that decides which of the two throws.
-      //
-      // Nothing that works today changes: every write this redirects previously
-      // threw or trapped, so there is no valid artifact to perturb. The
-      // JS-host/`gc` lane never enters this branch (it is `ctx.standalone`-only
-      // and the `!ctx.wasi` arm below is untouched).
-      const backing = externrefBackedOwnFieldBacking(ctx, typeName);
-      if (backing === undefined) {
-        return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
-      }
-      // A known backing whose helper was unavailable — fall through unchanged.
-    } else if (!ctx.wasi) {
-      return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName, true);
+    const ownWrite = emitExternrefBackedOwnFieldWrite(ctx, fctx, target, value, fieldName, typeName);
+    if (ownWrite !== undefined) return ownWrite;
+    // (#5383 S2b) `undefined` means the class has NO known native backing —
+    // an Array/TypedArray/String/… carrier rather than an `$Error_struct` or
+    // a native `$Object` (`externrefBackedOwnFieldBacking`). The struct path
+    // below is not merely unhelpful there, it is UNREACHABLE-BY-DESIGN: the
+    // instance is an externref carrier and never a `$typeName` WasmGC struct,
+    // so its `ref.test $typeName` always misses. The receiver then narrows to
+    // `ref.null $typeName` and the #2084 null guard throws
+    // `TypeError: Cannot access property on null or undefined` — which is
+    // exactly what `class B extends Array { constructor(n, s) { super(n);
+    // this.sign = s; } }` did on this lane, and (via jsbi's `class JSBI
+    // extends Array`) what stopped the standalone @js-temporal/polyfill's
+    // `__module_init`.
+    //
+    // The field only reaches the struct path at all because the constructor's
+    // own `this.sign = …` FLOW-GROWS a `sign` slot onto the vestigial `$B`
+    // struct; an assignment from outside the class (`b.sign = 1`) finds no
+    // slot, takes the #4149 `fieldIdx === -1` arm below, and has always
+    // worked. So route the unknown-backing case to the SAME dynamic store the
+    // outside write already uses — one behaviour for both, instead of a slot
+    // that decides which of the two throws.
+    //
+    // Nothing that works today changes: every write this redirects previously
+    // threw or trapped, so there is no valid artifact to perturb. The
+    // JS-host/`gc` lane never enters this branch (it is the regime flag-only
+    // and the `!ctx.wasi` arm below is untouched).
+    const backing = externrefBackedOwnFieldBacking(ctx, typeName);
+    if (backing === undefined) {
+      return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
     }
   }
 
@@ -5173,7 +5106,7 @@ function compilePropertyAssignment(
   // This runs before either receiver or RHS is emitted, preserving evaluation
   // order and leaving the direct physical fast path for a present slot in the
   // dispatcher/runtime itself.
-  if (ctx.standalone && inheritedSetAffectsKey(ctx, fieldName) && presenceSlot !== undefined) {
+  if (inheritedSetAffectsKey(ctx, fieldName) && presenceSlot !== undefined) {
     return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
   }
 
@@ -5259,12 +5192,6 @@ function compilePropertyAssignmentExternSet(
   forceRuntimeSet = false,
   wrapRuntimeEvalCallable = false,
 ): InnerResult {
-  // The erased host [[Set]] can still receive a compiled class instance at
-  // runtime. Record the property name in the existing dynamic class-member
-  // demand set so finalize can publish an exact accessor-setter bridge when a
-  // class in this module owns one. Unrelated host-object writes add no code:
-  // the bridge collector emits only a positively matched class accessor.
-  if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(propName);
   // Compile object expression and convert to externref
   const objResult = compileExpression(ctx, fctx, target.expression);
   if (!objResult) return null;
@@ -5320,7 +5247,6 @@ function compilePropertyAssignmentExternSet(
     coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
   } else if (valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
-    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   }
   let assignmentResultLocal: number | undefined;
   if (wrapRuntimeEvalCallable) {
@@ -5395,7 +5321,7 @@ function compileExternPropertySet(
   // (`re.constructor = f` — the §22.2.6.14 SpeciesConstructor idiom) must not
   // bind the `Object_set_<name>` host import; the caller's `__extern_set`
   // fallback is the native ordinary [[Set]].
-  if (noJsHost(ctx) && propOwner.importPrefix === "Object") return null;
+  if (propOwner.importPrefix === "Object") return null;
 
   // Check if the import exists BEFORE compiling object+value to avoid dangling stack values
   const importName = `${propOwner.importPrefix}_set_${propName}`;
@@ -5810,7 +5736,6 @@ function compileElementAssignment(
     // missing a view type registered by a later constructor. Host-free lane.
     if (
       arrType.kind === "externref" &&
-      noJsHost(ctx) &&
       (ctx.moduleUsesDynTaView || ctx.moduleUsesStaticTaView) &&
       isNumericIndexExpression(ctx, target.argumentExpression, fctx)
     ) {
@@ -6140,7 +6065,7 @@ function compileElementAssignment(
     // proves `i < arr.length`, the index is in [0, length) so capacity is
     // already sufficient and `vec.length` does not need to grow. Skip the
     // grow check + length-update entirely and emit a direct `array.set`.
-    if (isSafeBoundsEliminated(fctx, target) && (!isTypedArray || noJsHost(ctx))) {
+    if (isSafeBoundsEliminated(fctx, target)) {
       // Vec data field is `(ref $arr)` (non-nullable), so struct.get yields
       // a non-null ref directly — no ref.as_non_null needed.
       fctx.body.push({ op: "local.get", index: vecLocal });

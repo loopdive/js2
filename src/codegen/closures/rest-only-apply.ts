@@ -138,17 +138,9 @@ export function buildRestOnlyApply(
                   { op: "local.get", index: error },
                   { op: "throw", tagIdx: ensureExnTag(ctx) },
                 ];
-                if (ctx.standalone || ctx.wasi)
-                  return buildStandardTryTable({ kind: "empty" }, protectedCall, [
-                    { kind: "catch", tagIdx, payloadType: { kind: "externref" }, body: taggedRestore },
-                  ]);
-                return {
-                  op: "try",
-                  blockType: { kind: "empty" },
-                  body: protectedCall,
-                  catches: [{ tagIdx, body: taggedRestore }],
-                  catchAll: [...restore, { op: "rethrow", depth: 0 }],
-                };
+                return buildStandardTryTable({ kind: "empty" }, protectedCall, [
+                  { kind: "catch", tagIdx, payloadType: { kind: "externref" }, body: taggedRestore },
+                ]);
               })(),
               ...restore,
               { op: "i32.const", value: -1 },

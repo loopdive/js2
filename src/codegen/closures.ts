@@ -34,15 +34,12 @@ import { hofElemParamType } from "./array-hof-nullable-elem-param.js"; // (#6602
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./program-abi-source-callable-planning.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3b) manual import-shift must skip stable handles
-import { addStringConstantGlobal } from "./registry/imports.js"; // (#2025)
-import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#2025)
 import { emitWasiErrorConstructor } from "./registry/error-types.js"; // (#2025)
 import { widenClosureReturnForPreInitVar } from "./declarations/hoisted-var-preinit-read.js"; // (#4206)
 import { widenClosureReturnForDynamicModuleBinding } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { widenProxyTrapMixedReturn } from "./closures/proxy-trap-closure-return.js"; // (#6771 S1)
 import { popBody, pushBody } from "./context/bodies.js";
 import { recordClosureBody } from "./context/body-route-audit.js";
-import { reportError } from "./context/errors.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
 import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) lifted-method `this`→struct
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
@@ -52,9 +49,9 @@ import {
   hostFacingCallbackReturnType,
   resolveCallbackMakerName,
 } from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity · (#5375) host-facing result type
-import { BOOLEAN_I32, callbackBodyBoxesBoolean, hostBooleanCallbackResult } from "./closures/host-boolean-callback.js";
+import { BOOLEAN_I32, callbackBodyBoxesBoolean } from "./closures/host-boolean-callback.js";
 import { registerStandaloneDomCallbackDirectClosure } from "./standalone-dom-callback-authority.js";
-import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
+import { type ClosureInfo, type CodegenContext, type FunctionContext, regimeTarget } from "./context/types.js";
 import {
   addFuncType,
   destructureParamObject,
@@ -141,7 +138,7 @@ export {
 // avoid perturbing the init order of the coercion-engine/string-ops chain.
 import { planAsyncClosureActivation, emitAsyncClosureBody, reportDeclinedAsyncBody } from "./async-activation.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js"; // (#2865) async-gen fn-expr producer
-import { asyncClosurePromiseWrapEnabled, reserveAsyncClosurePromiseWrapper } from "./async-closure-promise.js"; // (#4648)
+import { reserveAsyncClosurePromiseWrapper } from "./async-closure-promise.js"; // (#4648)
 // (#3164) Native generator FUNCTION EXPRESSIONS (standalone/wasi): the lifted
 // closure body emits the state-struct factory instead of the eager-buffer host
 // path. `generators-native` does not import `closures`, so no cycle.
@@ -1684,7 +1681,6 @@ export function emitArrowParamDefaults(
       // (the `__new_plain_object` dynamic carrier) instead. Mirrors the
       // function-declaration site in function-body.ts.
       const dynObjCarrier =
-        (ctx.standalone || ctx.wasi) &&
         ts.isObjectBindingPattern(param.name) &&
         paramType.kind === "externref" &&
         ts.isObjectLiteralExpression(param.initializer) &&
@@ -3203,7 +3199,6 @@ export function compileLiftedClosureBody(
   if (
     isGenerator &&
     !isAsync &&
-    (ctx.standalone || ctx.wasi) &&
     (ts.isFunctionExpression(arrow) || isNativeGeneratorMethodClosure(ctx, arrow)) &&
     ts.isBlock(body) &&
     isNativeGeneratorCandidate(ctx, arrow)
@@ -3366,7 +3361,7 @@ export function compileLiftedClosureBody(
         : [];
     liftedFctx.body.push(
       buildTargetTaggedTry(
-        ctx,
+        regimeTarget(ctx),
         { kind: "empty" },
         [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
         [{ tagIdx, body: catchBody }],
@@ -3599,7 +3594,6 @@ function captureOwningDirectEvalState(
   captures: ArrowClosureCapture[],
 ): void {
   if (
-    !(ctx.standalone || ctx.wasi) ||
     reachesDirectEval ||
     (fctx.directEvalActivationStatePoolLocal === undefined &&
       !enclosingFunctionOwnScopeMayReachDirectEval(arrow, ctx.oracle))
@@ -3638,7 +3632,6 @@ function isNativeGeneratorMethodClosure(ctx: CodegenContext, arrow: ts.Node): ar
   return (
     ts.isMethodDeclaration(arrow) &&
     arrow.asteriskToken !== undefined &&
-    (ctx.standalone || ctx.wasi) &&
     ts.isObjectLiteralExpression(arrow.parent) &&
     !arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) &&
     arrow.body !== undefined &&
@@ -4044,32 +4037,6 @@ export function compileArrowAsClosure(
   // declared name instead of undefined / the bridge's own name. Host lane
   // only (the sidecar + __extern_set live in the JS runtime); anonymous
   // arrows/function expressions are untouched — zero cost for the common case.
-  if (
-    !ctx.standalone &&
-    !ctx.wasi &&
-    ts.isFunctionExpression(arrow) &&
-    arrow.name !== undefined &&
-    arrow.name.text.length > 0
-  ) {
-    const setIdx = ensureLateImportShared(
-      ctx,
-      "__extern_set",
-      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-      [],
-    );
-    flushLateImportShiftsShared(ctx, fctx);
-    if (setIdx !== undefined) {
-      addStringConstantGlobal(ctx, "name");
-      addStringConstantGlobal(ctx, arrow.name.text);
-      const selfLocal = allocLocal(fctx, `__clname_${fctx.locals.length}`, { kind: "ref", typeIdx: structTypeIdx });
-      fctx.body.push({ op: "local.tee", index: selfLocal });
-      fctx.body.push({ op: "extern.convert_any" });
-      fctx.body.push(...stringConstantExternrefInstrs(ctx, "name"));
-      fctx.body.push(...stringConstantExternrefInstrs(ctx, arrow.name.text));
-      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx });
-      fctx.body.push({ op: "local.get", index: selfLocal });
-    }
-  }
 
   return initializeNativeGeneratorFunctionValue(ctx, fctx, arrow, { kind: "ref", typeIdx: structTypeIdx });
 }
@@ -4255,7 +4222,6 @@ export function collectMutatedCaptureNames(
  * while the body compiles.
  */
 function hostFreeCallbackBridgeMissing(ctx: CodegenContext, needsThis: boolean): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   return !ctx.funcMap.has(needsThis ? "__make_getter_callback" : "__make_callback");
 }
 
@@ -4444,13 +4410,7 @@ export function compileArrowAsCallback(
     // traps. Keep binding-pattern parameters dynamic at this boundary so the
     // existing externref destructuring lane performs ordinary property/index
     // reads; compiled structs still work through the same runtime bridge.
-    const resolved =
-      !ctx.standalone &&
-      !ctx.wasi &&
-      (ts.isObjectBindingPattern(p.name) || ts.isArrayBindingPattern(p.name)) &&
-      (staticallyResolved.kind === "ref" || staticallyResolved.kind === "ref_null")
-        ? ({ kind: "externref" } as ValType)
-        : staticallyResolved;
+    const resolved = staticallyResolved;
     cbResolvedParams.push(resolved);
     // JS host passes all values as externref for GC ref types — they cannot
     // be passed as (ref N) or (ref null N) directly from JS
@@ -4470,7 +4430,6 @@ export function compileArrowAsCallback(
   // return type instead of crashing the whole compile — the body still coerces
   // its actual return value via the normal path.
   let cbReturnType: ValType | null = null;
-  let hostBooleanResult = false;
   try {
     const sig = ctx.checker.getSignatureFromDeclaration(arrow);
     if (sig) {
@@ -4480,8 +4439,6 @@ export function compileArrowAsCallback(
         // object-literal return types lower to externref (host plain objects).
         // (#5375) A host-invoked accessor/method returns references as externref.
         cbReturnType = hostFacingCallbackReturnType(resolveWasmTypeForClosureReturn(ctx, retType), needsThis);
-        hostBooleanResult = hostBooleanCallbackResult(ctx, retType, cbReturnType); // (#6417)
-        if (hostBooleanResult) cbReturnType = { kind: "externref" };
       }
     }
   } catch {
@@ -4513,7 +4470,6 @@ export function compileArrowAsCallback(
     locals: [],
     localMap: new Map(),
     returnType: cbReturnType,
-    hostBooleanReturn: hostBooleanResult || undefined,
     body: [],
     blockDepth: 0,
     breakStack: [],
@@ -4674,7 +4630,7 @@ export function compileArrowAsCallback(
       // Expression result is the return value — already on stack
       exprBodyHasReturnValue = true;
       // Coerce expression type to declared return type if needed
-      if (callbackBodyBoxesBoolean(ctx, exprType, cbReturnType, hostBooleanResult, body)) {
+      if (callbackBodyBoxesBoolean(ctx, exprType, cbReturnType, body)) {
         coerceType(ctx, cbFctx, BOOLEAN_I32, cbReturnType); // (#6417) `true`, not `1`
       } else if (exprType.kind !== cbReturnType.kind) {
         const instrs = coercionInstrs(ctx, exprType, cbReturnType, cbFctx);
@@ -4719,7 +4675,7 @@ export function compileArrowAsCallback(
     (arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false) &&
     !(ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined) &&
     cbResultIsPromiseWrappable &&
-    asyncClosurePromiseWrapEnabled(ctx) &&
+    false &&
     planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) === null;
   const cbBodyName = cbAsyncPromiseWrap ? `${cbName}__async_body` : cbName;
   const cbFuncIdx = mintDefinedFunc(ctx);
@@ -4774,11 +4730,7 @@ export function compileArrowAsCallback(
     // that reaches this host-bridge path to the native first-class closure struct;
     // the #3098 substrate (`__apply_closure`/`__call_fn_N`) invokes it host-free
     // wherever it's exercised. JS-host lane unaffected (idx always defined there).
-    if (ctx.standalone || ctx.wasi) {
-      return compileArrowAsClosure(ctx, fctx, arrow);
-    }
-    reportError(ctx, arrow, `Missing ${makeCallbackName} import`);
-    return null;
+    return compileArrowAsClosure(ctx, fctx, arrow);
   }
 
   fctx.body.push({ op: "i32.const", value: cbId });

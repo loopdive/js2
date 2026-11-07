@@ -42,7 +42,7 @@ import { ensureExternrefToStringProvider } from "./shared.js";
  * walk to finish the algorithm in this module, and answer true.
  */
 export function externalizeObjectLiteralArg(ctx: CodegenContext, fctx: FunctionContext, t: ValType | null): boolean {
-  if (!ctx.standalone || t === null || (t.kind !== "ref" && t.kind !== "ref_null")) return false;
+  if (t === null || (t.kind !== "ref" && t.kind !== "ref_null")) return false;
   if (ctx.typeIdxToStructName.get(t.typeIdx)?.startsWith("__anon_") !== true) return false;
   fctx.body.push({ op: "extern.convert_any" });
   requireExhaustiveClassToPrimitive(ctx);

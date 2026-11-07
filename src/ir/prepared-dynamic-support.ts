@@ -201,13 +201,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
           // Entry-time argc state also belongs to plain functions without a
           // local function-object call. Cover all native host-free externref
           // units, not only the function-object population below.
-          if (
-            native &&
-            (ctx.standalone || ctx.wasi) &&
-            !ctx.fast &&
-            carrierValType.kind === "externref" &&
-            instr.kind === "dyn.arguments_length"
-          ) {
+          if (native && !ctx.fast && carrierValType.kind === "externref" && instr.kind === "dyn.arguments_length") {
             bindExact(instr, "__ir_arguments_length", [I32], [{ kind: "f64" }]);
             return;
           }
@@ -218,7 +212,6 @@ export function prepareDynamicInstructionSupportForUnits(input: {
           if (
             native &&
             functionObjects &&
-            ctx.standalone &&
             !ctx.fast &&
             carrierValType.kind === "externref" &&
             instr.kind === "dyn.to_number"

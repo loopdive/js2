@@ -375,7 +375,6 @@ function fillOwnSymbolsArm(ctx: CodegenContext, d: OwnKeyDeps): void {
  * this is a no-op (byte-inert).
  */
 export function fillTaDynViewOwnKeyArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const dynIdx = ctx.taDynViewTypeIdx;
   if (dynIdx < 0) return;
   const helpers = ensureTaDynMopElemHelpers(ctx);

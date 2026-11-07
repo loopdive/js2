@@ -188,12 +188,12 @@ const EQ_HEAP_TYPE = -19;
 
 /** A module compiled as a linked provider whose consumer is wasm, not JS. */
 function isWasmConsumedStandaloneProvider(ctx: CodegenContext): boolean {
-  return ctx.standalone && ctx.exportsConsumedByWasm === true;
+  return ctx.exportsConsumedByWasm === true;
 }
 
 /** The provider namespaces this module may route a missed read to. */
 function peerNamespaces(ctx: CodegenContext): string[] {
-  if (!ctx.standalone || isWasmConsumedStandaloneProvider(ctx)) return [];
+  if (isWasmConsumedStandaloneProvider(ctx)) return [];
   return [...ctx.linkedNamespaces].filter((name) => name.startsWith("js2wasm:npm:")).sort();
 }
 

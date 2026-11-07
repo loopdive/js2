@@ -102,7 +102,6 @@ export function tryEmitBuiltinStaticExpandoRead(
   builtinName: string,
   propName: string,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   // A real static METHOD that failed to reify keeps the loud refusal — see the
   // "absent-not-wrong" note in the module header.
   // (#6957) …unless the program PATCHES that member: the carrier then holds

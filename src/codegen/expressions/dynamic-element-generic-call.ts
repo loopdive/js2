@@ -30,7 +30,6 @@ import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { ensureObjVecBuilders } from "../object-runtime.js";
 import { emitHostMethodCallArgs } from "../host-method-args.js";
-import { noJsHost } from "../js-errors.js";
 import { allocLocal } from "../context/locals.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 
@@ -48,11 +47,7 @@ export function tryEmitGenericComputedMethodCall(
   expr: ts.CallExpression,
   elemAccess: ts.ElementAccessExpression,
 ): InnerResult | undefined {
-  if (
-    !noJsHost(ctx) ||
-    elemAccess.argumentExpression === undefined ||
-    expr.arguments.some((arg) => arg === undefined)
-  ) {
+  if (elemAccess.argumentExpression === undefined || expr.arguments.some((arg) => arg === undefined)) {
     return undefined;
   }
   const externref = { kind: "externref" as const };

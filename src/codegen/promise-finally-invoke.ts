@@ -443,7 +443,7 @@ const emittingNativeArm = new WeakSet<FunctionContext>();
  */
 export function isReflectivePromiseMember(ctx: CodegenContext, member: string): boolean {
   if (member === "then" || member === "catch") return true;
-  return member === "finally" && ctx.standalone === true && ctx.wasi !== true;
+  return member === "finally" && ctx.wasi !== true;
 }
 
 /**
@@ -469,7 +469,7 @@ export function tryEmitObservablePromiseFinally(
   ) => void,
 ): boolean {
   if (emittingNativeArm.has(fctx)) return false;
-  if (ctx.standalone !== true || ctx.wasi === true) return false;
+  if (ctx.wasi === true) return false;
   const rt = ensureFinallyInvokeRuntime(ctx, fctx);
   if (rt === null) return false;
   const externGetIdx = ctx.funcMap.get("__extern_get");

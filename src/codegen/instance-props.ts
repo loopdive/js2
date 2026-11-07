@@ -49,7 +49,7 @@ import type { InstanceReadBinding } from "../runtime/wasmgc/values/object-get-ar
  * `annexB/language/eval-code/…-skip-early-err-try` files, all failing on parse.
  *
  * ## Shape of the fix, and the ONE invariant that keeps it safe
- * Three composable pieces, all gated `ctx.standalone || ctx.wasi`, all
+ * Three composable pieces, all gated the native regime, all
  * reserve-then-fill (funcIdx discipline of `closure-props.ts`):
  *
  * - **S1 — declared-field write-through** ({@link fillClosedStructExternSetArms}).
@@ -167,7 +167,6 @@ const ANY: ValType = { kind: "anyref" };
  * to exactly today's behaviour instead of trapping.
  */
 export function reserveInstanceProps(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   reserveNativeGeneratorProtocolLookup(ctx);
   if (ctx.funcMap.get(IS_INSTANCE_EXPANDO_CARRIER) !== undefined) return;
 

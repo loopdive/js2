@@ -28,7 +28,7 @@ import { emitStrFlattenHelpers, emitStrToUtf8Helper } from "./native-strings-cor
 import { emitStrConcatHelpers, emitStrCompareHelpers, emitStrSliceCharHelpers } from "./native-strings-basics.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { hostFreeEnvironment, jsValueBoundary } from "./context/types.js";
+import { hostFreeEnvironment, inModuleStdoutSink, jsValueBoundary } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
@@ -199,10 +199,7 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
  *      yield `name` alone per §20.5.3.4 steps 4–6.
  *   3. else `name + ": " + msg`.
  *
- * Standalone/WASI only: in JS-host mode the `__new_<Kind>` imports resolve to
- * the real JS constructors, so thrown errors are host objects and never
- * `$Error_struct`s — the helper would be dead weight. Registering the error
- * struct type here (idempotent) makes the arm order-independent: a module
+ * Registering the error struct type here (idempotent) makes the arm order-independent: a module
  * whose first string coercion happens BEFORE its first error construction
  * still gets the arm.
  *
@@ -216,7 +213,6 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
 function ensureErrorToStringHelper(ctx: CodegenContext): number | undefined {
   const cached = ctx.nativeStrHelpers.get("__error_to_string");
   if (cached !== undefined) return cached;
-  if (!(ctx.standalone || ctx.wasi)) return undefined; // noJsHost only (see doc above)
   ensureNativeStringHelpers(ctx);
   const strConcatIdx = ctx.nativeStrHelpers.get("__str_concat");
   if (strConcatIdx === undefined) return undefined;
@@ -1744,7 +1740,6 @@ export function emitTestRuntimeStringHelpers(ctx: CodegenContext): void {
  * helper emission or import registration.
  */
 export function emitExceptionRenderExports(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   if (!ctx.nativeStrings) return;
   if (ctx.exnTagIdx < 0) return;
   if (ctx.funcMap.has("__exn_render_prepare")) return;
@@ -1993,11 +1988,11 @@ export const STANDALONE_STDOUT_APPEND_FN = "__stdout_append";
  * console surface.
  */
 export function standaloneConsoleSinkAvailable(ctx: CodegenContext): boolean {
-  return ctx.standalone && ctx.nativeStrings && ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) !== undefined;
+  return inModuleStdoutSink(ctx) && ctx.nativeStrings && ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) !== undefined;
 }
 
 export function ensureStandaloneStdoutSink(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!inModuleStdoutSink(ctx)) return;
   if (!ctx.nativeStrings) return;
   if (ctx.stdoutAccGlobalIdx >= 0) return; // already minted
 

@@ -85,7 +85,6 @@ export function targetReceiverIsPrototypeAccess(target: ts.PropertyAccessExpress
  * resurrect an unrelated statement.
  */
 export function isTopLevelClassPrototypeWrite(ctx: CodegenContext, left: ts.Expression): boolean {
-  if (!ctx.standalone) return false;
   if (!ts.isPropertyAccessExpression(left) || ts.isPrivateIdentifier(left.name)) return false;
   if (!ts.isPropertyAccessExpression(left.expression)) return false;
   if (ts.isPrivateIdentifier(left.expression.name) || left.expression.name.text !== "prototype") return false;

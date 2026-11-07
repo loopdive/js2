@@ -80,7 +80,7 @@ function reserveHelper(
   anchor: ts.Node,
   helper: string,
 ): number | undefined {
-  if (!ctx.standalone || ctx.protoNamedDirty !== true || builtinBrandOffsetOf("Boolean") === undefined) {
+  if (ctx.protoNamedDirty !== true || builtinBrandOffsetOf("Boolean") === undefined) {
     return undefined;
   }
   if (
@@ -158,7 +158,7 @@ const PRIMITIVE_WRAPPER_TYPES: ReadonlySet<string> = new Set(["Boolean", "Number
  * inferred), so sloppy code keeps its fold.
  */
 export function strictThisMayBePrimitive(ctx: CodegenContext, operand: ts.Expression, thisType: ts.Type): boolean {
-  if (!ctx.standalone || operand.kind !== ts.SyntaxKind.ThisKeyword) return false;
+  if (operand.kind !== ts.SyntaxKind.ThisKeyword) return false;
   const name = thisType.getSymbol()?.getName();
   return name !== undefined && PRIMITIVE_WRAPPER_TYPES.has(name) && isStrictContext(operand, false);
 }

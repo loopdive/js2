@@ -91,7 +91,6 @@ const READ_ONLY_KEY_LIST_METHODS = new Set(["indexOf", "lastIndexOf", "includes"
  * still reads correctly.
  */
 function isStandaloneOwnKeyListCall(ctx: CodegenContext, expr: ts.Expression, methodName: string): boolean {
-  if (!ctx.standalone) return false;
   if (isOwnKeyListCall(expr)) return true;
   if (!ts.isIdentifier(expr) || !READ_ONLY_KEY_LIST_METHODS.has(methodName)) return false;
   const decl = ctx.oracle.valueDeclarationOf(expr);
@@ -323,7 +322,6 @@ export function nonObjectEnumerableOwnInstrs(ctx: CodegenContext, entries: boole
   const newIdx = ctx.funcMap.get("__objvec_new");
   const pushIdx = ctx.funcMap.get("__objvec_push");
   if (
-    !ctx.standalone ||
     keysIdx === undefined ||
     lengthIdx === undefined ||
     getIdxIdx === undefined ||

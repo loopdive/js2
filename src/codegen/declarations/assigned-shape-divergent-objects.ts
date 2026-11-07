@@ -102,7 +102,6 @@ export function collectAssignedShapeDivergentObjects(
   isModuleScoped: (decl: ts.VariableDeclaration) => boolean,
   markOpenConsumers: (decl: ts.VariableDeclaration) => void,
 ): void {
-  if (!ctx.standalone) return;
   const assignedLiterals = new Map<ts.VariableDeclaration, ts.ObjectLiteralExpression[]>();
   const visit = (node: ts.Node): void => {
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {

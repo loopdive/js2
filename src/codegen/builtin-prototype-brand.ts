@@ -107,7 +107,7 @@
 import ts from "typescript";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./js-errors.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js"; // (#4556)
 import { coerceType } from "./type-coercion.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js"; // (#6651 A13)
@@ -378,7 +378,6 @@ export function tryBuiltinPrototypeGetterBrandThrow(
   expr: ts.PropertyAccessExpression,
   propName: string,
 ): ValType | undefined {
-  if (!noJsHost(ctx) && !ctx.strictNoHostImports) return undefined;
   const ctor = builtinPrototypeReceiver(ctx, expr.expression);
   if (ctor === undefined) return undefined;
   if (BRANDED_PROTO_GETTERS.get(ctor)?.has(propName) !== true) return undefined;
@@ -408,7 +407,6 @@ export function tryBuiltinPrototypeMethodBrandThrow(
   compileArg: (arg: ts.Expression) => ValType | null,
   expectedType?: ValType,
 ): ValType | undefined {
-  if (!noJsHost(ctx) && !ctx.strictNoHostImports) return undefined;
   // (#4556) `<Builtin>.prototype.isPrototypeOf(V)` is not a brand THROW — it
   // has a real answer. Handled here so the dispatch site stays untouched.
   const isProto = tryBuiltinPrototypeIsPrototypeOf(ctx, fctx, expr, propAccess);
@@ -791,7 +789,6 @@ export function tryBorrowedPrototypeNullishThisThrow(
   compileArg: (arg: ts.Expression) => ValType | null,
   expectedType?: ValType,
 ): ValType | undefined {
-  if (!noJsHost(ctx) && !ctx.strictNoHostImports) return undefined;
   let base: ts.Expression = borrowedMethod;
   while (ts.isParenthesizedExpression(base)) base = base.expression;
   if (!ts.isPropertyAccessExpression(base)) return undefined;
@@ -836,7 +833,7 @@ export function tryBorrowedPrototypeNullishThisThrow(
   // idempotent). Without it the late-import fallback below minted
   // `env::__to_property_key`, a host import a standalone module can never be
   // linked against (#4076 rows, since 6cf0f5555c). Host lanes keep the import.
-  if (coercesKeyFirst && ctx.standalone && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (coercesKeyFirst && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     ensureObjectRuntime(ctx);
   }
   const toPropertyKeyIdx = coercesKeyFirst
@@ -894,7 +891,6 @@ export function tryBorrowedPrototypeBrandThisThrow(
   compileArg: (arg: ts.Expression) => ValType | null,
   expectedType?: ValType,
 ): ValType | undefined {
-  if (!noJsHost(ctx) && !ctx.strictNoHostImports) return undefined;
   let base: ts.Expression = borrowedMethod;
   while (ts.isParenthesizedExpression(base)) base = base.expression;
   if (!ts.isPropertyAccessExpression(base)) return undefined;
@@ -939,7 +935,6 @@ export function tryDetachedBuiltinPrototypeNullishThisThrow(
   compileArg: (arg: ts.Expression) => ValType | null,
   expectedType?: ValType,
 ): ValType | undefined {
-  if (!noJsHost(ctx) && !ctx.strictNoHostImports) return undefined;
   let base: ts.Expression = detachedMethod;
   while (ts.isParenthesizedExpression(base)) base = base.expression;
   if (!ts.isPropertyAccessExpression(base)) return undefined;

@@ -70,7 +70,6 @@ import {
   emitPreparedAsyncFrameStateMachine,
 } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
-import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
 import { classHasUnresolvedComputedMemberName, classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 Step 1 / R2-3)
 import { classHasComputedKeyAssignment } from "./class-member-keys.js"; // (#6772 S5)
 import { standaloneCommaHeritage } from "./classes/class-heritage-comma.js"; // (#6772 S6)
@@ -96,13 +95,9 @@ import {
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { readsAmbientThisGlobal } from "./helpers/body-references-own-this.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
-import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
 import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
-import { noJsHost } from "./js-errors.js";
 import {
-  addArrayIteratorImports,
-  addForInImports,
   addGeneratorImports,
   addIteratorImports,
   addStringImports,
@@ -116,7 +111,6 @@ import {
   hasDeclareModifier,
   hasExportModifier,
   isGeneratorFunction,
-  KNOWN_CONSTRUCTORS,
   MATH_HOST_METHODS_1ARG,
   MATH_HOST_METHODS_2ARG,
   nativeGeneratorBindingType,
@@ -211,7 +205,6 @@ import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-
 import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
 import * as proxy from "./analysis/proxy-binding-escape.js";
-import { bindingMayReceiveHostCallable } from "./analysis/mixed-assignment-carrier.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
 export {
@@ -237,7 +230,6 @@ import { inferImplicitAnyParamType, resolveGenericCallSiteTypes } from "./declar
 import {
   collectInterface,
   collectObjectType,
-  isTypeScriptZeroCostSyntaxTypesSource,
   publishDeclaredShapesForDedup,
   resolveStructFieldTypes,
 } from "./declarations/struct-type-registration.js";
@@ -579,106 +571,6 @@ export function prepareIdentityPreservingStructuralParams(
   assertedStructuralParamsByContext.set(ctx, candidates);
 }
 
-const writtenPropertyParamsByFunction = new WeakMap<ts.FunctionDeclaration, ReadonlySet<ts.ParameterDeclaration>>();
-
-const assertedWrittenPropertyParamsByFunction = new WeakMap<
-  ts.FunctionDeclaration,
-  ReadonlySet<ts.ParameterDeclaration>
->();
-
-/** True when the function writes through a property rooted at this parameter. */
-function parameterHasPropertyWrite(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  stmt: ts.FunctionDeclaration,
-): boolean {
-  const cached = writtenPropertyParamsByFunction.get(stmt);
-  if (cached) return cached.has(param);
-
-  const parameters = new Set(stmt.parameters);
-  const written = new Set<ts.ParameterDeclaration>();
-  const recordRoot = (expression: ts.Expression): void => {
-    const root = getAssignmentRootIdentifierNode(expression);
-    if (!root) return;
-    const declaration = ctx.oracle.valueDeclarationOf(root);
-    if (declaration && ts.isParameter(declaration) && parameters.has(declaration)) written.add(declaration);
-  };
-  const visit = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
-      recordRoot(node.left);
-    } else if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-    ) {
-      recordRoot(node.operand);
-    } else if (ts.isDeleteExpression(node)) {
-      recordRoot(node.expression);
-    }
-    forEachChild(node, visit);
-  };
-  if (stmt.body) forEachChild(stmt.body, visit);
-  writtenPropertyParamsByFunction.set(stmt, written);
-  return written.has(param);
-}
-
-/** True when an erased assertion occurs on a property-write path rooted at this parameter. */
-function parameterHasAssertedPropertyWrite(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  stmt: ts.FunctionDeclaration,
-): boolean {
-  const cached = assertedWrittenPropertyParamsByFunction.get(stmt);
-  if (cached) return cached.has(param);
-
-  const parameters = new Set(stmt.parameters);
-  const written = new Set<ts.ParameterDeclaration>();
-  const recordRoot = (expression: ts.Expression): void => {
-    let current = expression;
-    let sawProperty = false;
-    let sawAssertion = false;
-    while (true) {
-      if (
-        ts.isParenthesizedExpression(current) ||
-        ts.isNonNullExpression(current) ||
-        ts.isSatisfiesExpression(current)
-      ) {
-        current = current.expression;
-        continue;
-      }
-      if (ts.isAsExpression(current) || ts.isTypeAssertionExpression(current)) {
-        sawAssertion = true;
-        current = current.expression;
-        continue;
-      }
-      if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
-        sawProperty = true;
-        current = current.expression;
-        continue;
-      }
-      break;
-    }
-    if (!sawProperty || !sawAssertion || !ts.isIdentifier(current)) return;
-    const declaration = ctx.oracle.valueDeclarationOf(current);
-    if (declaration && ts.isParameter(declaration) && parameters.has(declaration)) written.add(declaration);
-  };
-  const visit = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
-      recordRoot(node.left);
-    } else if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-    ) {
-      recordRoot(node.operand);
-    } else if (ts.isDeleteExpression(node)) {
-      recordRoot(node.expression);
-    }
-    forEachChild(node, visit);
-  };
-  if (stmt.body) forEachChild(stmt.body, visit);
-  assertedWrittenPropertyParamsByFunction.set(stmt, written);
-  return written.has(param);
-}
-
 function directFunctionTypeParameter(
   param: ts.ParameterDeclaration,
   stmt: ts.FunctionDeclaration,
@@ -693,19 +585,6 @@ function directFunctionTypeParameter(
   }
   const typeParameterName = param.type.typeName.text;
   return stmt.typeParameters?.find((candidate) => candidate.name.text === typeParameterName);
-}
-
-/** Whether this is exactly a function-owned type parameter constrained to an object carrier. */
-function isDirectObjectTypeParameter(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  stmt: ts.FunctionDeclaration,
-  paramType: ts.Type,
-): boolean {
-  const typeParameter = directFunctionTypeParameter(param, stmt);
-  if (!typeParameter || !(paramType.flags & ts.TypeFlags.TypeParameter)) return false;
-  const constraint = ctx.checker.getBaseConstraintOfType(paramType);
-  return constraint !== undefined && (constraint.flags & ts.TypeFlags.Object) !== 0;
 }
 
 /** Parameter index when a generic function returns one direct type parameter unchanged by contract. */
@@ -729,48 +608,6 @@ function directIdentityReturnParamIndex(stmt: ts.FunctionDeclaration): number | 
   return index >= 0 ? index : undefined;
 }
 
-interface AssertedMutableStructuralParamCarrier {
-  open: true;
-  compoundStructDispatch?: true;
-}
-
-function typeScriptNodeCompoundDispatchConstraint(ctx: CodegenContext, paramType: ts.Type): boolean {
-  const constraint = ctx.checker.getBaseConstraintOfType(paramType);
-  const symbol = constraint?.getSymbol();
-  return (
-    symbol?.name === "Node" &&
-    symbol.declarations?.some(
-      (declaration) =>
-        ts.isInterfaceDeclaration(declaration) && isTypeScriptZeroCostSyntaxTypesSource(declaration.getSourceFile()),
-    ) === true
-  );
-}
-
-function assertedMutableStructuralParamCarrier(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  index: number,
-  stmt: ts.FunctionDeclaration,
-  wasmType: ValType,
-  paramType: ts.Type,
-): AssertedMutableStructuralParamCarrier | undefined {
-  if (!stmt.body || !ts.isIdentifier(param.name) || noJsHost(ctx)) return undefined;
-
-  const hasDoublyAssertedCall =
-    (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
-    parameterHasPropertyWrite(ctx, param, stmt) &&
-    assertedStructuralParamsByContext.get(ctx)?.get(stmt)?.has(index);
-  const hasGenericAssertedWrite =
-    isDirectObjectTypeParameter(ctx, param, stmt, paramType) && parameterHasAssertedPropertyWrite(ctx, param, stmt);
-  if (!hasDoublyAssertedCall && !hasGenericAssertedWrite) return undefined;
-  return {
-    open: true,
-    ...(hasGenericAssertedWrite && typeScriptNodeCompoundDispatchConstraint(ctx, paramType)
-      ? { compoundStructDispatch: true as const }
-      : {}),
-  };
-}
-
 function preserveIdentityForStructuralParam(
   ctx: CodegenContext,
   param: ts.ParameterDeclaration,
@@ -779,10 +616,7 @@ function preserveIdentityForStructuralParam(
   wasmType: ValType,
   paramType: ts.Type,
 ): ValType {
-  const carrier = assertedMutableStructuralParamCarrier(ctx, param, index, stmt, wasmType, paramType);
-  if (!carrier) return wasmType;
-  markIdentityPreservingStructuralParam(ctx, param, carrier);
-  return { kind: "externref" };
+  return wasmType;
 }
 
 // A call-site-inferred JavaScript parameter starts life as one nominal WasmGC
@@ -1159,68 +993,8 @@ function functionReturnsHostObjectLiteralCarrier(ctx: CodegenContext, stmt: ts.F
   return result;
 }
 
-function resolvesToAmbientConstructorAlias(ctx: CodegenContext, expr: ts.Expression, depth = 0): boolean {
-  if (depth > 3 || !ts.isIdentifier(expr)) return false;
-  const declaration = ctx.oracle.valueDeclarationOf(expr);
-  if (KNOWN_CONSTRUCTORS.has(expr.text) && (!declaration || declaration.getSourceFile().isDeclarationFile)) {
-    return true;
-  }
-  return (
-    declaration !== undefined &&
-    ts.isVariableDeclaration(declaration) &&
-    declaration.initializer !== undefined &&
-    resolvesToAmbientConstructorAlias(ctx, declaration.initializer, depth + 1)
-  );
-}
-
-/**
- * An untyped wrapper around an extracted host builtin returns a host value, not
- * the nominal anonymous struct TypeScript infers from the builtin signature.
- * Keep that value on the externref carrier across the wrapper's Wasm ABI.
- */
-function functionReturnsExtractedHostCall(ctx: CodegenContext, stmt: ts.FunctionDeclaration): boolean {
-  if (ctx.standalone || ctx.wasi || !stmt.body) return false;
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (
-      node !== stmt &&
-      (ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isArrowFunction(node) ||
-        ts.isMethodDeclaration(node) ||
-        ts.isAccessor(node) ||
-        ts.isConstructorDeclaration(node))
-    ) {
-      return;
-    }
-    if (ts.isReturnStatement(node) && node.expression && ts.isCallExpression(node.expression)) {
-      const callee = node.expression.expression;
-      if (ts.isIdentifier(callee)) {
-        const declaration = ctx.oracle.valueDeclarationOf(callee);
-        const initializer = declaration && ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
-        if (
-          initializer &&
-          ts.isPropertyAccessExpression(initializer) &&
-          resolvesToAmbientConstructorAlias(ctx, initializer.expression)
-        ) {
-          found = true;
-          return;
-        }
-      }
-    }
-    forEachChild(node, visit);
-  };
-  visit(stmt.body);
-  return found;
-}
-
 function functionReturnsReferenceBoundaryCarrier(ctx: CodegenContext, stmt: ts.FunctionDeclaration): boolean {
-  return (
-    functionReturnsDynamicObjectCarrier(stmt) ||
-    functionReturnsHostObjectLiteralCarrier(ctx, stmt) ||
-    functionReturnsExtractedHostCall(ctx, stmt)
-  );
+  return functionReturnsDynamicObjectCarrier(stmt) || functionReturnsHostObjectLiteralCarrier(ctx, stmt);
 }
 
 const withScopedReturnByFunction = new WeakMap<ts.FunctionDeclaration, boolean>();
@@ -1336,79 +1110,6 @@ export function functionReturnsThroughWithScope(
 }
 
 /**
- * A JSDoc `Array` can still be used as an ordinary JavaScript object. Native
- * vecs preserve indexed elements, but cannot preserve named expando properties
- * across a function boundary. Keep parameters that enumerate or dynamically
- * read those properties on the open externref carrier in JS-host builds.
- */
-function jsArrayParamNeedsOpenObjectCarrier(
-  ctx: CodegenContext,
-  param: ts.ParameterDeclaration,
-  stmt: ts.FunctionDeclaration,
-  wasmType: ValType,
-): boolean {
-  if (
-    ctx.standalone ||
-    ctx.wasi ||
-    !stmt.body ||
-    !ts.isIdentifier(param.name) ||
-    ts.getJSDocType(param) === undefined ||
-    !((wasmType.kind === "ref" || wasmType.kind === "ref_null") && getArrTypeIdxFromVec(ctx, wasmType.typeIdx) >= 0)
-  ) {
-    return false;
-  }
-
-  const isParam = (node: ts.Expression): boolean =>
-    ts.isIdentifier(node) && ctx.oracle.valueDeclarationOf(node) === param;
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (
-      node !== stmt &&
-      (ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isArrowFunction(node) ||
-        ts.isMethodDeclaration(node) ||
-        ts.isAccessor(node) ||
-        ts.isConstructorDeclaration(node))
-    ) {
-      return;
-    }
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "Object" &&
-      (node.expression.name.text === "keys" ||
-        node.expression.name.text === "values" ||
-        node.expression.name.text === "entries" ||
-        node.expression.name.text === "getOwnPropertyNames") &&
-      node.arguments.length > 0 &&
-      isParam(node.arguments[0]!)
-    ) {
-      found = true;
-      return;
-    }
-    if (ts.isElementAccessExpression(node) && isParam(node.expression) && node.argumentExpression) {
-      const keyFact = ctx.oracle.typeFactOf(node.argumentExpression);
-      if (
-        keyFact.kind === "string" ||
-        keyFact.kind === "any" ||
-        keyFact.kind === "unknown" ||
-        (keyFact.kind === "union" &&
-          keyFact.parts.some((part) => part.kind === "string" || part.kind === "any" || part.kind === "unknown"))
-      ) {
-        found = true;
-        return;
-      }
-    }
-    forEachChild(node, visit);
-  };
-  forEachChild(stmt.body, visit);
-  return found;
-}
-
-/**
  * JavaScript's optional-parameter spellings (`x?: T`, `@param {T=} x`, and
  * `@param {T} [x]`) all admit a call that supplies no value. A native scalar
  * slot cannot represent that value: the generic missing-argument pad for an
@@ -1477,9 +1178,6 @@ function lowerParamType(
     wasmType = widenUndefinedDefaultParamSlot(param, wasmType);
     wasmType = preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
   }
-  if (jsArrayParamNeedsOpenObjectCarrier(ctx, param, stmt, wasmType)) {
-    wasmType = { kind: "externref" };
-  }
   // If the parameter has a default value and is a non-null ref type, widen to
   // ref_null so callers can pass ref.null as a sentinel for "use default".
   if (param.initializer && wasmType.kind === "ref") {
@@ -1529,7 +1227,7 @@ function lowerParamType(
       // A computed-access parameter likewise stays dynamic unless inference
       // proved the indexed vec/array family rather than one incidental object.
       //
-      // (#5221) The `__anon_*` withdrawal above was gated on `ctx.standalone`
+      // (#5221) The `__anon_*` withdrawal above was gated on the native regime
       // until now. The gate was wrong: the unsoundness is the SAME on the host
       // lane, only the symptom differs. Host-lane, the mismatched value is
       // coerced at the CALL with `ref.test` + `else ref.null`, so a caller
@@ -1730,19 +1428,7 @@ function resolveGenericDeclarationCallSiteTypes(
     ) {
       return { kind: "externref" } as const;
     }
-    if (
-      !param ||
-      !stmt.body ||
-      !ts.isIdentifier(param.name) ||
-      noJsHost(ctx) ||
-      !directFunctionTypeParameter(param, stmt) ||
-      !parameterHasAssertedPropertyWrite(ctx, param, stmt) ||
-      nativeTypeOfDeclaration(ctx.checker, param) !== null
-    ) {
-      return wasmType;
-    }
-    const paramType = ctx.checker.getTypeAtLocation(param);
-    return preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
+    return wasmType;
   });
   const identityReturnParamIndex = directIdentityReturnParamIndex(stmt);
   const identityCarrier = identityReturnParamIndex === undefined ? undefined : params[identityReturnParamIndex];
@@ -1838,7 +1524,7 @@ function registerBodylessFunctionDeclaration(
           lowerParamType(ctx, param, name, i, stmt, sourceFile),
       );
     }
-    if (noJsHost(ctx)) registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
+    registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
     const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
     results = nativeGenerator ? [{ kind: "ref", typeIdx: nativeGenerator.stateTypeIdx }] : [{ kind: "externref" }];
   } else if (resolved) {
@@ -2472,7 +2158,6 @@ function isTopLevelClassAccessorPropertyWrite(ctx: CodegenContext, target: ts.Ex
  * covered by the syntactic check beside this one and does not reach here.
  */
 function topLevelClassInheritsRuntimeKeys(ctx: CodegenContext, statement: ts.ClassDeclaration): boolean {
-  if (!ctx.standalone) return false;
   const declaredName = statement.name?.text;
   if (declaredName === undefined) return false;
   const className = ctx.anonClassExprNames.get(statement) ?? declaredName;
@@ -2480,10 +2165,6 @@ function topLevelClassInheritsRuntimeKeys(ctx: CodegenContext, statement: ts.Cla
 }
 
 function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, statement: ts.Statement): boolean {
-  if (shouldCollectTopLevelClassForRuntimeHeritage(ctx, statement)) {
-    ctx.moduleInitStatements.push(statement);
-    return true;
-  }
   // (#5195 Step 1) A class with a METHOD (or an accessor in a body this
   // collector's accessor-only shape test declines) whose computed key does not
   // fold has ClassDefinitionEvaluation work of its own: the key expression must
@@ -2498,7 +2179,7 @@ function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, st
   // answered `new D()[ID('n')]` as `undefined` until something happened to
   // touch `D.prototype`, and correctly afterwards — an order-dependent wrong
   // answer. (`shouldCollectTopLevelClassForRuntimeHeritage` above cannot cover
-  // it: that predicate is `!ctx.standalone && …`, so it never fires here.)
+  // it: that predicate is host-lane-only, so it never fires here.)
   if (
     ts.isClassDeclaration(statement) &&
     (classHasUnresolvedComputedMemberName(ctx, statement) ||
@@ -3011,7 +2692,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
               lowerParamType(ctx, param, name, i, stmt, sourceFile),
           );
         }
-        if (noJsHost(ctx)) registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
+        registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
         const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
         results = nativeGenerator ? [{ kind: "ref", typeIdx: nativeGenerator.stateTypeIdx }] : [{ kind: "externref" }]; // JS-host fallback returns a Generator object
       } else if (resolved) {
@@ -3463,7 +3144,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   function moduleInitForcesExternref(decl: ts.VariableDeclaration): boolean {
     if (!decl.initializer) return false;
     if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return true;
-    if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return true;
+    if (ctx.redeclaredObjectIdentityDeclarations.has(decl)) return true;
     // (#4707/#4754) `new Proxy` returns an externref carrier even though
     // TypeScript gives it the target's structural type. Keep a member-only
     // module binding dynamic, but preserve the structural slot when that exact
@@ -3491,7 +3172,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // stored the `$Object` into a struct-typed global (or kept the closed
     // struct), seeding `$proto = null` at `new F()` and killing every
     // inherited read.
-    if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(decl.initializer)) return true;
+    if (ctx.dynamicProtoLiteralNodes.has(decl.initializer)) return true;
     // (#3369) An untyped empty object literal is constructed by literals.ts as
     // a host `$Object` (`__new_plain_object`). Keep the module global on the
     // same externref representation unless a shape pre-pass deliberately
@@ -3579,13 +3260,6 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     }
     if (proxyOrTransferredResultNeedsExternref(ctx, decl)) return { kind: "externref" };
     if (bindingHoldsStandaloneClassProto(ctx, decl)) return { kind: "externref" }; // (#7053)
-    // A host builtin static read (`Date.now`, `Object.hasOwn`, …) is a genuine
-    // JS function, not a Wasm closure struct.  Conditional/short-circuit
-    // initializers can select either that externref or a compiled closure, so
-    // retain the common externref carrier and let call dispatch discriminate at
-    // runtime.  This is the module-global twin of the local raw-externref path
-    // in statements/variables.ts and is deliberately host-only.
-    if (bindingMayReceiveHostCallable(ctx, decl)) return { kind: "externref" };
     // A source-file `var` is initialized to `undefined` before its initializer
     // runs. When that value is actually observed, a checker-inferred primitive
     // slot would expose the Wasm zero value instead (`false`, `0`, or an empty
@@ -4493,8 +4167,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           ctx.moduleInitStatements.push(stmt);
           continue;
         }
-        // (#3468 F1) STANDALONE counterpart of the #2671 keep below (which is
-        // gated `!ctx.standalone`): a top-level `F.<name> = …` static property
+        // (#3468 F1) STANDALONE counterpart of the #2671 keep below (formerly the
+        // host-lane arm): a top-level `F.<name> = …` static property
         // write on a top-level FUNCTION DECLARATION — the test262 assert-harness
         // shape (`assert.sameValue = function(){…}`, `assert._isSameValue = …`).
         // `F` is a function, not a module global, so the generic root-identifier
@@ -4516,10 +4190,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // `_compare` undefined, so the real Test262 deepEqual body is never
         // invoked. The callable-type gate deliberately excludes
         // `F.prototype.m` and ordinary object-valued chains; `.prototype` stays
-        // owned by #2660. Host/GC is untouched (that lane uses the
-        // `!ctx.standalone` arm below), so it stays byte-identical.
+        // owned by #2660.
         if (
-          ctx.standalone &&
           ts.isPropertyAccessExpression(expr.left) &&
           !ts.isPrivateIdentifier(expr.left.name) &&
           // Non-builtin, non-special property names only. `.prototype` is
@@ -4552,7 +4224,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         //     kept for host/GC. The old exclusion claimed the compile-time
         //     fnctor-prototype lift consumes it, but
         //     `tryCompileFnctorPrototypeAssign` opens with
-        //     `if (!ctx.standalone) return undefined` — the lift is
+        //     a host-lane early return — the lift was
         //     STANDALONE-ONLY, so in host mode nothing consumed the statement
         //     and it was silently elided. `F.prototype` reads then fell back
         //     to the auto-vivified #1712 sidecar object (non-null but
@@ -4572,100 +4244,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         //     `(Iterator as any).prototype = …`; the cast must not hide the
         //     top-level-function receiver — same unwrap
         //     getAssignmentRootIdentifier applies).
-        if (!ctx.standalone && ts.isPropertyAccessExpression(expr.left)) {
-          let receiver: ts.Expression = expr.left.expression;
-          while (
-            ts.isParenthesizedExpression(receiver) ||
-            ts.isAsExpression(receiver) ||
-            ts.isNonNullExpression(receiver) ||
-            ts.isTypeAssertionExpression(receiver)
-          ) {
-            receiver = receiver.expression;
-          }
-          if (ts.isIdentifier(receiver) && ctx.topLevelFunctionNames.has(receiver.text)) {
-            ctx.moduleInitStatements.push(stmt);
-            continue;
-          }
-          // (#4618) `F.prototype.m = …` — the react shape (the compiled react
-          // source's `Component.prototype.setState = …` /
-          // `Component.prototype.isReactComponent = {}` are top-level
-          // statements). The bare-identifier gate above deliberately excluded
-          // prototype chains, but that exclusion predates the #1712 vivified
-          // fnctor prototype: in host mode the write-arm inside a function
-          // body lands on the identity-stable vivified `F.prototype` object
-          // (measured: probe passes), so keeping the statement is the whole
-          // fix — the same collection-gap family as #2992/#3592/#3615/#3049.
-          if (
-            ts.isPropertyAccessExpression(receiver) &&
-            !ts.isPrivateIdentifier(receiver.name) &&
-            receiver.name.text === "prototype"
-          ) {
-            let protoRecv: ts.Expression = receiver.expression;
-            while (
-              ts.isParenthesizedExpression(protoRecv) ||
-              ts.isAsExpression(protoRecv) ||
-              ts.isNonNullExpression(protoRecv) ||
-              ts.isTypeAssertionExpression(protoRecv)
-            ) {
-              protoRecv = protoRecv.expression;
-            }
-            if (ts.isIdentifier(protoRecv) && ctx.topLevelFunctionNames.has(protoRecv.text)) {
-              ctx.moduleInitStatements.push(stmt);
-              continue;
-            }
-          }
-          // (#4394) Host/GC counterpart of the standalone #3666 keep above:
-          // the receiver is itself a function-valued own property of a
-          // top-level function — `assert.deepEqual._compare = (function(){…})()`,
-          // the literal harness's deepEqual.js. The bare-identifier gate above
-          // does not match, so the statement was dropped and compiled to
-          // NOTHING: `_compare` silently never existed and the whole deepEqual
-          // family failed with `_compare is not a function`. Gated exactly like
-          // the standalone arm — the oracle must prove the receiver CALLABLE,
-          // which excludes `F.prototype.m` and ordinary object-valued chains.
-          if (
-            !ts.isPrivateIdentifier(expr.left.name) &&
-            !STANDALONE_FN_STATIC_KEEP_EXCLUDED.has(expr.left.name.text) &&
-            !ts.isIdentifier(receiver) &&
-            isTopLevelFunctionPropertyReceiver(ctx, receiver)
-          ) {
-            ctx.moduleInitStatements.push(stmt);
-            continue;
-          }
-          // (#2623 P-7b) `Promise.<prop> = …` — a top-level static patch on the
-          // BUILTIN Promise (the test262 observable-resolve shape
-          // `Promise.resolve = function(){…}`, `all/race invoke-resolve.js`).
-          // `Promise` is neither a module global nor a top-level function, so
-          // the generic check below dropped the statement — the patch silently
-          // never existed at runtime (the exact #2671 `Test262Error.thrower`
-          // elision mechanism). Keep it in `__module_init` so the ordinary
-          // property-write arm runs: the write routes through `__extern_set`
-          // onto the `declared_global`-resolved Promise. In the single-realm
-          // CI lane (no vm sandbox) that IS `globalThis.Promise` — the same
-          // object the combinator capability `C` (`_resolveCtor`, runtime.ts)
-          // passes to V8, so `Get(C,"resolve")` observes the patch; the CI
-          // worker's #1220 static snapshot/restore un-patches it after each
-          // test. In the LOCAL sandboxed runner the write lands on the
-          // sandbox Promise (inert for the host-realm capability lane; the
-          // `["Promise","resolve"]` SENTINEL_KEYS entry discards the dirty
-          // sandbox) — the local lane deliberately does NOT chase realm
-          // unification (P-7b design decision, see the issue file). Host/GC
-          // lane + `Promise` receiver only — a blanket builtin-receiver keep
-          // flips patches on every builtin at once and is separate, measured
-          // work. Shadowed user bindings named `Promise` are module globals /
-          // functions and are caught by the arms above/below, never reaching
-          // this keep.
-          if (
-            ts.isIdentifier(receiver) &&
-            receiver.text === "Promise" &&
-            !ctx.moduleGlobals.has("Promise") &&
-            !ctx.topLevelFunctionNames.has("Promise") &&
-            !ctx.classSet.has("Promise")
-          ) {
-            ctx.moduleInitStatements.push(stmt);
-            continue;
-          }
-        }
+
         // (#3493) A top-level write through `globalThis` is observable realm
         // state just like a write to one of our module globals. In particular,
         // fixture modules commonly initialise shared state with
@@ -5532,7 +5111,7 @@ export function compileDeclarations(
     // return() { ++returnCount; } }`-in-`try` shape of the Iterator-helper
     // `return-is-forwarded` files). The deferred path is documented correct
     // for host above, so host defers derived capturers like base-less ones.
-    if ((ctx.standalone || ctx.wasi) && decl.heritageClauses?.some((h) => h.token === ts.SyntaxKind.ExtendsKeyword)) {
+    if (decl.heritageClauses?.some((h) => h.token === ts.SyntaxKind.ExtendsKeyword)) {
       return false;
     }
     const wouldPromote = (name: string): boolean => {
@@ -5940,10 +5519,7 @@ export function compileDeclarations(
   const hasModuleInits = ctx.moduleInitStatements.length > 0 || hasLiveFuncSeeds;
   const hasStaticInits = ctx.staticInitExprs.length > 0;
   const hasAsyncGraphInit =
-    ctx.standalone === true &&
-    ctx.deferTopLevelInit === true &&
-    !ctx.wasi &&
-    moduleInitHasTopLevelAwait(ctx.moduleInitStatements);
+    ctx.deferTopLevelInit === true && !ctx.wasi && moduleInitHasTopLevelAwait(ctx.moduleInitStatements);
   let compiledInitFctx: FunctionContext | null = null;
   const skipModuleInitBody =
     !hasAsyncGraphInit &&

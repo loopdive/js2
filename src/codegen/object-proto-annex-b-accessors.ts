@@ -441,7 +441,7 @@ export function emitObjectProtoAnnexBAccessorBody(
   member: string,
 ): ValType | null {
   if (!isAnnexBAccessorMember(member)) return null;
-  if (!ctx.standalone) return null;
+
   const isDefine = member === "__defineGetter__" || member === "__defineSetter__";
   const isSetterHalf = member === "__defineSetter__" || member === "__lookupSetter__";
   const nativeIdx = isDefine ? ensureAnnexBDefineAccessor(ctx) : ensureAnnexBLookupAccessor(ctx);
@@ -495,7 +495,6 @@ export function tryCompileAnnexBAccessorCall(
   propAccess: ts.PropertyAccessExpression,
   expr: ts.CallExpression,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   const member = propAccess.name.text;
   if (!isAnnexBAccessorMember(member)) return undefined;
   if (expr.arguments.some((arg) => ts.isSpreadElement(arg))) return undefined;

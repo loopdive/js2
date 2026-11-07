@@ -33,7 +33,6 @@ const EXTERNREF: ValType = { kind: "externref" };
 
 /** Emit the closure body (param 1 = `this`). `null` refuses when helpers are missing. */
 export function emitDateProtoToJsonBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (!ctx.standalone) return null;
   ensureObjectRuntime(ctx);
   ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
   ensureLateImport(ctx, "__extern_is_undefined", [EXTERNREF], [{ kind: "i32" }]);

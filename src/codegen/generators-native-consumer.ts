@@ -76,8 +76,6 @@ import {
   nativeReturnResultFromLocal,
   carrierIsAny,
   emptyResultForType,
-  emitOpenAnyArgValue,
-  emitExpressionAsF64,
 } from "./generators-native.js";
 import { boxedCaptureCellOf } from "./expressions/identifier-assignment.js"; // (#6992)
 
@@ -116,128 +114,6 @@ function compileIgnoredArgs(ctx: CodegenContext, fctx: FunctionContext, args: re
     const argType = compileExpression(ctx, fctx, arg);
     if (argType !== null) fctx.body.push({ op: "drop" });
   }
-}
-
-function compileDirectNativeGeneratorMethod(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  info: NativeGeneratorInfo,
-  receiverType: ValType,
-  methodName: string,
-  args: readonly ts.Expression[],
-): ValType | null | undefined {
-  if (receiverType.kind === "ref_null") {
-    fctx.body.push({ op: "ref.as_non_null" });
-  }
-  const selfLocal = allocLocal(fctx, `__native_gen_self_${fctx.locals.length}`, {
-    kind: "ref",
-    typeIdx: info.stateTypeIdx,
-  });
-  fctx.body.push({ op: "local.set", index: selfLocal });
-
-  if (methodName === "throw") {
-    // (#2864 F2) `gen.throw(e)` — §27.5.3.4 GeneratorResumeAbrupt(throw).
-    // Compile the error to externref into the dedicated error slot, then:
-    //   • SUSPENDED (state != start && state != done): set mode=2 and resume —
-    //     the resume function runs enclosing finalizers and re-throws (this slice
-    //     has no try/catch-across-yield, so it always propagates).
-    //   • NOT-STARTED / DONE: complete the generator and throw the error directly.
-    const errorTmp = allocLocal(fctx, `__native_gen_err_${fctx.locals.length}`, { kind: "externref" });
-    if (args[0]) {
-      const t = compileExpression(ctx, fctx, args[0], { kind: "externref" });
-      if (t && t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
-      else if (!t) fctx.body.push({ op: "ref.null.extern" });
-    } else {
-      fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
-    }
-    fctx.body.push({ op: "local.set", index: errorTmp });
-    compileIgnoredArgs(ctx, fctx, args.slice(1));
-    fctx.body.push(...nativeGeneratorExecutingCheck(ctx, info, [{ op: "local.get", index: selfLocal }]));
-
-    const tagIdx = ensureExnTag(ctx);
-    // suspended = (state != START) && (state != doneState)
-    fctx.body.push({ op: "local.get", index: selfLocal });
-    fctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD });
-    fctx.body.push({ op: "i32.const", value: 0 });
-    fctx.body.push({ op: "i32.ne" });
-    fctx.body.push({ op: "local.get", index: selfLocal });
-    fctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD });
-    fctx.body.push({ op: "i32.const", value: info.doneState });
-    fctx.body.push({ op: "i32.ne" });
-    fctx.body.push({ op: "i32.and" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "val", type: { kind: "ref", typeIdx: info.resultTypeIdx } },
-      then: [
-        { op: "local.get", index: selfLocal },
-        { op: "local.get", index: errorTmp },
-        { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD },
-        ...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, MODE_THROW),
-        { op: "local.get", index: selfLocal },
-        { op: "call", funcIdx: ensureNativeGeneratorResumeFunction(ctx, info) },
-      ],
-      else: [
-        // Not-started / completed: mark done and throw the error to the caller.
-        ...setStateI32FromConst(info, selfLocal, STATE_FIELD, info.doneState),
-        { op: "local.get", index: errorTmp },
-        { op: "throw", tagIdx },
-      ],
-    });
-    return { kind: "ref", typeIdx: info.resultTypeIdx };
-  }
-
-  if (methodName === "next") {
-    const sentTmp = emitCarrierValue(ctx, fctx, args[0], info);
-    compileIgnoredArgs(ctx, fctx, args.slice(1));
-    fctx.body.push(...nativeGeneratorExecutingCheck(ctx, info, [{ op: "local.get", index: selfLocal }]));
-    fctx.body.push(...setStateFieldFromLocal(info, selfLocal, info.sentFieldIdx, sentTmp));
-    fctx.body.push(...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, 0));
-    fctx.body.push({ op: "local.get", index: selfLocal });
-    fctx.body.push({ op: "call", funcIdx: ensureNativeGeneratorResumeFunction(ctx, info) });
-    return { kind: "ref", typeIdx: info.resultTypeIdx };
-  }
-
-  if (methodName === "return") {
-    const valueTmp = emitCarrierValue(ctx, fctx, args[0], info);
-    compileIgnoredArgs(ctx, fctx, args.slice(1));
-    fctx.body.push(...nativeGeneratorExecutingCheck(ctx, info, [{ op: "local.get", index: selfLocal }]));
-    fctx.body.push({ op: "local.get", index: selfLocal });
-    fctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD });
-    fctx.body.push({ op: "i32.const", value: 0 });
-    fctx.body.push({ op: "i32.eq" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "val", type: { kind: "ref", typeIdx: info.resultTypeIdx } },
-      then: [
-        ...setStateI32FromConst(info, selfLocal, STATE_FIELD, info.doneState),
-        ...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, 0),
-        ...nativeReturnResultFromLocal(ctx, info, valueTmp),
-      ],
-      else: [
-        { op: "local.get", index: selfLocal },
-        { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
-        { op: "i32.const", value: info.doneState },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "ref", typeIdx: info.resultTypeIdx } },
-          then: [
-            ...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, 0),
-            ...nativeReturnResultFromLocal(ctx, info, valueTmp),
-          ],
-          else: [
-            ...setStateFieldFromLocal(info, selfLocal, info.abruptFieldIdx, valueTmp),
-            ...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, 1),
-            { op: "local.get", index: selfLocal },
-            { op: "call", funcIdx: ensureNativeGeneratorResumeFunction(ctx, info) },
-          ],
-        },
-      ],
-    });
-    return { kind: "ref", typeIdx: info.resultTypeIdx };
-  }
-
-  return undefined;
 }
 
 /**
@@ -413,14 +289,11 @@ export function reserveOpaqueNativeGeneratorDispatch(
   // Only no-JS-host targets expose that result as externref: their function
   // expression factory returns a native state through an opaque closure ABI.
   // The JS-host native declaration path keeps its historical eqref result.
-  const externrefResultAbi = ctx.standalone || ctx.wasi;
-  if (externrefResultAbi) {
-    ensureNativeDelegatedResultHelpers(ctx);
-    if (methodName !== "throw") ensureNativeGeneratorNumericPayload(ctx);
-    // (#6651 A14) Those helpers reserve THIS dispatcher re-entrantly (the protocol closures' bodies).
-    const reentered = dispatches.get(methodName);
-    if (reentered) return reentered;
-  }
+  ensureNativeDelegatedResultHelpers(ctx);
+  if (methodName !== "throw") ensureNativeGeneratorNumericPayload(ctx);
+  // (#6651 A14) Those helpers reserve THIS dispatcher re-entrantly (the protocol closures' bodies).
+  const reentered = dispatches.get(methodName);
+  if (reentered) return reentered;
   const params: ValType[] =
     methodName === "throw"
       ? [{ kind: "anyref" }, { kind: "externref" }]
@@ -428,7 +301,7 @@ export function reserveOpaqueNativeGeneratorDispatch(
   const typeIdx = addFuncType(
     ctx,
     params,
-    [{ kind: externrefResultAbi ? "externref" : "eqref" }],
+    [{ kind: "externref" }],
     `$${opaqueNativeGeneratorDispatchName(methodName)}_type`,
   );
   const funcIdx = mintDefinedFunc(ctx);
@@ -436,7 +309,7 @@ export function reserveOpaqueNativeGeneratorDispatch(
   // An opaque `.next()` can be a native iterator-helper call in the no-JS-host
   // lane. Reserve its adapter while body compilation can still register the
   // iterator runtime; JS-host keeps the historical generator-only helper ABI.
-  const anyIterNextIdx = externrefResultAbi && methodName === "next" ? reserveAnyIterNext(ctx) : undefined;
+  const anyIterNextIdx = methodName === "next" ? reserveAnyIterNext(ctx) : undefined;
   const name = opaqueNativeGeneratorDispatchName(methodName);
   pushDefinedFunc(ctx, funcIdx, {
     name,
@@ -710,7 +583,7 @@ function buildNativeGeneratorDispatch(
       ];
     }
     thenBody.unshift(...returnOriginEntryInstrs(info, anyLocal, methodName, valueAnyLocal));
-    if ((ctx.standalone || ctx.wasi) && methodName !== "throw" && !carrierIsAny(info.elemValType)) {
+    if (methodName !== "throw" && !carrierIsAny(info.elemValType)) {
       thenBody.unshift(
         { op: "local.get", index: valueAnyLocal! },
         { op: "call", funcIdx: ctx.funcMap.get("__gen_numeric_payload")! },
@@ -901,15 +774,12 @@ export function fillNativeGeneratorMethodDispatches(ctx: CodegenContext): void {
     // internal anyref. No-JS-host callers need the ordinary dynamic
     // IteratorResult representation after pass 2, so cross that helper ABI as
     // externref. Preserve the JS-host helper's historical eqref result path.
-    fn.body =
-      ctx.standalone || ctx.wasi
-        ? [
-            ...instrs,
-            ...returnOriginResultInstrs(ctx, fn, dispatch.methodName),
-            { op: "extern.convert_any" },
-            { op: "call", funcIdx: ctx.funcMap.get("__gen_result_unwrap")! },
-          ]
-        : instrs;
+    fn.body = [
+      ...instrs,
+      ...returnOriginResultInstrs(ctx, fn, dispatch.methodName),
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: ctx.funcMap.get("__gen_result_unwrap")! },
+    ];
   }
 }
 
@@ -1042,87 +912,14 @@ export function tryCompileNativeGeneratorMethodCall(
   if (ctx.nativeGenerators.size === 0) return undefined;
 
   const receiverType = compileExpression(ctx, fctx, receiverExpr);
-  if (receiverType && (ctx.standalone || ctx.wasi)) {
+  if (receiverType) {
     return compileNativeGeneratorProtocolCall(ctx, fctx, receiverType, methodName, args);
   }
-  if (receiverType && (receiverType.kind === "ref" || receiverType.kind === "ref_null")) {
-    const info = nativeInfoForStateType(ctx, receiverType.typeIdx);
-    if (info) {
-      if (info.nativeDelegates) ensureNativeDelegatedResultHelpers(ctx);
-      const resultType = compileDirectNativeGeneratorMethod(ctx, fctx, info, receiverType, methodName, args);
-      if (info.nativeDelegates && resultType) {
-        fctx.body.push({ op: "extern.convert_any" }, { op: "call", funcIdx: ctx.funcMap.get("__gen_result_unwrap")! });
-        // A delegated non-done result is the iterator's actual object; exposing
-        // a fixed native result type here would cast away identity/accessors.
-        return { kind: "externref" };
-      }
-      return resultType;
-    }
-  }
-
-  if (receiverType?.kind === "externref") {
-    fctx.body.push({ op: "any.convert_extern" });
-  } else if (!receiverType || (receiverType.kind !== "anyref" && receiverType.kind !== "eqref")) {
-    if (receiverType !== null) fctx.body.push({ op: "drop" });
-    compileIgnoredArgs(ctx, fctx, args);
-    fctx.body.push(...emptyResultForType(ctx, ensureNativeGeneratorResultType(ctx)));
-    return { kind: "ref", typeIdx: ctx.nativeGeneratorResultTypeIdx };
-  }
-
-  const anyLocal = allocLocal(fctx, `__native_gen_any_${fctx.locals.length}`, { kind: "anyref" });
-  fctx.body.push({ op: "local.set", index: anyLocal });
-
-  const dispatch = reserveOpaqueNativeGeneratorDispatch(ctx, fctx, methodName);
-
-  // The late-filled helper has a fixed opaque ABI: `.next(v)` / `.return(v)`
-  // carry both the f64 and externref representations so a pass-2 producer can
-  // add an any-carrier frame without re-evaluating the source argument. The
-  // non-missing path evaluates once to externref and derives f64, exactly as the
-  // historical mixed-carrier dispatch did. A missing argument retains the f64
-  // undefined sentinel used by the numeric-only path.
-  let valueLocal: number | undefined;
-  let valueAnyLocal: number | undefined;
-  let errorLocal: number | undefined;
-  if (methodName === "throw") {
-    // (#2864 F2) The thrown value is an externref error, independent of any
-    // generator's carrier — store it in a dedicated local for the dispatch's
-    // throw branch (which writes it to the state struct's `error` field).
-    errorLocal = allocLocal(fctx, `__gen_throw_err_${fctx.locals.length}`, { kind: "externref" });
-    if (args[0]) {
-      const t = compileExpression(ctx, fctx, args[0], { kind: "externref" });
-      if (t && t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
-      else if (!t) fctx.body.push({ op: "ref.null.extern" });
-    } else {
-      fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
-    }
-    fctx.body.push({ op: "local.set", index: errorLocal });
-    compileIgnoredArgs(ctx, fctx, args.slice(1));
-  } else if (methodName === "return" || methodName === "next") {
-    if (args[0]) {
-      valueAnyLocal = emitOpenAnyArgValue(ctx, fctx, args[0]);
-      compileIgnoredArgs(ctx, fctx, args.slice(1));
-      valueLocal = allocLocal(fctx, `__gen_sent_f64_${fctx.locals.length}`, { kind: "f64" });
-      if (ctx.standalone || ctx.wasi) {
-        fctx.body.push({ op: "i64.const", value: UNDEF_F64_BITS }, { op: "f64.reinterpret_i64" });
-      } else {
-        fctx.body.push({ op: "local.get", index: valueAnyLocal });
-        coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
-      }
-      fctx.body.push({ op: "local.set", index: valueLocal });
-    } else {
-      valueLocal = emitExpressionAsF64(ctx, fctx, args[0]);
-      valueAnyLocal = emitOpenAnyArgValue(ctx, fctx, undefined);
-    }
-  }
-
-  fctx.body.push({ op: "local.get", index: anyLocal });
-  if (methodName === "throw") {
-    fctx.body.push({ op: "local.get", index: errorLocal! });
-  } else {
-    fctx.body.push({ op: "local.get", index: valueLocal! }, { op: "local.get", index: valueAnyLocal! });
-  }
-  fctx.body.push({ op: "call", funcIdx: dispatch.funcIdx });
-  return { kind: ctx.standalone || ctx.wasi ? "externref" : "eqref" };
+  // A receiver that produced no value: evaluate the arguments for effect and
+  // answer the empty native result.
+  compileIgnoredArgs(ctx, fctx, args);
+  fctx.body.push(...emptyResultForType(ctx, ensureNativeGeneratorResultType(ctx)));
+  return { kind: "ref", typeIdx: ctx.nativeGeneratorResultTypeIdx };
 }
 
 export function tryCompileNativeGeneratorResultProperty(
@@ -1162,7 +959,6 @@ export function tryCompileNativeGeneratorResultProperty(
   }
 
   if (
-    (ctx.standalone || ctx.wasi) &&
     Array.from(ctx.nativeGenerators.values()).some((info) => info.nativeDelegates) &&
     resultType &&
     ["externref", "anyref", "eqref"].includes(resultType.kind)
@@ -1442,13 +1238,7 @@ function buildOpenResultValueReadExtern(
   // path). Read it through the host accessor instead of answering null. The
   // import exists exactly when a legacy generator was compiled, so pure-native
   // host modules keep their bytes (the #3032 host-bytes contract holds there).
-  const hostValueIdx = !ctx.standalone && !ctx.wasi ? ctx.funcMap.get("__gen_result_value") : undefined;
-  const hostTail: Instr[] =
-    nonNativeTail !== undefined
-      ? nonNativeTail()
-      : hostValueIdx !== undefined
-        ? [{ op: "local.get", index: anyLocal }, { op: "extern.convert_any" }, { op: "call", funcIdx: hostValueIdx }]
-        : [{ op: "ref.null.extern" }];
+  const hostTail: Instr[] = nonNativeTail !== undefined ? nonNativeTail() : [{ op: "ref.null.extern" }];
   const wrap = (i: number): Instr[] => {
     // No-match tail (defensive when no host accessor is available): the null
     // externref rather than `undefInstrs` (#2864 wave-2 S1) — this arm is not
@@ -1535,17 +1325,6 @@ function buildOpenResultRead(
   // (it is registered exactly when a legacy generator compiled); pure-native
   // modules keep the inert default and their existing bytes.
   let hostTail: Instr[] | undefined;
-  if (!ctx.standalone && !ctx.wasi) {
-    const hostIdx =
-      fieldIdx === RESULT_DONE_FIELD
-        ? ctx.funcMap.get("__gen_result_done")
-        : returnVT.kind === "f64"
-          ? ctx.funcMap.get("__gen_result_value_f64")
-          : ctx.funcMap.get("__gen_result_value");
-    if (hostIdx !== undefined) {
-      hostTail = [{ op: "local.get", index: anyLocal }, { op: "extern.convert_any" }, { op: "call", funcIdx: hostIdx }];
-    }
-  }
   // Each level emits its own `ref.test` condition then the `if`; the tail (no
   // match) yields the host read when available, else the inert default.
   const wrap = (i: number): Instr[] => {
@@ -1791,23 +1570,14 @@ export function tryCompileNativeGeneratorForOf(
   // exception. This mirrors the generic iterator driver's #1347 wrapper.
   const closeOnThrow = (): Instr[] => {
     const closeBody = closeGenerator();
-    const innerCloseTry: Instr =
-      ctx.wasi || ctx.standalone
-        ? buildStandardTryTable({ kind: "empty" }, closeBody, [
-            {
-              kind: "catch",
-              tagIdx: ensureExnTag(ctx),
-              payloadType: { kind: "externref" },
-              body: [{ op: "drop" }],
-            },
-          ])
-        : {
-            op: "try",
-            blockType: { kind: "empty" },
-            body: closeBody,
-            catches: [],
-            catchAll: [],
-          };
+    const innerCloseTry: Instr = buildStandardTryTable({ kind: "empty" }, closeBody, [
+      {
+        kind: "catch",
+        tagIdx: ensureExnTag(ctx),
+        payloadType: { kind: "externref" },
+        body: [{ op: "drop" }],
+      },
+    ]);
     return [
       { op: "local.get", index: doneFlag },
       { op: "i32.eqz" },
@@ -1815,36 +1585,26 @@ export function tryCompileNativeGeneratorForOf(
     ];
   };
 
-  if (ctx.wasi || ctx.standalone) {
-    const exnLocal = allocLocal(fctx, `__nativegen_forof_exn_${fctx.locals.length}`, { kind: "externref" });
-    fctx.body.push(
-      buildStandardTryTable(
-        { kind: "empty" },
-        [blockLoopInstr],
-        [
-          {
-            kind: "catch",
-            tagIdx: ensureExnTag(ctx),
-            payloadType: { kind: "externref" },
-            body: [
-              { op: "local.set", index: exnLocal },
-              ...closeOnThrow(),
-              { op: "local.get", index: exnLocal },
-              { op: "throw", tagIdx: ensureExnTag(ctx) },
-            ],
-          },
-        ],
-      ),
-    );
-  } else {
-    fctx.body.push({
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [blockLoopInstr],
-      catches: [],
-      catchAll: [...closeOnThrow(), { op: "rethrow", depth: 0 }],
-    });
-  }
+  const exnLocal = allocLocal(fctx, `__nativegen_forof_exn_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push(
+    buildStandardTryTable(
+      { kind: "empty" },
+      [blockLoopInstr],
+      [
+        {
+          kind: "catch",
+          tagIdx: ensureExnTag(ctx),
+          payloadType: { kind: "externref" },
+          body: [
+            { op: "local.set", index: exnLocal },
+            ...closeOnThrow(),
+            { op: "local.get", index: exnLocal },
+            { op: "throw", tagIdx: ensureExnTag(ctx) },
+          ],
+        },
+      ],
+    ),
+  );
   // A break targeting this for-of loop is handled here; return, outer break,
   // and outer continue have already inlined `closeGenerator` above.
   fctx.body.push(...closeGenerator());

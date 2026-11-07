@@ -56,7 +56,6 @@
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { noJsHost } from "./js-errors.js";
 import {
   ensureNativeStringHelpers,
   nativeStringLiteralInstrs,
@@ -95,7 +94,6 @@ export function seedBoundFunctionMetaOnStack(
   targetLocal: number,
   boundArgCount: number,
 ): void {
-  if (!noJsHost(ctx)) return;
   // Settle the string helpers BEFORE either seed snapshots a funcMap index —
   // registering them mid-seed would bake indices taken across a shift.
   ensureObjectRuntime(ctx);
@@ -115,7 +113,6 @@ export function seedBoundFunctionLength(
   targetLocal: number,
   boundArgCount: number,
 ): void {
-  if (!noJsHost(ctx)) return;
   ensureObjectRuntime(ctx);
   const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
   const getIdx = ctx.funcMap.get("__extern_get");
@@ -229,7 +226,6 @@ export function seedBoundFunctionName(
   boundLocal: number,
   targetLocal: number,
 ): void {
-  if (!noJsHost(ctx)) return;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return;
   ensureObjectRuntime(ctx);
   ensureNativeStringHelpers(ctx);

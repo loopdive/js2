@@ -26,7 +26,7 @@ import { addUnionImports } from "../registry/imports.js";
 import { flushLateImportShifts } from "./late-imports.js";
 
 function noHostVecTarget(ctx: CodegenContext, to: ValType | null): number | undefined {
-  if (!(ctx.standalone || ctx.wasi) || to === null || to.kind !== "ref_null") return undefined;
+  if (to === null || to.kind !== "ref_null") return undefined;
   return getVecInfo(ctx, to.typeIdx) === null ? undefined : to.typeIdx;
 }
 
@@ -65,7 +65,7 @@ export function reserveScalarResultBoxers(
   candidates: readonly { readonly returnType: ValType | null }[],
   expectedReturn: ValType | null,
 ): void {
-  if (!(ctx.standalone || ctx.wasi) || expectedReturn === null) return;
+  if (expectedReturn === null) return;
   if (expectedReturn.kind !== "externref" && expectedReturn.kind !== "ref_extern") return;
   if (!candidates.some(({ returnType }) => returnType?.kind === "f64" || returnType?.kind === "i32")) return;
   addUnionImports(ctx);

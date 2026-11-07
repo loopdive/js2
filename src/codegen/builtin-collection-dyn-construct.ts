@@ -47,7 +47,6 @@ import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { noJsHost } from "./js-errors.js";
 import { addFuncType } from "./registry/types.js";
 import { emitStandaloneCollectionSuperCtor } from "./standalone-subclass-ctors.js";
 import { emitWasiErrorConstructor } from "./registry/error-constructor-delegates.js";
@@ -97,7 +96,6 @@ export function noteBuiltinCollectionCarrierReserved(ctx: CodegenContext, name: 
 
 /** Reserve the helper (standalone/WASI only). Returns its funcIdx, or undefined. */
 export function reserveBuiltinCollectionDynConstruct(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const existing = ctx.funcMap.get(HELPER_NAME);
   if (existing !== undefined) return existing;
   const typeIdx = addFuncType(ctx, [EXTERNREF, EXTERNREF], [EXTERNREF], `$${HELPER_NAME}_type`);
@@ -276,7 +274,7 @@ export function tryEmitErrorFamilyValueConstruct(
   compile: (e: import("../ts-api.js").ts.Expression) => ValType | null,
   toExtern: (t: ValType) => void,
 ): ValType | undefined {
-  if (!noJsHost(ctx) || !ERRORS.includes(className)) return undefined;
+  if (!ERRORS.includes(className)) return undefined;
   const helperIdx = reserveBuiltinCollectionDynConstruct(ctx);
   if (helperIdx === undefined) return undefined;
   const evalTo = (e: import("../ts-api.js").ts.Expression): number => {

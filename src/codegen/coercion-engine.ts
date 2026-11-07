@@ -39,7 +39,6 @@ import { ensureAnyFromExternHelper, ensureExternStrictEqHelper } from "./any-hel
 import { boxToAny, emitIsUndefF64 } from "./value-tags.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { noJsHost } from "./expressions/helpers.js";
 import { addUnionImports, nativeStringType } from "./index.js";
 import { ensureAnyToStringHelper, ensureStrTruthyHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -75,9 +74,7 @@ import { anyValuePayloadToNumberBody } from "./helpers/anyvalue-to-number.js"; /
 export type CoercionMode = "js-host" | "native-strings-host" | "standalone";
 
 export function coercionMode(ctx: CodegenContext): CoercionMode {
-  if (noJsHost(ctx)) return "standalone";
-  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) return "native-strings-host";
-  return "js-host";
+  return "standalone";
 }
 
 /**
@@ -124,10 +121,9 @@ export function ensureAnyValuePayloadToNumber(
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
   addUnionImports(ctx);
-  const nativeToPrimitive = ctx.standalone;
-  if (nativeToPrimitive) ensureObjectRuntime(ctx);
+  ensureObjectRuntime(ctx);
   flushLateImportShifts(ctx, fctx);
-  const toPrimitive = (nativeToPrimitive ? runtimeToPrimitiveInstrs(ctx, hint ?? "number") : null) ?? [];
+  const toPrimitive = runtimeToPrimitiveInstrs(ctx, hint ?? "number") ?? [];
   const toNumber = runtimeToNumberInstrs(ctx);
   if (toNumber === null) return null;
   const anyTypeIdx = ctx.anyValueTypeIdx;
@@ -608,21 +604,13 @@ export function emitToNumber(ctx: CodegenContext, fctx: FunctionContext, valType
   // externref → number. js-host calls `Number(v)` via `__unbox_number`
   // (ToNumber semantics: Number(null)=0, Number("")=0, Number("0x1F")=31 — NOT
   // parseFloat). `--target standalone` has no host import, so coerceType does the
-  // ToPrimitive("number") walk in pure Wasm. NOTE: gated on `ctx.standalone`
+  // ToPrimitive("number") walk in pure Wasm. NOTE: gated on the regime flag
   // EXACTLY (not `noJsHost`) to match the migrated `Number(x)` site byte-for-byte
   // — under `--target wasi` (wasi && !standalone) the original took the
   // `__unbox_number` host path, and this preserves that (any WASI-specific
   // correction is a separate, non-neutral change).
   if (valType.kind === "externref") {
-    if (ctx.standalone) {
-      coerceType(ctx, fctx, valType, { kind: "f64" }, "number");
-      return { kind: "f64" };
-    }
-    addUnionImports(ctx);
-    const unboxIdx = ctx.funcMap.get("__unbox_number");
-    if (unboxIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: unboxIdx });
-    }
+    coerceType(ctx, fctx, valType, { kind: "f64" }, "number");
     return { kind: "f64" };
   }
 
@@ -684,7 +672,7 @@ export function ensureSpecExternrefToStringProvider(
   const existing = ctx.funcMap.get(NAME);
   if (existing !== undefined) return existing;
   const plain = getExternrefToStringProvider(ctx);
-  if (!(ctx.standalone || ctx.wasi) || ctx.symbolTypeIdx < 0 || plain === undefined) return plain;
+  if (ctx.symbolTypeIdx < 0 || plain === undefined) return plain;
   if (getToPrimitiveProvider(ctx) === undefined) return plain;
   addStringConstantGlobal(ctx, "string");
   const throwSym = (): Instr[] =>
@@ -1060,7 +1048,7 @@ function emitAnyEquality(
   // `isReferenceLikeEqFact`): number/boolean/bigint/symbol comparisons keep
   // their exact existing tag-3/tag-4 path untouched. Standalone/WASI only — the
   // host lane emits nothing new (byte-identical).
-  if (helperName === "__any_strict_eq" && (ctx.standalone || ctx.wasi)) {
+  if (helperName === "__any_strict_eq") {
     if (
       isReferenceLikeEqFact(ctx.oracle.typeFactOf(expr.left)) &&
       isReferenceLikeEqFact(ctx.oracle.typeFactOf(expr.right))

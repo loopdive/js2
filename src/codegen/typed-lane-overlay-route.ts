@@ -61,10 +61,7 @@ import { ensureLateImport, flushLateImportShifts } from "./shared.js";
  * the raw `array.get` / `i < length` answer wrong.
  */
 export function overlayRouteActive(ctx: CodegenContext): boolean {
-  return (
-    ctx.standalone === true &&
-    (ctx.vecAccessorDescriptorDirty === true || ctx.vecIndexDeleteDirty === true || ctx.protoIndexDirty === true)
-  );
+  return ctx.vecAccessorDescriptorDirty === true || ctx.vecIndexDeleteDirty === true || ctx.protoIndexDirty === true;
 }
 
 /**

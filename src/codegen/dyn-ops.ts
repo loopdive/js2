@@ -9,15 +9,10 @@ import { jsValueBoundary } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { makeHelperFctx, reservePlaceholder } from "./helpers/reserved-helper-funcs.js";
 import { emitAnyAddFromExternTemps } from "./native-addition.js";
-import {
-  ensureNativeStringHelpers,
-  nativeStringLiteralInstrs,
-  stringConstantExternrefInstrs,
-} from "./native-strings.js";
+import { ensureNativeStringHelpers, nativeStringLiteralInstrs } from "./native-strings.js";
 import { i32ArrayLiteralInstrs } from "./native-regex.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { RE_FLAG_G } from "./regex/bytecode.js";
 import { compilePattern } from "./regex/compile.js";
@@ -329,7 +324,7 @@ function ensureDynamicMethodCall(ctx: CodegenContext, carrier: ValType, arity: 0
     if (argumentToExtern === undefined || resultFromExtern === undefined) {
       throw new Error("dyn-ops: fast standalone method-call carrier bridge unavailable");
     }
-  } else if (ctx.standalone || ctx.wasi) {
+  } else {
     // Host-free externref carriers still pass through the canonical AnyValue
     // classifier used by the established standalone path. In native-first
     // JS, however, an externref may be a raw JS-owned boundary object; keep
@@ -391,174 +386,113 @@ function ensureDynamicMethodCall(ctx: CodegenContext, carrier: ValType, arity: 0
  */
 function ensureDynamicStringReplace(ctx: CodegenContext, carrier: ValType): void {
   const externref: ValType = { kind: "externref" };
-  const standalone = ctx.standalone === true || ctx.wasi === true;
+  // (#6979) Native on every profile; the host `RegExp_new` + `__js_array_*`
+  // replace lane is retired.
 
-  if (standalone) {
-    ensureNativeStringHelpers(ctx);
-    ensureObjectRuntime(ctx);
-    const flatten = ctx.nativeStrHelpers.get("__str_flatten");
-    const replaceAll = ctx.nativeStrHelpers.get("__str_replaceAll");
-    const arrayNew = ctx.funcMap.get("__objvec_new");
-    const arrayPush = ctx.funcMap.get("__objvec_push");
-    const methodCall = ctx.funcMap.get("__extern_method_call");
-    const regexpTypeIdx = ctx.structMap.get("__StandaloneRegExp");
-    if (
-      flatten === undefined ||
-      replaceAll === undefined ||
-      arrayNew === undefined ||
-      arrayPush === undefined ||
-      methodCall === undefined ||
-      regexpTypeIdx === undefined ||
-      ctx.anyStrTypeIdx < 0 ||
-      ctx.nativeStrTypeIdx < 0
-    ) {
-      throw new Error("dyn-ops: standalone dynamic string replace string runtime unavailable");
-    }
-    const fromExtern = ensureAnyFromExternHelper(ctx, { forceHonest: true });
-    if (fromExtern === undefined) {
-      throw new Error("dyn-ops: standalone dynamic string replace classifier unavailable");
-    }
-    const rawExtern = ensureDynamicCallBoundaryExtern(ctx);
-    const compiledRegExp = compilePattern("_", RE_FLAG_G);
-    const regexpInstrs: Instr[] = [
-      { op: "i32.const", value: compiledRegExp.flags },
-      { op: "i32.const", value: compiledRegExp.nGroups },
-      ...i32ArrayLiteralInstrs(ctx, compiledRegExp.prog),
-      ...i32ArrayLiteralInstrs(ctx, compiledRegExp.classTable),
-      ...nativeStringLiteralInstrs(ctx, "_"),
-      { op: "i32.const", value: compiledRegExp.nScratch },
-      { op: "f64.const", value: 0 },
-      // Deferred `lastIndex` storage was added to the standalone RegExp
-      // carrier after this helper was introduced. Keep the dynamic literal
-      // constructor in lockstep with `emitStandaloneRegExpStruct`; the last
-      // field is (#6651 B6) `$lastIndexNonWritable`, 0 = writable.
-      { op: "ref.null.extern" },
-      { op: "i32.const", value: 0 },
-      { op: "i32.const", value: 0 },
-      { op: "struct.new", typeIdx: regexpTypeIdx },
-      { op: "extern.convert_any" },
-    ];
-    const flatRef: ValType = { kind: "ref", typeIdx: ctx.nativeStrTypeIdx };
-    addHelper(
-      ctx,
-      IR_DYN_STRING_REPLACE_FN,
-      [carrier, carrier, carrier],
-      [carrier],
-      [
-        // Classify once. Native strings take the exact underscore fast path;
-        // every other brand keeps ordinary receiver-preserving dispatch.
-        { op: "local.get", index: 0 },
-        { op: "call", funcIdx: fromExtern },
-        { op: "call", funcIdx: rawExtern },
-        { op: "local.set", index: 5 },
-        { op: "local.get", index: 5 },
-        { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "val", type: externref },
-          then: [
-            { op: "local.get", index: 5 },
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-            { op: "call", funcIdx: flatten },
-            { op: "local.set", index: 3 },
-            { op: "local.get", index: 2 },
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-            { op: "call", funcIdx: flatten },
-            { op: "local.set", index: 4 },
-            { op: "local.get", index: 3 },
-            ...nativeStringLiteralInstrs(ctx, "_"),
-            { op: "local.get", index: 4 },
-            { op: "call", funcIdx: replaceAll },
-            { op: "extern.convert_any" },
-          ],
-          else: [
-            { op: "call", funcIdx: arrayNew },
-            { op: "local.set", index: 6 },
-            { op: "local.get", index: 6 },
-            ...regexpInstrs,
-            { op: "call", funcIdx: arrayPush },
-            { op: "local.get", index: 6 },
-            { op: "local.get", index: 2 },
-            { op: "call", funcIdx: arrayPush },
-            { op: "local.get", index: 5 },
-            { op: "local.get", index: 1 },
-            { op: "call", funcIdx: fromExtern },
-            { op: "call", funcIdx: rawExtern },
-            { op: "local.get", index: 6 },
-            { op: "call", funcIdx: methodCall },
-          ],
-        },
-      ],
-      [
-        { name: "subject", type: flatRef },
-        { name: "replacement", type: flatRef },
-        { name: "receiver", type: externref },
-        { name: "args", type: externref },
-      ],
-    );
-    return;
-  }
-
-  const arrayNewName = "__js_array_new";
-  const arrayPushName = "__js_array_push";
-
-  addStringConstantGlobal(ctx, "_");
-  addStringConstantGlobal(ctx, "g");
-  ensureLateImport(ctx, arrayNewName, [], [externref]);
-  ensureLateImport(ctx, arrayPushName, [externref, externref], []);
-  ensureLateImport(ctx, "__extern_method_call", [externref, externref, externref], [externref]);
-  ensureLateImport(ctx, "RegExp_new", [externref, externref], [externref]);
-  if (ctx.fast) ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
-  flushLateImportShifts(ctx, null);
-
-  const arrayNew = ctx.funcMap.get(arrayNewName);
-  const arrayPush = ctx.funcMap.get(arrayPushName);
+  ensureNativeStringHelpers(ctx);
+  ensureObjectRuntime(ctx);
+  const flatten = ctx.nativeStrHelpers.get("__str_flatten");
+  const replaceAll = ctx.nativeStrHelpers.get("__str_replaceAll");
+  const arrayNew = ctx.funcMap.get("__objvec_new");
+  const arrayPush = ctx.funcMap.get("__objvec_push");
   const methodCall = ctx.funcMap.get("__extern_method_call");
-  if (arrayNew === undefined || arrayPush === undefined || methodCall === undefined) {
-    throw new Error("dyn-ops: dynamic string replace runtime unavailable");
+  const regexpTypeIdx = ctx.structMap.get("__StandaloneRegExp");
+  if (
+    flatten === undefined ||
+    replaceAll === undefined ||
+    arrayNew === undefined ||
+    arrayPush === undefined ||
+    methodCall === undefined ||
+    regexpTypeIdx === undefined ||
+    ctx.anyStrTypeIdx < 0 ||
+    ctx.nativeStrTypeIdx < 0
+  ) {
+    throw new Error("dyn-ops: standalone dynamic string replace string runtime unavailable");
   }
-  const regexpNew = ctx.funcMap.get("RegExp_new");
-  if (regexpNew === undefined) {
-    throw new Error("dyn-ops: dynamic string replace RegExp constructor unavailable");
+  const fromExtern = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+  if (fromExtern === undefined) {
+    throw new Error("dyn-ops: standalone dynamic string replace classifier unavailable");
   }
+  const rawExtern = ensureDynamicCallBoundaryExtern(ctx);
+  const compiledRegExp = compilePattern("_", RE_FLAG_G);
   const regexpInstrs: Instr[] = [
-    ...stringConstantExternrefInstrs(ctx, "_"),
-    ...stringConstantExternrefInstrs(ctx, "g"),
-    { op: "call", funcIdx: regexpNew },
+    { op: "i32.const", value: compiledRegExp.flags },
+    { op: "i32.const", value: compiledRegExp.nGroups },
+    ...i32ArrayLiteralInstrs(ctx, compiledRegExp.prog),
+    ...i32ArrayLiteralInstrs(ctx, compiledRegExp.classTable),
+    ...nativeStringLiteralInstrs(ctx, "_"),
+    { op: "i32.const", value: compiledRegExp.nScratch },
+    { op: "f64.const", value: 0 },
+    // Deferred `lastIndex` storage was added to the standalone RegExp
+    // carrier after this helper was introduced. Keep the dynamic literal
+    // constructor in lockstep with `emitStandaloneRegExpStruct`; the last
+    // field is (#6651 B6) `$lastIndexNonWritable`, 0 = writable.
+    { op: "ref.null.extern" },
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "struct.new", typeIdx: regexpTypeIdx },
+    { op: "extern.convert_any" },
   ];
-
-  if (ctx.fast) {
-    throw new Error("dyn-ops: fast host dynamic string replace is not enabled");
-  }
-
-  const argsLocal = 3;
+  const flatRef: ValType = { kind: "ref", typeIdx: ctx.nativeStrTypeIdx };
   addHelper(
     ctx,
     IR_DYN_STRING_REPLACE_FN,
     [carrier, carrier, carrier],
     [carrier],
     [
-      { op: "call", funcIdx: arrayNew },
-      { op: "local.set", index: argsLocal },
-      // Argument 0: a fresh exact /_/g RegExp carrier.
-      { op: "local.get", index: argsLocal },
-      ...regexpInstrs,
-      { op: "call", funcIdx: arrayPush },
-      // Argument 1: the proven string, carried dynamically.
-      { op: "local.get", index: argsLocal },
-      { op: "local.get", index: 2 },
-      { op: "call", funcIdx: arrayPush },
-      // Preserve the member receiver as `this` and dispatch only after both
-      // arguments have been appended in source order.
+      // Classify once. Native strings take the exact underscore fast path;
+      // every other brand keeps ordinary receiver-preserving dispatch.
       { op: "local.get", index: 0 },
-      { op: "local.get", index: 1 },
-      { op: "local.get", index: argsLocal },
-      { op: "call", funcIdx: methodCall },
+      { op: "call", funcIdx: fromExtern },
+      { op: "call", funcIdx: rawExtern },
+      { op: "local.set", index: 5 },
+      { op: "local.get", index: 5 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: externref },
+        then: [
+          { op: "local.get", index: 5 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+          { op: "call", funcIdx: flatten },
+          { op: "local.set", index: 3 },
+          { op: "local.get", index: 2 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+          { op: "call", funcIdx: flatten },
+          { op: "local.set", index: 4 },
+          { op: "local.get", index: 3 },
+          ...nativeStringLiteralInstrs(ctx, "_"),
+          { op: "local.get", index: 4 },
+          { op: "call", funcIdx: replaceAll },
+          { op: "extern.convert_any" },
+        ],
+        else: [
+          { op: "call", funcIdx: arrayNew },
+          { op: "local.set", index: 6 },
+          { op: "local.get", index: 6 },
+          ...regexpInstrs,
+          { op: "call", funcIdx: arrayPush },
+          { op: "local.get", index: 6 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: arrayPush },
+          { op: "local.get", index: 5 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: fromExtern },
+          { op: "call", funcIdx: rawExtern },
+          { op: "local.get", index: 6 },
+          { op: "call", funcIdx: methodCall },
+        ],
+      },
     ],
-    [{ name: "args", type: externref }],
+    [
+      { name: "subject", type: flatRef },
+      { name: "replacement", type: flatRef },
+      { name: "receiver", type: externref },
+      { name: "args", type: externref },
+    ],
   );
 }
 
@@ -572,14 +506,10 @@ function ensureDynamicMemberCallSupport(ctx: CodegenContext, carrier: ValType): 
   emitWasiErrorConstructor(ctx, "TypeError", 1);
   flushLateImportShifts(ctx, null);
   const honest = ensureAnyFromExternHelper(ctx, { forceHonest: true });
-  const fromExtern = !ctx.fast && (ctx.standalone || ctx.wasi) ? honest : undefined;
-  const raw = ctx.fast || ctx.standalone || ctx.wasi ? ensureDynamicCallBoundaryExtern(ctx) : undefined;
+  const fromExtern = !ctx.fast ? honest : undefined;
+  const raw = ensureDynamicCallBoundaryExtern(ctx);
   const arg = ctx.fast ? ensureAnyToExternHelper(ctx) : undefined;
-  if (
-    (!ctx.fast && (ctx.standalone || ctx.wasi) && fromExtern === undefined) ||
-    ((ctx.fast || ctx.standalone || ctx.wasi) && raw === undefined) ||
-    (ctx.fast && arg === undefined)
-  ) {
+  if ((!ctx.fast && fromExtern === undefined) || raw === undefined || (ctx.fast && arg === undefined)) {
     throw new Error("native member-call carrier projection unavailable");
   }
   addHelper(

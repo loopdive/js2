@@ -44,7 +44,7 @@ import {
 } from "../shared/contracts/native-buffer-adapters.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./js-errors.js";
 import { ts } from "../ts-api.js"; // (#3177 slice 2) literal-`undefined` length detection
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./index.js";
 import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
@@ -239,9 +239,6 @@ export function inferNativeTaViewConstructType(
   const args = expression.arguments;
   if (!args || args.length < 1 || args.length > 3 || ts.isNumericLiteral(args[0]!)) return null;
   const argBrand = nativeBufferBuiltinOf(ctx, args[0]!);
-  if (!noJsHost(ctx)) {
-    return argBrand === "ArrayBuffer" || argBrand === "SharedArrayBuffer" ? { kind: "externref" } : null;
-  }
   // An erased one-argument source still has a runtime overload set (plain
   // vec/array-like/iterable/count).  The static constructor hook routes these
   // values through the runtime-kinded native dispatcher, whose boxed view
@@ -479,7 +476,7 @@ function probePackedByteSliceReceiver(
   fctx: FunctionContext,
   guarded: boolean,
 ): { isPackedLocal: number; i8VecIdx: number; i8ArrIdx: number } {
-  if (!guarded || !noJsHost(ctx)) return { isPackedLocal: -1, i8VecIdx: -1, i8ArrIdx: -1 };
+  if (!guarded) return { isPackedLocal: -1, i8VecIdx: -1, i8ArrIdx: -1 };
   const i8VecIdx = getOrRegisterVecType(ctx, "i8_byte", { kind: "i8" });
   const i8ArrIdx = getArrTypeIdxFromVec(ctx, i8VecIdx);
   if (i8ArrIdx < 0) return { isPackedLocal: -1, i8VecIdx: -1, i8ArrIdx: -1 };
@@ -1022,7 +1019,6 @@ export function ensureArrayBufferTransferHelper(
   ctx: CodegenContext,
   method: ArrayBufferTransferMethod,
 ): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const helperName = arrayBufferTransferHelperName(method);
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -1260,7 +1256,7 @@ export function emitArrayBufferTransfer(
   args: readonly import("../ts-api.js").ts.Expression[],
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
 ): ValType | null {
-  if (!noJsHost(ctx) || ensureArrayBufferTransferHelper(ctx, method) === undefined) return null;
+  if (ensureArrayBufferTransferHelper(ctx, method) === undefined) return null;
 
   const receiverType = compileExpr(receiver);
   if (!receiverType) return null;
@@ -2127,7 +2123,7 @@ export function emitDataViewAccessor(
   // first (the call's ArgumentListEvaluation happens before ToIndex), then
   // throw without applying later ToNumber/ToBoolean coercions. Host lowering
   // deliberately keeps the old path byte-for-byte unchanged.
-  const staticSymbolOffset = args.length >= 1 && noJsHost(ctx) && ctx.oracle.staticJsTypeOf(args[0]!) === "symbol";
+  const staticSymbolOffset = args.length >= 1 && ctx.oracle.staticJsTypeOf(args[0]!) === "symbol";
   if (staticSymbolOffset) {
     for (const arg of args) {
       const argType = compileExpr(arg);
@@ -2551,7 +2547,6 @@ export function tryCompileStandaloneDetachedWrite(
   value: import("../ts-api.js").ts.Expression,
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
 ): ValType | undefined {
-  if (!noJsHost(ctx)) return undefined;
   if (target.name.text !== "__detached__") return undefined;
 
   const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
@@ -3238,15 +3233,6 @@ function emitRecoverBufferVecGuarded(
   desc: { bytes: number; signed: boolean; float: boolean },
 ): void {
   const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
-  // The JS-host lane never registers `$__vec_i8_byte` (`TYPED_ARRAY_PACKED_STORAGE`
-  // is gated on `wasi || standalone`), so no packed-byte value can reach this
-  // cast there and the guard would only add a type and change bytes. Keep the
-  // bare cast — byte-identical to main on host.
-  if (!noJsHost(ctx)) {
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
-    fctx.body.push({ op: "local.set", index: bufLocal });
-    return;
-  }
   // Register the packed-byte carrier unconditionally on the host-free lanes: a
   // module can construct one in a function compiled AFTER this site, so "not
   // registered yet" is not proof that no packed-byte value can reach here.
@@ -3480,8 +3466,6 @@ export function emitDynamicUint8ArrayBufferAlias(
   argExpr: import("../ts-api.js").ts.Expression,
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
 ): ValType | null {
-  if (!noJsHost(ctx)) return null;
-
   const { vecTypeIdx: byteVecIdx } = i32ByteVec(ctx);
   const uintVecIdx = getOrRegisterVecType(ctx, "i8_byte", { kind: "i8" });
   const uintArrIdx = getArrTypeIdxFromVec(ctx, uintVecIdx);
@@ -3627,7 +3611,6 @@ export function emitDynamicTypedArrayConstructFromAny(
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
   additionalArgs: readonly import("../ts-api.js").ts.Expression[] = [],
 ): ValType | null {
-  if (!noJsHost(ctx)) return null;
   const kind = taCtorKindOf(viewName);
   if (kind < 0) return null;
 
@@ -6748,7 +6731,7 @@ export function ensureStandaloneTaSubclassParentCtor(
   argCount: number,
 ): number | undefined {
   const kind = taCtorKindOf(parentName);
-  if (kind < 0 || kind > 8 || !noJsHost(ctx)) return undefined;
+  if (kind < 0 || kind > 8) return undefined;
   const key = `__new_${parentName}@${argCount}`;
   const existing = ctx.funcMap.get(key);
   if (existing !== undefined) return existing;
@@ -6834,7 +6817,7 @@ export function emitArrayBufferSliceSpecies(
   vecTypeIdx: number,
   resetSink?: Instr[],
 ): number | null {
-  if (!noJsHost(ctx) || !ctx.arraySpeciesDirty) return null;
+  if (!ctx.arraySpeciesDirty) return null;
   // (#5349) Step 16 ("if new does not have an [[ArrayBufferData]] slot, throw a
   // TypeError") is decided below by `ref.test $__vec_i32_byte`. That is a
   // REPRESENTATION test, and it is decidable because the packed-byte TypedArray
@@ -7169,8 +7152,6 @@ export function emitTaDynSpeciesCreate(
   fctx: FunctionContext,
   options: TaDynSpeciesCreateOptions,
 ): number | null {
-  if (!noJsHost(ctx)) return null;
-
   const dynIdx = getOrRegisterTaDynViewType(ctx);
   ensureObjectRuntime(ctx);
   ensureSymbolCarrier(ctx);
@@ -7537,7 +7518,6 @@ export interface TaFromArrayLikeMapHook {
  * (append-only — no import add / funcIdx shift). Idempotent via funcMap.
  */
 export function ensureTaFromArrayLikeHelper(ctx: CodegenContext, mapHook?: TaFromArrayLikeMapHook): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const helperName = mapHook?.helperName ?? "__ta_from_arraylike";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -7785,7 +7765,6 @@ function taDynDetachedAfterCoercionThrow(
  * (no imports → the minted stable handle never shifts). Idempotent via funcMap.
  */
 export function ensureTaDynFillHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const helperName = "__ta_dyn_fill";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -8062,7 +8041,6 @@ export function ensureTaDynFillHelper(ctx: CodegenContext): number | undefined {
  * adds no standalone imports.  Idempotent through `funcMap`.
  */
 export function ensureTaDynSetHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const helperName = "__ta_dyn_set";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -8693,7 +8671,6 @@ export function makeHelperFctx(
  * decode/encode — the raw bytes move verbatim. noJsHost lane only; idempotent.
  */
 export function ensureTaDynCopyWithinHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const helperName = "__ta_dyn_copywithin";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -8894,7 +8871,6 @@ export function ensureTaDynCopyWithinHelper(ctx: CodegenContext): number | undef
  * `recv` (`ta.reverse() === ta`). noJsHost lane only; idempotent.
  */
 export function ensureTaDynReverseHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const helperName = "__ta_dyn_reverse";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -9866,160 +9842,6 @@ export function emitDataViewToWriteScratch(
   });
 
   return lenLocal;
-}
-
-/**
- * (#3058) Resizable-ArrayBuffer helper exports for the JS-host runtime.
- *
- * The JS-host lane lowers `new ArrayBuffer(n, {maxByteLength})` to the same
- * `$__resizable_ab` WasmGC subtype the standalone lane uses (#3054 C), but the
- * host-lane method/getter dispatch happens in the JS runtime
- * (`__extern_method_call` / `__extern_get`), which cannot touch WasmGC struct
- * fields directly. Two exports bridge that:
- *
- *   __ab_max_len(externref) -> f64   — maxByteLength (field 2) for a
- *       `$__resizable_ab` instance; -1 for a fixed buffer / any other value.
- *       The -1 sentinel doubles as the `resizable` discriminator.
- *   __rab_resize(externref, i32) -> i32 — the §25.1.6.4 resize core: realloc
- *       the backing i8 array to newLen, copy min(oldLen, newLen) bytes, swap
- *       `data` + `length` IN PLACE on the same struct (views/DataView fallback
- *       observe the swap through `__dv_byte_len`). Status: 0 ok · 1 receiver
- *       not resizable (TypeError) · 2 newLen out of range (RangeError). The
- *       runtime arm pre-validates per spec order and maps statuses to host
- *       error types; the in-function checks are a defensive backstop.
- *
- * Host lane only: standalone/WASI resize compiles to the inline native emitter
- * (`emitArrayBufferResize`) and has no JS runtime to call exports — the gate
- * keeps the standalone lane byte-identical. Modules that never construct a
- * resizable buffer (`ctx.resizableAbTypeIdx < 0`) are byte-identical too.
- */
-export function emitResizableAbExports(ctx: CodegenContext): void {
-  if (ctx.wasi || ctx.standalone) return; // JS-host lane only (see doc comment)
-  const rabTypeIdx = ctx.resizableAbTypeIdx;
-  if (rabTypeIdx < 0) return;
-  const mod = ctx.mod;
-  const byteVecTypeIdx = ctx.vecTypeMap.get("i32_byte");
-  if (byteVecTypeIdx === undefined) return;
-  const arrTypeIdx = getArrTypeIdxFromVec(ctx, byteVecTypeIdx);
-  if (arrTypeIdx < 0) return;
-
-  // __ab_max_len(externref) -> f64
-  {
-    const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "f64" }], "$__ab_max_len_type");
-    const funcIdx = ctx.numImportFuncs + mod.functions.length;
-    const body: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: 1 },
-      { op: "local.get", index: 1 },
-      { op: "ref.test", typeIdx: rabTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: rabTypeIdx },
-          { op: "struct.get", typeIdx: rabTypeIdx, fieldIdx: 2 },
-          { op: "f64.convert_i32_s" },
-          { op: "return" },
-        ],
-        else: [],
-      },
-      { op: "f64.const", value: -1 },
-    ];
-    mod.functions.push({
-      name: "__ab_max_len",
-      typeIdx,
-      locals: [{ name: "__any", type: { kind: "anyref" } }],
-      body,
-      exported: true,
-    } as any);
-    mod.exports.push({ name: "__ab_max_len", desc: { kind: "func", index: funcIdx } });
-  }
-
-  // __rab_resize(externref, i32) -> i32
-  {
-    const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "i32" }], [{ kind: "i32" }], "$__rab_resize_type");
-    const funcIdx = ctx.numImportFuncs + mod.functions.length;
-    // locals: 2 = anyref scratch, 3 = (ref null $__resizable_ab), 4 = (ref null
-    // $__arr_i32_byte) new backing, 5 = i32 copyLen.
-    const body: Instr[] = [
-      // if receiver is not a $__resizable_ab → status 1 (TypeError in the runtime arm)
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: 2 },
-      { op: "local.get", index: 2 },
-      { op: "ref.test", typeIdx: rabTypeIdx },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
-        else: [],
-      },
-      { op: "local.get", index: 2 },
-      { op: "ref.cast", typeIdx: rabTypeIdx },
-      { op: "local.set", index: 3 },
-      // if newLen < 0 || newLen > maxByteLength (field 2) → status 2 (RangeError)
-      { op: "local.get", index: 1 },
-      { op: "i32.const", value: 0 },
-      { op: "i32.lt_s" },
-      { op: "local.get", index: 1 },
-      { op: "local.get", index: 3 },
-      { op: "struct.get", typeIdx: rabTypeIdx, fieldIdx: 2 },
-      { op: "i32.gt_s" },
-      { op: "i32.or" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 2 }, { op: "return" }],
-        else: [],
-      },
-      // copyLen = min(oldLen = field 0, newLen)
-      { op: "local.get", index: 3 },
-      { op: "struct.get", typeIdx: rabTypeIdx, fieldIdx: 0 },
-      { op: "local.get", index: 1 },
-      { op: "local.get", index: 3 },
-      { op: "struct.get", typeIdx: rabTypeIdx, fieldIdx: 0 },
-      { op: "local.get", index: 1 },
-      { op: "i32.lt_s" },
-      { op: "select" },
-      { op: "local.set", index: 5 },
-      // newArr = array.new_default $__arr_i32_byte (newLen)
-      { op: "local.get", index: 1 },
-      { op: "array.new_default", typeIdx: arrTypeIdx },
-      { op: "local.set", index: 4 },
-      // array.copy newArr[0..copyLen) ← rab.data[0..copyLen)
-      { op: "local.get", index: 4 },
-      { op: "i32.const", value: 0 },
-      { op: "local.get", index: 3 },
-      { op: "struct.get", typeIdx: rabTypeIdx, fieldIdx: 1 },
-      { op: "i32.const", value: 0 },
-      { op: "local.get", index: 5 },
-      { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
-      // swap data + length IN PLACE (same struct → views observe the resize)
-      { op: "local.get", index: 3 },
-      { op: "local.get", index: 4 },
-      { op: "struct.set", typeIdx: rabTypeIdx, fieldIdx: 1 },
-      { op: "local.get", index: 3 },
-      { op: "local.get", index: 1 },
-      { op: "struct.set", typeIdx: rabTypeIdx, fieldIdx: 0 },
-      { op: "i32.const", value: 0 },
-    ];
-    mod.functions.push({
-      name: "__rab_resize",
-      typeIdx,
-      locals: [
-        { name: "__any", type: { kind: "anyref" } },
-        { name: "__rab", type: { kind: "ref_null", typeIdx: rabTypeIdx } },
-        { name: "__newarr", type: { kind: "ref_null", typeIdx: arrTypeIdx } },
-        { name: "__copylen", type: { kind: "i32" } },
-      ],
-      body,
-      exported: true,
-    } as any);
-    mod.exports.push({ name: "__rab_resize", desc: { kind: "func", index: funcIdx } });
-  }
 }
 
 /**

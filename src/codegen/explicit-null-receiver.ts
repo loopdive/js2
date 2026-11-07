@@ -45,7 +45,7 @@
  *
  * ── Availability gate ────────────────────────────────────────────────────
  *
- * `ctx.standalone || ctx.nativeStrings` only. Off that lane, `undefined` has
+ * the native regime only. Off that lane, `undefined` has
  * no guaranteed non-null externref representation, so "the trampoline's null
  * arm means the caller passed null" is not a safe reading, and a marker
  * escaping into a JS host would be an opaque object rather than `null`. The
@@ -98,11 +98,6 @@ export function sourceBindsReceiver(sf: ts.SourceFile): boolean {
   return found;
 }
 
-/** The regime gate, without the per-file question. */
-export function explicitNullReceiverLane(ctx: CodegenContext): boolean {
-  return ctx.standalone === true || ctx.nativeStrings === true;
-}
-
 /**
  * Should code compiled for `node` participate in the marker protocol?
  *
@@ -115,7 +110,6 @@ export function explicitNullReceiverLane(ctx: CodegenContext): boolean {
  * just the file prologue (`10.4.3-1-77-s` puts it inside `f`).
  */
 export function explicitNullReceiverActive(ctx: CodegenContext, node: ts.Node): boolean {
-  if (!explicitNullReceiverLane(ctx)) return false;
   const sf = node.getSourceFile?.();
   if (sf === undefined || !sourceBindsReceiver(sf)) return false;
   return sf.text.includes("use strict") || isStrictContext(sf, ctx.inferModuleStrictArguments);
@@ -132,7 +126,6 @@ export function explicitNullReceiverActive(ctx: CodegenContext, node: ts.Node): 
  */
 export function ensureExplicitNullThisGlobal(ctx: CodegenContext): number | undefined {
   if (ctx.explicitNullThisGlobalIdx !== undefined) return ctx.explicitNullThisGlobalIdx;
-  if (!explicitNullReceiverLane(ctx)) return undefined;
   if (ctx.anyValueTypeIdx < 0) ensureAnyValueType(ctx);
   const anyTypeIdx = ctx.anyValueTypeIdx;
   if (anyTypeIdx < 0) return undefined;

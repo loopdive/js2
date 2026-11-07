@@ -62,7 +62,7 @@ export function widenProxyTrapMixedReturn(
   retType: ts.Type,
   lowered: ValType,
 ): ValType {
-  if (!ctx.standalone || ts.isFunctionDeclaration(fn)) return lowered;
+  if (ts.isFunctionDeclaration(fn)) return lowered;
   const prop = fn.parent;
   if (!ts.isPropertyAssignment(prop) || prop.initializer !== fn) return lowered;
   if (!ts.isObjectLiteralExpression(prop.parent) || !isProxyHandlerLiteral(prop.parent)) return lowered;

@@ -395,7 +395,7 @@ function buildReverseBody(ctx: CodegenContext, deps: SliceDeps): { body: Instr[]
  * substrate is unavailable, in which case callers keep their previous behaviour.
  */
 export function ensureNativeArraySlice(ctx: CodegenContext, methodName: string): number | undefined {
-  if (!ctx.standalone || !NATIVE_SLICE_METHODS.has(methodName)) return undefined;
+  if (!NATIVE_SLICE_METHODS.has(methodName)) return undefined;
   const helperName = `__arrprod_${methodName}`;
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -431,7 +431,7 @@ export function ensureNativeArraySlice(ctx: CodegenContext, methodName: string):
  */
 export function emitSliceProtoEndDefault(ctx: CodegenContext, fctx: FunctionContext, endLocal: number): void {
   const isUndefined = ctx.funcMap.get("__extern_is_undefined");
-  if (!ctx.standalone || isUndefined === undefined || fctx.params.length < 4) return;
+  if (isUndefined === undefined || fctx.params.length < 4) return;
   fctx.body.push(
     { op: "local.get", index: 3 },
     { op: "call", funcIdx: isUndefined },
@@ -454,7 +454,7 @@ export function emitSliceProtoEndDefault(ctx: CodegenContext, fctx: FunctionCont
  * Returns false (emitting nothing) when the native helper is unavailable.
  */
 export function emitSliceProtoArrayLikeFallback(ctx: CodegenContext, fctx: FunctionContext): boolean {
-  if (!ctx.standalone || fctx.params.length < 4) return false;
+  if (fctx.params.length < 4) return false;
   const sliceIdx = ensureNativeArraySlice(ctx, "slice");
   const objVecNew = ctx.funcMap.get("__objvec_new");
   const objVecPush = ctx.funcMap.get("__objvec_push");
