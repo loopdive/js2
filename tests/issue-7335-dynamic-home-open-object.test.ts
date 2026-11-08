@@ -7,8 +7,7 @@
 // initializes it (`__new_plain_object`), defines on it with a literal data
 // descriptor from any unit, and tests it with `hasOwnProperty` /
 // `propertyIsEnumerable`. Every other use keeps the binding on legacy, refused at
-// select (never claimed and then demoted); so does a module-init `var` head the
-// unit cannot model. The gc lane keeps declining.
+// select, never claimed and then demoted. The gc lane keeps declining.
 import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { compile, type CompileResult } from "../src/index.js";
@@ -155,9 +154,10 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
     source: `var o = {}; Object.prototype.hasOwnProperty = function () { return true; }; if (!o.hasOwnProperty('zz')) { throw "override"; }`,
     detail: "objectlit-empty",
   },
-  "module-init var head": {
+  // The census's claim-then-demote; #7288 (main) now refuses the head at select.
+  "module-init for-in var head": {
     source: `/** @type {any} */ var a = 'ab'; var n = 0; for (var k in a) { n++; } if (n !== 2) { throw "n"; }`,
-    detail: "module-init-unmodelled-var",
+    detail: "forin-head-module-var",
   },
 };
 

@@ -27,7 +27,7 @@
 import { forEachChild, ts } from "../ts-api.js";
 import { isStoreTarget, skipOuterExpressions } from "./binding-writes.js";
 
-export type PatchableIntrinsic = "Array" | "Function" | "Object" | "RegExp" | "String";
+export type PatchableIntrinsic = "Array" | "Function" | "Object" | "String";
 
 interface PrototypeUse {
   readonly writes: Set<PatchableIntrinsic>;
@@ -103,7 +103,7 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
   return use;
 }
 
-/** `Array` for `Array.prototype` / `globalThis.Array.prototype`, and each other patchable intrinsic likewise. */
+/** `Array` for `Array.prototype` / `globalThis.Array.prototype`, `Object` and `String` likewise. */
 function prototypeOwner(
   expression: ts.PropertyAccessExpression,
 ): { readonly intrinsic: PatchableIntrinsic; readonly viaGlobalThis: boolean } | undefined {
@@ -116,13 +116,7 @@ function prototypeOwner(
   const owner = viaGlobalThis ? receiver.name : receiver;
   if (!ts.isIdentifier(owner)) return undefined;
   const intrinsic = owner.text;
-  if (
-    intrinsic !== "Array" &&
-    intrinsic !== "Function" &&
-    intrinsic !== "Object" &&
-    intrinsic !== "RegExp" &&
-    intrinsic !== "String"
-  ) {
+  if (intrinsic !== "Array" && intrinsic !== "Function" && intrinsic !== "Object" && intrinsic !== "String") {
     return undefined;
   }
   return { intrinsic, viaGlobalThis };

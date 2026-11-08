@@ -25,7 +25,6 @@ import { allocLocal } from "../context/locals.js";
 import { emitEvalCompletionTail } from "../statements/eval-completion-value.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitVariadicStringConcat, nativeStringRepr } from "../builtin-scaffold.js";
-import { emitGlobalEnvironmentObject } from "../global-environment.js";
 import { hoistFunctionDeclarations } from "../statements/nested-declarations.js";
 import { hoistLetConstWithTdz, hoistVarDeclarations } from "../index.js";
 import type { InnerResult } from "../shared.js";
@@ -42,12 +41,7 @@ import { isUseStrictDirectiveExpression } from "../helpers/use-strict-directive.
 import { evalCallerCapabilities, foldedEvalEarlyError } from "./eval-early-errors.js";
 import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
 import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
-import {
-  emitRuntimeEvalGlobalBindingSeed,
-  emitRuntimeEvalProviderActive,
-  emitRuntimeEvalResultUnwrap,
-  RUNTIME_EVAL_IMPORT_MODULE,
-} from "./runtime-eval-provider.js";
+import { ensureRuntimeEvalGlobalCall, RUNTIME_EVAL_IMPORT_MODULE } from "./runtime-eval-provider.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { ensureRuntimeEvalInterpretedCallbackType } from "../runtime-eval-boundary.js";
 import { emitRuntimeEvalFunctionPrototypeSeed } from "../runtime-eval-construct.js"; // (#4438) §20.2.1.1
@@ -2024,12 +2018,17 @@ const DYNAMIC_CODE_UNSUPPORTED_MSG =
   "(tracking: runtime-eval goal, bytecode interpreter #2928)";
 
 /**
- * Standalone indirect eval route. Indirect eval is always global-scoped and
- * can execute entirely inside the separately linked interpreter provider.
+ * (#7106 A2) Standalone global-scope eval: indirect eval (§19.2.1.1, also a
+ * sloppy script-level direct eval, which runs at the same global environment)
+ * or the host-facing global Script entry, whose lexical declarations persist
+ * in the realm's GlobalEnvironmentRecord. The source and any extra arguments
+ * are evaluated here, BEFORE the support function publishes the script
+ * bindings (`ensureRuntimeEvalGlobalCall`), so the push sees their effects.
  */
-export function emitStandaloneIndirectEvalRuntime(
+export function emitStandaloneGlobalEvalRuntime(
   ctx: CodegenContext,
   fctx: FunctionContext,
+  entry: "__runtime_indirect_eval" | "__runtime_script_eval",
   args: readonly ts.Expression[],
   sourceLocal?: number, // (#6774 S18) the source already evaluated (spread args)
 ): ValType | undefined {
@@ -2043,79 +2042,19 @@ export function emitStandaloneIndirectEvalRuntime(
     emitUndefined(ctx, fctx);
     return { kind: "externref" };
   }
-
   if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;
-  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
-
   const sourceType = sourceLocal === undefined ? compileExpression(ctx, fctx, args[0]!) : null;
   if (sourceLocal !== undefined) fctx.body.push({ op: "local.get", index: sourceLocal });
-  else if (sourceType && sourceType.kind !== "externref") {
-    coerceType(ctx, fctx, sourceType, { kind: "externref" });
-  }
+  else if (sourceType && sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, { kind: "externref" });
   for (let i = 1; i < args.length; i++) {
     const extraType = compileExpression(ctx, fctx, args[i]!);
     if (extraType !== null) fctx.body.push({ op: "drop" });
   }
-  if (emitGlobalEnvironmentObject(ctx, fctx) === null) {
-    fctx.body.push({ op: "ref.null.extern" });
-  }
-
-  const evalIdx = ensureLateImport(
-    ctx,
-    "__runtime_indirect_eval",
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-    RUNTIME_EVAL_IMPORT_MODULE,
-  );
+  const callIdx = ensureRuntimeEvalGlobalCall(ctx, entry);
   flushLateImportShifts(ctx, fctx);
-  if (evalIdx === undefined) {
-    fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
-    emitRuntimeEvalProviderActive(ctx, fctx, false);
-    return { kind: "externref" };
-  }
-  const liveIdx = ctx.funcMap.get("__runtime_indirect_eval") ?? evalIdx;
-  fctx.body.push({ op: "call", funcIdx: liveIdx });
-  return emitRuntimeEvalResultUnwrap(ctx, fctx);
-}
-
-/** Standalone host-facing global Script route. This is distinct from
- * indirect eval: lexical declarations belong to the persistent realm
- * GlobalEnvironmentRecord and are visible to later global Script calls. */
-export function emitStandaloneGlobalScriptEvalRuntime(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  args: readonly ts.Expression[],
-): ValType | undefined {
-  if (!ctx.standalone) return undefined;
-  if (args.length === 0) {
-    emitUndefined(ctx, fctx);
-    return { kind: "externref" };
-  }
-  if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;
-  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
-  const sourceType = compileExpression(ctx, fctx, args[0]!);
-  if (sourceType && sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, { kind: "externref" });
-  for (let i = 1; i < args.length; i++) {
-    const extraType = compileExpression(ctx, fctx, args[i]!);
-    if (extraType !== null) fctx.body.push({ op: "drop" });
-  }
-  if (emitGlobalEnvironmentObject(ctx, fctx) === null) fctx.body.push({ op: "ref.null.extern" });
-  const evalIdx = ensureLateImport(
-    ctx,
-    "__runtime_script_eval",
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-    RUNTIME_EVAL_IMPORT_MODULE,
-  );
-  flushLateImportShifts(ctx, fctx);
-  if (evalIdx === undefined) {
-    fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
-    emitRuntimeEvalProviderActive(ctx, fctx, false);
-    return { kind: "externref" };
-  }
-  const liveIdx = ctx.funcMap.get("__runtime_script_eval") ?? evalIdx;
-  fctx.body.push({ op: "call", funcIdx: liveIdx });
-  return emitRuntimeEvalResultUnwrap(ctx, fctx);
+  fctx.body.push(callIdx === undefined ? { op: "drop" } : { op: "call", funcIdx: callIdx });
+  if (callIdx === undefined) fctx.body.push({ op: "ref.null.extern" });
+  return { kind: "externref" };
 }
 
 /** Hoist the realm's first-class `%eval%` wrapper without executing eval. */
@@ -2187,7 +2126,9 @@ export function emitStandaloneIntrinsicEvalValue(ctx: CodegenContext, fctx: Func
  * exact same reference while aliases still dispatch through the interpreted
  * callback bridge. */
 export function emitStandaloneIntrinsicFunctionValue(ctx: CodegenContext, fctx: FunctionContext): ValType | undefined {
-  return emitStandaloneIndirectEvalRuntime(ctx, fctx, [ts.factory.createStringLiteral("Function")]);
+  return emitStandaloneGlobalEvalRuntime(ctx, fctx, "__runtime_indirect_eval", [
+    ts.factory.createStringLiteral("Function"),
+  ]);
 }
 
 /**
@@ -2256,33 +2197,18 @@ export function emitStandaloneDynamicFunctionRuntime(
   } else {
     fctx.body.push(...compilePart(args[args.length - 1]!), { op: "extern.convert_any" });
   }
-  if (emitGlobalEnvironmentObject(ctx, fctx) === null) {
-    fctx.body.push({ op: "ref.null.extern" });
-  }
-
   // Function's parameter/body ToString steps run in the caller realm before
-  // CreateDynamicFunction enters the provider. Seed the provider only after
-  // all user-controlled coercions have completed, so their side effects are
-  // part of the snapshot and a throwing coercion never pulls a stale one.
-  emitRuntimeEvalGlobalBindingSeed(ctx, fctx, true);
-
-  const newFnIdx = ensureLateImport(
-    ctx,
-    "__runtime_new_function",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-    RUNTIME_EVAL_IMPORT_MODULE,
-  );
+  // CreateDynamicFunction enters the provider; the support function seeds the
+  // provider only after them, so their side effects are part of the snapshot
+  // and a throwing coercion never pulls a stale one.
+  const callIdx = ensureRuntimeEvalGlobalCall(ctx, "__runtime_new_function");
   flushLateImportShifts(ctx, fctx);
   for (const part of liveParts) ctx.liveBodies.delete(part);
-  if (newFnIdx === undefined) {
+  if (callIdx === undefined) {
     fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "ref.null.extern" });
-    emitRuntimeEvalProviderActive(ctx, fctx, false);
     return { kind: "externref" };
   }
-  const liveIdx = ctx.funcMap.get("__runtime_new_function") ?? newFnIdx;
-  fctx.body.push({ op: "call", funcIdx: liveIdx });
-  emitRuntimeEvalResultUnwrap(ctx, fctx);
+  fctx.body.push({ op: "call", funcIdx: callIdx });
   const carrierType = emitRuntimeEvalInterpretedCallableAdapter(ctx, fctx);
   // (#4438) §20.2.1.1 always creates an ordinary CONSTRUCTABLE function with a
   // fresh `prototype` object whose `constructor` is the function. QuickJS's own
@@ -2541,4 +2467,4 @@ function synthesizeThrowingFunctionStub(
 }
 
 // (#6797) late-bound for the expressions/ leaves (eval-param-scope-hoist, eval-spread-args).
-registerExpressionHelpers({ emitStandaloneIndirectEvalRuntime, foldedEvalDeclarationNames, resolveConstantString });
+registerExpressionHelpers({ emitStandaloneGlobalEvalRuntime, foldedEvalDeclarationNames, resolveConstantString });

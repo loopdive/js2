@@ -19,23 +19,19 @@ assignee: "ttraenkler/opus-lever-d"
 # moved verbatim from codegen/class-heritage-check.ts to src/shared/binding-writes.ts.
 # What remains in the god-files is the hook each needs, because it reads or
 # writes the selector's per-subject state:
-#   - select.ts +89: initializer, define and own-property admissions (they
+#   - select.ts +70: initializer, define and own-property admissions (they
 #     record into #7128's admitted-literal set and the lowering's call map),
-#     the live query object, the option's doc comment, the unmodelled-var
-#     refusal, and one hook each in trackedModuleInfluenceIsBoolean and
-#     isPhase1Expr's call arm (+1 there);
-#   - from-ast.ts +2 (lowerCall +2): the own-property dispatch, whose arm is its
-#     own function; the moved nested-var predicate nets out;
-#   - codegen/index.ts +1 (planIrOverlay +1): the explicit
-#     `refuseUnmodelledModuleInitVar` lane option.
+#     the live query object, and one hook each in
+#     trackedModuleInfluenceIsBoolean and isPhase1Expr's call arm (+1 there);
+#   - from-ast.ts +21 (lowerCall +2): the own-property dispatch in lowerCall,
+#     its arm as its own 11-line function, the define target read from the
+#     dynamic slot, and the Object-tag box of an open-carrier `{}`.
 loc-budget-allow:
   - src/ir/select.ts
   - src/ir/from-ast.ts
-  - src/codegen/index.ts
 func-budget-allow:
   - src/ir/select.ts::isPhase1Expr
   - src/ir/from-ast.ts::lowerCall
-  - src/codegen/index.ts::planIrOverlay
 ---
 
 # #7335: dynamic module storage for script vars (lever D)
@@ -152,24 +148,19 @@ its own slice only if its gain is non-zero with zero ES5 regressions.
   - `lowerOpenCarrierDefineProperty` takes the target from the dynamic slot;
   - `lowerOwnPropertyMethodCall` reuses `lowerAliasCarrierOperands` and
     `emitDynOwnProperty`, the certified uncurried aliases' path (#7106 S1g).
-- **Claim-then-demote fix** (found by the census). `for (var k in x)` in
-  `<module-init>` was claimed by the selector and then demoted by lowering.
-  - The predicate moves from `from-ast.ts` to `src/ir/module-init-vars.ts` as
-    `moduleInitContainsUnmodelledVar`.
-  - `assessModuleInit` refuses by it when the explicit
-    `refuseUnmodelledModuleInitVar` option is set. `codegen/index.ts` sets it
-    for the raw standalone target.
+- **The census's claim-then-demote** (`for (var k in x)` in `<module-init>`,
+  claimed and then demoted for its nested `var` head) is no longer reachable.
+  Main's #7288 refuses the head at select (`forin-head-module-var`) on every
+  lane. The first cut's own refusal and its lane option were dropped when
+  `origin/main` was merged in, because nothing else reached them: a `var` in a
+  `with` body, a catch-redeclared `var` and a `for-of` head are all refused
+  earlier.
 
 ### gc
 
 The dynamic-home arms need the `isOpenObjectBinding` selection option, which
-only the raw standalone target sets (`irOpenObjectSelectionOption`). The
-unmodelled-var refusal has its own explicit option for the same lane.
-
-The ungated first cut changed one gc binary in the sample
-(`Object/create/15.2.3.5-4-46.js`). The claim-then-demote it replaces leaves
-the partial lowering's type registrations behind, and removing them reorders
-the gc type section. gc keeps the demote until its own A/B.
+only the raw standalone target sets (`irOpenObjectSelectionOption`). gc
+declines them, and the A/B finds no changed gc binary.
 
 ### Acceptance criteria
 
@@ -246,8 +237,10 @@ reproduced before it was fixed. The tests are rows in
      `!sourceNamesReflectiveRoute(file)`;
    - the own-property test needs every mention of the method name to be a
      plain member read.
-5. **The lane was inferred from an option's presence.** Fixed: the explicit
-   `refuseUnmodelledModuleInitVar` option, set in `codegen/index.ts`.
+5. **The lane was inferred from an option's presence.** Fixed: the refusal
+   that needed it is gone (see the claim-then-demote note under Modules).
+   Every remaining arm reads `isOpenObjectBinding` for what it means, legacy's
+   answer, not as a lane flag.
 6. **The U1 test was re-inlined.** Fixed: `isOpenCarrierUse` is called.
 7. **Cost.** Fixed:
    - the verdict is cached per declaration, and the cheap checks run first;
