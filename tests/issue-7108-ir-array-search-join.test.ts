@@ -181,10 +181,11 @@ describe("#7108 — IR indexOf / includes / join on number and string vecs", () 
     const result = await compileFor(
       `
       function sparam(xs: string[], v: string): number { return xs.indexOf(v); }
-      function from(xs: number[]): number { return xs.indexOf(1, 1); }
+      // (#7313) a number fromIndex is claimed now; a string one is not.
+      function from(xs: number[], k: string): number { return xs.indexOf(1, k as any); }
       function anyArr(xs: any[]): string { return xs.join(); }
       export function run(): number {
-        return sparam(["a"], "a") + from([1, 1]) + anyArr([1]).length;
+        return sparam(["a"], "a") + from([1, 1], "1") + anyArr([1]).length;
       }
       `,
       "standalone",

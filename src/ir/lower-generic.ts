@@ -45,6 +45,12 @@
 import type { BackendEmitter, BackendI32BitwiseOp } from "./backend/emitter.js";
 import type { IrLowerResolver, IrLoweredBody, IrLoweredSignature } from "./backend/lower-contracts.js";
 import { emitStringOperation, type StringOperationContext } from "./lowering/string-operations.js";
+import {
+  createStringBuilderLowering,
+  tryEmitStringBuilderLength,
+  tryEmitStringBuilderRead,
+  tryEmitStringBuilderWrite,
+} from "./lowering/string-builder.js";
 import type { TypeConverter } from "./backend/contract.js";
 import { type IrBackendKind, verifyIrBackendLegality } from "./backend/legality.js";
 import type { IrVecLowering } from "./backend/handles.js";
@@ -68,6 +74,7 @@ import {
   type IrType,
   type IrValueId,
   asVal,
+  collectTerminatorUses,
   forEachInstrDeep,
   forEachNestedBuffer,
 } from "./nodes.js";
@@ -1041,6 +1048,11 @@ export function lowerIrFunctionBody<S, Slot>(
     locals.push({ name: `${name}_${idx}`, type, logicalType: { kind: "val", val: type } });
     return idx;
   };
+  const stringBuilderCx = createStringBuilderLowering(slotDefs, emitter, slotWasmIdx, allocScratchLocal, {
+    emitValue: (value, out) => emitValue(value, out),
+    inlineDef: (value) =>
+      paramIdx.has(value) || needsLocal.has(value) || anchorEager.has(value) ? undefined : defBy.get(value),
+  });
 
   /**
    * Emit a nested buffer as a statement sequence with the standard SSA
@@ -2160,11 +2172,14 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const op of dyn.emitMemberSet(instr.sloppy === true)) emitter.pushRaw(out, op);
         return;
       }
+      case "string.len":
+        if (stringBuilderCx && tryEmitStringBuilderLength(instr.value, stringBuilderCx, out)) return;
+        emitStringOperation(instr, stringOperationContext, out);
+        return;
       case "string.const":
       case "string.concat":
       case "string.repeat":
       case "string.eq":
-      case "string.len":
       case "string.char_at":
       case "string.char_code_at":
         emitStringOperation(instr, stringOperationContext, out);
@@ -2531,10 +2546,12 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       // Slice 6 (#1169e): slot / vec / for-of ops.
       case "slot.read": {
+        if (stringBuilderCx && tryEmitStringBuilderRead(instr.slotIndex, stringBuilderCx, out)) return;
         emitter.emitLocalGet(slotWasmIdx(instr.slotIndex), out);
         return;
       }
       case "slot.write": {
+        if (stringBuilderCx && tryEmitStringBuilderWrite(instr.slotIndex, instr.value, stringBuilderCx, out)) return;
         emitValue(instr.value, out);
         emitter.emitLocalSet(slotWasmIdx(instr.slotIndex), out);
         return;
@@ -4205,20 +4222,6 @@ export function collectForOfBodyUses(body: readonly IrInstr[]): IrValueId[] {
     }
   }
   return uses;
-}
-
-function collectTerminatorUses(block: IrBlock): readonly IrValueId[] {
-  const t = block.terminator;
-  switch (t.kind) {
-    case "return":
-      return t.values;
-    case "br":
-      return t.branch.args;
-    case "br_if":
-      return [t.condition, ...t.ifTrue.args, ...t.ifFalse.args];
-    case "unreachable":
-      return [];
-  }
 }
 
 /**

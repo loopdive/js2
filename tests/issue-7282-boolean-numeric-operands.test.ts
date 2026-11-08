@@ -161,10 +161,11 @@ export function test() { return (a ? 1 : 0) + (b ? 10 : 0); }`,
 export function test() { return (a ? 1 : 0) + (b ? 10 : 0); }`,
     legacyUnits: ["<module-init>"],
   },
-  "a boolean beside a string keeps the legacy unit": {
+  // #7106 lever B boxes both sides into the carrier, which ToNumbers each.
+  "a boolean beside a string lowers through the carrier": {
     fileName: "issue-7282.ts",
     source: `export function test(): number { const t = true; return t & ("3" as any); }`,
-    legacyUnits: ["test"],
+    irUnits: ["test"],
   },
 };
 

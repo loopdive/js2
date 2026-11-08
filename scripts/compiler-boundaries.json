@@ -12403,6 +12403,14 @@
       "nextBoundary": "TypeScript-AST shape plus builder lowering of the ambient parse/escape/isNaN calls shared by the selector and from-ast (#7253); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/builtin-proto-member.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "TypeScript-AST admission plus builder lowering of `<Builtin>.prototype.<m>` value reads and their own-property descriptors, shared by the selector and from-ast (#7294); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/numeric-slot-coercion.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13049,6 +13057,14 @@
       "destination": "compiler",
       "owner": "3518-coordinator",
       "nextBoundary": "Generic string operation orchestration uses an injected emitter and only type-imports the clean semantic IR nodes and the still-unmigrated string emitter contract; establish a complete generic lowering contract closure before activation."
+    },
+    {
+      "path": "src/ir/lowering/string-builder.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Builder-slot lowering uses an injected emitter and only type-imports the clean semantic IR nodes, the still-unmigrated string emitter contract and the backend-wasmgc builder slot shapes; establish a complete generic lowering contract closure before activation."
     },
     {
       "path": "src/ir/lower.ts",
@@ -16834,6 +16850,11 @@
       "layer": "ir-runtime"
     },
     {
+      "path": "src/ir/runtime/string-builder-verification.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
       "path": "src/ir/program/allocations.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -16940,6 +16961,11 @@
     },
     {
       "path": "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/lowering/wasm-string-builder.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },

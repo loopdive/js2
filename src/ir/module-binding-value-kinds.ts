@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { isTopLevelVarList } from "../shared/var-declaration-lists.js";
+import { bindingDeclarationList } from "./binding-pattern-plan.js";
 
 /**
  * The explicit providers that own an externref module slot: the standalone
@@ -165,6 +167,22 @@ export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind
  * mode) is no home: no value kind's storage is exactly that carrier.
  */
 export type IrScriptVarHome = "dynamic" | "string" | "typed" | "class-instance";
+
+/**
+ * (#7106 lever L2) The home a script `var` keeps given where it is declared. A
+ * declaration nested in a branch, loop body, `switch` case or `catch` may never
+ * run, so its slot can be read unwritten. Only the dynamic carrier (`undefined`)
+ * and a typed scalar (its zero, legacy's own answer) read that as legacy does;
+ * every other home (string, class instance, regexp match, …) reads as a written
+ * value, so it needs a top-level declaration. Every home goes through here.
+ */
+export function reachableScriptVarHome(
+  declaration: ts.VariableDeclaration | ts.BindingElement,
+  home: IrScriptVarHome | undefined,
+): IrScriptVarHome | undefined {
+  if (home === undefined || home === "dynamic" || home === "typed") return home;
+  return isTopLevelVarList(bindingDeclarationList(declaration)) ? home : undefined;
+}
 
 export function isCapabilityExternKind(
   valueKind: IrModuleBindingValueKind,
