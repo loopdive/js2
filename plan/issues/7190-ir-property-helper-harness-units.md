@@ -299,3 +299,17 @@ Soundness (a)–(d) held:
 Found, not fixed (also on main): `function f(s){return s;} function w(){return
 f("a");} var r = w();` fails to compile standalone with "IR path failed for
 <module-init>: alloc-provenance check failed (#1586)". It needs its own issue.
+
+## Note (2026-11-07): refusal label after #7277
+
+Since PR #7143 (#7277) the implicit-param resolver adopts legacy's
+call-site-refined slot, so a string-keyed `name` in `verifyNotEnumerable` /
+`verifyConfigurable` no longer reaches the
+`param-dynamic-carrier-diverges-from-legacy` guard. Both helpers are still
+refused before the claim, now at the move-only scan
+(`move-only[dyn]:Identifier «name»`), and none is withdrawn. Main failed this
+test's label assertion from `b2dd1281` (bisected: `6559215c` passes); the test
+is updated in the PR on branch `issue-7277-7190-refusal-label`. The wrapped
+stride-40 ledger shows no propertyHelper unit changing route between
+`6559215c` and main `636331310e`, with 0 invariants on both.
+
