@@ -7522,6 +7522,165 @@ exports, typecheck, import cycles, standalone arms, IR layering, flat dir;
 compiler boundaries as on main. Tests: lever-l, var-pattern-heads,
 for-head-destructuring, script-var, uninitialized-var: 227/227.
 
+## ES5 lever P — primitive wrappers and statics (2026-11-08, root; claim on #6583)
+
+The `claim-issue.mjs --allocate` scan refused ("open-PR id scan DEGRADED",
+exit 6), so per the brief this section lives here, not in its own issue.
+
+### Census (origin/main `4d5478b37c`, standalone, body-level)
+
+Method: the body-bounds rewrite (`__ir_stub(…)` under a local-only selector
+flag that lowers to a dynamic `undefined`) over the 1,431 ES5 files carrying a
+`new String/Number/Boolean` or a `String.*`/`Number.*`/`Boolean.*` member
+chain, minus files already IR-only. **141** files become IR-only with every
+site stubbed. Split by sub-shape (each stubbed alone):
+
+| sub-shape | files IR-only alone | example |
+|---|---|---|
+| `String.prototype.<m>.call(r, …)` (`pcall`; all 41 are `trim`) | **37** | `String/prototype/trim/15.5.4.20-1-3.js` |
+| `new X(v)` as a value (`new`) | 30 | `String/15.5.5.5.2-1-1.js` |
+| `X.prototype…` other than `.call` (`Number.prototype.toString()`) | 14 | `Number/prototype/toString/…` |
+| static calls (`Number.hasOwnProperty`, `String.fromCharCode`) | 8 | |
+| static reads (`Number.NaN`, `±_INFINITY`) | 0 alone; 39 need `new` + `Number.prototype` + the reads together | |
+| `new` + `pcall` together | 71 (= 30 + 37 + 4) | |
+
+### Scope of this slice: `String.prototype.<m>.call(<primitive>, …)` (P1)
+
+`String.prototype.m.call(r, …a)` with `r` a proven string, number or boolean
+is `ToString(r).m(…a)` (§22.1.3: every ES5 String method starts with
+RequireObjectCoercible + ToString on `this`; a primitive is never nullish).
+The IR already lowers both halves: `String(v)` of a primitive
+(`lowerPrimitiveToString`) and a string-method call from the one surface
+(`string-method-surface.ts` → `lowerStringMethodCall`). The arm composes them;
+no runtime, provider or host import is added.
+
+- **Module.** The borrow shape becomes one matcher keyed by constructor:
+  `matchPrototypeBorrowCall(expr, "Array" | "String")` in
+  `src/ir/array-prototype-borrow-call.ts`. `matchArrayPrototypeBorrowCall`
+  keeps its wrapper-name gate on top of it.
+- **Selection** (`select.ts`, beside the Array borrow): the ambient `String`
+  (`selectorSeesAmbientStringBinding`), a receiver whose proven family is
+  string, number or boolean, and the method's plan through the existing
+  `stringMethodSelection` (now taking the argument list), so a method is
+  claimed exactly when the backend has a row. A nullish, dynamic, object or
+  wrapper receiver refuses at selection (`expr-string-borrow-receiver`).
+- **Lowering** (`from-ast.ts`): the receiver through the `String(v)` arm's
+  primitive conversion, then `lowerStringMethodCall` with the remaining
+  arguments.
+- **Duplicate removed.** The Array-only borrow walk becomes the shared,
+  constructor-keyed matcher; the `String(v)` primitive conversion is factored
+  out of `tryLowerAmbientStringToStringCall` and reused, not copied.
+- **Acceptance.**
+  - The `trim.call` files with primitive receivers become IR-only on
+    standalone; 0 pass→fail, 0 files lost, 0 units newly legacy, 0 post-claim
+    errors on the census set plus 200 random ES5 files, both lanes; gc and
+    playground bytes identical where nothing new is claimed.
+  - `tests/issue-7106-lever-p.test.ts`: claimed rows (string, number,
+    boolean, `-0`, `1e21` receivers; `trim`, `charAt`, `indexOf`, `slice`)
+    equal JS on both lanes; refused rows (`undefined`/`null`/object/wrapper
+    receiver, a method without a row, `.apply`) stay legacy and correct.
+  - Code quality: no second borrow matcher and no second primitive-ToString;
+    the new select and from-ast arms are each one function next to their
+    Array-borrow sibling, with no growth grant beyond the two arms.
+
+### Not in this slice, and why
+
+- **`new X(v)` as a value (30 files).** Measured by admitting the wrapper and
+  boxing it into the dynamic carrier: the dynamic runtime answers wrong for a
+  wrapper in three places the census files use — an index read
+  (`new String("abc")[1]` is `undefined`), a loose `==` against a string
+  (`false`), and a prototype method call (`(new Number(1)).toFixed()` throws
+  "not a function"). Claiming the value is only exact once each use is
+  certified (lever V's use-site pattern for a wrapper-holding script var) or
+  those dynamic ops learn the wrapper; both are their own slice.
+- **`Number.prototype` as a value and the static reads (39 + 14 files).** They
+  need the intrinsic-singleton value provider of #7294; no IR row reads a
+  builtin prototype object today.
+- **Static calls (8 files).** `Number.hasOwnProperty(…)` on the constructor
+  object needs the same singleton; `String.fromCharCode` (2) is a follow-up
+  row on the string surface.
+
+### Measured (2026-11-08, as built)
+
+Base `4d5478b37c` (origin/main; main's later commits touch no `src/`), head
+this branch, one niced worker per pass. Population: the 1,431 census files plus
+200 random ES5 files (`.tmp/rnd200.txt`), 1,603 distinct, 1,589 compiling on
+both sides, compiled as the runner does (original harness, `allowJs`).
+Pass/fail is `runTest262File` (sloppy run plus strict rerun) on every changed
+file, both trees.
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, base → head | 241 → 277 (**+36**) | 241 → 277 (**+36**) |
+| …of them in the random sample | 0 | 0 |
+| IR-only files lost | 0 | 0 |
+| units newly legacy | 0 | 0 |
+| new post-claim errors | 0 | 0 |
+| binaries changed | 36, each a newly claimed `<module-init>` | 36, the same files |
+| binaries byte-identical | 1,553 | 1,553 |
+| pass → fail on the changed files | 0 (36/36 pass on both) | 0 (36/36 pass on both) |
+| playground (13 programs) | identical | identical |
+
+The 36 are `String/prototype/trim/15.5.4.20-1-{3,4,7}` and `15.5.4.20-2-*`
+(33). The other trim borrows stay legacy by design or behind another arm: an
+object, array or nullish receiver (`.call({})`, `.call([1])`,
+`.call(undefined)`, refused as `expr-string-borrow-receiver`; the stubbed
+census counted one of them as its 37th), or a RegExp / Error constructor or
+another body shape elsewhere in the file.
+
+**Found and fixed in validation: a patched `String.prototype`.** Legacy looks
+the borrowed method up on the live prototype, so
+`String.prototype.trim = f; String.prototype.trim.call(" a ")` calls `f`. The
+first cut lowered the surface row regardless (a pass→fail outside the census
+population). The borrow now refuses when the program may patch
+`String.prototype` (`expr-string-borrow-patched-prototype`), asking the shared
+`sourceMayPatchPrototype`, whose intrinsic set gains `String`; its other
+callers ask only `Array` / `Object`, so nothing else moves. The 36 gained
+binaries are byte-identical before and after the fix. The ordinary method form
+(`" a ".trim()` after the same patch) is already claimed on main and answers the
+intrinsic; that is a pre-existing gap for its own issue, not this slice.
+
+**Trust boundary (review, 2026-11-08).** The borrow trusts the realm's
+`String.prototype.<m>` and `Function.prototype.call` exactly as legacy does: it
+is claimed only when the source shows no route that could replace what the
+call reaches. Refused at selection (`expr-string-borrow-patched-prototype`), all
+from one cached walk in `src/shared/intrinsic-prototype-writes.ts`:
+
+- `String.prototype` or `Function.prototype` used other than as the object of
+  a plain member read (`sourceMayPatchPrototype`): a store, `delete`,
+  `Object.defineProperty`, an alias or any other escape;
+- a store, `delete` or `Object.defineProperty` of any member or binding named
+  `call` or `String` (`sourceWritesMemberNamed`): `x.call = f`,
+  `String.prototype.trim.call = f`, `globalThis.String = v`, `String = v`;
+- a reflective name anywhere (`sourceNamesReflectiveRoute`): `getPrototypeOf`,
+  `setPrototypeOf`, `__proto__`, `Reflect`, `constructor` (except the two
+  read shapes assert.js uses, an identity compare and `.constructor.name`),
+  and any `with` statement.
+
+A bare mention of `globalThis` is not refused: the test262 runtime shim reads
+`globalThis.<name>` and stores `global: globalThis` in every test, so that rule
+would refuse all 36 files. A patch through the escaped global object still has
+to write a member named `String` (or `call`), which the name rule refuses; a
+computed key (`o["Str" + "ing"] = v`) is outside the boundary, as it is for
+legacy and for lever O. Legacy answers every listed route the same way (it
+does not model them either), so these refusals keep parity, not fix a
+regression. Re-measured on the 36 gained files plus 30 random ES5 files, both
+lanes: all 36 still claim, 66/66 binaries byte-identical to `c75028d573`.
+
+**Follow-up: one reflective-route helper.** Lever O (#7188,
+`src/ir/object-integrity.ts`) keeps the same `REFLECTIVE_NAMES` list and an
+`isObservedConstructor` twin for `Object`'s statics. Once both levers are on
+main, lever O's facts should read `sourceNamesReflectiveRoute` (and the shared
+`isObservedConstructor`) from `src/shared/intrinsic-prototype-writes.ts`,
+removing its copy.
+
+**Next sub-shapes, by measured yield** (census above, files IR-only alone):
+`new X(v)` as a value (30; needs certified wrapper uses or wrapper-aware
+dynamic ops), `X.prototype` other than `.call` (14) and the static reads (39
+together with `new` and `Number.prototype`; both need #7294's intrinsic
+singletons), static calls (8; `String.fromCharCode` is 2 of them, a surface
+row).
+
 ### Review round 2 (#7178, 2026-11-07) and main `a484c365fe`
 
 Approved, with two nits, fixed in `93eec5fe24`:

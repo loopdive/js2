@@ -83,7 +83,11 @@ import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./modu
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
-import { type ArrayPrototypeBorrowCall, matchArrayPrototypeBorrowCall } from "./array-prototype-borrow-call.js";
+import {
+  type PrototypeBorrowCall,
+  ambientStringPrototypeBorrow,
+  matchArrayPrototypeBorrowCall,
+} from "./array-prototype-borrow-call.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
@@ -197,6 +201,11 @@ import {
 } from "./literal-pattern-plan.js";
 import { declarationBindingWritten } from "./const-binding-writes.js";
 import { programPatchesDestructuringRealm } from "./realm-keys.js";
+import {
+  sourceMayPatchPrototype,
+  sourceNamesReflectiveRoute,
+  sourceWritesMemberNamed,
+} from "../shared/intrinsic-prototype-writes.js";
 import { collectBindingPatternNames } from "./analysis/ast-scope.js";
 import {
   conditionalJoinArmFamily,
@@ -9081,7 +9090,7 @@ const NO_LOCALS: ReadonlySet<string> = new Set();
 function ambientArrayPrototypeBorrowCall(
   expr: ts.CallExpression,
   locals: ReadonlySet<string>,
-): ArrayPrototypeBorrowCall | null {
+): PrototypeBorrowCall | null {
   const borrow = matchArrayPrototypeBorrowCall(expr);
   if (borrow === undefined || locals.has("Array") || !selectorSeesAmbientBinding(borrow.root)) return null;
   if (currentSelectionOptions?.supportsBackendCapability?.("dynamic-method-call-wrapper") !== true) return null;
@@ -9091,6 +9100,42 @@ function ambientArrayPrototypeBorrowCall(
     return null;
   }
   return borrow;
+}
+
+/**
+ * (#7106 lever P) `String.prototype.<m>.call(r, …a)` on the ambient `String`
+ * is `ToString(r).<m>(…a)` for a receiver that is never nullish: every ES5
+ * `String.prototype` method starts with RequireObjectCoercible + ToString on
+ * `this`. The receiver must be a proven primitive the `String(v)` arm renders,
+ * and the method a row of the string surface for the remaining arguments.
+ */
+function stringPrototypeBorrowSelection(
+  expr: ts.CallExpression,
+  borrow: PrototypeBorrowCall,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  // The surface row is the realm's own method reached as spelled, legacy's own
+  // trust: a source that may replace the method, `.call` or `String`, or that
+  // names a route to a prototype it does not spell, keeps legacy's lookup.
+  const source = expr.getSourceFile();
+  if (
+    sourceMayPatchPrototype(source, "String") ||
+    sourceMayPatchPrototype(source, "Function") ||
+    sourceNamesReflectiveRoute(source) ||
+    sourceWritesMemberNamed(source, "call") ||
+    sourceWritesMemberNamed(source, "String")
+  ) {
+    return capabilityNo("string-method-unsupported", "expr-string-borrow-patched-prototype", expr);
+  }
+  const family = provenIrFamily(borrow.receiver, scope);
+  if (family !== "string" && family !== "number" && family !== "boolean") {
+    return capabilityNo("string-method-unsupported", "expr-string-borrow-receiver", borrow.receiver);
+  }
+  const plan = stringMethodSelection(expr, borrow.method, borrow.args, scope);
+  if (plan === false) return false;
+  if (plan.literalArguments) return capabilityNo("string-method-unsupported", "expr-string-borrow-literal-plan", expr);
+  return [borrow.receiver, ...borrow.args].every((operand) => isPhase1Expr(operand, scope, localClasses));
 }
 
 /**
@@ -9642,14 +9687,13 @@ function hasLiteralStringMethodArguments(expr: ts.CallExpression): boolean {
 function stringMethodSelection(
   expr: ts.CallExpression,
   method: string,
+  args: readonly ts.Expression[],
   scope: ReadonlySet<string>,
 ): StringMethodPlan | false {
   const backend = currentSelectionOptions?.backendTargetProfile?.backend ?? "wasmgc";
-  const plan = expr.arguments.some(ts.isSpreadElement)
-    ? null
-    : stringMethodPlan(backend, method, expr.arguments.length);
+  const plan = args.some(ts.isSpreadElement) ? null : stringMethodPlan(backend, method, args.length);
   if (plan === null) return capabilityNo("string-method-unsupported", "expr-string-method-surface", expr);
-  const unproven = expr.arguments.find((arg, i) => !stringMethodArgumentProven(plan.parameters[i]!.role, arg, scope));
+  const unproven = args.find((arg, i) => !stringMethodArgumentProven(plan.parameters[i]!.role, arg, scope));
   if (unproven !== undefined) return capabilityNo("string-method-unsupported", "expr-string-method-argument", unproven);
   return plan;
 }
@@ -12507,6 +12551,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // (#7106 S1c) `Object.prototype.toString.call(v)`: standalone classifier lanes only.
       const objectTagArg = scope.has("Object") ? null : ambientObjectToStringTagCall(expr);
       if (objectTagArg !== null) return isPhase1Expr(objectTagArg, scope, localClasses);
+      // (#7106 lever P) `String.prototype.<m>.call(<primitive>, …)`: `String(r).<m>(…)`.
+      const stringBorrow = ambientStringPrototypeBorrow(expr, scope, selectorSeesAmbientStringBinding);
+      if (stringBorrow !== undefined) {
+        return stringPrototypeBorrowSelection(expr, stringBorrow, scope, localClasses);
+      }
       // (#7106 compareArray.format) `Array.prototype.<m>.call(recv, …)`: borrow-wrapper lanes only.
       const arrayBorrow = ambientArrayPrototypeBorrowCall(expr, scope);
       if (arrayBorrow !== null) {
@@ -12630,7 +12679,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;
           return expr.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
         }
-        const plan = stringMethodSelection(expr, expr.expression.name.text, scope);
+        const plan = stringMethodSelection(expr, expr.expression.name.text, expr.arguments, scope);
         if (plan === false) return false;
         if (plan.literalArguments) {
           if (currentSelectionOptions?.supportsLiteralStringReplace !== true) {
