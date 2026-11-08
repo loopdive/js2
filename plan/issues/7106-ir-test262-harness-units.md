@@ -45,6 +45,12 @@ flat-dir-budget-allow:
   - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
   - src/codegen/ir-dynamic-delete.ts # 2026-10-22 (#7106 propertyHelper arm 3): the dynamic delete wrapper beside ir-dynamic-construct.ts
   - src/codegen/ir-dynamic-instanceof.ts # 2026-10-22 (#7106 dyn.instanceof): the generic dynamic instanceof wrapper beside ir-dynamic-delete.ts
+loc-budget-allow:
+  - src/ir/select.ts # 2026-11-06 (#7106 lever T): +34 net — the builder's own rules at selection (the checker `+` proof, throwOperandAdmissible, the void-call, dynamic-compound and in-function dynamic `+` refusals) and the three throw refusal codes; folding the two compound arms and the three touch walkers offsets part of it
+  # 2026-11-06 (#7106 lever T review round 2): +4, writeValueMatches refuses a bare null into the script dynamic home as the builder does; #7127 removes it
+  - src/ir/module-bindings.ts
+func-budget-allow:
+  - src/ir/select.ts::isPhase1Expr # 2026-11-06 (#7106 lever T): +5 — the module `+` reads the builder's checker proof (`checkerAdditionVerdict`) instead of requiring equal families, a void local call operand is refused, and so is a function's unproven `+` over a dynamic script var
 import-cycles-allow:
   - ir->codegen: 84 # 2026-10-29 (merge-group fix, restated on main's 83 after #6977/#6979 + this borrow wrapper); 2026-10-29 (revive, restated on main's 81 + #7119's wrapper module + this borrow wrapper); 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (module-init lever A): the bridge reads legacy's Math/Number constant table (`codegen/builtin-value-read.ts`); 2026-10-22 (lever B): …and pre-registers the Number(v) provider (`codegen/helpers/ir-number-from-value.ts`); 2026-10-22 (compareArray.format): …and the Array.prototype borrow wrapper
   - codegen->ir: 303 # 2026-11-06 (#7106 string-method surface): the self-hosted string resolver (`codegen/stdlib-selfhost.ts`) reads the one string-method table (`ir/string-method-surface.ts`) instead of keeping its own copy; main already sits at 302; 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
@@ -5712,6 +5718,147 @@ depends on it, not for its own gain.
   hazard.
 - Once this and #7037 have landed, S5 can drop its boolean-leaf refusal, and
   its test can use the shared `runHarnessOn`.
+
+## ES5 lever T: `throw new Test262Error('…' + x)` over a script scalar (implemented, 2026-11-06)
+
+Lever `T` of "ES5 IR-only: ranked levers" (census branch
+`claude/7106-es5-ir-only-census`): 463 files carry it, and the census
+estimated 52 freed by T alone. #7251 (the `Test262Error` harness unit) and S3c
+own the constructor; this lever is only the test body's `throw` and its
+message.
+
+### Root cause
+
+The ES5 `S…` shape is
+`var x = 1; if (x !== 1) { throw new Test262Error('#1: ' + x); }`. Two
+selector rules in `src/ir/select.ts` refused it, in module-binding terms that
+the builder's rules do not use:
+
+1. **`throw-module-scalar-unboxed`** (`isPhase1ThrowStatement`). It refused a
+   thrown value that merely *touched* a scalar script var, unless the whole
+   value was a string. So `new Test262Error('#1: ' + x)`, an object that only
+   reads `x`, was refused like `throw x`. `lowerThrowStatement` judges the
+   thrown value's own family (`throwOperandAdmissible`).
+2. **The module `+` rules.** `expr-module-value-representation-mismatch` and
+   `expr-module-boolean-nonboolean-op` refused a `+` whose operands have
+   different module families. But the selector's own `obviousModuleValueFamily`
+   already reads that `+` through #7066's `additiveResultFamily`.
+
+### What changed (`src/ir/select.ts`, plus one write rule in `src/ir/module-bindings.ts`)
+
+- **Throw arm.** The thrown value's own family decides, through
+  `throwOperandAdmissible` as `lowerThrowStatement` judges it: a construction
+  (`new …(…)`) is a reference, a string passes, and a number, boolean or
+  unknown value is refused. When the value reads a script scalar, each
+  refusal has its own code:
+  - `throw-module-nullish`: a nullish value;
+  - `throw-module-scalar-unboxed`: a family `throwOperandAdmissible` refuses;
+  - `throw-module-top-level`: a top-level `throw`, which integration withdraws
+    after the claim outside WASI.
+
+  The arm still reads the result family of a thrown `'#' + x` from
+  `obviousModuleValueFamily`, not from `checkerAdditionVerdict`. The verdict
+  answers "does this `+` lower", which `isPhase1Expr` already asks of the
+  thrown expression; the arm needs the result family (string or number), and
+  `obviousModuleValueFamily` serves 15 other storage-family callers, so it is
+  not folded.
+- **A `null` written into a dynamic script slot** (review round 2). The
+  builder refuses the write ("bare 'null' in non-reference context
+  (dynamic)", `nullValueAdmissible`), whether it is the initializer
+  (`var x = null`) or an assignment (`x = null`). `writeValueMatches`, the one
+  write check every module-write arm (declaration, statement, tail) asks, now
+  refuses it for the script dynamic home. This replaces round 1's read-side
+  rule in the throw arm, which missed `x = null` and `var z = a + n`. #7127
+  lowers the write; when it lands, this refusal goes.
+- **Module `+`.** It is judged by the builder's own proof: #7066's additive
+  rule over the checker's types at the use site (`checkerAdditionVerdict`, the
+  selector's twin of `provenAdditiveOperands`), not by the storage family. A
+  guard that narrows the read to `never` (`var x = true; if (x !== true)
+  { … '#1: ' + x }`, S8.3_A1_T1), or a `null` operand, proves nothing and keeps
+  the family checks. The element-concat backstop asks the same verdict.
+- **Three builder refusals the selector now makes first.** Without them T
+  would unmask post-claim withdrawals.
+  - *A compound write to a dynamic script var* (`var y; y = 1; y *= -1;`).
+    `isSelectableNumberCompound`, the one admission every compound arm reads,
+    refuses it: `lowerCompoundAssignment` writes no dynamic script var yet.
+    #7130 lowers it and removes this refusal.
+  - *A void local call used as a binary operand* (`f() !== undefined`,
+    `'…' + f()`, S13.2.1_A9_T1). from-ast throws "returned void used as
+    expression". The refusal reuses the callee's resolved return kind:
+    `calleeReturnIsDynamic` becomes `calleeReturnKind`, read by both. A void
+    call in other value positions (`var v = f()`, `typeof f()`) withdraws on
+    main too; refusing those needs a value-position flag the walk does not
+    carry, so it is left as is.
+  - *A `+` over a dynamic script var read inside a function*
+    (`function g() { throw new Test262Error('#1: ' + x); }`, review round 2).
+    from-ast takes a dynamic script var as the carrier only where it is in
+    scope (`<module-init>`); a function reads it through
+    `resolveModuleBinding`, which `addsAsCarrier` does not consult, so the
+    checker proof decides and refuses. `moduleAdditionVerdict`, beside
+    `checkerAdditionVerdict`, answers the module `+` once (admit, refuse as
+    `expr-module-dynamic-addition`, or leave it to the family checks). The same withdrawal
+    exists on main for `return '#1: ' + x`; this refusal fixes that as well.
+    Teaching `addsAsCarrier` the resolver read would claim these instead; that
+    is a builder change with its own census, left as a follow-up.
+- **Leave it better.**
+  - The body and non-tail statement arms for `<id> <op>= e` were the same code
+    with different refusal prefixes. They are now one helper,
+    `isPhase1IdentifierCompound`.
+  - The three module-binding touch walkers (`expressionTouchesModuleBinding`,
+    `…BooleanModuleBinding`, `…ScalarModuleBinding`) were one walk with
+    different predicates. They are now one walk, `expressionTouchesIdentifier`,
+    and the throw arm's dynamic-var case is one more predicate.
+
+### Measured (origin/main 245e830d49 vs head, standalone and gc)
+
+- **Population:** the 56 T files of the census sample, plus 299 random ES5
+  files (355 in total).
+- **Newly IR-only:** +4 (26 → 30) on both lanes, all ES5 and all from the T
+  sample, and all pass on both trees:
+  - `S13_A3_T3`
+  - `S12.6.2_A4_T1`
+  - `S8.1_A2_T1`
+  - `S7.2_A3.5_T2`
+
+  At the census weight that is about 29 ES5 files. That is below the
+  census's 52, because the prototype it measured had neither selector refusal
+  (the four dynamic-compound files and S13.2.1_A9_T1 would have withdrawn).
+- **Other files:** the 351 other binaries are byte-identical; there are 0
+  status changes and 0 new post-claim errors on both lanes, and the playground
+  is identical.
+- **Review round 1 (2026-11-06), the reviewer's 207 probes × both lanes,
+  main vs head:** 0 new post-claim errors, 0 wrong answers, 132 rows newly
+  claimed, and the post-claim rows fall from 34 to 20 (the void-call operand
+  ones). `S8.3_A1_T1` is refused at selection, not withdrawn.
+- **Most T files need another lever:**
+  - `N`: `new Object/String/Boolean`, `isNaN`;
+  - `P`: compound on dynamic vars, now refused cleanly;
+  - `D`: `for (var …)`;
+  - chained assignment.
+
+**Tests:** `tests/issue-7106-lever-t.test.ts`, on both lanes:
+- seven claimed shapes: a number, `'…' + (x)`, a rewritten var, 1.5, -0,
+  1e21 and a boolean;
+- thirteen refused at selection and never withdrawn:
+  - throw of a number;
+  - boolean + number;
+  - dynamic `*=`;
+  - dynamic `+=`;
+  - the void-call operand;
+  - a read the guard narrows to `never` (boolean, `typeof`);
+  - a `null` written into a script var: initialized or assigned, read in a
+    guard, a message or a `+`;
+  - a dynamic script var concatenated inside a function;
+- a failing check that throws.
+
+**Code quality:**
+- No new predicate. The rules are `throwOperandAdmissible`'s families, #7066's
+  additive verdict, `compoundWriteAdmissible` and the existing return-kind
+  resolver.
+- One duplicate is folded: the two `<id> <op>= e` arms.
+- `select.ts` grows by 34 lines, `module-bindings.ts` by 4 and `isPhase1Expr`
+  by 5, granted in the frontmatter. The two refusals are new arms the builder already implied, so
+  the plan's "no growth" did not hold.
 
 ## ES5 lever R: RegExp on the host-free lanes (plan 2026-11-06; R1 implemented 2026-11-07)
 
