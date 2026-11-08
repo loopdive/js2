@@ -30,6 +30,30 @@ export function collectIrSafeModuleVarDeclarationLists(
   return new Set(statements.flatMap(moduleInitVarLists));
 }
 
+/**
+ * Whether a module-init statement holds a `var` list that is not modelled
+ * (`isModuleInitVarList`), such as a `for-in` / `for-of` head: its names have
+ * no persistent global and would need hoisting support. The selector refuses
+ * such a unit (#7335) by the same rule lowering checks, so it is never claimed
+ * and then demoted.
+ */
+export function moduleInitContainsUnmodelledVar(statements: readonly ts.Statement[]): boolean {
+  const findVarList = (node: ts.Node): boolean => {
+    if (
+      isModuleInitVarList(node) ||
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node)
+    ) {
+      return false;
+    }
+    if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) return true;
+    return ts.forEachChild(node, findVarList) === true;
+  };
+  return statements.some(findVarList);
+}
+
 /** A name a module-init statement binds to a module global, or a pattern with no one-to-one global. */
 export type ModuleInitBinding =
   | { readonly name: ts.Identifier; readonly declaration: ts.VariableDeclaration | BindingLeaf }

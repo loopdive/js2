@@ -308,6 +308,7 @@ import {
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
 import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { moduleInitContainsUnmodelledVar } from "./module-init-vars.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   mixedPrimitiveConditionalArms,
@@ -322,8 +323,10 @@ import {
   peelAssignmentChain,
   IR_MATH_METHOD_TABLE,
   admittedEmptyLiteralIsOpenCarrier,
+  admittedOwnPropertyCallMethod,
 } from "./select.js";
 import { openCarrierDefinePlan, type DataDescriptorField } from "./empty-object-literal.js";
+import type { OwnPropertyMethod } from "./dynamic-home-open-object.js";
 import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
@@ -1429,26 +1432,6 @@ export interface LoweredFunctionResult {
   readonly countedStringAppendPlans?: readonly IrCountedStringAppendLoweringPlan[];
 }
 
-/** A modelled `var` list (`isModuleInitVarList`) has persistent globals; any other `var` still needs hoisting support. */
-function moduleInitContainsNestedVar(statements: readonly ts.Statement[]): boolean {
-  const findVarDecl = (node: ts.Node): boolean => {
-    if (
-      isModuleInitVarList(node) ||
-      ts.isFunctionDeclaration(node) ||
-      ts.isFunctionExpression(node) ||
-      ts.isArrowFunction(node) ||
-      ts.isMethodDeclaration(node)
-    ) {
-      return false;
-    }
-    if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
-      return true;
-    }
-    return ts.forEachChild(node, findVarDecl) === true;
-  };
-  return statements.some(findVarDecl);
-}
-
 function nestedSourceScope(
   cx: LowerCtx,
   builder: IrFunctionBuilder,
@@ -2005,7 +1988,7 @@ export function lowerFunctionAstToIr(
     if (returnType !== null) {
       demoteToLegacy("module-init-legacy-coupling", `ir/from-ast: module-init unit must be void (${name})`);
     }
-    if (moduleInitContainsNestedVar(stmts)) {
+    if (moduleInitContainsUnmodelledVar(stmts)) {
       demoteToLegacy(
         "module-init-legacy-coupling",
         `ir/from-ast: module-init unit contains a nested var declaration (${name})`,
@@ -7668,6 +7651,8 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
+  const ownPropertyMethod = admittedOwnPropertyCallMethod(expr);
+  if (ownPropertyMethod !== undefined) return lowerOwnPropertyMethodCall(expr, ownPropertyMethod, cx);
   if (cx.resolver?.preparedObjectCreateCall?.(expr) === "null") {
     if (!isDirectObjectCreateNullCall(expr))
       throw new IrInvariantError(
@@ -8253,6 +8238,17 @@ function lowerAliasCarrierOperands(args: readonly ts.Expression[], aliasName: st
     carriers.push(value);
   }
   return carriers;
+}
+
+/**
+ * (#7335) `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on a
+ * selector-certified dynamic-home open object: both operands as carriers, then
+ * the lane's own-property provider, as the uncurried aliases lower.
+ */
+function lowerOwnPropertyMethodCall(expr: ts.CallExpression, method: OwnPropertyMethod, cx: LowerCtx): IrValueId {
+  const receiver = (expr.expression as ts.PropertyAccessExpression).expression;
+  const [object, key] = lowerAliasCarrierOperands([receiver, expr.arguments[0]!], method, cx);
+  return cx.builder.emitDynOwnProperty(object!, key!, method);
 }
 
 /**
@@ -9251,7 +9247,9 @@ function lowerObjectDefinePropertyCall(expr: ts.CallExpression, cx: LowerCtx): I
  */
 function lowerOpenCarrierDefineProperty(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
   const plan = openCarrierDefinePlan(expr);
-  const object = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
+  let object = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
+  // (#7335) A dynamic-home open object is read from its `dynamic` slot, whose carrier is that externref.
+  if (cx.builder.typeOf(object).kind === "dynamic") object = cx.builder.emitCoerceToExternref(object);
   if (plan === null || asVal(cx.builder.typeOf(object))?.kind !== "externref") {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
@@ -16211,6 +16209,10 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
     return withNodeSourceSite(cx, operand, () => boxConcreteToDynamic(v, t, operand, cx));
   const family = irOperandFamily(t, operand);
   if (family === "string") return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.String));
+  // (#7335) An open-carrier `{}` is legacy's `$Object`: an object on the externref carrier.
+  if (ts.isObjectLiteralExpression(operand) && admittedEmptyLiteralIsOpenCarrier(operand)) {
+    return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Object));
+  }
   if (family === "boolean") return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Boolean));
   // A numeric literal of a non-f64 scalar carrier also takes the number box
   // (the literal is the proof); `boxableIntoDynamic` does not claim that

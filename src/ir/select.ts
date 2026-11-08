@@ -79,7 +79,11 @@ import {
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
-import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
+import {
+  carrierLeafReads,
+  collectIrSafeModuleVarDeclarationLists,
+  moduleInitContainsUnmodelledVar,
+} from "./module-init-vars.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
@@ -89,7 +93,13 @@ import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
-import { emptyObjectLiteralBinding, isOpenCarrierUse, type EmptyObjectLiteralBinding } from "./empty-object-literal.js";
+import {
+  emptyObjectLiteralBinding,
+  isOpenCarrierUse,
+  openCarrierDefinePlan,
+  type EmptyObjectLiteralBinding,
+} from "./empty-object-literal.js";
+import * as dynamicHome from "./dynamic-home-open-object.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
@@ -8355,6 +8365,7 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
     return trackedModuleInfluenceIsBoolean(candidate.whenTrue) && trackedModuleInfluenceIsBoolean(candidate.whenFalse);
   }
   if (ts.isCallExpression(candidate)) {
+    if (isDynamicHomeOpenObjectOwnPropertyCall(candidate)) return true; // (#7335) an i32 boolean test
     if (expressionIsModuleBindingRootedCall(candidate)) return false;
     return currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "boolean";
   }
@@ -11901,6 +11912,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (expr.text === "undefined" && currentModuleBindingResolver?.isDirectModuleBinding(expr)) {
       return shapeNo("expr-module-undefined-shadow", expr);
     }
+    if (dynamicHome.useIsRefused(expr, dynamicHomeScope())) return shapeNo("expr-open-object-use", expr);
     if (currentModuleBindingResolver?.(expr) !== undefined) return true;
     if (isUnrepresentableModuleBinding(expr)) {
       return shapeNo("expr-module-storage-unrepresentable", expr);
@@ -12678,6 +12690,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return true;
       }
+      if (isDynamicHomeOpenObjectOwnPropertyCall(expr)) return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
       if (expressionTouchesScalarModuleBinding(expr.expression.expression)) {
         if (!isExactF64ScalarToStringCall(expr)) {
           return shapeNo("expr-module-scalar-method", expr);
@@ -13193,6 +13206,7 @@ function isPhase1ObjectLiteral(
     if (binding !== undefined && (binding.references.length === 0 || isOpenCarrierBinding(binding, owner))) {
       return true;
     }
+    if (isDynamicHomeOpenObjectLiteral(expr)) return true;
     return shapeNo("objectlit-empty", expr);
   }
 
@@ -13316,15 +13330,83 @@ function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node
   return true;
 }
 
-/** (#7128 S1) A U1 define on an admitted open-carrier binding, in the current subject's own body. */
+/**
+ * (#7128 S1) A U1 define on an admitted open-carrier binding, in the current
+ * subject's own body; (#7335) or a U1 define statement on a dynamic-home open
+ * object, from any unit, since that binding holds the one `$Object` throughout.
+ */
 function isOpenCarrierDefine(call: ts.CallExpression): boolean {
   const target = call.arguments[0];
+  if (target === undefined || !ts.isIdentifier(target)) return false;
+  if (currentOpenCarrierNames.has(target.text) && enclosingProjectionOwner(call) === currentSelectionSubject)
+    return true;
   return (
-    target !== undefined &&
-    ts.isIdentifier(target) &&
-    currentOpenCarrierNames.has(target.text) &&
-    enclosingProjectionOwner(call) === currentSelectionSubject
+    ts.isExpressionStatement(call.parent) &&
+    openCarrierDefinePlan(call) !== null &&
+    dynamicHome.isReference(target, dynamicHomeScope())
   );
+}
+
+/**
+ * (#7335) The module-init initializer of a dynamic-home open object: it lowers
+ * to the open carrier's `__new_plain_object`, and each use of the binding is
+ * selected at its own site against the shared `dynamic` slot.
+ */
+function isDynamicHomeOpenObjectLiteral(expr: ts.ObjectLiteralExpression): boolean {
+  const decl = expr.parent;
+  if (
+    !currentSubjectIsModuleInit ||
+    !ts.isVariableDeclaration(decl) ||
+    !dynamicHome.isDeclaration(decl, dynamicHomeScope())
+  ) {
+    return false;
+  }
+  admittedOpenCarrierLiterals.add(expr);
+  return true;
+}
+
+/**
+ * (#7335) `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on a
+ * dynamic-home open object, where the lane builds the own-property provider
+ * the certified uncurried aliases lower to (#7106 S1g).
+ */
+function isDynamicHomeOpenObjectOwnPropertyCall(call: ts.CallExpression): boolean {
+  const method = dynamicHome.ownPropertyMethod(call, dynamicHomeScope());
+  if (
+    method === undefined ||
+    !currentDynamicRuntimeBuildable ||
+    currentSelectionOptions?.supportsBackendCapability?.("native-own-property-test") !== true
+  ) {
+    return false;
+  }
+  admittedOwnPropertyCalls.set(call, method);
+  return true;
+}
+
+const admittedOwnPropertyCalls = new WeakMap<ts.CallExpression, dynamicHome.OwnPropertyMethod>();
+
+/** (#7335) The own-property method of a certified `o.<method>(k)` call on a dynamic-home open object. */
+export function admittedOwnPropertyCallMethod(call: ts.CallExpression): dynamicHome.OwnPropertyMethod | undefined {
+  return admittedOwnPropertyCalls.get(call);
+}
+
+/** (#7335) The selector state a dynamic-home open object is judged against. */
+function dynamicHomeScope(): dynamicHome.Scope {
+  return {
+    resolve: currentModuleBindingResolver,
+    isOpenObjectBinding: currentSelectionOptions?.isOpenObjectBinding,
+    enclosingOwner: enclosingProjectionOwner,
+  };
+}
+
+/**
+ * (#7335) The raw `standalone` target. `irOpenObjectSelectionOption` is the
+ * option's only producer, and it sets it nowhere else; no backend capability
+ * can name this lane, because the native-regime gc lane projects to it too
+ * (#7128 correction 4).
+ */
+function selectingForRawStandalone(): boolean {
+  return currentSelectionOptions?.isOpenObjectBinding !== undefined;
 }
 
 /** `Object.defineProperty(…)` on the ambient `Object`. */
@@ -13584,6 +13666,15 @@ export function assessModuleInit(
     };
   }
 
+  // (#7335) Raw standalone only: on gc the demote's leftover type registrations
+  // reorder the binary, so gc keeps its claim-then-demote until its own A/B.
+  if (selectingForRawStandalone() && moduleInitContainsUnmodelledVar(population)) {
+    return {
+      stmtCount: population.length,
+      reason: "body-shape-rejected",
+      ...(SHAPE_DIAG_ON ? { detail: "module-init-unmodelled-var" } : {}),
+    };
+  }
   if (population.some((stmt) => callPassesUncarriedDynamicArgument(stmt, typeMap))) {
     return {
       stmtCount: population.length,
