@@ -5982,6 +5982,10 @@ function isPhase1ForInStatement(
   }
   const headName = declaration.name.text;
   if (scope.has(headName)) return shapeNo("forin-head-shadow", declaration.name);
+  // (#7288) In `<module-init>` the head hoists into its `__mod_<name>` slot, which the loop-local key slot never writes.
+  if (currentSubjectIsModuleInit && enclosingProjectionOwner(stmt) === undefined) {
+    return shapeNo("forin-head-module-var", declaration.name);
+  }
   // #2952 slice 6c — the head value is now READABLE in the body. The #2964
   // ABI already materialises the key into the head slot on every iteration
   // (slice 5 wrote it and simply had no reader), so the widening is
