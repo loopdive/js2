@@ -12,9 +12,9 @@
   "verifiedExecutionCases": 0,
   "verifiedFrontendCases": 0,
   "unverifiedExecutionCases": 48621,
-  "timestamp": "2026-11-08T08:23:53.664Z",
-  "baseline_generated_at": "2026-11-08T08:23:53.665Z",
-  "baseline_sha": "57574f011c9c58805b9e15654d9415b437b5508a",
+  "timestamp": "2026-11-08T10:28:29.772Z",
+  "baseline_generated_at": "2026-11-08T10:28:29.772Z",
+  "baseline_sha": "7133f25946a4c7ed79717d41bdb2a280eb256571",
   "oracle_version": 16,
   "mode": {
     "target": "standalone",
@@ -158,14 +158,14 @@
   "ir_fallback_codes": [
     {
       "code": "unsupported:select:body-shape-rejected",
-      "tests": 32919,
-      "units": 62412,
-      "passing_tests": 27819
+      "tests": 32718,
+      "units": 59692,
+      "passing_tests": 27623
     },
     {
       "code": "unsupported:select:param-type-not-resolvable",
       "tests": 12450,
-      "units": 29758,
+      "units": 29789,
       "passing_tests": 9471
     },
     {
@@ -176,21 +176,15 @@
     },
     {
       "code": "unsupported:select:class-member-unsupported",
-      "tests": 4394,
-      "units": 8041,
-      "passing_tests": 3623
+      "tests": 4400,
+      "units": 8047,
+      "passing_tests": 3629
     },
     {
       "code": "unsupported:select:call-graph-closure",
-      "tests": 3528,
-      "units": 4351,
-      "passing_tests": 3126
-    },
-    {
-      "code": "unsupported:select:return-type-not-resolvable",
-      "tests": 3248,
-      "units": 3725,
-      "passing_tests": 2620
+      "tests": 3603,
+      "units": 4625,
+      "passing_tests": 3199
     },
     {
       "code": "unsupported:select:array-method-unsupported",
@@ -199,16 +193,22 @@
       "passing_tests": 1915
     },
     {
+      "code": "unsupported:select:return-type-not-resolvable",
+      "tests": 1838,
+      "units": 2289,
+      "passing_tests": 1301
+    },
+    {
       "code": "unsupported:resolve:late-preparation-unsupported",
-      "tests": 2022,
-      "units": 6334,
-      "passing_tests": 1441
+      "tests": 1836,
+      "units": 5907,
+      "passing_tests": 1254
     },
     {
       "code": "unsupported:select:constructor-resolution-unsupported",
-      "tests": 1137,
-      "units": 1895,
-      "passing_tests": 1015
+      "tests": 1085,
+      "units": 1495,
+      "passing_tests": 968
     },
     {
       "code": "unsupported:select:async-generator",
@@ -218,9 +218,9 @@
     },
     {
       "code": "unsupported:select:call-resolution-unsupported",
-      "tests": 865,
-      "units": 874,
-      "passing_tests": 755
+      "tests": 827,
+      "units": 833,
+      "passing_tests": 743
     },
     {
       "code": "unsupported:select:class-method",
@@ -241,16 +241,16 @@
       "passing_tests": 615
     },
     {
-      "code": "unsupported:select:regexp-constructor-unsupported",
-      "tests": 514,
-      "units": 514,
-      "passing_tests": 484
+      "code": "unsupported:select:external-call",
+      "tests": 618,
+      "units": 619,
+      "passing_tests": 517
     },
     {
-      "code": "unsupported:select:external-call",
-      "tests": 438,
-      "units": 438,
-      "passing_tests": 341
+      "code": "unsupported:select:regexp-constructor-unsupported",
+      "tests": 515,
+      "units": 515,
+      "passing_tests": 485
     },
     {
       "code": "unsupported:select:param-shape-rejected",
@@ -278,9 +278,9 @@
     },
     {
       "code": "unsupported:select:operand-coercion-unsupported",
-      "tests": 138,
-      "units": 138,
-      "passing_tests": 126
+      "tests": 140,
+      "units": 140,
+      "passing_tests": 128
     },
     {
       "code": "unsupported:select:class-projection-unsupported",
@@ -302,9 +302,9 @@
     },
     {
       "code": "unsupported:select:string-method-unsupported",
-      "tests": 101,
-      "units": 101,
-      "passing_tests": 90
+      "tests": 103,
+      "units": 103,
+      "passing_tests": 92
     },
     {
       "code": "unsupported:select:date-constructor-unsupported",
@@ -1902,8 +1902,8 @@
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "assertion_fail:Test262Error: Symbol(Symbol.asyncDispose) should be an own property",
-          "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«null», «[object Object]») to be true",
+          "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: Expected stack2 to be an instance of AsyncDisposableStack"
         ]
       },
@@ -2360,15 +2360,15 @@
         "sample_files": [
           "test/language/expressions/class/async-gen-method/yield-promise-reject-next-yield-star-sync-iterator.js",
           "test/language/statements/class/elements/new-no-sc-line-method-rs-static-generator-method-privatename-identifier.js",
-          "test/built-ins/Iterator/prototype/forEach/next-method-returns-throwing-value.js",
           "test/built-ins/Iterator/prototype/forEach/argument-validation-failure-closes-underlying.js",
+          "test/built-ins/Iterator/prototype/forEach/next-method-returns-throwing-value.js",
           "test/built-ins/Iterator/prototype/take/next-method-returns-throwing-value.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot read properties of undefined (reading a class field)",
           "type_error:TypeError: Invalid iterator protocol",
-          "assertion_fail:Test262Error: Expected a Test262Error but got a TypeError",
           "assertion_fail:Test262Error: Expected SameValue(«false», «true») to be true",
+          "assertion_fail:Test262Error: Expected a Test262Error but got a TypeError",
           "assertion_fail:Test262Error: Expected a ReturnCalledError but got a Error"
         ]
       },
