@@ -695,6 +695,7 @@ import {
   nativeStringType,
   nativeStringTypeNullable,
   stringConstantExternrefInstrs,
+  jsonParseTextFoldsAtCompileTime,
 } from "./native-strings.js";
 import { isAnyStringSlot } from "./native-strings-shared.js";
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
@@ -3298,6 +3299,7 @@ function planIrOverlay(
       ...(nativeBufferSurface ? { nativeBufferSurface } : {}),
       dynMemberReadBuildable,
       builtinProtoCompanionSeeded: ctx.protoMemberDirty, // (#7127)
+      runtimeEvalMayExecute: ctx.runtimeEvalBoundaryPlan?.providerMayExecute !== false, // (#7106 lever O)
       builtinProtoMember: (builtin, member, anchor) => builtinProtoMemberProvided(ctx, builtin, member, anchor), // (#7294)
       ...functionValueSelectionOptions(),
       dynamicRuntimeBuildable: !ctx.fast,
@@ -3324,6 +3326,7 @@ function planIrOverlay(
       ...(resolveModuleBinding ? { resolveModuleBinding } : {}),
       classifyPrimitiveExpression,
       classifyDeclaredPrimitiveExpression,
+      jsonParseFoldsAtCompileTime: (call) => jsonParseTextFoldsAtCompileTime(ctx, call), // (#7267)
       isArrayExpression,
       classifyArrayElementFamily,
       isRegExpExpression,
@@ -4280,6 +4283,8 @@ export function scriptVarHome(
       return ctx.fast ? undefined : "dynamic";
     case "ref_null":
       if (type.typeIdx === ctx.anyStrTypeIdx) return "string";
+      // (#7292) The vec of a native-string array literal.
+      if (type.typeIdx === ctx.vecTypeMap.get(`ref_${ctx.anyStrTypeIdx}`)) return "vec";
       // (#7252) The struct legacy allocated for a user class.
       return [...ctx.classSet].some((n) => ctx.structMap.get(n) === type.typeIdx) ? "class-instance" : undefined;
     case "f64":
