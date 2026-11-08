@@ -6887,7 +6887,11 @@ fold becomes one parameterised arm keyed by the static's name:
     an identity (`x.constructor !== C`) or for its `name`
     (`x.constructor.name`), the two reads assert.js's `assert.throws` makes.
     This also covers `[].constructor.constructor("…")`, `Function` reached
-    without spelling it;
+    without spelling it. A name counts as an identifier, a string literal or
+    a template literal without substitutions (``({})[`constructor`]``). A
+    **computed** key (`var k = "constr" + "uctor"; ({})[k]`) is outside the
+    trust boundary: refusing every computed key removes all 57 files, because
+    the harness itself (assert.js) reads computed keys;
   - for an intrinsic operand only: any mention of an integrity mutator.
 
   Operand
@@ -7047,3 +7051,25 @@ files; 0 lost, 0 units newly legacy, 0 new post-claim errors, 57/57 pass on
 base and head, 408 byte-identical, playground 26/26 identical. Tests:
 `issue-7106-lever-o` 144/144; `linear-tests` (CI's command) 243/243. Gates
 pass bare, also against origin/main.
+
+### Review round 3 (#7188, 2026-11-08)
+
+Approved with two fixes:
+
+1. **Fixed — template-literal keys.** `propertyNameText` reads a template
+   literal without substitutions as a name, so ``({})[`constructor`].isFrozen = f``
+   refuses the fold. The same helper feeds the mutator scan, so legacy's
+   #3776 isFrozen adapter now also refuses ``Object[`freeze`]`` — the one
+   legacy change, and only more conservative. Refusing every *computed* key
+   was measured and dropped all 57 files (assert.js reads computed keys), so
+   computed keys are stated outside the trust boundary, and a test pins that
+   the fold still admits one.
+2. **Fixed — duplicated wrapper check.** `isExpressionWrapper` is the one
+   predicate for parentheses / `as` / `<T>` / `satisfies` / `!`, used by
+   `unwrapExpression` and `unwrapExpressionParent`.
+
+**Re-checked** (base `ad7789a495`): the 57 files plus 25 random files from
+the other 408, both lanes. +57 IR-only; every binary is byte-identical to
+round 2's head, and the 25 are identical to base; no new post-claim error
+(the 2 in `intl402/DateTimeFormat/test-option-date-time-components.js` are
+also on base). Tests: `issue-7106-lever-o` 149/149. Gates pass bare.

@@ -133,6 +133,9 @@ const REFUSED_LEGACY_WRONG: Record<string, string> = {
   reflectRoute: 'Reflect.set(Object, "isSealed", function () { return 7; });\nassert.sameValue(Object.isSealed(1), 7);',
   protoRoute:
     "({}).__proto__.constructor.isFrozen = function () { return 7; };\nassert.sameValue(Object.isFrozen(1), 7);",
+  // Review round 3: a template-literal key spells `constructor` too.
+  templateKeyConstructor:
+    "({})[`constructor`].isFrozen = function () { return 7; };\nassert.sameValue(Object.isFrozen(1), 7);",
 };
 
 describe("#7106 lever O: ES5 integrity statics with a fixed answer", () => {
@@ -154,6 +157,10 @@ describe("#7106 lever O: ES5 integrity statics with a fixed answer", () => {
     expect(foldOfLastCall(observed)).toEqual({ kind: "answer", value: false });
     expect(foldOfLastCall("var c = e.constructor;\nObject.isSealed(Array);")).toBeUndefined();
     expect(foldOfLastCall("e.constructor.name = 'x';\nObject.isSealed(Array);")).toBeUndefined();
+  });
+  it("a computed member key is outside the trust boundary: the fold still admits", () => {
+    const computed = 'var k = "constr" + "uctor";\n({})[k].isFrozen = f;\nObject.isFrozen(1);';
+    expect(foldOfLastCall(computed)).toEqual({ kind: "answer", value: true });
   });
   it("the fold refuses any call once dynamic code may run", () => {
     const call = ts.createSourceFile("t.js", "Object.isFrozen(1);", ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS)

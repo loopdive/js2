@@ -97,22 +97,32 @@ interface SourceIntegrityFacts {
 
 const sourceIntegrityFactsCache = new WeakMap<ts.SourceFile, SourceIntegrityFacts>();
 
+type ExpressionWrapper =
+  | ts.ParenthesizedExpression
+  | ts.AsExpression
+  | ts.TypeAssertion
+  | ts.SatisfiesExpression
+  | ts.NonNullExpression;
+
+/** A wrapper that forwards its operand's value unchanged: parentheses and the type-only forms. */
+function isExpressionWrapper(node: ts.Node): node is ExpressionWrapper {
+  return (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isNonNullExpression(node)
+  );
+}
+
 function unwrapExpression(expr: ts.Expression): ts.Expression {
   let current = expr;
-  while (
-    ts.isParenthesizedExpression(current) ||
-    ts.isAsExpression(current) ||
-    ts.isTypeAssertionExpression(current) ||
-    ts.isSatisfiesExpression(current) ||
-    ts.isNonNullExpression(current)
-  ) {
-    current = current.expression;
-  }
+  while (isExpressionWrapper(current)) current = current.expression;
   return current;
 }
 
 function propertyNameText(node: ts.Node): string | undefined {
-  if (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNumericLiteral(node)) return node.text;
+  if (ts.isIdentifier(node) || ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) return node.text;
   return undefined;
 }
 
@@ -127,15 +137,7 @@ function isStaticRead(object: ts.Identifier): boolean {
 
 /** `node` with every parenthesis / type wrapper around it: the position its value is used in. */
 function unwrapExpressionParent(node: ts.Node): ts.Node {
-  while (
-    ts.isParenthesizedExpression(node.parent) ||
-    ts.isAsExpression(node.parent) ||
-    ts.isTypeAssertionExpression(node.parent) ||
-    ts.isSatisfiesExpression(node.parent) ||
-    ts.isNonNullExpression(node.parent)
-  ) {
-    node = node.parent;
-  }
+  while (isExpressionWrapper(node.parent)) node = node.parent;
   return node;
 }
 
@@ -207,10 +209,10 @@ function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
         objectStaticsPristine = false;
       }
     }
+    // A computed key (`o["constr" + "uctor"]`) is outside the trust boundary: assert.js itself uses them.
     if (
       ts.isElementAccessExpression(node) &&
-      ts.isStringLiteralLike(node.argumentExpression) &&
-      node.argumentExpression.text === "Object"
+      propertyNameText(unwrapExpression(node.argumentExpression)) === "Object"
     ) {
       objectStaticsPristine = false;
     }
