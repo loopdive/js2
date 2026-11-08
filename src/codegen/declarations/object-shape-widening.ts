@@ -6,6 +6,7 @@
  */
 import { markIndexedPropertyStale } from "../strict-eq-stale-type.js";
 import { collectShapes } from "../../shape-inference.js";
+import { isVarDeclarationList } from "../../shared/var-declaration-lists.js";
 import { forEachChild, getTypeAtLocationBounded, ts } from "../../ts-api.js";
 import { resolveWasmType } from "../index.js";
 import { localGlobalIdx } from "../registry/imports.js";
@@ -897,9 +898,7 @@ function collectRepeatedOrdinaryToPrimitiveObjects(
   const visit = (node: ts.Node): void => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const list = node.parent;
-      const isVar =
-        ts.isVariableDeclarationList(list) &&
-        (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) === 0;
+      const isVar = ts.isVariableDeclarationList(list) && isVarDeclarationList(list);
       const symbol = isVar ? checker.getSymbolAtLocation(node.name) : undefined;
       if (symbol) {
         const declarations = declarationsBySymbol.get(symbol) ?? [];

@@ -60,6 +60,7 @@ import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan }
 import { makeIrNativeBufferSurfacePlan, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
 import { isIrNativeBufferRuntimeSymbol } from "../shared/contracts/native-buffer-adapters.js";
 import { irBackendCapabilityQuery, projectIrBackendTargetProfile } from "./backend/legality.js";
+import type { StringBuilderLowering } from "../backend/wasmgc/lowering/wasm-string-builder.js";
 import { nativeBufferSurfaceCapability } from "./capability.js";
 
 import {
@@ -140,7 +141,11 @@ import {
 } from "../codegen/ir-dynamic-construct.js";
 import { reserveModuleInitChunkHelperName } from "../shared/module-init-chunk-plan.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
-import { builtinNamespaceConstantValue } from "../codegen/builtin-value-read.js"; // (#7106 module-init lever A)
+import {
+  builtinNamespaceConstantValue, // (#7106 module-init lever A)
+  builtinProtoMemberProvided, // (#7294)
+  ensureBuiltinProtoMemberFunc, // (#7294)
+} from "../codegen/builtin-value-read.js";
 import { ensureIrNumberFromValueHelper } from "../codegen/helpers/ir-number-from-value.js"; // (#7106 module-init lever B)
 import { IR_NUMBER_FROM_VALUE_FEATURE, IR_NUMBER_FROM_VALUE_NATIVE_FN } from "./runtime/number-conversion-callable.js";
 import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-number-conversion.js"; // (#7106 module-init lever B)
@@ -182,11 +187,13 @@ import {
   VEC_ELEM_SET_PREFIX,
   VEC_NEW_SIZED_PREFIX,
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
+import { parseBuiltinProtoMemberSymbol } from "../shared/ambient-intrinsics.js"; // (#7294)
 import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import {
   ambientGlobalFunctionProviderSymbol,
   ensureNativeStringHelpers,
+  nativeStringBuilderTypes,
   STANDALONE_STDOUT_APPEND_FN,
 } from "../codegen/native-strings.js";
 import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
@@ -3938,6 +3945,7 @@ export function compileIrPathFunctions(
         fnctorNativeStringBoundaries: sourceLoweringPlans?.fnctorNativeStringBoundaries,
         returnTypeOverride: null,
         moduleInitUnit: true,
+        functionCodeStrict: irFunctionCodeStrictness(ctx, moduleInitSourceFile),
         moduleBindings,
         calleeTypes,
         ...projectFunctionValueLoweringPlans(sourceLoweringPlans),
@@ -7456,6 +7464,8 @@ function makeFromAstResolver(
       return moduleBindingResolver?.isLibOnlyBinding(node) === true;
     },
     builtinProtoCompanionSeeded: () => ctx.protoMemberDirty, // (#7127)
+    builtinProtoMember: (builtin: string, member: string, anchor: ts.Node) =>
+      builtinProtoMemberProvided(ctx, builtin, member, anchor), // (#7294)
     isAmbientStringBinding,
     // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
     // predicates as the legacy `collectConsoleImports` registration scan
@@ -7622,6 +7632,7 @@ function resolveAndObserveCallableProvider(
 
   let index: number | null | undefined;
   const { symbol } = ref.binding;
+  const builtinProtoMember = ref.binding.kind === "runtime" ? parseBuiltinProtoMemberSymbol(symbol) : undefined; // (#7294)
   if (ref.binding.kind === "intrinsic" && isIntrinsicId(symbol)) {
     const provider = runtimeProviders?.get(symbol);
     if (!provider || provider.implementation.kind !== "self-hosted") {
@@ -7684,6 +7695,9 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNativePromiseAllProvider(ctx);
   } else if (ref.binding.kind === "runtime" && IR_NATIVE_CONSOLE_SYMBOLS.has(symbol)) {
     index = ensureIrNativeConsoleProvider(ctx, symbol);
+  } else if (builtinProtoMember !== undefined) {
+    const { role, builtin, member } = builtinProtoMember;
+    index = ensureBuiltinProtoMemberFunc(ctx, role, builtin, member) ?? null;
   } else if (ref.binding.kind === "runtime" && symbol === "__hof_holey_array_filter") {
     index = ensureHoleyArrayFilter(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
@@ -8003,6 +8017,27 @@ function resolvePreparedImportCallable(
   );
 }
 
+/**
+ * (#7291) The builder replaces the owned-append concat, so it follows that
+ * provider's frozen arm: only the native helpers own a builder's buffer.
+ */
+function nativeStringBuilderLowering(
+  ctx: CodegenContext,
+  preparedRuntimeManifest: PreparedIrRuntimeManifest | undefined,
+): StringBuilderLowering | undefined {
+  if (preparedStringConcatProvider(preparedRuntimeManifest, "owned-append")?.arm !== "native") return undefined;
+  ensureNativeStringHelpers(ctx);
+  const flatten = nativeStrHelperHandle(ctx, "__str_flatten");
+  const nextCap = nativeStrHelperHandle(ctx, "__str_buf_next_cap");
+  if (flatten === undefined || nextCap === undefined) {
+    throw new Error("ir/integration: native string builder helpers not registered");
+  }
+  return {
+    types: nativeStringBuilderTypes(ctx),
+    helpers: { flatten, nextCap },
+  };
+}
+
 function makeResolver(
   ctx: CodegenContext,
   unionRegistry: UnionStructRegistry,
@@ -8317,6 +8352,7 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: string_charAt import not registered");
       return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: idx }];
     },
+    resolveStringBuilderLowering: () => nativeStringBuilderLowering(ctx, preparedRuntimeManifest),
     emitStringCharCodeAt(_inputEncoding, provider): readonly Instr[] {
       if (provider) {
         return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
