@@ -136,6 +136,7 @@ import { staticMemberBindingIsUnsound } from "./class-overrides.js";
 // codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
 import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "./analysis/loop-shape.js";
 import { countedStringAppendPlanIsCurrent } from "./analysis/counted-string-append.js";
+import { stringBuilderSlotRole } from "./string-builder-shape.js";
 // (#3741) native-i32 slot storage for provably-int32 mutable locals
 import {
   compoundBitwiseToken,
@@ -4652,7 +4653,11 @@ function bindLocalName(
   if (!isConst && cx.mutatedLets.has(name)) {
     const representation = resolveMutableLocalRepresentation(inferred, widenDynamic, cx);
     if (representation) {
-      const slotIndex = cx.builder.declareSlot(name, representation.storageType);
+      const slotIndex = cx.builder.declareSlot(
+        name,
+        representation.storageType,
+        stringBuilderSlotRole(declaration, cx),
+      );
       cx.builder.emitSlotWrite(slotIndex, value);
       if (promoteI32Slot) {
         // (#3741) The Wasm slot is i32; the BINDING's logical type stays f64
@@ -10434,8 +10439,8 @@ interface LoweredStringMethodArgument {
 
 /**
  * An argument as its role converts it: a string, or an i32 position or length.
- * Selection proved it; a literal with a static ToNumber folds, and `undefined`
- * takes the omitted value.
+ * Selection proved it; a static literal folds its ToNumber or ToString, and an
+ * `undefined` with an omitted value takes it.
  */
 function lowerStringMethodArgument(
   parameter: StringMethodParameter,
@@ -10448,10 +10453,12 @@ function lowerStringMethodArgument(
   const literal = staticStringMethodArgument(arg, (identifier) =>
     isGlobalUndefinedIdentifier(identifier, cx.scope, (id) => cx.resolver?.isDirectModuleBinding?.(id) === true),
   );
-  if (literal === "undefined") {
+  const textual = parameter.role === "search" || parameter.role === "fill";
+  if (literal === "undefined" && (!textual || parameter.omitted !== undefined)) {
     return { value: omittedStringMethodArgument(parameter.omitted ?? "zero", recv, receiverExpr, cx) };
   }
-  if (parameter.role === "search" || parameter.role === "fill") {
+  if (textual && literal !== undefined) return { value: cx.builder.emitStringConst(literal) };
+  if (textual) {
     const value = lowerExpr(arg, cx, { kind: "string" });
     if (cx.builder.typeOf(value).kind !== "string") {
       // invariant (selection): a search or fill argument is a proven string.
@@ -10463,8 +10470,9 @@ function lowerStringMethodArgument(
     }
     return { value };
   }
-  if (literal !== undefined)
-    return { value: cx.builder.emitConst({ kind: "i32", value: literal }, irVal({ kind: "i32" })) };
+  if (literal !== undefined) {
+    return { value: cx.builder.emitConst({ kind: "i32", value: literal === "true" ? 1 : 0 }, irVal({ kind: "i32" })) };
+  }
   const numeric = lowerExpr(arg, cx, irVal({ kind: "f64" }));
   const numberType = cx.builder.typeOf(numeric);
   if (asVal(numberType)?.kind === "i32") return { value: numeric, numberType };
