@@ -10120,7 +10120,12 @@ function registerReassignedFunctionGlobals(
     for (const name of ctx.topLevelFunctionNames) {
       const declaration = ctx.topLevelFunctionDeclarations.get(name);
       const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
-      if (canBeReboundByEval && (hasUnknownDynamicSource || runtimeEvalPlan.dynamicSourceWrites.has(name))) {
+      // A fragment that only calls the declaration still needs it live: the
+      // static eval splice reaches a top-level function only through its live
+      // binding, and without one drops the call (`eval("f()")`, 15.3.5.4_2-57gs).
+      const namedByDynamicSource =
+        runtimeEvalPlan.dynamicSourceWrites.has(name) || runtimeEvalPlan.dynamicSourceReferences.has(name);
+      if (canBeReboundByEval && (hasUnknownDynamicSource || namedByDynamicSource)) {
         if (!reassigned.has(name)) (ctx.evalOnlyLiveFuncBindings ??= new Set<string>()).add(name);
         reassigned.add(name);
         if (declaration) reassignedDeclarations.add(declaration);
