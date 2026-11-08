@@ -97,8 +97,9 @@ const REFUSED: Record<string, string> = {
 };
 
 /**
- * Review round 1: every `Object` must be a static read, or `Object` / a static
- * may be replaced. The fold refuses each; legacy then answers wrongly, as on
+ * Review rounds 1 and 2: every `Object` must be a static read, and no
+ * reflective route (`.constructor`, `getPrototypeOf`, `__proto__`, `Reflect`)
+ * may reach it, or `Object` / a static may be replaced. The fold refuses each; legacy then answers wrongly, as on
  * main (identical outcome on base `cb64e11d5f`), so the run's assertion throws.
  */
 const REFUSED_LEGACY_WRONG: Record<string, string> = {
@@ -116,6 +117,22 @@ const REFUSED_LEGACY_WRONG: Record<string, string> = {
   thisObject: "this.Object = { isSealed: function () { return 7; } };\nassert.sameValue(Object.isSealed(Array), 7);",
   withObject:
     "with ({ Object: { isFrozen: function () { return 7; } } }) { assert.sameValue(Object.isFrozen(Array), 7); }",
+  // Review round 2: routes to `Object` (or `Function`) that never spell it.
+  protoConstructorStatic:
+    "Object.prototype.constructor.isFrozen = function () { return 7; };\nassert.sameValue(Object.isFrozen(1), 7);",
+  literalConstructorStatic:
+    "({}).constructor.isSealed = function () { return 7; };\nassert.sameValue(Object.isSealed(1), 7);",
+  getPrototypeOfConstructorStatic:
+    "Object.getPrototypeOf({}).constructor.isExtensible = function () { return 7; };\nassert.sameValue(Object.isExtensible(1), 7);",
+  deleteThroughConstructor:
+    'var r;\ntry { delete Object.prototype.constructor.isExtensible; r = Object.isExtensible(1); } catch (e) { r = "threw"; }\nassert.sameValue(r, "threw");',
+  getterRoute:
+    "var o = { get g() { ({}).constructor.isFrozen = function () { return 7; }; return 0; } };\no.g;\nassert.sameValue(Object.isFrozen(1), 7);",
+  functionThroughConstructor:
+    '[].constructor.constructor("Object.preventExtensions(Math)")();\nassert.sameValue(Object.isExtensible(Math), false);',
+  reflectRoute: 'Reflect.set(Object, "isSealed", function () { return 7; });\nassert.sameValue(Object.isSealed(1), 7);',
+  protoRoute:
+    "({}).__proto__.constructor.isFrozen = function () { return 7; };\nassert.sameValue(Object.isFrozen(1), 7);",
 };
 
 describe("#7106 lever O: ES5 integrity statics with a fixed answer", () => {
@@ -131,6 +148,12 @@ describe("#7106 lever O: ES5 integrity statics with a fixed answer", () => {
   }
   it("the fold admits the same call when every `Object` is a static read", () => {
     expect(foldOfLastCall("Object.isSealed(Array);")).toEqual({ kind: "answer", value: false });
+  });
+  it("the fold admits a `.constructor` read only as an identity or for its name (assert.throws)", () => {
+    const observed = "if (e.constructor !== C) { n = e.constructor.name; }\nObject.isSealed(Array);";
+    expect(foldOfLastCall(observed)).toEqual({ kind: "answer", value: false });
+    expect(foldOfLastCall("var c = e.constructor;\nObject.isSealed(Array);")).toBeUndefined();
+    expect(foldOfLastCall("e.constructor.name = 'x';\nObject.isSealed(Array);")).toBeUndefined();
   });
   it("the fold refuses any call once dynamic code may run", () => {
     const call = ts.createSourceFile("t.js", "Object.isFrozen(1);", ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS)

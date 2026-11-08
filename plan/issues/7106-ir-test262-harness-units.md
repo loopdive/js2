@@ -6864,21 +6864,31 @@ fold becomes one parameterised arm keyed by the static's name:
   sealed, not extensible); `freeze` / `seal` / `preventExtensions` are
   `mutator` rows (a non-Object operand is returned unchanged).
 - `objectIntegrityCallFold(call, realm)` → `{ answer }` | `{ operand }` |
-  `undefined`. One operand, the ambient `Object`, and nothing that could
-  replace `Object` or one of its statics (*rewritten in review round 1, below:
-  an allowlist, not a blocklist*):
-  - no runtime-eval site may run (`eval`, `Function`, `new Function`): the
+  `undefined`. One operand and the ambient `Object`. *(Rewritten in review
+  rounds 1 and 2.)* **Trust boundary:** the fold assumes the integrity statics
+  and the pristine intrinsics are not changed through any path the source does
+  not expose syntactically — the assumption #3776's isFrozen fold already
+  makes. It guarantees no more than that the source shows none of the routes
+  below; each one refuses the fold:
+  - a runtime-eval site that may run (`eval`, `Function`, `new Function`): the
     boundary plan's `providerMayExecute`, passed in as the realm's
     `dynamicCodeMayRun`;
-  - every occurrence of the identifier `Object` in the source is
-    `Object.<identifier>` read as a value or called: never an assignment,
-    compound-assignment or destructuring target, an update or `delete`
-    operand (also through parentheses / `as` / `!`), a computed access, or any
-    other value use (`var o = Object`, `f(Object)`, `(Object).x`). The one
-    other admitted occurrence is the operand of an integrity *test*
-    (`Object.isFrozen(Object)`), which reads it and nothing else;
-  - no member is named `Object` (`this.Object`, `$262.global["Object"]`), and
-    the source names neither `globalThis` nor a `with` statement.
+  - an occurrence of the identifier `Object` other than `Object.<identifier>`
+    read as a value or called, or the operand of an integrity *test*
+    (`Object.isFrozen(Object)`, which reads it and nothing else). So an
+    assignment, compound-assignment or destructuring target, an update or
+    `delete` operand (also through parentheses / `as` / `!`), a computed
+    access, and any other value use (`var o = Object`, `f(Object)`,
+    `(Object).x`) refuse;
+  - a member named `Object` (`this.Object`, `$262.global["Object"]`), the
+    identifier `globalThis`, or a `with` statement;
+  - a reflective route: the names `getPrototypeOf`, `setPrototypeOf`,
+    `__proto__` or `Reflect`, and any `.constructor` except one used only as
+    an identity (`x.constructor !== C`) or for its `name`
+    (`x.constructor.name`), the two reads assert.js's `assert.throws` makes.
+    This also covers `[].constructor.constructor("…")`, `Function` reached
+    without spelling it;
+  - for an intrinsic operand only: any mention of an integrity mutator.
 
   Operand
   classes: an ES5 intrinsic or `X.prototype` (only while the source names no
@@ -7013,3 +7023,27 @@ legacy, 0 new post-claim errors, 57/57 changed binaries pass on base and head,
 408 byte-identical. Tests: `issue-7106-lever-o` 111/111 (new rows for every probe, the
 direct admission checks among them). `linear-tests` (the CI job's exact
 command) passes locally, 243/243.
+
+### Review round 2 (#7188, 2026-11-08)
+
+1. **Fixed — reflective routes to `Object`.** `Object.prototype.constructor.isFrozen = …`,
+   `({}).constructor.isSealed = …`, `Object.getPrototypeOf({}).constructor.isExtensible = …`,
+   `delete Object.prototype.constructor.isExtensible`, the same write in a
+   getter, `({}).__proto__.constructor…`, `Reflect.set(Object, …)` and
+   `[].constructor.constructor("…")()` now refuse the fold (rule and trust
+   boundary in the Implementation Plan). Legacy answers each of them wrongly,
+   exactly as on main. A literal "any `.constructor`" refusal also removed
+   all 57 files: assert.js's `assert.throws` reads `thrown.constructor` (an
+   identity compare and `.name`). Those two reads are admitted; any other use
+   of a `.constructor` value refuses.
+2. **Fixed — duplicated helpers.** The write test is `isStoreTarget`
+   (`shared/binding-writes.ts`) plus a `delete`-operand check; the local
+   `isAssignmentOperator` is gone (the `FirstAssignment`–`LastAssignment`
+   range).
+
+**Re-measured** (base `ad7789a495` = the origin/main merged into the branch,
+same 465 files, both lanes): +57 IR-only per lane (43 → 100), the same 57
+files; 0 lost, 0 units newly legacy, 0 new post-claim errors, 57/57 pass on
+base and head, 408 byte-identical, playground 26/26 identical. Tests:
+`issue-7106-lever-o` 144/144; `linear-tests` (CI's command) 243/243. Gates
+pass bare, also against origin/main.

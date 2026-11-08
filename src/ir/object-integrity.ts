@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { isUnshadowedUndefined } from "../shared/ambient-intrinsics.js";
+import { isStoreTarget } from "../shared/binding-writes.js";
+import { isEqualityOperator } from "./analysis/operand-admissibility.js";
 import { forEachChild, ts } from "../ts-api.js";
 
 const ES5_INTRINSIC_OBJECTS: ReadonlySet<string> = new Set([
@@ -44,6 +46,19 @@ const ES5_INTRINSIC_PROTOTYPES: ReadonlySet<string> = new Set([
 const INTEGRITY_MUTATORS: ReadonlySet<string> = new Set(["freeze", "seal", "preventExtensions"]);
 
 /**
+ * Names that reach `Object` (or `Function`) without spelling it:
+ * `({}).constructor`, `Object.getPrototypeOf(x).constructor`, `o.__proto__`,
+ * `Reflect.set(…)`, `[].constructor.constructor("…")`. Any mention refuses.
+ */
+const REFLECTIVE_NAMES: ReadonlySet<string> = new Set([
+  "constructor",
+  "getPrototypeOf",
+  "setPrototypeOf",
+  "__proto__",
+  "Reflect",
+]);
+
+/**
  * (#7106 lever O) The six ES5 integrity statics, keyed by name. A `test`
  * answers a constant for the two operand classes whose answer is fixed at
  * compile time: an intrinsic of the pristine ES5 realm (extensible, neither
@@ -67,12 +82,13 @@ interface SourceIntegrityFacts {
   /** Some source text names an integrity mutator, so no intrinsic is known to be pristine. */
   readonly mayMutate: boolean;
   /**
-   * Every occurrence of the identifier `Object` is `Object.<name>` read as a
-   * value or called ({@link isStaticRead}) or an integrity test's operand
-   * ({@link isIntegrityTestOperand}), no member is named `Object`
-   * (`this.Object`, `$262.global["Object"]`), and the source names neither
-   * `globalThis` nor a `with` statement: nothing in the source can replace
-   * `Object` or one of its statics.
+   * The source shows no syntactic route to `Object` or its statics: every
+   * occurrence of the identifier `Object` is `Object.<name>` read as a value
+   * or called ({@link isStaticRead}) or an integrity test's operand
+   * ({@link isIntegrityTestOperand}); no member is named `Object`
+   * (`this.Object`, `$262.global["Object"]`); no `globalThis`, `with` or
+   * {@link REFLECTIVE_NAMES} route ({@link isObservedConstructor} aside).
+   * Paths the source does not expose are trusted, as #3776's fold trusts them.
    */
   readonly objectStaticsPristine: boolean;
   /** #3776's narrower rule, kept for legacy's adapter: `Object` or `Object.isFrozen` is assigned. */
@@ -95,27 +111,6 @@ function unwrapExpression(expr: ts.Expression): ts.Expression {
   return current;
 }
 
-function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
-  return (
-    kind === ts.SyntaxKind.EqualsToken ||
-    kind === ts.SyntaxKind.PlusEqualsToken ||
-    kind === ts.SyntaxKind.MinusEqualsToken ||
-    kind === ts.SyntaxKind.AsteriskEqualsToken ||
-    kind === ts.SyntaxKind.SlashEqualsToken ||
-    kind === ts.SyntaxKind.PercentEqualsToken ||
-    kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken ||
-    kind === ts.SyntaxKind.LessThanLessThanEqualsToken ||
-    kind === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken ||
-    kind === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken ||
-    kind === ts.SyntaxKind.AmpersandEqualsToken ||
-    kind === ts.SyntaxKind.BarEqualsToken ||
-    kind === ts.SyntaxKind.CaretEqualsToken ||
-    kind === ts.SyntaxKind.QuestionQuestionEqualsToken ||
-    kind === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
-    kind === ts.SyntaxKind.BarBarEqualsToken
-  );
-}
-
 function propertyNameText(node: ts.Node): string | undefined {
   if (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNumericLiteral(node)) return node.text;
   return undefined;
@@ -127,17 +122,42 @@ function isStaticRead(object: ts.Identifier): boolean {
   if (!ts.isPropertyAccessExpression(access) || access.expression !== object || !ts.isIdentifier(access.name)) {
     return false;
   }
-  let use: ts.Node = access;
+  return !isStoreTarget(access) && !ts.isDeleteExpression(unwrapExpressionParent(access).parent);
+}
+
+/** `node` with every parenthesis / type wrapper around it: the position its value is used in. */
+function unwrapExpressionParent(node: ts.Node): ts.Node {
   while (
-    ts.isParenthesizedExpression(use.parent) ||
-    ts.isAsExpression(use.parent) ||
-    ts.isTypeAssertionExpression(use.parent) ||
-    ts.isSatisfiesExpression(use.parent) ||
-    ts.isNonNullExpression(use.parent)
+    ts.isParenthesizedExpression(node.parent) ||
+    ts.isAsExpression(node.parent) ||
+    ts.isTypeAssertionExpression(node.parent) ||
+    ts.isSatisfiesExpression(node.parent) ||
+    ts.isNonNullExpression(node.parent)
   ) {
-    use = use.parent;
+    node = node.parent;
   }
-  return !isWriteTarget(use);
+  return node;
+}
+
+/**
+ * `x.constructor` used only as an identity (`x.constructor !== C`) or for its
+ * `name` (`x.constructor.name`, assert.js's `assert.throws`): neither use can
+ * reach a static of the constructor it reads.
+ */
+function isObservedConstructor(name: ts.Node): boolean {
+  const access = name.parent;
+  if (!ts.isIdentifier(name) || name.text !== "constructor" || !ts.isPropertyAccessExpression(access)) return false;
+  if (access.name !== name) return false;
+  const use = unwrapExpressionParent(access);
+  const parent = use.parent;
+  if (ts.isBinaryExpression(parent)) return isEqualityOperator(parent.operatorToken.kind);
+  return (
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === use &&
+    parent.name.text === "name" &&
+    !isStoreTarget(parent) &&
+    !ts.isDeleteExpression(unwrapExpressionParent(parent).parent)
+  );
 }
 
 /** `Object` passed to an integrity test (`Object.isFrozen(Object)`): a test reads its operand and nothing else. */
@@ -151,27 +171,6 @@ function isIntegrityTestOperand(object: ts.Identifier): boolean {
     callee.expression.text === "Object" &&
     INTEGRITY_STATICS.get(callee.name.text)?.kind === "test"
   );
-}
-
-/** `node` is written: an assignment / compound-assignment / destructuring target, an update or `delete` operand. */
-function isWriteTarget(node: ts.Node): boolean {
-  const parent = node.parent;
-  if (ts.isBinaryExpression(parent)) return parent.left === node && isAssignmentOperator(parent.operatorToken.kind);
-  if (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) {
-    return parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken;
-  }
-  if (ts.isDeleteExpression(parent)) return true;
-  if (ts.isForInStatement(parent) || ts.isForOfStatement(parent)) return parent.initializer === node;
-  if (
-    ts.isArrayLiteralExpression(parent) ||
-    ts.isSpreadElement(parent) ||
-    ts.isSpreadAssignment(parent) ||
-    (ts.isPropertyAssignment(parent) && parent.initializer === node) ||
-    ts.isObjectLiteralExpression(parent)
-  ) {
-    return isWriteTarget(parent);
-  }
-  return false;
 }
 
 function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
@@ -194,7 +193,12 @@ function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
       mayMutate = true;
     }
 
-    if (ts.isWithStatement(node)) objectStaticsPristine = false;
+    if (
+      ts.isWithStatement(node) ||
+      (REFLECTIVE_NAMES.has(propertyNameText(node) ?? "") && !isObservedConstructor(node))
+    ) {
+      objectStaticsPristine = false;
+    }
     if (ts.isIdentifier(node)) {
       const parent = node.parent;
       const isObjectKey = ts.isPropertyAssignment(parent) && parent.name === node;
@@ -211,7 +215,11 @@ function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
       objectStaticsPristine = false;
     }
 
-    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
       const left = unwrapExpression(node.left as ts.Expression);
       isFrozenRebound ||=
         (ts.isIdentifier(left) && left.text === "Object") ||
@@ -318,8 +326,8 @@ export interface IrObjectIntegrityRealm {
  *   - a mutator of a boolean, number or string literal is that literal. A
  *     mutator of an intrinsic mutates it, and one of `null` / `undefined`
  *     would need its consumer's hint to lower: both keep legacy.
- * Only while nothing can replace `Object` or its statics: no dynamic code may
- * run, and every `Object` in the source is a static read
+ * Only while the program shows no route to `Object` or its statics: no
+ * dynamic code may run, and the source exposes none
  * ({@link SourceIntegrityFacts.objectStaticsPristine}).
  */
 export function objectIntegrityCallFold(
