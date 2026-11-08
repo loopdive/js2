@@ -14,6 +14,21 @@ area: ir
 goal: ir-full-coverage
 related: [7252, 7128, 2949, 7274]
 assignee: "ttraenkler/lever-v" # handed over from c-lane-opus, 2026-11-07
+loc-budget-allow:
+  # 2026-11-08 (lever V): restated here because the 7106 plan file this branch
+  # carried them in now matches main, which strands them. The vec home's own
+  # logic lives in module-binding-vec.ts and module-binding-certified-homes.ts;
+  # the god-files only gain the seams that route to it: select.ts the module-init
+  # admission of a vec-homed script var, from-ast.ts its read/write lowering
+  # calls, integration.ts the vec binding's storage type, codegen/index.ts
+  # classifying the legacy string-array slot as a vec home.
+  - src/ir/select.ts
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  # 2026-11-08 (lever V): isPhase1Expr +1, the vec-homed element read arm.
+  - src/ir/select.ts::isPhase1Expr
 ---
 
 # #7292 — IR module-init: script-var array-literal storage
