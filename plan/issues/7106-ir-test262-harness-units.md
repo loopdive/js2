@@ -6917,6 +6917,40 @@ binaries are byte-identical before and after the fix. The ordinary method form
 (`" a ".trim()` after the same patch) is already claimed on main and answers the
 intrinsic; that is a pre-existing gap for its own issue, not this slice.
 
+**Trust boundary (review, 2026-11-08).** The borrow trusts the realm's
+`String.prototype.<m>` and `Function.prototype.call` exactly as legacy does: it
+is claimed only when the source shows no route that could replace what the
+call reaches. Refused at selection (`expr-string-borrow-patched-prototype`), all
+from one cached walk in `src/shared/intrinsic-prototype-writes.ts`:
+
+- `String.prototype` or `Function.prototype` used other than as the object of
+  a plain member read (`sourceMayPatchPrototype`): a store, `delete`,
+  `Object.defineProperty`, an alias or any other escape;
+- a store, `delete` or `Object.defineProperty` of any member or binding named
+  `call` or `String` (`sourceWritesMemberNamed`): `x.call = f`,
+  `String.prototype.trim.call = f`, `globalThis.String = v`, `String = v`;
+- a reflective name anywhere (`sourceNamesReflectiveRoute`): `getPrototypeOf`,
+  `setPrototypeOf`, `__proto__`, `Reflect`, `constructor` (except the two
+  read shapes assert.js uses, an identity compare and `.constructor.name`),
+  and any `with` statement.
+
+A bare mention of `globalThis` is not refused: the test262 runtime shim reads
+`globalThis.<name>` and stores `global: globalThis` in every test, so that rule
+would refuse all 36 files. A patch through the escaped global object still has
+to write a member named `String` (or `call`), which the name rule refuses; a
+computed key (`o["Str" + "ing"] = v`) is outside the boundary, as it is for
+legacy and for lever O. Legacy answers every listed route the same way (it
+does not model them either), so these refusals keep parity, not fix a
+regression. Re-measured on the 36 gained files plus 30 random ES5 files, both
+lanes: all 36 still claim, 66/66 binaries byte-identical to `c75028d573`.
+
+**Follow-up: one reflective-route helper.** Lever O (#7188,
+`src/ir/object-integrity.ts`) keeps the same `REFLECTIVE_NAMES` list and an
+`isObservedConstructor` twin for `Object`'s statics. Once both levers are on
+main, lever O's facts should read `sourceNamesReflectiveRoute` (and the shared
+`isObservedConstructor`) from `src/shared/intrinsic-prototype-writes.ts`,
+removing its copy.
+
 **Next sub-shapes, by measured yield** (census above, files IR-only alone):
 `new X(v)` as a value (30; needs certified wrapper uses or wrapper-aware
 dynamic ops), `X.prototype` other than `.call` (14) and the static reads (39

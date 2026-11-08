@@ -4,7 +4,8 @@
 // with `r` a proven string, number or boolean, is `String(r).<m>(…)` and is
 // claimed by the IR through the string-method surface. A receiver that may be
 // nullish, an object or a wrapper, a method without a surface row, `.apply`,
-// and a program that may patch `String.prototype` stay on the legacy boundary.
+// and a program that may patch `String.prototype` (by name or by a reflective
+// route) stay on the legacy boundary.
 // Each row's expected value is the JS engine's answer, recorded with the row.
 
 import { describe, expect, it } from "vitest";
@@ -47,6 +48,21 @@ const REFUSED: Record<string, Row> = {
 /** A program that may replace a `String.prototype` method keeps legacy's lookup of it. */
 const PATCHED_PROTOTYPE = `String.prototype.trim = function () { return "patched"; };
 export function patched(): number { return String.prototype.trim.call(" a ") === "patched" ? 1 : 0; }`;
+
+/**
+ * Routes that change what the borrow reaches without spelling
+ * `String.prototype.<m> = …` also keep the borrow legacy. Legacy answers these
+ * no better than the IR would, so the rows are compiled, not run.
+ */
+const INDIRECT_PATCHES: Record<string, string> = {
+  functionCall: 'Function.prototype.call = function () { return "F"; } as any;',
+  borrowCall: '(String.prototype.trim as any).call = function () { return "C"; };',
+  getPrototypeOf: 'Object.getPrototypeOf("").trim = function () { return "G"; };',
+  proto: '("" as any).__proto__.trim = function () { return "P"; };',
+  constructorPrototype: '("" as any).constructor.prototype.trim = function () { return "K"; };',
+  globalString: '(globalThis as any).String = { prototype: { trim: { call() { return "S"; } } } };',
+};
+const BORROW = 'export function borrow(): number { return String.prototype.trim.call(" a ") === "a" ? 1 : 0; }';
 
 function source(cases: Record<string, Row>): string {
   return Object.entries(cases)
@@ -107,4 +123,11 @@ describe("#7106 lever P — String.prototype borrow over a primitive receiver", 
     expect(outcome(result, "patched")?.irBodyEmitted).not.toBe(true);
     expect(exports.patched!()).toBe(1);
   });
+
+  for (const [name, patch] of Object.entries(INDIRECT_PATCHES)) {
+    it.each<CompileTarget>([undefined, "standalone"])(`keeps the borrow legacy after ${name} (%s)`, async (target) => {
+      const result = await compileTarget(`${patch}\n${BORROW}`, target);
+      expect(outcome(result, "borrow")?.irBodyEmitted).not.toBe(true);
+    });
+  }
 });

@@ -35,7 +35,7 @@ export interface PrototypeBorrowCall {
  * least the receiver argument, no spread. Pure syntax — no scope, ambient or
  * lane question is answered here. (#7106 lever P) `String`'s borrow reads it too.
  */
-export function matchPrototypeBorrowCall(
+function matchPrototypeBorrowCall(
   expr: ts.CallExpression,
   constructorName: "Array" | "String",
 ): PrototypeBorrowCall | undefined {
@@ -50,6 +50,21 @@ export function matchPrototypeBorrowCall(
   const [receiver, ...args] = expr.arguments;
   if (receiver === undefined || expr.arguments.some(ts.isSpreadElement)) return undefined;
   return { root, method: methodAccess.name.text, receiver, args };
+}
+
+/**
+ * (#7106 lever P) The `String` borrow off the ambient `String`: no local of
+ * that name in `locals`, and `isAmbient` (the caller's view of the global
+ * binding) takes the root for the realm's constructor.
+ */
+export function ambientStringPrototypeBorrow(
+  expr: ts.CallExpression,
+  locals: { has(name: string): boolean },
+  isAmbient: (root: ts.Identifier) => boolean,
+): PrototypeBorrowCall | undefined {
+  if (locals.has("String")) return undefined;
+  const borrow = matchPrototypeBorrowCall(expr, "String");
+  return borrow !== undefined && isAmbient(borrow.root) ? borrow : undefined;
 }
 
 /** The `Array` borrow, for a (method, arity) the wrapper symbol can name. */

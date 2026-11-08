@@ -90,8 +90,8 @@ import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
 import {
   type PrototypeBorrowCall,
+  ambientStringPrototypeBorrow,
   matchArrayPrototypeBorrowCall,
-  matchPrototypeBorrowCall,
 } from "./array-prototype-borrow-call.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
@@ -206,7 +206,11 @@ import {
 } from "./literal-pattern-plan.js";
 import { declarationBindingWritten } from "./const-binding-writes.js";
 import { programPatchesDestructuringRealm } from "./realm-keys.js";
-import { sourceMayPatchPrototype } from "../shared/intrinsic-prototype-writes.js";
+import {
+  sourceMayPatchPrototype,
+  sourceNamesReflectiveRoute,
+  sourceWritesMemberNamed,
+} from "../shared/intrinsic-prototype-writes.js";
 import { collectBindingPatternNames } from "./analysis/ast-scope.js";
 import {
   conditionalJoinArmFamily,
@@ -8942,8 +8946,17 @@ function stringPrototypeBorrowSelection(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
-  // The surface row is the realm's own method: a program that may replace it keeps legacy's lookup.
-  if (sourceMayPatchPrototype(expr.getSourceFile(), "String")) {
+  // The surface row is the realm's own method reached as spelled, legacy's own
+  // trust: a source that may replace the method, `.call` or `String`, or that
+  // names a route to a prototype it does not spell, keeps legacy's lookup.
+  const source = expr.getSourceFile();
+  if (
+    sourceMayPatchPrototype(source, "String") ||
+    sourceMayPatchPrototype(source, "Function") ||
+    sourceNamesReflectiveRoute(source) ||
+    sourceWritesMemberNamed(source, "call") ||
+    sourceWritesMemberNamed(source, "String")
+  ) {
     return capabilityNo("string-method-unsupported", "expr-string-borrow-patched-prototype", expr);
   }
   const family = provenIrFamily(borrow.receiver, scope);
@@ -12387,8 +12400,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       const objectTagArg = scope.has("Object") ? null : ambientObjectToStringTagCall(expr);
       if (objectTagArg !== null) return isPhase1Expr(objectTagArg, scope, localClasses);
       // (#7106 lever P) `String.prototype.<m>.call(<primitive>, …)`: `String(r).<m>(…)`.
-      const stringBorrow = scope.has("String") ? undefined : matchPrototypeBorrowCall(expr, "String");
-      if (stringBorrow !== undefined && selectorSeesAmbientStringBinding(stringBorrow.root)) {
+      const stringBorrow = ambientStringPrototypeBorrow(expr, scope, selectorSeesAmbientStringBinding);
+      if (stringBorrow !== undefined) {
         return stringPrototypeBorrowSelection(expr, stringBorrow, scope, localClasses);
       }
       // (#7106 compareArray.format) `Array.prototype.<m>.call(recv, …)`: borrow-wrapper lanes only.

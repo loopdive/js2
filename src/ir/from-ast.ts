@@ -118,8 +118,8 @@ import { irDynamicMethodCallHelperName, irDynamicMethodCallNeedsWrapper } from "
 import {
   type PrototypeBorrowCall,
   irArrayPrototypeBorrowHelperName,
+  ambientStringPrototypeBorrow,
   matchArrayPrototypeBorrowCall,
-  matchPrototypeBorrowCall,
 } from "./array-prototype-borrow-call.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "../codegen/ir-native-map.js"; // (#4461) native $Map adapter ABI
@@ -9701,8 +9701,12 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
 
   // (#7106 lever P) `String.prototype.<m>.call(r, …)` on the ambient `String`:
   // the selector proved `r` a primitive, so the call is `String(r).<m>(…)`.
-  const stringBorrow = cx.scope.has("String") ? undefined : matchPrototypeBorrowCall(expr, "String");
-  if (stringBorrow !== undefined && cx.resolver?.isAmbientStringBinding?.(stringBorrow.root) === true) {
+  const stringBorrow = ambientStringPrototypeBorrow(
+    expr,
+    cx.scope,
+    (root) => cx.resolver?.isAmbientStringBinding?.(root) === true,
+  );
+  if (stringBorrow !== undefined) {
     const receiver = lowerToStringOperand(stringBorrow.receiver, cx);
     const args = ts.factory.createNodeArray(stringBorrow.args);
     const result = lowerStringMethodCall(stringBorrow.method, receiver, stringBorrow.receiver, args, cx);
