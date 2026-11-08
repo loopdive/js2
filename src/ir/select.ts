@@ -59,8 +59,10 @@ import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import {
+  isCertifiedObjectAliasCall,
   isStoredObjectDescriptorAliasCall,
   isStoredObjectDescriptorMemberRead,
+  isUncurriedObjectAliasCall,
   uncurriedObjectAliasMethod,
 } from "./uncurried-object-alias.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
@@ -109,6 +111,7 @@ import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imp
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
 import { lowersAsPreparedComponent } from "./prepared-component-ownership.js";
 import { admitAmbientGlobalFunctionCall } from "./ambient-global-function-call.js";
+import { admittedBuiltinProtoMember, type BuiltinProtoMemberLane } from "./builtin-proto-member.js";
 import { objectCreateDescriptorMap } from "./object-create-call.js";
 import {
   isAffineThreeDeepElementAccess,
@@ -738,6 +741,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * the member. Undefined ⇒ false: such reads stay refused.
    */
   readonly builtinProtoCompanionSeeded?: boolean;
+  /** (#7294) `<builtin>.prototype.<member>`'s kind when its support function answers it on this lane. */
+  readonly builtinProtoMember?: (builtin: string, member: string, anchor: ts.Node) => "method" | "getter" | undefined;
   /**
    * #2952 slice 5 — certify that this exact `for (head in receiver)` source
    * expression uses the non-fast dynamic externref carrier. The callback is
@@ -7133,7 +7138,14 @@ function isPhase1VarDeclarationList(
     if (!currentSubjectIsModuleInit) {
       const initializer = unwrapPhase1Parens(d.initializer);
       const exactMapGetAlias = ts.isCallExpression(initializer) && exactModuleMapMethod(initializer) === "get";
-      if (expressionTouchesTrackedModuleValue(d.initializer) && !exactMapGetAlias) {
+      // (#7269) `var hadValue = __hasOwnProperty(obj, name)`: the callee is a
+      // certified alias whose result is the provider's, not module storage.
+      // Its arguments still obey the alias rule.
+      const certifiedAliasCall =
+        ts.isCallExpression(initializer) &&
+        isCertifiedObjectAliasCall(initializer, (name) => scope.has(name)) &&
+        !initializer.arguments.some(expressionTouchesTrackedModuleValue);
+      if (expressionTouchesTrackedModuleValue(d.initializer) && !exactMapGetAlias && !certifiedAliasCall) {
         const family = obviousModuleValueFamily(d.initializer);
         if (!isConst || (family !== "f64" && family !== "boolean")) {
           return shapeNo("vardecl-module-binding-alias", d.initializer);
@@ -8430,7 +8442,9 @@ function expressionIsProvenNumber(expr: ts.Expression, seen = new Set<ts.Variabl
     // `new Date().getFullYear()` are intentionally outside this helper's
     // narrow call-expression recursion, but their module slot is still an
     // exact f64 value.
-    if (moduleBinding(candidate)?.valueKind.kind === "f64") return true;
+    // (#7313) A module binding is a number only when its slot is (not after `n = "1"`).
+    const binding = moduleBinding(candidate);
+    if (binding) return binding.valueKind.kind === "f64";
     const checkerProvesNumber = currentSelectionOptions?.classifyPrimitiveExpression?.(candidate) === "number";
     if (currentModuleBindingResolver?.scalarExpressionFamily(candidate) !== "f64" && !checkerProvesNumber) return false;
     const declaration = currentModuleBindingResolver?.localVariableDeclaration(candidate);
@@ -8761,6 +8775,14 @@ function selectorObjectCreateDescriptorMap(expr: ts.CallExpression) {
       currentSelectionOptions?.supportsBackendCapability?.(capability) === true,
     isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding(node) === true,
   });
+}
+
+/** (#7294) The lane's answers the builtin-prototype member admission reads. */
+function selectorBuiltinProtoMemberLane(): BuiltinProtoMemberLane {
+  return {
+    isLibOnlyBinding: (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true,
+    builtinProtoMember: currentSelectionOptions?.builtinProtoMember,
+  };
 }
 
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
@@ -9123,6 +9145,12 @@ function selectorDynamicLaneIn(
   );
 }
 
+/** A fresh wrapper operand needs the backend's ToPrimitive lowering (#4208 S4); refuses at `at`. */
+function selectorWrapperToPrimitiveSupported(at: ts.Node): boolean {
+  if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") === true) return true;
+  return capabilityNo("operand-coercion-unsupported", "expr-wrapper-to-primitive-target", at);
+}
+
 /**
  * The generic binary tail (#7144, #7106). A fresh primitive wrapper operand is
  * the dynamic carrier of its ToPrimitive (#4208 S4), and compares by identity
@@ -9142,9 +9170,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
   const left = leftWrapper ? "dynamic" : binaryOperandFamily(expr.left, scope, localClasses);
   const right = rightWrapper ? "dynamic" : binaryOperandFamily(expr.right, scope, localClasses);
   if (leftWrapper || rightWrapper) {
-    if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") !== true) {
-      return capabilityNo("operand-coercion-unsupported", "expr-wrapper-to-primitive-target", expr);
-    }
+    if (!selectorWrapperToPrimitiveSupported(expr)) return false;
     const other = leftWrapper ? right : left;
     if (
       wrapperComparisonIsIdentity(binOp, leftWrapper, rightWrapper) ||
@@ -9460,15 +9486,14 @@ function stringMethodSelection(
 }
 
 /**
- * A literal with a static ToNumber stands for a position or a length; an
- * `undefined` fill is the omitted one (a space). The builder folds both.
+ * A literal with static conversions (`undefined`, `null`, `true`, `false`)
+ * stands for any role: the builder folds its ToNumber for a position or a
+ * length, its ToString for a search or a fill (#7313), and an `undefined`
+ * that has an omitted value takes it.
  */
 function stringMethodArgumentProven(role: StringArgumentRole, arg: ts.Expression, scope: ReadonlySet<string>): boolean {
-  const literal = staticStringMethodArgument(arg, (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope));
-  if (literal === undefined) {
-    return role === "search" || role === "fill" ? expressionIsClassifiedString(arg) : expressionIsProvenNumber(arg);
-  }
-  return literal === "undefined" ? role !== "search" : role === "position" || role === "length";
+  if (staticStringMethodArgument(arg, (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope))) return true;
+  return role === "search" || role === "fill" ? expressionIsClassifiedString(arg) : expressionIsProvenNumber(arg);
 }
 
 function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
@@ -11477,6 +11502,7 @@ function isPhase1ArraySearchOrJoin(
     argumentFamily: (argument) =>
       currentSelectionOptions?.classifyPrimitiveExpression?.(argument) ??
       (expressionIsProvenNumber(argument) ? "number" : expressionIsProvenString(argument) ? "string" : undefined),
+    isProvenNumber: (argument) => expressionIsProvenNumber(argument),
   });
   if (verdict === undefined) return undefined;
   if (!verdict.admitted) return capabilityNo("array-method-unsupported", verdict.arm, verdict.node);
@@ -11807,6 +11833,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (expr.operator === ts.SyntaxKind.TildeToken && !expressionIsProvenNumber(expr.operand)) {
       return shapeNo("expr-tilde-nonnumeric", expr.operand);
     }
+    // Unary `-`/`+` ToNumber a fresh wrapper through the binary operands' ToPrimitive (#4208 S4, #7144).
+    if (
+      (expr.operator === ts.SyntaxKind.MinusToken || expr.operator === ts.SyntaxKind.PlusToken) &&
+      selectorPrimitiveWrapperConstruction(expr.operand, scope, localClasses) !== null
+    ) {
+      return selectorWrapperToPrimitiveSupported(expr);
+    }
     return isPhase1Expr(expr.operand, scope, localClasses);
   }
   if (ts.isBinaryExpression(expr)) {
@@ -12072,15 +12105,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return isPhase1ConditionalParts(expr, scope, localClasses);
   }
   if (ts.isCallExpression(expr)) {
+    if (admittedBuiltinProtoMember(expr, selectorBuiltinProtoMemberLane()) !== undefined) return true; // (#7294)
     // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
     // `__propertyIsEnumerable(obj, name)` aliases: the lane's own-property
     // provider over two carriers (legacy's `call-object-builtins.ts` arm).
-    if (
-      expr.arguments.length === 2 &&
-      !expr.questionDotToken &&
-      !expr.arguments.some(ts.isSpreadElement) &&
-      uncurriedObjectAliasMethod(expr.expression, (name) => scope.has(name)) !== undefined
-    ) {
+    if (isUncurriedObjectAliasCall(expr, (name) => scope.has(name))) {
       if (
         !currentDynamicRuntimeBuildable ||
         currentSelectionOptions?.supportsBackendCapability?.("native-own-property-test") !== true
@@ -12766,6 +12795,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // class instance (recv is Phase-1; lowerer dispatches by the recv's
   // resolved IrType).
   if (ts.isPropertyAccessExpression(expr)) {
+    if (admittedBuiltinProtoMember(expr, selectorBuiltinProtoMemberLane()) !== undefined) return true; // (#7294)
     // (#7106 S1e) `arguments.length` — the invocation's actual argument count.
     if (phase1ArgumentsLengthRead(expr, scope)) return true;
     // (#7106 module-init lever A) `Number.MAX_VALUE`, `Math.PI`, … — a constant.

@@ -92,3 +92,35 @@ AST-site plan in t__closure_0").
 - [x] gc and standalone bytes identical wherever the route set is unchanged,
       except the files main withdrew (their leftover goes away).
 - [x] test262 verdicts identical on the A/B corpus.
+
+## Resolution (2026-11-07): an uninitialized script `var` callee is subsumed by #7287
+
+#7164 (#7287) and this issue's PR (#7175) landed in parallel. `var getter;`
+lives in its dynamic module home, and #7287 lowers a statement call through it
+as the dynamic call (IsCallable, then a catchable TypeError). The walk now
+descends into lifted closures, so that arm admits `getter()` there too, and
+`<module-init>` is claimed instead of refused. The claim is sound: on
+standalone, wasi and gc it has no post-claim error, and a harness that accepts
+only a `TypeError` completes. A module-level reassignment to a non-callable
+value is claimed and also correct: `getter = 3`, and `getter = 3; getter =
+undefined`, throw the catchable TypeError on all three lanes (RV7185). Every
+reassignment to a callable keeps `<module-init>` legacy, so the claimed path
+never calls a stale function. The "uninitialized
+var" row of the test moves from the refused cases to the claimed ones, and a
+runtime case pins the TypeError on all three lanes. `var getter = 3` and
+`let getter = 3` stay refused (`external-call`): this rule is unchanged for
+callees #7287 does not lower.
+
+Fixed forward in PR #7185, which changes only the test and this file. The
+semantics were verified independently by this issue's owner (R8) on merged
+main `636331310e`. With the real test262 harness (`assert.throws` checks
+`constructor === TypeError`), `var getter; assert.throws(TypeError, function
+() { getter(); })` is IR and passes on gc and standalone. An ordering probe
+(`r = 1; getter(); r = 2;`, then `assert.sameValue(r, 1)`) shows the TypeError
+is thrown at the call, after the code before it and before the code after it.
+`let getter;` stays legacy. `var getter = 3` and `var getter = null` stay
+refused (`external-call` / `vardecl-module-value-flow`). A reassignment to a
+callable never reaches the #7287 arm here (`<module-init>` stays legacy). A
+legacy trap on `getter = function () {}; getter = 3; getter()` predates #7164;
+it is #7334.
+

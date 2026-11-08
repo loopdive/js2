@@ -136,6 +136,7 @@ import { staticMemberBindingIsUnsound } from "./class-overrides.js";
 // codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
 import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "./analysis/loop-shape.js";
 import { countedStringAppendPlanIsCurrent } from "./analysis/counted-string-append.js";
+import { stringBuilderSlotRole } from "./string-builder-shape.js";
 // (#3741) native-i32 slot storage for provably-int32 mutable locals
 import {
   compoundBitwiseToken,
@@ -374,6 +375,7 @@ import {
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
 import { lowerAmbientGlobalFunctionCall, type IrAmbientGlobalFunctionName } from "./ambient-global-function-call.js";
+import { lowerBuiltinProtoMember, type BuiltinProtoMemberLane } from "./builtin-proto-member.js";
 import {
   IR_HOLEY_ARRAY_ELEM_SET,
   IR_HOLEY_ARRAY_NEW,
@@ -905,6 +907,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isLibOnlyBinding?(node: ts.Identifier): boolean;
   /** (#7127) The module's builtin-prototype brand companion is seeded. */
   builtinProtoCompanionSeeded?(): boolean;
+  /** (#7294) `<builtin>.prototype.<member>`'s kind when its support function answers it on this lane. */
+  builtinProtoMember?(builtin: string, member: string, anchor: ts.Node): "method" | "getter" | undefined;
   /** Exact source-bound Number call; no physical conversion provider is implied. */
   preparedNumberCall?(call: ts.CallExpression): boolean;
   /** Exact current ambient Object.create(null) source call; symbolic provider only. */
@@ -4650,7 +4654,11 @@ function bindLocalName(
   if (!isConst && cx.mutatedLets.has(name)) {
     const representation = resolveMutableLocalRepresentation(inferred, widenDynamic, cx);
     if (representation) {
-      const slotIndex = cx.builder.declareSlot(name, representation.storageType);
+      const slotIndex = cx.builder.declareSlot(
+        name,
+        representation.storageType,
+        stringBuilderSlotRole(declaration, cx),
+      );
       cx.builder.emitSlotWrite(slotIndex, value);
       if (promoteI32Slot) {
         // (#3741) The Wasm slot is i32; the BINDING's logical type stays f64
@@ -6248,6 +6256,8 @@ function lowerPreparedOrdinaryPropertyRead(expr: ts.PropertyAccessExpression, cx
 function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPropertyAccess(expr, cx));
+  const builtinProtoMember = lowerBuiltinProtoMember(expr, cx.builder, builtinProtoMemberLane(cx)); // (#7294)
+  if (builtinProtoMember !== null) return builtinProtoMember;
   // (#7106 S1e) `arguments.length` — the entry-time count (selector-admitted
   // only in the claimed function's own body, unshadowed).
   if (
@@ -7761,6 +7771,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (generalToString !== null) return generalToString;
   const globalFunction = tryLowerAmbientGlobalFunctionCall(expr, cx);
   if (globalFunction !== null) return globalFunction;
+  const builtinProtoDescriptor = lowerBuiltinProtoMember(expr, cx.builder, builtinProtoMemberLane(cx)); // (#7294)
+  if (builtinProtoDescriptor !== null) return builtinProtoDescriptor;
   // Slice 4 (#1169d): method call — `<recv>.<methodName>(args)`. The
   // receiver must lower to an IrType.class; the method must exist on
   // the class shape and be non-void (slice 4 only handles methods with
@@ -10428,8 +10440,8 @@ interface LoweredStringMethodArgument {
 
 /**
  * An argument as its role converts it: a string, or an i32 position or length.
- * Selection proved it; a literal with a static ToNumber folds, and `undefined`
- * takes the omitted value.
+ * Selection proved it; a static literal folds its ToNumber or ToString, and an
+ * `undefined` with an omitted value takes it.
  */
 function lowerStringMethodArgument(
   parameter: StringMethodParameter,
@@ -10442,10 +10454,12 @@ function lowerStringMethodArgument(
   const literal = staticStringMethodArgument(arg, (identifier) =>
     isGlobalUndefinedIdentifier(identifier, cx.scope, (id) => cx.resolver?.isDirectModuleBinding?.(id) === true),
   );
-  if (literal === "undefined") {
+  const textual = parameter.role === "search" || parameter.role === "fill";
+  if (literal === "undefined" && (!textual || parameter.omitted !== undefined)) {
     return { value: omittedStringMethodArgument(parameter.omitted ?? "zero", recv, receiverExpr, cx) };
   }
-  if (parameter.role === "search" || parameter.role === "fill") {
+  if (textual && literal !== undefined) return { value: cx.builder.emitStringConst(literal) };
+  if (textual) {
     const value = lowerExpr(arg, cx, { kind: "string" });
     if (cx.builder.typeOf(value).kind !== "string") {
       // invariant (selection): a search or fill argument is a proven string.
@@ -10457,8 +10471,9 @@ function lowerStringMethodArgument(
     }
     return { value };
   }
-  if (literal !== undefined)
-    return { value: cx.builder.emitConst({ kind: "i32", value: literal }, irVal({ kind: "i32" })) };
+  if (literal !== undefined) {
+    return { value: cx.builder.emitConst({ kind: "i32", value: literal === "true" ? 1 : 0 }, irVal({ kind: "i32" })) };
+  }
   const numeric = lowerExpr(arg, cx, irVal({ kind: "f64" }));
   const numberType = cx.builder.typeOf(numeric);
   if (asVal(numberType)?.kind === "i32") return { value: numeric, numberType };
@@ -13769,6 +13784,14 @@ function tryLowerAmbientStringToStringCall(expr: ts.CallExpression, cx: LowerCtx
     "operand-coercion-unsupported",
     `ir/from-ast: String() of ${describeIrType(type)} operand is deferred (${cx.funcName})`,
   );
+}
+
+/** (#7294) The resolver's answers the builtin-prototype member admission reads. */
+function builtinProtoMemberLane(cx: LowerCtx): BuiltinProtoMemberLane {
+  return {
+    isLibOnlyBinding: (node) => cx.resolver?.isLibOnlyBinding?.(node) === true,
+    builtinProtoMember: cx.resolver?.builtinProtoMember?.bind(cx.resolver),
+  };
 }
 
 /** (#7253) The selector's `admitAmbientGlobalFunctionCall`, lowered by the shared module. */
