@@ -142,8 +142,8 @@ export function resolveStandaloneProtoMemberValueClosure(
  *
  * Both are named functions so legacy's `gOPD(<B>.prototype, "<m>")` arm and the
  * IR (through `resolver.resolveFunc` on the runtime symbol) call the SAME
- * synthesis. Only the native lanes reach them (`ctx.standalone`, which the
- * default JS target sets too since the native-first core): the native-proto
+ * synthesis. Only the native regime reaches them (every WasmGC target since
+ * #6979 S7-c, the default JS target included): the native-proto
  * glue is native-only, and the IR resolves the runtime symbol only after the
  * selector's native-gated admission.
  */

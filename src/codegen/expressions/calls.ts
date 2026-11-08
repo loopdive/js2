@@ -435,8 +435,7 @@ import { compileOptionalCallExpression } from "./calls-optional.js";
 import { compileOptionalDirectCall, isLoweringOptionalDirectCallDynamically } from "./calls-optional-direct.js";
 import {
   emitStandaloneDirectEvalRuntime,
-  emitStandaloneIndirectEvalRuntime,
-  emitStandaloneGlobalScriptEvalRuntime,
+  emitStandaloneGlobalEvalRuntime,
   ensureRuntimeEvalCallableCarrier,
   isGlobalFunctionIdentifier,
   isFunctionCtorImmediateCall,
@@ -6990,7 +6989,7 @@ function compileCallExpression(
 
   const globalScriptEvalCallee = unwrapTransparent(expr.expression);
   if (ts.isIdentifier(globalScriptEvalCallee) && globalScriptEvalCallee.text === "__js2wasm_global_script_eval") {
-    const runtimeScriptEval = emitStandaloneGlobalScriptEvalRuntime(ctx, fctx, expr.arguments);
+    const runtimeScriptEval = emitStandaloneGlobalEvalRuntime(ctx, fctx, "__runtime_script_eval", expr.arguments);
     if (runtimeScriptEval !== undefined) return runtimeScriptEval;
   }
   // Test262's `$262.evalScript` is a host-facing global-Script entry, not an
@@ -7003,7 +7002,7 @@ function compileCallExpression(
     ts.isIdentifier(expr.expression.expression) &&
     expr.expression.expression.text === "$262"
   ) {
-    const runtimeScriptEval = emitStandaloneGlobalScriptEvalRuntime(ctx, fctx, expr.arguments);
+    const runtimeScriptEval = emitStandaloneGlobalEvalRuntime(ctx, fctx, "__runtime_script_eval", expr.arguments);
     if (runtimeScriptEval !== undefined) return runtimeScriptEval;
   }
   // eval(...) — first try static inlining (#1163): if the source argument is
@@ -7043,13 +7042,13 @@ function compileCallExpression(
       const runtimeEval =
         evalKind === "direct"
           ? directEvalRunsAtScriptGlobal(expr, ctx)
-            ? emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments)
+            ? emitStandaloneGlobalEvalRuntime(ctx, fctx, "__runtime_indirect_eval", expr.arguments)
             : ctx.directEvalMode === "reified-host"
               ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
               : runtimeEvalProviderLinkable(ctx) && ensureRuntimeEvalCallableCarrier(ctx, fctx)
                 ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
                 : undefined
-          : emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
+          : emitStandaloneGlobalEvalRuntime(ctx, fctx, "__runtime_indirect_eval", expr.arguments);
       if (runtimeEval !== undefined) return runtimeEval;
       // (#2960) WASI (until its linker grows the provider), or a standalone
       // route that could not materialize its runtime ABI: refuse the
