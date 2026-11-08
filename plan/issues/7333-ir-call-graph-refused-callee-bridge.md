@@ -52,6 +52,11 @@ t(1);
 On the wrapped test262 stride-40 corpus this does not occur: no file loses a
 unit there.
 
+Since #7287 (PR #7164, test fixed in PR #7185), an uninitialized or dynamic
+module-var callee no longer refuses: its statement call lowers as the dynamic
+module call. This follow-up therefore concerns only non-dynamic callees
+(ambient functions, unclaimed declarations, non-callable module values).
+
 ## Goal
 
 A caller of a selection-refused function should take the same route as a
