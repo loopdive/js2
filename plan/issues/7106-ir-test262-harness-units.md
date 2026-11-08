@@ -55,7 +55,7 @@ func-budget-allow:
   - src/ir/select.ts::isPhase1Expr # 2026-11-06 (#7106 lever T): +5 — the module `+` reads the builder's checker proof (`checkerAdditionVerdict`) instead of requiring equal families, a void local call operand is refused, and so is a function's unproven `+` over a dynamic script var
 import-cycles-allow:
   - ir->codegen: 84 # 2026-10-29 (merge-group fix, restated on main's 83 after #6977/#6979 + this borrow wrapper); 2026-10-29 (revive, restated on main's 81 + #7119's wrapper module + this borrow wrapper); 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (module-init lever A): the bridge reads legacy's Math/Number constant table (`codegen/builtin-value-read.ts`); 2026-10-22 (lever B): …and pre-registers the Number(v) provider (`codegen/helpers/ir-number-from-value.ts`); 2026-10-22 (compareArray.format): …and the Array.prototype borrow wrapper
-  - codegen->ir: 303 # 2026-11-06 (#7106 string-method surface): the self-hosted string resolver (`codegen/stdlib-selfhost.ts`) reads the one string-method table (`ir/string-method-surface.ts`) instead of keeping its own copy; main already sits at 302; 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
+  - codegen->ir: 306 # 2026-11-08 (restated on main's 305 after the merge of origin/main, +1 for lever R2's edge below); 2026-11-07 (#7106 lever R2): `codegen/regexp-exec-carrier.ts` names its helper from `ir/regexp-runtime-contract.ts`, beside the test helper's name (plan step 4); 2026-11-06 (#7106 string-method surface): the self-hosted string resolver (`codegen/stdlib-selfhost.ts`) reads the one string-method table (`ir/string-method-surface.ts`) instead of keeping its own copy; main already sits at 302; 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
   - ir->frontend: 8 # 2026-10-22 (#7106 lever B): the bridge builds the source-bound Number-conversion plan (`frontend/builtins/prepare-number-conversion.ts`) for the selector, as program-source.ts does for its resolver
   - ir->runtime: 10 # 2026-10-29 (#7106 function-object realm members): `ir/select-expression-structure.ts` reads %Function.prototype%'s and %Object.prototype%'s keys from the native realm catalog (`runtime/contracts/native-realm-catalog.ts`, pure data), as `ir/program/native-realm-requirements.ts` already does; a hand copy of those 19 names would duplicate the catalog
   - largestSccSize: 728 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it; 2026-10-22 (dyn.instanceof): codegen/ir-dynamic-instanceof.ts joins it the same way; 2026-10-22 (lever B): codegen/helpers/ir-number-from-value.ts joins it; 2026-10-22 (compareArray.format): codegen/array/ir-array-prototype-borrow.ts joins it
@@ -67,6 +67,8 @@ import-cycles-allow:
 # self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
 # stands down when runtime eval may share the realm.
 func-budget-allow:
+  # 2026-11-07 (#7106 lever S2, review round 1): `resolveGlobalType`, the slot ValType `emitModuleSlotAdapter` derives a module slot's read/write adapter from (+3)
+  - src/ir/integration.ts::makeResolver
   # 2026-11-06 (#7106 lever R1): extern.regex joins its sibling extern ops' provider dependency arm
   - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
   # 2026-10-22 (module-init lever A): one resolver entry for the namespace-constant fold
@@ -106,6 +108,8 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
+  # 2026-11-08 (merge of origin/main): the `regexp-match` home's doc line and the classifier `certifiedScriptVarUse` now takes (+3); its kind, write and use arms joined lever V's dispatch in src/ir/module-binding-certified-homes.ts. 2026-11-07 (#7106 levers R2 + S2): the admission lives in src/ir/regexp-match-uses.ts
+  - src/ir/module-bindings.ts
   # 2026-11-06 (#7106 lever R1): the constructor's static tail is exported unchanged as compileStandaloneStaticRegExp for the IR's extern.regex wrapper, plus standaloneStaticRegExpCompiles, the selection predicate over the same compiler
   - src/codegen/regexp-standalone.ts
   # 2026-10-22 (module-init lever A): the table accessor beside legacy's fold
@@ -5721,6 +5725,8 @@ depends on it, not for its own gain.
 - Once this and #7037 have landed, S5 can drop its boolean-leaf refusal, and
   its test can use the shared `runHarnessOn`.
 
+## ES5 lever R: RegExp on the host-free lanes (plan 2026-11-06; R1, R2 + S2 implemented 2026-11-07)
+
 ## ES5 lever T: `throw new Test262Error('…' + x)` over a script scalar (implemented, 2026-11-06)
 
 Lever `T` of "ES5 IR-only: ranked levers" (census branch
@@ -6084,6 +6090,279 @@ ships alone.
   pair's SyntaxError, and a fresh `g` literal per evaluation;
 - six refused at selection and never withdrawn: `exec`, a dynamic pattern,
   `.source`, a `+`, a script binding and a local binding.
+
+### R2 + S2 design (2026-11-07)
+
+**R2: `re.exec(s)`.** It lowers like `.test`: a call to the existing
+`__regexp_exec_carrier(recv, subject)` with an `externref` result, typed
+`dynamic` in the IR, the same as `lowerReceiverFirstDynamicMethod`'s result.
+- The helper's name moves to `ir/regexp-runtime-contract.ts`, beside the test
+  helper's name (plan step 4).
+- The resolver's `nativeRegExpTestPlan` becomes `nativeRegExpMethodPlan(receiver,
+  method)`, so `test` and `exec` share one plan, one selector arm and one
+  from-ast arm. They differ only in helper and result type.
+- `nativeStaticRegExp` admits an `.exec(…)` receiver as well as a `.test(…)`
+  receiver.
+
+**S2: the result bound in a script `var`.**
+- **The slot.** For `var __executed = /re/.exec(s)`, legacy types
+  `__mod___executed` as `(ref null $__regexp_match_vec)`. This is #1914's
+  `inferStandaloneRegExpMatchResultType`, which proves that every write in the
+  source is a match result. It picks the capture subtype, or the flat
+  native-string vec if any write is a global `match`.
+- **Design question.** The carrier gives an `externref`, but the slot is a
+  typed struct. How does the IR value get into it?
+- **Decision.** Bind legacy's slot as the `regexp-match` value kind, following
+  #7252 (`class-instance`).
+  - `scriptVarHome` names the slot `regexp-match` when its type is one of the
+    two match-result carriers.
+  - The binding's IR type is `dynamic`. The existing dynamic arms then read it:
+    `.length`, `.index`, `.input`, `[i]` and `=== null`. These are the same
+    runtime readers legacy uses for an exec result whose static type was erased
+    (#6672: marked's untyped `exec`).
+  - The slot boundary converts in both directions:
+    - a read is `global.get` then `extern.convert_any`;
+    - a write is `any.convert_extern`, `ref.cast null $slot`, then `global.set`.
+- **How the conversion reaches lowering.** `ModuleBindingGlobal` carries the
+  typed slot (`slot`). from-ast hands it to `global.get` / `global.set`, and
+  lowering calls the emitter's existing `emitToExternref` /
+  `emitFromExternref`.
+  - A nullable target type makes `emitDowncast` emit `ref.cast null`.
+  - Every current caller passes a type index, so no existing output changes.
+- **Why the cast cannot trap.** The IR admits a write only when the written
+  value is a `.exec(…)` call on a RegExp receiver. That value is `null` or the
+  capture subtype, which is the slot's type or a subtype of the flat base.
+  Writes outside the IR are legacy's, and #1914 proves them.
+- **Lane condition.** Only lanes where `dynamic` is `externref`, so not fast
+  mode. This is the same condition as the `dynamic` home.
+
+**Rejected alternatives.**
+- **Use the exact `val (ref null $match_vec)` as the IR type,** as the
+  `native-map` kind does. No IR consumer reads a match vector, so `.index` and
+  `[i]` would refuse, and the write would still need the same cast.
+- **Admit only results that legacy also types as `externref`.** Legacy types
+  every `var __executed = …exec(…)` slot as the vector, so this frees none of
+  the S15.10.2 family. It is left to the unbound shapes R2 already covers:
+  `/a/.exec(s) === null` and `/a/.exec(s)[0]`.
+- **Add a typed-result twin of the carrier.** That would be a second exec entry
+  point for one user.
+
+**Dependency.** The S15.10.2 family also writes `var __expected = [...]` and
+`__expected.index = n`. These are lane C's #7292 (script-var array literals),
+so many files become IR-only only when both changes are in. The measurement
+below reports units moved, files now IR-only, and files whose only remaining
+refusal is #7292's.
+
+### R2 + S2 implemented (2026-11-07)
+
+**What landed** (as revised by review round 1, below).
+
+R2: `re.exec(s)`.
+- **One path for `.test` and `.exec`.**
+  - `matchRegExpCarrierCall` (`shared/regexp-static.ts`) is the one
+    syntactic matcher, for the selector and the builder alike.
+  - `REGEXP_CARRIER_METHODS` (`ir/regexp-runtime-contract.ts`) is the one
+    table of each method's helper and IR result: `test` answers `boolean`,
+    `exec` answers `dynamic`.
+  - The resolver splits into two hooks. `isNativeRegExpReceiver` is the pure
+    question. `nativeRegExpMethodPlan`, asked only by the lowering arm
+    `lowerRegExpCarrierCall`, registers the helper and throws an invariant if
+    the lane has none.
+- **The helper name is below the IR.** It moved to the contract, which adds
+  one codegen→ir edge from `regexp-exec-carrier.ts`; the `import-cycles-allow`
+  grant covers it. The IR reaches the `exec` builder through the
+  `codegen/index.ts` facade, as it reaches the dynamic delete and instanceof
+  wrappers. So the ir→codegen layering count is unchanged and there is no
+  re-export cycle.
+- **Where an `.exec` result is admitted.** `ir/regexp-match-uses.ts` allows
+  only these uses:
+  - a plain property or element read. Not `groups` / `indices`, which the
+    dynamic reader does not serve on the native match vector. Not a store, a
+    callee or a `delete`. Element keys must be numbers;
+  - an operand of `===`, `!==`, the dynamic `+` or `typeof`;
+  - a `var` initializer.
+
+  `expressionProducesDynamic` names such a call, so `'…' + re.exec(s)` takes
+  the dynamic `+`.
+
+S2: the result bound in a script `var`.
+- **The value kind.** `scriptVarHome` names `$__regexp_match_vec` (off fast
+  mode) as the `regexp-match` home.
+  - The resolver binds the slot only at the declaration's own name, and at
+    the same admitted uses (`regExpMatchUseSupported`).
+  - The one IR write is the declaration's `.exec(…)` initializer.
+  - An element store's receiver now asks its module binding's use-site proof,
+    as every other identifier does.
+- **The slot boundary.** `emitModuleSlotAdapter` (`lower-generic.ts`) derives a
+  module slot's adapter from the pair (slot ValType, IR type). The slot
+  ValType comes from the new `IrLowerResolver.resolveGlobalType`.
+  - It reproduces #7252's `ref.as_non_null` for a class instance.
+  - On an externref carrier it adds a `ref_null` slot behind a `dynamic`
+    value:
+    - a read goes through `extern.convert_any`;
+    - a write goes through `any.convert_extern` and `ref.cast null`.
+  - `WasmGcEmitter.emitDowncast` emits `ref.cast null` for a `ref_null` IrType
+    target. No earlier caller passes one.
+- **A bare `null` in a dynamic position.** On a lane whose dynamic carrier is
+  externref, `lowerExprUnchecked`'s `null` arm emits the carrier's null. That
+  is legacy's `ref.null.extern`; `undefined` is the distinct value
+  `emitDynUndefined` pushes. `const null` of a `dynamic` type lowers through
+  the carrier, as the `vec` case does.
+  - Before, every such `null` failed after the claim ("bare 'null' in
+    non-reference context (dynamic)"), e.g. `assert.sameValue(x, null)` or
+    `chk(null)`.
+  - A probe checks the semantics: to `assert.sameValue`, `null` is neither
+    `undefined` nor `1`.
+
+**First build, measured** (superseded by review round 1, below).
+Base 4748040724 (R1 merged with main b631a4bcab) against head cd9a9d6c6c.
+- **Population: 636 files.** Every ES5 `built-ins/{RegExp,String}` file that
+  calls `.exec` (340), plus the 389-file R1 population (100 random ES5
+  `built-ins/RegExp` files, the R probe, the String-method files and the
+  lever-T sample).
+- **Results, identical on standalone and gc:**
+
+  | measure | standalone | gc |
+  | --- | --- | --- |
+  | `<module-init>` moved legacy → IR | 42 | 42 |
+  | legacy units | 739 → 697 | 735 → 693 |
+  | newly IR-only files | +42, all `S15.10.2.*` exec shapes | +42 |
+  | IR-only files lost | 0 | 0 |
+  | new post-claim errors | 0 | 0 |
+  | changed binaries | the same 42 files | the same 42 files |
+  | pass/fail of the 42, base and head | 42/42 pass | 42/42 pass |
+
+  - The other 594 binaries are byte-identical, so there is no pass→fail.
+  - The playground is identical: 26 binaries.
+- **ES5 IR-only gain: 42 files.** The `.exec` family is enumerated
+  exhaustively, and no file outside it moved. Only two ES5 files outside
+  `RegExp`/`String` call `.exec`.
+- **Blocked by #7292.** 194 exec-family files now stop first at
+  `var __expected = [...]`.
+  - An unmasked rerun with `JS2WASM_IR_MODULE_INIT_ALL_REJECTS` over the 296
+    still-legacy files finds **no file blocked by #7292 alone**: every one
+    also carries the top-level `for (var index = 0; …)` head
+    (`for-init-var-kind`).
+  - **193 files are blocked only by #7292 plus `for-init-var-kind`.** These are
+    the S2 family's remaining gain once both land.
+  - The other refusals: 16 `__executed instanceof Array`, 16 dynamic or
+    unsupported literals (`/(?:ab|cd)\d?/`, lever R's later slices), and a
+    tail of `throw-module-scalar-unboxed` and `lastIndex` / g-flag shapes.
+
+**Tests.** `tests/issue-7106-lever-r.test.ts` runs on both lanes.
+- **Claimed:** an exec miss, captures (`length` / `index` / `[1]`), a
+  constructed pattern, the bound result (`length` / `index` / `input` /
+  `[1]`), and a bound miss through `assert.sameValue(__executed, null)`.
+- **Refused, never withdrawn:** a number subject, a reassigned binding and a
+  redeclared binding.
+
+**Not done.**
+- The fresh-context adversarial review has not run. It belongs to the PR
+  hold.
+- `__executed instanceof Array` (16 files) is the next S-family blocker
+  after #7292 and the for-var head.
+
+### R2 + S2 review round 1 (2026-11-07)
+
+The fresh-context review of c338ad786c returned CHANGES REQUESTED. Every
+finding was fixed in 083d99adc9.
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 | `__e[0] = 'z'` claimed, then trapped | The element-store receiver asks its binding's use-site proof (`elementStoreReceiverAdmitted`), and a store is not an admitted use. |
+| 2 | `.groups` / `.indices` read `undefined` through the dynamic reader | Refused: `groups` / `indices` are not admitted fields, and element keys must be numbers. |
+| 3 | `compareArray(re.exec(s), [...])`, `__e.length = 1`, `__e != null` failed after the claim | Refused: a call argument, a store and a loose `!=` are not admitted uses (`ir/regexp-match-uses.ts`). |
+| 4 | the `null` fix lived in one consumer | Moved to `lowerExprUnchecked`'s `null` arm, which covers any dynamic hint on an externref carrier. The per-consumer hook is gone. |
+| 5 | two unrelated `global.get` adapters, and a `slot` field that duplicated the global's ValType | One `emitModuleSlotAdapter`, derived from (`resolveGlobalType`, IR type). The `slot` field is gone from the IR, the builder, `ModuleBindingGlobal` and the scope. |
+| 6 | three "carrier call" tests, and the method→helper mapping twice | `matchRegExpCarrierCall` and `REGEXP_CARRIER_METHODS`. The `plan.funcName` check is dropped. |
+| 7 | a type query minted a helper | `isNativeRegExpReceiver` is pure. Only `nativeRegExpMethodPlan` registers, and it is called by the lowering arm alone. |
+| 8 | an unreachable `funcIdx === undefined → null` | It throws an invariant now. |
+| 9 | a re-export cycle `regexp-standalone` ↔ `regexp-exec-carrier` | The re-exports are gone. The IR imports the builder through the `codegen/index.ts` facade, the established route for IR wrappers (`ir-dynamic-delete`, `ir-dynamic-instanceof`). A direct import would grow the ir-layering baseline, which a PR may not edit. `ensureRegexMatchVecType` is no longer needed: the slot is the global's own ValType. |
+| 10 | orphaned grant comment | Deleted. The `makeResolver` grant (+3, `resolveGlobalType`) is dated. |
+| 11 | doc overclaim and a signature that differed from its sibling | The write test's doc states that legacy's proof carries it. `regExpMatchUseSupported(node, declaration, classify)` now matches its sibling's argument order. |
+| 12 | inaccurate boundary class | Classified `frontend-ts` / owner 7106, like `module-init-vars.ts`. |
+| 13 | `slot` naming and a braceless `if` | Both are gone. |
+| 14 | tests | Added `execConcatenated` and `nullArgument` (claimed). Added, refused: `execArgument`, `execLooseNull`, `execGroups`, `execGroupsTypeof`, `execBoundGroups`, `execIndices`, `execElementStore`, `execLengthStore`, `execIndexStore`, `execExpandoStore`. 68/68 pass on both lanes. |
+
+**Re-measured.** Base 4748040724 against head 083d99adc9.
+- **Population: 858 files.**
+  - Every file of every edition that calls `.exec`: 412 (394 in
+    `built-ins/{RegExp,String}`). Staging, intl402 and fixtures are left out.
+  - The 389-file R1 population.
+  - 150 random files that pass a bare `null` argument, for the `null` arm.
+- **Results, identical on standalone and gc:**
+
+  | measure | standalone | gc |
+  | --- | --- | --- |
+  | `<module-init>` moved legacy → IR | 43 | 43 |
+  | legacy units | 1,454 → 1,411 | 1,450 → 1,407 |
+  | newly IR-only files | +43, all in the `.exec` family | +43 |
+  | IR-only files lost | 0 | 0 |
+  | new post-claim errors | 0 | 0 |
+  | changed binaries | the same 43 files | the same 43 files |
+  | pass/fail of those 43, base and head | 43/43 pass | 43/43 pass |
+
+  - The other 815 binaries are byte-identical. This includes the whole
+    `null` sample, so the `null` arm changes no binary there.
+  - The playground is identical: 26 binaries.
+- **Against the first build:**
+  - `S15.10.2.13_A1_T17` is no longer claimed: `assert.sameValue(__executed,
+    null)` passes the match result as a call argument.
+  - Two files outside ES5 are newly claimed:
+    `annexB/language/literals/regexp/legacy-octal-escape.js` and
+    `built-ins/RegExp/prototype/exec/u-captured-value.js`.
+  - **The ES5 IR-only gain is 41 files.**
+- The #7292 figures above come from the first build. They change by at most
+  that one file.
+
+### R2 + S2 review round 2 (2026-11-07)
+
+The review of 61258cb98c found holes in the round-1 allow-list. They are
+fixed in b2d66208f2 and 570cf99a8c.
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 | an inherited `Array.prototype` member (`typeof m.join`) was read as `undefined` | The blocklist is replaced by the fields the dynamic reader serves: `length`, `index`, `input` and proven-number keys. |
+| 2 | a function-local `var m = re.exec(s)` let `m`'s uses go unchecked | An `.exec` call may initialize only a `regexp-match` script slot (`initializesRegExpMatchSlot`), whose every use the resolver checks. |
+| 3 | an indexed read compared with `undefined` failed after the claim | Refused (`comparedWithUndefined`). |
+| 3b | a probe set (below) found more post-claim failures: `Math.max(m.length, 1)`, `return re.exec(s).length`, `m[0] == null`. One more was a hard compile error: `'s'.indexOf(m[0])` | The selector also checks where a served field's own value goes (`regExpMatchReadValueAdmitted`): only to a `===` / `!==` / `+` / `typeof` operand, a function-object member call's argument, or a further `.length`. |
+| 4 | misplaced JSDoc | Restored above `isUnrepresentableModuleBinding`. |
+| 5 | inconsistent import route | Both carrier builders come through the `codegen/index.ts` facade. |
+| 6 | unnamed type | `RegExpCarrierCall` is now exported. |
+| 7 | seven copies of `ctx.mod.globals[localGlobalIdx(...)]` in `integration.ts` | Folded into `moduleGlobalDef`. |
+
+**Probe set.** 62 synthetic bodies, base and head, both lanes, each asserting
+its JS result. Their shapes:
+- inherited member reads and calls;
+- `groups` and `indices`;
+- comparisons with `undefined` / `null`;
+- function-local and returned `.exec` results;
+- truthiness, `||` and `?:`;
+- `for-in`, `Array.isArray`, `instanceof`, `String(m)` and `m + ''`;
+- array and object literal elements;
+- a stable carrier and a `g` carrier;
+- field values passed to `Math.max`, string methods, `push`, a direct call
+  and the harness.
+
+Head results:
+- **0 pass→fail.**
+- **0 new post-claim errors.**
+- **12 bodies newly claimed, all passing.** One of them,
+  `typeof m[1] === 'undefined'`, fails on base, so head fixes it.
+- The bodies are in `.tmp/r2/probes/` in the worktree; the plan does not
+  commit them.
+
+**Re-measured** over the same 858 files (base 4748040724, head 570cf99a8c).
+Both lanes give the same result:
+- 42 `<module-init>` units move to the IR, and 42 files become newly IR-only,
+  all calling `.exec`. 41 of them are ES5.
+- 0 files lose IR-only status, and there are 0 new post-claim errors.
+- The same 42 binaries change on both lanes, and all 42 pass on both trees.
+- The other 816 binaries and the playground are byte-identical.
+
+Against round 1, one file is no longer claimed:
+`built-ins/RegExp/prototype/exec/u-captured-value.js` (not ES5). It passes a
+field's value somewhere `regExpMatchReadValueAdmitted` does not admit.
 
 ### R3 implemented (2026-11-07): `'…' + re`
 

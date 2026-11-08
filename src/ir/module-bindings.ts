@@ -1106,6 +1106,8 @@ function scriptVarHomeOf(
  * when the checker type agrees. A `dynamic` home needs no such agreement and
  * a `typed` one resolves through `scalarKind`. (#7252) A `class-instance` home
  * binds only when every write constructs the one class the checker names.
+ * (#7106 lever S2) A `regexp-match` home needs no checker agreement: legacy's
+ * #1914 inference already proved every write a match result.
  */
 function scriptVarReferenceKind(
   home: IrScriptVarHome | undefined,
@@ -2409,7 +2411,8 @@ export function makeIrLegacyModuleBindingResolver(
       valueKind = { kind: "dynamic" } as const;
     }
     if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
-    if (!certifiedScriptVarUse(valueKind, scriptVarCapability !== undefined, node, declaration))
+    const capabilityCertified = scriptVarCapability !== undefined;
+    if (!certifiedScriptVarUse(valueKind, capabilityCertified, node, declaration, classifyPrimitiveExpression))
       return { kind: "unsupported", declaration, arm: "script-var-use-site" };
     if (
       writeValue !== undefined &&
