@@ -1,7 +1,8 @@
 ---
 id: 7277
 title: "IR: adopt legacy's refined parameter slot (string / f64) instead of refusing `param-dynamic-carrier-diverges-from-legacy`"
-status: in-progress
+status: done
+completed: 2026-11-07
 sprint: current
 created: 2026-11-06
 updated: 2026-11-06
@@ -215,3 +216,14 @@ function that is also called inside the file (#1580 source + `run(10)`) now
 gets the IR body and its slower builder loop. Base has the same slowdown for
 a non-exported builder reached through another call. This PR only widens
 which functions reach the #7291 gap; #7291 carries the test case.
+
+## Note (2026-11-07): #7190's label assertion
+
+Adopting the refined slot moved #7190's string-key helpers from the
+`param-dynamic-carrier-diverges-from-legacy` refusal to the move-only scan's
+refusal. They are still refused before the claim, and none is withdrawn.
+#7190's test expectation is updated in the PR on branch
+`issue-7277-7190-refusal-label`. Bare compiles and runs on standalone, wasi
+and gc (main `636331310e`) found 0 post-claim errors, and this change's new
+string-slot claims (`"k:" + name`, `name in o`) give node's results.
+
