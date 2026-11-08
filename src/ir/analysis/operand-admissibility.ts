@@ -745,8 +745,9 @@ export function switchDiscriminantAdmissible(discriminant: OperandFamily): boole
  * parameter called as a function, a method of a carrier value): every
  * argument crosses into the carrier's any-typed parameter list, where a vec
  * has no representation ("array literal flows into a widening/heterogeneous
- * sink"). Other families keep their existing argument lowering.
+ * sink"), and nor does a bare `null`: the IR has no dynamic `null` value
+ * (#7287 review B3). Other families keep their existing argument lowering.
  */
 export function dynamicCallArgumentAdmissible(argument: OperandFamily): boolean {
-  return argument !== "vec<number>" && argument !== "vec<other>";
+  return argument !== "vec<number>" && argument !== "vec<other>" && argument !== "nullish";
 }

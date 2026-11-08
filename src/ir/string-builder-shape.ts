@@ -27,6 +27,8 @@
 import { forEachChild, ts } from "../ts-api.js";
 import { countedStringAppendCandidateLoops, type IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { readEnv } from "../env.js";
+import type { IrCountedStringAppendLoweringPlan } from "./ast-lowering-plans.js";
+import type { IrSlotDef } from "./core/nodes.js";
 
 function isFunctionScopeBoundary(node: ts.Node): boolean {
   return (
@@ -163,4 +165,30 @@ export function containsStringBuilderLoopShape(root: ts.Node): boolean {
   };
   walk(root);
   return found;
+}
+
+/** What `stringBuilderSlotRole` reads of the lowering context. */
+export interface StringBuilderSlotEvidence {
+  readonly funcKind: "regular" | "generator" | "async";
+  readonly checker?: ts.TypeChecker;
+  readonly ownedStringAppendSymbols: ReadonlySet<ts.Symbol>;
+  readonly countedStringAppends?: ReadonlyMap<ts.ForStatement, IrCountedStringAppendLoweringPlan>;
+}
+
+/**
+ * (#7291) The slot role of an owned-append builder (`collectOwnedStringAppendSymbols`)
+ * outside a resumable body, whose state machine assumes one Wasm local per
+ * slot. A counted append (#3518) already lowers to one `string.repeat`.
+ */
+export function stringBuilderSlotRole(
+  declaration: ts.VariableDeclaration | ts.BindingElement,
+  evidence: StringBuilderSlotEvidence,
+): Pick<IrSlotDef, "stringBuilder"> {
+  if (evidence.funcKind !== "regular" || !ts.isVariableDeclaration(declaration)) return {};
+  const symbol = evidence.checker?.getSymbolAtLocation(declaration.name);
+  if (!symbol || !evidence.ownedStringAppendSymbols.has(symbol)) return {};
+  for (const plan of evidence.countedStringAppends?.values() ?? []) {
+    if (plan.syntaxPlan.accumulatorSymbol === symbol) return {};
+  }
+  return { stringBuilder: true };
 }

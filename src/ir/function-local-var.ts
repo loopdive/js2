@@ -3,11 +3,8 @@
 // #3783 — proof for the function-local `var` subset that the IR can represent
 // with its existing lexical local/slot model.
 
+import { isVarDeclarationList } from "../shared/var-declaration-lists.js";
 import { forEachChild, ts } from "../ts-api.js";
-
-export function isVarDeclarationList(list: ts.VariableDeclarationList): boolean {
-  return (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) === 0;
-}
 
 function isFunctionBoundary(node: ts.Node): boolean {
   return (

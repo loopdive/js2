@@ -58,8 +58,9 @@ import {
 import { makeCalendarIrSelectionSupport } from "./calendar-selection-support.js";
 import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "./dom-capability.js";
 import { makeIrNativeBufferSurfacePlan, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
-import { isIrNativeBufferFn, type IrNativeBufferFn } from "../shared/contracts/native-buffer-adapters.js";
+import { isIrNativeBufferRuntimeSymbol } from "../shared/contracts/native-buffer-adapters.js";
 import { irBackendCapabilityQuery, projectIrBackendTargetProfile } from "./backend/legality.js";
+import type { StringBuilderLowering } from "../backend/wasmgc/lowering/wasm-string-builder.js";
 import { nativeBufferSurfaceCapability } from "./capability.js";
 
 import {
@@ -100,7 +101,7 @@ import {
   moduleInitPrologueMayEmit,
   retireModuleInitPrologueHelper,
   irNativeI32SlotRead,
-  ensureIrNativeBufferAdapter, // (#7274) native ArrayBuffer adapters
+  irNativeBufferProvider, // (#7274) native ArrayBuffer / DataView providers
   nativeBufferProvidersAvailable,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
@@ -188,6 +189,7 @@ import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983)
 import {
   ambientGlobalFunctionProviderSymbol,
   ensureNativeStringHelpers,
+  nativeStringBuilderTypes,
   STANDALONE_STDOUT_APPEND_FN,
 } from "../codegen/native-strings.js";
 import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
@@ -565,6 +567,7 @@ import {
   IR_STRING_REPEAT_FN,
 } from "./string-runtime.js";
 import { readEnv } from "../env.js";
+import { IN_HAS_PROPERTY } from "../shared/contracts/in-operator-helper.js";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -3940,6 +3943,7 @@ export function compileIrPathFunctions(
         fnctorNativeStringBoundaries: sourceLoweringPlans?.fnctorNativeStringBoundaries,
         returnTypeOverride: null,
         moduleInitUnit: true,
+        functionCodeStrict: irFunctionCodeStrictness(ctx, moduleInitSourceFile),
         moduleBindings,
         calleeTypes,
         ...projectFunctionValueLoweringPlans(sourceLoweringPlans),
@@ -8031,6 +8035,27 @@ function resolvePreparedImportCallable(
   );
 }
 
+/**
+ * (#7291) The builder replaces the owned-append concat, so it follows that
+ * provider's frozen arm: only the native helpers own a builder's buffer.
+ */
+function nativeStringBuilderLowering(
+  ctx: CodegenContext,
+  preparedRuntimeManifest: PreparedIrRuntimeManifest | undefined,
+): StringBuilderLowering | undefined {
+  if (preparedStringConcatProvider(preparedRuntimeManifest, "owned-append")?.arm !== "native") return undefined;
+  ensureNativeStringHelpers(ctx);
+  const flatten = nativeStrHelperHandle(ctx, "__str_flatten");
+  const nextCap = nativeStrHelperHandle(ctx, "__str_buf_next_cap");
+  if (flatten === undefined || nextCap === undefined) {
+    throw new Error("ir/integration: native string builder helpers not registered");
+  }
+  return {
+    types: nativeStringBuilderTypes(ctx),
+    helpers: { flatten, nextCap },
+  };
+}
+
 function makeResolver(
   ctx: CodegenContext,
   unionRegistry: UnionStructRegistry,
@@ -8345,6 +8370,7 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: string_charAt import not registered");
       return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: idx }];
     },
+    resolveStringBuilderLowering: () => nativeStringBuilderLowering(ctx, preparedRuntimeManifest),
     emitStringCharCodeAt(_inputEncoding, provider): readonly Instr[] {
       if (provider) {
         return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
@@ -8974,7 +9000,7 @@ function preregisterInOperatorSupport(ctx: CodegenContext, fns: readonly BuiltFn
           if (
             instr.kind === "call" &&
             instr.target.binding.kind === "runtime" &&
-            instr.target.binding.symbol === "__extern_has"
+            (instr.target.binding.symbol === "__extern_has" || instr.target.binding.symbol === IN_HAS_PROPERTY)
           ) {
             used = true;
           }
@@ -9265,11 +9291,12 @@ function buildTemplateWrapperFamily(
   flushLateImportShifts(ctx, null);
 }
 
-/** (#7274) Mint the native ArrayBuffer adapters the bodies call, before Phase 3 bakes a funcIdx. */
-function reserveNativeBufferAdapters(ctx: CodegenContext, symbols: ReadonlySet<IrNativeBufferFn>): void {
+/** (#7274) Mint the native ArrayBuffer / DataView providers the bodies call, before Phase 3 bakes a funcIdx. */
+function reserveNativeBufferAdapters(ctx: CodegenContext, symbols: ReadonlySet<string>): void {
   if (symbols.size === 0) return;
   for (const symbol of [...symbols].sort()) {
-    observeNativeRuntimeProvider(ctx, symbol, ensureIrNativeBufferAdapter(ctx, symbol));
+    const handle = irNativeBufferProvider(ctx, symbol);
+    if (handle !== undefined) observeNativeRuntimeProvider(ctx, symbol, handle);
   }
   flushLateImportShifts(ctx, null);
 }
@@ -9320,7 +9347,7 @@ function preregisterDynamicSupport(
   // Both are REAL Wasm functions on this lane, so they are reserved here —
   // before any Phase-3 body bakes a funcIdx — exactly like the union family.
   let usesNativeMapAdapters = false;
-  const nativeBufferAdapters = new Set<IrNativeBufferFn>();
+  const nativeBufferAdapters = new Set<string>();
   let usesNativeExternIsUndefined = false;
   // (#7104) `dyn.undefined` on the host externref carrier needs the
   // `__get_undefined` import reserved BEFORE Phase 3 bakes funcIdxs.
@@ -9442,7 +9469,7 @@ function preregisterDynamicSupport(
             if (methodWrapper !== undefined) dynamicMethodCallWrappers.set(symbol, methodWrapper);
             const borrowWrapper = parseIrArrayPrototypeBorrowHelperName(symbol);
             if (borrowWrapper !== undefined) arrayPrototypeBorrowWrappers.set(symbol, borrowWrapper);
-            if (isIrNativeBufferFn(symbol)) nativeBufferAdapters.add(symbol); // (#7274)
+            if (isIrNativeBufferRuntimeSymbol(symbol)) nativeBufferAdapters.add(symbol); // (#7274)
             switch (symbol) {
               case "__extern_set_strict":
                 usesFunctionMemberStrictSet = true;
