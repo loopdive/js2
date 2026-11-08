@@ -12403,6 +12403,14 @@
       "nextBoundary": "TypeScript-AST shape plus builder lowering of the ambient parse/escape/isNaN calls shared by the selector and from-ast (#7253); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/builtin-proto-member.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "TypeScript-AST admission plus builder lowering of `<Builtin>.prototype.<m>` value reads and their own-property descriptors, shared by the selector and from-ast (#7294); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/numeric-slot-coercion.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

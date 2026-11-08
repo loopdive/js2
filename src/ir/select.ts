@@ -106,6 +106,7 @@ import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imp
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
 import { lowersAsPreparedComponent } from "./prepared-component-ownership.js";
 import { admitAmbientGlobalFunctionCall } from "./ambient-global-function-call.js";
+import { admittedBuiltinProtoMember, type BuiltinProtoMemberLane } from "./builtin-proto-member.js";
 import { objectCreateDescriptorMap } from "./object-create-call.js";
 import {
   isAffineThreeDeepElementAccess,
@@ -735,6 +736,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * the member. Undefined ⇒ false: such reads stay refused.
    */
   readonly builtinProtoCompanionSeeded?: boolean;
+  /** (#7294) `<builtin>.prototype.<member>`'s kind when its support function answers it on this lane. */
+  readonly builtinProtoMember?: (builtin: string, member: string, anchor: ts.Node) => "method" | "getter" | undefined;
   /**
    * #2952 slice 5 — certify that this exact `for (head in receiver)` source
    * expression uses the non-fast dynamic externref carrier. The callback is
@@ -8877,6 +8880,14 @@ function selectorObjectCreateDescriptorMap(expr: ts.CallExpression) {
   });
 }
 
+/** (#7294) The lane's answers the builtin-prototype member admission reads. */
+function selectorBuiltinProtoMemberLane(): BuiltinProtoMemberLane {
+  return {
+    isLibOnlyBinding: (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true,
+    builtinProtoMember: currentSelectionOptions?.builtinProtoMember,
+  };
+}
+
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
   return (
     currentSelectionOptions?.isAmbientBinding?.(node) === true ||
@@ -12191,6 +12202,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return isPhase1ConditionalParts(expr, scope, localClasses);
   }
   if (ts.isCallExpression(expr)) {
+    if (admittedBuiltinProtoMember(expr, selectorBuiltinProtoMemberLane()) !== undefined) return true; // (#7294)
     // (#7106 S1g, propertyHelper; #7272) propertyHelper's certified aliases —
     // `__hasOwnProperty(obj, name)`, `__getOwnPropertyDescriptor(obj, name)`,
     // `__isArray(obj)` — lower to the lane's native provider over carriers
@@ -12869,6 +12881,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // class instance (recv is Phase-1; lowerer dispatches by the recv's
   // resolved IrType).
   if (ts.isPropertyAccessExpression(expr)) {
+    if (admittedBuiltinProtoMember(expr, selectorBuiltinProtoMemberLane()) !== undefined) return true; // (#7294)
     // (#7106 S1e) `arguments.length` — the invocation's actual argument count.
     if (phase1ArgumentsLengthRead(expr, scope)) return true;
     // (#7106 module-init lever A) `Number.MAX_VALUE`, `Math.PI`, … — a constant.
