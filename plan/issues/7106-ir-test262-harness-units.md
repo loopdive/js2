@@ -7187,3 +7187,63 @@ regressions, 4,850 passing, 20 failing, all in the known-failures baseline.
 **Tests**: lever-l2 (60), and with lever-l, var-pattern-heads,
 for-head-destructuring, script-var, script-var-reference-homes and the
 #7252/#7253/var-hoisting/binding-null-guard equivalence files: all pass.
+
+## ES5 lever S (string-method argument proofs) — census and stop (2026-11-08)
+
+(Not the earlier "ES5 lever S: module storage" section. Branch
+`claude/7106-lever-s-args`, because `claude/7106-lever-s` is that lever's.)
+
+Lever P2's census named argument proofs on the string-method surface as the
+next lever: the 11 `S15.5.4.*_A1_T6`/`_T9` wrapper-receiver files fail on
+their arguments too. This section measures the lever before any code.
+**Verdict: 19 files, under the ~20-file bar, so no code in this slice.**
+
+### Method
+
+Base: lever P's head (`8af326da35`), standalone. Population: the 518 ES5 files
+(edition classifier of `scripts/test262-edition-ratchet.ts`) that call a
+String.prototype method. They were compiled as the runner does, with
+`JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, so every
+refused top-level statement reports its own arm.
+
+- 80 of the 518 are already IR-only.
+- 398 have `<module-init>` as their only legacy unit.
+- 32 of those carry an argument-surface arm (`expr-string-method-argument`,
+  `expr-string-method-surface`).
+- In **19**, the argument arms are the only refusals.
+- In **11** more, the argument arms sit beside the `new String(v)`
+  construction (`S15.5.4.{4,5,6,7,8,12,13,15}_A1_T6`/`_T9`). Those need lever
+  P2's wrapper receiver as well, so this lever alone does not claim them.
+
+### Split of the 19, by argument shape
+
+| shape | files | what admitting it needs |
+| --- | --- | --- |
+| missing argument (`"".search()`, `"".indexOf()`, `"".lastIndexOf()`, `"lego".concat()`) | 6 | zero-arity surface rows, where the absent argument is `undefined` (`search` → `/(?:)/`, `indexOf` → `"undefined"`) |
+| `null` / `undefined` / `void 0` argument to `concat`, `match`, `search` (`concat(null)`, `match(null)`, `search(undefined)`) | 6 | `concat` and regexp-role surface rows over a nullish argument (ToString / `RegExp(null)`); two of these also have an IIFE receiver |
+| string literal in a number role (`charAt("x")`, `slice("e")`, `substring("e")`) | 3 | ToInteger of a literal string, a constant fold |
+| IIFE argument `function(){}()` (`slice`, `substring`) | 2 | a proof that the IIFE returns `undefined` |
+| strict IIFE returning a function that writes `this` (`10.4.3-1-102-s`, `-102gs`) | 2 | out of scope (closure / `this` semantics) |
+| replace callback `function(a1, a2, a3){…}` | 1 | a replacer-function lane (out of scope) |
+
+The coordinator's other shapes did not occur as a sole blocker in this
+population: an object argument with `toString`/`valueOf`, number and boolean
+arguments (already proven by `expressionIsProvenNumber` and
+`staticStringMethodArgument`), extra arguments, and a hoisted-`undefined` `var`
+read with a primitive receiver. The hoisted `var x` shape appears only in the
+11 wrapper-receiver files.
+
+### What it would yield
+
+- **This lever alone:** at most 19 files, and realistically about 17 (the 3
+  constant folds, 2 IIFE proofs, 6 zero-arity rows and 6 nullish rows). That is
+  under the bar.
+- **Combined with lever P2's wrapper receiver:** the 11 `_A1_T6`/`_T9` files
+  join, making about 28–30 for one combined lever. That needs:
+  - a fresh `new String(v)` receiver read as ToString(v) behind lever P's trust
+    boundary;
+  - the hoisted-`undefined` `var` proof (`var x;` read before its declaration);
+  - the IIFE return proof;
+  - the zero-arity and nullish surface rows.
+- **Recommendation:** plan P2 and S as one lever, "String receivers and
+  arguments", against the combined 28–30. Neither half clears the bar alone.
