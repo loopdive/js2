@@ -167,6 +167,11 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
     source: `var o = {}; function g(x, k) { x[k] = function () { return true; }; } g(o, "has" + "OwnProperty"); if (!o.hasOwnProperty("z")) { throw "x"; }`,
     detail: "objectlit-empty",
   },
+  // Round-3 review: a method call hands `o` to arbitrary code as `this`.
+  "method call on the binding": {
+    source: `var o = {}; Object.defineProperty(o, "p", { value: 1 }); o.m = function () { this["has" + "OwnProperty"] = function () { return true; }; }; o.m(); function f() { return o.hasOwnProperty("z"); } if (!f()) { throw "x"; }`,
+    detail: "objectlit-empty",
+  },
   // The census's claim-then-demote; #7288 (main) now refuses the head at select.
   "module-init for-in var head": {
     source: `/** @type {any} */ var a = 'ab'; var n = 0; for (var k in a) { n++; } if (n !== 2) { throw "n"; }`,

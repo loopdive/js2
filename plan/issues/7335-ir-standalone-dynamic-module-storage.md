@@ -115,7 +115,8 @@ its own slice only if its gain is non-zero with zero ES5 regressions.
   - **The consumers.** Every reference, taken in its outermost parenthesized
     form, must be on an **allow-list** of the consumers the dynamic operations
     serve:
-    - a read of an own key (not an `Object.prototype` key);
+    - a read of an own key (not an `Object.prototype` key), not a method call:
+      `o.m()` would hand `o` to arbitrary code as `this` (review round 3);
     - a plain `=` write in `<module-init>` or a top-level function;
     - a U1 define (`isOpenCarrierUse`);
     - an own-property test;
@@ -189,8 +190,15 @@ declines them, and the A/B finds no changed gc binary.
   - Legacy applies it without throwing, and so does the IR, which matches
     legacy and does not trap.
   - This is a legacy gap, not this slice's.
-- **Dynamic code other than `eval`** (`Function("o = …")()`). SR's
-  `sourceRunsDynamicCode` (#7192) adds this decline once SR is on main.
+- **Dynamic code other than `eval`** (`Function("o = …")()`).
+  - Every eval and `Function` site that the source spells sets
+    `callableBoundaryRequired` (`codegen/index.ts`,
+    `codegen/ir-overlay-preparation.ts`). That withdraws module-init and every
+    function that reads a script var, so evaluated code cannot reach a claimed
+    unit on standalone.
+  - Untracked: a route with no syntactic site, such as
+    `globalThis["Func" + "tion"]`. SR's `sourceRunsDynamicCode` (#7192) adds
+    the file-level decline once SR is on main.
 - **Non-empty `{…}` homes, `new X()`, function values and wrappers** are later
   slices.
 

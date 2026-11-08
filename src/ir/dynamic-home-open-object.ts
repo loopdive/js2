@@ -113,7 +113,7 @@ function everyUseIsServed(decl: ts.VariableDeclaration, query: DynamicHomeQuery)
 /**
  * One reference the dynamic operations serve, judged on its outermost
  * parenthesized form:
- *   - `o.<key>` read where `Object.prototype` does not own `<key>` (the
+ *   - `o.<key>` read, not called, where `Object.prototype` does not own `<key>` (the
  *     reader does not reach an inherited member: #7128's U2 key screen), or a
  *     plain `o.<key> = v` in `<module-init>` or a top-level function, whose
  *     code strictness `dyn.member_set` is told;
@@ -130,7 +130,15 @@ function isServedUse(reference: ts.Identifier, query: DynamicHomeQuery): boolean
   if (ts.isPropertyAccessExpression(parent) && parent.expression === use) {
     if (ts.isCallExpression(parent.parent) && ownPropertyCallMethod(parent.parent) !== undefined) return true;
     if (parent.questionDotToken !== undefined || OBJECT_PROTOTYPE_KEYS.has(parent.name.text)) return false;
-    if (!isStoreTarget(parent) && !ts.isDeleteExpression(outermostParenthesized(parent).parent)) return true;
+    // `o.m()` / ``o.m`…` `` hands `o` to arbitrary code as `this`, which could install an own method.
+    const member = outermostParenthesized(parent);
+    const user = member.parent;
+    if (
+      (ts.isCallExpression(user) && user.expression === member) ||
+      (ts.isTaggedTemplateExpression(user) && user.tag === member)
+    )
+      return false;
+    if (!isStoreTarget(parent) && !ts.isDeleteExpression(user)) return true;
     return isPlainAssignmentTarget(parent) && writerKnowsItsStrictness(parent);
   }
   if (use === reference && isOpenCarrierUse(reference, query.isAmbientDefineProperty)) return true;
