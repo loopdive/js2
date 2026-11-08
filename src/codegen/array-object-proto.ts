@@ -3052,12 +3052,17 @@ export function ensurePromiseNativeProtoGlue(ctx: CodegenContext): number | unde
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
     // (#5197 Slice C) `catch`'s generic arm calls `__call_m_then_vararg`.
-    // RESERVE it here, before the glue exists: the member-closure factory emits
+    // RESERVE it on registration, before the glue exists (a provisional
+    // selection-time query skips it, #7294): the member-closure factory emits
     // each body TWICE (a probe for the result type, then the committed
     // emission), and minting a function inside either would shift funcidxs
     // under a body already being written.
-    reserveClosedMethodDispatchVararg(ctx, "then");
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Promise", PROMISE_PROTO_METHODS, "Promise"));
+    registerNativeProtoBuiltin(ctx, {
+      ...makeGlue(ctx, brand, "Promise", PROMISE_PROTO_METHODS, "Promise"),
+      // (#6979 S7-c2) The native regime is the only WasmGC lowering, so the
+      // vararg slot is always reserved.
+      onRegister: (c) => reserveClosedMethodDispatchVararg(c, "then"),
+    });
   }
   return brand;
 }

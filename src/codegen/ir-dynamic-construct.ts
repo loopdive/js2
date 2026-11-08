@@ -49,7 +49,7 @@ import { emitFnctorProtoGet } from "./expressions/fnctor-prototype.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { isSelfGuardedConstructor, selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js";
-import { isStrictFunction } from "./helpers/is-strict-function.js";
+import { isStrictContext } from "./helpers/is-strict-function.js";
 import { emitGlobalObjectAsThis } from "./helpers/sloppy-this-global.js";
 import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 
@@ -298,9 +298,13 @@ export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionNa
   return publishHelperFunction(ctx, helper);
 }
 
-/** (#7260) The strictness of a top-level function's code: the rule a dynamic PutValue follows. */
-export function irFunctionCodeStrictness(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
-  return isStrictFunction(fn, ctx.inferModuleStrictArguments);
+/**
+ * (#7260) The strictness of a top-level function's code, or (#7276) of the
+ * script's own top-level code for `<module-init>`: the rule a dynamic PutValue
+ * follows, as legacy decides it.
+ */
+export function irFunctionCodeStrictness(ctx: CodegenContext, code: ts.FunctionDeclaration | ts.SourceFile): boolean {
+  return isStrictContext(code, ctx.inferModuleStrictArguments);
 }
 
 /**

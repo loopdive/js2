@@ -157,6 +157,12 @@ export interface NativeProtoBuiltinGlue {
    *  sentinels for well-known-symbol members — see spec §"Symbol cell"). */
   memberCsv: string;
   /**
+   * (#7294) Module effects the glue needs before it exists (e.g. a reserved
+   * dispatch function). Run by a real registration only: a provisional query
+   * ({@link withProvisionalNativeProtoGlue}) describes the glue without them.
+   */
+  onRegister?: (ctx: CodegenContext) => void;
+  /**
    * Optional own `Symbol.toStringTag` data property. The tag is not part of
    * `memberCsv` because it is symbol-keyed, but a flowing prototype companion
    * still needs the identity-stable symbol entry for dynamic reads and
@@ -286,15 +292,54 @@ export interface NativeProtoBuiltinGlue {
   ) => ValType | null;
 }
 
+interface BuiltinGlueSlot {
+  __nativeProtoGlue?: Map<number, NativeProtoBuiltinGlue>;
+  /** Set while a provisional query runs. */
+  __nativeProtoGlueProvisional?: boolean;
+}
+
+function builtinGlueSlot(ctx: CodegenContext): BuiltinGlueSlot {
+  return ctx as unknown as BuiltinGlueSlot;
+}
+
 function builtinGlueRegistry(ctx: CodegenContext): Map<number, NativeProtoBuiltinGlue> {
-  const slot = ctx as unknown as { __nativeProtoGlue?: Map<number, NativeProtoBuiltinGlue> };
+  const slot = builtinGlueSlot(ctx);
   if (!slot.__nativeProtoGlue) slot.__nativeProtoGlue = new Map();
   return slot.__nativeProtoGlue;
 }
 
 /** A builtin registers its glue once (idempotent). */
 export function registerNativeProtoBuiltin(ctx: CodegenContext, glue: NativeProtoBuiltinGlue): void {
+  if (!builtinGlueSlot(ctx).__nativeProtoGlueProvisional) glue.onRegister?.(ctx);
   builtinGlueRegistry(ctx).set(glue.brand, glue);
+}
+
+/**
+ * (#7294) Answer `query` with whatever glue it registers in place, then
+ * withdraw what it added: a selection-time question about a builtin's glue
+ * must leave no registration behind, because later emission reads both tables
+ * and a unit the IR then declines would reorder the module. A glue's other
+ * module effects ride its `onRegister`, which a provisional registration skips,
+ * so the `ensure*NativeProtoGlue` builders write only the two tables here and
+ * withdrawing them is exact.
+ */
+export function withProvisionalNativeProtoGlue<T>(ctx: CodegenContext, query: () => T): T {
+  const slot = builtinGlueSlot(ctx);
+  const brandMap = ctx.builtinBrandMap;
+  const registry = slot.__nativeProtoGlue;
+  const brandNames = new Set(brandMap?.keys());
+  const brands = new Set(registry?.keys());
+  const provisional = slot.__nativeProtoGlueProvisional;
+  slot.__nativeProtoGlueProvisional = true;
+  try {
+    return query();
+  } finally {
+    slot.__nativeProtoGlueProvisional = provisional;
+    if (brandMap === undefined) ctx.builtinBrandMap = undefined;
+    else for (const name of [...brandMap.keys()]) if (!brandNames.has(name)) brandMap.delete(name);
+    if (registry === undefined) slot.__nativeProtoGlue = undefined;
+    else for (const brand of [...registry.keys()]) if (!brands.has(brand)) registry.delete(brand);
+  }
 }
 
 /** Look up a registered builtin's glue by brand. */
