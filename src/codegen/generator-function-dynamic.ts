@@ -54,7 +54,7 @@ import { isStaticGeneratorFunctionConstructorSyntax } from "../ir/runtime-eval-b
 import { ts } from "../ts-api.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { emitStandaloneIndirectEvalRuntime, ensureRuntimeEvalCallableCarrier } from "./expressions/eval-inline.js";
+import { emitStandaloneGlobalEvalRuntime, ensureRuntimeEvalCallableCarrier } from "./expressions/eval-inline.js";
 import { runtimeEvalProviderLinkable } from "./expressions/runtime-eval-provider.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { isRuntimeEvalProviderAbsent } from "./expressions/standalone-dynamic-code.js";
@@ -200,7 +200,7 @@ export function tryEmitDynamicGeneratorFunction(
   fctx.body = fetch;
   let fetched: ValType | undefined;
   try {
-    fetched = emitStandaloneIndirectEvalRuntime(ctx, fctx, [
+    fetched = emitStandaloneGlobalEvalRuntime(ctx, fctx, "__runtime_indirect_eval", [
       ts.factory.createStringLiteral(REALM_GENERATOR_FUNCTION_SOURCE),
     ]);
   } finally {
