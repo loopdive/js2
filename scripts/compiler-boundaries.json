@@ -12843,6 +12843,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/shared/always-undefined-binding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106",
+      "nextBoundary": "Pure-AST proof that a script var is declared without a value and never written, shared by the IR selector and builder; becomes a frontend fact when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/shared/ambient-intrinsics.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
