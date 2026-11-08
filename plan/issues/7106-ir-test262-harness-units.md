@@ -6957,3 +6957,233 @@ dynamic ops), `X.prototype` other than `.call` (14) and the static reads (39
 together with `new` and `Number.prototype`; both need #7294's intrinsic
 singletons), static calls (8; `String.fromCharCode` is 2 of them, a surface
 row).
+
+### Review round 2 (#7178, 2026-11-07) and main `a484c365fe`
+
+Approved, with two nits, fixed in `93eec5fe24`:
+
+1. `isPhase1VarDeclarationList` computes `isScriptVarList(list)` itself; the
+   parameter (one caller passed a literal `true`) is gone.
+2. `isModuleInitVarList` returns `boolean`, not a type guard that is false for
+   some declaration lists; `lowerForStatement` checks the initializer itself.
+
+Main `a484c365fe` (with #7292, module-init array literals) is merged in
+(`444bb4f67f`). Re-measured on it, one niced worker: base = main, head =
+lever L; standalone on the 790 `for (var` files plus 200 of the random
+sample (926 compile on both sides), gc on the 200 sample files plus every
+changed file (211):
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, main → L | 11 → 27 (**+16**, the same 16) | 11 → 27 (+16) |
+| lost / units newly legacy / new post-claim errors | 0 / 0 / 0 | 0 / 0 / 0 |
+| binaries changed | 16, each a newly claimed `<module-init>` | 16 |
+| pass → fail on the 16 | 0 (16/16 pass on both) | 0 |
+| playground (26 binaries) | identical | identical |
+
+#7292 does not move the leading blocker: `vardecl-module-storage-unrepresentable`
+is still the sole `<module-init>` refusal in 229 files of the census, led by
+`var __expected = [...]` (220 files, a string-element array) and
+`var __executed = /…/.exec(…)` (212, a RegExp match result), then `obj = {…}`
+(125), `print = …` and `$262 = …` (103 each).
+
+Equivalence gate on the merged lever L: no new regressions (4,850 passing,
+20 failing, all in the 22-row known-failures baseline; 2 baseline rows now
+pass).
+## `<module-init>` lever L2 — the rest of the script-`var` path (plan, 2026-11-07)
+
+Stacked on lever L (`claude/7106-lever-l`, #7178). Three shapes from lever L's
+blocker table, all writes to the same `__mod_<name>` script-`var` slots.
+
+### Census (lever L head `65552ecb58`, standalone, unmasked)
+
+Population: lever L's 1,130 files plus every other ES5 file whose top-level
+code (outside functions) has one of the shapes, found by a parse-only scan
+(81 prefix updates, 369 nested `var` statements, 21 nested `for (var` heads;
+361 not yet in lever L's census), 1,491 files.
+
+| shape | refusal | carriers | sole blocker | sole except a literal home (lane C) |
+| --- | --- | --- | --- | --- |
+| (a) `++i` / `--i` | `expr-prefix-op-++` / `---` | 30 | 5 | 3 |
+| (b) `var` statement in top-level control flow | `vardecl-var-kind` | 161 | 40 | 22 |
+| (c) `for (var` head nested in a block | `for-init-var-kind` | 12 | 3 | 3 |
+| (b) and (c) together | | 173 | 43 | 25 |
+| all three | | 203 | 48 | 28 |
+
+"Sole" means `<module-init>` has no other refusal and no other unit is legacy;
+the masking caveat of lever L applies (a refused statement hides what is
+behind it). All three are taken: (b) carries the payoff, and (a) and (c) are
+small but fall out of the same two edits.
+
+### Implementation Plan
+
+1. **(b) + (c): one predicate.** `isModuleInitVarList`
+   (`src/shared/var-declaration-lists.ts`) becomes structural: the list of a
+   `var` statement or of a `for (;;)` `var` head whose ancestors up to the
+   source file are all statement containers (block, `if`, loops, label,
+   `try`/`catch`, `switch`). It refuses a list inside a function, a `with` body
+   (a name there may resolve to the object), a `for-in`/`for-of` head, and a
+   `catch` clause whose parameter it re-declares (Annex B.3.5: that `var`
+   writes the parameter). `moduleInitVarLists(statement)` lists the modelled
+   lists of one top-level statement and replaces the single-list
+   `moduleInitVarList`; its consumers (`collectIrSafeModuleVarDeclarationLists`,
+   `moduleInitBindings`, from-ast's `moduleInitContainsNestedVar`) take the
+   plural, and the last one tests `isModuleInitVarList(node)` instead of
+   comparing with the one modelled list.
+   - Nothing else changes in selection or lowering: a nested `var` statement
+     already reaches `isPhase1VarDecl` → `isPhase1VarDeclarationList` and
+     `lowerVarDecl`'s module arm, and a nested head already reaches lever L's
+     `for` arm. A nested declaration is a write at its position, because the
+     prologue seeds the slot (`emitModuleVarUndefinedSeeds` walks the same
+     region) and a re-executed `var x;` is a no-op.
+   - The resolver (`isModuleBindingDeclaration`) and the ordinal enumerator
+     (`moduleInitVarBindings`) number "every declaration that is not a
+     top-level statement's own", so a nested statement's names join the leaves
+     and head names.
+   - Legacy observation: `isHoistedScriptVar` (lever L's
+     `isScriptForHeadVar`, widened) lets `registerVarDeclListGlobals`, which the
+     hoisting walk already calls for every nested list, hand each such
+     declaration's slot to the Program ABI.
+2. **(a): no new arm.** `isPhase1ForUpdateExpr` admits `++i`/`--i` beside
+   `i++`/`i--` through the same branch (`identifierUpdateRefusal`); the update
+   value is discarded, and `lowerForUpdateExpr` already lowers both through
+   `lowerIncrementDecrement`. Statement-position prefix updates are already
+   admitted. A prefix update in value position (`x = ++i`) stays refused, as
+   the postfix one does.
+
+**Removed duplicates:** the single-list `moduleInitVarList` and its
+`unlabelled` walk; the "top-level `for` head" special case in the codegen
+helper; the postfix-only branch of the update arm.
+
+### Acceptance
+
+- Measured as lever L: both lanes, base = lever L head, on the 1,491 files.
+  Zero IR-only files lost, zero pass → fail, zero new post-claim errors on the
+  population; every binary without a newly claimed unit byte-identical;
+  playground identical.
+- Tests: `tests/issue-7106-lever-l2.test.ts`, both lanes: claimed nested
+  statements (loop, `while`, `do`, `if`, `try`, `switch`), nested heads,
+  prefix updates, reads before and after, redeclarations; refused: `with`
+  bodies, a catch-parameter re-declaration.
+- Code quality: one structural predicate; no new selector or lowering arm; no
+  budget grant.
+
+### Lever L2 measured (2026-11-07)
+
+Base: lever L at `4cf965aa1f` (review round 1 included), head `145ccae225`, one
+niced worker, both lanes. Population: the 1,491 files of the census above
+(1,431 compile on both sides; the rest are runner-skipped or compile errors on
+both, unchanged).
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, base → head | 44 → 55 (**+11**) | 44 → 55 (**+11**) |
+| IR-only files lost | 0 | 0 |
+| binaries changed | 11, each a newly claimed `<module-init>` | 11, the same files |
+| binaries byte-identical | 1,420 (the whole random sample included) | 1,420 |
+| units newly legacy | 0 | 0 |
+| new post-claim errors (on these files) | 0 | 0 |
+| pass → fail on the changed files | 0 (11/11 pass on both) | 0 (11/11 pass on both) |
+| playground (26 binaries) | identical | identical |
+
+The 11: `Math/ceil/S15.8.2.6_A7`, `Math/floor/S15.8.2.9_A7`,
+`Math/round/S15.8.2.15_A6`, `statements/function/S13.2.1_A8_T1`,
+`statements/try/S12.14_A1`, `_A2`, `_A11_T3`,
+`statements/variable/S12.2_A6_T1`, `_A6_T2`, `_A7`, `_A12`.
+
+**Why 11, not the census's 48.** A refused statement hid the refusals behind
+it. Over the 203 files that carried an L2 refusal, the arms `<module-init>`
+now reports are led by `vardecl-module-storage-unrepresentable` (62 files,
+17 as the sole arm: lane C's literal homes), `expr-ident-not-in-scope` (43),
+`expr-new-ctor-unknown` (25), `throw-module-scalar-unboxed` (21, lever T),
+`expr-module-extern-call-brand` (19), `expr-new-module-binding-callee` (18).
+
+**Skipped:** a prefix update in value position (`if (++x !== 1)`,
+`S11.4.4_*` / `S11.4.5_*`, 18 files still carry it). The postfix one is
+refused in value position too (#4459's discard gate), so there is no postfix
+lowering to reuse; it is a value-position update lever of its own. The census
+"prefix" count (30) was mostly these.
+
+**Known exposures, outside this population:** each claims and then withdraws,
+and each has a statement twin that does the same (or worse) on main:
+- `try { throw 1; } catch (e) { var q = 3; }`: "throw val not in slice 9"
+  (main twin `var q; try { throw 1; } catch (e) { q = 3; }`; lever T's area);
+- `for (…) { var ch = 'a'; acc += ch; }`: "typed string += requires …
+  encoding evidence" (main twin `var ch; for (…) { ch = 'a'; acc += ch; }`
+  is a hard compile error on main);
+- `if (false) { var a = 5; } a === undefined` reads `0` from an `f64` slot,
+  as legacy does (#4489's residual), so the claim keeps legacy's wrong answer.
+
+**Code.** One structural predicate, `isModuleInitVarList`, plus
+`moduleInitVarLists`, in `src/shared/var-declaration-lists.ts`; the
+single-list `moduleInitVarList` and its label walk are gone; the update arm
+admits prefix through the postfix branch. `src/ir` net 0 (+56/−56);
+`src/shared` +36; codegen +2. No new selector or lowering arm, no grant.
+Gates pass bare: loc, func (also against origin/main `5ef8f0aae5`),
+coercion, oracle, dead exports, typecheck, import cycles, standalone arms,
+IR layering, flat dir, IR fallbacks; compiler boundaries as on main.
+Tests: lever-l2, lever-l, var-pattern-heads, for-head-destructuring,
+script-var, uninitialized-var: 263/263.
+
+### L2 review round 1 (#7179, 2026-11-07) and main `a484c365fe`
+
+Changes requested (plus the CI equivalence failure in
+`issue-7252-module-binding-class-instance`, "declared inside a block"). Fixed
+in `b98ab0ea6a`, after merging lever L's round 2 and main (`99d7787d06`).
+
+1. **Fixed — a reference home behind a nested `var` (pass → fail).** A string
+   or class-instance (#7252) home reads as a written value, which holds only
+   when the declaration runs before every later read. A nested declaration
+   may never run (`if (false)`, `while (false)`, `for (; false;)`, a missed
+   `switch` case, `L: { break L; var … }`, a nested head, an unreached
+   `catch`), and the read then answered something other than `undefined`.
+   - The same root as the equivalence failure: L2 claimed a `{ var c = new C(); }`
+     whose class-instance slot may be null. The claim agreed with legacy (both
+     trap on the null slot) but broke #7252's own rule that every IR read sees
+     a written slot. It is answer (a), unsound, fixed at selection.
+   - Fix: `scriptVarReferenceKind` binds no reference kind unless the
+     declaration's list is top-level (`isTopLevelVarList`), so such a binding
+     is refused as `vardecl-module-storage-unrepresentable`. Typed (f64/i32)
+     homes are unchanged: their `0`/`false` read matches legacy and is wrong on
+     main too (out of scope).
+   - **Cost: none measured.** The same 11 files still become IR-only.
+   - Tests: every repro, the template-literal variant, a zero-iteration loop,
+     an unreached `catch` and the #7252 case are in
+     `tests/issue-7106-lever-l2.test.ts` (stay legacy, run correctly).
+2. **Fixed.** The unreachable postfix branch in `isPhase1ForUpdateExpr` is gone.
+3. **Fixed.** One helper, `isTopLevelStatementDeclaration`
+   (`src/shared/var-declaration-lists.ts`), replaces the three copies (ordinal
+   enumerator, resolver, codegen predicate).
+4. **Scope, stated.** The prefix-update change also admits `for (…; ++i)` in
+   every function, not only in `<module-init>`. Its lowering is postfix's
+   (`lowerIncrementDecrement`, the update's value is discarded). The census
+   covered the 22 ES5 files with a prefix `for` update: no binary changed
+   outside the 11 module-init claims. The evidence for function units is the
+   full equivalence gate (below).
+5. **Fixed.** `catchParameterIsRedeclared` matches a pattern parameter's leaf
+   names; a same-named `var` there is an early error (B.3.5 exempts only an
+   identifier parameter), which its doc states.
+
+**Re-measured on main `a484c365fe`**, one niced worker; base = lever L
+(merged with main), head = L2. Standalone on the 446 L2-shape files, the 22
+prefix-update files and 200 random-sample files (597 compile on both sides);
+gc on the 200 sample files plus every changed file (202):
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, L → L2 | 14 → 25 (**+11**, the same 11) | 11 → 22 (+11) |
+| lost / units newly legacy / new post-claim errors | 0 / 0 / 0 | 0 / 0 / 0 |
+| binaries changed | 11, each a newly claimed `<module-init>` | 11 |
+| pass → fail on the 11 | 0 (11/11 pass on main, L and L2) | 0 |
+| playground, main → L2 (26 binaries) | identical | identical |
+
+On top of main + #7292, L and L2 together make **27** more ES5 files IR-only
+on each lane (16 + 11).
+
+**Gates**, bare: loc, func (also against main), coercion, oracle, dead
+exports, typecheck, import cycles, standalone arms, IR layering, flat dir.
+**Equivalence gate** on L2 (and earlier on the merged lever L): no new
+regressions, 4,850 passing, 20 failing, all in the known-failures baseline.
+**Tests**: lever-l2 (60), and with lever-l, var-pattern-heads,
+for-head-destructuring, script-var, script-var-reference-homes and the
+#7252/#7253/var-hoisting/binding-null-guard equivalence files: all pass.
