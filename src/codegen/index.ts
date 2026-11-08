@@ -42,7 +42,7 @@ import { readonlyErasureMappedAliasTarget } from "./readonly-erasure-mapped-type
 import { isShapelessObjectType } from "./shapeless-object-type.js"; // (#5348)
 import { genericStructFactoryExpression } from "./generic-struct-factory.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
-import { selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js"; // (#7106 S3c)
+import { selfGuardedConstructorLeavesFnctor } from "./helpers/self-guarded-constructor.js"; // (#7106 S3c)
 import {
   collectIrFnctorArgumentProjectionsForPlanning,
   makeIrFnctorArgumentProjectionAuthority,
@@ -3560,7 +3560,7 @@ function planIrOverlay(
   // component seals (`collectPreparedTopLevelFunctionValueTargetUnitIds`).
   // Module init and class members share the push/pull seam with the direct
   // carrier, so they stay direct as a whole.
-  if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
+  if (ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
     const failure = runtimeEvalBoundaryFailure();
     withdrawEvalBoundaryFunctions(ctx, ast.sourceFile, identityPlan, safeSelection.funcs, recordPreparationFailure);
     for (const name of safeSelection.classMembers ?? []) recordPreparationFailure(name, failure);
@@ -5486,12 +5486,8 @@ export function generateModule(
   // (#4235) The array + explicit `"single"` path tag. `generateMultiModule`
   // makes the identical call with the whole graph and `"multi"`; keeping the
   // two call shapes the same is what makes the parity testable.
-  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(
-    ast.checker,
-    [ast.sourceFile],
-    true,
-    "single",
-    selfGuardedConstructorsLeaveFnctor(ctx),
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, [ast.sourceFile], true, "single", (decl) =>
+    selfGuardedConstructorLeavesFnctor(ctx, decl),
   );
   // (#3673) Names the source itself defines as function-valued members, so the
   // guarded native-string method lowering can tell a genuine `String.prototype`
@@ -9146,7 +9142,6 @@ function registerReassignedFunctionGlobals(
   const reassignedDeclarations = new Set<ts.FunctionDeclaration>();
   const runtimeEvalConsumer =
     ctx.runtimeEvalProviderAbsent !== true && runtimeEvalPlan.sharedRealmMayContainCanonicalValues; // (#6956)
-  const dynamicSourceFragments = runtimeEvalPlan.dynamicSourceFragments;
   const hasUnknownDynamicSource = runtimeEvalPlan.unknownDynamicSource;
   const varEnvironment = (node: ts.Node): ts.Node => {
     for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
@@ -9289,25 +9284,15 @@ function registerReassignedFunctionGlobals(
       global.type = { kind: "externref" };
       global.init = [{ op: "ref.null.extern" }];
     }
-    const mentionedByDynamicSource = (name: string): boolean =>
-      dynamicSourceFragments.some((fragment) => {
-        let from = 0;
-        while (from <= fragment.length) {
-          const at = fragment.indexOf(name, from);
-          if (at < 0) return false;
-          const before = at === 0 ? "" : fragment[at - 1]!;
-          const afterAt = at + name.length;
-          const after = afterAt >= fragment.length ? "" : fragment[afterAt]!;
-          const ident = (ch: string): boolean => /[A-Za-z0-9_$]/.test(ch);
-          if (!ident(before) && !ident(after)) return true;
-          from = at + name.length;
-        }
-        return false;
-      });
     for (const name of ctx.topLevelFunctionNames) {
       const declaration = ctx.topLevelFunctionDeclarations.get(name);
       const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
-      if (canBeReboundByEval && (hasUnknownDynamicSource || mentionedByDynamicSource(name))) {
+      // A fragment that only calls the declaration still needs it live: the
+      // static eval splice reaches a top-level function only through its live
+      // binding, and without one drops the call (`eval("f()")`, 15.3.5.4_2-57gs).
+      const namedByDynamicSource =
+        runtimeEvalPlan.dynamicSourceWrites.has(name) || runtimeEvalPlan.dynamicSourceReferences.has(name);
+      if (canBeReboundByEval && (hasUnknownDynamicSource || namedByDynamicSource)) {
         if (!reassigned.has(name)) (ctx.evalOnlyLiveFuncBindings ??= new Set<string>()).add(name);
         reassigned.add(name);
         if (declaration) reassignedDeclarations.add(declaration);
@@ -10025,12 +10010,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   // why each pass is monotone-safe under that widening, and for the two hazards
   // it handles explicitly (import-alias symbol identity, and cross-module
   // fnctor NAME collisions, which are refused and COUNTED).
-  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(
-    multiAst.checker,
-    multiAst.sourceFiles,
-    true,
-    "multi",
-    selfGuardedConstructorsLeaveFnctor(ctx),
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(multiAst.checker, multiAst.sourceFiles, true, "multi", (decl) =>
+    selfGuardedConstructorLeavesFnctor(ctx, decl),
   );
   try {
     // M1A: construct the checker-owned callable graph exactly once, before

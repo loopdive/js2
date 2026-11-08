@@ -9586,7 +9586,7 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
   }
-  if (storedStaticProviders.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+  if (storedStaticProviders.size > 0 && !ctx.fast) {
     for (const symbol of storedStaticProviders) {
       const { params, results } = storedStaticAliasProviderImport(symbol);
       ensureLateImport(ctx, symbol, [...params], [...results]);

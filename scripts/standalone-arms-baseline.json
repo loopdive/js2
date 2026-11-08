@@ -1,9 +1,9 @@
 {
   "total": {
-    "ctx.standalone": 707,
+    "ctx.standalone": 706,
     "!ctx.standalone": 283,
     "noJsHost(": 247,
-    "ctx.wasi": 441
+    "ctx.wasi": 440
   },
   "byDir": {
     ".": {
@@ -13,10 +13,10 @@
       "ctx.wasi": 1
     },
     "codegen": {
-      "ctx.standalone": 673,
+      "ctx.standalone": 672,
       "!ctx.standalone": 269,
       "noJsHost(": 134,
-      "ctx.wasi": 393
+      "ctx.wasi": 392
     },
     "codegen/analysis": {
       "ctx.standalone": 3,
