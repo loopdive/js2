@@ -154,6 +154,19 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
     source: `var o = {}; Object.prototype.hasOwnProperty = function () { return true; }; if (!o.hasOwnProperty('zz')) { throw "override"; }`,
     detail: "objectlit-empty",
   },
+  // Round-2 review: a call argument lets other code install an own method under a computed key.
+  "own hasOwnProperty under a computed key": {
+    source: `var o = {}; Object.defineProperty(o, "has" + "OwnProperty", { value: function () { return true; } }); function f() { return o.hasOwnProperty("z"); } if (!f()) { throw "x"; }`,
+    detail: "objectlit-empty",
+  },
+  "Object.assign from parsed JSON": {
+    source: `var o = {}; Object.assign(o, JSON.parse('{"hasOwnProperty": 1}')); if (typeof o.hasOwnProperty !== "number") { throw "x"; }`,
+    detail: "objectlit-empty",
+  },
+  "passed to a function that writes a computed key": {
+    source: `var o = {}; function g(x, k) { x[k] = function () { return true; }; } g(o, "has" + "OwnProperty"); if (!o.hasOwnProperty("z")) { throw "x"; }`,
+    detail: "objectlit-empty",
+  },
   // The census's claim-then-demote; #7288 (main) now refuses the head at select.
   "module-init for-in var head": {
     source: `/** @type {any} */ var a = 'ab'; var n = 0; for (var k in a) { n++; } if (n !== 2) { throw "n"; }`,

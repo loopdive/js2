@@ -119,9 +119,10 @@ function everyUseIsServed(decl: ts.VariableDeclaration, query: DynamicHomeQuery)
  *     code strictness `dyn.member_set` is told;
  *   - the target of a U1 define statement (`isOpenCarrierUse`);
  *   - the receiver of `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)`;
- *   - a strict `===` / `!==` operand, a `typeof` operand, a call argument.
- * Anything else, an alias, an element access, a loose `==` or a condition
- * included, is not served.
+ *   - a strict `===` / `!==` operand, a `typeof` operand.
+ * Anything else is not served: an alias, an element access, a loose `==`, a
+ * condition, and a call argument, through which other code could install an
+ * own `hasOwnProperty` under a key no scan sees (`g(o, "has" + "Own…")`).
  */
 function isServedUse(reference: ts.Identifier, query: DynamicHomeQuery): boolean {
   const use = outermostParenthesized(reference);
@@ -137,8 +138,7 @@ function isServedUse(reference: ts.Identifier, query: DynamicHomeQuery): boolean
     const op = parent.operatorToken.kind;
     return op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
   }
-  if (ts.isTypeOfExpression(parent)) return true;
-  return ts.isCallExpression(parent) && parent.arguments.includes(use);
+  return ts.isTypeOfExpression(parent);
 }
 
 /** `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` with one plain argument, the method never replaced. */

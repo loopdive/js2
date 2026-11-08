@@ -16,7 +16,7 @@ related: [7106, 7311]
 assignee: "ttraenkler/opus-lever-d"
 # 2026-11-08 (review round 1): the binding rule and the allow-list of
 # consumers live in src/ir/dynamic-home-open-object.ts; the never-written proof
-# moved verbatim from codegen/class-heritage-check.ts to src/shared/binding-writes.ts.
+# moved from codegen/class-heritage-check.ts to src/shared/binding-writes.ts.
 # What remains in the god-files is the hook each needs, because it reads or
 # writes the selector's per-subject state:
 #   - select.ts +70: initializer, define and own-property admissions (they
@@ -119,22 +119,26 @@ its own slice only if its gain is non-zero with zero ES5 regressions.
     - a plain `=` write in `<module-init>` or a top-level function;
     - a U1 define (`isOpenCarrierUse`);
     - an own-property test;
-    - a strict `===` / `!==` operand, a `typeof` operand, a call argument.
+    - a strict `===` / `!==` operand, a `typeof` operand.
   - Any other reference keeps the whole binding on legacy: an alias, an
     element access, a loose `==`, a condition, a destructuring target, a
-    nested-closure write.
+    nested-closure write, and a call argument (review round 2: other code
+    could install an own `hasOwnProperty` under a computed key).
   - The verdict is cached per declaration, and the cheap checks run first.
   - `ownPropertyMethod` admits `o.hasOwnProperty(k)` /
     `o.propertyIsEnumerable(k)` only where every other mention of the method
     name is a plain member read and none is written.
-- `src/shared/binding-writes.ts` now holds `bindingIsUniqueAndNeverWritten`,
-  `occurrenceIsWriteTarget` and `isBindingSiteName`. They were moved verbatim
-  from `codegen/class-heritage-check.ts`, which re-exports them, so codegen and
-  the IR share one never-written proof.
-- `src/shared/intrinsic-prototype-writes.ts` takes the #7106 lever SR branch's
-  version verbatim (`sourceNamesReflectiveRoute`, `sourceWritesMemberNamed`,
-  more intrinsics). Main's copy had not changed since SR forked, so the two
-  merge cleanly.
+- `src/shared/binding-writes.ts` now holds `bindingIsUniqueAndNeverWritten`
+  and `occurrenceIsWriteTarget`, moved from `codegen/class-heritage-check.ts`,
+  which re-exports them. Codegen and the IR now share one never-written proof.
+  - **Not verbatim.** The binding-site test is now `isBindingSiteName`,
+    byte-identical to the #7106 lever SR branch's. It also counts
+    `import X = …` as a binding site.
+  - The change is conservative: an extra binding site can only make the proof
+    decline. It affects TS sources only.
+- `src/shared/intrinsic-prototype-writes.ts`: `sourceNamesReflectiveRoute`
+  and `sourceWritesMemberNamed` come from main (lever P). This branch does not
+  change the file.
 - `src/ir/select.ts` adds hooks that reuse #7128's state through one live
   query object (`DYNAMIC_HOME_QUERY`):
   - the empty-literal arm admits the initializer;
@@ -176,6 +180,19 @@ declines them, and the A/B finds no changed gc binary.
   shared by every arm. The selector hooks reuse #7128's open-carrier state. The
   moved predicate leaves one copy. No growth beyond those hooks in `select.ts`
   or `from-ast.ts`.
+
+## Not covered
+
+- **A define or read before the declaration runs.** Example:
+  `function f() { Object.defineProperty(o, …) }`, then `f(); var o = {};`.
+  - Node throws a TypeError for a define on `undefined`.
+  - Legacy applies it without throwing, and so does the IR, which matches
+    legacy and does not trap.
+  - This is a legacy gap, not this slice's.
+- **Dynamic code other than `eval`** (`Function("o = …")()`). SR's
+  `sourceRunsDynamicCode` (#7192) adds this decline once SR is on main.
+- **Non-empty `{…}` homes, `new X()`, function values and wrappers** are later
+  slices.
 
 ## Result (2026-11-08, base `cf5eac1cf6`, standalone)
 
