@@ -3,10 +3,8 @@
   "assignee": "ttraenkler/codex-7077",
   "requested_by": "ttraenkler/codex-7077",
   "status": "in-progress",
-  "branch": "codex/7077-host-heterogeneous-bindings",
-  "reserved_at": "2026-11-08T15:58:31Z",
-  "claimed_at": "2026-11-08T15:58:31Z",
-  "updated_at": "2026-11-08T15:58:31Z",
-  "write_id": "51839-5w8stmfl",
-  "pr_scan": "ok"
+  "branch": "codex/7337-widened-binding-values",
+  "claimed_at": "2026-11-08T16:15:48Z",
+  "updated_at": "2026-11-08T16:15:48Z",
+  "write_id": "67113-d27qkd50"
 }
