@@ -1,13 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7335 slice 1 (lever D): a script's top-level `var o = {}` — declared once,
-// never written, every reference a consumer the dynamic operations serve — whose
-// slot legacy keeps as an open `$Object` in externref, is the IR's `dynamic`
-// script-var home. On standalone the IR claims a `<module-init>` that
-// initializes it (`__new_plain_object`), defines on it with a literal data
-// descriptor from any unit, and tests it with `hasOwnProperty` /
-// `propertyIsEnumerable`. Every other use keeps the binding on legacy, refused at
-// select, never claimed and then demoted. The gc lane keeps declining.
+// #7335 (lever D) on top of #7280 S1: a script `var o = {}` on the dynamic
+// module slot that legacy keeps as an open `$Object` is #7280's carrier, whose
+// initializer #7280 admits. When the binding is declared once, never written,
+// and every reference is a consumer the dynamic operations serve, D adds two
+// arms on standalone: a literal-data `Object.defineProperty` on it from any
+// unit, and `hasOwnProperty` / `propertyIsEnumerable` through
+// `dyn.own_property`. Any other use leaves the binding a plain #7280 carrier,
+// so those arms are refused at select, never claimed and then demoted. gc keeps
+// declining.
 import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { compile, type CompileResult } from "../src/index.js";
@@ -86,37 +87,41 @@ const CLAIMED: Record<string, string> = {
   "read before the declaration runs": `if (o !== undefined) { throw "hoist"; } var o = {};`,
 };
 
-/** Refused at select, with the selector arm that names why. */
+/**
+ * A use the dynamic-home proof does not serve: the binding stays #7280's plain
+ * carrier, so the own-property probe each source ends with is not admitted and
+ * `<module-init>` is refused at select, with the arm named.
+ */
 const REFUSED: Record<string, { readonly source: string; readonly detail: string }> = {
   "inherited method read": {
     source: `var o = {}; if (o.hasOwnProperty !== Object.prototype.hasOwnProperty) { throw "inherited"; }`,
-    detail: "objectlit-empty",
+    detail: "expr-module-scalar-method",
   },
   "parenthesized inherited read": {
     source: `var o = {}; if ((o).toString === undefined) { throw "inherited"; }`,
-    detail: "objectlit-empty",
+    detail: "expr-module-scalar-method",
   },
   "parenthesized loose equality": {
     source: `var o = {}; if ((o) == null) { throw "null"; }`,
-    detail: "objectlit-empty",
+    detail: "expr-module-scalar-method",
   },
   alias: {
     source: `var o = {}; var p = o; if (p.toString === undefined) { throw "alias"; }`,
-    detail: "objectlit-empty",
+    detail: "expr-module-scalar-method",
   },
-  reassigned: { source: `var o = {}; o = 5; if (o !== 5) { throw "w"; }`, detail: "objectlit-empty" },
+  reassigned: { source: `var o = {}; o = 5; if (o !== 5) { throw "w"; }`, detail: "vardecl-module-value-flow" },
   "array destructuring write": {
     source: `var o = {}; [o] = [5]; if (o !== 5) { throw "w"; }`,
-    detail: "objectlit-empty",
+    detail: "body-exprstmt-other",
   },
   "object destructuring write": {
     source: `var o = {}; ({ a: o } = { a: 5 }); if (o !== 5) { throw "w"; }`,
-    detail: "objectlit-empty",
+    detail: "body-exprstmt-other",
   },
-  "parenthesized write": { source: `var o = {}; (o) = 5; if (o !== 5) { throw "w"; }`, detail: "objectlit-empty" },
+  "parenthesized write": { source: `var o = {}; (o) = 5; if (o !== 5) { throw "w"; }`, detail: "body-exprstmt-other" },
   "for-of destructuring head": {
     source: `var o = {}; var xs = [[5]]; for ([o] of xs) { } if (o !== 5) { throw "w"; }`,
-    detail: "objectlit-empty",
+    detail: "vardecl-module-storage-unrepresentable",
   },
   "this.o write": {
     source: `var o = {}; this.o = { p: 1 }; if (o.p !== 1) { throw "w"; }`,
@@ -124,15 +129,15 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   },
   "eval in the file": {
     source: `var o = {}; eval(""); if (o.p !== undefined) { throw "eval"; }`,
-    detail: "vardecl-module-storage-unrepresentable",
+    detail: "call-resolution-unsupported",
   },
   "Object.setPrototypeOf on the binding": {
     source: `var o = {}; Object.setPrototypeOf(o, { p: 1 }); if (o.p !== 1) { throw "proto"; }`,
-    detail: "objectlit-empty",
+    detail: "expr-ident-not-in-scope",
   },
   "element read": {
     source: `var o = {}; ${DEFINE} var k = 'p'; if (o[k] !== 1) { throw "elem"; }`,
-    detail: "objectlit-empty",
+    detail: "call-resolution-unsupported",
   },
   "ToPropertyKey-running key": {
     source: `var o = {}; ${DEFINE} if (!o.hasOwnProperty({ toString: function () { return 'p'; } })) { throw "key"; }`,
@@ -140,42 +145,37 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   },
   "shadowing parameter": {
     source: `var o = {}; ${DEFINE} function f(o) { return o.p; } if (f({ p: 2 }) !== 2) { throw "shadow"; }`,
-    detail: "objectlit-empty",
+    detail: "call-resolution-unsupported",
   },
   "element destructuring target": {
     source: `"use strict"; var o = {}; Object.defineProperty(o, 'b', { value: 1 }); ${STRICT_THROW("[o.b] = [11];")}`,
-    detail: "objectlit-empty",
+    detail: "call-resolution-unsupported",
   },
   "member write in a nested closure": {
     source: `"use strict"; var o = {}; Object.defineProperty(o, 'b', { writable: false }); var threw = false; (function () { try { o.b = 11; } catch (e) { threw = e instanceof TypeError; } })(); if (!threw) { throw "strict"; }`,
-    detail: "objectlit-empty",
+    detail: "call-resolution-unsupported",
   },
   "replaced hasOwnProperty": {
     source: `var o = {}; Object.prototype.hasOwnProperty = function () { return true; }; if (!o.hasOwnProperty('zz')) { throw "override"; }`,
-    detail: "objectlit-empty",
+    detail: "expr-ident-not-in-scope",
   },
   // Round-2 review: a call argument lets other code install an own method under a computed key.
   "own hasOwnProperty under a computed key": {
     source: `var o = {}; Object.defineProperty(o, "has" + "OwnProperty", { value: function () { return true; } }); function f() { return o.hasOwnProperty("z"); } if (!f()) { throw "x"; }`,
-    detail: "objectlit-empty",
+    detail: "call-resolution-unsupported",
   },
   "Object.assign from parsed JSON": {
     source: `var o = {}; Object.assign(o, JSON.parse('{"hasOwnProperty": 1}')); if (typeof o.hasOwnProperty !== "number") { throw "x"; }`,
-    detail: "objectlit-empty",
+    detail: "expr-ident-not-in-scope",
   },
   "passed to a function that writes a computed key": {
     source: `var o = {}; function g(x, k) { x[k] = function () { return true; }; } g(o, "has" + "OwnProperty"); if (!o.hasOwnProperty("z")) { throw "x"; }`,
-    detail: "objectlit-empty",
+    detail: "expr-module-scalar-method",
   },
   // Round-3 review: a method call hands `o` to arbitrary code as `this`.
   "method call on the binding": {
     source: `var o = {}; Object.defineProperty(o, "p", { value: 1 }); o.m = function () { this["has" + "OwnProperty"] = function () { return true; }; }; o.m(); function f() { return o.hasOwnProperty("z"); } if (!f()) { throw "x"; }`,
-    detail: "objectlit-empty",
-  },
-  // The census's claim-then-demote; #7288 (main) now refuses the head at select.
-  "module-init for-in var head": {
-    source: `/** @type {any} */ var a = 'ab'; var n = 0; for (var k in a) { n++; } if (n !== 2) { throw "n"; }`,
-    detail: "forin-head-module-var",
+    detail: "call-resolution-unsupported",
   },
 };
 
@@ -214,12 +214,13 @@ describe("#7335 — standalone dynamic-home open object", () => {
 
   for (const [name, { source, detail }] of Object.entries(REFUSED)) {
     it(`refuses at select and matches legacy: ${name}`, async () => {
-      const ir = await build(source, "standalone");
+      const probed = `${source} var probe = o.hasOwnProperty("zz");`;
+      const ir = await build(probed, "standalone");
       expect(ir.irPostClaimErrors ?? []).toEqual([]);
       const row = outcome(ir, "<module-init>");
       expect(row).toMatchObject({ kind: "unsupported", stage: "select", irBodyEmitted: false });
       expect(row?.detail).toContain(detail);
-      const legacy = await build(source, "standalone", false);
+      const legacy = await build(probed, "standalone", false);
       expect(await run(ir, "standalone")).toBe(await run(legacy, "standalone"));
     });
   }

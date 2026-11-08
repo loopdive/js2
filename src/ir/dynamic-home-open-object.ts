@@ -1,20 +1,18 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #7335 (lever D, slice 1) — a script's top-level `var o = {}` as the IR's
- * `dynamic` script-var home. Where legacy keeps such a binding as the open
- * `$Object` in its externref slot (the selector's `isOpenObjectBinding`, #7128
- * S1), the module-binding resolver already reads that slot as `dynamic`
- * (`scriptVarHome`, #7132), so an IR unit and a legacy unit share one store
- * whoever runs the initializer. The selector hooks in `select.ts` admit the
- * initializer (the open carrier's `__new_plain_object`), a U1 define on the
- * binding from any unit, and `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)`
- * through the `dyn.own_property` provider.
- *
- * The binding qualifies only when every reference is one of the consumers the
- * dynamic operations serve ({@link isServedUse}); any other use, an alias
- * included, keeps the whole binding on legacy. An allow-list, because a
- * deny-list of the uses that miscompile has to anticipate every spelling of
- * them.
+ * #7335 (lever D) — the uses proof for #7280's dynamic-home carrier: a script
+ * `var o = {}` on the dynamic module slot that legacy keeps as an open
+ * `$Object` (`isDynamicHomeOpenCarrier` in `select.ts`, the one initializer
+ * admission). #7280 lets every use read the binding through the ordinary
+ * dynamic arms. Two arms here need more:
+ *   - a U1 define on the binding from any unit;
+ *   - `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` through the
+ *     `dyn.own_property` provider, which ignores an own method a program
+ *     installed.
+ * Both stand only on a binding that holds that one object throughout, with
+ * every reference a consumer that cannot hand it to code that installs one
+ * ({@link isServedUse}). An allow-list, because a deny-list of the uses that
+ * escape has to anticipate every spelling of them.
  */
 
 import { bindingIsUniqueAndNeverWritten, isStoreTarget, outermostParenthesized } from "../shared/binding-writes.js";
@@ -31,26 +29,21 @@ import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 /** What the selector answers about a binding. */
 export interface DynamicHomeQuery {
   readonly resolve: ((id: ts.Identifier) => IrLegacyModuleBindingIdentity | undefined) | null;
-  /** Legacy's answer (#7128 S1); present only on the lane whose IR lowers an open carrier. */
-  readonly isOpenObjectBinding: ((decl: ts.VariableDeclaration) => boolean) | undefined;
+  /** #7280's declaration half: the dynamic module slot holds legacy's open `$Object`. */
+  readonly isCarrier: (decl: ts.VariableDeclaration) => boolean;
   readonly isAmbientDefineProperty: (call: ts.CallExpression) => boolean;
 }
 
-/** `decl` is a dynamic-home open object that legacy keeps open in the slot the resolver reads as `dynamic`. */
-export function isDeclaration(decl: ts.VariableDeclaration, query: DynamicHomeQuery): boolean {
-  return (
-    query.isOpenObjectBinding !== undefined &&
-    isScriptEmptyLiteralVar(decl) &&
-    everyUseIsServed(decl, query) &&
-    query.isOpenObjectBinding(decl) &&
-    query.resolve?.(decl.name as ts.Identifier)?.valueKind.kind === "dynamic"
-  );
-}
-
-/** `id` reads a dynamic-home open object ({@link isDeclaration}). */
+/** `id` reads a #7280 dynamic-home carrier whose every use is served. */
 export function isReference(id: ts.Identifier, query: DynamicHomeQuery): boolean {
   const declaration = query.resolve?.(id)?.declaration;
-  return declaration !== undefined && ts.isVariableDeclaration(declaration) && isDeclaration(declaration, query);
+  return (
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    isScriptEmptyLiteralVar(declaration) &&
+    query.isCarrier(declaration) &&
+    everyUseIsServed(declaration, query)
+  );
 }
 
 /** The `Object.prototype` own-property tests a dynamic-home open object answers through `dyn.own_property`. */

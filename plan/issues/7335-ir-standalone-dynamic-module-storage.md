@@ -14,18 +14,18 @@ area: ir
 goal: ir-full-coverage
 related: [7106, 7311]
 assignee: "ttraenkler/opus-lever-d"
-# 2026-11-08 (review round 1): the binding rule and the allow-list of
-# consumers live in src/ir/dynamic-home-open-object.ts; the never-written proof
+# 2026-11-08 (review round 1; rebased onto #7280 S1): the uses proof (the
+# allow-list of consumers) lives in src/ir/dynamic-home-open-object.ts; the never-written proof
 # moved from codegen/class-heritage-check.ts to src/shared/binding-writes.ts.
 # What remains in the god-files is the hook each needs, because it reads or
 # writes the selector's per-subject state:
-#   - select.ts +70: initializer, define and own-property admissions (they
-#     record into #7128's admitted-literal set and the lowering's call map),
-#     the live query object, and one hook each in
+#   - select.ts +57 (after #7280 S1): #7280's declaration half factored out of
+#     isDynamicHomeOpenCarrier for D's arms, the U1 define and own-property
+#     admissions, the live query object, and one hook each in
 #     trackedModuleInfluenceIsBoolean and isPhase1Expr's call arm (+1 there);
-#   - from-ast.ts +21 (lowerCall +2): the own-property dispatch in lowerCall,
-#     its arm as its own 11-line function, the define target read from the
-#     dynamic slot, and the Object-tag box of an open-carrier `{}`.
+#   - from-ast.ts +17 (lowerCall +2): the own-property dispatch in lowerCall,
+#     its arm as its own 11-line function, and the define target read from the
+#     dynamic slot.
 loc-budget-allow:
   - src/ir/select.ts
   - src/ir/from-ast.ts
@@ -181,6 +181,44 @@ declines them, and the A/B finds no changed gc binary.
   shared by every arm. The selector hooks reuse #7128's open-carrier state. The
   moved predicate leaves one copy. No growth beyond those hooks in `select.ts`
   or `from-ast.ts`.
+
+## Rebased onto #7280 S1 (2026-11-08)
+
+#7280 S1 (main `2e9852199a`) admits the same initializer this slice first
+admitted: a module-init `var o = {}` on the dynamic slot that legacy keeps open
+(`isDynamicHomeOpenCarrier` in `select.ts`).
+
+**One mechanism, not two.**
+- #7280's `isDynamicHomeOpenCarrier` is the only initializer admission.
+- D's duplicate initializer path and its Object-tag box are deleted. #7280
+  boxes through `lowerObjectLiteral`'s hint.
+- The declaration half is factored out as `isDynamicHomeOpenCarrierDeclaration`.
+  D's arms ask it through the query object.
+
+**What D still adds, on top of a #7280 carrier:**
+- a U1 literal-data define from any unit. #7280's own S3 row expected this to
+  stay legacy, and that row now expects the claim;
+- `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` through
+  `dyn.own_property`.
+
+Both stand only on the uses proof in `dynamic-home-open-object.ts`: the
+never-written proof plus the allow-list of consumers. Every other #7280 use is
+untouched.
+
+**#7280 unsoundness, found on main `4a6e3c4369` and reported, not fixed here.**
+#7280 admits the initializer with any uses, so:
+- `var o = {}; if (o.hasOwnProperty !== Object.prototype.hasOwnProperty) throw 'x';`
+  is claimed. Node completes; the IR throws.
+- `var o = {}; if (o == null) throw 1;` is claimed and then demoted
+  ("bare 'null' in non-reference context").
+- Applying D's allow-list to #7280's admission would fix both. It would also
+  refuse #7280's own claimed rows (element writes, passing the carrier to a
+  function), so it is not small.
+
+**Measured over main `4a6e3c4369`.**
+- Same 2,000-file sample, the 310 files with a `var o = {}` binding.
+- #7280 alone makes 0 of them IR-only.
+- With D, 9 become IR-only: the same 9 as before. 0 lost, 0 post-claim errors.
 
 ## Not covered
 
