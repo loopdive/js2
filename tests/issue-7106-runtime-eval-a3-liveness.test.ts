@@ -2,9 +2,10 @@
 //
 // #7106 A3 — write-precise runtime-eval liveness. A literal eval source makes a
 // top-level function live (routed through its global, kept off the IR) only
-// when it can WRITE the name; a computed source still makes every function
-// live. With liveness precise, the harness's function objects (`assert`,
-// `compareArray`, `Test262Error`) keep their IR value route under the push.
+// when it names it (a write, or a call: eval code reaches the function through
+// that live binding); a computed source still makes every function live. With
+// liveness precise, the harness's function objects (`assert`, `compareArray`,
+// `Test262Error`) keep their IR value route under the push.
 
 import { describe, expect, it } from "vitest";
 
@@ -26,12 +27,16 @@ export function run(): number { return g(); }
 `;
 
 describe("#7106 A3 — write-precise runtime-eval liveness", () => {
-  it("leaves a function a literal source only reads static (and `(0, eval)` is no escaped value)", async () => {
-    const byName = await outcomes(program('(0, eval)("f()");'));
+  it("leaves a function a literal source does not name static (and `(0, eval)` is no escaped value)", async () => {
+    const byName = await outcomes(program('(0, eval)("var unrelated = 1; unrelated + 1");'));
     for (const name of ["f", "g", "run"]) expect(byName.get(name)?.irBodyEmitted, name).toBe(true);
   });
 
   it.each([
+    // (#7163 merge-group regression, 15.3.5.4_2-57gs) a call names the function:
+    // a non-live `f` dropped `eval("f()")`'s call
+    ["an indirect-eval call", '(0, eval)("f()");'],
+    ["a direct-eval call", 'eval("f();");'],
     ["an assignment", '(0, eval)("f = function () { return 2; }");'],
     ["an Annex B block function", '(0, eval)("{ function f() { return 2; } }");'],
     ["a string-keyed global write", "(0, eval)(\"this['f'] = function () { return 2; }\");"],

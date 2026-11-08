@@ -58,6 +58,8 @@ export interface IrRuntimeEvalBoundaryPlan {
   readonly unknownDynamicSource: boolean;
   /** (#7106 A3) Every name a literal dynamic source can write (`literalSourceWrites`). */
   readonly dynamicSourceWrites: ReadonlySet<string>;
+  /** Every identifier a literal dynamic source names, read or written (`literalSourceWrites`). */
+  readonly dynamicSourceReferences: ReadonlySet<string>;
 }
 
 const PROVIDER_NAMES = new Set([
@@ -140,7 +142,8 @@ function mayNameConstructor(node: ts.Node): boolean {
 
 /**
  * (#7106 A3) Add to `written` every script binding the literal source can
- * write, or answer `false` when it can write one this scan cannot name.
+ * write, and to `referenced` every identifier it names, or answer `false`
+ * when it can write one this scan cannot name.
  *
  * Writes are the shared binding-write walker's identifier targets
  * (`identifierWritesOf`: assignment and destructuring, `++`/`--`, for-in/of
@@ -154,7 +157,7 @@ function mayNameConstructor(node: ts.Node): boolean {
  * (`this["eval"](…)`). The answer over-approximates; it only ever makes a
  * function live.
  */
-function literalSourceWrites(source: string, written: Set<string>): boolean {
+function literalSourceWrites(source: string, written: Set<string>, referenced: Set<string>): boolean {
   const script = ts.createSourceFile("eval-source.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   let nameable = true;
   const nested: string[] = [];
@@ -166,6 +169,7 @@ function literalSourceWrites(source: string, written: Set<string>): boolean {
     },
   });
   const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) referenced.add(node.text);
     for (const write of identifierWritesOf(node)) written.add(write.target.text);
     if (ts.isFunctionDeclaration(node) && node.name) written.add(node.name.text);
     if (mayNameConstructor(node)) nameable = false;
@@ -184,7 +188,7 @@ function literalSourceWrites(source: string, written: Set<string>): boolean {
     forEachChild(node, visit);
   };
   visit(script);
-  for (const fragment of nested) if (!literalSourceWrites(fragment, written)) nameable = false;
+  for (const fragment of nested) if (!literalSourceWrites(fragment, written, referenced)) nameable = false;
   return nameable;
 }
 
@@ -566,8 +570,9 @@ export function buildIrRuntimeEvalBoundaryPlan(
 
   const frozenSites = Object.freeze(sites.slice());
   const dynamicSourceWrites = new Set<string>();
+  const dynamicSourceReferences = new Set<string>();
   for (const fragment of dynamicSourceFragments) {
-    if (!literalSourceWrites(fragment, dynamicSourceWrites)) unknownDynamicSource = true;
+    if (!literalSourceWrites(fragment, dynamicSourceWrites, dynamicSourceReferences)) unknownDynamicSource = true;
   }
   const providerMayExecute = frozenSites.some((site) => site.providerDisposition !== "provided");
   // A provider module has no *consumer* call site of its own, but its exported
@@ -584,5 +589,6 @@ export function buildIrRuntimeEvalBoundaryPlan(
     callableBoundaryRequired: frozenSites.length !== 0,
     unknownDynamicSource,
     dynamicSourceWrites,
+    dynamicSourceReferences,
   });
 }
