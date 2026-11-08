@@ -22,7 +22,7 @@ reproduce the same way on main `dc52abf7` and on the #7291 head: the #7291
 change does not touch these routes. Each source below is a `.ts` file
 compiled with `test()` exported.
 
-## 1. `s += r.charAt(i)` with an empty receiver traps
+## 1. `s += r.charAt(i)` out of range traps (empty receiver, or any index past the end)
 
 ```ts
 function b(n: number, r: string): string { let s = ""; for (let i = 0; i < n; i++) { s += r.charAt(i); } return s; }
@@ -30,7 +30,9 @@ export function test(): number { return b(3, "").length; }
 ```
 
 - **standalone and wasi:** `RuntimeError: array element access out of
-  bounds`. JS gives `0`.
+  bounds`. JS gives `0`. The #7168 review also hit it with a rope receiver
+  indexed past its end (`(p + "bcdef").charAt(7)`), so it is any
+  out-of-range index, not only an empty receiver.
 - **Likely cause:** legacy's #1744 single-code-unit fast path
   (`emitStringBuilderAppendCodeUnit`'s `charAt` arm in
   `src/codegen/expressions/operator-assignment.ts`) reads `data[off + i]`
@@ -47,7 +49,7 @@ function b(n: number): string { let s = ""; for (let i = 0; i < n; i++) { s += i
 export function test(): number { return b(2).length; }
 ```
 
-- **standalone and wasi:** `RuntimeError: illegal cast`. JS gives `"0truenullundefined1truenullundefined".length`.
+- **gc, standalone and wasi:** `RuntimeError: illegal cast` (gc confirmed by the #7156 review, 6700897010). JS gives `"0truenullundefined1truenullundefined".length`.
 
 ## 3. `for…of` over `string[]` with string appends fails to compile
 
@@ -59,6 +61,75 @@ export function test(): number { return b(["ab", "c"]).length; }
 - **standalone, wasi and gc:** compile error, `IR path failed for b:
   ir/from-ast: checker-string RHS for "s +=" has contradictory carrier
   externref`.
+
+## 4. A presized builder with a fractional bound traps — fixed in #7291 step 3
+
+```js
+export function run(n) { let s = ""; for (let i = 0; i < n; i++) { s += "abc"; } return s.length; }
+```
+
+- **Before:** `run(2.5)`, `run(0.5)` and `run(1e-9)` trap with `array element
+  access out of bounds` on gc, standalone and wasi. JS gives 9, 3 and 3.
+- **Cause:** #1761's presize compiled the bound with an i32 hint, which
+  truncates `2.5` to 2, but `i < 2.5` runs 3 times.
+- **Fix** (#7291 step 3, its own commit): a non-literal bound compiles as f64
+  and goes through `STRING_BUILDER_TRIP_COUNT_OF_F64_BOUND`, which is `ceil`
+  then a saturating truncation. Integer-literal bounds keep the i32 path.
+- **Test:** `tests/issue-1761.test.ts` "sizes a fractional bound …".
+
+## 5. A presized builder whose bound a closure changes traps — fixed in #7291 step 3
+
+```js
+export function run(n) {
+  const bump = () => { n = n + 1; };
+  let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i < 2) bump(); }
+  return s.length;
+}
+```
+
+- **Before:** `run(3)`, `run(2.5)`, `run(0.5)` and `run(1e-9)` trap with
+  `array element access out of bounds` on all 3 lanes. JS gives 5, 5, 3, 3.
+- **Cause:** #1761's loop-invariance check looked for writes only directly
+  in the loop body, and only for six assignment operators. A closure
+  writing the bound, or `n |= …` / `n ??= …` in the body, went unseen.
+- **Fix** (#7291 step 3, `881ee24f`, completed after the #7168 review):
+  - the presize requires that nothing but the loop's own `i++` writes the
+    counter;
+  - it requires that nothing writes the bound while the loop runs:
+    - searched over the bound's whole declaring scope, so a module-level
+      bound is checked against every function of the module;
+    - through any assignment operator, array/object destructuring and
+      `for…of`/`for…in` targets;
+  - a direct `eval` or an `arguments` reference refuses the presize.
+
+  Typed corpus and builder fixtures are byte-identical; only such programs
+  change.
+- **Test:** `tests/issue-1761.test.ts` "does not presize a bound a closure
+  can change …".
+
+## 6. A module `let` assigned a fractional value reads back wrong (legacy)
+
+```js
+let m = 0;
+function grow() { if (m < 6) m++; }
+export function run(n) { m = n; let s = ""; for (let i = 0; i < m; i++) { s += "a"; grow(); } return s.length; }
+```
+
+- `run(2.5)` and `run(0.5)` give `0` on gc, standalone and wasi, on main and
+  with #7291. JS gives 7 and 6.
+- The presize is not involved: since #7291 step 3 no presize is applied here,
+  and `run(3)` (which trapped on main) now gives JS's 6. Likely cause: legacy
+  narrows the module `let m` to i32 from its `0` initializer and `m++`.
+  Not traced.
+- Found by the #7168 review's module-level-bound case.
+
+## 7. An unbounded presize traps with "requested new array is too large"
+
+- Untyped `run(Infinity)` traps on main and with #7291. JS runs out of memory
+  more slowly, or throws `RangeError: Invalid string length`.
+- Suggested by the #7168 review: refuse to presize, or fall back to the
+  growing buffer, when `ceil(bound) * units` exceeds a cap.
 
 ## Acceptance
 

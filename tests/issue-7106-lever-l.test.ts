@@ -58,8 +58,6 @@ const CLAIMED: Record<string, string> = {
 
 // Refused at selection; legacy runs them.
 const REFUSED: Record<string, string> = {
-  // A nested head is hoisting the IR does not model.
-  nestedHead: "{ for (var i = 0; i < 2; i++) { } }\nassert.sameValue(i, 2);",
   // A `var` merged with a function owns the function's slot.
   functionName: "function i() {}\nfor (var i = 0; i < 1; i++) { }\nassert.sameValue(i, 1);",
   // A lexical head may not shadow a script `var`, nor a script `var` head a lexical name.
