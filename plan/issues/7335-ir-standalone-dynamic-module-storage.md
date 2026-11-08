@@ -268,8 +268,12 @@ reproduced before it was fixed. The tests are rows in
       - The row therefore asserts that the IR matches legacy and does not
         trap. This is a legacy gap, not a regression from this slice.
 
-**Re-measured after the review**, on the same base `cf5eac1cf6`:
-- 9 files gained (the same 9), 0 lost, 0 post-claim errors.
-- 367-file hash A/B: 0 gc changes, and the same 10 standalone binaries change.
-  Their hashes are identical to the binaries already run through the A/B, and
-  all 10 pass on base and head.
+**Re-measured after the review and the merge of origin/main.** Base is main
+at `aae9eda0b2`, which includes #7288. Same 2,000-file sample.
+- **Gain:** 9 files become IR-only, the same 9 as before. 0 lost, and 0
+  post-claim errors on both sides.
+- **gc:** 0 of the 367 hashed binaries change.
+- **Standalone:** exactly the 9 gained binaries change. The for-in file no
+  longer differs, since #7288 handles it on both sides.
+- **Pass/fail:** `runTest262File` passes all 9 on base and on head.
+  **0 regressions.**
