@@ -13,6 +13,7 @@
  * constructors, and async functions remain explicit selector refusals until their own
  * creation/hoisting contracts can carry the environment record.
  */
+import { isVarDeclarationList } from "../shared/var-declaration-lists.js";
 import { forEachChild, ts } from "../ts-api.js";
 
 /**
@@ -146,10 +147,7 @@ export function withBodyBareIdentifierWriteNames(body: ts.Statement): ReadonlySe
     // record.
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
       const list = node.parent;
-      if (
-        ts.isVariableDeclarationList(list) &&
-        (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) === 0
-      ) {
+      if (ts.isVariableDeclarationList(list) && isVarDeclarationList(list)) {
         names.add(node.name.text);
       }
     }

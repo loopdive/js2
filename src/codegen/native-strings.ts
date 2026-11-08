@@ -8,6 +8,7 @@ import type { AnyToStringResponse } from "../runtime/wasmgc/values/any-to-string
  * Extracted from codegen/index.ts (#1013).
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import type { StringBuilderTypes } from "../backend/wasmgc/lowering/wasm-string-builder.js";
 import {
   buildStdoutAppendDefinition,
   buildStdoutPrepareDefinition,
@@ -97,6 +98,11 @@ export function nativeStringTypeNullable(ctx: CodegenContext): ValType {
  */
 export function flatStringType(ctx: CodegenContext): ValType {
   return { kind: "ref", typeIdx: ctx.nativeStrTypeIdx };
+}
+
+/** (#7291) The native string type indices a `let s = ""` builder works over. */
+export function nativeStringBuilderTypes(ctx: CodegenContext): StringBuilderTypes {
+  return { data: ctx.nativeStrDataTypeIdx, flat: ctx.nativeStrTypeIdx, any: ctx.anyStrTypeIdx };
 }
 
 /**

@@ -7,6 +7,7 @@
  * behaviour-preserving leaf move. This module owns the `x op= y` lowering; plain
  * `=` assignment and destructuring stay in assignment.ts.
  */
+import type { StringBuilderSlots } from "../../backend/wasmgc/lowering/wasm-string-builder.js";
 import { tryCompileArrayLengthUpdate } from "../array-length-define.js"; // (#7164)
 import { ts, forEachChild } from "../../ts-api.js";
 import { isBooleanType, isStringType } from "../../checker/type-mapper.js";
@@ -82,12 +83,7 @@ import { ensureLateImport, flushLateImportShifts, patchStructNewForAddedField } 
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { isSloppyImplicitGlobalBinding, tryEmitImplicitGlobalCompoundAssign } from "./implicit-global-binding.js"; // (#4640 D3)
 import { resolveStructNameForExpr } from "./misc.js";
-import {
-  compileStringBuilderAppend,
-  emitStringBuilderAppendCodeUnit,
-  getBuilderInfo,
-  type StringBuilderInfo,
-} from "../string-builder.js";
+import { compileStringBuilderAppend, emitStringBuilderAppendCodeUnit, getBuilderInfo } from "../string-builder.js";
 import {
   coerceVecBigIntElementStoreValue,
   compileExternSetFallback,
@@ -1317,7 +1313,7 @@ function tryCompileSingleCharBuilderAppend(
   ctx: CodegenContext,
   fctx: FunctionContext,
   rhs: ts.Expression,
-  sb: StringBuilderInfo,
+  sb: StringBuilderSlots,
 ): boolean {
   // Shape 1: a 1-character string literal → append the constant code unit.
   if (ts.isStringLiteral(rhs) && rhs.text.length === 1) {
@@ -1440,7 +1436,7 @@ function compileNativeStringCompoundAssignment(
       reportError(ctx, expr, "Failed to compile string += RHS");
       return null;
     }
-    compileStringBuilderAppend(ctx, fctx, coerced, sb);
+    compileStringBuilderAppend(ctx, fctx, sb);
     // The += statement is normally side-effecting (statement-level) — the
     // wrapping ExpressionStatement drops the result. Push a sentinel
     // `ref.null $AnyString` so callers that DO consume the value get a
