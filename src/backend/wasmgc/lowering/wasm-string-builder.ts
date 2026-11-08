@@ -49,7 +49,16 @@ export interface StringBuilderScratch {
   readonly rhsLen: number;
   readonly cu: number;
   readonly receiver: number;
+  /** The `charAt` receiver before flattening, typed `$AnyString`. */
+  readonly receiverAny: number;
   readonly index: number;
+}
+
+/** (#1761) A presized builder's f64 loop-bound local, an i32 scratch, and its units per iteration. */
+export interface StringBuilderPresize {
+  readonly bound: number;
+  readonly boundTmp: number;
+  readonly unitsPerIter: number;
 }
 
 /** A never-iterated builder wastes little; a few iterations do not grow it. */
@@ -74,6 +83,30 @@ export function stringBuilderResetInstrs(t: StringBuilderTypes, sb: StringBuilde
     { op: "local.set", index: sb.len },
     { op: "ref.null", typeIdx: t.any },
     { op: "local.set", index: sb.mat },
+  ];
+}
+
+/**
+ * (#7291) An f64 bound to the i32 trip count of `for (let i = 0; i < bound; i++)`:
+ * the loop runs `ceil(bound)` times, so `2.5` runs 3 (truncating gave 2 and
+ * the presized buffer overflowed). NaN saturates to 0.
+ */
+export const STRING_BUILDER_TRIP_COUNT_OF_F64_BOUND: readonly Instr[] = [
+  { op: "f64.ceil" },
+  { op: "i32.trunc_sat_f64_s" },
+];
+
+/** (#7291) Presized init from the f64 loop bound: `ceil(bound) * unitsPerIter` units, never grown. */
+export function stringBuilderPresizedInitInstrs(
+  t: StringBuilderTypes,
+  sb: StringBuilderSlots,
+  presize: StringBuilderPresize,
+): Instr[] {
+  return [
+    { op: "local.get", index: presize.bound },
+    ...STRING_BUILDER_TRIP_COUNT_OF_F64_BOUND,
+    ...stringBuilderPresizedAllocInstrs(t, sb, presize.boundTmp, presize.unitsPerIter),
+    ...stringBuilderResetInstrs(t, sb),
   ];
 }
 
@@ -176,10 +209,10 @@ export function stringBuilderAppendCodeUnitInstrs(
 export function stringBuilderAppendCharAtInstrs(
   t: StringBuilderTypes,
   sb: StringBuilderSlots,
-  scratch: Pick<StringBuilderScratch, "needed" | "oldBuf" | "cu" | "receiver" | "index">,
+  scratch: Pick<StringBuilderScratch, "needed" | "oldBuf" | "cu" | "receiver" | "receiverAny" | "index">,
   helpers: StringBuilderHelpers,
 ): Instr[] {
-  const { receiver, index } = scratch;
+  const { receiver, receiverAny, index } = scratch;
   const field = (fieldIdx: number): Instr[] => [
     { op: "local.get", index: receiver },
     { op: "ref.as_non_null" },
@@ -187,7 +220,22 @@ export function stringBuilderAppendCharAtInstrs(
   ];
   return [
     { op: "local.set", index },
-    { op: "call", funcIdx: helpers.flatten },
+    // An already-flat receiver (a string literal, usually) skips the flatten call.
+    { op: "local.tee", index: receiverAny },
+    { op: "ref.test", typeIdx: t.flat },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: t.flat } },
+      then: [
+        { op: "local.get", index: receiverAny },
+        { op: "ref.cast", typeIdx: t.flat },
+      ],
+      else: [
+        { op: "local.get", index: receiverAny },
+        { op: "ref.as_non_null" },
+        { op: "call", funcIdx: helpers.flatten },
+      ],
+    },
     { op: "local.set", index: receiver },
     { op: "local.get", index },
     ...field(0),

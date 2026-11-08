@@ -33,6 +33,7 @@ export type IrBackendTargetCapability =
   | "native-own-property-test"
   | "host-dynamic-method-call"
   | "native-own-property-descriptor"
+  | "native-array-is-array"
   | "native-number-conversion"
   | "prepared-dynamic-helper-abi"
   | "native-dynamic-member-read"
@@ -152,6 +153,11 @@ export function supportsIrBackendTargetCapability(
         profile.fast !== true &&
         (profile.target === "standalone" || profile.target === "wasi")
       );
+    case "native-array-is-array":
+      // (#7272) the stored `Array.isArray` alias reaches the object runtime's
+      // native `__extern_is_array` — the provider legacy's `Array.isArray`
+      // arm uses on standalone only (WASI keeps its inline `ref.test` chain).
+      return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "standalone";
     case "host-dynamic-method-call":
       // (#7117) `recv.m(…)` on a dynamic receiver through the generic
       // `__ir_dyn_method_call_N` → `__extern_method_call`. The host lane binds
