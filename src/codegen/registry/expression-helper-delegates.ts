@@ -17,6 +17,7 @@ import type * as WithScope from "../with-scope.js";
 interface ExpressionHelpers {
   emitUndefined: typeof LateImports.emitUndefined;
   emitStandaloneGlobalEvalRuntime: typeof EvalInline.emitStandaloneGlobalEvalRuntime;
+  ensureRuntimeEvalCallableCarrier: typeof EvalInline.ensureRuntimeEvalCallableCarrier;
   foldedEvalDeclarationNames: typeof EvalInline.foldedEvalDeclarationNames;
   resolveConstantString: typeof EvalInline.resolveConstantString;
   ensureNativeArrayFromIterN: typeof IteratorNative.ensureNativeArrayFromIterN;
@@ -43,6 +44,8 @@ function helper<K extends keyof ExpressionHelpers>(name: K): ExpressionHelpers[K
 export const emitUndefined: ExpressionHelpers["emitUndefined"] = (...a) => helper("emitUndefined")(...a);
 export const emitStandaloneGlobalEvalRuntime: ExpressionHelpers["emitStandaloneGlobalEvalRuntime"] = (...a) =>
   helper("emitStandaloneGlobalEvalRuntime")(...a);
+export const ensureRuntimeEvalCallableCarrier: ExpressionHelpers["ensureRuntimeEvalCallableCarrier"] = (...a) =>
+  helper("ensureRuntimeEvalCallableCarrier")(...a);
 export const foldedEvalDeclarationNames: ExpressionHelpers["foldedEvalDeclarationNames"] = (...a) =>
   helper("foldedEvalDeclarationNames")(...a);
 export const resolveConstantString: ExpressionHelpers["resolveConstantString"] = (...a) =>
