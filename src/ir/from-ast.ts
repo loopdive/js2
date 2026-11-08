@@ -62,6 +62,7 @@ import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-tar
 import {
   additiveOperandsProvable,
   binaryOperandsAdmissible,
+  numericReaderOperandsBoxed,
   booleanReadAsNumber,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
@@ -136,7 +137,7 @@ import { staticMemberBindingIsUnsound } from "./class-overrides.js";
 // codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
 import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "./analysis/loop-shape.js";
 import { countedStringAppendPlanIsCurrent } from "./analysis/counted-string-append.js";
-import { stringBuilderSlotRole } from "./string-builder-shape.js";
+import { stringBuilderSlotPlan } from "./string-builder-shape.js";
 // (#3741) native-i32 slot storage for provably-int32 mutable locals
 import {
   compoundBitwiseToken,
@@ -306,10 +307,11 @@ import {
 } from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
-import { isModuleInitVarList, moduleInitVarList } from "../shared/var-declaration-lists.js";
+import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
-  boundedMixedConditionalPrimitiveFamily,
+  mixedPrimitiveConditionalArms,
+  type MixedPrimitiveConditionalArms as MixedPrimitiveConditionalProof,
   effectiveIrParamTypeNode,
   jsDocParamIsExternrefCandidate,
   functionBodyReferencesArguments,
@@ -341,7 +343,7 @@ import {
 // `JsTag` enum import this file used to carry is gone: the producer names its
 // partitions through `JS_TAG_IDS` throughout.
 import { JS_TAG_IDS } from "./js-tag-domain.js";
-import { isStoredObjectDescriptorAliasCall, uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
+import { certifiedAliasCall } from "./uncurried-object-alias.js";
 import {
   exactClosureLiftedName,
   tryLowerPromiseDelayCall,
@@ -370,6 +372,7 @@ import {
   type IrObjectShape,
   type IrType,
   type IrUnop,
+  type IrSlotDef,
   type IrValueId,
 } from "./nodes.js";
 import type { ValType } from "./types.js";
@@ -1426,27 +1429,24 @@ export interface LoweredFunctionResult {
   readonly countedStringAppendPlans?: readonly IrCountedStringAppendLoweringPlan[];
 }
 
-/** A `var` list `moduleInitVarList` models has persistent globals; any other `var` still needs hoisting support. */
+/** A modelled `var` list (`isModuleInitVarList`) has persistent globals; any other `var` still needs hoisting support. */
 function moduleInitContainsNestedVar(statements: readonly ts.Statement[]): boolean {
-  return statements.some((statement) => {
-    const modelled = moduleInitVarList(statement);
-    const findVarDecl = (node: ts.Node): boolean => {
-      if (
-        node === modelled ||
-        ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isArrowFunction(node) ||
-        ts.isMethodDeclaration(node)
-      ) {
-        return false;
-      }
-      if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
-        return true;
-      }
-      return ts.forEachChild(node, findVarDecl) === true;
-    };
-    return findVarDecl(statement);
-  });
+  const findVarDecl = (node: ts.Node): boolean => {
+    if (
+      isModuleInitVarList(node) ||
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node)
+    ) {
+      return false;
+    }
+    if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
+      return true;
+    }
+    return ts.forEachChild(node, findVarDecl) === true;
+  };
+  return statements.some(findVarDecl);
 }
 
 function nestedSourceScope(
@@ -4628,6 +4628,25 @@ interface LocalNameStorage {
 }
 
 /**
+ * (#7291) The role of an owned-append builder slot. A presized builder's loop
+ * bound is evaluated here, before the loop, into a sibling f64 slot.
+ */
+function stringBuilderRole(
+  declaration: ts.VariableDeclaration | ts.BindingElement,
+  name: string,
+  cx: LowerCtx,
+): Pick<IrSlotDef, "stringBuilder"> {
+  const plan = stringBuilderSlotPlan(declaration, cx);
+  if (!plan) return {};
+  if (!plan.presize) return { stringBuilder: {} };
+  const bound = lowerExpr(plan.presize.boundExpr, cx, IR_F64);
+  if (asVal(cx.builder.typeOf(bound))?.kind !== "f64") return { stringBuilder: {} };
+  const boundSlot = cx.builder.declareSlot(`${name}$bound`, { kind: "f64" });
+  cx.builder.emitSlotWrite(boundSlot, bound);
+  return { stringBuilder: { presize: { boundSlot, unitsPerIter: plan.presize.unitsPerIter } } };
+}
+
+/**
  * Bind a declared local name: an identifier declaration or a destructuring
  * leaf. A name an accessor closure captures gets a ref cell, a reassigned
  * `let` a slot, and every other name an SSA local.
@@ -4657,7 +4676,7 @@ function bindLocalName(
       const slotIndex = cx.builder.declareSlot(
         name,
         representation.storageType,
-        stringBuilderSlotRole(declaration, cx),
+        stringBuilderRole(declaration, name, cx),
       );
       cx.builder.emitSlotWrite(slotIndex, value);
       if (promoteI32Slot) {
@@ -7810,30 +7829,22 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (binding?.kind === "nestedFunc") {
     return lowerNestedFuncCall(binding, expr.arguments, cx);
   }
-  // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
-  // `__propertyIsEnumerable(obj, name)`: both operands as carriers, then the
-  // lane's provider — exactly legacy's lowering, never the generic bound call.
-  const ownPropertyTest =
-    expr.arguments.length === 2 ? uncurriedObjectAliasMethod(expr.expression, (name) => cx.scope.has(name)) : undefined;
-  if (ownPropertyTest !== undefined && cx.resolver?.stringIsExternref?.() !== true) {
-    const carriers = lowerAliasCarrierOperands(expr.arguments, ownPropertyTest, cx);
-    return cx.builder.emitDynOwnProperty(carriers[0]!, carriers[1]!, ownPropertyTest);
-  }
-  // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor` alias:
-  // both operands as carriers, then the object runtime's native provider — a
-  // dynamic descriptor (or undefined), exactly legacy's
-  // `tryCompileStoredObjectBuiltinCall` lowering.
-  if (
-    isStoredObjectDescriptorAliasCall(expr, (name) => cx.scope.has(name)) &&
-    cx.resolver?.stringIsExternref?.() !== true
-  ) {
-    const carriers = lowerAliasCarrierOperands(expr.arguments, "getOwnPropertyDescriptor", cx);
-    const descriptor = cx.builder.emitCall(irRuntimeFuncRef("__getOwnPropertyDescriptor"), carriers, irDynamic());
-    if (descriptor === null) {
+  // (#7106 S1g, propertyHelper; #7272) propertyHelper's certified aliases:
+  // every operand as a carrier, then the lane's native provider — never the
+  // generic bound or dynamic call. The uncurried predicates take
+  // `dyn.own_property`; the stored statics call the object runtime
+  // (`tryCompileStoredObjectBuiltinCall`, legacy's `Array.isArray` arm).
+  const alias = certifiedAliasCall(expr, (name) => cx.scope.has(name));
+  if (alias !== undefined && cx.resolver?.stringIsExternref?.() !== true) {
+    const carriers = lowerAliasCarrierOperands(expr.arguments, alias.method, cx);
+    if (alias.form === "uncurried") return cx.builder.emitDynOwnProperty(carriers[0]!, carriers[1]!, alias.method);
+    const result = alias.result === "boolean" ? irBool() : irDynamic();
+    const value = cx.builder.emitCall(irRuntimeFuncRef(alias.provider), carriers, result);
+    if (value === null) {
       // invariant (producer-promise): a runtime helper declared non-void returned no SSA value — #4502.
-      throw new Error(`ir/from-ast: __getOwnPropertyDescriptor produced no value in ${cx.funcName}`);
+      throw new Error(`ir/from-ast: ${alias.provider} produced no value in ${cx.funcName}`);
     }
-    return descriptor;
+    return value;
   }
   // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding. After
   // the propertyHelper alias arms, in the selector's order: those aliases are
@@ -13667,11 +13678,6 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   cx.builder.emitRefCellSet(storage.value, result);
 }
 
-interface MixedPrimitiveConditionalProof {
-  readonly whenTrue: IrPrimitiveExpressionFamily;
-  readonly whenFalse: IrPrimitiveExpressionFamily;
-}
-
 interface ExactMixedPrimitiveWrapperProof {
   readonly kind: "Number" | "String";
   readonly conditional: ts.ConditionalExpression;
@@ -13882,15 +13888,8 @@ function mixedPrimitiveConditionalClaim(
   if (!cx.checker) return null;
   const classifyPrimitive = makeIrPrimitiveExpressionClassifier(cx.checker);
   const classifyDeclared = makeIrDeclaredPrimitiveExpressionClassifier(cx.checker);
-  const lane = additiveLaneOf(cx);
-  const familyOf = (e: ts.Expression) =>
-    boundedMixedConditionalPrimitiveFamily(e, classifyPrimitive, classifyDeclared, lane);
-  const whenTrue = familyOf(expr.whenTrue);
-  const whenFalse = familyOf(expr.whenFalse);
-  if (whenTrue === undefined || whenFalse === undefined || whenTrue === whenFalse || !familyOf(expr.condition)) {
-    return null;
-  }
-  return { whenTrue, whenFalse };
+  const shadowed = (name: string) => cx.scope.has(name);
+  return mixedPrimitiveConditionalArms(expr, classifyPrimitive, classifyDeclared, additiveLaneOf(cx), shadowed) ?? null;
 }
 
 /**
@@ -14119,7 +14118,7 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: I
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "build",
-          `ir/from-ast: #5092 condition lost its selector-proven primitive truthiness in ${cx.funcName}`,
+          `ir/from-ast: #5092 condition lost its selector-proven boolean truthiness in ${cx.funcName}`,
         );
       }
 
@@ -14697,13 +14696,12 @@ function proveUnboxedNumberLocal(decl: ts.VariableDeclaration, boundType: IrType
   // else i32 (`any` / mixed union — no determinable brand) → demote.
   if (isProvablyBoolean(tsType)) return true;
   // (#7106 S1g) `var had = __hasOwnProperty(o, n)`: the checker types the
-  // uncurried alias call `any`, but the certified Object.prototype predicate
-  // is boolean by construction (`dyn.own_property` → i32 bool).
+  // alias call `any`, but a certified boolean alias is boolean by
+  // construction (`dyn.own_property` / `__extern_is_array` → i32 bool).
   return (
     decl.initializer !== undefined &&
     ts.isCallExpression(decl.initializer) &&
-    decl.initializer.arguments.length === 2 &&
-    uncurriedObjectAliasMethod(decl.initializer.expression, (name) => cx.scope.has(name)) !== undefined
+    certifiedAliasCall(decl.initializer, (name) => cx.scope.has(name))?.result === "boolean"
   );
 }
 
@@ -15435,6 +15433,8 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
  * operator's own ToPrimitive runs (#4208 S4, #7106). An operator that
  * ToNumerics its operands completes the left one before the right one's
  * ToPrimitive (§13.15.3), so each carrier is ToNumber'd in turn there.
+ * (#7106 lever B) Last, a boolean / string operand of a numeric reader beside
+ * another family is boxed into the carrier (`boxNumericReaderOperands`).
  */
 function lowerBinaryOperands(
   expr: ts.BinaryExpression,
@@ -15461,7 +15461,8 @@ function lowerBinaryOperands(
   const rhs = lower(expr.right, additiveProofs?.[0]);
   const leftWrapper = primitiveWrapperConstructorName(expr.left, cx) !== null;
   const rightWrapper = primitiveWrapperConstructorName(expr.right, cx) !== null;
-  if (!leftWrapper && !rightWrapper) return booleansReadAsNumbers(expr, op, lhs, rhs, cx);
+  if (!leftWrapper && !rightWrapper)
+    return boxNumericReaderOperands(expr, booleansReadAsNumbers(expr, op, lhs, rhs, cx), cx);
   if (wrapperComparisonIsIdentity(op, leftWrapper, rightWrapper)) {
     // invariant (producer-promise): selection refuses an identity comparison of a fresh wrapper.
     throw new IrInvariantError("selection-preparation-mismatch", "build", "ir/from-ast: fresh-wrapper identity");
@@ -15473,7 +15474,32 @@ function lowerBinaryOperands(
       : primitive;
   };
   const left = operand(leftWrapper, lhs);
-  return booleansReadAsNumbers(expr, op, left, operand(rightWrapper, rhs), cx);
+  return boxNumericReaderOperands(expr, booleansReadAsNumbers(expr, op, left, operand(rightWrapper, rhs), cx), cx);
+}
+
+/**
+ * (#7106 lever B) A pair `numericReaderOperandsBoxed` names: box each
+ * boolean / string operand into the dynamic carrier (no side effect; ToNumber
+ * and the type survive), so the pair takes `lowerBinary`'s dynamic arm.
+ */
+function boxNumericReaderOperands(
+  expr: ts.BinaryExpression,
+  operands: readonly [IrValueId, IrValueId],
+  cx: LowerCtx,
+): readonly [IrValueId, IrValueId] {
+  const families = [
+    irOperandFamily(cx.builder.typeOf(operands[0]), expr.left),
+    irOperandFamily(cx.builder.typeOf(operands[1]), expr.right),
+  ] as const;
+  if (!numericReaderOperandsBoxed(expr.operatorToken.kind, families[0], families[1])) return operands;
+  const box = (value: IrValueId, family: OperandFamily, source: ts.Expression): IrValueId => {
+    if (family !== "boolean" && family !== "string") return value;
+    const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), source, cx);
+    // invariant (producer-promise): `boxConcreteToDynamic` boxes every boolean and string — #4502.
+    if (boxed === null) throw new Error(`ir/from-ast: no dynamic box for a ${family} operand (${cx.funcName})`);
+    return boxed;
+  };
+  return [box(operands[0], families[0], expr.left), box(operands[1], families[1], expr.right)];
 }
 
 /**

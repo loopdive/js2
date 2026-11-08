@@ -11,6 +11,15 @@ import type { IrVerifyError } from "./verify.js";
 export function verifyStringBuilderSlots(func: IrFunction, errors: IrVerifyError[]): void {
   const builders = new Set((func.slots ?? []).filter((slot) => slot.stringBuilder).map((slot) => slot.index));
   if (builders.size === 0) return;
+  for (const slot of func.slots ?? []) {
+    const boundSlot = slot.stringBuilder?.presize?.boundSlot;
+    if (boundSlot !== undefined && func.slots?.[boundSlot]?.type.kind !== "f64") {
+      errors.push({
+        message: `string-builder slot ${slot.index} presizes from a non-f64 slot ${boundSlot}`,
+        func: func.name,
+      });
+    }
+  }
   if ((func.funcKind ?? "regular") !== "regular") {
     errors.push({ message: "a string-builder slot requires a regular function", func: func.name });
   }
