@@ -271,10 +271,12 @@ import {
   finalizePreparedIrSelection,
   prepareHostDateSnapshotPreflight,
   synchronizeIrSafeFunctionSelection,
+  moduleInitCrossesEvalBoundary,
   runtimeEvalBoundaryFailure,
   withdrawEvalBoundaryFunctions,
 } from "./ir-overlay-preparation.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
+import { runtimeEvalOwnsGlobalEval } from "./expressions/runtime-eval-provider.js";
 import {
   auditIrSkippedClassMemberSlots,
   auditIrSkippedFunctionSlots,
@@ -609,7 +611,11 @@ import {
 } from "./stack-balance.js";
 import { emitNativeParseNumber, fillParseNumberToStringArms } from "./parse-number-native.js";
 import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6603)
-import { inferStandaloneRegExpMatchResultType, STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
+import {
+  inferStandaloneRegExpMatchResultType,
+  STANDALONE_REGEXP_REFLECTION_PROPS,
+  standaloneStaticRegExpCompiles,
+} from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
@@ -3313,6 +3319,7 @@ function planIrOverlay(
       isArrayExpression,
       classifyArrayElementFamily,
       isRegExpExpression,
+      nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
       preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
@@ -3369,7 +3376,7 @@ function planIrOverlay(
       supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
       isNativeI32SlotRead: (expr) => irNativeI32SlotRead(ctx, ast.checker, expr),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
-      supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
+      supportsGlobalEval: (call) => runtimeEvalOwnsGlobalEval(ctx, call),
       ...backendCapabilitySelectionOptions,
       ...(hostExternSurface && legacyImportedFunctions ? { importedFunctions: legacyImportedFunctions } : {}),
       ...programCallableSelectionOptions(ctx, identityContext, ast.sourceFile),
@@ -3554,22 +3561,20 @@ function planIrOverlay(
     // `calleeTypes` from safeSelection.funcs, so this unit returns to legacy.
     moduleInit: selection.moduleInit,
   };
-  // (#2928, #7106 A1) Runtime eval is a per-unit boundary: only a function that
-  // crosses it stays direct (`withdrawEvalBoundaryFunctions`), and the
-  // value the global push publishes for every other one is planned before its
-  // component seals (`collectPreparedTopLevelFunctionValueTargetUnitIds`).
-  // Module init and class members share the push/pull seam with the direct
-  // carrier, so they stay direct as a whole.
+  // (#2928, #7106 A1) Runtime eval is a per-unit boundary: only a function crossing it stays direct
+  // (`withdrawEvalBoundaryFunctions`), the others' pushed values planned before their component seals.
+  // Class members, and a module init holding an eval site the IR does not lower, stay direct whole.
   if (ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
     const failure = runtimeEvalBoundaryFailure();
     withdrawEvalBoundaryFunctions(ctx, ast.sourceFile, identityPlan, safeSelection.funcs, recordPreparationFailure);
     for (const name of safeSelection.classMembers ?? []) recordPreparationFailure(name, failure);
-    if (safeSelection.moduleInit?.reason === null && safeSelection.moduleInit.stmtCount > 0) {
-      recordPreparationFailure(MODULE_INIT_UNIT_NAME, failure);
+    if (moduleInitCrossesEvalBoundary(ctx, ast.sourceFile)) {
+      if (safeSelection.moduleInit?.reason === null && safeSelection.moduleInit.stmtCount > 0)
+        recordPreparationFailure(MODULE_INIT_UNIT_NAME, failure);
+      safeSelection.moduleInit = undefined;
     }
     safeSelection.classMembers = new Set();
     safeSelection.classMemberUnitIds = new Set();
-    safeSelection.moduleInit = undefined;
   }
   // (#2023) The IR `new C(...)` lowering does not thread the new.target
   // class-id (that machinery lives only on the legacy path). When the
@@ -4246,11 +4251,11 @@ function compileMultiIrOverlaySource(
  * (#7105) The carrier of a SCRIPT-goal top-level `var`'s `__mod_<name>` slot
  * (`IrScriptVarHome`) when the IR may share that slot as the binding's sole
  * home. Legacy allocates it for scripts exactly as for modules, and a plain
- * read or write is `global.get`/`global.set` on it. Three script-only arms
+ * read or write is `global.get`/`global.set` on it. A runtime-eval consumer
+ * widens every script `var` to `externref` (`registerReassignedFunctionGlobals`),
+ * the `dynamic` home; the pull decodes what eval writes back, and the IR's
+ * dynamic read decodes eval-built values (#7106 A2b). Two script-only arms
  * move the binding's home away from the slot, and each answers `undefined`:
- *   - a runtime-eval consumer widens every script `var` to `externref`
- *     (`registerReassignedFunctionGlobals`), so the slot's type no longer
- *     matches the checker type the IR would resolve;
  *   - a name in `sloppyImplicitGlobals` (an undeclared `p = v` or a top-level
  *     `this.p = v`) resolves bare reads through the global-environment object;
  *   - a slot the declaration collector has not placed is not a home at all.
@@ -4278,11 +4283,7 @@ export function scriptVarHome(
 function scriptVarHomeSlot(ctx: CodegenContext, declaration: IrModuleBindingDeclaration) {
   if (!ts.isIdentifier(declaration.name)) return undefined;
   const name = declaration.name.text;
-  const plan = ctx.runtimeEvalBoundaryPlan;
-  if (plan === undefined || ctx.sloppyImplicitGlobals === undefined) return undefined;
-  if (ctx.runtimeEvalProviderAbsent !== true && plan.sharedRealmMayContainCanonicalValues) {
-    return undefined;
-  }
+  if (ctx.runtimeEvalBoundaryPlan === undefined || ctx.sloppyImplicitGlobals === undefined) return undefined;
   if (ctx.sloppyImplicitGlobals.has(name)) return undefined;
   // (#7106) `var g` merged with `function g` owns the function's slot; (#7189) a same-named object-runtime
   // helper (`__getOwnPropertyNames`) is not that `function` and can enter `funcMap` after selection.
@@ -11370,15 +11371,8 @@ registerAddStringImports(addStringImports);
 // in-module native funcs under no-JS-host mode without an import cycle.
 registerAddUnionImports(addUnionImports);
 
-/** Parse a RegExp literal text (e.g. "/\\d+/gi") into pattern and flags */
-export function parseRegExpLiteral(text: string): { pattern: string; flags: string } {
-  // The text includes the leading '/' and trailing '/flags'.
-  // Find the last '/' which separates pattern from flags.
-  const lastSlash = text.lastIndexOf("/");
-  const pattern = text.slice(1, lastSlash);
-  const flags = text.slice(lastSlash + 1);
-  return { pattern, flags };
-}
+/** Parse a RegExp literal text (e.g. "/\\d+/gi") into pattern and flags — the IR's one splitter. */
+export { parseRegExpLiteralText as parseRegExpLiteral } from "../shared/regexp-static.js";
 
 /** Math methods that need host imports (no native Wasm opcode) */
 export const MATH_HOST_METHODS_1ARG = new Set([
@@ -14505,6 +14499,7 @@ export {
   IR_DYN_INSTANCEOF_HELPER,
   irDynamicInstanceOfAtLegacyParity,
 } from "./ir-dynamic-instanceof.js";
+export { linkRuntimeEvalGlobalEval, runtimeEvalOwnsGlobalEval } from "./expressions/runtime-eval-provider.js"; // (#7106 A2c) ir/integration.ts
 // (#7274) the IR's native ArrayBuffer adapters (ir/integration.ts).
 export { irNativeBufferProvider, nativeBufferProvidersAvailable } from "./buffers/ir-native-buffer.js";
 // (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).

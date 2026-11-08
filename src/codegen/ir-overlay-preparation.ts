@@ -13,7 +13,10 @@ import type { CodegenContext } from "./context/types.js";
 import { prepareIrAmbientClassCallLowering, recordIrOverlayPreparationFailure } from "./ir-imported-call-planning.js";
 import { prepareIrCompilerTimerShimCallLowering } from "./ir-timer-shim-planning.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
-import { runtimeEvalPushPublishesCachedFunctionValues } from "./expressions/runtime-eval-provider.js";
+import {
+  runtimeEvalOwnsGlobalEval,
+  runtimeEvalPushPublishesCachedFunctionValues,
+} from "./expressions/runtime-eval-provider.js";
 import {
   applyIrFinalContextFunctionRetention,
   closeIrBlockedComponentByIdentity,
@@ -106,6 +109,46 @@ export function withdrawEvalBoundaryFunctions(
   }
 }
 
+/**
+ * (#7106 A2b) Module init owns every top-level statement except function
+ * declarations (their own units), so it crosses the runtime-eval boundary the
+ * way A1's `runtimeEvalBoundaryCrossing` defines for a function:
+ *
+ *  - `eval-site`: an eval site lies in such a statement, including a nested
+ *    function expression there. (#7106 A2c) A site the IR's global-eval arm
+ *    lowers (`runtimeEvalOwnsGlobalEval`) does not count.
+ *  - `eval-visible-binding`: a statement references or declares a binding
+ *    evaluated code may replace and the IR would bind or type itself: a function eval may
+ *    rebind (`ctx.liveFuncBindingGlobals`, A3's write-precise set), or a
+ *    script lexical, whose slot `registerReassignedFunctionGlobals` widened to
+ *    externref. A script `var` does not count: the IR shares its widened slot
+ *    as the `dynamic` home and re-reads it after every eval (A2b).
+ */
+export function moduleInitCrossesEvalBoundary(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
+  const sites = ctx.runtimeEvalBoundaryPlan?.sites ?? [];
+  const evalVisible = new Set([...(ctx.liveFuncBindingGlobals ?? []), ...(ctx.globalLexicalBindings ?? [])]);
+  // A declaration inside a nested function is that function's binding; any other one is the script's.
+  const reachesScriptBinding = (id: ts.Identifier): boolean => {
+    const target = ctx.oracle.valueDeclarationOf(id);
+    return target === undefined || ts.findAncestor(target.parent, ts.isFunctionLike) === undefined;
+  };
+  const lowered = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && runtimeEvalOwnsGlobalEval(ctx, node))
+      lowered.add(`${node.getStart()}:${node.end}`);
+    forEachChild(node, visit);
+  };
+  return sourceFile.statements.some((statement) => {
+    if (ts.isFunctionDeclaration(statement)) return false;
+    if (reachesEvalVisibleBinding(statement, evalVisible, reachesScriptBinding)) return true;
+    visit(statement);
+    const start = statement.getStart();
+    return sites.some(
+      (site) => site.start >= start && site.end <= statement.end && !lowered.has(`${site.start}:${site.end}`),
+    );
+  });
+}
+
 /** (#2928) Why an owner of a runtime-eval program stays direct; `why` is the per-function reason. */
 export function runtimeEvalBoundaryFailure(why?: string): IrPreparationFailure {
   const detail = "the linked runtime-eval callable carrier is still owned by the direct frontend";
@@ -135,15 +178,37 @@ function runtimeEvalBoundaryCrossing(
     if (target.getSourceFile() !== declaration.getSourceFile()) return true;
     return target.pos < declaration.pos || target.end > declaration.end;
   };
+  return reachesEvalVisibleBinding(declaration, evalVisible, reachesScriptBinding) ? "eval-visible-binding" : undefined;
+}
+
+/**
+ * Does code under `root` reach a name in `evalVisible` that resolves to the
+ * script binding: a reference, or a `var`/`let`/`const`/`class` declaration,
+ * which writes the binding's slot?
+ */
+function reachesEvalVisibleBinding(
+  root: ts.Node,
+  evalVisible: ReadonlySet<string>,
+  reachesScriptBinding: (id: ts.Identifier) => boolean,
+): boolean {
   let crosses = false;
   const visit = (node: ts.Node): void => {
     if (crosses) return;
-    if (ts.isIdentifier(node) && evalVisible.has(node.text) && isBindingReferencePosition(node)) {
+    if (
+      ts.isIdentifier(node) &&
+      evalVisible.has(node.text) &&
+      (isBindingReferencePosition(node) || declaresName(node))
+    ) {
       crosses = reachesScriptBinding(node);
     } else forEachChild(node, visit);
   };
-  if (evalVisible.size !== 0) forEachChild(declaration, visit);
-  return crosses ? "eval-visible-binding" : undefined;
+  if (evalVisible.size !== 0) forEachChild(root, visit);
+  return crosses;
+}
+
+function declaresName(id: ts.Identifier): boolean {
+  const parent = id.parent;
+  return (ts.isVariableDeclaration(parent) || ts.isClassDeclaration(parent)) && parent.name === id;
 }
 
 export function applyIrFinalContextFunctionUnitIds(
