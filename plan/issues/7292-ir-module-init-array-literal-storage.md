@@ -315,6 +315,40 @@ the 177 files round 1 claimed plus the seeded random 200:
 | random 200 | 0 changes (5 / 4 IR-only both sides) | 0 changes |
 | pass → fail on the 177 | 0 (177/177 pass on both sides) | 0 |
 
+### Review round 3 (PR #7186, 2026-11-08)
+
+Two items, fixed in `ff177c8963`:
+
+- **Refusal reason.** Round 2 lowered the operand of `x === undefined` before
+  the unproven-read check, so a function-local string vec's `a[k] === undefined`
+  refused as `element-access-unsupported` instead of `nullish-value-unsupported`
+  (same bytes, another fallback bucket). The check runs first again and exempts
+  only a script-var vec read (`isScriptVarVec`, which now also requires the
+  slot's IR type to be a vec); probes of function-local string and number vecs
+  report `nullish-value-unsupported` as on main (round 2 reported
+  `element-access-unsupported` for the string one). A test row pins it on both
+  lanes.
+- **No grant.** The resolver's per-home dispatch for the write-certified homes
+  is `module-binding-certified-homes.ts` (`certifiedScriptVarKind`,
+  `certifiedScriptVarWriteMatches`, `certifiedScriptVarUse`), above the
+  certifiers, which import the shared facts from `module-binding-script-var.ts`
+  (the dispatcher cannot live there: the certifiers import that module, so it
+  would close a cycle). `module-bindings.ts` imports only the dispatcher, and
+  the `loc-budget-allow` grant is gone.
+
+Byte identity against round 2 (`c4ad393e73`; both sides with #7176
+`claude/7106-lever-r2` merged locally, not pushed), compiled as the runner
+does (`assembleOriginalHarness` + `originalHarnessCompileOptions`, primary and
+strict-rerun variants), one niced process per side: the 576 test262 files with
+a top-level `var` initialized by a non-empty all-string array literal, plus a
+seeded random 200 ES5 files (770 distinct, 1,686 compiles per side).
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| binaries / compile errors / IR outcomes | 843 identical, 0 changed | 843 identical, 0 changed |
+| `<module-init>` claimed in the 576 set | 177 → 177 (176 S15.10.2 + 1 annexB) | 177 → 177 |
+| post-claim errors in a claimed `<module-init>` | 0 | 0 |
+
 ### Follow-ups
 
 - Number vecs: an undefined-capable unproven f64 read, then the same home.

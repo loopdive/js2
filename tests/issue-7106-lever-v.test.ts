@@ -129,6 +129,13 @@ describe("#7292 lever V: script-var string-array literals", () => {
           expect(await compileHarness(target, body)).toBe(false);
         });
       }
+      // Review round 3: the carrier's undefined test is a script-var vec's only; a function-local vec keeps main's refusal.
+      it("function-local string vec: `a[k] === undefined` refuses as nullish-value-unsupported", async () => {
+        const source = 'export function f(k: number): boolean { var a = ["x", "y"]; return a[k] === undefined; }';
+        const result = await compile(source, { trackIrOutcomes: true, ...(target ? { target } : {}) });
+        const outcome = (result.irOutcomes ?? []).find((o) => o.displayName === "f");
+        expect(outcome).toMatchObject({ irBodyEmitted: false, code: "nullish-value-unsupported" });
+      });
     });
   }
 });
