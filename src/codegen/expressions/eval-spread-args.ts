@@ -14,7 +14,7 @@ import { allocLocal } from "../context/locals.js";
 import { coerceType, compileExpression, ensureLateImport, flushLateImportShifts } from "../shared.js";
 // Late-bound: direct imports of these owners would close an import cycle (#6797).
 import {
-  emitStandaloneIndirectEvalRuntime,
+  emitStandaloneGlobalEvalRuntime,
   emitUndefined,
   ensureNativeArrayFromIterN,
   ensureObjVecBuilders,
@@ -100,7 +100,7 @@ export function tryCompileStandaloneEvalSpread(
     { op: "call", funcIdx: ctx.funcMap.get("__extern_get_idx")! },
     { op: "local.set", index: first },
   ];
-  const evalType = emitStandaloneIndirectEvalRuntime(ctx, fctx, [], first);
+  const evalType = emitStandaloneGlobalEvalRuntime(ctx, fctx, "__runtime_indirect_eval", [], first);
   if (evalType === undefined) fctx.body.push({ op: "local.get", index: first });
   const elseArm = fctx.body;
   fctx.body = saved;
