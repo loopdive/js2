@@ -1,10 +1,11 @@
 ---
 id: 7291
 title: "IR string-builder loop is 6–10× slower than legacy's #1210/#1580 buffer (`$text$buf`/`$text$mat`)"
-status: in-progress
+status: done
 sprint: current
 created: 2026-11-06
-updated: 2026-11-06
+updated: 2026-11-07
+completed: 2026-11-07
 priority: high
 horizon: m
 feasibility: medium
@@ -35,6 +36,7 @@ func-budget-allow:
   - src/ir/integration.ts::makeResolver
 import-cycles-allow:
   - ir->backend: 26 # 2026-11-07 (#7291): +1 edge over base 25 — ir/backend/wasmgc-emitter.ts (destined for backend-wasmgc) calls the shared builder sequences in backend/wasmgc/lowering/wasm-string-builder.ts
+  - codegen->ir: 305 # 2026-11-07 (#7291 step 3): +2 edges over base 303 — legacy codegen/string-builder.ts imports the shared presize analysis (ir/analysis/string-builder-presize.ts) and the shared isFunctionScopeBoundary (ir/analysis/ast-scope.ts, replacing its private copy; review N1); #7157 grants the same pair, so whichever merges second re-states its grant as base+its own delta
 ---
 
 # IR string-builder loop is 6–10× slower than legacy's buffer
@@ -185,6 +187,8 @@ is legacy; typed `run(n: number)` is IR.
 | 1 | `run(n: number)` (IR) | 10.6 | 9.8 | 10.1 |
 | 2 | `run(n)` (legacy) | 2.0 | 2.0 | 2.1 |
 | 2 | `run(n: number)` (IR) | 4.4 | 3.6–3.9 | 3.7–3.9 |
+| 3 | `run(n)` (legacy) | 2.0–2.1 | 2.1–2.2 | 2.1 |
+| 3 | `run(n: number)` (IR) | 1.6–1.8 | 1.6–2.2 | 1.7 |
 
 **Step 1** (shared emitters, `src/backend/wasmgc/lowering/wasm-string-builder.ts`). Legacy
 output is byte-identical:
@@ -253,3 +257,44 @@ nits.
 **Status:** stays `in-progress`. Step 3 (presize, #1761) is the next PR,
 stacked on #7156. Acceptance "IR ≥ legacy" is not met yet: 3.4–4.0 ms vs
 2.1 ms.
+
+**Step 3** (PR stacked on #7156, 2026-11-07). Commits:
+
+1. A legacy fix (#7300 item 4): presize by `ceil(bound)`.
+2. The shared presize analysis moves to
+   `src/ir/analysis/string-builder-presize.ts`.
+3. A legacy fix (#7300 item 5): a bound written by a closure, or by any
+   assignment operator, is not presized.
+4. IR presize: a sibling `$bound` slot; no growth check.
+5. The `charAt` receiver is tested with `ref.test` instead of calling
+   flatten on every append.
+
+Clean machine, median ms, build phase only, n = 2M:
+
+| appends | legacy wasi / standalone / gc | IR wasi / standalone / gc |
+| --- | --- | --- |
+| `charAt` ×2 + `";"` | 13.9 / 13.8 / 14.4 | 9.0 / 8.9 / 9.4 |
+| literals only | 6.3 / 7.1 / 6.3 | 8.7 / 6.9 / 8.9 |
+
+- **Acceptance** "IR ≤ legacy on #1580 `run(n: number)`": **met** on all three
+  lanes (table above).
+- **Literal-only build loops:** still 1–2.6 ms slower than legacy at 2M on
+  wasi/gc. This was not traced further; it is a follow-up candidate.
+- **Standalone test262 A/B,** the same 202 files: 190 pass / 10 fail / 2 CE,
+  with the same 12 non-pass files as base `dc52abf7`.
+- **Equivalence gate:** no new regressions; 2 baseline failures now pass.
+- **Not taken (review nit, #7156):** moving the slot/scratch shapes into
+  `ir/backend/string-contract.ts`. The clean `backend-wasmgc` module would
+  then import an unmigrated (mixed) one, which the compiler-boundaries gate
+  rejects.
+
+**Known gaps (presize analysis), from the #7168 reviews:**
+
+- **`arguments[i] = …` aliasing:** a sloppy-mode parameter bound written through
+  `arguments` is not modelled. The presize is refused there, because any
+  `arguments` reference refuses, but the value itself is wrong (3, node 5).
+  This is pre-existing and independent of the presize.
+- **Script-mode `.js` file, top-level `var` bound:** the variable is a
+  `globalThis` property, so `globalThis.n = 5` (or `this.n`, `window.n`) writes
+  it without naming the binding. The write search does not see that. Untested
+  and not blocking: the compiled inputs are modules in every measured case.

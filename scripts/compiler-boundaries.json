@@ -11930,6 +11930,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/analysis/string-builder-presize.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Checker-based frontend analysis shared by legacy codegen and IR selection; separate pure IR contracts from frontend inventory."
+    },
+    {
       "path": "src/ir/analysis/dominance.ts",
       "state": "clean",
       "layer": "ir-analysis"
