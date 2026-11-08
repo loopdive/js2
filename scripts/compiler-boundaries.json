@@ -11938,6 +11938,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/analysis/string-builder-presize.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Checker-based frontend analysis shared by legacy codegen and IR selection; separate pure IR contracts from frontend inventory."
+    },
+    {
       "path": "src/ir/analysis/dominance.ts",
       "state": "clean",
       "layer": "ir-analysis"
@@ -12409,6 +12417,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "TypeScript-AST shape plus builder lowering of the ambient parse/escape/isNaN calls shared by the selector and from-ast (#7253); moves with the frontend inventory split."
+    },
+    {
+      "path": "src/ir/builtin-proto-member.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "TypeScript-AST admission plus builder lowering of `<Builtin>.prototype.<m>` value reads and their own-property descriptors, shared by the selector and from-ast (#7294); moves with the frontend inventory split."
     },
     {
       "path": "src/ir/numeric-slot-coercion.ts",
@@ -13059,6 +13075,14 @@
       "nextBoundary": "Generic string operation orchestration uses an injected emitter and only type-imports the clean semantic IR nodes and the still-unmigrated string emitter contract; establish a complete generic lowering contract closure before activation."
     },
     {
+      "path": "src/ir/lowering/string-builder.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Builder-slot lowering uses an injected emitter and only type-imports the clean semantic IR nodes, the still-unmigrated string emitter contract and the backend-wasmgc builder slot shapes; establish a complete generic lowering contract closure before activation."
+    },
+    {
       "path": "src/ir/lower.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13217,6 +13241,14 @@
       "destination": "frontend-ts",
       "owner": "7106",
       "nextBoundary": "Frontend source-shape classifier for the top-level `var` lists the module initializer models and the bindings they declare (#7106 S5); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/shared/var-declaration-lists.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape predicates: the `var`-kind list test (shared by IR and codegen analyses) and the top-level `var` lists (statement and `for` head) the module initializer models (#7106 lever L), shared by the IR and legacy's module-global registration; moves with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/string-method-surface.ts",
@@ -13961,6 +13993,14 @@
       "destination": "ir-core",
       "owner": "7106-item1-harness-units",
       "nextBoundary": "Frontend source-shape certifier for the uncurried Object.prototype predicate aliases; move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/stored-static-alias-providers.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Import signatures of the object-runtime providers the stored-static aliases lower to (#7272); move next to the provider registry when the backend runtime-provider inventory is split from the integration bridge."
     },
     {
       "path": "src/ir/update-retyped-bindings.ts",
@@ -16826,6 +16866,11 @@
       "layer": "ir-runtime"
     },
     {
+      "path": "src/ir/runtime/string-builder-verification.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
       "path": "src/ir/program/allocations.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -16932,6 +16977,11 @@
     },
     {
       "path": "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/lowering/wasm-string-builder.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },
