@@ -31,7 +31,7 @@ import {
   outermostParenthesized,
   stripParens,
 } from "../shared/binding-writes.js";
-import { scriptVarUseFollowsDeclaration } from "./module-binding-class-instance.js";
+import { scriptVarUseFollowsDeclaration } from "./module-binding-script-var.js";
 import {
   makeIrNativeBufferOperands,
   nativeBufferMember,
