@@ -1,0 +1,47 @@
+name: Setup Wasmtime
+description: Install a pinned, checksum-verified Wasmtime release on PATH, cached per version.
+
+inputs:
+  version:
+    description: Wasmtime release version without the leading `v` (e.g. 46.0.1).
+    required: true
+  sha256:
+    description: SHA-256 of the x86_64-linux release archive for `version`.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The release asset is served from GitHub's release CDN, which has failed
+    # for hours at a time (92-byte error bodies, 504s, truncated transfers).
+    # Piping curl into tar turned every such blip into a red job before any
+    # test ran, and one red check keeps a PR out of the merge queue. Caching
+    # the extracted toolchain removes the download from warm runs; the cold
+    # path downloads to a file with retries and verifies the checksum before
+    # extracting, so a bad body fails with a clear error instead of `xz`.
+    - name: Restore cached Wasmtime
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/wasmtime-v${{ inputs.version }}-x86_64-linux
+        key: wasmtime-v${{ inputs.version }}-x86_64-linux-${{ inputs.sha256 }}
+
+    - name: Download and verify Wasmtime
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        WASMTIME_VERSION: ${{ inputs.version }}
+        WASMTIME_SHA256: ${{ inputs.sha256 }}
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/wasmtime.tar.xz"
+        curl --fail --location --retry 6 --retry-all-errors --retry-delay 10 \
+          "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/wasmtime-v${WASMTIME_VERSION}-x86_64-linux.tar.xz" \
+          --output "$archive"
+        echo "${WASMTIME_SHA256}  ${archive}" | sha256sum --check
+        tar -xJf "$archive" -C "$RUNNER_TEMP"
+        rm "$archive"
+
+    - name: Put Wasmtime on PATH
+      shell: bash
+      run: echo "$RUNNER_TEMP/wasmtime-v${{ inputs.version }}-x86_64-linux" >> "$GITHUB_PATH"
