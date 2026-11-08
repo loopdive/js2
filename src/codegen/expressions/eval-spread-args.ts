@@ -19,13 +19,17 @@ import {
   ensureNativeArrayFromIterN,
   ensureObjVecBuilders,
 } from "../registry/expression-helper-delegates.js";
+import { runtimeEvalProviderLinkable } from "./runtime-eval-provider.js";
 
 export function tryCompileStandaloneEvalSpread(
   ctx: CodegenContext,
   fctx: FunctionContext,
   call: ts.CallExpression,
 ): ValType | undefined {
-  if (!call.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
+  // (#7336) Without a linkable provider (WASI) the first element has no
+  // evaluator: fall through to the call site's #4195 refusal rather than
+  // returning the source string unevaluated.
+  if (!runtimeEvalProviderLinkable(ctx) || !call.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
   const ext: ValType = { kind: "externref" };
   const toArray = ensureNativeArrayFromIterN(ctx);
   const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
