@@ -49,6 +49,8 @@ import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./sel
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import {
   staticStringMethodArgument,
+  staticStringNumber,
+  staticStringPattern,
   type StringArgumentDefault,
   type StringMethodParameter,
   type StringMethodPlan,
@@ -10469,9 +10471,21 @@ function lowerStringMethodArgument(
   receiverExpr: ts.Expression,
   cx: LowerCtx,
 ): LoweredStringMethodArgument {
-  const literal = staticStringMethodArgument(arg, (identifier) =>
-    isGlobalUndefinedIdentifier(identifier, cx.scope, (id) => cx.resolver?.isDirectModuleBinding?.(id) === true),
-  );
+  const isGlobalUndefined = (identifier: ts.Identifier): boolean =>
+    isGlobalUndefinedIdentifier(identifier, cx.scope, (id) => cx.resolver?.isDirectModuleBinding?.(id) === true);
+  if (parameter.role === "pattern") {
+    const pattern = staticStringPattern(arg, isGlobalUndefined);
+    // invariant (selection): a `pattern` argument is a static source without RegExp syntax.
+    if (pattern === undefined) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: String.${methodName} pattern`,
+      );
+    }
+    return { value: cx.builder.emitStringConst(pattern) };
+  }
+  const literal = staticStringMethodArgument(arg, isGlobalUndefined);
   const textual = parameter.role === "search" || parameter.role === "fill";
   if (literal === "undefined" && (!textual || parameter.omitted !== undefined)) {
     return { value: omittedStringMethodArgument(parameter.omitted ?? "zero", recv, receiverExpr, cx) };
@@ -10492,7 +10506,12 @@ function lowerStringMethodArgument(
   if (literal !== undefined) {
     return { value: cx.builder.emitConst({ kind: "i32", value: literal === "true" ? 1 : 0 }, irVal({ kind: "i32" })) };
   }
-  const numeric = lowerExpr(arg, cx, irVal({ kind: "f64" }));
+  // (#7106 lever SR) A string literal's ToNumber is a constant on the same path.
+  const literalNumber = staticStringNumber(arg);
+  const numeric =
+    literalNumber === undefined
+      ? lowerExpr(arg, cx, irVal({ kind: "f64" }))
+      : cx.builder.emitConst({ kind: "f64", value: literalNumber }, irVal({ kind: "f64" }));
   const numberType = cx.builder.typeOf(numeric);
   if (asVal(numberType)?.kind === "i32") return { value: numeric, numberType };
   const integer = cx.builder.emitUnary("i32.trunc_sat_f64_s", numeric, irVal({ kind: "i32" }));
@@ -10511,6 +10530,8 @@ function omittedStringMethodArgument(
   cx: LowerCtx,
 ): IrValueId {
   if (omitted === "space") return cx.builder.emitStringConst(" ");
+  if (omitted === "undefined") return cx.builder.emitStringConst("undefined");
+  if (omitted === "empty") return cx.builder.emitStringConst("");
   if (omitted === "length") {
     const length = cx.builder.emitStringLen(recv, inferStringEncoding(receiverExpr, cx));
     return cx.builder.emitUnary("i32.trunc_sat_f64_s", length, irVal({ kind: "i32" }));

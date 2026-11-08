@@ -185,7 +185,10 @@ import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-type
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
+  isEmptyFunctionCall,
   staticStringMethodArgument,
+  staticStringNumber,
+  staticStringPattern,
   stringMethodPlan,
   type StringArgumentRole,
   type StringMethodPlan,
@@ -7999,7 +8002,7 @@ function expressionTouchesBooleanModuleBinding(expr: ts.Expression): boolean {
 function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
   let touched = false;
   const visit = (node: ts.Node): void => {
-    if (touched) return;
+    if (touched || isStaticBorrowArgument(node)) return;
     if (ts.isIdentifier(node)) {
       const binding = moduleBinding(node);
       const scalarBinding =
@@ -8967,7 +8970,10 @@ function stringPrototypeBorrowSelection(
   const plan = stringMethodSelection(expr, borrow.method, borrow.args, scope);
   if (plan === false) return false;
   if (plan.literalArguments) return capabilityNo("string-method-unsupported", "expr-string-borrow-literal-plan", expr);
-  return [borrow.receiver, ...borrow.args].every((operand) => isPhase1Expr(operand, scope, localClasses));
+  return (
+    isPhase1Expr(borrow.receiver, scope, localClasses) &&
+    borrow.args.every((arg) => isStaticStringMethodArgument(arg, scope) || isPhase1Expr(arg, scope, localClasses))
+  );
 }
 
 /**
@@ -9537,8 +9543,53 @@ function stringMethodSelection(
  * that has an omitted value takes it.
  */
 function stringMethodArgumentProven(role: StringArgumentRole, arg: ts.Expression, scope: ReadonlySet<string>): boolean {
-  if (staticStringMethodArgument(arg, (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope))) return true;
-  return role === "search" || role === "fill" ? expressionIsClassifiedString(arg) : expressionIsProvenNumber(arg);
+  if (role === "pattern") {
+    // (#7106 lever SR) RegExpCreate and the `@@search` lookup are the realm's own.
+    const source = arg.getSourceFile();
+    return (
+      !sourceMayPatchPrototype(source, "RegExp") &&
+      !sourceMayPatchPrototype(source, "String") &&
+      !sourceNamesReflectiveRoute(source) &&
+      staticStringPattern(arg, undefinedArgument(scope)) !== undefined
+    );
+  }
+  if (isStaticStringMethodArgument(arg, scope)) return true;
+  if (role === "search" || role === "fill") return expressionIsClassifiedString(arg);
+  return expressionIsProvenNumber(arg) || staticStringNumber(arg) !== undefined;
+}
+
+/** The selector's view of a global `undefined` argument (`staticStringMethodArgument`'s predicate). */
+function undefinedArgument(scope: ReadonlySet<string>): (identifier: ts.Identifier) => boolean {
+  return (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope);
+}
+
+/**
+ * (#7106 lever SR) A static argument of a `String.prototype` borrow
+ * (`new String(v).m(x)`, `String.prototype.m.call(v, x)`): never read, since
+ * lowering converts it statically.
+ */
+function isStaticBorrowArgument(node: ts.Node): boolean {
+  const call = node.parent;
+  return (
+    ts.isExpression(node) &&
+    ts.isCallExpression(call) &&
+    ambientStringPrototypeBorrow(call, NO_LOCALS, selectorSeesAmbientStringBinding)?.args.includes(node) === true &&
+    isStaticStringMethodArgument(node, NO_LOCALS)
+  );
+}
+
+/**
+ * (#7106 lever SR) An empty IIFE in argument position (`f(function () {}())`)
+ * is `undefined` with no effect, so it is no call edge; selection admits it
+ * only as a static string-method argument, which lowering never evaluates.
+ */
+function isEmptyIifeArgument(node: ts.CallExpression): boolean {
+  return isEmptyFunctionCall(node) && ts.isCallExpression(node.parent) && node.parent.arguments.includes(node);
+}
+
+/** A string-method argument with a static value and no effect: lowering never evaluates it. */
+function isStaticStringMethodArgument(arg: ts.Expression, scope: ReadonlySet<string>): boolean {
+  return staticStringMethodArgument(arg, undefinedArgument(scope)) !== undefined;
 }
 
 function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
@@ -12685,6 +12736,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         // out of scope — methods on classes have known signatures and
         // expanding spread would blur them. Reject for now.
         if (ts.isSpreadElement(arg)) return false;
+        // (#7106 lever SR) A static argument of a planned string method is never lowered.
+        if (isStringReceiver && isStaticStringMethodArgument(arg, scope)) continue;
         if (!isPhase1Expr(arg, scope, localClasses)) return false;
       }
       return true;
@@ -13621,6 +13674,7 @@ export function buildLocalCallGraph(
         return;
       }
       if (ts.isCallExpression(node)) {
+        if (isEmptyIifeArgument(node)) return;
         if (
           !certifiedImportedHofCall(node, currentSelectionOptions?.importedFunctions) &&
           visitProgramCallableUse(currentSelectionOptions?.resolveProgramCallableUse, node, visit, () =>

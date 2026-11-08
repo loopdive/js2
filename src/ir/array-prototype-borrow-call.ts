@@ -23,9 +23,9 @@ export interface PrototypeBorrowCall {
   /** The constructor identifier — callers settle shadowing and ambient-ness. */
   readonly root: ts.Identifier;
   readonly method: string;
-  /** The borrowed receiver: `.call`'s first argument. */
+  /** The borrowed receiver: `.call`'s first argument, or a fresh `new String(v)`'s `v`. */
   readonly receiver: ts.Expression;
-  /** `.call`'s remaining arguments; their count is the wrapper's arity. */
+  /** The method's arguments: `.call`'s remaining ones; their count is the wrapper's arity. */
   readonly args: readonly ts.Expression[];
 }
 
@@ -53,9 +53,30 @@ function matchPrototypeBorrowCall(
 }
 
 /**
+ * (#7106 lever SR) `new String(v).<m>(…args)`: a method called on a fresh
+ * wrapper of one argument. Its `this` is only converted by the method
+ * (ToString(wrapper) = ToString(v)), so the call is the borrow with receiver
+ * `v` and the wrapper's identity is never observed.
+ */
+function matchStringWrapperMethodCall(expr: ts.CallExpression): PrototypeBorrowCall | undefined {
+  const callee = expr.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.name)) return undefined;
+  let wrapper: ts.Expression = callee.expression;
+  while (ts.isParenthesizedExpression(wrapper)) wrapper = wrapper.expression;
+  if (!ts.isNewExpression(wrapper) || !ts.isIdentifier(wrapper.expression) || wrapper.expression.text !== "String") {
+    return undefined;
+  }
+  const receiver = wrapper.arguments?.length === 1 ? wrapper.arguments[0]! : undefined;
+  if (receiver === undefined || ts.isSpreadElement(receiver) || expr.arguments.some(ts.isSpreadElement))
+    return undefined;
+  return { root: wrapper.expression, method: callee.name.text, receiver, args: expr.arguments };
+}
+
+/**
  * (#7106 lever P) The `String` borrow off the ambient `String`: no local of
  * that name in `locals`, and `isAmbient` (the caller's view of the global
- * binding) takes the root for the realm's constructor.
+ * binding) takes the root for the realm's constructor. (#7106 lever SR) A
+ * method called on a fresh `new String(v)` is the same borrow.
  */
 export function ambientStringPrototypeBorrow(
   expr: ts.CallExpression,
@@ -63,7 +84,7 @@ export function ambientStringPrototypeBorrow(
   isAmbient: (root: ts.Identifier) => boolean,
 ): PrototypeBorrowCall | undefined {
   if (locals.has("String")) return undefined;
-  const borrow = matchPrototypeBorrowCall(expr, "String");
+  const borrow = matchPrototypeBorrowCall(expr, "String") ?? matchStringWrapperMethodCall(expr);
   return borrow !== undefined && isAmbient(borrow.root) ? borrow : undefined;
 }
 
