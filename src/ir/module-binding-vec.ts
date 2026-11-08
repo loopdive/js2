@@ -42,7 +42,7 @@ export function vecValueKind(
   return writes?.every((write) => write.target === declaration.name) ? { kind: "vec", element: "string" } : undefined;
 }
 
-/** True when `node` writes a vec binding through its own (certified) initializer. */
+/** True when `value` writes a vec binding through its own (certified) initializer. */
 export function vecWriteMatches(
   declaration: ts.VariableDeclaration | ts.BindingElement,
   value: ts.Expression,

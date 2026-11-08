@@ -4,7 +4,9 @@
  * instance, #7292's string vec), dispatched by home: the value kind each binds
  * as, whether a write matches it, and where a use may read it. The resolver
  * (`module-bindings.ts`) asks here; each certifier owns its own rule, over the
- * shared source facts in `module-binding-script-var.ts`.
+ * shared source facts in `module-binding-script-var.ts`. The `string` home is
+ * not write-certified, so the resolver keeps its arm; capability-certified
+ * (#7274) bindings only share the declaration-order use rule here.
  */
 import { ts } from "../ts-api.js";
 import { classInstanceValueKind, classInstanceWriteMatches } from "./module-binding-class-instance.js";
