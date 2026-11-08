@@ -409,3 +409,37 @@ Reaching 28–52 needs either the closure + descriptor-variable define path
 its own semantics risk. Recommendation: tier 3 first (the generic
 `__obj_define_from_desc` over a dynamic descriptor already exists in legacy),
 then tiers 1–3 together as one lever (28-file bound).
+
+### Tiers 1–3 checked against legacy's slots (2026-11-08): still not built
+
+The go-ahead for tiers 1–3 required the binding to keep legacy's own slot
+(`externref`, or legacy's own struct), never an IR copy. Legacy's
+`__mod_<name>` globals for the 28 object-tier files (standalone; gc the
+same):
+
+| binding | legacy's slot | files |
+| --- | --- | --- |
+| `var o = {}` | `externref` | 23 |
+| `var o = { get/set foo … }` (`8.12.1-1_20/21/22`) | `externref` | 3 |
+| `var o = { foo: 42 }` (`8.12.1-1_2`), `var object = { true: 1 }` (`S11.1.5_A4.1/2`) | an anonymous struct (`ref null $__anon_0`) | 3 |
+| `var desc = { get/set/value … }` in every tier-3 file (`15.2.3.6-3-*`) | an anonymous struct, e.g. `$__anon_0 { get: f64 }` | 13 |
+
+Every tier-3 file keeps its descriptor in a typed anonymous struct whose
+fields legacy types from its own inference (the getter field is `f64` in
+`15.2.3.6-3-5`); the `getter` / `setter` slots themselves vary between
+`externref`, `f64`, `i32` and a string ref across the family. Sharing those
+structs is not a reuse of a home but a re-implementation of legacy's literal
+widening, so tier 3 is refused under the rule, and so are the three
+non-empty data literals.
+
+What remains on legacy's `externref` slots: tier 1 (9 files: `{}` with a
+module-init literal data define and `hasOwnProperty`), the three accessor
+literals with `hasOwnProperty`, and `15.2.3.6-3-15` (`{}` with a define of an
+`undefined` descriptor in a closure): a **13-file bound**, under the 15-file
+bar of the go-ahead. Stopped; no code.
+
+Prerequisite for a real lever E: give the script-var `{ … }` descriptor and
+data literals legacy's open `$Object` (`externref`) slot instead of an
+anonymous struct when every use of the binding is an own-property operation
+(a codegen change in legacy's literal widening), after which tiers 2–3 reuse
+the externref home this section describes.
