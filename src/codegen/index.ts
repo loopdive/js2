@@ -4282,6 +4282,8 @@ export function scriptVarHome(
       return ctx.fast ? undefined : "dynamic";
     case "ref_null":
       if (type.typeIdx === ctx.anyStrTypeIdx) return "string";
+      // (#7292) The vec of a native-string array literal.
+      if (type.typeIdx === ctx.vecTypeMap.get(`ref_${ctx.anyStrTypeIdx}`)) return "vec";
       // (#7252) The struct legacy allocated for a user class.
       return [...ctx.classSet].some((n) => ctx.structMap.get(n) === type.typeIdx) ? "class-instance" : undefined;
     case "f64":
