@@ -26,10 +26,10 @@ import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fncto
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import * as classInstance from "./module-binding-class-instance.js";
+import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
   carrierLeafReads,
-  isModuleInitVarList,
   moduleBindingDeclarationOrder,
   moduleBindingLexicalFlags as lexicalFlags,
 } from "./module-init-vars.js";
@@ -599,9 +599,12 @@ export function makeIrPrimitiveExpressionClassifier(
 export type IrModuleBindingValueKind = bindingValue.IrModuleBindingValueKind;
 export type IrScriptVarHome = bindingValue.IrScriptVarHome;
 export {
+  capabilityExternBindingOptions, // (#7274) DOM + native-buffer providers, for both planning sites
   isIrModuleClassInstanceValueKind,
   isIrModuleMapValueKind,
+  isIrModuleNativeBufferValueKind,
   isIrModuleReferenceValueKind,
+  abiPinnedCapability,
 } from "./module-binding-value-kinds.js";
 // (#7108) Re-exported so the codegen driver reaches it over its existing edge to this module.
 export { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
@@ -658,7 +661,7 @@ export type IrModuleBindingRefusalArm =
   | "heterogeneous-assignment-retype"
   | "no-value-kind"
   | "write-value-mismatch"
-  | "class-instance-use-site"
+  | "script-var-use-site"
   | "destructuring-pattern"
   | "inspection-threw";
 
@@ -838,6 +841,12 @@ export interface IrModuleBindingResolverOptions {
   readonly allowHostExterns: boolean;
   readonly resolveCapabilityExternBinding?: bindingValue.IrModuleCapabilityExternResolver;
   /**
+   * (#7274) True when a capability var's read hands its handle straight to the
+   * provider's own certified operation (`buffer.byteLength`), so the read is
+   * not an extern value reaching the enclosing call.
+   */
+  readonly consumesCapabilityHandle?: (node: ts.Identifier) => boolean;
+  /**
    * Builtin Map uses an externref slot only in host-string mode. Native-string
    * lanes store it as `(ref null $Map)`, outside this capability's surface.
    */
@@ -992,18 +1001,15 @@ function isModuleBindingDeclaration(
   sourceFile: ts.SourceFile,
 ): candidate is IrModuleBindingDeclaration {
   if (!candidate || candidate.getSourceFile() !== sourceFile) return false;
-  if (ts.isVariableDeclaration(candidate)) {
-    const list = candidate.parent;
-    if (!ts.isIdentifier(candidate.name) || !ts.isVariableDeclarationList(list)) return false;
-    return ts.isVariableStatement(list.parent) && list.parent.parent === sourceFile;
+  const declaration = ts.isVariableDeclaration(candidate) || ts.isBindingElement(candidate) ? candidate : undefined;
+  if (!declaration || !ts.isIdentifier(declaration.name)) return false;
+  const list = bindingDeclarationList(declaration);
+  // A `VariableStatement`'s own name binds when the statement is top-level, in a script or an ES module.
+  if (ts.isVariableDeclaration(declaration) && list && ts.isVariableStatement(list.parent)) {
+    return list.parent.parent === sourceFile;
   }
-  // (#7106 S5) A leaf binds in a script's module-init `var` list.
-  return (
-    ts.isBindingElement(candidate) &&
-    ts.isIdentifier(candidate.name) &&
-    !ts.isExternalModule(sourceFile) &&
-    isModuleInitVarList(bindingDeclarationList(candidate))
-  );
+  // (#7106 S5, lever L) A leaf, or a `for` head's name, binds in a script's module-init `var` list.
+  return !ts.isExternalModule(sourceFile) && isModuleInitVarList(list);
 }
 
 function uniqueTopLevelVariableDeclaration(
@@ -1069,10 +1075,10 @@ function directTopLevelDeclaration(
   if (!sameSourceDeclarations.has(declaration)) return undefined;
   if (sameSourceDeclarations.size === 1) return declaration;
   // (#7106) Script redeclarations only — a merged function/class declaration
-  // of the same name still rejects. A JS expando target (`o` in `o.p = 1`)
-  // is a property declaration on the same binding, not a second binding.
+  // of the same name still rejects. A JS property declaration on the binding
+  // is not a second binding.
   const allDirectVars = [...sameSourceDeclarations].every(
-    (candidate) => isModuleBindingDeclaration(candidate, sourceFile) || isJsExpandoTarget(candidate),
+    (candidate) => isModuleBindingDeclaration(candidate, sourceFile) || isJsPropertyDeclarationTarget(candidate),
   );
   return script && allDirectVars ? declaration : undefined;
 }
@@ -1109,13 +1115,13 @@ function scriptVarReferenceKind(
   return home === "string" && isModuleStringStorageType(declaredType, checker) ? { kind: "string" } : undefined;
 }
 
-function isJsExpandoTarget(candidate: ts.Declaration): boolean {
-  const access = candidate.parent;
+// `o` in a JS property declaration on it: `o.p = v`, `o[k] = v`, `Object.defineProperty(o, …)` (#7106 lever S).
+function isJsPropertyDeclarationTarget(candidate: ts.Declaration): boolean {
+  const parent = candidate.parent;
+  if (!ts.isIdentifier(candidate) || parent === undefined) return false;
+  if (ts.isCallExpression(parent)) return parent.arguments[0] === candidate;
   return (
-    ts.isIdentifier(candidate) &&
-    access !== undefined &&
-    (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) &&
-    access.expression === candidate
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === candidate
   );
 }
 
@@ -1555,6 +1561,32 @@ function externValueIsPassable(
   return externValueSourceIsProven(checker, value, options);
 }
 
+/** True when a value position inside `node` reads a reference-kind module binding. */
+function nodeContainsModuleExtern(
+  node: ts.Node,
+  resolve: (node: ts.Identifier) => IrLegacyModuleBindingIdentity | undefined,
+  consumesHandle: ((node: ts.Identifier) => boolean) | undefined,
+): boolean {
+  let found = false;
+  const visit = (candidate: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(candidate)) {
+      const candidateKind = resolve(candidate)?.valueKind;
+      if (
+        candidateKind !== undefined &&
+        bindingValue.isIrModuleReferenceValueKind(candidateKind) &&
+        consumesHandle?.(candidate) !== true
+      ) {
+        found = true;
+        return;
+      }
+    }
+    candidate.forEachChild(visit);
+  };
+  visit(node);
+  return found;
+}
+
 function callReceiverIsModuleExtern(
   call: ts.CallExpression,
   resolve: (node: ts.Identifier) => IrLegacyModuleBindingIdentity | undefined,
@@ -1638,7 +1670,7 @@ function writeValueMatches(
     // declared type) so `"x" as string` cannot assert its way into the slot.
     return classifyPrimitiveExpression(valueExpr) === "string";
   }
-  // A capability kind is certified for a lexical, so identifier, declaration only.
+  // A capability kind is certified for a variable declaration only.
   if (bindingValue.isCapabilityExternKind(targetKind))
     return (
       ts.isVariableDeclaration(declaration) &&
@@ -2294,15 +2326,22 @@ export function makeIrLegacyModuleBindingResolver(
 
     const declaredType = checker.getTypeAtLocation(declaration.name);
     const home = scriptVarHomeOf(declaration, options);
+    // (#7274) A provider-certified script var in the externref dynamic home
+    // keeps its provider's typed handle on the same slot.
+    const scriptVarCapability =
+      home === "dynamic" && ts.isVariableDeclaration(declaration)
+        ? bindingValue.resolveCapabilityExternKind(resolveCapabilityExtern, declaration, writeValue)
+        : undefined;
     // #4208 S2 — a non-fast update target whose initializer representation
     // cannot hold the Number written by `++` / `--` uses the IR dynamic
     // carrier. Fast mode has a `$AnyValue` dynamic carrier while compatibility
     // allocation currently widens these globals to externref, so it stays on
     // direct codegen until that ABI is unified.
     let valueKind =
-      home === "dynamic" || (options.numberStorage === "f64" && updateRetypesModuleBinding(checker, declaration))
+      scriptVarCapability ??
+      (home === "dynamic" || (options.numberStorage === "f64" && updateRetypesModuleBinding(checker, declaration))
         ? ({ kind: "dynamic" } as const)
-        : (scalarKind(declaredType, options) ?? scriptVarReferenceKind(home, declaration, declaredType, checker));
+        : (scalarKind(declaredType, options) ?? scriptVarReferenceKind(home, declaration, declaredType, checker)));
     if (!valueKind && lexical && options.allowHostExterns) {
       const className = externClassNameForType(declaredType, checker, options);
       if (className) {
@@ -2360,8 +2399,13 @@ export function makeIrLegacyModuleBindingResolver(
       valueKind = { kind: "dynamic" } as const;
     }
     if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
-    if (valueKind.kind === "class-instance" && !classInstance.classInstanceUseFollowsDeclaration(node, declaration))
-      return { kind: "unsupported", declaration, arm: "class-instance-use-site" };
+    // (#7252 / #7274) A write-certified script var is read through its typed
+    // handle only where its slot is already written.
+    if (
+      (valueKind.kind === "class-instance" || scriptVarCapability) &&
+      !classInstance.scriptVarUseFollowsDeclaration(node, declaration)
+    )
+      return { kind: "unsupported", declaration, arm: "script-var-use-site" };
     if (
       writeValue !== undefined &&
       !writeValueMatches(checker, declaration, valueKind, writeValue, options, classifyPrimitiveExpression, resolve)
@@ -2405,22 +2449,8 @@ export function makeIrLegacyModuleBindingResolver(
     },
     externCallArgumentsMatch(call: ts.CallExpression | ts.NewExpression): boolean {
       try {
-        const containsModuleExtern = (node: ts.Node): boolean => {
-          let found = false;
-          const visit = (candidate: ts.Node): void => {
-            if (found) return;
-            if (ts.isIdentifier(candidate)) {
-              const candidateKind = resolve(candidate)?.valueKind;
-              if (candidateKind !== undefined && bindingValue.isIrModuleReferenceValueKind(candidateKind)) {
-                found = true;
-                return;
-              }
-            }
-            candidate.forEachChild(visit);
-          };
-          visit(node);
-          return found;
-        };
+        const containsModuleExtern = (node: ts.Node): boolean =>
+          nodeContainsModuleExtern(node, resolve, options.consumesCapabilityHandle);
         const callArguments = call.arguments ?? [];
         const signature = checker.getResolvedSignature(call);
         const moduleExternReceiver = ts.isCallExpression(call) && callReceiverIsModuleExtern(call, resolve);

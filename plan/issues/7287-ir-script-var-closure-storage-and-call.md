@@ -235,3 +235,11 @@ Verdict: 1 must-fix, 3 should-fix, 2 nits.
   hazard the statement-position limit addresses. Left as is.
 - **Nits, fixed:** the message comment no longer claims legacy throws for
   every non-callable value; the message plumbing is one conditional.
+
+- **Interaction with #7324 (2026-11-07):** #7324's call-graph walk now
+  descends into lifted closures, so this arm also lowers an uninitialized
+  script `var`'s statement call inside one (`var getter; assert.throws(TypeError,
+  function () { getter(); })` claims `<module-init>`). The claim is correct: it
+  throws a catchable TypeError at the call on all three lanes. #7324's test
+  expectation was updated in PR #7185.
+

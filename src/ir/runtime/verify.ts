@@ -23,7 +23,7 @@
 import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from "../core/nodes.js";
 import type { PreparedIrFunction as IrFunction } from "./contracts/prepared.js";
 import type { IrClassShape, IrType } from "../core/types.js";
-import { forEachInstrDeep, forEachNestedBuffer } from "../core/nodes.js";
+import { collectTerminatorUses, forEachInstrDeep, forEachNestedBuffer } from "../core/nodes.js";
 import { asVal, irTypeEquals } from "../core/types.js";
 import { irSupportRef, closureSignatureEquals } from "../core/types.js";
 // #4605 — the module-level declared-type tables and the rules that read them.
@@ -45,6 +45,7 @@ import type { ValType } from "../../wasm/model/instructions.js";
 import { defaultTagDomain } from "./producer.js";
 import type { TagDomain } from "../core/tag-domain.js";
 import { verifyIrIntrinsicInstruction } from "./intrinsic-verification.js";
+import { verifyStringBuilderSlots } from "./string-builder-verification.js";
 import { verifyIrAsyncPlan } from "../analysis/async-plan.js";
 import { irFnctorShapeEquals, validateIrFnctorShape } from "../core/fnctor-abi.js";
 import {
@@ -436,6 +437,7 @@ export function verifyIrFunction(
   }
 
   verifySymbolicReferences(func, errors);
+  verifyStringBuilderSlots(func, errors);
 
   for (const p of func.params) {
     if (defs.has(p.value)) {
@@ -1752,20 +1754,6 @@ function unionContains(members: readonly IrType[], target: ValType): boolean {
     return true;
   }
   return false;
-}
-
-function collectTerminatorUses(block: IrBlock): readonly IrValueId[] {
-  const t = block.terminator;
-  switch (t.kind) {
-    case "return":
-      return t.values;
-    case "br":
-      return t.branch.args;
-    case "br_if":
-      return [t.condition, ...t.ifTrue.args, ...t.ifFalse.args];
-    case "unreachable":
-      return [];
-  }
 }
 
 function checkBranchArity(

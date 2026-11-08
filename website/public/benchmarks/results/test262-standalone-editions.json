@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4346,
-    "fail": 1245,
+    "pass": 4347,
+    "fail": 1244,
     "ce": 201,
     "skip": 0,
     "total": 5792,
@@ -2276,8 +2276,8 @@
       },
       {
         "name": "resizable-arraybuffer",
-        "pass": 158,
-        "fail": 272,
+        "pass": 159,
+        "fail": 271,
         "ce": 2,
         "skip": 0,
         "total": 432,
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4584,
+    "pass": 4583,
     "fail": 197,
-    "ce": 140,
+    "ce": 141,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4485,
+        "pass": 4484,
         "fail": 106,
-        "ce": 20,
+        "ce": 21,
         "skip": 0,
         "total": 4611,
         "pct": 97
@@ -3789,12 +3789,12 @@
   },
   {
     "edition": "ES2027",
-    "pass": 388,
-    "fail": 360,
+    "pass": 392,
+    "fail": 356,
     "ce": 149,
     "skip": 0,
     "total": 897,
-    "pct": 43,
+    "pct": 44,
     "features": [
       {
         "name": "explicit-resource-management",
@@ -3816,12 +3816,12 @@
       },
       {
         "name": "joint-iteration",
-        "pass": 14,
-        "fail": 21,
+        "pass": 18,
+        "fail": 17,
         "ce": 47,
         "skip": 0,
         "total": 82,
-        "pct": 17
+        "pct": 22
       },
       {
         "name": "immutable-arraybuffer",

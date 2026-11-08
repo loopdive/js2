@@ -84,6 +84,7 @@ func-budget-allow:
   - src/ir/select.ts::dynamicUsesAreMoveOnly
   - src/ir/select.ts::scanExpr
   # 2026-10-31 (boolean statics, round 4): the 3-line adapter call beside the Math arms (+3)
+  # 2026-11-07 (lever W, review round 1): the unary `-`/`+` wrapper-operand arm, refusing through the shared `selectorWrapperToPrimitiveSupported` (+7)
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select.ts::collectCallGraph
   - src/ir/select.ts::whyNotIrClaimable
@@ -117,6 +118,7 @@ loc-budget-allow:
   - src/ir/runtime/verify.ts
   # 2026-10-31 (boolean statics, round 5): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+89); the rule lives in src/ir/static-predicates/
   # 2026-11-01 (#7106 S5): `moduleVarLeavesStorable`, the per-leaf slot fit of a module-init `var` pattern (+36)
+  # 2026-11-07 (lever W, review round 1): the unary `-`/`+` wrapper-operand arm and `selectorWrapperToPrimitiveSupported`, the wrapper capability refusal now shared with the binary arm (+11; the binary arm nets -2)
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
@@ -5629,9 +5631,29 @@ the claim: "function member operand has no canonical carrier".
 **Change.** One arm in `src/ir/integration.ts`, `resolveModuleBindingGlobal`:
 the `i32` kind reads as `irBool()`.
 - It reuses the #4503 boolean brand (`boolean-brand.ts`). The brand changes
-  no representation, and `irTypeEquals` erases it, so no join, slot write or
-  verifier check changes. No second boolean rule is added; the value kind
-  already says `boolean`.
+  no representation, and `irTypeEquals` erases it, so no join or verifier
+  check changes. No second boolean rule is added; the value kind already says
+  `boolean`.
+- **Numeric coercion did change** (review round 1). `isNumericIrSlot` refuses
+  a boolean, so a branded read stopped converting into a number result
+  (`let flag = true; function t(): number { return flag; }`) and into a
+  numeric compound field write. Standalone withdrew both after the claim,
+  where main converts the bare `i32`.
+  - `coerceIrToNumber` (`numeric-slot-coercion.ts`) is ToNumber into a
+    numeric slot: a numeric slot's value, or a boolean, whose ToNumber is its
+    0 or 1. Only its real ToNumber consumers take it: a compound field
+    update's operands (`numericFieldUpdate`) and a declared number result.
+  - `coerceIrNumeric` stays slot to slot, so a plain field write keeps the
+    boolean itself (`o.n = true` stores `true`; review round 2 found that
+    widening it stored 1).
+  - The compound write's right-side gate accepts a boolean on both lanes,
+    since its ToNumber needs no recovered domain. The field slot check is
+    main's `laneNumericSlot`.
+  - A boolean is still no numeric target. So a branded read converts exactly
+    where main's bare one did.
+- The selector's `provenIrFamily` names the slot `boolean`, not `int32`, as
+  the brand does. That newly claims `Object.is(x, true)` on both lanes, with
+  the right answer.
 - The `f64` and `i32` arms stay separate. `integration.ts` grows by 2 lines
   (the import and the one-line why), under its existing grant with a dated
   note.
@@ -5662,13 +5684,249 @@ depends on it, not for its own gain.
 **Acceptance.**
 - **Correctness:** no claim-then-demote for a boolean module `var`, 0 flips
   on both lanes, and legacy bytes and the playground identical.
-- **Tests:** `tests/issue-7106-module-bool-slot.test.ts`, both lanes: six
-  claimed shapes, and the S5 boolean-leaf shape, which withdraws nothing.
+- **Tests:** `tests/issue-7106-module-bool-slot.test.ts`:
+  - on both lanes, seven claimed shapes, and the S5 boolean-leaf shape, which
+    withdraws nothing;
+  - on standalone, two numeric consumers that keep main's claim;
+  - on both lanes, a boolean written to an object's number field keeps
+    `true`, and a boolean compound operand (`o.n += flag`) converts, claimed.
+
+  It and `issue-7106-for-head-destructuring.test.ts` share
+  `compileHarnessOn` / `runHarnessOn`
+  (`tests/helpers/harness-module-init.ts`), which take the lane.
 - **Code quality:**
   - one arm changed;
-  - no new predicate or boolean rule (the existing brand and value kind are
-    reused);
-  - no new function.
+  - one conversion added, `coerceIrToNumber`, sharing
+    `coerceIrNumeric`'s body and used by its two ToNumber consumers;
+  - no second boolean rule (the existing brand and value kind are reused).
+
+**Follow-ups.**
+- **Latent: a conditional keeps its true arm's type.** `lowerConditional`
+  keeps the true arm's `IrType`, brand included. So `c ? flag : k`, with `k`
+  a native `i32`, would box `k` as a boolean if it were ever claimed. It is
+  not claimed today, and literal `true` arms on main already carry the same
+  hazard.
+- Once this and #7037 have landed, S5 can drop its boolean-leaf refusal, and
+  its test can use the shared `runHarnessOn`.
+
+## ES5 blocker map (2026-11-07)
+
+**What this is.** For every ES5 test262 file on standalone, this map lists
+which IR refusals still keep the file from compiling fully through the IR
+("IR-only"). It ranks the remaining levers by payoff.
+
+**Method.**
+- **Population: 9,174 ES5 files.** This is the edition ratchet's classifier
+  (`classifyEdition` in `scripts/generate-editions.ts`). 457 files are
+  negative, raw or module tests, which the census skips. 126 files hit a
+  compile error. That leaves 8,591 files that compile.
+- **One census row per file**, with `JS2WASM_IR_SHAPE_DIAG=1` and
+  `JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, so every refused top-level statement
+  reports its own refusal.
+- **A file's code set** is every distinct refusal code across its legacy
+  units:
+  - for a `<module-init>`, the arm of each unmasked refusal;
+  - for a function unit, its arm, marked `{fn}`.
+- **LANE-C.** `vardecl-module-storage-unrepresentable` on an array or object
+  literal initializer is tagged `[LANE-C]`. That is lane C's literal-home
+  work (#7280 / #7292).
+
+**Trees.**
+- **Main:** origin/main a484c365fe, which includes #7121.
+  - #7292 is **not** in it: PR #7152 merged only the #7292 plan. On main, even
+    `var a = [1, 2]` still refuses as `vardecl-module-storage-unrepresentable`.
+- **Overlay:** main plus the pending lever branches, merged locally and not
+  pushed:
+  - R2 (`claude/7106-lever-r2` c4265fb9b5);
+  - S (`claude/7106-lever-s` 376bc4b9ae);
+  - T (`claude/7106-lever-t` 8cb4b7b88c);
+  - L (`claude/7106-lever-l` 4cf965aa1f);
+  - A2c (`claude/7106-eval-a2c` 8d6550fa23);
+  - R3 (`claude/7106-lever-r3` 0c7c555214);
+  - A3 (`claude/7106-eval-a3` 2b231a5b67).
+- **Merge conflicts.** L, A2c and R3 conflicted.
+  - L and A2c: one import and one re-export line each, plus the plan file.
+    Resolved by keeping both sides.
+  - R3 against R2: both edit the same RegExp arms, so the R3 resolution is
+    hand-made and more than a union. In `select.ts`, `nativeStaticRegExp`
+    admits R3's `+` operand next to R2's method receiver.
+  - `tests/issue-7106-lever-r.test.ts` passes 90/92 on the overlay. The 2
+    failures are the `concatenated` row on each lane: R3 is meant to claim
+    it, and that R3 test row was not merged.
+
+### Headline
+
+| | IR-only ES5 files |
+| --- | --- |
+| main a484c365fe | **710** |
+| overlay (main + R2, S, T, L, A2c, R3, A3) | **910** (+200) |
+
+- **The main count is not a full run.** Main was compiled on the overlay's 910
+  IR-only files plus a random 400 of the rest. None of those 400 is IR-only on
+  main without also being IR-only on the overlay, so 710 is the main count up
+  to that sample.
+- **Where the +200 comes from:** 91 in `built-ins/RegExp`, 37 in
+  `annexB/language`, 22 in `language/statements`, 17 in
+  `language/expressions`, the rest scattered.
+- **What remains on the overlay:**
+  - 7,681 compiled files still have a legacy unit;
+  - 45 of them fail after the claim on the overlay. 12 are the harness
+    `assert` direct call ("no exact AST-site plan"), and 9 are a bare `null`
+    under an f64 hint;
+  - by unit kind, 5,848 refuse only in `<module-init>`, 1,830 also in a
+    function unit, and 3 only in a function unit.
+- **Codes per file:** 1 code in 2,352 files, 2 in 1,943, 3 in 1,003, 4 in
+  642, 5 or more in 1,741.
+
+### Codes, by sole-blocker payoff (overlay)
+
+A "sole-blocker" file is one where this is the file's only code.
+
+| code | carrier files | sole-blocker files |
+| --- | --- | --- |
+| `expr-ident-not-in-scope` | 3816 | 607 |
+| `vardecl-module-storage-unrepresentable [LANE-C]` | 1217 | 259 |
+| `body-exprstmt-other(expr-call-callee-nonident)` | 403 | 166 |
+| `expr-binary-operand-families` | 178 | 143 |
+| `expr-new-ctor-unknown` | 920 | 140 |
+| `expr-global-eval-statement` | 306 | 91 |
+| `external-call(eval)` | 77 | 75 |
+| `closure-return-type` | 217 | 65 |
+| `expr-call-callee-nonident` | 377 | 64 |
+| `body-exprstmt-other(expr-ident-not-in-scope)` | 114 | 63 |
+| `body-shape-rejected` | 329 | 53 |
+| `vardecl-var-kind` | 246 | 48 |
+| `expr-module-extern-consumer` | 138 | 43 |
+| `expr-new-regexp-target` | 106 | 38 |
+| `body-unhandled-stmt` | 132 | 26 |
+| `body-if-cond` | 49 | 26 |
+| `expr-module-extern-call-brand` | 51 | 18 |
+| `compound-dynamic-module` | 162 | 17 |
+| `expr-regexp-literal` | 118 | 17 |
+| `expr-object-define-property-target` | 1658 | 16 |
+| `expr-string-method-argument` | 26 | 16 |
+| `expr-string-method-surface` | 23 | 16 |
+| `expr-logical-value-family` | 67 | 15 |
+| `expr-static-predicate-operand` | 31 | 15 |
+| `external-call(Function)` | 18 | 15 |
+| `vardecl-module-storage-unrepresentable` | 411 | 14 |
+| `expr-binary-op-instanceof` | 72 | 14 |
+| `forin-receiver-not-dynamic-externref` | 306 | 12 |
+| `nullish-value-unsupported` | 11 | 11 |
+| `external-call(Object)` | 10 | 10 |
+
+### The 25 commonest code pairs (the file's only two codes)
+
+| code pair | files |
+| --- | --- |
+| `expr-ident-not-in-scope` + `vardecl-module-storage-unrepresentable [LANE-C]` | 133 |
+| `compound-dynamic-module` + `expr-new-ctor-unknown` | 100 |
+| `expr-ident-not-in-scope` + `expr-module-scalar-method` | 86 |
+| `body-exprstmt-other(expr-call-callee-nonident)` + `expr-local-call-target` | 84 |
+| `expr-ident-not-in-scope` + `objectlit-empty` | 67 |
+| `expr-ident-not-in-scope` + `expr-new-ctor-unknown` | 65 |
+| `expr-global-eval-statement` + `expr-ident-not-in-scope` | 64 |
+| `body-unhandled-stmt` + `expr-ident-not-in-scope` | 56 |
+| `expr-object-define-property-target` + `vardecl-module-storage-unrepresentable [LANE-C]` | 50 |
+| `expr-module-scalar-method` + `expr-new-ctor-unknown` | 47 |
+| `expr-ident-not-in-scope` + `forin-receiver-not-dynamic-externref` | 41 |
+| `call-graph-closure` + `vardecl-var-kind {fn}` | 36 |
+| `body-shape-rejected {fn}` + `expr-function-invocation-method` | 36 |
+| `objectlit-property-kind` + `with-target-not-objectlit` | 30 |
+| `expr-object-define-property-target` + `objectlit-empty` | 25 |
+| `expr-new-ctor-unknown` + `vardecl-module-storage-unrepresentable` | 24 |
+| `expr-delete-no-ir-lowering` + `expr-ident-not-in-scope` | 23 |
+| `expr-local-call-target` + `vardecl-let-closure` | 23 |
+| `expr-ident-not-in-scope` + `vardecl-var-kind` | 22 |
+| `expr-call-callee-nonident` + `expr-ident-not-in-scope` | 21 |
+| `vardecl-module-storage-unrepresentable` + `vardecl-module-storage-unrepresentable [LANE-C]` | 19 |
+| `body-exprstmt-other(expr-call-callee-nonident)` + `expr-ident-not-in-scope` | 19 |
+| `vardecl-module-storage-unrepresentable [LANE-C]` + `vardecl-var-kind` | 19 |
+| `body-exprstmt-other(expr-local-call-target)` + `vardecl-let-closure` | 18 |
+| `call-graph-closure` + `param-dynamic-carrier-diverges-from-legacy {fn}` | 17 |
+
+### LANE-C share
+
+- **Every code is LANE-C in 259 of the 7,681 non-IR-only files (3.4%).**
+  #7292 alone would make those 259 IR-only.
+- **LANE-C appears in 1,217 files.** In 133 of them its only partner is
+  `expr-ident-not-in-scope`; in 50, `expr-object-define-property-target`.
+- **The S15.10.2 exec family is not counted in the 259.** Its 193 files also
+  need L's `for (var` head, and after L, LANE-C is their only code. A rerun of
+  those 193 on R2 merged with main confirms it: they refuse with exactly
+  `vardecl-module-storage-unrepresentable` (`__expected = [...]`) and
+  `for-init-var-kind`.
+
+### `expr-ident-not-in-scope` by name
+
+Counts are of files where `expr-ident-not-in-scope` is the only code. The
+member columns count the commonest members of that name the files read.
+
+| name | sole files | commonest members read |
+| --- | --- | --- |
+| `Object` | 369 | `getOwnPropertyDescriptor` 167, `create` 57, `isSealed` 27, `isExtensible` 24, `getPrototypeOf` 17, `defineProperties` 10, `isFrozen` 9, `freeze` 7 |
+| `String` | 106 | `prototype.trim` 48, `prototype.*` (`charAt`, `indexOf`, `split`, …) |
+| `Date` | 48 | `prototype.*` 45 |
+| `JSON` | 39 | `parse` 33 |
+| `Function` | 35 | `prototype.bind` 10, `prototype.toString` 6 |
+| `Math` | 29 | constants and functions not yet folded (`PI`, `E`, `atan2`, …) |
+| `Number` | 29 | `prototype.*`, `MAX_VALUE`, `NaN`, … |
+| `Array` | 27 | `prototype.*` 23 |
+| `RegExp` | 18 | `prototype.*` |
+
+As a carrier code, `expr-ident-not-in-scope` is dominated by `Object` (1,922
+files) and `Function` (998). The harness names (`verifyProperty` 899,
+`assert` 430, `compareArray` 423) are never sole: they trail another refusal.
+
+### Top 5 non-LANE-C levers, by sole-blocker payoff
+
+1. **Ambient `Object.*` statics: 369 sole files.**
+   - Shape: `Object.getOwnPropertyDescriptor`, `create`, `isSealed`,
+     `isExtensible`, `getPrototypeOf`, `isFrozen` and `defineProperties` on
+     the unshadowed ambient `Object`, read or called in `<module-init>`.
+   - Module: the ambient-intrinsic seam (`shared/ambient-intrinsics.ts`) and
+     the selector's ambient call arms, beside lever A/B and the
+     `Object.defineProperty` arm. Each call reaches legacy's native object
+     runtime through a provider, not a new runtime.
+2. **Immediately-invoked function expressions: 166 + 64 sole files.**
+   - Shape: `(function () { … })()` and `(function () { … }).call(…)`
+     (`body-exprstmt-other(expr-call-callee-nonident)`,
+     `expr-call-callee-nonident`).
+   - Another 84 files pair the shape with `expr-local-call-target`.
+   - Module: the select and from-ast call arm, as a closure literal callee
+     lowered through the existing `closure.new` / `closure.call`.
+3. **Mixed-family binary operators: 143 sole files.**
+   - Shape: `expr-binary-operand-families`. An object with
+     `valueOf` / `toString`, a string, `null`, `true` or a wrapper meets an
+     arithmetic or relational operator. Example: `"b" * null`, or
+     `{valueOf: …} - 1`.
+   - Module: `ir/analysis/operand-admissibility.ts` plus `lowerBinary`.
+     ToNumber and ToPrimitive go through the dynamic carrier (`dyn.to_number`,
+     like the #7066 additive rule).
+4. **Primitive-wrapper and `Object` construction: 140 sole files.**
+   - Shape: `expr-new-ctor-unknown`. Of those, `new Object(…)` is 47,
+     `new String(…)` 41, `new Number(…)` 33, `new Boolean(…)` 12 and
+     `new Function(…)` 10.
+   - Another 100 files pair it with `compound-dynamic-module`.
+   - Module: the `new` arm (`phase1NewExpression`) and the #4208
+     primitive-wrapper runtime.
+5. **`String.prototype.*` reads on the ambient `String`: 106 sole files.**
+   - Shape: `String.prototype.trim` (48) and other `String.prototype` members
+     read as values or called through `.call`.
+   - Module: `ir/string-method-surface.ts`, with the ambient
+     `String.prototype` read as a builtin-value read.
+
+**Not ranked, owned by another lane:** eval. `expr-global-eval-statement`
+(91 sole) and `external-call(eval)` (75) are lever A's, so they are left
+out.
+
+**Next after these five:**
+- `closure-return-type`: 65 sole files;
+- `body-exprstmt-other(expr-ident-not-in-scope)`: 63;
+- `vardecl-var-kind`: 48;
+- `Date`: 48;
+- `expr-module-extern-consumer`: 43;
+- `JSON.parse`: 39.
 
 ## Lever A — the runtime-eval boundary, per unit (plan, 2026-11-06)
 
@@ -5839,6 +6097,39 @@ the eval rows fail locally with "quickjs provider is not built".
   base. The other failures there match base (353 failing tests, mostly
   `issue-3518` receipt history and the missing QuickJS provider).
 
+### A1 forward fix — a self-reference crosses the boundary (2026-11-07)
+
+- **Bug.** `runtimeEvalBoundaryCrossing` counted a reference as local when
+  its declaration lay inside the function's own range. A recursive `f(n - 1)`
+  resolves to that same `FunctionDeclaration`, whose name is bound in the
+  script scope. So a function eval may rebind kept a static self-call on the
+  IR. An alias call (`var saved = f; …; saved(1)`) leaves no call-graph edge
+  that would rescue it.
+- **Fix.** A reference that resolves to the declaration itself reaches the
+  script binding. Declarations nested in it, and a named function
+  expression's own name, stay local. Admission stays per unit.
+- **Tests:** `tests/issue-7106-runtime-eval-a1-selfref.test.ts`.
+  - The recursive function stays direct (`eval-visible-binding`). This row
+    fails on the base.
+  - Two controls stay IR: a named function expression that recurses on its
+    own name, and a call to a nested same-named declaration.
+- **Measured** (base c03f7d0e3f vs fix, standalone):
+  - all 141 eval files and the 40-file control are byte-identical;
+  - IR units unchanged (513 on the 141, 344 on the control);
+  - 0 new post-claim errors;
+  - the interpreter provider built from each tree is byte-identical, so the
+    verdicts cannot differ.
+
+  None of the 141 has the shape: the fix only changes programs where an
+  eval-visible top-level function calls itself.
+- **The end-to-end answer is blocked by a provider gap, not by this fix.**
+  With the interpreter provider, the repro answers 1 on standalone and
+  overflows the stack on the JS host, before and after the fix. The same
+  holds for a direct `f(1)` after the rebind, and for `(0, eval)("f = …")`.
+  - So the eval rebinding of a top-level function declaration is not
+    observed even by legacy code: the gap A3's focused probes recorded.
+  - The test therefore pins the boundary decision, not the value.
+
 ### A2 and A3 (outline; each gets its own measured plan before code)
 
 - **A2.**
@@ -5854,6 +6145,224 @@ the eval rows fail locally with "quickjs provider is not built".
   - `makeIrFunctionObjectValueResolver` is then re-enabled for non-live
     names, so `assert`, `Test262Error` and `compareArray` keep static
     bindings and function-object values.
+
+## ES5 lever S: module storage — `vardecl-module-storage-unrepresentable` (plan, 2026-11-07)
+
+Claimed for lane L in #6583. Lane C owns the neighbouring work, and S does not
+overlap it: script-var object literals (#7280), array literals (#7292), the
+parameter carrier (#7277), `expr-ident-not-in-scope` (#7278) and default
+parameters (#7279). af35410's A2b owns the eval gate in `scriptVarHomeSlot`.
+
+### What refuses (measured on main cc27f70dfd, standalone)
+
+**Sample:** every 40th test262 file (1,340 files). Two temporary logs ran in a
+scratch tree:
+- `directTopLevelDeclaration` logs why it declines a script `var`;
+- `inspectDirectBinding` logs why it declines a lexical binding.
+
+**Counts:**
+- 389 files' `<module-init>` refuses for this reason, 167 of them as their
+  only legacy unit.
+- 40 are eval programs (A2b's), counted apart.
+- 101 are Temporal.
+
+**Non-eval, non-Temporal rows by cause:**
+
+| cause | rows | sole unit | ES5 sole | owner |
+| --- | ---: | ---: | ---: | --- |
+| array-literal slot (`ref_null` vec/array struct) | ~105 | ~32 | ~6 | C #7292 |
+| object literal, `merged-declaration` (see below) | 34 | 34 | 17 | **S** (identity) + C #7280 (value) |
+| object literal, struct slot (`ref_null` struct) | ~10 | ~7 | ~2 | C #7280 |
+| `var r = /…/.exec(s)` (`RegExpExecArray` struct slot) | 7 | 7 | 7 | R2 + S, and C #7292 for `__expected` |
+| `var s = Symbol()` in a typed slot | 9 | 5 | 0 | unowned, not ES5 |
+| lexical `Set`/`Map`/`Error`/generator/`new C`/function value | ~30 | ~8 | 0 | unowned, not ES5 |
+
+**The `merged-declaration` arm.** In a JS file,
+`Object.defineProperty(obj, "p", …)` makes the argument `obj` one more checker
+declaration of the binding. `directTopLevelDeclaration` then sees two
+declarations and declines the binding as merged, though they are the same
+slot. `isJsExpandoTarget` already accepts the `obj.p = v` and `obj[k] = v`
+spellings of the same thing. Typical case: the ES5 Array generic tests,
+`var obj = {}; Object.defineProperty(obj, "length", …)`.
+
+Scratch experiment on those 34 files (the defineProperty target accepted like
+`isJsExpandoTarget`):
+- 0 post-claim errors;
+- every file moves on to its next refusal: `objectlit-empty` (`var obj = {}`)
+  in 23 (#7280), `call-resolution-unsupported` in 8, others in 3;
+- no file becomes IR-only on its own.
+
+### Plan
+
+- **S1 — identity (module-bindings.ts, `directTopLevelDeclaration`).**
+  - **Change:** the first argument of a JS `Object.defineProperty(<id>, …)`
+    property declaration counts as the same binding, beside
+    `isJsExpandoTarget`. Both are folded into one predicate,
+    "a JS property declaration on this binding".
+  - **Storage:** none new. The binding resolves to legacy's existing
+    `__mod_<name>` slot through `scriptVarHome`.
+  - **Guards:** the eval gate and every other `scriptVarHomeSlot` arm are left
+    alone.
+  - **Gain on its own:** 0 files. It removes the identity refusal so #7280's
+    object-literal value lowering can claim these files. With #7280, the 13
+    ES5 `typeof obj` rows scale to about 520 ES5 files (×40), as an upper
+    bound; each file still needs its own next lever.
+- **S1 implemented (2026-11-07).**
+  - **Change:** `isJsExpandoTarget` became `isJsPropertyDeclarationTarget`.
+    The binding of `o.p = v`, of `o[k] = v`, or the first argument of
+    `Object.defineProperty(o, …)` is the same binding.
+  - **Size:** `module-bindings.ts` grows by 0 lines.
+  - **Measured** (main cc27f70dfd vs head, the 1,340-file sample):
+    - +0 IR-only on both lanes, as expected for an enabler;
+    - 0 status changes and 0 new post-claim;
+    - gc binaries are all identical. On standalone, 3 async tests hashed
+      differently inside the long census process; compiled alone, main and
+      head give identical hashes;
+    - the playground is identical.
+  - **The 34 target files** all move on:
+    - `objectlit-empty` in 23 (#7280);
+    - `call-resolution-unsupported` in 8: `Object.defineProperty` is
+      host-only in the IR, and the host-free path is the open-carrier define
+      that follows #7280's object literal;
+    - three others in 3;
+    - 0 claim-then-withdraw.
+  - **Tests:** `tests/issue-7106-lever-s.test.ts`, at the resolver: the plain
+    `var`, an expando, a `defineProperty` target, and both together. The
+    defineProperty rows fail on main.
+- **S2 — the `exec` result slot.** Stacked on R2 (`.exec` as a carrier
+  value). It binds the legacy struct slot for `RegExpExecArray` the way #7252
+  bound class instances, which needs R2 first. The `__expected` arrays in the
+  same tests need #7292.
+- **Not planned:** symbol-typed slots and the lexical `Set`/`Map`/generator/
+  function-value bindings. None of them is ES5, and the ES5 goal is what this
+  lever serves.
+
+**Acceptance:**
+- 0 pass→fail on both lanes;
+- 0 claim-then-withdraw;
+- byte identity outside the changed files;
+- the gates.
+
+**Code quality:**
+- one predicate for JS property declarations;
+- no new storage kind;
+- no change to `scriptVarHomeSlot`.
+
+## ES5 lever W: `new` of a primitive wrapper in `<module-init>` (2026-11-07)
+
+**Question.** `expr-new-ctor-unknown` is the most common refusal in the
+module-init map. Can the IR take `new String/Number/Boolean/Object(…)` there?
+#7295 (`new <LibBuiltin>(…)` at module init) is `blocked`: measured at 0 yield.
+
+### Scope check (main 83c5c23daf, standalone)
+
+**Population:** the map's 240 files (140 it listed with the code as the only
+module-init refusal, 100 paired with a compound assignment). Re-census:
+- 0 IR-only and 0 post-claim errors on main.
+- `expr-new-ctor-unknown` in 230 files, the sole refusal in **85**.
+- Beside it: `throw-module-scalar-unboxed` in 133, `expr-ident-not-in-scope`
+  in 13.
+- Constructors named: String 225, Number 219, Boolean 171, Object 70,
+  Function 10, Array 4.
+- The other 145 files with the code also refuse elsewhere; they are the
+  compound-assignment matrix (`x op= …` on a dynamic module var).
+
+**Probes on the 85 sole files** (scratch builds, not committed):
+
+| probe | IR-only | post-claim | still refused |
+| --- | ---: | ---: | --- |
+| admit a wrapper `new` anywhere, plus `new Object()` | 5 | 15 | 31 on `callee:new Object`, 29 on `expr-new-ctor-unknown` |
+| rewrite `new Object()` to `{}` | 0 | 0 | 31 on `objectlit-empty` |
+
+The 15 post-claim errors of the first probe split into:
+- a wrapper stored in a module var and read back as a carrier (8);
+- a method call on a wrapper (5);
+- `!wrapper` (2).
+
+Admitting wrappers everywhere is claim-then-demote, so it is not an option.
+The 5 IR-only files are unary `-`/`+` of a fresh wrapper
+(`unary-minus/S11.4.7_A3_T1..T3`, `unary-plus/S11.4.6_A3_T1..T2`). They pass on
+both lanes.
+
+### The arm (built)
+
+- **Where:** `isPhase1Expr`'s prefix-unary arm in `src/ir/select.ts`.
+- **What:** unary `-`/`+` takes a fresh wrapper construction operand
+  (`selectorPrimitiveWrapperConstruction`). It is gated on the
+  `primitive-wrapper-to-primitive` capability with the same refusal as the
+  binary arm (`selectorPrimitiveWrapperOrGenericBinary`).
+- **Reuse:** no new helper and no lowering change. `lowerPrefixUnary` already
+  applies ToNumber through the wrapper's ToPrimitive carrier, the same path
+  the binary operands use (#4208 S4, #7144).
+- **Still refused:** `!`, `~`, `typeof`, `void` on a wrapper, and
+  `new Object()`. `selectorPrimitiveWrapperConstruction` covers only
+  `String`/`Number`/`Boolean` with one argument of the matching family.
+- **Size:** +11 lines in `select.ts` (+7 in `isPhase1Expr`), granted in
+  the frontmatter. The capability refusal is one helper,
+  `selectorWrapperToPrimitiveSupported`, shared with the binary wrapper arm
+  (review round 1 folded the copy the first cut had inlined).
+- **Tests:** `tests/issue-7106-lever-w-unary-wrapper.test.ts` on both lanes:
+  - claimed: `-new Number(1)`, `+new String("1")`, `-new Boolean(true)`,
+    `+new Boolean(false)`, `-new String("0x10")`, `+new String("x")`, each
+    checked against the JS result;
+  - refused (legacy body, same result): `!new Boolean(false)`,
+    `~new Number(1)`, `+new Object()`;
+  - the claimed rows fail on main.
+
+**Acceptance:**
+- the 85 sole files gain the 5 target files as IR-only, with 0 pass→fail and
+  0 post-claim errors on both lanes;
+- binaries are byte-identical outside the claimed files on a random ES5
+  sample;
+- the playground is identical;
+- the equivalence gate passes.
+
+**Code quality:** one arm beside its siblings, no new helper, no duplicated
+lowering.
+
+### Measured
+
+Base main 83c5c23daf against head, A/B by file copy of `select.ts`, the
+in-process runner (`runTest262File`) on both lanes, one niced worker:
+
+- **The 85 sole files:**
+  - 5 binaries change on each lane, exactly the 5 target files;
+  - those 5 are now IR-only (0 legacy units) with 0 post-claim errors on
+    both lanes, and they pass on both before and after;
+  - 0 status changes; all 85 pass on both lanes before and after;
+  - `unary-plus/S11.4.6_A3_T3` stays legacy (unchanged binary): it builds
+    `new Number("-1")`, and `selectorPrimitiveWrapperConstruction` takes only
+    an argument of the constructor's own family.
+- **Random ES5 sample** (200 files, `shuf` seeded with `yes 7106`, from the
+  10,171 ES5-named test files outside `intl402`/`annexB`):
+  - every binary is byte-identical on both lanes;
+  - 191 pass, 6 fail, 3 skip on each lane, before and after.
+- **Playground:** all 13 examples compile byte-identically on both lanes.
+- **Equivalence gate:** all 8 shards, "No new equivalence regressions"
+  (every failing file is in the baseline's known failures).
+
+### Follow-ups (not built)
+
+1. **Wrapper values as dynamic carriers / extern receivers.** A wrapper
+   stored in a var, a method call on it, and `!wrapper` were the 15
+   post-claim errors of the probe. They need a wrapper to live as a dynamic
+   carrier value, not only as an operand.
+2. **A callable `__to_object`.** Extract legacy's `emitObjectCoercion` into a
+   helper the IR can call, so `new Object(v)` lowers without a legacy body.
+3. **An open-carrier `{}` that allows property writes,** so `new Object()`
+   can become `{}` (the 31 `objectlit-empty` rows of the second probe; this
+   joins #7280).
+4. **`x op= …` on a dynamic module var.** The 145 paired files need the
+   compound assignment, whatever its right-hand side.
+5. **A wrapper whose argument is another family,** such as
+   `new Number("-1")` (`unary-plus/S11.4.6_A3_T3`). Construction would apply
+   ToNumber/ToString/ToBoolean to the argument first.
+
+### Handoff (2026-11-07)
+
+Lever W is built and measured on branch `claude/7106-lever-w`. Nothing from
+this lane is in flight. Open: follow-ups 1–5 above (none claimed) and #7295,
+which stays `blocked` until follow-ups 1–3 land.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
@@ -6070,3 +6579,222 @@ Normal commit/push hooks and this PR's protected CI remain required. The
 November1 census, legacy-byte and playground results above are historical,
 not fresh receiving measurements. No fresh full-suite conformance gain is
 claimed from these focused tests.
+
+## `<module-init>` lever L — script `var` `for` heads (plan, 2026-11-07)
+
+Lever L is the S6 follow-up of the S5 `var`-pattern work: a script's top-level
+`for (var i = …; …; …)` is refused today, although its names are script `var`s
+in the same `__mod_<name>` slots a top-level `var` statement already writes.
+
+### Problem (measured)
+
+Base `b631a4bcab` (origin/main), standalone, one niced worker. The census
+compiles the runner's harness assembly with `JS2WASM_IR_SHAPE_DIAG=1
+JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, so every refused top-level statement
+reports its own refusal. Population: the 790 ES5 files (edition classifier of
+`scripts/test262-edition-ratchet.ts`, 9,174 ES5 files in all) whose source has
+a `for (var` head; 11 are skipped by the runner (negative/raw/module), 3 do not
+compile, 776 compile.
+
+| measure | files |
+| --- | --- |
+| `<module-init>` refused with `for-init-var-kind` (309 as its shape refusal, 34 behind an earlier constructor / RegExp refusal) | 343 |
+| …and it is `<module-init>`'s only refusal | 62 |
+| …and no other unit is legacy (upper bound of the IR-only gain) | 61 |
+| `for-init-var-kind` plus exactly one other `<module-init>` refusal, no other legacy unit | 30 (15 `expr-new-ctor-unknown`, 8 `vardecl-module-storage-unrepresentable`, …) |
+
+The bound is loose: a head refusal stops the `for` arm before the condition,
+update and body, and the unmasked census skips the call-graph gate, so a
+refused head can hide refusals behind it.
+
+**Why the head is refused.** `moduleInitVarList` models a `for` head only when
+every declaration is a pattern (S5 deferred identifier heads), so the head's
+list is not in `currentIrSafeVarDeclarationLists`. Three layers follow from
+that one predicate: the module-binding resolver does not know the head's
+declaration (`isModuleBindingDeclaration`), legacy never hands the head's slot
+to the Program ABI (`registerVarDeclListGlobals` calls `registerModuleGlobal`
+without the declaration), and the ordinal enumerator does not number it.
+
+### Implementation Plan
+
+One idea: **a top-level `var` `for` head is a module-init `var` list, so its
+names are script `var`s, checked and lowered by the `var` statement's own arm.**
+No new home kind, no new module, no legacy fallback.
+
+1. **The list predicate** (`src/ir/module-init-vars.ts`). `moduleInitVarList`
+   drops its pattern-only clause. `moduleInitLeaves` becomes
+   `moduleInitVarBindings`: every module-init binding that is not a top-level
+   statement's own declaration (pattern leaves and head names), in source
+   order, cached per file. `moduleBindingDeclarationOrder` appends them after
+   the statement declarations as before (no statement binding id moves), and
+   `carrierLeafReads` keeps reading only the leaf names from the same cache.
+2. **The resolver** (`src/ir/module-bindings.ts`). `isModuleBindingDeclaration`
+   folds its leaf clause into one: an identifier declaration or leaf of a
+   script's module-init `var` list. ES modules are unchanged (no playground
+   example has a top-level `for (var`).
+3. **Legacy observation** (`src/codegen/declarations.ts`).
+   `registerVarDeclListGlobals` passes a head's declaration to
+   `registerModuleGlobal` when its list is a module-init `var` list, as S5 does
+   for leaves. Observation is a map entry on the same slot; a statement's own
+   declarations stay observed by the source-order pass, so global allocation
+   order does not move.
+4. **Selection** (`src/ir/select.ts`).
+   - `isPhase1VarDecl`'s per-declaration loop becomes
+     `isPhase1VarDeclarationList`. The `for` arm calls it for a
+     `<module-init>` `var` head, so storage
+     (`vardecl-module-storage-unrepresentable`), value flow
+     (`vardecl-module-value-flow`), repeated declarations, shadowing and the
+     bare `var i;` no-op are decided by one arm for a statement and a head.
+   - The `for` arm's own loop moves into `isPhase1LoopHeadDeclarations`
+     (loop-scoped heads only). S5's pattern head now also goes through the
+     list arm, which calls the same `isPhase1DeclarationPattern`.
+   - `recordForInitLeaks` does not mark a script-`var` head's names as
+     sibling-redeclarable, so a later `for (let i …)` stays refused
+     (`for-init-shadow`) instead of writing the script slot.
+5. **Lowering** (`src/ir/from-ast.ts`): `lowerForStatement` lowers its head
+   through `lowerVarDecl`, whose module arm (`storeModuleBinding`) writes the
+   slot, and `moduleInitContainsNestedVar` already skips any
+   `moduleInitVarList`. *Corrected in review round 1:* the head must bind in
+   the enclosing scope, not the loop's copy (see below).
+
+**Reused:** `isModuleInitVarList`, the `var` statement's selector arm, the
+resolver's script-var home (#7105/#6985), `storeModuleBinding`,
+`emitModuleVarUndefinedSeeds` (it already seeds head names). **Removed
+duplicate:** the `for` arm's identifier checks no longer stand beside the
+statement arm for a module-init list; S5's twin `isModuleInitVarList` /
+pattern-only test in the predicate goes.
+
+### Semantics kept
+
+- Hoisting: the name reads `undefined` (carrier slot) before the loop.
+- `i++` / `i += k` in the update write the slot (`moduleGlobal` binding).
+- Two heads, or a head and a statement, of the same name: the first
+  declaration is the identity, the others are writes (`redeclaredModuleVar`).
+- A head that shares a function's name, a nested head (`{ for (var …) }`), a
+  `let` head after a `var` head of one name, and eval / `with` programs stay
+  refused as today.
+
+### Acceptance
+
+- **Gain** measured base vs head, both lanes, on the 790 files plus a random
+  400-file ES5 sample (seeded `shuf`).
+- **Zero** IR-only files lost, pass → fail flips, and new post-claim errors.
+- Every binary without a newly claimed unit is byte-identical; the playground
+  is identical on both lanes.
+- **Tests** (`tests/issue-7106-lever-l.test.ts`, both lanes): claimed heads
+  run correctly; the refused shapes above stay legacy and run.
+- **Code quality:** one list arm for statement and head; no new module or
+  import edge beyond `codegen/declarations.ts` → `ir/module-init-vars.ts`; no
+  new budget grant unless a gate says so (then stated here, dated); net
+  `src/ir` growth stated.
+
+### Measured (2026-11-07, as built)
+
+Base `b631a4bcab` (origin/main), head `c7df95521c`, one niced worker. Census
+population: the 790 `for (var` files plus 400 random ES5 files (`shuf
+--random-source=<(yes 7106)`), 1,130 distinct; 1,103 compile on both sides
+(the rest are runner-skipped or compile errors on both, unchanged).
+Pass/fail is `runTest262File` (sloppy run plus strict rerun). Census scripts:
+the lever worktree's `.tmp/l/` (`census.mts`, `cmp.py`, `run.mts`).
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, base → head | 25 → 41 (**+16**) | 25 → 41 (**+16**) |
+| …of them in the random sample | 0 | 0 |
+| IR-only files lost | 0 | 0 |
+| binaries changed | 16, each a newly claimed `<module-init>` | 16, the same files |
+| binaries byte-identical | 1,087 (the whole random sample included) | 1,087 |
+| units newly legacy | 0 | 0 |
+| new post-claim errors (on these 1,103 files) | 0 | 0 |
+| pass → fail on the changed files | 0 (16/16 pass on both) | 0 (16/16 pass on both) |
+| playground (26 binaries, both lanes) | identical | identical |
+
+The 16: `statements/break/12.8-1`, `statements/continue/12.7-1`,
+`statements/for/12.6.3_2-3-a-ii-{11,13..21}`,
+`statements/for/head-init-var-check-empty-inc-empty-syntax`,
+`statements/try/S12.14_A11_T{2,4}`, `statements/variable/S12.2_A10`.
+
+**What blocks the rest.** The census bound (61) was loose, as expected: a head
+refusal hid the loop's own refusals. Over the 309 files whose shape refusal was
+`for-init-var-kind`, 16 now claim `<module-init>`; of the rest, by the
+refusal the head now reports (a file counts once per arm):
+
+| files | arm | sole arm, no other legacy unit |
+| --- | --- | --- |
+| 269 | `vardecl-module-storage-unrepresentable`: a script `var` whose home the resolver cannot place, overwhelmingly an array / object / RegExp-match literal (`var __expected = [...]` 260, `__executed = /…/.exec(…)` 226, `obj = {...}` 126) | 199 |
+| 28 | `throw-module-scalar-unboxed` | 6 |
+| 15 | `expr-binary-op-instanceof` | 0 |
+| 12 | `for-init-var-kind` (a nested head, `{ for (var …) }`) | 3 |
+| 12 | `expr-prefix-op-++` (`++i` on a script `var`) | 0 |
+| 11 | `vardecl-var-kind` (a `var` statement in the loop body) | 5 |
+
+The 199 are lane C's object/array literal homes (#7280/#7292), not this lever.
+The next lever-L-adjacent arms are `var` statements nested in top-level
+control flow (`vardecl-var-kind`) and prefix updates of a script `var`.
+
+**Code.** Net `src/ir` +4 lines (+109/−105); the list predicates (37 lines)
+moved to `src/shared/module-init-var-list.ts` so legacy's registration reads
+them without a new codegen→ir edge; `codegen/module-global-registration.ts`
++10. No budget grant: loc, func (also against `origin/main`), coercion,
+oracle, dead exports, typecheck, import cycles, standalone arms, IR layering,
+flat dir, IR fallbacks all pass; compiler boundaries reports the same
+`inventory-valid-architecture-incomplete` as main, with the new module
+classified (owner 7106).
+
+**Not done here.** The adversarial fresh-context review the IR rule requires
+is the lead's to run before the hold is released. A function declared above a
+head that returns its name (`function g() { return i; } for (var i = 0;;)`)
+is claimed and then withdrawn on main's ABI parity check, as its statement
+twin (`function g() { return i; } var i = 0;`) already is on main: legacy
+widens such a return to `externref` (`functionReturnsPreInitVarValue`) and the
+selector does not mirror it. No census file reaches it; it is a selector
+follow-up for both forms.
+
+
+### Review round 1 (#7178, 2026-11-07)
+
+The verdict was changes requested: one bug, one inherited reach, two quality
+findings and three nits. Fixed in `fa9eecdddb` + `bab312aea8` (the first
+commit carries only the rename because a failed `git add` left the rest
+unstaged; the second carries the changes its message lists).
+
+1. **Fixed — claim-then-demote after the loop.** The head bound its
+   `moduleGlobal` in the loop's scope copy, so `i++`, `i--`, `i += k` or
+   `while (…) i++` after the loop was claimed and then failed to lower
+   ("undeclared"). A `<module-init>` `var` head now lowers in the enclosing
+   scope (`lowerForInitializer`, split out of `lowerForStatement`), as a `var`
+   statement does. The four shapes (and `--i`) are in
+   `tests/issue-7106-lever-l.test.ts`, claimed and correct on both lanes.
+2. **Scoped, not fixed — inherited reach.** `for (var j = i, i = 2;;)`,
+   `for (var i = k;;){} var k = 5` and `function g(){ return i } for (var i …)`
+   are claimed and then withdrawn ("initializer is dynamic but its global is
+   f64", or the ABI parity check). Their statement twins do the same on main
+   with identical bytes; the root is the selector's missing pre-initialization
+   (`undefined`) value flow for a script `var`, shared by statements and
+   heads. "0 new post-claim errors" above is now scoped to the census files,
+   where none of these shapes occurs. Follow-up: one selector refusal for a
+   read of a script `var` that can observe its pre-initialization value,
+   for statements and heads alike; a head-only refusal would leave the twins.
+3. **Fixed — misplaced predicate.** The shared module is now
+   `src/shared/var-declaration-lists.ts`: the general `isVarDeclarationList`
+   and the module-init list predicates. The three inline copies of its flag
+   test (`ir/with-environment.ts`, `ir/analysis/loop-shape.ts`,
+   `codegen/declarations/object-shape-widening.ts`) call it. The plan's "no
+   new module" was wrong: the module exists so legacy's registration reads the
+   list predicate without a new codegen→ir import edge.
+4. **Fixed — repeated condition.** `isScriptVarList(list)` in select.ts serves
+   all four sites; the `var` statement and the `for` arm compute it once and
+   pass it to `isPhase1VarDeclarationList`.
+5. **Fixed.** The codegen helper is a predicate, `isScriptForHeadVar`, with
+   the resolver's script-only test; the call site keeps the ternary.
+6. **Fixed.** `isModuleBindingDeclaration` branches on the declaration kind.
+7. **Fixed.** Stale import tag removed; `moduleInitBindings` doc names heads.
+
+**Re-measured** at `bab312aea8`, same 1,103 files, both lanes: identical to
+the first head (every binary byte-identical to `c7df95521c`'s), so the table
+above holds: +16 IR-only per lane, 0 lost, 0 new post-claim errors, 16/16
+pass on both sides, playground 26/26 identical (re-run). Gates pass bare:
+loc, func (also against origin/main `5ef8f0aae5`), coercion, oracle, dead
+exports, typecheck, import cycles, standalone arms, IR layering, flat dir;
+compiler boundaries as on main. Tests: lever-l, var-pattern-heads,
+for-head-destructuring, script-var, uninitialized-var: 227/227.
