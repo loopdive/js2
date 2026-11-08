@@ -111,6 +111,7 @@ import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imp
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
 import { lowersAsPreparedComponent } from "./prepared-component-ownership.js";
 import { admitAmbientGlobalFunctionCall } from "./ambient-global-function-call.js";
+import { admittedBuiltinProtoMember, type BuiltinProtoMemberLane } from "./builtin-proto-member.js";
 import { objectCreateDescriptorMap } from "./object-create-call.js";
 import {
   isAffineThreeDeepElementAccess,
@@ -741,6 +742,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * the member. Undefined ⇒ false: such reads stay refused.
    */
   readonly builtinProtoCompanionSeeded?: boolean;
+  /** (#7294) `<builtin>.prototype.<member>`'s kind when its support function answers it on this lane. */
+  readonly builtinProtoMember?: (builtin: string, member: string, anchor: ts.Node) => "method" | "getter" | undefined;
   /**
    * #2952 slice 5 — certify that this exact `for (head in receiver)` source
    * expression uses the non-fast dynamic externref carrier. The callback is
@@ -5726,9 +5729,9 @@ function recordForInitLeaks(stmt: ts.ForStatement, scope: Set<string>): void {
 
 /**
  * Slice 12 (#1280): the `update` clause of a `for` loop. Same as
- * Phase-1 expressions plus postfix `i++` / `i--` on identifiers in
+ * Phase-1 expressions plus `i++` / `++i` / `i--` / `--i` on identifiers in
  * scope (which the body-statement layer accepts as an
- * ExpressionStatement but `isPhase1Expr` does not — postfix is a
+ * ExpressionStatement but `isPhase1Expr` does not — an update is a
  * mutation, not a pure expression).
  */
 function isPhase1ForUpdateExpr(
@@ -5752,15 +5755,16 @@ function isPhase1ForUpdateExpr(
     if (!isPhase1ForUpdateExpr(expr.left, scope, localClasses)) return false;
     return isPhase1ForUpdateExpr(expr.right, scope, localClasses);
   }
-  if (ts.isPostfixUnaryExpression(expr)) {
-    const op = expr.operator;
-    if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
-      if (!ts.isIdentifier(expr.operand)) return false;
-      if (identifierUpdateRefusal(expr.operand, expr, scope) !== undefined) return false;
-      clearProjectionBinding(expr.operand.text);
-      return true;
-    }
-    return false;
+  // (#7106 lever L2) The update's value is discarded, so prefix and postfix are
+  // the same write: `lowerForUpdateExpr` lowers both through `lowerIncrementDecrement`.
+  if (
+    (ts.isPostfixUnaryExpression(expr) || ts.isPrefixUnaryExpression(expr)) &&
+    (expr.operator === ts.SyntaxKind.PlusPlusToken || expr.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    if (!ts.isIdentifier(expr.operand)) return false;
+    if (identifierUpdateRefusal(expr.operand, expr, scope) !== undefined) return false;
+    clearProjectionBinding(expr.operand.text);
+    return true;
   }
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
@@ -8757,6 +8761,14 @@ function selectorObjectCreateDescriptorMap(expr: ts.CallExpression) {
   });
 }
 
+/** (#7294) The lane's answers the builtin-prototype member admission reads. */
+function selectorBuiltinProtoMemberLane(): BuiltinProtoMemberLane {
+  return {
+    isLibOnlyBinding: (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true,
+    builtinProtoMember: currentSelectionOptions?.builtinProtoMember,
+  };
+}
+
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
   return (
     currentSelectionOptions?.isAmbientBinding?.(node) === true ||
@@ -9117,6 +9129,12 @@ function selectorDynamicLaneIn(
   );
 }
 
+/** A fresh wrapper operand needs the backend's ToPrimitive lowering (#4208 S4); refuses at `at`. */
+function selectorWrapperToPrimitiveSupported(at: ts.Node): boolean {
+  if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") === true) return true;
+  return capabilityNo("operand-coercion-unsupported", "expr-wrapper-to-primitive-target", at);
+}
+
 /**
  * The generic binary tail (#7144, #7106). A fresh primitive wrapper operand is
  * the dynamic carrier of its ToPrimitive (#4208 S4), and compares by identity
@@ -9136,9 +9154,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
   const left = leftWrapper ? "dynamic" : binaryOperandFamily(expr.left, scope, localClasses);
   const right = rightWrapper ? "dynamic" : binaryOperandFamily(expr.right, scope, localClasses);
   if (leftWrapper || rightWrapper) {
-    if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") !== true) {
-      return capabilityNo("operand-coercion-unsupported", "expr-wrapper-to-primitive-target", expr);
-    }
+    if (!selectorWrapperToPrimitiveSupported(expr)) return false;
     const other = leftWrapper ? right : left;
     if (
       wrapperComparisonIsIdentity(binOp, leftWrapper, rightWrapper) ||
@@ -11836,6 +11852,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (expr.operator === ts.SyntaxKind.TildeToken && !expressionIsProvenNumber(expr.operand)) {
       return shapeNo("expr-tilde-nonnumeric", expr.operand);
     }
+    // Unary `-`/`+` ToNumber a fresh wrapper through the binary operands' ToPrimitive (#4208 S4, #7144).
+    if (
+      (expr.operator === ts.SyntaxKind.MinusToken || expr.operator === ts.SyntaxKind.PlusToken) &&
+      selectorPrimitiveWrapperConstruction(expr.operand, scope, localClasses) !== null
+    ) {
+      return selectorWrapperToPrimitiveSupported(expr);
+    }
     return isPhase1Expr(expr.operand, scope, localClasses);
   }
   if (ts.isBinaryExpression(expr)) {
@@ -12106,6 +12129,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return isPhase1ConditionalParts(expr, scope, localClasses);
   }
   if (ts.isCallExpression(expr)) {
+    if (admittedBuiltinProtoMember(expr, selectorBuiltinProtoMemberLane()) !== undefined) return true; // (#7294)
     // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
     // `__propertyIsEnumerable(obj, name)` aliases: the lane's own-property
     // provider over two carriers (legacy's `call-object-builtins.ts` arm).
@@ -12795,6 +12819,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // class instance (recv is Phase-1; lowerer dispatches by the recv's
   // resolved IrType).
   if (ts.isPropertyAccessExpression(expr)) {
+    if (admittedBuiltinProtoMember(expr, selectorBuiltinProtoMemberLane()) !== undefined) return true; // (#7294)
     // (#7106 S1e) `arguments.length` — the invocation's actual argument count.
     if (phase1ArgumentsLengthRead(expr, scope)) return true;
     // (#7106 module-init lever A) `Number.MAX_VALUE`, `Math.PI`, … — a constant.
