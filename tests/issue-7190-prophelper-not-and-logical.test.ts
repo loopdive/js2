@@ -265,8 +265,12 @@ describe("#7190 propertyHelper — `!` over a descriptor read and `&&` over exac
 
     it(`${lane}: a non-null string slot is refused before the claim, not withdrawn`, { timeout: 180_000 }, async () => {
       const result = await compileAssembled(join(fixtureDir, "string-keys.js"), lane);
+      // (#7277) The `name` slot no longer reaches the divergence guard: the
+      // resolver adopts legacy's call-site-refined slot. Selection still
+      // refuses both helpers, now at the move-only scan of `name`, and
+      // `compileAssembled` asserts neither is withdrawn after a claim.
       for (const name of ["verifyNotEnumerable", "verifyConfigurable"]) {
-        expect(refusal(result, name), name).toMatch(/^param-dynamic-carrier-diverges-from-legacy:/);
+        expect(refusal(result, name), name).toMatch(/^move-only\[dyn\]:Identifier «name»/);
       }
     });
   }

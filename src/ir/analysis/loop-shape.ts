@@ -21,6 +21,7 @@
  * and `statements/exceptions.ts` import it back down-stack, which is the
  * intended `emit <- ir <- codegen` direction.
  */
+import { isVarDeclarationList } from "../../shared/var-declaration-lists.js";
 import { forEachChild, ts } from "../../ts-api.js";
 import { collectPatternBindingNames, collectReferencedIdentifiers } from "./ast-scope.js";
 import { isLexicalBindingWrite } from "../../shared/binding-writes.js";
@@ -161,10 +162,7 @@ export function varCounterRedeclarationBlocksI32(stmt: ts.ForStatement, name: st
     if (node !== scope && (ts.isFunctionLike(node) || ts.isClassStaticBlockDeclaration(node))) return;
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
       const list = node.parent;
-      if (
-        ts.isVariableDeclarationList(list) &&
-        (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) === 0
-      ) {
+      if (ts.isVariableDeclarationList(list) && isVarDeclarationList(list)) {
         // Another `var <name>`. Our own head is fine; a sibling for-head that
         // is itself the same i32-promotable counter shape is fine (both loops
         // agree on i32); anything else forces the shared local to stay f64.

@@ -1,10 +1,10 @@
 ---
 id: 7275
 title: "IR module-init: builtin prototype objects / builtin functions as values (`Object.getOwnPropertyDescriptor(Date.prototype, \"x\")`, `<Ctor>.prototype.<m>.length`, `Object.create(<proto>)`)"
-status: blocked
+status: in-progress
 sprint: current
 created: 2026-11-06
-updated: 2026-11-06
+updated: 2026-11-07
 priority: high
 horizon: l
 feasibility: hard
@@ -12,12 +12,22 @@ reasoning_effort: high
 task_type: implementation
 area: ir
 goal: ir-full-coverage
-related: [7267, 7253, 7273, 7118, 7127, 7189]
-blocked_by: "each shape needs a new IR provider or a change to legacy's prototype-companion seeding (see Findings)"
+related: [7267, 7253, 7273, 7118, 7127, 7189, 7294]
+blocked_by: "shape 1 `.length`/`.name` and shapes 3-4 still need their providers (see Status by shape)"
 assignee: "ttraenkler/c-lead"
 ---
 
 # #7275: builtin objects and functions as IR values in `<module-init>`
+
+## Status by shape (2026-11-07)
+
+| Shape | Status |
+| --- | --- |
+| 1. `<B>.prototype.<m>` read as a value (`===` / `!==`, call argument, initializer; methods) | **done by #7294**: the same (brand, member) support function as shape 2 |
+| 1. `<B>.prototype.<m>.length` / `.name` | remaining: needs the companion seed decision below |
+| 2. `Object.getOwnPropertyDescriptor(<B>.prototype, "<m>")` | **done by #7294** |
+| 3. `Object.create({}, {…})` | remaining (#7276) |
+| 4. harness `Reflect.construct` / `Function.prototype.call.bind` | remaining |
 
 ## Problem
 

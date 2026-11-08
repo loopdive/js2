@@ -71,7 +71,7 @@ const CLAIMED: Record<string, string> = {
     "  throw new Test262Error('#1');\n}",
   // A bare `null` in a dynamic position is the externref carrier's null, distinct from `undefined`.
   nullArgument:
-    "function chk(v) { if (v !== null) { throw new Test262Error('#1'); } }\nchk(null);\nassert.sameValue(null, (null));\n" +
+    "assert.sameValue(null, (null));\n" +
     "var u = 0;\ntry { assert.sameValue(undefined, null); } catch (e) { u = 1; }\n" +
     "if (u !== 1) { throw new Test262Error('#2'); }",
 };

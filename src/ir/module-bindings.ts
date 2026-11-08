@@ -27,10 +27,10 @@ export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import * as classInstance from "./module-binding-class-instance.js";
 import { regExpMatchUseSupported, regExpMatchWriteMatches } from "./regexp-match-uses.js";
+import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
   carrierLeafReads,
-  isModuleInitVarList,
   moduleBindingDeclarationOrder,
   moduleBindingLexicalFlags as lexicalFlags,
 } from "./module-init-vars.js";
@@ -1003,18 +1003,12 @@ function isModuleBindingDeclaration(
   sourceFile: ts.SourceFile,
 ): candidate is IrModuleBindingDeclaration {
   if (!candidate || candidate.getSourceFile() !== sourceFile) return false;
-  if (ts.isVariableDeclaration(candidate)) {
-    const list = candidate.parent;
-    if (!ts.isIdentifier(candidate.name) || !ts.isVariableDeclarationList(list)) return false;
-    return ts.isVariableStatement(list.parent) && list.parent.parent === sourceFile;
-  }
-  // (#7106 S5) A leaf binds in a script's module-init `var` list.
-  return (
-    ts.isBindingElement(candidate) &&
-    ts.isIdentifier(candidate.name) &&
-    !ts.isExternalModule(sourceFile) &&
-    isModuleInitVarList(bindingDeclarationList(candidate))
-  );
+  const declaration = ts.isVariableDeclaration(candidate) || ts.isBindingElement(candidate) ? candidate : undefined;
+  if (!declaration || !ts.isIdentifier(declaration.name)) return false;
+  // A top-level `VariableStatement`'s own name binds in a script or an ES module.
+  if (isTopLevelStatementDeclaration(declaration)) return true;
+  // (#7106 S5, L, L2) A leaf, a `for` head's or a nested `var`'s name binds in a script's modelled list.
+  return !ts.isExternalModule(sourceFile) && isModuleInitVarList(bindingDeclarationList(declaration));
 }
 
 function uniqueTopLevelVariableDeclaration(
@@ -1098,7 +1092,8 @@ function scriptVarHomeOf(
 ): IrScriptVarHome | undefined {
   if (lexicalFlags(declaration) !== 0) return undefined;
   if (ts.isExternalModule(declaration.getSourceFile())) return undefined;
-  return options?.scriptVarHome?.(declaration);
+  // (#7106 lever L2) Every home passes the one rule for a declaration that may never run.
+  return bindingValue.reachableScriptVarHome(declaration, options?.scriptVarHome?.(declaration));
 }
 
 /**
