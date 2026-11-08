@@ -114,6 +114,29 @@ export function hasDynamicScope(root: ts.Node): boolean {
   return found;
 }
 
+/**
+ * `node` is the name a declaration binds: a variable, parameter, binding
+ * element, function, class or import binding (`x` in `var x`, `function x() {}`,
+ * `import { x } from …`). A `catch (x)` binding is a variable declaration.
+ */
+export function isBindingSiteName(node: ts.Identifier): boolean {
+  const parent = node.parent;
+  return (
+    (ts.isVariableDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isBindingElement(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isImportSpecifier(parent) ||
+      ts.isNamespaceImport(parent) ||
+      ts.isImportClause(parent) ||
+      ts.isImportEqualsDeclaration(parent)) &&
+    (parent as { readonly name?: ts.Node }).name === node
+  );
+}
+
 /** Parentheses and TS type wrappers (`as`, `!`, `satisfies`, `<T>x`) — transparent around a target or a source. */
 export function skipOuterExpressions(expr: ts.Expression): ts.Expression {
   while (

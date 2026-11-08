@@ -16,6 +16,7 @@
  */
 import { ts } from "../ts-api.js";
 import { irWrapperSymbol, irWrapperSymbolIsNameable, parseIrWrapperSymbol } from "./dynamic-method-call-names.js";
+import { isStringSurfaceMethod } from "./string-method-surface.js";
 
 const IR_ARRAY_BORROW_PREFIX = "__ir_arr_borrow_";
 
@@ -53,14 +54,15 @@ function matchPrototypeBorrowCall(
 }
 
 /**
- * (#7106 lever SR) `new String(v).<m>(…args)`: a method called on a fresh
- * wrapper of one argument. Its `this` is only converted by the method
- * (ToString(wrapper) = ToString(v)), so the call is the borrow with receiver
- * `v` and the wrapper's identity is never observed.
+ * (#7106 lever SR) `new String(v).<m>(…args)` for a method the string surface
+ * has a row for: a method called on a fresh wrapper of one argument. Its
+ * `this` is only converted by the method (ToString(wrapper) = ToString(v)), so
+ * the call is the borrow with receiver `v` and the wrapper's identity is never
+ * observed.
  */
 function matchStringWrapperMethodCall(expr: ts.CallExpression): PrototypeBorrowCall | undefined {
   const callee = expr.expression;
-  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.name)) return undefined;
+  if (!ts.isPropertyAccessExpression(callee) || !isStringSurfaceMethod(callee.name.text)) return undefined;
   let wrapper: ts.Expression = callee.expression;
   while (ts.isParenthesizedExpression(wrapper)) wrapper = wrapper.expression;
   if (!ts.isNewExpression(wrapper) || !ts.isIdentifier(wrapper.expression) || wrapper.expression.text !== "String") {

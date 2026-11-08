@@ -10471,11 +10471,16 @@ function lowerStringMethodArgument(
   receiverExpr: ts.Expression,
   cx: LowerCtx,
 ): LoweredStringMethodArgument {
-  const isGlobalUndefined = (identifier: ts.Identifier): boolean =>
-    isGlobalUndefinedIdentifier(identifier, cx.scope, (id) => cx.resolver?.isDirectModuleBinding?.(id) === true);
+  const literal = staticStringMethodArgument(arg, (identifier) =>
+    isGlobalUndefinedIdentifier(identifier, cx.scope, (id) => cx.resolver?.isDirectModuleBinding?.(id) === true),
+  );
+  const textual = parameter.role === "search" || parameter.role === "fill";
+  if (literal === "undefined" && (!textual || parameter.omitted !== undefined)) {
+    return { value: omittedStringMethodArgument(parameter.omitted ?? "zero", recv, receiverExpr, cx) };
+  }
   if (parameter.role === "pattern") {
-    const pattern = staticStringPattern(arg, isGlobalUndefined);
-    // invariant (selection): a `pattern` argument is a static source without RegExp syntax.
+    const pattern = staticStringPattern(arg);
+    // invariant (selection): a `pattern` other than `undefined` has a static text.
     if (pattern === undefined) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
@@ -10484,11 +10489,6 @@ function lowerStringMethodArgument(
       );
     }
     return { value: cx.builder.emitStringConst(pattern) };
-  }
-  const literal = staticStringMethodArgument(arg, isGlobalUndefined);
-  const textual = parameter.role === "search" || parameter.role === "fill";
-  if (literal === "undefined" && (!textual || parameter.omitted !== undefined)) {
-    return { value: omittedStringMethodArgument(parameter.omitted ?? "zero", recv, receiverExpr, cx) };
   }
   if (textual && literal !== undefined) return { value: cx.builder.emitStringConst(literal) };
   if (textual) {

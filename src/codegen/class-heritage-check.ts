@@ -34,6 +34,7 @@
 // the code the base tree emitted for it.
 
 import { ts } from "../ts-api.js";
+import { isBindingSiteName } from "../shared/binding-writes.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
@@ -183,18 +184,7 @@ export function bindingIsUniqueAndNeverWritten(id: ts.Identifier, declaration: t
       if (node.text === name) {
         const parent: ts.Node | undefined = node.parent;
         if (parent !== undefined) {
-          const isBindingSite =
-            (ts.isVariableDeclaration(parent) ||
-              ts.isParameter(parent) ||
-              ts.isBindingElement(parent) ||
-              ts.isFunctionDeclaration(parent) ||
-              ts.isFunctionExpression(parent) ||
-              ts.isClassDeclaration(parent) ||
-              ts.isClassExpression(parent) ||
-              ts.isImportSpecifier(parent) ||
-              ts.isNamespaceImport(parent) ||
-              ts.isImportClause(parent)) &&
-            (parent as { name?: ts.Node }).name === node;
+          const isBindingSite = isBindingSiteName(node);
           const isPropertyName =
             (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
             (ts.isPropertyAssignment(parent) && parent.name === node) ||

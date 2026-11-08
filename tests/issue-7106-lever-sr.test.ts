@@ -23,47 +23,106 @@ const CLAIMED: Record<string, Row> = {
   concatEmptyIife: ['"lego".concat(function () {}())', "legoundefined"],
   concatHoistedVar: ['"lego".concat(hoisted)', "legoundefined"],
   indexOfOmitted: ['"abundefined".indexOf()', 2],
+  lastIndexOfOmitted: ['"undefinedxundefined".lastIndexOf()', 10],
   lastIndexOfUndefined: ['"undefinedxundefined".lastIndexOf(undefined)', 10],
   searchOmitted: ['"abc".search()', 0],
   searchUndefined: ['"abc".search(undefined)', 0],
   searchNull: ['"gnulluna".search(null)', 1],
   searchLiteral: ['"abcbc".search("bc")', 1],
+  searchSlash: ['"a/b".search("/")', 1],
   charAtStringNumber: ['"abc".charAt("1")', "b"],
   charAtStringNaN: ['"abc".charAt("x")', "a"],
   sliceStringNumbers: ['"abcdef".slice("1", "3.9")', "bc"],
   substringNull: ['"abc".substring(null, "2")', "ab"],
+  borrowStaticArguments: ["String.prototype.concat.call(5, null)", "5null"],
   wrapperNumber: ["new String(12).charAt(1)", "2"],
   wrapperBoolean: ["new String(true).slice(1)", "rue"],
   wrapperString: ['new String("ab").concat("c")', "abc"],
   wrapperStaticArgument: ["new String(-0).concat(undefined)", "0undefined"],
 };
 
-/** Rows whose argument or receiver is not proven: legacy answers them. */
-const REFUSED: Record<string, Row> = {
-  initializedVar: ['"a".concat(initialized)', "a5"],
-  writtenVar: ['"a".concat(written)', "a7"],
-  nonEmptyIife: ['"a".concat(function () { return 1; }())', "a1"],
-  searchSyntax: ['"a.b".search(".")', 0],
-  searchExtraArgument: ['"abc".search("c", 0)', 2],
-  wrapperObject: ['new String({ toString() { return "o"; } }).charAt(0)', "o"],
-  wrapperNull: ["new String(null).charAt(0)", "n"],
-  wrapperNoArgument: ['new String().concat("a")', "a"],
+/** The receiver's effect comes before the argument's: `"101".charAt(2)`, not `"102".charAt(1)`. */
+const EVALUATION_ORDER =
+  'export function wrapperEvaluationOrder(): number { let i = 0; return new String(100 + (i = i + 1)).charAt((i = i + 1)) === "1" ? 1 : 0; }';
+
+/** Rows whose argument, pattern or receiver is not proven, with the reason each is refused. */
+const REFUSED: Record<string, readonly [...Row, code: string]> = {
+  initializedVar: ['"a".concat(initialized)', "a5", "string-method-unsupported"],
+  writtenVar: ['"a".concat(written)', "a7", "string-method-unsupported"],
+  nonEmptyIife: ['"a".concat(function () { return 1; }())', "a1", "string-method-unsupported"],
+  searchSyntax: ['"a.b".search(".")', 0, "string-method-unsupported"],
+  searchBoolean: ['"atrue".search(true)', 1, "string-method-unsupported"],
+  searchExtraArgument: ['"abc".search("c", 0)', 2, "string-method-unsupported"],
+  wrapperObject: ['new String({ toString() { return "o"; } }).charAt(0)', "o", "string-method-unsupported"],
+  wrapperNull: ["new String(null).charAt(0)", "n", "string-method-unsupported"],
+  wrapperNoArgument: ['new String().concat("a")', "a", "constructor-resolution-unsupported"],
+  wrapperNoRow: ['new String("ab").valueOf()', "ab", "constructor-resolution-unsupported"],
 };
 
 const BINDINGS = "var hoisted: any;\nvar initialized: any = 5;\nvar written: any;\nwritten = 7;";
 
 /**
- * A program that may patch the prototype a borrowed or `search` row reads
- * keeps it legacy; compiled, not run. (A direct call on a primitive, such as
- * `"a".concat(null)`, ignores a patched `String.prototype` on both paths
+ * A program whose prelude makes a row's static reading unsound keeps the row
+ * legacy, refused at the string-method surface. Legacy's own answer to these
+ * rows is wrong on both lanes (measured on the lever P base: it ignores the
+ * patch or the computed write), so they are compiled, not compared; a read of
+ * another function's `var` must still throw. (A direct call on a primitive,
+ * such as `"a".trim()`, ignores a patched `String.prototype` on both paths
  * already; that gap predates this lever.)
  */
-const PATCHED: Record<string, readonly [patch: string, body: string]> = {
-  stringWrapper: [
-    'String.prototype.charAt = function () { return "patched"; };',
-    'new String("ab").charAt(0) === "a" ? 1 : 0',
-  ],
-  regexpSearch: ["RegExp.prototype.exec = function () { return null; };", '"abc".search("b") === 1 ? 1 : 0'],
+const GUARDED: Record<string, { prelude: string; body: string; expected: string | number; throws?: true }> = {
+  patchedStringWrapper: {
+    prelude: 'String.prototype.charAt = function () { return "patched"; };',
+    body: 'new String("ab").charAt(0)',
+    expected: "patched",
+  },
+  patchedRegExpSearch: {
+    prelude: "RegExp.prototype.exec = function () { return null; };",
+    body: '"abc".search("b")',
+    expected: -1,
+  },
+  patchedRegExpSearchOmitted: {
+    prelude: "RegExp.prototype.exec = function () { return null; };",
+    body: '"abc".search()',
+    expected: -1,
+  },
+  patchedRegExpSearchBorrow: {
+    prelude: "RegExp.prototype.exec = function () { return null; };",
+    body: 'String.prototype.search.call("abc")',
+    expected: -1,
+  },
+  patchedObjectSearch: {
+    prelude: "(Object.prototype as any)[Symbol.search] = function () { return 42; };",
+    body: '"abc".search("b")',
+    expected: 42,
+  },
+  aliasedRegExp: {
+    prelude: "var R: any = RegExp; R.prototype.exec = function () { return null; };",
+    body: '"abc".search("b")',
+    expected: -1,
+  },
+  aliasedStringBorrow: {
+    prelude: 'var S: any = String; S.prototype.charAt = function () { return "P"; };',
+    body: 'String.prototype.charAt.call("ab", 0)',
+    expected: "P",
+  },
+  varOfAnotherFunction: {
+    prelude: "function declares() { var elsewhere: any; }",
+    body: '"a".concat(elsewhere)',
+    expected: "unreached",
+    throws: true,
+  },
+  globalNameVar: { prelude: "var NaN: any;", body: '"a".concat(NaN)', expected: "aNaN" },
+  computedGlobalWrite: {
+    prelude: 'var viaThis: any; var key = "viaThis"; (this as any)[key] = "set";',
+    body: '"a".concat(viaThis)',
+    expected: "aset",
+  },
+  indirectEval: {
+    prelude: "var viaEval: any; (0, eval)(\"viaEval = 'set'\");",
+    body: '"a".concat(viaEval)',
+    expected: "aset",
+  },
 };
 
 function source(cases: Record<string, Row>): string {
@@ -103,27 +162,32 @@ async function compileTarget(text: string, target: CompileTarget): Promise<Compi
 
 describe("#7106 lever SR — string receivers and arguments", () => {
   it.each<CompileTarget>([undefined, "standalone"])("claims proven rows and answers as JS (%s)", async (target) => {
-    const result = await compileTarget(source(CLAIMED), target);
+    const result = await compileTarget(`${source(CLAIMED)}\n${EVALUATION_ORDER}`, target);
     const exports = await instantiate(result);
-    for (const name of Object.keys(CLAIMED)) {
+    for (const name of [...Object.keys(CLAIMED), "wrapperEvaluationOrder"]) {
       expect(outcome(result, name), name).toMatchObject({ irBodyEmitted: true });
       expect(exports[name]!(), name).toBe(1);
     }
   });
 
   it.each<CompileTarget>([undefined, "standalone"])("keeps unproven rows legacy (%s)", async (target) => {
-    const result = await compileTarget(source(REFUSED), target);
+    const rows = Object.fromEntries(
+      Object.entries(REFUSED).map(([name, [body, expected]]) => [name, [body, expected]]),
+    );
+    const result = await compileTarget(source(rows as Record<string, Row>), target);
     const exports = await instantiate(result);
-    for (const name of Object.keys(REFUSED)) {
-      expect(outcome(result, name)?.irBodyEmitted, name).not.toBe(true);
+    for (const [name, [, , code]] of Object.entries(REFUSED)) {
+      expect(outcome(result, name), name).toMatchObject({ irBodyEmitted: false, code });
       expect(exports[name]!(), name).toBe(1);
     }
   });
 
-  for (const [name, [patch, body]] of Object.entries(PATCHED)) {
-    it.each<CompileTarget>([undefined, "standalone"])(`keeps ${name} legacy after a patch (%s)`, async (target) => {
-      const result = await compileTarget(`${patch}\nexport function row(): number { return ${body}; }`, target);
-      expect(outcome(result, "row")?.irBodyEmitted).not.toBe(true);
+  for (const [name, { prelude, body, expected, throws }] of Object.entries(GUARDED)) {
+    it.each<CompileTarget>([undefined, "standalone"])(`keeps ${name} legacy (%s)`, async (target) => {
+      const row = `export function row(): number { return ${body} === ${JSON.stringify(expected)} ? 1 : 0; }`;
+      const result = await compileTarget(`${prelude}\n${row}`, target);
+      expect(outcome(result, "row")).toMatchObject({ irBodyEmitted: false, code: "string-method-unsupported" });
+      if (throws) expect((await instantiate(result)).row!).toThrow();
     });
   }
 });

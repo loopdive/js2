@@ -8,7 +8,7 @@
 //
 // Pure data and pure functions: no builder, no checker.
 
-import { isAlwaysUndefinedVar } from "../shared/always-undefined-binding.js";
+import { isAlwaysUndefinedVar, isEmptyFunctionCall } from "../shared/always-undefined-binding.js";
 import { stripParens } from "../shared/binding-writes.js";
 import { ts } from "../ts-api.js";
 import type { IrBackendKind } from "./analysis/backend-legality.js";
@@ -60,8 +60,12 @@ export interface StringMethodPlan {
   readonly asciiHelper?: string;
   readonly parameters: readonly StringMethodParameter[];
   readonly result: StringMethodResult;
-  /** At most this many source arguments, where the helper takes more parameters (`search`'s hidden position). */
-  readonly arity?: number;
+  /**
+   * `search`: the call goes through RegExpCreate and the `@@search` lookup
+   * (§22.1.3.23), so it holds only while the realm's `RegExp`, `String` and
+   * `Object` prototypes are its own, whatever the arguments.
+   */
+  readonly readsRegExpProtocol?: true;
   /** Both arguments literals, on a backend with the literal replace (`supportsLiteralStringReplace`). */
   readonly literalArguments?: true;
   /** A one-argument call over two immutable literal strings folds to this answer. */
@@ -71,6 +75,8 @@ export interface StringMethodPlan {
 interface StringMethodRow extends Omit<StringMethodPlan, "helper"> {
   /** The helper per backend; a backend with neither a helper nor the typed intrinsic has no plan. */
   readonly helpers: Partial<Record<IrBackendKind, string>>;
+  /** At most this many source arguments, where the helper takes more parameters (`search`'s hidden position). */
+  readonly arity?: number;
 }
 
 const position = (omitted: StringArgumentDefault): StringMethodParameter => ({ role: "position", omitted });
@@ -152,6 +158,7 @@ const ROWS: Readonly<Record<string, StringMethodRow>> = Object.freeze({
     parameters: [{ role: "pattern", omitted: "empty" }, position("zero")],
     arity: 1,
     result: "index",
+    readsRegExpProtocol: true,
   },
   replace: replaceRow("__str_replace"),
   // (#7313) The same `$`-pattern GetSubstitution helper legacy calls.
@@ -171,7 +178,7 @@ export function stringMethodPlan(backend: IrBackendKind, method: string, argCoun
   const required = row.parameters.filter((parameter) => parameter.omitted === undefined).length;
   if (argCount < required || argCount > (row.arity ?? row.parameters.length)) return null;
   const { typedIntrinsic, flatSubstringReceiverPrefersLegacy, asciiHelper, parameters, result } = row;
-  const { literalArguments, fold } = row;
+  const { readsRegExpProtocol, literalArguments, fold } = row;
   return {
     helper,
     typedIntrinsic,
@@ -179,9 +186,15 @@ export function stringMethodPlan(backend: IrBackendKind, method: string, argCoun
     asciiHelper,
     parameters,
     result,
+    readsRegExpProtocol,
     literalArguments,
     fold,
   };
+}
+
+/** Whether `method` has a row on any backend: the methods a `String.prototype` call can be planned for. */
+export function isStringSurfaceMethod(method: string): boolean {
+  return stringMethodRow(method) !== undefined;
 }
 
 /** Whether `symbol` names a WasmGC string-method helper (the resolver materialises them on demand). */
@@ -214,39 +227,23 @@ export function staticStringMethodArgument(
   return arg.kind === ts.SyntaxKind.NullKeyword ? "null" : undefined;
 }
 
-/** `function () {}()`: a call with no arguments of a function expression with no parameters and an empty body. */
-export function isEmptyFunctionCall(expression: ts.Expression): boolean {
-  if (!ts.isCallExpression(expression) || expression.arguments.length !== 0) return false;
-  const callee = stripParens(expression.expression);
-  return (
-    ts.isFunctionExpression(callee) &&
-    callee.asteriskToken === undefined &&
-    callee.modifiers === undefined &&
-    callee.parameters.length === 0 &&
-    callee.body.statements.length === 0
-  );
-}
-
 /** (#7106 lever SR) ToNumber of a string-literal argument in a number role (StringToNumber, §7.1.4.1.1). */
 export function staticStringNumber(expression: ts.Expression): number | undefined {
   const arg = stripParens(expression);
   return ts.isStringLiteralLike(arg) ? Number(arg.text) : undefined;
 }
 
-/** RegExp pattern syntax characters (§22.2.1 SyntaxCharacter): a source without them matches its own text. */
-const REGEXP_SYNTAX = /[\\^$.*+?()[\]{}|/]/;
+/** The RegExp SyntaxCharacters (§22.2.1): a pattern without them matches its own text. */
+const REGEXP_SYNTAX = /[\\^$.*+?()[\]{}|]/;
 
 /**
- * (#7106 lever SR) The literal text a static `pattern` argument matches, or
- * `undefined` when it is not static or has RegExp syntax: RegExpCreate(p) has
- * source `""` for `undefined` and ToString(p) otherwise.
+ * (#7106 lever SR) The text a `pattern` argument other than `undefined`
+ * matches, or `undefined` when it has none: `null` (ToString, with no
+ * `@@search` lookup, §22.1.3.23 step 2) or a string literal without RegExp
+ * syntax. An `undefined` pattern takes the parameter's omitted default.
  */
-export function staticStringPattern(
-  expression: ts.Expression,
-  isGlobalUndefined: (identifier: ts.Identifier) => boolean,
-): string | undefined {
-  const value = staticStringMethodArgument(expression, isGlobalUndefined);
-  if (value !== undefined) return value === "undefined" ? "" : value;
+export function staticStringPattern(expression: ts.Expression): string | undefined {
   const arg = stripParens(expression);
+  if (arg.kind === ts.SyntaxKind.NullKeyword) return "null";
   return ts.isStringLiteralLike(arg) && !REGEXP_SYNTAX.test(arg.text) ? arg.text : undefined;
 }

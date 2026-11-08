@@ -87,7 +87,7 @@ func-budget-allow:
   # 2026-11-07 (lever W, review round 1): the unary `-`/`+` wrapper-operand arm, refusing through the shared `selectorWrapperToPrimitiveSupported` (+7)
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select.ts::collectCallGraph
-  # 2026-11-08 (lever SR, +1): an empty IIFE argument adds no call edge (`isEmptyIifeArgument`); also restates lever P's +7 indirect-route walk, whose ceiling main's baseline refresh reset
+  # 2026-11-08 (lever SR, review round 1, +2): an unevaluated string-method argument adds no call edge (`isUnevaluatedStringMethodArgument`); also restates lever P's +7 indirect-route walk, whose ceiling main's baseline refresh reset
   - src/ir/select.ts::buildLocalCallGraph
   - src/ir/select.ts::whyNotIrClaimable
   - src/codegen/index.ts::planIrOverlay
@@ -7234,7 +7234,14 @@ Each argument conversion is the method's own, per ES2024 §22.1.3 (ES5 §15.5.4)
     - every binding site of the name is an initializer-less `var` declarator;
     - nothing writes it (no store, `delete`, `defineProperty` or member write
       of that name, so no `this.x = v` either);
-    - no `with` or direct `eval`.
+    - no `with`, no `eval` or `Function` identifier (direct or indirect), no
+      reflective route.
+  - (Review round 1) The read must sit inside the function or script that
+    declares one of those declarators, so a read cannot fall through to an
+    undeclared global. `arguments` is never proven. A script-level declarator
+    is a global-object property, so it declines for a name the host already
+    defines (`GLOBAL_VALUE_NAMES`: `NaN`, `Array`, `console`, …) and when
+    `this` or `globalThis` escapes (`this[k] = v`, `Object.assign(this, …)`).
   - The read has no side effect, so not evaluating it is exact.
 - **Empty IIFE argument** (`function(){}()`, no parameters, no arguments, an
   empty body, not a generator or async): the value is `undefined` and the call
@@ -7254,8 +7261,9 @@ Each argument conversion is the method's own, per ES2024 §22.1.3 (ES5 §15.5.4)
   (ToString) parameter, no omitted default. `concat()` with no argument is out
   of scope: a nullish argument must not take the empty default, and one file
   does not pay for the extra parameter rule.
-- **`search(p)` with a static pattern** (none, `undefined`, `null`, `true`,
-  `false`, or a string literal without RegExp syntax characters):
+- **`search(p)` with a static pattern** (none, `undefined`, `null`, or a
+  string literal without RegExp SyntaxCharacters; review round 1 dropped
+  `true`/`false`, whose `@@search` lookup reads `Boolean.prototype`):
   - ES2024 §22.1.3.23:
     - for a nullish pattern, GetMethod is skipped and the RegExp is created
       from the pattern;
@@ -7267,9 +7275,12 @@ Each argument conversion is the method's own, per ES2024 §22.1.3 (ES5 §15.5.4)
       `search` is `indexOf(text, 0)`.
   - New argument role `pattern`, row over `__str_indexOf` with one user
     argument (extra arguments are refused) and a hidden zero position.
-  - Trust boundary: refused when the source may patch `RegExp.prototype` or
-    `String.prototype` (`sourceMayPatchPrototype`) or names a reflective route
-    (`sourceNamesReflectiveRoute`). `RegExp` joins the patchable intrinsics.
+  - Trust boundary: refused when the source may patch `RegExp.prototype`,
+    `String.prototype` or `Object.prototype` (a string pattern's `@@search`
+    lookup reaches `Object.prototype`), or names a reflective route. `RegExp`
+    joins the patchable intrinsics. (Review round 1) The guard is a property
+    of the row (`readsRegExpProtocol`), checked once per call, so `search()`
+    with no argument is guarded too.
 - **`match(null)`:** returns an array; out of scope.
 - **Fresh `new String(v)` receiver** (exactly one argument `v`, a proven
   string, number or boolean, on the ambient `String`):
@@ -7307,10 +7318,10 @@ Each argument conversion is the method's own, per ES2024 §22.1.3 (ES5 §15.5.4)
   - the `pattern` role is proven only for a static pattern, behind its trust
     boundary;
   - a static argument is not walked by `isPhase1Expr`, because lowering never
-    lowers it. The same fact is applied at the two other walks that would
-    otherwise see it: the local call graph adds no edge for an empty IIFE
-    argument, and the throw-value module-scalar walk skips a static argument
-    of a borrow (`isStaticBorrowArgument`), since neither is ever evaluated.
+    lowers it. The same fact (`isUnevaluatedStringMethodArgument`) is
+    applied at the two other walks that would otherwise see it: the local call
+    graph adds no edge for it, and the throw-value module-scalar walk skips
+    it, since it is never evaluated.
 - **`from-ast.ts`:** `lowerStringMethodArgument` lowers a number-role string
   literal as its `f64` ToNumber through the existing numeric path, and the
   `pattern` role as its static text. `omittedStringMethodArgument` gains the
@@ -7379,7 +7390,7 @@ Each argument conversion is the method's own, per ES2024 §22.1.3 (ES5 §15.5.4)
   `String.prototype` method on both the legacy and the IR path, measured on the
   base and the head alike. The borrow, the wrapper receiver and the `search`
   pattern are behind the trust boundary; the direct surface never was.
-- **Grant:** `buildLocalCallGraph` +1 for the empty-IIFE call edge, which also
+- **Grant:** `buildLocalCallGraph` +2 for the unevaluated-argument call edge, which also
   restates lever P's +7 against main's refreshed ceiling.
 - **Gates:**
   - equivalence gate: 0 new regressions (4850 passing);
@@ -7387,3 +7398,25 @@ Each argument conversion is the method's own, per ES2024 §22.1.3 (ES5 §15.5.4)
   - loc and func budgets, at the fork point and against `origin/main`:
     green;
   - coercion, oracle-ratchet, dead-exports and typecheck: green.
+
+### Review round 1 (fresh-context adversarial review, 2026-11-08)
+
+| # | finding | verdict |
+| --- | --- | --- |
+| 1 | `search()` with no argument skipped the patch guard | fixed: `readsRegExpProtocol` row flag, checked once in `stringMethodSelection` |
+| 2 | the `var` proof was not tied to scope; `arguments`, `NaN`/`Infinity` | fixed: the read must lie in a declaring scope; `arguments` and host-global names decline |
+| 3 | proof weaker than `bindingIsUniqueAndNeverWritten` | fixed: `eval`/`Function` identifiers, reflective routes, and an escaping `this`/`globalThis` decline |
+| 4 | `@@search` reads `Object.prototype` / `Boolean.prototype`; constructor aliases | fixed: `Object` in the guard, boolean patterns refused, and any escape of a patchable constructor (`var R = RegExp`) counts as may-patch; a constructor used only as a borrowed array method's callback (assert.js `Array.prototype.map.call(a, String)`) stays inert |
+| 5 | `isBindingName` duplicated codegen's binding-site test | fixed: one `isBindingSiteName` in `shared/binding-writes.ts`, used by both |
+| 6 | four walks, three predicates for an unevaluated argument | fixed: one `isUnevaluatedStringMethodArgument`, keyed on the parent call (a borrow over a primitive or a direct call on a proven string, with a plan); `isEmptyFunctionCall` moved next to the `var` proof |
+| 7 | `arity` on the plan; `undefined → ""` encoded twice | fixed: `arity` is a row field; an `undefined` pattern takes the omitted default only |
+| 8 | `const t = s.substring(1)` borrow reaching the "borrow has no plan" invariant | rebutted: no such receiver passes selection; every spelling tried (unannotated, annotated, `as string`, `!`, parenthesised, module `const`, wrapper) is refused at `expr-string-borrow-receiver` on lever P and on SR, with 0 post-claim errors |
+| 9 | the wrapper matcher matched any method name | fixed: only names with a surface row (`isStringSurfaceMethod`) |
+| 10 | tests | fixed: refusal reason asserted; guarded rows for 1–4 (legacy's own answer is wrong on them, measured, so they assert the refusal and are not compared); `lastIndexOf()`, `search(true)`, a static-argument `.call` borrow and a receiver-before-argument evaluation-order row added |
+| 11 | nits | fixed: `/` is not a SyntaxCharacter; stale doc; module header; `prototypeOwner` reads a set |
+
+**Result after round 1** (same 706 files, base lever P `8af326da35`): per lane
+IR-only 100 → 123, gain 23, 0 lost, 0 units newly legacy, 0 post-claim
+errors, 669 binaries byte-identical, every changed binary a newly claimed
+file. Runner pass/fail on the 23: 23/23 pass on both lanes, 0 pass→fail.
+Playground examples byte-identical on both lanes.
