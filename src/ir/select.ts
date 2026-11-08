@@ -1247,7 +1247,7 @@ export function planIrCompilation(
       // (#3142 Slice 2) The module-init assessment is claim-feeding now, so
       // production selections carry it too — a module can have a claimable
       // init unit (zero local calls) even with no claimed functions.
-      const prodModuleInit = assessModuleInit(sourceFile, new Set<string>(), declByName, localClasses);
+      const prodModuleInit = assessModuleInit(sourceFile, new Set<string>(), declByName, localClasses, typeMap);
       if (individuallyClaimedClassMembers.size === 0) {
         return { funcs: new Set<string>(), moduleInit: prodModuleInit };
       }
@@ -1258,7 +1258,7 @@ export function planIrCompilation(
     for (let i = 0; i < unnamedCount; i++) fallbacks.push({ name: `<unnamed:${i}>`, reason: "unnamed" });
     // (#3142 Slice 1) Module-init assessment — no top-level function is
     // claimed on this path, so any local callee rejects the unit.
-    const moduleInit = assessModuleInit(sourceFile, new Set<string>(), declByName, localClasses);
+    const moduleInit = assessModuleInit(sourceFile, new Set<string>(), declByName, localClasses, typeMap);
     if (individuallyClaimedClassMembers.size === 0) {
       return { funcs: new Set<string>(), fallbacks, moduleInit };
     }
@@ -1361,7 +1361,7 @@ export function planIrCompilation(
   if (!trackFallbacks) {
     // (#3142 Slice 2) Claim-feeding module-init assessment on the production
     // path — same FINAL-claimed-set gating as the telemetry arm below.
-    const prodModuleInit = assessModuleInit(sourceFile, claimed, declByName, localClasses);
+    const prodModuleInit = assessModuleInit(sourceFile, claimed, declByName, localClasses, typeMap);
     return classMembers
       ? { funcs: claimed, classMembers, localCallees: callees, moduleInit: prodModuleInit }
       : { funcs: claimed, localCallees: callees, moduleInit: prodModuleInit };
@@ -1373,7 +1373,7 @@ export function planIrCompilation(
   // (#3142 Slice 1) Module-init assessment against the FINAL claimed set —
   // runs after the Step-2 closure so `call-graph-closure` verdicts match
   // what Slice 2's lowering will actually be able to link against.
-  const moduleInit = assessModuleInit(sourceFile, claimed, declByName, localClasses);
+  const moduleInit = assessModuleInit(sourceFile, claimed, declByName, localClasses, typeMap);
   return classMembers
     ? { funcs: claimed, classMembers, fallbacks, localCallees: callees, moduleInit }
     : { funcs: claimed, fallbacks, localCallees: callees, moduleInit };
@@ -3061,22 +3061,46 @@ function calleeParamIsDynamic(calleeName: string, argIdx: number, typeMap: TypeM
  * claim-then-demote channel the selector is meant to close.
  */
 function bodyCallsDynamicParamCallee(body: ts.Block, typeMap: TypeMap | undefined): boolean {
+  return someDirectLocalCall(body, (_, callee) => calleeHasAnyDynamicParam(callee, typeMap));
+}
+
+/**
+ * (#7305 review B1) Does a direct call under `root` pass a callee's dynamic
+ * parameter a value from-ast's argument coercion cannot carry? `lowerCall`
+ * lowers a bare `null` under the dynamic hint, which only a reference takes
+ * (`nullValueAdmissible`), and an object literal is not `boxableIntoDynamic`.
+ * Functions meet this rule through the move-only scan; `<module-init>` has no
+ * parameters and so no scan, and checks it with this predicate instead.
+ *
+ * This is the syntactic negation of those two refusals at the call boundary.
+ * A value that reaches the call through a binding (`var nv = null; u(nv)`)
+ * is out of its scope: there the binding's initializer is the failing node
+ * (#7328).
+ */
+function callPassesUncarriedDynamicArgument(root: ts.Node, typeMap: TypeMap | undefined): boolean {
+  return someDirectLocalCall(root, (call, callee) =>
+    call.arguments.some((argument, i) => {
+      const value = unwrapPhase1Parens(argument);
+      const uncarried = value.kind === ts.SyntaxKind.NullKeyword || ts.isObjectLiteralExpression(value);
+      return uncarried && calleeParamIsDynamic(callee, i, typeMap);
+    }),
+  );
+}
+
+/** A direct call to a top-level function under `root`, outside nested functions, that `matches`. */
+function someDirectLocalCall(root: ts.Node, matches: (call: ts.CallExpression, callee: string) => boolean): boolean {
   if (currentDynScanDecls === null) return false;
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
-    if (node !== body && ts.isFunctionLike(node)) return;
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      calleeHasAnyDynamicParam(node.expression.text, typeMap)
-    ) {
+    if (node !== root && ts.isFunctionLike(node)) return;
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && matches(node, node.expression.text)) {
       found = true;
       return;
     }
     ts.forEachChild(node, visit);
   };
-  visit(body);
+  visit(root);
   return found;
 }
 
@@ -3334,7 +3358,11 @@ function concreteResultRecoversDynamic(
  *   - `const`/`let` initializer that is exactly a dyn identifier or a
  *     dyn-returning local call — the declared name joins `dynNames`;
  *   - re-assignment `<dynLocal> = <dyn move>`;
- *   - statement-position calls (a dropped dynamic result is fine).
+ *   - statement-position calls (a dropped dynamic result is fine);
+ *   - (#7305) the callee of a statement call through a dynamic value
+ *     (`dynamicValueCallTarget`). Its arguments each become a carrier, so a
+ *     concrete one boxes onto it (`concreteOperandBoxesOntoCarrier`), as S3a's
+ *     `new g()` arguments do; slice 3 lifted the no-box rule above for these.
  *
  * Dually, a position that REQUIRES a dynamic value (dyn-param argument, dyn
  * return) must receive one — a concrete value there would need a box.
@@ -3468,6 +3496,13 @@ function dynamicUsesAreMoveOnly(
     return false;
   };
 
+  /** Arguments that each become a dynamic carrier: a concrete one must box onto it. */
+  const scanCarrierArguments = (args: readonly ts.Expression[]): boolean =>
+    args.every((argument) => {
+      const dynamic = isDynShaped(argument);
+      return (dynamic || concreteOperandBoxesOntoCarrier(unwrap(argument))) && scanExpr(argument, dynamic);
+    });
+
   /** Scan a direct-call's arguments against the callee's per-param verdicts. */
   const scanDirectCallArgs = (e: ts.CallExpression, calleeName: string): boolean => {
     for (let i = 0; i < e.arguments.length; i++) {
@@ -3554,14 +3589,7 @@ function dynamicUsesAreMoveOnly(
     // argument is a dynamic carrier (a concrete one boxes like a member-store
     // value); the result is dynamic.
     if (ts.isNewExpression(e) && dynamicConstructCallee(e) !== null) {
-      if (!expectDyn || !currentDynamicRuntimeBuildable) return false;
-      for (const argument of e.arguments ?? []) {
-        const dynamic = isDynShaped(argument);
-        const concrete = unwrap(argument);
-        if (!dynamic && !concreteOperandBoxesOntoCarrier(concrete)) return false;
-        if (!scanExpr(argument, dynamic)) return false;
-      }
-      return true;
+      return expectDyn && currentDynamicRuntimeBuildable && scanCarrierArguments(e.arguments ?? []);
     }
     if (ts.isCallExpression(e)) {
       // (#7128 S1) A U1 define: literal key and descriptor, result dropped.
@@ -4131,6 +4159,10 @@ function dynamicUsesAreMoveOnly(
       // return is fine here regardless of the callee's return verdict.
       if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
         return scanDirectCallArgs(e, e.expression.text);
+      }
+      // (#7305) A call through a dynamic value: callee and arguments are `__apply_closure` carriers.
+      if (ts.isCallExpression(e) && dynamicValueCallTarget(e)) {
+        return scanExpr(e.expression, true) && scanCarrierArguments(e.arguments);
       }
       return scanExpr(s.expression, false);
     }
@@ -6742,13 +6774,16 @@ function closureFunctionObjectReadLocals(
  * `currentClosureDynamicParamNames` is non-empty only inside a closure that
  * `planMemberClosure` (function-member-closure-planning.ts) minted, and that
  * plan already requires non-fast, native-first, standalone|wasi and the
- * externref dynamic carrier. A top-level subject is never admitted because
- * this set is empty outside a planned closure — and independently, its
- * Phase-1 shape check already refuses `func()` at `expr-local-call-target`
- * (`call-resolution-unsupported`) before the move-only scan runs.
+ * externref dynamic carrier.
  *
- * The match is by identifier text, so a catch binding that shadows the
- * parameter (`catch (func) { func(); }`) also takes the arm; that is sound,
+ * (#7305) A top-level subject takes the arm for its own dynamic PARAMETER
+ * (`currentDynamicParamNames`, the membership `new g()` already uses, #7106
+ * S3a) called in statement position in its own body, when it has no ambient
+ * `this`: it then cannot read `this` after a callee throws. Statement position
+ * only: a call result would be typed by the callee's checker signature (#7287).
+ *
+ * In the closure arm the match is by identifier text, so a catch binding that
+ * shadows the parameter (`catch (func) { func(); }`) also takes it; that is sound,
  * because the catch binding is itself the dynamic carrier on these lanes
  * (`catchIsCarrier`). `var`/`let` shadows are refused at select; nested
  * functions are refused by the plan.
@@ -6756,9 +6791,35 @@ function closureFunctionObjectReadLocals(
 function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
   const callee = expr.expression;
   if (!ts.isIdentifier(callee) || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) return false;
-  if (!currentClosureDynamicParamNames.has(callee.text) && !currentClosureFunctionObjectReadLocals.has(callee.text))
-    return false;
+  const closureCarrier =
+    currentClosureDynamicParamNames.has(callee.text) || currentClosureFunctionObjectReadLocals.has(callee.text);
+  const subjectCarrier =
+    currentDynamicParamNames.has(callee.text) &&
+    !subjectHasAmbientThis() &&
+    ownParameterStatementCall(expr, currentSelectionSubject);
+  if (!closureCarrier && !subjectCarrier) return false;
   return currentDynamicRuntimeBuildable;
+}
+
+/**
+ * (#7305) A statement call through one of `owner`'s own parameters, in
+ * `owner`'s own body. `owner` is a function declaration the selector claims
+ * (a top-level one; class members are out of scope). The call graph reads it
+ * too: such a call is the dynamic call above, never an edge, and a
+ * non-dynamic parameter is refused at Phase-1.
+ *
+ * The walk can leave the source file without meeting `owner`: the call graph
+ * passes `<module-init>`'s synthetic declaration, whose statements are
+ * parented to the source file, and `<module-init>`'s own Phase-1 walk runs
+ * under the last function subject.
+ */
+function ownParameterStatementCall(expr: ts.CallExpression, owner: ts.SignatureDeclaration | null): boolean {
+  const callee = expr.expression;
+  const shaped = owner !== null && ts.isFunctionDeclaration(owner) && ts.isIdentifier(callee);
+  if (!shaped || !ts.isExpressionStatement(expr.parent)) return false;
+  let enclosing: ts.Node | undefined = expr.parent;
+  while (enclosing !== undefined && !ts.isFunctionLike(enclosing)) enclosing = enclosing.parent;
+  return enclosing === owner && owner.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === callee.text);
 }
 
 /**
@@ -13467,6 +13528,7 @@ export function assessModuleInit(
   claimedFuncs: ReadonlySet<string>,
   declByName: ReadonlyMap<string, ts.FunctionDeclaration>,
   localClasses: ReadonlySet<string>,
+  typeMap: TypeMap | undefined,
 ): IrModuleInitAssessment {
   const population = collectModuleInitPopulation(sourceFile);
   if (population.length === 0) return { stmtCount: 0, reason: null };
@@ -13542,6 +13604,14 @@ export function assessModuleInit(
       stmtCount: population.length,
       reason: maskedRejects[0]!.reason,
       detail: maskedRejects.map((entry) => entry.label).join(" | "),
+    };
+  }
+
+  if (population.some((stmt) => callPassesUncarriedDynamicArgument(stmt, typeMap))) {
+    return {
+      stmtCount: population.length,
+      reason: "body-shape-rejected",
+      ...(SHAPE_DIAG_ON ? { detail: "module-init-uncarried-dynamic-argument" } : {}),
     };
   }
 
@@ -13778,6 +13848,10 @@ export function buildLocalCallGraph(
             )
           ) {
             // (#7287) Lowered by from-ast's Stage-4 dynamic call, not an edge.
+            for (const argument of node.arguments) visit(argument);
+            return;
+          } else if (ownParameterStatementCall(node, fn)) {
+            // (#7305) A statement call through the caller's own parameter.
             for (const argument of node.arguments) visit(argument);
             return;
           } else {
