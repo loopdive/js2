@@ -14,20 +14,28 @@ area: ir
 goal: ir-full-coverage
 related: [7106, 7311]
 assignee: "ttraenkler/opus-lever-d"
-# 2026-11-08: the binding rule and every use rule live in
-# src/ir/dynamic-home-open-object.ts. What remains in the god-files is the hook
-# each needs, because it reads or writes the selector's per-subject state:
-# select.ts adds the initializer, define and own-property admissions (which
-# record into #7128's admitted-literal set and the lowering's call map), the
-# scope adapter, the raw-standalone gate, a use-refusal hook in isPhase1Expr's
-# identifier arm and the own-property hook in its call arm. from-ast.ts adds
-# the own-property dispatch in lowerCall; its arm is its own function.
+# 2026-11-08 (review round 1): the binding rule and the allow-list of
+# consumers live in src/ir/dynamic-home-open-object.ts; the never-written proof
+# moved verbatim from codegen/class-heritage-check.ts to src/shared/binding-writes.ts.
+# What remains in the god-files is the hook each needs, because it reads or
+# writes the selector's per-subject state:
+#   - select.ts +89: initializer, define and own-property admissions (they
+#     record into #7128's admitted-literal set and the lowering's call map),
+#     the live query object, the option's doc comment, the unmodelled-var
+#     refusal, and one hook each in trackedModuleInfluenceIsBoolean and
+#     isPhase1Expr's call arm (+1 there);
+#   - from-ast.ts +2 (lowerCall +2): the own-property dispatch, whose arm is its
+#     own function; the moved nested-var predicate nets out;
+#   - codegen/index.ts +1 (planIrOverlay +1): the explicit
+#     `refuseUnmodelledModuleInitVar` lane option.
 loc-budget-allow:
   - src/ir/select.ts
   - src/ir/from-ast.ts
+  - src/codegen/index.ts
 func-budget-allow:
   - src/ir/select.ts::isPhase1Expr
   - src/ir/from-ast.ts::lowerCall
+  - src/codegen/index.ts::planIrOverlay
 ---
 
 # #7335: dynamic module storage for script vars (lever D)
@@ -97,27 +105,47 @@ its own slice only if its gain is non-zero with zero ES5 regressions.
 
 ### Modules
 
-- `src/ir/dynamic-home-open-object.ts` (new) holds the binding rule and every
-  use rule:
-  - `isDeclaration`: the syntactic rule plus legacy's `isOpenObjectBinding`
-    and the resolver's `dynamic` home;
-  - `useIsRefused`: refuses the uses the dynamic operations do not serve:
-    - an inherited `Object.prototype` key read (#7128's U2 key screen);
-    - a loose `==` / `!=`, whose `null` arm has no lowering;
-    - a member write inside a nested function, whose code strictness
-      `dyn.member_set` is not told;
-  - `ownPropertyMethod`: `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)`.
-    It refuses a file that could have replaced the inherited method: a
-    `.<method>` write or delete, or a `"<method>"` string anywhere in the
-    source.
-- `src/ir/select.ts` adds hooks that reuse #7128's state:
-  - the empty-literal arm admits the initializer (`admittedOpenCarrierLiterals`);
-  - `isOpenCarrierDefine` admits a U1 define statement on the binding from any
-    unit;
-  - the call arm admits the own-property test when the lane builds the
-    `native-own-property-test` provider;
-  - the boolean-influence classifier knows that test is an `i32` boolean;
-  - the identifier arm refuses `useIsRefused`.
+- `src/ir/dynamic-home-open-object.ts` (new) holds the binding rule. It
+  answers `isDeclaration`, `isReference` and `ownPropertyMethod`.
+  - **The binding.** A script's top-level unannotated `var o = {}`.
+  - **The proof that nothing else writes it:**
+    - `bindingIsUniqueAndNeverWritten`: declared once and never written in any
+      spelling, destructuring and parenthesized targets included, with no
+      `eval` or `with` in the file;
+    - `sourceWritesMemberNamed`: no member named `o` is stored or defined
+      (`this.o = v` writes a script `var`);
+    - `sourceMayPatchPrototype(file, "Object")` and
+      `sourceNamesReflectiveRoute`: `Object.prototype` is the realm's own.
+  - **The consumers.** Every reference, taken in its outermost parenthesized
+    form, must be on an **allow-list** of the consumers the dynamic operations
+    serve:
+    - a read of an own key (not an `Object.prototype` key);
+    - a plain `=` write in `<module-init>` or a top-level function;
+    - a U1 define (`isOpenCarrierUse`);
+    - an own-property test;
+    - a strict `===` / `!==` operand, a `typeof` operand, a call argument.
+  - Any other reference keeps the whole binding on legacy: an alias, an
+    element access, a loose `==`, a condition, a destructuring target, a
+    nested-closure write.
+  - The verdict is cached per declaration, and the cheap checks run first.
+  - `ownPropertyMethod` admits `o.hasOwnProperty(k)` /
+    `o.propertyIsEnumerable(k)` only where every other mention of the method
+    name is a plain member read and none is written.
+- `src/shared/binding-writes.ts` now holds `bindingIsUniqueAndNeverWritten`,
+  `occurrenceIsWriteTarget` and `isBindingSiteName`. They were moved verbatim
+  from `codegen/class-heritage-check.ts`, which re-exports them, so codegen and
+  the IR share one never-written proof.
+- `src/shared/intrinsic-prototype-writes.ts` takes the #7106 lever SR branch's
+  version verbatim (`sourceNamesReflectiveRoute`, `sourceWritesMemberNamed`,
+  more intrinsics). Main's copy had not changed since SR forked, so the two
+  merge cleanly.
+- `src/ir/select.ts` adds hooks that reuse #7128's state through one live
+  query object (`DYNAMIC_HOME_QUERY`):
+  - the empty-literal arm admits the initializer;
+  - `isOpenCarrierDefine` admits a U1 define on the binding from any unit,
+    through `isOpenCarrierUse`;
+  - the call arm admits and records the own-property test;
+  - the boolean-influence classifier asks the same question as a pure query.
 - `src/ir/from-ast.ts`:
   - `boxConcreteToDynamic` boxes an admitted open-carrier `{}` with the Object
     tag;
@@ -125,18 +153,18 @@ its own slice only if its gain is non-zero with zero ES5 regressions.
   - `lowerOwnPropertyMethodCall` reuses `lowerAliasCarrierOperands` and
     `emitDynOwnProperty`, the certified uncurried aliases' path (#7106 S1g).
 - **Claim-then-demote fix** (found by the census). `for (var k in x)` in
-  `<module-init>` was claimed by the selector and then demoted by lowering
-  ("module-init unit contains a nested var declaration").
+  `<module-init>` was claimed by the selector and then demoted by lowering.
   - The predicate moves from `from-ast.ts` to `src/ir/module-init-vars.ts` as
     `moduleInitContainsUnmodelledVar`.
-  - `assessModuleInit` refuses by it at select, and lowering keeps the same
-    check, so there is one copy.
+  - `assessModuleInit` refuses by it when the explicit
+    `refuseUnmodelledModuleInitVar` option is set. `codegen/index.ts` sets it
+    for the raw standalone target.
 
 ### gc
 
-Every new arm requires the `isOpenObjectBinding` selection option, which only
-the raw `standalone` target sets (`irOpenObjectSelectionOption`). The
-unmodelled-var refusal is gated the same way (`selectingForRawStandalone`).
+The dynamic-home arms need the `isOpenObjectBinding` selection option, which
+only the raw standalone target sets (`irOpenObjectSelectionOption`). The
+unmodelled-var refusal has its own explicit option for the same lane.
 
 The ungated first cut changed one gc binary in the sample
 (`Object/create/15.2.3.5-4-46.js`). The claim-then-demote it replaces leaves
@@ -195,3 +223,60 @@ module-init `var` head.
 
 **Data.** The measuring session's `scratchpad/lever-d/` holds the stub census.
 The A/B rows are in the worktree's `.tmp/`.
+
+## Review round 1 (2026-11-08, PR #7193)
+
+The fresh-context review returned NOT met, with 10 findings. Each was
+reproduced before it was fixed. The tests are rows in
+`tests/issue-7335-dynamic-home-open-object.test.ts`.
+
+1. **Parenthesized receivers and aliases bypassed the use screens.** Fixed:
+   the per-use deny-list is gone. The binding qualifies only when every
+   reference, in its outermost parenthesized form, is on the allow-list. An
+   alias is not on it.
+2. **Writes that the never-written proof missed:** `[o] = [5]`,
+   `({a: o} = …)`, `(o) = 5`, `for ([o] of xs)`, `this.o = v`, eval and with.
+   Fixed: the proof is the shared `bindingIsUniqueAndNeverWritten` plus
+   `sourceWritesMemberNamed`.
+3. **A fourth copy of the binding scan.** Fixed: the proof moved to
+   `src/shared/binding-writes.ts` (with `isBindingSiteName`), and the
+   reference walk is `emptyObjectLiteralBinding`'s.
+4. **`methodMayBeReplaced` was weak.** Fixed:
+   - the binding now needs `!sourceMayPatchPrototype(file, "Object")` and
+     `!sourceNamesReflectiveRoute(file)`;
+   - the own-property test needs every mention of the method name to be a
+     plain member read.
+5. **The lane was inferred from an option's presence.** Fixed: the explicit
+   `refuseUnmodelledModuleInitVar` option, set in `codegen/index.ts`.
+6. **The U1 test was re-inlined.** Fixed: `isOpenCarrierUse` is called.
+7. **Cost.** Fixed:
+   - the verdict is cached per declaration, and the cheap checks run first;
+   - the strictness owner is computed only for member writes;
+   - there is one live query object instead of one allocation per call.
+8. **A type query recorded admissions.** Fixed: the boolean classifier calls
+   the pure `dynamicHomeOwnPropertyMethod`. Only `isPhase1Expr` records.
+9. **Nits:** `Scope` became `DynamicHomeQuery`; the deny-list names are gone;
+   no duck-typed `.name`; the grants state their sizes.
+10. **Tests.**
+    - The refusal rows assert `kind: "unsupported"`, `stage: "select"` and the
+      selector detail.
+    - `f` is asserted IR-claimed.
+    - A trap is told apart from a thrown value.
+    - Rows were added for: parenthesized and alias uses; destructuring,
+      parenthesized and `this.o` writes; eval; `setPrototypeOf`; a replaced
+      method; a ToPropertyKey-running key; an accessor descriptor; a
+      shadowing parameter; `[o.b] = [11]`; a use before the declaration.
+    - **Partly rebutted: the use-before-declaration row.** The input was
+      `function f() { Object.defineProperty(o, 'q', { value: 2 }); }`, then
+      `try { f(); … } catch (e) { if (!(e instanceof TypeError)) throw … }`,
+      then `var o = {};`.
+      - Node throws a TypeError there.
+      - Legacy does not throw; neither does the IR, and it does not trap.
+      - The row therefore asserts that the IR matches legacy and does not
+        trap. This is a legacy gap, not a regression from this slice.
+
+**Re-measured after the review**, on the same base `cf5eac1cf6`:
+- 9 files gained (the same 9), 0 lost, 0 post-claim errors.
+- 367-file hash A/B: 0 gc changes, and the same 10 standalone binaries change.
+  Their hashes are identical to the binaries already run through the A/B, and
+  all 10 pass on base and head.

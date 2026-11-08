@@ -3332,6 +3332,7 @@ function planIrOverlay(
       arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
       dynamicInstanceOfAtLegacyParity: (site) => irDynamicInstanceOfAtLegacyParity(ctx, site), // (#7106)
       ...irOpenObjectSelectionOption(ctx), // (#7128 S1)
+      refuseUnmodelledModuleInitVar: ctx.targetProfile.target === "standalone", // (#7335) gc keeps its demote
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,

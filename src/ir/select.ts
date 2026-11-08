@@ -858,6 +858,14 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly isOpenObjectBinding?: (decl: ts.VariableDeclaration) => boolean;
   /**
+   * (#7335) Refuse a `<module-init>` that holds a `var` list it cannot model
+   * (`moduleInitContainsUnmodelledVar`) at select, rather than claiming it and
+   * letting lowering demote it. Set on the raw standalone target only: on gc the
+   * demote's leftover type registrations reorder the binary, so gc keeps the
+   * demote until its own A/B.
+   */
+  readonly refuseUnmodelledModuleInitVar?: boolean;
+  /**
    * The backend that builds the selection (`IrBackendTargetProfile.backend`):
    * a string method is claimed only where its plan exists. Absent: WasmGC.
    */
@@ -8365,7 +8373,7 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
     return trackedModuleInfluenceIsBoolean(candidate.whenTrue) && trackedModuleInfluenceIsBoolean(candidate.whenFalse);
   }
   if (ts.isCallExpression(candidate)) {
-    if (isDynamicHomeOpenObjectOwnPropertyCall(candidate)) return true; // (#7335) an i32 boolean test
+    if (dynamicHomeOwnPropertyMethod(candidate) !== undefined) return true; // (#7335) an i32 boolean test
     if (expressionIsModuleBindingRootedCall(candidate)) return false;
     return currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "boolean";
   }
@@ -11912,7 +11920,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (expr.text === "undefined" && currentModuleBindingResolver?.isDirectModuleBinding(expr)) {
       return shapeNo("expr-module-undefined-shadow", expr);
     }
-    if (dynamicHome.useIsRefused(expr, dynamicHomeScope())) return shapeNo("expr-open-object-use", expr);
     if (currentModuleBindingResolver?.(expr) !== undefined) return true;
     if (isUnrepresentableModuleBinding(expr)) {
       return shapeNo("expr-module-storage-unrepresentable", expr);
@@ -12690,7 +12697,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return true;
       }
-      if (isDynamicHomeOpenObjectOwnPropertyCall(expr)) return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
+      if (admitDynamicHomeOwnPropertyCall(expr)) return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
       if (expressionTouchesScalarModuleBinding(expr.expression.expression)) {
         if (!isExactF64ScalarToStringCall(expr)) {
           return shapeNo("expr-module-scalar-method", expr);
@@ -13332,19 +13339,15 @@ function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node
 
 /**
  * (#7128 S1) A U1 define on an admitted open-carrier binding, in the current
- * subject's own body; (#7335) or a U1 define statement on a dynamic-home open
- * object, from any unit, since that binding holds the one `$Object` throughout.
+ * subject's own body; (#7335) or a U1 define on a dynamic-home open object,
+ * from any unit, since that binding holds the one `$Object` throughout.
  */
 function isOpenCarrierDefine(call: ts.CallExpression): boolean {
   const target = call.arguments[0];
   if (target === undefined || !ts.isIdentifier(target)) return false;
   if (currentOpenCarrierNames.has(target.text) && enclosingProjectionOwner(call) === currentSelectionSubject)
     return true;
-  return (
-    ts.isExpressionStatement(call.parent) &&
-    openCarrierDefinePlan(call) !== null &&
-    dynamicHome.isReference(target, dynamicHomeScope())
-  );
+  return isOpenCarrierUse(target, isAmbientObjectDefineProperty) && dynamicHome.isReference(target, DYNAMIC_HOME_QUERY);
 }
 
 /**
@@ -13357,7 +13360,7 @@ function isDynamicHomeOpenObjectLiteral(expr: ts.ObjectLiteralExpression): boole
   if (
     !currentSubjectIsModuleInit ||
     !ts.isVariableDeclaration(decl) ||
-    !dynamicHome.isDeclaration(decl, dynamicHomeScope())
+    !dynamicHome.isDeclaration(decl, DYNAMIC_HOME_QUERY)
   ) {
     return false;
   }
@@ -13366,19 +13369,24 @@ function isDynamicHomeOpenObjectLiteral(expr: ts.ObjectLiteralExpression): boole
 }
 
 /**
- * (#7335) `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on a
- * dynamic-home open object, where the lane builds the own-property provider
+ * (#7335) The method of `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on
+ * a dynamic-home open object, where the lane builds the own-property provider
  * the certified uncurried aliases lower to (#7106 S1g).
  */
-function isDynamicHomeOpenObjectOwnPropertyCall(call: ts.CallExpression): boolean {
-  const method = dynamicHome.ownPropertyMethod(call, dynamicHomeScope());
+function dynamicHomeOwnPropertyMethod(call: ts.CallExpression): dynamicHome.OwnPropertyMethod | undefined {
   if (
-    method === undefined ||
     !currentDynamicRuntimeBuildable ||
     currentSelectionOptions?.supportsBackendCapability?.("native-own-property-test") !== true
   ) {
-    return false;
+    return undefined;
   }
+  return dynamicHome.ownPropertyMethod(call, DYNAMIC_HOME_QUERY);
+}
+
+/** (#7335) Admit a {@link dynamicHomeOwnPropertyMethod} call, recording its method for the lowering. */
+function admitDynamicHomeOwnPropertyCall(call: ts.CallExpression): boolean {
+  const method = dynamicHomeOwnPropertyMethod(call);
+  if (method === undefined) return false;
   admittedOwnPropertyCalls.set(call, method);
   return true;
 }
@@ -13390,24 +13398,16 @@ export function admittedOwnPropertyCallMethod(call: ts.CallExpression): dynamicH
   return admittedOwnPropertyCalls.get(call);
 }
 
-/** (#7335) The selector state a dynamic-home open object is judged against. */
-function dynamicHomeScope(): dynamicHome.Scope {
-  return {
-    resolve: currentModuleBindingResolver,
-    isOpenObjectBinding: currentSelectionOptions?.isOpenObjectBinding,
-    enclosingOwner: enclosingProjectionOwner,
-  };
-}
-
-/**
- * (#7335) The raw `standalone` target. `irOpenObjectSelectionOption` is the
- * option's only producer, and it sets it nowhere else; no backend capability
- * can name this lane, because the native-regime gc lane projects to it too
- * (#7128 correction 4).
- */
-function selectingForRawStandalone(): boolean {
-  return currentSelectionOptions?.isOpenObjectBinding !== undefined;
-}
+/** (#7335) The selector state a dynamic-home open object is judged against, read live. */
+const DYNAMIC_HOME_QUERY: dynamicHome.DynamicHomeQuery = {
+  get resolve() {
+    return currentModuleBindingResolver;
+  },
+  get isOpenObjectBinding() {
+    return currentSelectionOptions?.isOpenObjectBinding;
+  },
+  isAmbientDefineProperty: (call) => isAmbientObjectDefineProperty(call),
+};
 
 /** `Object.defineProperty(…)` on the ambient `Object`. */
 function isAmbientObjectDefineProperty(call: ts.CallExpression): boolean {
@@ -13666,9 +13666,7 @@ export function assessModuleInit(
     };
   }
 
-  // (#7335) Raw standalone only: on gc the demote's leftover type registrations
-  // reorder the binary, so gc keeps its claim-then-demote until its own A/B.
-  if (selectingForRawStandalone() && moduleInitContainsUnmodelledVar(population)) {
+  if (currentSelectionOptions?.refuseUnmodelledModuleInitVar === true && moduleInitContainsUnmodelledVar(population)) {
     return {
       stmtCount: population.length,
       reason: "body-shape-rejected",
