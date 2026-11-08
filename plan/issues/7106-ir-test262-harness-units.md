@@ -5709,6 +5709,178 @@ depends on it, not for its own gain.
 - Once this and #7037 have landed, S5 can drop its boolean-leaf refusal, and
   its test can use the shared `runHarnessOn`.
 
+## ES5 lever B: mixed-family operands of the numeric operators (plan, 2026-11-07)
+
+`expr-binary-operand-families` is the only code in **143 ES5 files** on the
+overlay of the blocker map. Lane: #6583 (claimed).
+
+### Census (the 143 files)
+
+- **By directory:** almost all are the `S11.x_A3_T*` "type conversion" tests
+  of `language/expressions`, about 10 files per operator:
+  - `<<` and `>>>`: 11 each;
+  - `&`, `^`, `/`, `>=`, `>`, `<=`, `<`, `%`, `*`, `>>` and `-`: 10 each;
+  - `+`: 8 (`addition`) and 2 (`concatenation`); `grouping`: 1.
+- **By operand family** (a static scan of each body's binary expressions):
+  - 125 files use a fresh primitive wrapper (`new Number` / `new String` /
+    `new Boolean`) beside a primitive: a number, a string, a boolean, `null`
+    or `undefined`;
+  - 14 use an object literal or a function expression (`{} - 1`,
+    `function () {} * {}`), whose ToPrimitive is `Object.prototype`'s;
+  - 4 are primitive-only `+` (`true + true`, `1 + null`, `null + undefined`, …).
+- **The commonest operand pairs** (files, summed over operators), with a number
+  on one side and a boolean, string, `null` or `undefined` on the other:
+  - boolean × number, `Boolean` wrapper × number: 16 each;
+  - boolean × boolean, boolean × `Boolean` wrapper: 14 each;
+  - string × number, `String` wrapper × string, `Number` wrapper × string: 13
+    each.
+- **No user `valueOf` / `toString`.** No file in the 143 makes a user call
+  observable: a wrapper's ToPrimitive is the built-in `valueOf`, and an object
+  literal's is `Object.prototype`'s. Call order is still kept, below.
+
+### What refuses today
+
+`binaryOperandsAdmissible` (`ir/analysis/operand-admissibility.ts`), the one
+predicate that the selector and `lowerBinary` share (#7144), admits a numeric
+reader in these cases only:
+- a numeric reader (`- * / %`, the bitwise operators, the relationals)
+  admits a dynamic operand only beside a dynamic operand or a number;
+- otherwise both sides must share one carrier: two numbers, two i32s, or two
+  strings for a relational.
+
+A fresh wrapper is the dynamic carrier of its ToPrimitive (#4208 S4). So
+`new Number(1) - 1` lowers, but every pair that has a boolean or string beside
+a number or the carrier refuses, e.g. `true * 1`, `"1" - 1`,
+`new String("1") - "1"` and `true < new Boolean(true)`.
+
+### Design
+
+**Rule.** A boolean or string operand of a numeric reader is boxed into the
+dynamic carrier, so the pair takes the existing dynamic arm. Boxing preserves
+both ToNumber and the type test, so nothing new is needed below it:
+- `- * / %` and the bitwise operators: `tryLowerDynamicArithmetic`, i.e.
+  `dyn.to_number` on each side and then `emitNumberBinary`;
+- the relationals: `tryLowerDynamicRelational`, i.e. `dyn.to_number` beside an
+  f64, or `__ir_dyn_lt` / `le` / `gt` / `ge` for two carriers. Those helpers
+  compare two strings as strings and anything else as numbers, which is
+  IsLessThan over primitives (§7.2.13). So `"10" < new String("9")` is still
+  `true`.
+
+**Where it lives.**
+- `binaryOperandsAdmissible` gains one arm, `carrierNumericReaderOperands`.
+  It applies when the operator is a numeric reader, both families are in
+  {number, boolean, string, dynamic} after the `null` / `undefined` →
+  number mapping, at least one is a boolean or a string, and the existing
+  rules refuse the pair.
+  - Pairs that lower today keep their arm: two i32s, two strings for a
+    relational. Their bytes do not change.
+- `lowerBinary` asks the same predicate. For an admitted pair it boxes the
+  boolean / string side with `boxConcreteToDynamic` before the dynamic arm.
+- No new runtime helper and no new IR instruction.
+
+**What it reuses.**
+- The #7066 shape: the shared predicate decides and the builder produces.
+- `boxConcreteToDynamic`, `dyn.to_number`, `emitNumberBinary`, `__ir_dyn_*`.
+- The wrapper's `__to_primitive` boundary (`freshWrapperToDynamic`).
+
+**What duplicate goes.** `tryLowerDynamicRelational` and
+`tryLowerDynamicArithmetic` each re-derive "which operand is not an f64";
+`relOperandToF64` already makes that one decision. No second rule is added.
+
+**Spec order** (§13.15.3 ApplyStringOrNumericBinaryOperator, §7.2.13
+IsLessThan). Both operand expressions are evaluated first, left then right
+(`lowerBinaryOperands`). Then:
+- the arithmetic and bitwise operators run ToNumeric(left) in full before
+  ToNumeric(right): the wrapper's ToPrimitive and `dyn.to_number` are emitted
+  per operand, left first;
+- the relationals run ToPrimitive(left) and then ToPrimitive(right), and only
+  then decide between the string and the numeric comparison.
+
+Boxing a primitive is not observable. A wrapper's `valueOf` stays a real call
+through `__to_primitive`, in this order, so a redefined
+`Number.prototype.valueOf` still sees left before right.
+
+**Out of scope.**
+- The 14 object-literal / function operands. They need ToPrimitive of an
+  ordinary object through `__to_primitive` and a `reference` family in the
+  predicate, which is a follow-up.
+- `+` with booleans / `null` / `undefined` (the 10 `addition` /
+  `concatenation` files). That is the #7066 rule's job: `null` / `undefined`
+  beside a string and numeric `+` over booleans.
+- Unary `-`, `+` and `~`. None of the 143 files needs them.
+
+**Acceptance.**
+- **Correctness:**
+  - the 143 files, a random 400 ES5 files and the playground: 0 pass→fail on
+    both lanes;
+  - 0 new post-claim errors;
+  - IR-only gains reported, and 0 IR-only files lost.
+- **Byte identity:** standalone and gc binaries byte-identical wherever the
+  IR's claim does not change; the equivalence gate green.
+- **Code quality:**
+  - one new arm in the shared predicate, and one boxing step in `lowerBinary`
+    before the existing dynamic arm;
+  - no new helper, instruction or table;
+  - no growth of `select.ts`.
+- **Tests:** `tests/issue-7106-lever-b.test.ts`, on both lanes:
+  - claimed rows for each operator group (arithmetic, bitwise, relational)
+    over boolean, string and wrapper operands, including the string×string
+    relational through a wrapper;
+  - refused rows for the object-literal operand and a `+`.
+
+### Lever B implemented (2026-11-07)
+
+**What landed:** the design above. `carrierNumericReaderOperands` is the new
+arm of `binaryOperandsAdmissible`, which the selector and the builder share.
+`boxNumericReaderOperands` is the boxing step at the end of
+`lowerBinaryOperands`. The rest of `lowerBinary` is unchanged: the boxed pair
+reaches the existing dynamic arm.
+
+**Order cannot be tested on a claimed body.** The only way to observe it is a
+redefined `Number.prototype.valueOf`, and the IR refuses that body
+(`expr-ident-not-in-scope: Number`). The order stays structural: both operands
+are lowered, then each wrapper's `__to_primitive` and `dyn.to_number` run left
+first.
+
+**Measured** (base origin/main 0fa19fca78 against head 7c29b69936,
+standalone and gc).
+- **Population: 543 files.** The 143 sole-blocker files plus a random 400 ES5
+  files (seed 70106).
+- **Results, identical on both lanes:**
+
+  | measure | standalone | gc |
+  | --- | --- | --- |
+  | `<module-init>` moved legacy → IR | 119 | 119 |
+  | legacy units | 1,126 → 1,007 | 1,126 → 1,007 |
+  | newly IR-only files | +119, all lever-B files | +119 |
+  | IR-only files lost | 0 | 0 |
+  | new post-claim errors | 0 | 0 |
+  | changed binaries | the same 119 files | the same 119 files |
+  | pass/fail of those 119, base and head | 119/119 pass | 119/119 pass |
+
+  - The other 424 binaries are byte-identical, and so are the 26 playground
+    binaries.
+- **The 24 lever-B files still refused:**
+  - 10 are `+` (`addition`, `concatenation`), the #7066 rule's job;
+  - 13 are the object-literal / function operand files, one per operator
+    directory;
+  - 1 is `grouping`.
+
+  All 24 refuse at selection.
+
+**Tests.** `tests/issue-7106-lever-b.test.ts` passes 14/14 on both lanes:
+- claimed: the arithmetic, bitwise and relational operators over boolean,
+  string, `null` / `undefined` and wrapper operands, including
+  `"10" < new String("9")`;
+- refused: an object operand, and `true + true`.
+
+**Equivalence gate:** green on all 8 shards. Every failure is among the 22
+the baseline already knows, and there is no new regression.
+
+**Follow-ups, not this lever:**
+- ToPrimitive of an ordinary object as a `reference` operand (13 files);
+- `+` with a boolean, `null` or `undefined` (10 files).
+
 ## ES5 blocker map (2026-11-07)
 
 **What this is.** For every ES5 test262 file on standalone, this map lists
