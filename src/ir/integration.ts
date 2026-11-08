@@ -62,6 +62,7 @@ import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan }
 import { makeIrNativeBufferSurfacePlan, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
 import { isIrNativeBufferRuntimeSymbol } from "../shared/contracts/native-buffer-adapters.js";
 import { irBackendCapabilityQuery, projectIrBackendTargetProfile } from "./backend/legality.js";
+import type { StringBuilderLowering } from "../backend/wasmgc/lowering/wasm-string-builder.js";
 import { nativeBufferSurfaceCapability } from "./capability.js";
 
 import {
@@ -190,6 +191,7 @@ import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983)
 import {
   ambientGlobalFunctionProviderSymbol,
   ensureNativeStringHelpers,
+  nativeStringBuilderTypes,
   STANDALONE_STDOUT_APPEND_FN,
 } from "../codegen/native-strings.js";
 import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
@@ -3943,6 +3945,7 @@ export function compileIrPathFunctions(
         fnctorNativeStringBoundaries: sourceLoweringPlans?.fnctorNativeStringBoundaries,
         returnTypeOverride: null,
         moduleInitUnit: true,
+        functionCodeStrict: irFunctionCodeStrictness(ctx, moduleInitSourceFile),
         moduleBindings,
         calleeTypes,
         ...projectFunctionValueLoweringPlans(sourceLoweringPlans),
@@ -8034,6 +8037,27 @@ function resolvePreparedImportCallable(
   );
 }
 
+/**
+ * (#7291) The builder replaces the owned-append concat, so it follows that
+ * provider's frozen arm: only the native helpers own a builder's buffer.
+ */
+function nativeStringBuilderLowering(
+  ctx: CodegenContext,
+  preparedRuntimeManifest: PreparedIrRuntimeManifest | undefined,
+): StringBuilderLowering | undefined {
+  if (preparedStringConcatProvider(preparedRuntimeManifest, "owned-append")?.arm !== "native") return undefined;
+  ensureNativeStringHelpers(ctx);
+  const flatten = nativeStrHelperHandle(ctx, "__str_flatten");
+  const nextCap = nativeStrHelperHandle(ctx, "__str_buf_next_cap");
+  if (flatten === undefined || nextCap === undefined) {
+    throw new Error("ir/integration: native string builder helpers not registered");
+  }
+  return {
+    types: nativeStringBuilderTypes(ctx),
+    helpers: { flatten, nextCap },
+  };
+}
+
 function makeResolver(
   ctx: CodegenContext,
   unionRegistry: UnionStructRegistry,
@@ -8348,6 +8372,7 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: string_charAt import not registered");
       return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: idx }];
     },
+    resolveStringBuilderLowering: () => nativeStringBuilderLowering(ctx, preparedRuntimeManifest),
     emitStringCharCodeAt(_inputEncoding, provider): readonly Instr[] {
       if (provider) {
         return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
