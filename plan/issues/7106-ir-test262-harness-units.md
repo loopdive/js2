@@ -7187,3 +7187,62 @@ regressions, 4,850 passing, 20 failing, all in the known-failures baseline.
 **Tests**: lever-l2 (60), and with lever-l, var-pattern-heads,
 for-head-destructuring, script-var, script-var-reference-homes and the
 #7252/#7253/var-hoisting/binding-null-guard equivalence files: all pass.
+
+## ES5 lever P2 — `new String/Number/Boolean(v)` as a value: census and stop (2026-11-08)
+
+Lever P's census bounded this sub-shape at 30 files ("IR-only alone" with the
+wrapper sites stubbed). Before any code, this section splits that population by
+how the wrapper is used after construction and measures what the existing
+machinery could claim honestly. **Verdict: below the ~15-file bar, so no code
+in this slice.** The levers that would carry it are named at the end.
+
+### Method
+
+Base: lever P's head (`8af326da35`), standalone. Population: the 787 ES5 files
+in the lever P census set that construct `new String|Number|Boolean(…)` and are
+not IR-only. Each was compiled as the runner does, with
+`JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, so every
+refused top-level statement reports its own arm. 758 files have
+`<module-init>` as their only legacy unit. In **45** of them, every refused
+statement is the wrapper construction itself (`expr-new-ctor-unknown`: String
+28, Number 13, Boolean 4). That is the upper bound for this lever. A use in the
+same statement as the construction is hidden behind it, and the per-use probes
+below unmask those uses.
+
+### Split of the 45, by use after construction
+
+| use | files | what it needs | reuses existing machinery? |
+| --- | --- | --- | --- |
+| method call on a fresh `new String(v)` receiver (`charAt`, `charCodeAt`, `concat`, `indexOf`, `lastIndexOf`, `search`, `slice`, `substring`; `S15.5.4.*_A1_T6`/`_T9`) | 11 | receiver ToString(wrapper) = ToString(v) under lever P's trust boundary, **and** the argument (`var x;` read before its declaration, `function(){}()`) proven for the string surface | no: lever P's own borrow refuses the same arguments (`expr-string-method-argument` on `x` and on the IIFE), so the receiver is not the blocker |
+| truthiness of a wrapper held in a `var` (`for (…; strObj;)`, `12.6.3_2-3-a-ii-2…10`) | 9 | a script-var home for a wrapper, read only as a condition | partly: the condition consumer exists, but no home holds a wrapper (`new X(v)` lowers only as a ToPrimitive operand, #4208 S4) |
+| index read or expando on a `String` wrapper `var` (`15.5.5.5.2-*`) | 7 | String exotic `[[Get]]` (an index inside the length reads a char, anything else is an ordinary lookup) plus the prototype trust boundary | no: the dynamic reader answers `undefined` for an in-range index on a wrapper, so it is not exact |
+| `Number.prototype` members read off `new Number()` (`S15.7.5_A1_T01…T07`) | 7 | prototype member reads and `hasOwnProperty` | no: needs #7294's built-in prototype provider |
+| a method swapped onto a wrapper, expecting TypeError (`S15.7.4.2_A4`, `S15.7.4.4_A2`) | 4 | a wrapper with a written method slot | no |
+| `!new X(v)` (`S11.4.9_A3_T1…T3`) | 3 | ToBoolean(object) = `true`, after evaluating `v` | yes (a fold) |
+| `+new Number(v)` (`S11.4.6_A3_T3`) | 1 | unary `+` as a ToPrimitive operator | yes (#4208 S4's carrier, if unary `+` joins the operator set) |
+| `.length` and reassignment of a wrapper `var` (`S15.5.5.1_A1`) | 1 | a wrapper home plus `.length` | no |
+| a wrapper as `parseInt`'s radix | 1 | ToNumber(wrapper) as an argument | no |
+| wrapper identity after `+=` (`S8.7_A4`) | 1 | a wrapper home and identity compare | no |
+
+### What the existing machinery can claim
+
+- **Today's machinery alone: 4 files** (`!new X(v)` ×3, `+new X(v)` ×1).
+- **With one new piece, a script-var home holding a wrapper whose uses are
+  only conditions: 13 files.** This is lever V's certified-home pattern (a
+  certified-use rule in `module-binding-script-var.ts`). It is new machinery,
+  not reuse.
+- **Both are under the ~15 bar,** so this slice stops at the census.
+
+### The levers that would carry the rest
+
+1. **String-surface argument proof for `undefined` / IIFE arguments.** The 11
+   method-call files fail on their arguments, not on the wrapper. The same
+   `_A1_T6`/`_T9` argument shapes also recur with primitive receivers across
+   `S15.5.4.*`, so this is likely the larger lever. Measure it first.
+2. **A wrapper script-var home with String exotic `[[Get]]`** (9 + 7 + 1 + 1
+   files). Wrapper identity, `typeof` = `"object"` and truthiness come free
+   with an object home. The index read must implement the exotic `[[Get]]`
+   behind `sourceMayPatchPrototype("String"|"Object")` and
+   `sourceNamesReflectiveRoute`, never through the dynamic reader.
+3. **#7294's built-in prototype provider** for the `Number.prototype` member
+   reads (7).
