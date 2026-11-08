@@ -1,7 +1,8 @@
 ---
 id: 7305
 title: "IR: a statement call through a top-level subject's dynamic parameter (function value in a dynamic slot)"
-status: in-progress
+status: done
+completed: 2026-11-07
 sprint: current
 created: 2026-11-07
 updated: 2026-11-07
