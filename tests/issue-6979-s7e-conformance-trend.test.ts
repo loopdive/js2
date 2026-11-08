@@ -51,7 +51,10 @@ describe("#6979 S7-e — retired JS-host lane on the trend graph", () => {
       day("2026-10-20T00:00:00Z", 87),
       day("2026-11-04T00:00:00Z", 88),
     ];
-    const merged = t262MergeConformanceLanes(host, standalone, { hostEndsAt: T262_HOST_LANE_RETIRED_AT });
+    const merged = t262MergeConformanceLanes(
+      { standaloneRate: standalone, hostRate: host },
+      { endsAt: { hostRate: T262_HOST_LANE_RETIRED_AT } },
+    );
     const after = merged.filter((p: any) => p.time > T262_HOST_LANE_RETIRED_AT.getTime());
     expect(after.length).toBeGreaterThan(0);
     for (const p of after) expect(p.hostRate).toBeNull();
@@ -59,10 +62,10 @@ describe("#6979 S7-e — retired JS-host lane on the trend graph", () => {
     expect(merged.at(-1).standaloneRate).toBe(88);
   });
 
-  it("without hostEndsAt the merge keeps its old carry-forward behaviour", () => {
+  it("without endsAt the merge keeps its old carry-forward behaviour", () => {
     const host = [day("2026-09-01T00:00:00Z", 70), day("2026-09-02T00:00:00Z", 71)];
     const standalone = [day("2026-09-01T12:00:00Z", 80), day("2026-11-01T00:00:00Z", 88)];
-    const merged = t262MergeConformanceLanes(host, standalone);
+    const merged = t262MergeConformanceLanes({ standaloneRate: standalone, hostRate: host });
     expect(merged.at(-1).hostRate).toBe(71);
   });
 });
