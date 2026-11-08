@@ -356,3 +356,56 @@ seeded random 200 ES5 files (770 distinct, 1,686 compiles per side).
   (#7128 S5), `hasOwnProperty`, `forEach` / `filter` callbacks, passing the
   array to `assert.compareArray`.
 
+
+## ES5 lever E — script-var literal homes (census, 2026-11-08): not built
+
+Lever E would give a module-init script `var o = {…}` / `{}` / `[]` a certified
+home, admitted only as an `Object.defineProperty` target and a
+`hasOwnProperty` receiver (every other use refused at its site). Measured
+first; the subset that fits that scope stays under the ~20-file bar without
+two further pieces of machinery, so no code was written.
+
+### Method
+
+Base: lever V head `70cc21f565` (`claude/7106-lever-v`). The body-bound
+rewrite (e2) of the 2026-11-08 body-bounds census, run on this base: each
+top-level `var v = {…}` / `[…]` initializer and each
+`Object.defineProperty(v, …)` / `v.hasOwnProperty(…)` becomes
+`__ir_stub(<operands>)`, admitted by a local-only selector flag (never
+committed) that lowers its operands to a dynamic `undefined`. 2,884 of the
+9,174 ES5 files carry such a `var`; 167 rewritten files reach zero legacy
+units, 1 of them already did, so the bound is **166** (160 on the overlay the
+earlier map used). A parse walk then classifies, per bound file, every
+literal `var` (`{}`, `{…}`, `[]`, `[…]`) and every use of it.
+
+### What carries the 166
+
+- 87 are `built-ins/Object/defineProperty`, 13 `Object/prototype`.
+- The stub makes the binding a dynamic value, so the bound also counts the
+  uses this scope refuses: `.length` reads (45), element reads and writes
+  (66), named reads and writes (59), comparisons and arithmetic on `{…}`
+  (47), passing the object on (25).
+- Files whose every literal-`var` use is a define target, a define
+  descriptor or a `hasOwnProperty` receiver: **52**, in four tiers:
+
+| tier | needs | files |
+| --- | --- | --- |
+| `var o = {}`; a literal data-descriptor define and `o.hasOwnProperty("k")`, both in `<module-init>` | the open-carrier `{}` (#7128 S1) moved to a script-var `dynamic` home (legacy's slot is `externref`), plus an own-property `hasOwnProperty` arm | 9 |
+| + `var o = { k: v }` / accessor literals with `hasOwnProperty` | a non-empty literal built into the dynamic home (legacy keeps one of these in a struct slot, `ref_null` 79, so it has no dynamic home) | +6 → 15 |
+| `var desc = { get/set/value … }` + `Object.defineProperty(o, k, desc)` inside an `assert.throws` closure (`15.2.3.6-3-*`) | a closure unit reading both script vars, an accessor literal whose values are function objects, and a define from a dynamic descriptor that throws TypeError on an invalid one | +13 → 28 |
+| `var arrObj = []` / `[0, 1]` + `Object.defineProperty(arrObj, "length" / index, …)`, mostly inside `assert.throws` closures (`15.2.3.6-4-1xx`) | an array home (legacy's slot is a vec, `ref_null` 2) and the array-exotic [[DefineOwnProperty]] (`length` and index semantics) through the IR | 24 |
+
+- `Object.getOwnPropertyDescriptor(v, …)`: 355 carriers use it on a literal
+  `var`, but #7294's arm (merged on main as #7167) admits only a
+  `<Builtin>.prototype` receiver, not a script var, and those files carry
+  other uses too; none of them is in the 166.
+
+### Verdict
+
+The scope that reuses existing pieces only (tiers 1–2: the #7128 S1 open
+carrier, `emitOpenCarrierDefine`, the own-property op) bounds at 15 files.
+Reaching 28–52 needs either the closure + descriptor-variable define path
+(tier 3) or array-exotic `defineProperty` (tier 4); each is its own lever with
+its own semantics risk. Recommendation: tier 3 first (the generic
+`__obj_define_from_desc` over a dynamic descriptor already exists in legacy),
+then tiers 1–3 together as one lever (28-file bound).
