@@ -3704,7 +3704,7 @@ export function tryStringLengthIteratorAndExternClassReads(
     if (ts.isIdentifier(expr.expression)) {
       const builder = fctx.stringBuilders?.get(expr.expression.text);
       if (builder !== undefined) {
-        fctx.body.push({ op: "local.get", index: builder.lenLocalIdx });
+        fctx.body.push({ op: "local.get", index: builder.len });
         return { kind: "i32" };
       }
     }

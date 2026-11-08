@@ -169,12 +169,7 @@ import {
   compileElementIndexI32,
   isDynamicPropertyKeyExpression,
 } from "../array-nonindex-key.js"; // (#4247) §10.4.2.2 named-key routing + the relocated TA-view-name helper
-import {
-  compileStringBuilderAppend,
-  emitStringBuilderAppendCodeUnit,
-  getBuilderInfo,
-  type StringBuilderInfo,
-} from "../string-builder.js";
+import { compileStringBuilderAppend, emitStringBuilderAppendCodeUnit, getBuilderInfo } from "../string-builder.js";
 import {
   captureDynamicWithHasBindings,
   compileWithBindingAssignment,

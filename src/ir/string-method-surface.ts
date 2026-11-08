@@ -89,6 +89,12 @@ const searchRow = (helper: string, omitted: StringArgumentDefault): StringMethod
   parameters: [search, position(omitted)],
   result: "boolean",
 });
+const replaceRow = (helper: string): StringMethodRow => ({
+  helpers: wasmgc(helper),
+  parameters: [search, search],
+  result: "string",
+  literalArguments: true,
+});
 const wasmgc = (helper: string): Partial<Record<IrBackendKind, string>> => ({ wasmgc: helper });
 
 const ROWS: Readonly<Record<string, StringMethodRow>> = Object.freeze({
@@ -130,7 +136,9 @@ const ROWS: Readonly<Record<string, StringMethodRow>> = Object.freeze({
   includes: { ...searchRow("__str_includes", "zero"), fold: (receiver, needle) => receiver.includes(needle) },
   startsWith: searchRow("__str_startsWith", "zero"),
   endsWith: searchRow("__str_endsWith", "end"),
-  replace: { helpers: wasmgc("__str_replace"), parameters: [search, search], result: "string", literalArguments: true },
+  replace: replaceRow("__str_replace"),
+  // (#7313) The same `$`-pattern GetSubstitution helper legacy calls.
+  replaceAll: replaceRow("__str_replaceAll"),
 });
 
 /** Own rows only: `toString` / `valueOf` must not reach `Object.prototype`. */
@@ -164,18 +172,21 @@ export function isStringMethodHelper(symbol: string): boolean {
   return Object.values(ROWS).some((row) => row.helpers.wasmgc === symbol || row.asciiHelper === symbol);
 }
 
+type StaticStringMethodArgument = "undefined" | "null" | "true" | "false";
+
 /**
- * A literal argument whose ToNumber is static: `undefined` (or `void 0`), which
- * takes the parameter's omitted value, or `null` / `false` / `true`, which are
- * 0, 0 and 1. A shadowed `undefined` (`isGlobalUndefined` false) is a value.
+ * A literal argument whose conversions are static: `undefined` (or `void 0`),
+ * `null`, `true` or `false`; the value is its ToString. A shadowed
+ * `undefined` (`isGlobalUndefined` false) is a value.
  */
 export function staticStringMethodArgument(
   expression: ts.Expression,
   isGlobalUndefined: (identifier: ts.Identifier) => boolean,
-): "undefined" | 0 | 1 | undefined {
+): StaticStringMethodArgument | undefined {
   const arg = stripParens(expression);
   if (ts.isIdentifier(arg)) return arg.text === "undefined" && isGlobalUndefined(arg) ? "undefined" : undefined;
   if (ts.isVoidExpression(arg)) return ts.isNumericLiteral(arg.expression) ? "undefined" : undefined;
-  if (arg.kind === ts.SyntaxKind.TrueKeyword) return 1;
-  return arg.kind === ts.SyntaxKind.NullKeyword || arg.kind === ts.SyntaxKind.FalseKeyword ? 0 : undefined;
+  if (arg.kind === ts.SyntaxKind.TrueKeyword) return "true";
+  if (arg.kind === ts.SyntaxKind.FalseKeyword) return "false";
+  return arg.kind === ts.SyntaxKind.NullKeyword ? "null" : undefined;
 }

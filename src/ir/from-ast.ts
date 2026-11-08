@@ -136,6 +136,7 @@ import { staticMemberBindingIsUnsound } from "./class-overrides.js";
 // codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
 import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "./analysis/loop-shape.js";
 import { countedStringAppendPlanIsCurrent } from "./analysis/counted-string-append.js";
+import { stringBuilderSlotRole } from "./string-builder-shape.js";
 // (#3741) native-i32 slot storage for provably-int32 mutable locals
 import {
   compoundBitwiseToken,
@@ -305,7 +306,7 @@ import {
 } from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
-import { isModuleInitVarList, moduleInitVarList } from "./module-init-vars.js";
+import { isModuleInitVarList, moduleInitVarList } from "../shared/var-declaration-lists.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   boundedMixedConditionalPrimitiveFamily,
@@ -320,7 +321,8 @@ import {
   IR_MATH_METHOD_TABLE,
   admittedEmptyLiteralIsOpenCarrier,
 } from "./select.js";
-import { openCarrierDefinePlan } from "./empty-object-literal.js";
+import { openCarrierDefinePlan, type DataDescriptorField } from "./empty-object-literal.js";
+import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
 import {
@@ -373,6 +375,7 @@ import {
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
 import { lowerAmbientGlobalFunctionCall, type IrAmbientGlobalFunctionName } from "./ambient-global-function-call.js";
+import { lowerBuiltinProtoMember, type BuiltinProtoMemberLane } from "./builtin-proto-member.js";
 import {
   IR_HOLEY_ARRAY_ELEM_SET,
   IR_HOLEY_ARRAY_NEW,
@@ -602,7 +605,9 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * (#7066) The selector's `supportsBackendCapability` for this compile: the
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
-  supportsBackendCapability?(capability: "number-to-string" | "native-global-function-call"): boolean;
+  supportsBackendCapability?(
+    capability: "number-to-string" | "native-global-function-call" | "native-dynamic-member-read",
+  ): boolean;
   /**
    * (#7253) The host-free provider legacy calls for a direct ambient
    * `parseInt` / `parseFloat` (`(externref, f64) -> f64` / `(externref) -> f64`)
@@ -902,6 +907,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isLibOnlyBinding?(node: ts.Identifier): boolean;
   /** (#7127) The module's builtin-prototype brand companion is seeded. */
   builtinProtoCompanionSeeded?(): boolean;
+  /** (#7294) `<builtin>.prototype.<member>`'s kind when its support function answers it on this lane. */
+  builtinProtoMember?(builtin: string, member: string, anchor: ts.Node): "method" | "getter" | undefined;
   /** Exact source-bound Number call; no physical conversion provider is implied. */
   preparedNumberCall?(call: ts.CallExpression): boolean;
   /** Exact current ambient Object.create(null) source call; symbolic provider only. */
@@ -4647,7 +4654,11 @@ function bindLocalName(
   if (!isConst && cx.mutatedLets.has(name)) {
     const representation = resolveMutableLocalRepresentation(inferred, widenDynamic, cx);
     if (representation) {
-      const slotIndex = cx.builder.declareSlot(name, representation.storageType);
+      const slotIndex = cx.builder.declareSlot(
+        name,
+        representation.storageType,
+        stringBuilderSlotRole(declaration, cx),
+      );
       cx.builder.emitSlotWrite(slotIndex, value);
       if (promoteI32Slot) {
         // (#3741) The Wasm slot is i32; the BINDING's logical type stays f64
@@ -6245,6 +6256,8 @@ function lowerPreparedOrdinaryPropertyRead(expr: ts.PropertyAccessExpression, cx
 function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPropertyAccess(expr, cx));
+  const builtinProtoMember = lowerBuiltinProtoMember(expr, cx.builder, builtinProtoMemberLane(cx)); // (#7294)
+  if (builtinProtoMember !== null) return builtinProtoMember;
   // (#7106 S1e) `arguments.length` — the entry-time count (selector-admitted
   // only in the claimed function's own body, unshadowed).
   if (
@@ -7758,6 +7771,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (generalToString !== null) return generalToString;
   const globalFunction = tryLowerAmbientGlobalFunctionCall(expr, cx);
   if (globalFunction !== null) return globalFunction;
+  const builtinProtoDescriptor = lowerBuiltinProtoMember(expr, cx.builder, builtinProtoMemberLane(cx)); // (#7294)
+  if (builtinProtoDescriptor !== null) return builtinProtoDescriptor;
   // Slice 4 (#1169d): method call — `<recv>.<methodName>(args)`. The
   // receiver must lower to an IrType.class; the method must exist on
   // the class shape and be non-void (slice 4 only handles methods with
@@ -9228,7 +9243,15 @@ function lowerOpenCarrierDefineProperty(expr: ts.CallExpression, cx: LowerCtx): 
       `ir/from-ast: Object.defineProperty is not a certified open-carrier define (${cx.funcName})`,
     );
   }
-  const fields = plan.fields.map(({ name, initializer }) => {
+  return emitOpenCarrierDefine(cx.builder, object, plan.key, lowerDataDescriptorFields(plan.fields, cx));
+}
+
+/** Each literal descriptor field value, boxed onto its dynamic carrier (#7128 S1, #7276). */
+function lowerDataDescriptorFields(
+  fields: readonly DataDescriptorField[],
+  cx: LowerCtx,
+): { readonly name: string; readonly value: IrValueId }[] {
+  return fields.map(({ name, initializer }) => {
     const value = lowerExpr(initializer, cx, IR_F64);
     const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), initializer, cx);
     if (boxed === null) {
@@ -9240,7 +9263,18 @@ function lowerOpenCarrierDefineProperty(expr: ts.CallExpression, cx: LowerCtx): 
     }
     return { name, value: boxed };
   });
-  return emitOpenCarrierDefine(cx.builder, object, plan.key, fields);
+}
+
+/** (#7276) `Object.create({}, { <literal data descriptors> })`, behind the selector's plan. */
+function tryLowerObjectCreateDescriptorMapCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
+  return lowerObjectCreateDescriptorMapCall(expr, {
+    builder: cx.builder,
+    admission: {
+      supportsBackendCapability: (capability) => cx.resolver?.supportsBackendCapability?.(capability) === true,
+      isLibOnlyBinding: (node) => cx.resolver?.isLibOnlyBinding?.(node) === true,
+    },
+    lowerFields: (fields) => lowerDataDescriptorFields(fields, cx),
+  });
 }
 
 /**
@@ -9306,6 +9340,8 @@ function lowerMethodCallWithSourcePlan(
   if (functionObjects.isPreparedFunctionObjectAccess(expr.expression, cx.topLevelFunctionValues)) {
     return functionObjects.lowerFunctionObjectMemberCall(expr, expr.expression, functionObjectLoweringHost(cx));
   }
+  const objectCreate = tryLowerObjectCreateDescriptorMapCall(expr, cx);
+  if (objectCreate !== null) return objectCreate;
   const closureInvocation = cx.resolver?.sourceClosureInvocation?.(expr);
   if (closureInvocation)
     return lowerSourceClosureInvocation(closureInvocation, {
@@ -10404,8 +10440,8 @@ interface LoweredStringMethodArgument {
 
 /**
  * An argument as its role converts it: a string, or an i32 position or length.
- * Selection proved it; a literal with a static ToNumber folds, and `undefined`
- * takes the omitted value.
+ * Selection proved it; a static literal folds its ToNumber or ToString, and an
+ * `undefined` with an omitted value takes it.
  */
 function lowerStringMethodArgument(
   parameter: StringMethodParameter,
@@ -10418,10 +10454,12 @@ function lowerStringMethodArgument(
   const literal = staticStringMethodArgument(arg, (identifier) =>
     isGlobalUndefinedIdentifier(identifier, cx.scope, (id) => cx.resolver?.isDirectModuleBinding?.(id) === true),
   );
-  if (literal === "undefined") {
+  const textual = parameter.role === "search" || parameter.role === "fill";
+  if (literal === "undefined" && (!textual || parameter.omitted !== undefined)) {
     return { value: omittedStringMethodArgument(parameter.omitted ?? "zero", recv, receiverExpr, cx) };
   }
-  if (parameter.role === "search" || parameter.role === "fill") {
+  if (textual && literal !== undefined) return { value: cx.builder.emitStringConst(literal) };
+  if (textual) {
     const value = lowerExpr(arg, cx, { kind: "string" });
     if (cx.builder.typeOf(value).kind !== "string") {
       // invariant (selection): a search or fill argument is a proven string.
@@ -10433,8 +10471,9 @@ function lowerStringMethodArgument(
     }
     return { value };
   }
-  if (literal !== undefined)
-    return { value: cx.builder.emitConst({ kind: "i32", value: literal }, irVal({ kind: "i32" })) };
+  if (literal !== undefined) {
+    return { value: cx.builder.emitConst({ kind: "i32", value: literal === "true" ? 1 : 0 }, irVal({ kind: "i32" })) };
+  }
   const numeric = lowerExpr(arg, cx, irVal({ kind: "f64" }));
   const numberType = cx.builder.typeOf(numeric);
   if (asVal(numberType)?.kind === "i32") return { value: numeric, numberType };
@@ -12052,6 +12091,19 @@ function lowerPreparedCountedStringAppend(stmt: ts.ForStatement, cx: LowerCtx): 
   return true;
 }
 
+/** A `for (;;)` initializer, lowered in `cx`: a declaration list binds its names, an expression is dropped. */
+function lowerForInitializer(initializer: ts.ForInitializer, cx: LowerCtx): void {
+  if (ts.isVariableDeclarationList(initializer)) {
+    // Synthesize a VariableStatement so we can re-use lowerVarDecl.
+    // The flags carry let/const-ness (already validated by the selector).
+    const synthStmt = ts.factory.createVariableStatement(undefined, initializer);
+    if (cx.sourceMap) cx.sourceMapState!.synthetic.set(synthStmt, { cause: initializer, role: "binding-scaffold" });
+    lowerVarDecl(synthStmt, cx);
+  } else {
+    void lowerExpr(initializer, cx, irVal({ kind: "f64" }));
+  }
+}
+
 function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (bodyCx: LowerCtx) => void): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
     withNodeSourceSite(cx, stmt, () => lowerForStatement(stmt, cx, bodyOverride));
@@ -12061,22 +12113,13 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
   // #2952 slice 3 — adopt a labeled statement's pre-allocated id when set
   // (consumed here; cleared so init/body contexts don't leak it inward).
   const loopLabel = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
+  // 1. Init — emit inline before the for.loop instr. (#7106 lever L) A
+  // `<module-init>` `var` head declares script `var`s, so it binds them in the
+  // enclosing scope, as a `var` statement does; any other head binds in the loop's.
+  const scriptVarHead = cx.moduleBindings !== undefined && isModuleInitVarList(stmt.initializer);
+  if (stmt.initializer && scriptVarHead) lowerForInitializer(stmt.initializer, { ...cx, pendingLoopLabel: undefined });
   const innerCx: LowerCtx = { ...cx, scope: new Map(cx.scope), pendingLoopLabel: undefined };
-
-  // 1. Init — emit inline before the for.loop instr.
-  if (stmt.initializer) {
-    if (ts.isVariableDeclarationList(stmt.initializer)) {
-      // Synthesize a VariableStatement so we can re-use lowerVarDecl.
-      // The flags carry let/const-ness (already validated by the selector).
-      const synthStmt = ts.factory.createVariableStatement(undefined, stmt.initializer);
-      if (cx.sourceMap)
-        cx.sourceMapState!.synthetic.set(synthStmt, { cause: stmt.initializer, role: "binding-scaffold" });
-      lowerVarDecl(synthStmt, innerCx);
-    } else {
-      // Expression init — lower as a value, drop the result.
-      void lowerExpr(stmt.initializer, innerCx, irVal({ kind: "f64" }));
-    }
-  }
+  if (stmt.initializer && !scriptVarHead) lowerForInitializer(stmt.initializer, innerCx);
 
   const loopCx: LowerCtx = { ...innerCx, scope: conservativeLoopStringEncodingScope(stmt, innerCx) };
 
@@ -13741,6 +13784,14 @@ function tryLowerAmbientStringToStringCall(expr: ts.CallExpression, cx: LowerCtx
     "operand-coercion-unsupported",
     `ir/from-ast: String() of ${describeIrType(type)} operand is deferred (${cx.funcName})`,
   );
+}
+
+/** (#7294) The resolver's answers the builtin-prototype member admission reads. */
+function builtinProtoMemberLane(cx: LowerCtx): BuiltinProtoMemberLane {
+  return {
+    isLibOnlyBinding: (node) => cx.resolver?.isLibOnlyBinding?.(node) === true,
+    builtinProtoMember: cx.resolver?.builtinProtoMember?.bind(cx.resolver),
+  };
 }
 
 /** (#7253) The selector's `admitAmbientGlobalFunctionCall`, lowered by the shared module. */
