@@ -45,17 +45,19 @@ export function isSelfGuardedConstructor(decl: ts.Node): decl is ts.FunctionDecl
 }
 
 /**
- * Does this compile keep self-guarded constructors out of the fnctor machinery?
- * Standalone only, and never when runtime eval may share the realm (#7106 S3c
- * regression, merge group pr-6844): there the identifier reads through the
- * global-binding adapter, so an instance's `constructor` is the raw function
- * and `e.constructor === Test262Error` fails. Legacy's fnctor path keeps the
- * two identical, so such programs stay on it.
+ * Does this compile keep the self-guarded constructor `decl` out of the fnctor
+ * machinery? Standalone only, and never when evaluated code may rebind it
+ * (#7106 S3c regression, merge group pr-6844): a live binding reads through
+ * the global-binding adapter, so an instance's `constructor` is the raw
+ * function and `e.constructor === Test262Error` fails. Legacy's fnctor path
+ * keeps the two identical, so such constructors stay on it. (#7106 A3) Only a
+ * computed source, or a literal one that writes the name, can rebind it.
  */
-export function selfGuardedConstructorsLeaveFnctor(ctx: CodegenContext): boolean {
+export function selfGuardedConstructorLeavesFnctor(ctx: CodegenContext, decl: ts.FunctionDeclaration): boolean {
   const plan = ctx.runtimeEvalBoundaryPlan;
   if (plan === undefined) return false;
-  return ctx.runtimeEvalProviderAbsent === true || !plan.sharedRealmMayContainCanonicalValues;
+  if (ctx.runtimeEvalProviderAbsent === true || !plan.sharedRealmMayContainCanonicalValues) return true;
+  return !plan.unknownDynamicSource && !plan.dynamicSourceWrites.has(decl.name!.text);
 }
 
 function isNotThisInstanceOf(condition: ts.Expression, name: string): boolean {

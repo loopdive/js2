@@ -701,6 +701,7 @@ function assessIdentityModuleInit(
   claimed: ReadonlyMap<IrUnitId, IrIdentityFunctionClaim>,
   uniqueFunctions: ReadonlyMap<string, ts.FunctionDeclaration>,
   localClasses: ReadonlySet<string>,
+  helperTypes: TypeMap | undefined,
 ): IrIdentityModuleInitAssessment | undefined {
   const moduleInitId = identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
   const inventoryModuleInits = identityContext.inventory.terminalUnits.filter(
@@ -741,7 +742,7 @@ function assessIdentityModuleInit(
   for (const [name, candidates] of functionsByName) {
     if (candidates.length === 1 && claimed.has(candidates[0]!.unit.unitId)) claimedNames.add(name);
   }
-  const assessment = assessModuleInit(sourceFile, claimedNames, uniqueFunctions, localClasses);
+  const assessment = assessModuleInit(sourceFile, claimedNames, uniqueFunctions, localClasses, helperTypes);
   return {
     unitId: moduleInitId,
     displayName: terminal.displayName,
@@ -1507,6 +1508,7 @@ export function planIrCompilationByIdentity(
     claimed,
     uniqueFunctions,
     localClasses,
+    helperTypes,
   );
 
   const fallbacks = trackFallbacks
