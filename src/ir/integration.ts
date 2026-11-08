@@ -7479,6 +7479,7 @@ function makeFromAstResolver(
       return moduleBindingResolver?.isLibOnlyBinding(node) === true;
     },
     builtinProtoCompanionSeeded: () => ctx.protoMemberDirty, // (#7127)
+    runtimeEvalMayExecute: () => ctx.runtimeEvalBoundaryPlan?.providerMayExecute !== false, // (#7106 lever O)
     isAmbientStringBinding,
     // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
     // predicates as the legacy `collectConsoleImports` registration scan

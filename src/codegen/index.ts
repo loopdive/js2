@@ -3291,6 +3291,7 @@ function planIrOverlay(
       ...(nativeBufferSurface ? { nativeBufferSurface } : {}),
       dynMemberReadBuildable,
       builtinProtoCompanionSeeded: ctx.protoMemberDirty, // (#7127)
+      runtimeEvalMayExecute: ctx.runtimeEvalBoundaryPlan?.providerMayExecute !== false, // (#7106 lever O)
       ...functionValueSelectionOptions(),
       dynamicRuntimeBuildable: !ctx.fast,
       // #2952 slice 5 — for-in currently owns only the non-fast dynamic

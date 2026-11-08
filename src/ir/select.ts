@@ -741,6 +741,12 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly builtinProtoCompanionSeeded?: boolean;
   /**
+   * (#7106 lever O) The program has a runtime-eval site that may run (the
+   * boundary plan's `providerMayExecute`). Undefined ⇒ true: no fold that
+   * assumes a pristine realm.
+   */
+  readonly runtimeEvalMayExecute?: boolean;
+  /**
    * #2952 slice 5 — certify that this exact `for (head in receiver)` source
    * expression uses the non-fast dynamic externref carrier. The callback is
    * checker-backed in production and absent for bare selector callers, so the
@@ -12264,10 +12270,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
       }
       // (#7106 lever O) An integrity static with a fixed answer: a constant, or a mutator's own literal operand.
-      const integrityFold = objectIntegrityCallFold(
-        expr,
-        (node) => selectorSeesAmbientBinding(node) && !scope.has(node.text),
-      );
+      const integrityFold = objectIntegrityCallFold(expr, {
+        isAmbientBinding: (node) => selectorSeesAmbientBinding(node) && !scope.has(node.text),
+        dynamicCodeMayRun: currentSelectionOptions?.runtimeEvalMayExecute !== false,
+      });
       if (integrityFold !== undefined) {
         return integrityFold.kind === "answer" || isPhase1Expr(integrityFold.operand, scope, localClasses);
       }

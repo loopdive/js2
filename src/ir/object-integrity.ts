@@ -66,8 +66,17 @@ const INTEGRITY_STATICS: ReadonlyMap<string, IntegrityStatic> = new Map<string, 
 interface SourceIntegrityFacts {
   /** Some source text names an integrity mutator, so no intrinsic is known to be pristine. */
   readonly mayMutate: boolean;
-  /** Assigned names: `Object` itself, and `X` of every assigned `Object.X`. */
-  readonly reassigned: ReadonlySet<string>;
+  /**
+   * Every occurrence of the identifier `Object` is `Object.<name>` read as a
+   * value or called ({@link isStaticRead}) or an integrity test's operand
+   * ({@link isIntegrityTestOperand}), no member is named `Object`
+   * (`this.Object`, `$262.global["Object"]`), and the source names neither
+   * `globalThis` nor a `with` statement: nothing in the source can replace
+   * `Object` or one of its statics.
+   */
+  readonly objectStaticsPristine: boolean;
+  /** #3776's narrower rule, kept for legacy's adapter: `Object` or `Object.isFrozen` is assigned. */
+  readonly isFrozenRebound: boolean;
 }
 
 const sourceIntegrityFactsCache = new WeakMap<ts.SourceFile, SourceIntegrityFacts>();
@@ -112,12 +121,66 @@ function propertyNameText(node: ts.Node): string | undefined {
   return undefined;
 }
 
+/** The pure `Object` occurrence: `Object.<name>` read or called, never written, deleted or computed. */
+function isStaticRead(object: ts.Identifier): boolean {
+  const access = object.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== object || !ts.isIdentifier(access.name)) {
+    return false;
+  }
+  let use: ts.Node = access;
+  while (
+    ts.isParenthesizedExpression(use.parent) ||
+    ts.isAsExpression(use.parent) ||
+    ts.isTypeAssertionExpression(use.parent) ||
+    ts.isSatisfiesExpression(use.parent) ||
+    ts.isNonNullExpression(use.parent)
+  ) {
+    use = use.parent;
+  }
+  return !isWriteTarget(use);
+}
+
+/** `Object` passed to an integrity test (`Object.isFrozen(Object)`): a test reads its operand and nothing else. */
+function isIntegrityTestOperand(object: ts.Identifier): boolean {
+  const call = object.parent;
+  if (!ts.isCallExpression(call) || call.arguments.length !== 1 || call.arguments[0] !== object) return false;
+  const callee = call.expression;
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    callee.expression.text === "Object" &&
+    INTEGRITY_STATICS.get(callee.name.text)?.kind === "test"
+  );
+}
+
+/** `node` is written: an assignment / compound-assignment / destructuring target, an update or `delete` operand. */
+function isWriteTarget(node: ts.Node): boolean {
+  const parent = node.parent;
+  if (ts.isBinaryExpression(parent)) return parent.left === node && isAssignmentOperator(parent.operatorToken.kind);
+  if (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) {
+    return parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken;
+  }
+  if (ts.isDeleteExpression(parent)) return true;
+  if (ts.isForInStatement(parent) || ts.isForOfStatement(parent)) return parent.initializer === node;
+  if (
+    ts.isArrayLiteralExpression(parent) ||
+    ts.isSpreadElement(parent) ||
+    ts.isSpreadAssignment(parent) ||
+    (ts.isPropertyAssignment(parent) && parent.initializer === node) ||
+    ts.isObjectLiteralExpression(parent)
+  ) {
+    return isWriteTarget(parent);
+  }
+  return false;
+}
+
 function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
   const cached = sourceIntegrityFactsCache.get(sourceFile);
   if (cached !== undefined) return cached;
 
   let mayMutate = false;
-  const reassigned = new Set<string>();
+  let objectStaticsPristine = true;
+  let isFrozenRebound = false;
   const visit = (node: ts.Node): void => {
     // Treat even taking a reference to an integrity mutator as unsafe. This
     // covers aliases such as `const freeze = Object.freeze; freeze(Boolean)`.
@@ -131,22 +194,37 @@ function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
       mayMutate = true;
     }
 
+    if (ts.isWithStatement(node)) objectStaticsPristine = false;
+    if (ts.isIdentifier(node)) {
+      const parent = node.parent;
+      const isObjectKey = ts.isPropertyAssignment(parent) && parent.name === node;
+      if (node.text === "globalThis") objectStaticsPristine = false;
+      else if (node.text === "Object" && !isObjectKey && !isStaticRead(node) && !isIntegrityTestOperand(node)) {
+        objectStaticsPristine = false;
+      }
+    }
+    if (
+      ts.isElementAccessExpression(node) &&
+      ts.isStringLiteralLike(node.argumentExpression) &&
+      node.argumentExpression.text === "Object"
+    ) {
+      objectStaticsPristine = false;
+    }
+
     if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
       const left = unwrapExpression(node.left as ts.Expression);
-      if (ts.isIdentifier(left) && left.text === "Object") reassigned.add("Object");
-      if (
-        ts.isPropertyAccessExpression(left) &&
-        ts.isIdentifier(left.expression) &&
-        left.expression.text === "Object"
-      ) {
-        reassigned.add(left.name.text);
-      }
+      isFrozenRebound ||=
+        (ts.isIdentifier(left) && left.text === "Object") ||
+        (ts.isPropertyAccessExpression(left) &&
+          ts.isIdentifier(left.expression) &&
+          left.expression.text === "Object" &&
+          left.name.text === "isFrozen");
     }
 
     forEachChild(node, visit);
   };
   visit(sourceFile);
-  const facts = { mayMutate, reassigned };
+  const facts = { mayMutate, objectStaticsPristine, isFrozenRebound };
   sourceIntegrityFactsCache.set(sourceFile, facts);
   return facts;
 }
@@ -162,7 +240,9 @@ function isEs5IntrinsicObject(expr: ts.Expression, isAmbientBinding: (node: ts.I
   return false;
 }
 
-type OperandClass = "intrinsic" | "primitive" | "nullish";
+/** A literal primitive operand's family; the IR value a mutator returns has this type. */
+type IntegrityLiteralFamily = "number" | "string" | "boolean";
+type OperandClass = IntegrityLiteralFamily | "nullish" | "intrinsic";
 
 /**
  * The fixed-answer class of an integrity static's operand: a boolean, number
@@ -175,14 +255,9 @@ function operandClass(
   mayMutate: boolean,
 ): OperandClass | undefined {
   const operand = unwrapExpression(expr);
-  if (
-    ts.isNumericLiteral(operand) ||
-    ts.isStringLiteralLike(operand) ||
-    operand.kind === ts.SyntaxKind.TrueKeyword ||
-    operand.kind === ts.SyntaxKind.FalseKeyword
-  ) {
-    return "primitive";
-  }
+  if (ts.isNumericLiteral(operand)) return "number";
+  if (ts.isStringLiteralLike(operand)) return "string";
+  if (operand.kind === ts.SyntaxKind.TrueKeyword || operand.kind === ts.SyntaxKind.FalseKeyword) return "boolean";
   if (operand.kind === ts.SyntaxKind.NullKeyword || isUnshadowedUndefined(operand)) return "nullish";
   return !mayMutate && isEs5IntrinsicObject(operand, isAmbientBinding) ? "intrinsic" : undefined;
 }
@@ -192,13 +267,10 @@ interface IntegrityCall {
   readonly plan: IntegrityStatic;
   readonly operand: ts.Expression;
   readonly operandClass: OperandClass;
+  readonly facts: SourceIntegrityFacts;
 }
 
-/**
- * `Object.<integrity static>(<one operand>)` on the ambient `Object`, neither
- * reassigned anywhere in the source, with an operand of a fixed-answer class;
- * else undefined.
- */
+/** `Object.<integrity static>(<one operand>)` on the ambient `Object`, with an operand of a fixed-answer class; else undefined. */
 function integrityCall(
   expr: ts.CallExpression,
   isAmbientBinding: (node: ts.Identifier) => boolean,
@@ -217,15 +289,25 @@ function integrityCall(
   const operand = expr.arguments[0]!;
   if (plan === undefined || ts.isSpreadElement(operand) || !isAmbientBinding(callee.expression)) return undefined;
   const facts = sourceIntegrityFacts(expr.getSourceFile());
-  if (facts.reassigned.has("Object") || facts.reassigned.has(name)) return undefined;
   const fixed = operandClass(operand, isAmbientBinding, facts.mayMutate);
-  return fixed === undefined ? undefined : { name, plan, operand, operandClass: fixed };
+  return fixed === undefined ? undefined : { name, plan, operand, operandClass: fixed, facts };
 }
 
 /** What an admitted integrity call lowers to: a constant answer, or (a mutator's) its own operand. */
 export type IrObjectIntegrityFold =
   | { readonly kind: "answer"; readonly value: boolean }
-  | { readonly kind: "operand"; readonly operand: ts.Expression };
+  | { readonly kind: "operand"; readonly operand: ts.Expression; readonly family: IntegrityLiteralFamily };
+
+/** What the program lets the fold assume beyond its own source. */
+export interface IrObjectIntegrityRealm {
+  readonly isAmbientBinding: (node: ts.Identifier) => boolean;
+  /**
+   * The program has a runtime-eval site that may run (`eval`, `Function`,
+   * `new Function`: the boundary plan's `providerMayExecute`), whose code the
+   * source scan cannot see.
+   */
+  readonly dynamicCodeMayRun: boolean;
+}
 
 /**
  * (#7106 lever O) The ONE admission of an integrity static as a fold, read by
@@ -236,32 +318,37 @@ export type IrObjectIntegrityFold =
  *   - a mutator of a boolean, number or string literal is that literal. A
  *     mutator of an intrinsic mutates it, and one of `null` / `undefined`
  *     would need its consumer's hint to lower: both keep legacy.
- * Source-conservative like {@link isPristineEs5IntrinsicIsFrozenCall}: a
- * shadowed or reassigned `Object` / `Object.<name>` is never folded.
+ * Only while nothing can replace `Object` or its statics: no dynamic code may
+ * run, and every `Object` in the source is a static read
+ * ({@link SourceIntegrityFacts.objectStaticsPristine}).
  */
 export function objectIntegrityCallFold(
   expr: ts.CallExpression,
-  isAmbientBinding: (node: ts.Identifier) => boolean,
+  realm: IrObjectIntegrityRealm,
 ): IrObjectIntegrityFold | undefined {
-  const call = integrityCall(expr, isAmbientBinding);
-  if (call === undefined) return undefined;
+  if (realm.dynamicCodeMayRun) return undefined;
+  const call = integrityCall(expr, realm.isAmbientBinding);
+  if (call === undefined || !call.facts.objectStaticsPristine) return undefined;
   const { plan, operand, operandClass } = call;
   if (plan.kind === "test") {
     return { kind: "answer", value: operandClass === "intrinsic" ? plan.intrinsic : plan.primitive };
   }
-  return operandClass === "primitive" ? { kind: "operand", operand } : undefined;
+  return operandClass === "nullish" || operandClass === "intrinsic"
+    ? undefined
+    : { kind: "operand", operand, family: operandClass };
 }
 
 /**
  * Recognise the ES5 initial-realm invariant
- * `Object.isFrozen(%IntrinsicObject%) === false`: legacy's module-init
- * adapter for the original harness folds exactly this call, the intrinsic
- * class of {@link objectIntegrityCallFold}'s `isFrozen` row.
+ * `Object.isFrozen(%IntrinsicObject%) === false` under #3776's rule: legacy's
+ * module-init adapter for the original harness folds exactly this call, and
+ * keeps that rule so its bytes do not move. {@link objectIntegrityCallFold}
+ * is the stricter IR admission.
  */
 export function isPristineEs5IntrinsicIsFrozenCall(
   expr: ts.CallExpression,
   isAmbientBinding: (node: ts.Identifier) => boolean,
 ): boolean {
   const call = integrityCall(expr, isAmbientBinding);
-  return call?.name === "isFrozen" && call.operandClass === "intrinsic";
+  return call?.name === "isFrozen" && call.operandClass === "intrinsic" && !call.facts.isFrozenRebound;
 }

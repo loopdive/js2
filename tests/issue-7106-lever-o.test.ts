@@ -10,7 +10,10 @@ import { runInNewContext } from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
-import { compileHarnessOn, runHarnessOn } from "./helpers/harness-module-init.js";
+import { objectIntegrityCallFold } from "../src/ir/object-integrity.js";
+import { buildImports } from "../src/runtime.js";
+import { ts } from "../src/ts-api.js";
+import { compileHarnessOn, moduleInit, runHarnessOn } from "./helpers/harness-module-init.js";
 import { lane, TARGETS } from "./helpers/ambient-intrinsic-probe.js";
 
 /** Run `body` in a fresh node realm against a two-method `assert`, so an expectation the test states is JS's own answer. */
@@ -28,6 +31,19 @@ function runInNode(body: string): void {
   runInNewContext(body, { assert });
 }
 
+/** The fold's verdict on the body's last integrity call, with `Object` ambient and no dynamic code. */
+function foldOfLastCall(body: string): ReturnType<typeof objectIntegrityCallFold> {
+  const source = ts.createSourceFile("test.js", body, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS);
+  let last: ts.CallExpression | undefined;
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && /^Object\.is(Frozen|Sealed|Extensible)$/.test(node.expression.getText()))
+      last = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return objectIntegrityCallFold(last!, { isAmbientBinding: () => true, dynamicCodeMayRun: false });
+}
+
 const CLAIMED: Record<string, string> = {
   // A pristine ES5 intrinsic: extensible, neither sealed nor frozen.
   sealedIntrinsic:
@@ -37,6 +53,9 @@ const CLAIMED: Record<string, string> = {
     "var e = Object.isExtensible(Math);\nassert.sameValue(e, true);\nassert.sameValue(Object.isExtensible(JSON), true);",
   extensiblePrototype: "assert.sameValue(Object.isExtensible(String.prototype), true);",
   frozenIntrinsic: "assert.sameValue(Object.isFrozen(Number), false);",
+  // `Object` as a test's operand is read and nothing else (#3776's `isFrozen/15.2.3.12-3-2`).
+  objectAsTestOperand:
+    "var b = Object.isFrozen(Object);\nassert.sameValue(b, false);\nassert.sameValue(Object.isExtensible(Object), true);",
   // A primitive (§20.1.2.12–14): frozen and sealed, not extensible.
   frozenPrimitives:
     'assert.sameValue(Object.isFrozen(0), true);\nassert.sameValue(Object.isFrozen("abc"), true);\nassert.sameValue(Object.isFrozen(null), true);\nassert.sameValue(Object.isFrozen(undefined), true);',
@@ -62,6 +81,14 @@ const REFUSED: Record<string, string> = {
   dynamicOperand: "assert.sameValue(Object.isSealed(this), false);",
   // A source that assigns the static (here never run) may replace the builtin.
   reassignedStatic: "if (false) Object.isSealed = null;\nassert.sameValue(Object.isSealed(Array), false);",
+  // Review round 1: dynamic code the source scan cannot read.
+  evalMutatorInFunction:
+    'function setup() { eval("Object.preventExtensions(JSON)"); }\nsetup();\nassert.sameValue(Object.isExtensible(JSON), false);',
+  evalMutator: 'eval("Object.seal(Date)");\nassert.sameValue(Object.isSealed(Date), true);',
+  functionConstructorMutator:
+    'Function("Object.preventExtensions(Math)")();\nassert.sameValue(Object.isExtensible(Math), false);',
+  // An `Object` that is no static read (legacy answers it).
+  computedMutator: 'Object["pre" + "ventExtensions"](Boolean);\nassert.sameValue(Object.isExtensible(Boolean), false);',
   // Out of scope for this lever: #7294's gOPD, and the statics with no fixed answer.
   getOwnPropertyDescriptor:
     "var d = Object.getOwnPropertyDescriptor(Math, 'PI');\nassert.sameValue(d.writable, false);",
@@ -69,12 +96,48 @@ const REFUSED: Record<string, string> = {
   getPrototypeOf: "assert.sameValue(Object.getPrototypeOf(RangeError), Error);",
 };
 
+/**
+ * Review round 1: every `Object` must be a static read, or `Object` / a static
+ * may be replaced. The fold refuses each; legacy then answers wrongly, as on
+ * main (identical outcome on base `cb64e11d5f`), so the run's assertion throws.
+ */
+const REFUSED_LEGACY_WRONG: Record<string, string> = {
+  deletedStatic:
+    'var r;\ntry { delete Object.isFrozen; r = Object.isFrozen(1); } catch (e) { r = "threw"; }\nassert.sameValue(r, "threw");',
+  definePropertyOnObject:
+    'Object.defineProperty(Object, "isSealed", { value: function () { return 7; } });\nassert.sameValue(Object.isSealed(Array), 7);',
+  elementAssignedStatic:
+    'Object["isExtensible"] = function () { return 7; };\nassert.sameValue(Object.isExtensible(Array), 7);',
+  aliasAssignedStatic:
+    "var o = Object;\no.isFrozen = function () { return 7; };\nassert.sameValue(Object.isFrozen(Array), 7);",
+  parenthesizedTarget: "(Object).isFrozen = function () { return 7; };\nassert.sameValue(Object.isFrozen(1), 7);",
+  globalThisObject:
+    "globalThis.Object = { isFrozen: function () { return 7; } };\nassert.sameValue(Object.isFrozen(Array), 7);",
+  thisObject: "this.Object = { isSealed: function () { return 7; } };\nassert.sameValue(Object.isSealed(Array), 7);",
+  withObject:
+    "with ({ Object: { isFrozen: function () { return 7; } } }) { assert.sameValue(Object.isFrozen(Array), 7); }",
+};
+
 describe("#7106 lever O: ES5 integrity statics with a fixed answer", () => {
-  for (const [name, body] of Object.entries({ ...CLAIMED, ...REFUSED })) {
+  for (const [name, body] of Object.entries({ ...CLAIMED, ...REFUSED, ...REFUSED_LEGACY_WRONG })) {
     it(`node agrees with the stated answers: ${name}`, () => {
       runInNode(body);
     });
   }
+  for (const [name, body] of Object.entries({ computedMutator: REFUSED.computedMutator!, ...REFUSED_LEGACY_WRONG })) {
+    it(`the fold refuses an \`Object\` that is not a static read: ${name}`, () => {
+      expect(foldOfLastCall(body)).toBeUndefined();
+    });
+  }
+  it("the fold admits the same call when every `Object` is a static read", () => {
+    expect(foldOfLastCall("Object.isSealed(Array);")).toEqual({ kind: "answer", value: false });
+  });
+  it("the fold refuses any call once dynamic code may run", () => {
+    const call = ts.createSourceFile("t.js", "Object.isFrozen(1);", ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS)
+      .statements[0] as ts.ExpressionStatement;
+    const realm = { isAmbientBinding: () => true, dynamicCodeMayRun: true };
+    expect(objectIntegrityCallFold(call.expression as ts.CallExpression, realm)).toBeUndefined();
+  });
   for (const target of TARGETS) {
     describe(lane(target), () => {
       for (const [name, body] of Object.entries(CLAIMED)) {
@@ -97,6 +160,15 @@ describe("#7106 lever O: ES5 integrity statics with a fixed answer", () => {
       for (const [name, body] of Object.entries(REFUSED)) {
         it(`stays legacy and runs: ${name}`, async () => {
           expect(await runHarnessOn(target, body)).toBe(false);
+        });
+      }
+      for (const [name, body] of Object.entries(REFUSED_LEGACY_WRONG)) {
+        it(`stays legacy, answering as main does: ${name}`, async () => {
+          const result = await compileHarnessOn(target, body);
+          expect(moduleInit(result)?.irBodyEmitted).toBe(false);
+          const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
+          const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+          expect(() => (instance.exports.__module_init as () => void)()).toThrow();
         });
       }
     });

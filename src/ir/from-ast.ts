@@ -905,6 +905,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isLibOnlyBinding?(node: ts.Identifier): boolean;
   /** (#7127) The module's builtin-prototype brand companion is seeded. */
   builtinProtoCompanionSeeded?(): boolean;
+  /** (#7106 lever O) The program has a runtime-eval site that may run. */
+  runtimeEvalMayExecute?(): boolean;
   /** Exact source-bound Number call; no physical conversion provider is implied. */
   preparedNumberCall?(call: ts.CallExpression): boolean;
   /** Exact current ambient Object.create(null) source call; symbolic provider only. */
@@ -9627,14 +9629,17 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   }
 
   // (#7106 lever O) The selector's `objectIntegrityCallFold`: a constant, or a mutator's literal operand.
-  const integrityFold = objectIntegrityCallFold(
-    expr,
-    (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
-  );
+  const integrityFold = objectIntegrityCallFold(expr, {
+    isAmbientBinding: (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
+    dynamicCodeMayRun: cx.resolver?.runtimeEvalMayExecute?.() !== false,
+  });
   if (integrityFold?.kind === "answer") {
     return cx.builder.emitConst({ kind: "bool", value: integrityFold.value }, irVal({ kind: "i32", boolean: true }));
   }
-  if (integrityFold?.kind === "operand") return lowerExpr(integrityFold.operand, cx, IR_F64);
+  if (integrityFold?.kind === "operand") {
+    const { operand, family } = integrityFold;
+    return lowerExpr(operand, cx, family === "number" ? IR_F64 : family === "boolean" ? IR_BOOL : { kind: "string" });
+  }
 
   // #3000-E: `super.method(args)` — static-dispatch to the PARENT's method slot.
   // Intercepted BEFORE receiver lowering: `super` is a keyword lowerExpr can't

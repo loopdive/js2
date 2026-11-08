@@ -6745,9 +6745,24 @@ fold becomes one parameterised arm keyed by the static's name:
   not frozen) and `primitive` (§20.1.2.12–14: a non-Object is frozen and
   sealed, not extensible); `freeze` / `seal` / `preventExtensions` are
   `mutator` rows (a non-Object operand is returned unchanged).
-- `objectIntegrityCallFold(call, isAmbientBinding)` → `{ answer }` |
-  `{ operand }` | `undefined`. One operand, the ambient `Object`, neither
-  `Object` nor `Object.<name>` reassigned anywhere in the source. Operand
+- `objectIntegrityCallFold(call, realm)` → `{ answer }` | `{ operand }` |
+  `undefined`. One operand, the ambient `Object`, and nothing that could
+  replace `Object` or one of its statics (*rewritten in review round 1, below:
+  an allowlist, not a blocklist*):
+  - no runtime-eval site may run (`eval`, `Function`, `new Function`): the
+    boundary plan's `providerMayExecute`, passed in as the realm's
+    `dynamicCodeMayRun`;
+  - every occurrence of the identifier `Object` in the source is
+    `Object.<identifier>` read as a value or called: never an assignment,
+    compound-assignment or destructuring target, an update or `delete`
+    operand (also through parentheses / `as` / `!`), a computed access, or any
+    other value use (`var o = Object`, `f(Object)`, `(Object).x`). The one
+    other admitted occurrence is the operand of an integrity *test*
+    (`Object.isFrozen(Object)`), which reads it and nothing else;
+  - no member is named `Object` (`this.Object`, `$262.global["Object"]`), and
+    the source names neither `globalThis` nor a `with` statement.
+
+  Operand
   classes: an ES5 intrinsic or `X.prototype` (only while the source names no
   mutator, as before); a primitive literal (boolean, number, string), or
   `null` / the unshadowed `undefined` for a test. A mutator's result is its
@@ -6824,7 +6839,7 @@ the first A/B run was re-measured on all 465 files: every binary and every
 legacy-unit list identical to the first head.
 
 **Code.** `src/ir/object-integrity.ts` +85 net (the table, the operand classes,
-the per-file facts that now record which `Object.<name>` is reassigned); the
+the per-file facts); the
 selector and from-ast call sites +3 / +1 lines, under the issue's existing
 function grants; no new module, import edge or grant. Gates pass bare: loc and
 func (also against `cb64e11d5f`), coercion, oracle, dead exports, typecheck;
@@ -6837,3 +6852,46 @@ lanes. `issue-3776`'s "shadowed bindings" case fails on base too (2/10, the
 refused (see the census); a mutator with a `null` / `undefined` operand stays
 legacy (4 test262 files), as does a test of a non-literal primitive or of a
 dynamic object.
+
+### Review round 1 (#7188, 2026-11-08)
+
+Changes requested: one regression against main, one unsound rule, one nit.
+
+1. **Fixed — a mutator in dynamic code.** `function setup(){ eval("Object.preventExtensions(JSON)") } setup(); Object.isExtensible(JSON)`
+   answered `true` (node and main: `false`); `eval("Object.seal(Date)")` the
+   same. The fold now refuses whenever a runtime-eval site may run, read from
+   the existing boundary inventory (`IrRuntimeEvalBoundaryPlan.providerMayExecute`,
+   built once per program in `codegen/index.ts`). It reaches the selector as
+   the `runtimeEvalMayExecute` selection option and from-ast as the resolver
+   method of the same name, and enters `objectIntegrityCallFold` as the
+   realm's `dynamicCodeMayRun`; unset means refuse. Test262 bodies keep the
+   fold because the runner's uncalled `$262.evalScript` shim is elided before
+   the plan is built (measured: no site in any of the 57 files).
+2. **Fixed — blocklist replaced by an allowlist** (rule in the Implementation
+   Plan above). Every probe — `Object["pre"+"ventExtensions"](x)`,
+   `delete Object.isFrozen`, `Object.defineProperty(Object, "isSealed", …)`,
+   `Object["isExtensible"] = …`, `var o = Object; o.isFrozen = …`,
+   `(Object).isFrozen = …`, `globalThis.Object = …`, `this.Object = …`,
+   `with ({ Object: … })` — is refused by the fold (a direct test of the
+   admission) and stays legacy. Legacy answers the first as node does; on the
+   other eight it answers wrongly exactly as main does (same outcome on base),
+   which the test pins. `(Object as any).isFrozen = f` is TypeScript-only and
+   is covered by the parenthesised row (`as` / `!` / parentheses are unwrapped
+   before the write test). Legacy's own isFrozen adapter keeps #3776's rule so
+   its bytes do not move.
+3. **Fixed — hint.** A mutator's literal operand is lowered with its own type
+   (`f64`, `string` or the boolean brand), carried by the fold as the literal's
+   family.
+
+The first allowlist cut lost one file main claims,
+`isFrozen/15.2.3.12-3-2.js` (`Object.isFrozen(Object)`): its operand is a
+value use of `Object`. The operand of an integrity *test* only reads it, so it
+is the one admitted non-member occurrence.
+
+**Re-measured** (base `6d723c6949` = the origin/main merged into the branch,
+same 465 files, both lanes): +57 IR-only per lane (43 → 100), the same 57
+files as before, so the review fixes cost no gain; 0 lost, 0 units newly
+legacy, 0 new post-claim errors, 57/57 changed binaries pass on base and head,
+408 byte-identical. Tests: `issue-7106-lever-o` 111/111 (new rows for every probe, the
+direct admission checks among them). `linear-tests` (the CI job's exact
+command) passes locally, 243/243.
