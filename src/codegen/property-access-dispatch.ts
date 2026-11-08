@@ -252,6 +252,7 @@ import {
   buildPackedByteLengthElse,
   byteVecLengthInstrs,
 } from "./buffers/array-buffer-native.js"; // (#7274) shared with the IR adapters
+import { dataViewByteAttrInstrs } from "./buffers/data-view-native.js"; // (#7274) shared with the IR adapters
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -999,7 +1000,6 @@ export function tryBufferViewAttributeReads(
     if (isDataView && propName !== "BYTES_PER_ELEMENT") {
       const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" });
       const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
-      const fieldIdx = propName === "byteOffset" ? 1 : 2;
       // (#3173) §25.3.4.2/3 — the byteLength/byteOffset getters throw TypeError
       // on a detached buffer (marker: buffer vec length < 0). Template built
       // BEFORE the receiver compile (funcIdx-capture ordering rule).
@@ -1011,36 +1011,8 @@ export function tryBufferViewAttributeReads(
         fctx.body.push({ op: "any.convert_extern" });
       }
       fctx.body.push({ op: "local.set", index: anyLocal });
-      const winBranch: Instr[] = [
-        // detached? → TypeError
-        { op: "local.get", index: anyLocal },
-        { op: "ref.cast", typeIdx: dvWinTypeIdx },
-        { op: "struct.get", typeIdx: dvWinTypeIdx, fieldIdx: 0 }, // buf
-        { op: "ref.cast", typeIdx: vecTypeIdx },
-        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }, // buf.length
-        { op: "i32.const", value: 0 },
-        { op: "i32.lt_s" },
-        { op: "if", blockType: { kind: "empty" }, then: detachedThrow, else: [] },
-        { op: "local.get", index: anyLocal },
-        { op: "ref.cast", typeIdx: dvWinTypeIdx },
-        { op: "struct.get", typeIdx: dvWinTypeIdx, fieldIdx },
-      ];
-      const vecBranch: Instr[] =
-        propName === "byteOffset"
-          ? [{ op: "i32.const", value: 0 }]
-          : [
-              { op: "local.get", index: anyLocal },
-              { op: "ref.cast", typeIdx: vecTypeIdx },
-              { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-            ];
-      fctx.body.push({ op: "local.get", index: anyLocal });
-      fctx.body.push({ op: "ref.test", typeIdx: dvWinTypeIdx });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: winBranch,
-        else: vecBranch,
-      });
+      const attr = propName === "byteOffset" ? "byteOffset" : "byteLength";
+      fctx.body.push(...dataViewByteAttrInstrs(anyLocal, attr, detachedThrow, vecTypeIdx, dvWinTypeIdx));
       if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
       return ctx.fast ? { kind: "i32" } : { kind: "f64" };
     }
