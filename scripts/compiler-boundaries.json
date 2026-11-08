@@ -13083,6 +13083,14 @@
       "nextBoundary": "Script-var string-array admission (#7292), the class-instance twin: separate the source-shape certification from the IR value kind when the frontend inventory is split from ir-core."
     },
     {
+      "path": "src/ir/module-binding-script-var.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7292",
+      "nextBoundary": "The source facts every write-certified script-var home shares (#7252, #7274, #7292): its writes and whether a use follows the declaration. Moves with the frontend inventory when it is split from ir-core."
+    },
+    {
       "path": "src/ir/module-binding-class-instance.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

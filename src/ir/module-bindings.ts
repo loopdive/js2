@@ -26,6 +26,7 @@ import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fncto
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import * as classInstance from "./module-binding-class-instance.js";
+import { scriptVarUseFollowsDeclaration } from "./module-binding-script-var.js";
 import { vecUseSupported, vecValueKind, vecWriteMatches } from "./module-binding-vec.js";
 import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
@@ -2400,15 +2401,14 @@ export function makeIrLegacyModuleBindingResolver(
       valueKind = { kind: "dynamic" } as const;
     }
     if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
-    // (#7252 / #7274) A write-certified script var is read through its typed
-    // handle only where its slot is already written.
-    if (
-      (valueKind.kind === "class-instance" || scriptVarCapability) &&
-      !classInstance.scriptVarUseFollowsDeclaration(node, declaration)
-    )
-      return { kind: "unsupported", declaration, arm: "script-var-use-site" };
-    if (valueKind.kind === "vec" && !vecUseSupported(node, declaration, checker))
-      return { kind: "unsupported", declaration, arm: "script-var-use-site" };
+    // (#7252 / #7274 / #7292) A write-certified script var is read only where
+    // its slot is already written; a vec only in a use the IR vec lowers.
+    const certifiedUse =
+      valueKind.kind === "vec"
+        ? vecUseSupported(node, declaration)
+        : !(valueKind.kind === "class-instance" || scriptVarCapability) ||
+          scriptVarUseFollowsDeclaration(node, declaration);
+    if (!certifiedUse) return { kind: "unsupported", declaration, arm: "script-var-use-site" };
     if (
       writeValue !== undefined &&
       !writeValueMatches(checker, declaration, valueKind, writeValue, options, classifyPrimitiveExpression, resolve)

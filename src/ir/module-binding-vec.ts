@@ -9,13 +9,13 @@
  *     source (`scriptVarWrites`), its elements are all string literals, with no
  *     hole and no spread;
  *   - every use follows the declaration in module-init and is one the IR vec
- *     lowers to the value JS reads (`vecUseSupported`).
+ *     lowers (`vecUseSupported`).
  * A use anywhere else is refused at its site and stays on the direct path,
  * which reads the same slot.
  */
 import { ts } from "../ts-api.js";
 import { isStoreTarget, outermostParenthesized, stripParens } from "../shared/binding-writes.js";
-import { scriptVarUseFollowsDeclaration, scriptVarWrites } from "./module-binding-class-instance.js";
+import { scriptVarUseFollowsDeclaration, scriptVarWrites } from "./module-binding-script-var.js";
 import type { IrModuleBindingValueKind } from "./module-binding-value-kinds.js";
 
 export type VecValueKind = Extract<IrModuleBindingValueKind, { kind: "vec" }>;
@@ -55,43 +55,28 @@ export function vecWriteMatches(
 }
 
 /**
- * True when `node` is the declaration, or a use after it that the IR vec lowers
- * to the value JS reads:
- *   - `.length`, anywhere it is read;
- *   - an element read with a number key, and a named property read that an
- *     earlier top-level statement wrote (an own expando, never an inherited
- *     `Array.prototype` name, which the dynamic reader cannot see). Either may
- *     answer `undefined`, so either is admitted only as a call argument, which
- *     the IR boxes whatever it lowers to;
- *   - a plain `=` write of a named property (an expando).
+ * True when `node` is the declaration, or a use after it that the IR vec
+ * lowers: an element read, `.length`, a plain `=` write of a named property
+ * (an expando), or a named read of an expando an earlier top-level statement
+ * wrote. An inherited `Array.prototype` name is not one: the dynamic reader
+ * sees only the boxed vec's own properties. The element and expando reads
+ * lower to the dynamic carrier; the selector types them so and judges their
+ * key and consumer (`phase1ScriptVarVecRead`).
  */
-export function vecUseSupported(
-  node: ts.Identifier,
-  declaration: ts.VariableDeclaration | ts.BindingElement,
-  checker: ts.TypeChecker,
-): boolean {
+export function vecUseSupported(node: ts.Identifier, declaration: ts.VariableDeclaration | ts.BindingElement): boolean {
   if (node === declaration.name) return true;
   if (!scriptVarUseFollowsDeclaration(node, declaration)) return false;
   const receiver = outermostParenthesized(node);
   const access = receiver.parent;
   if (!(ts.isElementAccessExpression(access) || ts.isPropertyAccessExpression(access))) return false;
   if (access.expression !== receiver) return false;
-  if (ts.isPropertyAccessExpression(access) && access.name.text === "length") return !isStoreTarget(access);
   const use = outermostParenthesized(access).parent;
-  if (ts.isPropertyAccessExpression(access) && isStoreTarget(access)) {
-    return ts.isBinaryExpression(use) && use.operatorToken.kind === ts.SyntaxKind.EqualsToken && !isStoreTarget(use);
-  }
-  if (isStoreTarget(access) || !ts.isCallExpression(use) || use.expression === outermostParenthesized(access)) {
+  if (ts.isDeleteExpression(use) || (ts.isCallExpression(use) && use.expression === outermostParenthesized(access))) {
     return false;
   }
-  return ts.isElementAccessExpression(access)
-    ? isNumberKey(access.argumentExpression, checker)
-    : expandoWrittenBefore(node, access.name.text);
-}
-
-function isNumberKey(key: ts.Expression, checker: ts.TypeChecker): boolean {
-  const type = checker.getTypeAtLocation(key);
-  return !type.isUnion() && (type.flags & ts.TypeFlags.NumberLike) !== 0;
+  if (ts.isElementAccessExpression(access) || access.name.text === "length") return !isStoreTarget(access);
+  if (!isStoreTarget(access)) return expandoWrittenBefore(node, access.name.text);
+  return ts.isBinaryExpression(use) && use.operatorToken.kind === ts.SyntaxKind.EqualsToken && !isStoreTarget(use);
 }
 
 /** Whether a top-level `<binding>.<name> = …;` statement runs before `node`'s statement. */

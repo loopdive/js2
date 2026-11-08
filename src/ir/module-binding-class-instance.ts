@@ -6,22 +6,16 @@
  * class's non-null `class` value, so every IR read must see a written slot:
  *   - every write anywhere in the source (the initializer, `=`, a `var`
  *     redeclaration, a nested function's assignment) is `new X(...)` of the
- *     same class, and no `with` / direct `eval` resolves a name outside
- *     checker identity, so a written slot never holds `null` or another class;
- *   - an IR use is a module-init use that runs after the declaration: a
- *     top-level statement after it, outside every function and class body,
- *     and not the operand of `typeof` / `delete`.
+ *     same class (`scriptVarWrites`), so a written slot never holds `null` or
+ *     another class;
+ *   - an IR use is a module-init use that runs after the declaration
+ *     (`scriptVarUseFollowsDeclaration`).
  * A use anywhere else is refused at its site and stays on the direct path,
  * which reads the same slot.
  */
 import { ts } from "../ts-api.js";
-import {
-  hasDynamicScope,
-  identifierWritesOf,
-  outermostParenthesized,
-  stripParens,
-  type IdentifierWrite,
-} from "../shared/binding-writes.js";
+import { stripParens } from "../shared/binding-writes.js";
+import { scriptVarWrites } from "./module-binding-script-var.js";
 import type { IrModuleBindingValueKind } from "./module-binding-value-kinds.js";
 
 type ClassInstanceKind = Extract<IrModuleBindingValueKind, { kind: "class-instance" }>;
@@ -39,43 +33,7 @@ function constructedTopLevelClass(checker: ts.TypeChecker, expr: ts.Expression):
     : undefined;
 }
 
-const scriptVarWritesCache = new WeakMap<ts.VariableDeclaration, readonly IdentifierWrite[] | null>();
-
-/**
- * Every write of the script var `declaration` anywhere in its source (the
- * declaration's own included), or `undefined` when a `with` / direct `eval`
- * could write it outside checker identity. Shared by the script-var homes
- * that certify their writes (class instance, #7292's string vec).
- */
-export function scriptVarWrites(
-  checker: ts.TypeChecker,
-  declaration: ts.VariableDeclaration,
-): readonly IdentifierWrite[] | undefined {
-  let cached = scriptVarWritesCache.get(declaration);
-  if (cached === undefined) {
-    cached = collectScriptVarWrites(checker, declaration) ?? null;
-    scriptVarWritesCache.set(declaration, cached);
-  }
-  return cached ?? undefined;
-}
-
-function collectScriptVarWrites(
-  checker: ts.TypeChecker,
-  declaration: ts.VariableDeclaration,
-): IdentifierWrite[] | undefined {
-  const sourceFile = declaration.getSourceFile();
-  if (!ts.isIdentifier(declaration.name) || hasDynamicScope(sourceFile)) return undefined;
-  const bindingSymbol = checker.getSymbolAtLocation(declaration.name);
-  const writes: IdentifierWrite[] = [];
-  const visit = (node: ts.Node): void => {
-    for (const write of identifierWritesOf(node)) {
-      if (checker.getSymbolAtLocation(write.target) === bindingSymbol) writes.push(write);
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(sourceFile, visit);
-  return writes;
-}
+const bindingClassCache = new WeakMap<ts.VariableDeclaration, ts.ClassDeclaration | null>();
 
 function computeBindingClass(
   checker: ts.TypeChecker,
@@ -100,8 +58,12 @@ export function classInstanceValueKind(
   declaredType: ts.Type,
 ): ClassInstanceKind | undefined {
   if (!ts.isVariableDeclaration(declaration)) return undefined;
-  const classDeclaration = computeBindingClass(checker, declaration, declaredType);
-  return classDeclaration ? { kind: "class-instance", classDeclaration } : undefined;
+  let cached = bindingClassCache.get(declaration);
+  if (cached === undefined) {
+    cached = computeBindingClass(checker, declaration, declaredType) ?? null;
+    bindingClassCache.set(declaration, cached);
+  }
+  return cached ? { kind: "class-instance", classDeclaration: cached } : undefined;
 }
 
 /** True when `value` constructs exactly the binding's class. */
@@ -111,24 +73,4 @@ export function classInstanceWriteMatches(
   value: ts.Expression,
 ): boolean {
   return constructedTopLevelClass(checker, value) === target.classDeclaration;
-}
-
-/**
- * True when `node` is the declaration itself or a module-init use that runs
- * after it, so the script var's slot has been written. (#7274) Shared with the
- * native-buffer script vars, which certify their writes the same way.
- */
-export function scriptVarUseFollowsDeclaration(
-  node: ts.Identifier,
-  declaration: ts.VariableDeclaration | ts.BindingElement,
-): boolean {
-  if (node === declaration.name) return true;
-  const statement = ts.findAncestor(declaration, ts.isVariableStatement);
-  if (statement === undefined || node.pos < statement.end) return false;
-  const parent = outermostParenthesized(node).parent;
-  if (ts.isTypeOfExpression(parent) || ts.isDeleteExpression(parent)) return false;
-  for (let current = node.parent; !ts.isSourceFile(current); current = current.parent) {
-    if (ts.isFunctionLike(current) || ts.isClassLike(current)) return false;
-  }
-  return true;
 }

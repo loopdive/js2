@@ -44,6 +44,13 @@ const CLAIMED: Record<string, string> = {
   outOfBounds:
     'var e = ["a"];\nassert.sameValue(e[3], undefined);\nassert.sameValue(e[0.5], undefined);\nassert.sameValue(e[-1], undefined);',
   strictExpando: '"use strict";\nvar e = ["a"];\ne.index = 2;\nassert.sameValue(e.index, 2);',
+  // Review round 2: a carrier read where its consumer takes the carrier.
+  comparedWithUndefined:
+    'var a = ["a"];\nassert.sameValue(a[9] === undefined, true);\nassert.sameValue(a[0] === "a", true);',
+  typeofElement:
+    'var a = ["a"];\nassert.sameValue(typeof a[0], "string");\nassert.sameValue(typeof a[1], "undefined");',
+  expandoToDynamicParameter:
+    'var a = ["x"];\na.foo = "z";\nfunction g(s) { return s + "!"; }\nassert.sameValue(g(a.foo), "z!");',
 };
 
 // Refused at selection; legacy runs them.
@@ -79,10 +86,15 @@ const REFUSED_COMPILE: Record<string, string> = {
   keyStringVar: 'var a = ["a", "b"];\nvar k;\nk = "0";\nassert.sameValue(a[k], "a");',
   keyNull: 'var a = ["a", "b"];\nassert.sameValue(a[null], undefined);',
   elementLength: 'var a = ["ab"];\nvar n = a[0].length;\nassert.sameValue(n, 2);',
-  comparedWithUndefined: 'var a = ["a"];\nassert.sameValue(a[9] === undefined, true);',
   expandoPlusOne: 'var a = ["a"];\nassert.sameValue(a.foo + 1, NaN);',
   expandoPlusExpando: 'var a = ["a"];\nassert.sameValue(a.foo + a.bar, NaN);',
   expandoWrittenPlusOne: 'var a = ["a"];\na.foo = 1;\nassert.sameValue(a.foo + 1, 2);',
+  // Review round 2: a key the IR holds on the carrier, and a typed parameter.
+  keyDynamicLeadingZero: 'var a = ["x", "y"];\nvar k = 0;\nk = "01";\nassert.sameValue(a[k], undefined);',
+  keyDynamicOne: 'var a = ["x", "y"];\nvar k = 0;\nk = "1";\nassert.sameValue(a[k], "y");',
+  keyDynamicSpaceOne: 'var a = ["x", "y"];\nvar k = 0;\nk = " 1";\nassert.sameValue(a[k], undefined);',
+  keyDynamicMinusZero: 'var a = ["x", "y"];\nvar k = 0;\nk = "-0";\nassert.sameValue(a[k], undefined);',
+  stringParameter: 'var a = ["x", "y"];\nfunction g(s) { return s + "!"; }\nassert.sameValue(g(a[1]), "y!");',
 };
 
 async function compileHarness(target: Target, body: string): Promise<boolean> {
