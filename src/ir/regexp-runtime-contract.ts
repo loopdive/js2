@@ -13,3 +13,5 @@
  * its own, so the move is pure relocation.
  */
 export const STANDALONE_REGEXP_CARRIER_TEST_HELPER = "__regexp_test_carrier";
+/** (#7106 lever R3) `(externref) -> string`: a `$NativeRegExp` carrier's `RegExp.prototype.toString`. */
+export const STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER = "__regexp_to_string_carrier";

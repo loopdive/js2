@@ -611,7 +611,11 @@ import {
 } from "./stack-balance.js";
 import { emitNativeParseNumber, fillParseNumberToStringArms } from "./parse-number-native.js";
 import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6603)
-import { inferStandaloneRegExpMatchResultType, STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
+import {
+  inferStandaloneRegExpMatchResultType,
+  STANDALONE_REGEXP_REFLECTION_PROPS,
+  standaloneStaticRegExpCompiles,
+} from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
@@ -3321,6 +3325,7 @@ function planIrOverlay(
       isArrayExpression,
       classifyArrayElementFamily,
       isRegExpExpression,
+      nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
       preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
@@ -12273,15 +12278,8 @@ registerAddStringImports(addStringImports);
 // in-module native funcs under no-JS-host mode without an import cycle.
 registerAddUnionImports(addUnionImports);
 
-/** Parse a RegExp literal text (e.g. "/\\d+/gi") into pattern and flags */
-export function parseRegExpLiteral(text: string): { pattern: string; flags: string } {
-  // The text includes the leading '/' and trailing '/flags'.
-  // Find the last '/' which separates pattern from flags.
-  const lastSlash = text.lastIndexOf("/");
-  const pattern = text.slice(1, lastSlash);
-  const flags = text.slice(lastSlash + 1);
-  return { pattern, flags };
-}
+/** Parse a RegExp literal text (e.g. "/\\d+/gi") into pattern and flags — the IR's one splitter. */
+export { parseRegExpLiteralText as parseRegExpLiteral } from "../shared/regexp-static.js";
 
 /** Math methods that need host imports (no native Wasm opcode) */
 export const MATH_HOST_METHODS_1ARG = new Set([

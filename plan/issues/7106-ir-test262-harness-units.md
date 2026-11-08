@@ -59,6 +59,8 @@ import-cycles-allow:
 # self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
 # stands down when runtime eval may share the realm.
 func-budget-allow:
+  # 2026-11-06 (#7106 lever R1): extern.regex joins its sibling extern ops' provider dependency arm
+  - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
   # 2026-10-22 (module-init lever A): one resolver entry for the namespace-constant fold
   # 2026-10-22 (propertyHelper arm 3): the dynamicDeleteSymbol method
   # 2026-11-01 (chunk-budget S2, +2): `moduleInitChunkName`, the chunk-name reservation the IR chunk lowering asks for
@@ -98,6 +100,8 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
+  # 2026-11-06 (#7106 lever R1): the constructor's static tail is exported unchanged as compileStandaloneStaticRegExp for the IR's extern.regex wrapper, plus standaloneStaticRegExpCompiles, the selection predicate over the same compiler
+  - src/codegen/regexp-standalone.ts
   # 2026-10-22 (module-init lever A): the table accessor beside legacy's fold
   - src/codegen/builtin-value-read.ts
   # 2026-10-22 (lever B): one provider-id set spread in the manifest registry
@@ -5710,6 +5714,274 @@ depends on it, not for its own gain.
   hazard.
 - Once this and #7037 have landed, S5 can drop its boolean-leaf refusal, and
   its test can use the shared `runHarnessOn`.
+
+## ES5 lever R: RegExp on the host-free lanes (plan 2026-11-06; R1 implemented 2026-11-07)
+
+Lever `R` of "ES5 IR-only: ranked levers": 548 files carry it, and the census
+estimated 135 freed by R alone (not unmasked). Plan only; nothing is
+implemented.
+
+**Ownership.** No IR RegExp lane is open. The done IR work this plan reuses:
+- #1169i: `extern.regex` on the host lane;
+- #3791: the `.test` bridge to a stable top-level carrier;
+- #3794: dynamic string/RegExp `replace`.
+
+The open RegExp issues are legacy-standalone engine and protocol correctness:
+#2723 linear-time matching, the dynamic-pattern refusals, flag getters,
+backreferences, and the god-file split of `regexp-standalone.ts`. #4237
+(compile-time specialization) is an exploration. None of them claims the IR
+front end.
+
+### What refuses today (main a67f11711f; census sample plus a 60-file probe)
+
+Every refusal is `regexp-constructor-unsupported`, raised in
+`src/ir/select.ts` behind `hostRegExpUnavailable()`, i.e. the lane lacks the
+`host-regexp-constructor` capability. That is the case on both host-free
+WasmGC lanes:
+
+| arm | site | shape |
+| --- | --- | --- |
+| `expr-regexp-literal` | `isPhase1Expr`, the literal arm (~L11545) | `/re/flags` anywhere |
+| `expr-new-regexp-target` | the `new` arm (~L11279) | `new RegExp(…)`, `new RegExp` |
+| `expr-regexp-method-target` | the call arm (~L12174/12182) | `re.test(s)` / `re.exec(s)` / any method on a RegExp receiver. Only #3791's exact `.test` on a stable top-level `var` carrier passes. |
+| `expr-string-method-surface` / `expr-string-replace-shape` | string-method arm | `s.split(/,/)`, `s.search(/c/)`, `s.replace(/b/, "x")` |
+| `external-call callee:RegExp` | call arm | `RegExp("a")` without `new` |
+
+`s.match(/b/)` and `re.lastIndex = n` stop earlier: storage of a script var
+holding the result or the RegExp (`vardecl-module-storage-unrepresentable`,
+lever `S`).
+
+- **Census:** 31 of the 1,100 sample files carry an R arm (module-init only):
+  - `expr-regexp-method-target` 13;
+  - `expr-regexp-literal` 15;
+  - `expr-new-regexp-target` 12.
+- **Probe:** the 31 census files plus 29 random ES5 `built-ins/RegExp` files,
+  every refusal shown.
+  - 24 files have **only** RegExp refusals: 16 of the 31 census files and 8
+    of the 29 extra.
+  - The rest also need `S`, mostly the S15.10.2 family
+    `var __executed = /re/.exec(s)` with `__expected` arrays.
+
+### What exists to reuse (the IR must call it, not a second engine)
+
+Legacy standalone RegExp compiles each pattern **at build time**:
+- `compileStandaloneRegExpLiteral` / `compileStandaloneRegExpConstructor` →
+  `emitStandaloneRegExpStruct` in `codegen/regexp-standalone.ts`;
+- the result is a `$NativeRegExp` struct: flags, group count, program
+  (`array<i32>`), class table, source, lastIndex;
+- an invalid `new RegExp("a**")` becomes a runtime `SyntaxError` throw
+  (`emitThrowRegExpSyntaxError`);
+- matching runs in-module (`ensureRegexSearch`, the engine #2723 is making
+  linear-time). There is no host import.
+
+The IR-facing pieces already in place:
+- **One IR instruction, `extern.regex`** (`builder.emitRegExpLiteral`). Its
+  only lowering (`lower-generic.ts` ~L3456) calls the host `env.RegExp_new`.
+- **Two in-module carrier helpers with an externref ABI:**
+  `__regexp_test_carrier` (`ir/regexp-runtime-contract.ts`, used by #3791)
+  and `__regexp_exec_carrier` (`codegen/regexp-exec-carrier.ts`, #6672).
+  They recover the struct, ToString the subject and run the shared engine,
+  including g/y `lastIndex`.
+- **The #3791 plumbing:** a backend capability
+  (`standalone-native-regexp-test-carrier`), a resolver hook
+  (`standaloneRegExpTestPlan`), and a module-binding plan
+  (`staticRegExpTestPlan`).
+
+### Scratch prototype (selection only, reverted)
+
+With `hostRegExpUnavailable()` forced false, 21 of the 24 only-RegExp files
+pass selection. They then withdraw at build, as expected with no
+standalone lowering. That names what R must lower:
+- `'…' + <RegExp or match result>`: a throw message concatenating
+  `new RegExp("a**")`, 12 files (the `+` needs the operand's ToString);
+- native `.test`: 6;
+- `.source`: 1;
+- the constructor's string argument and the RegExp-valued script var: 1 each.
+
+The other 3 hit other levers (`O` ToPrimitive object literal, `M` module
+scalar method, `RegExp(…)` without `new`).
+
+### Implementation Plan
+
+**One IR instruction, two lowerings: the dual-backend pattern (#679/#682).**
+`extern.regex` stays the IR's only RegExp construction. The backend picks its
+lowering, and from-ast and the selector read no lane fact beyond one
+capability.
+
+1. **Capability.** Generalize `standalone-native-regexp-test-carrier` in
+   `ir/backend/legality.ts` to `native-regexp`: in-module RegExp construction
+   plus the carrier helpers. `hostRegExpUnavailable()` refuses only where
+   neither the host constructor nor `native-regexp` exists.
+2. **Construction.** The `extern.regex` arm in `lower-generic.ts` asks the
+   resolver for a native constructor before falling back to `env.RegExp_new`.
+   - The resolver hook lives in `ir/integration.ts` beside
+     `standaloneRegExpTestPlan`.
+   - It returns a per-(pattern, flags) wrapper function built by a new
+     `codegen/ir-regexp-literal.ts`, the same shape as
+     `ir-dynamic-construct.ts`.
+   - The wrapper calls legacy's `emitStandaloneRegExpStruct` (or
+     `emitThrowRegExpSyntaxError` for an invalid pattern) and
+     `extern.convert_any`. Each evaluation makes a fresh object, as a literal
+     must.
+   - `new RegExp(p, f)` with literal-string arguments lowers to the same
+     instruction; a non-literal pattern stays refused (a later slice through
+     `ensureDynamicStandaloneRegExpCompiler`).
+3. **Methods.** `re.test(s)` / `re.exec(s)` on any IR RegExp value (an
+   externref) lower to calls of the two carrier helpers:
+   - `test` returns a boolean;
+   - `exec` returns the dynamic carrier: the match array or null.
+   - #3791's stable-global special case becomes the general arm. Its
+     selector bypass and `staticRegExpTestPlan` fold away once a RegExp-valued
+     script var is an `extern` module binding (lever `S`). Until then it stays
+     as the one receiver source the IR can read.
+4. **The constant.** `__regexp_exec_carrier`'s name moves to
+   `ir/regexp-runtime-contract.ts` beside the test helper's, so both helper
+   names live in one place below the IR.
+5. **ToString of a RegExp in `+`.** A RegExp value is the dynamic carrier's
+   object family to the #7066 additive rule, so `'…' + re` takes the dynamic
+   `+`, whose ToPrimitive reaches `RegExp.prototype.toString`
+   (`regexp-proto-to-string.ts`). Verify this before slicing; if the native
+   dynamic `+` cannot reach it, this is R's first follow-up.
+
+**Slices:**
+- **R1:** steps 1, 2, 3 for `.test` only, and 4. Literals and literal
+  `new RegExp`.
+- **R2:** `.exec` and the result as a dynamic value.
+- **R3:** step 5, and the flag/`source` getters through
+  `regexp-accessor-get-arm.ts`.
+- **R4:** string methods with a RegExp argument (`split`, `search`,
+  `replace`, `match`) through the existing protocol helpers
+  (`regexp-split-protocol.ts`, `regexp-replace-protocol.ts`): a `regexp`
+  argument role in `string-method-surface.ts`, not a second table.
+- **Later:** `lastIndex` writes (`regexp-lastindex-carrier.ts`) and dynamic
+  patterns.
+
+**Acceptance:**
+- **Correctness:**
+  - 0 pass→fail, both WasmGC lanes, on `built-ins/RegExp` (about 480 ES5
+    files) and `built-ins/String/prototype/{match,replace,split,search}`;
+  - 0 claim-then-demote: every shape the selector admits lowers;
+  - non-RegExp programs byte-identical, and the playground identical;
+  - the host-RegExp lane unchanged.
+- **Code quality:**
+  - no second engine, no new host import;
+  - RegExp construction is one IR instruction with backend-chosen lowering;
+  - helper names only in `regexp-runtime-contract.ts`;
+  - the wrapper module beside its siblings;
+  - no growth of `select.ts` beyond replacing the three
+    `hostRegExpUnavailable()` refusals with the capability question.
+- **Expected gain:**
+  - Upper bound about 101 ES5 files: 14 of the 31 census files pass
+    selection with R admitted, at about 7.2 files each. The census's 135
+    included files that the prototype shows also need other levers.
+  - R1 alone frees the `.test` / literal / constructor shapes; the 12
+    `'…' + re` throw messages need R3.
+  - About 25 more need `S` + R (the S15.10.2 `__executed` family).
+
+### R1 implemented (2026-11-07)
+
+**What landed** (steps 1, 2 and step 3 for `.test`; step 4 moves to R2, where the IR first calls the exec helper, since moving the name now would only add codegen→ir import edges):
+- `native-regexp` replaces `standalone-native-regexp-test-carrier`.
+- `extern.regex` carries an optional provider. On a `native-regexp` lane it is
+  the per-pair wrapper `ensureIrRegExpLiteralHelper` builds over legacy's
+  static construction (`compileStandaloneStaticRegExp`, split out of the
+  constructor tail); elsewhere the arm still calls `env.RegExp_new`.
+  - The wrapper sits beside that construction in `codegen/regexp-standalone.ts`,
+    not in its own module as planned. `integration.ts` already imports that
+    file; a new module would add an ir→codegen edge, grow the import SCC and
+    raise `integration.ts`'s layering count.
+  - It is built with the shared `helperFunctionContext` /
+    `publishHelperFunction` (`codegen/helpers/ir-helper-function.ts`), like
+    every other IR wrapper; integration turns its name into the `IrFuncRef`.
+- `staticRegExpPair` (`shared/regexp-static.ts`) reads a literal or a literal
+  `new RegExp(p?, f?)`, for from-ast and the selector alike. It sits below
+  both layers because legacy's `parseRegExpLiteral` is the same split.
+- `.test(s)` on any IR RegExp value calls `__regexp_test_carrier`.
+
+**Where a native RegExp is admitted.** Only where R1 consumes it: the
+receiver of `.test(…)`, or a discarded statement (`new RegExp('a**');` still
+throws its SyntaxError). The first census admitted it everywhere and found
+four withdrawals and one compile error, all a RegExp value meeting a consumer
+with no lowering yet:
+- `/1/.source`: a capability-deferred extern property read, a hard compile
+  error (R3's getters);
+- `'…' + new RegExp('a**')`: the builder's `+` proof has no RegExp family
+  (R3's ToString), 6 files;
+- `var __re = new RegExp;`: a dynamic script slot has no carrier for it;
+- a local `var re = /a/g` would reach the same reads.
+
+`nativeStaticRegExp` refuses every other position, so a binding (`S`) or a
+consumer (R2/R3) widens it with its own lowering.
+
+**R3 is not in this change.** `'…' + re` needs the RegExp value as a dynamic
+`+` operand whose ToPrimitive reaches `RegExp.prototype.toString`, plus the
+selector's `+` family for it. That is more than a second commit's worth, so R1
+ships alone.
+
+**Measured** (base 245e830d49 vs head, standalone and gc):
+- **Population:** 389 files: the 60-file R probe, 100 random ES5
+  `built-ins/RegExp` files, every ES5 `String.prototype.{match,replace,split,search}`
+  file, and the lever-T non-eval sample.
+- **Newly IR-only:** +12 on both lanes (2 → 14), all `S15.10.2.*` `.test`
+  shapes. All 12 pass on both trees and both lanes.
+- **Everything else:** 377 binaries byte-identical; 0 status changes; 0 new
+  post-claim; the playground is identical. The host-RegExp lane takes the
+  unchanged `env.RegExp_new` arm.
+- **ES5 IR-only estimate:** about 33 files: the 6 probe gains, plus 6 of the
+  100 random files scaled to the 451-file pool (about 27). The String-method
+  files gain nothing yet (R4).
+
+**Tests:** `tests/issue-7106-lever-r.test.ts`, on both lanes:
+- eight claimed shapes: a literal, an anchored miss, the `m` flag, a
+  constructed pattern with and without flags, the empty pattern, an invalid
+  pair's SyntaxError, and a fresh `g` literal per evaluation;
+- six refused at selection and never withdrawn: `exec`, a dynamic pattern,
+  `.source`, a `+`, a script binding and a local binding.
+
+### R3 implemented (2026-11-07): `'…' + re`
+
+**What changed.** The `+` rule now covers a RegExp operand beside a string; the
+string it adds is `RegExp.prototype.toString`'s, computed by legacy's
+existing code. Nothing new is computed.
+- **The `+` rule:**
+  - #7066's `additiveOperandsProvable` gains one proof, `regexp`. It
+    concatenates beside a string, like a string; beside a number or another
+    RegExp it is still refused.
+  - The selector names the operand family `regexp` (`binaryOperandFamily`).
+  - from-ast's `additiveOperandProof` gives the same proof
+    (`lowersAsNativeRegExp`).
+  - Both sides read one predicate, `staticRegExpPair`, over the same lib-only
+    proof.
+- **ToString:** `lowerConcatOperand` calls `__regexp_to_string_carrier`.
+  - It is a three-instruction adapter in `regexp-standalone.ts`:
+    `any.convert_extern`, then a call to legacy's `__regexp_to_string_dyn`
+    (#4465), which renders `"/" + source + "/" + flags`.
+  - Its name sits beside the test helper's in `regexp-runtime-contract.ts`.
+  - Integration's runtime-function resolver builds it on demand, so a module
+    without a RegExp `+` has none.
+- **Selection:** `nativeStaticRegExp` admits a `+` operand as a third consumer.
+  A property read and a binding still refuse.
+
+**Measured** (the merged R1 head vs R3, the same 389 files, standalone and gc):
+- **Newly IR-only:** +6 on both lanes (14 → 20):
+  - `S15.10.1_A1_T1`, `_T6`, `_T12`, `_T14` and `_T16`;
+  - `S15.10.4.1_A9_T2`.
+
+  Each is `'…' + (new RegExp(<invalid>))` inside a `try`. All 6 pass on both
+  trees and lanes.
+- **Everything else:** 383 binaries byte-identical; 0 status changes; 0 new
+  post-claim; the playground is identical.
+- **ES5 IR-only estimate:** about 17 more files: 3 probe gains, plus 3 of the
+  100 random files scaled to the 451-file pool (about 13.5). 78 ES5 RegExp
+  files put a RegExp in a `+`; most of the rest need another lever (`S`,
+  R2's `exec`, the getters).
+
+**Tests:** `tests/issue-7106-lever-r.test.ts`, on both lanes:
+- five more claimed shapes: a literal with flags, the RegExp on the left, an
+  escaped `/` in a constructed pattern, the empty pattern `/(?:)/`, and the
+  S15.10.1 invalid-pair throw;
+- `+` beside a number and `+` beside another RegExp are refused at selection;
+- a script's own `function RegExp` is refused, as on main.
 
 ## ES5 lever B: mixed-family operands of the numeric operators (plan, 2026-11-07)
 

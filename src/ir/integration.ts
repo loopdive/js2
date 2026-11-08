@@ -206,8 +206,16 @@ import {
   type NativeStringLiteralMaterialization,
   type StringEncoding,
 } from "../codegen/native-string-literals.js";
-import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
-import { ensureStandaloneRegExpCarrierTestHelper } from "../codegen/regexp-standalone.js";
+import {
+  STANDALONE_REGEXP_CARRIER_TEST_HELPER,
+  STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER,
+} from "./regexp-runtime-contract.js";
+import {
+  ensureIrRegExpLiteralHelper,
+  ensureStandaloneRegExpCarrierTestHelper,
+  ensureStandaloneRegExpCarrierToStringHelper,
+  standaloneStaticRegExpCompiles,
+} from "../codegen/regexp-standalone.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../codegen/registry/imports.js";
 import { emitWasiErrorConstructor } from "../codegen/registry/error-types.js";
 import {
@@ -2421,6 +2429,10 @@ export function compileIrPathFunctions(
       : undefined;
   const nativeBufferSurface = planIrNativeBufferSurface(ctx, sourceFile); // (#7274)
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
+  // (#7106 lever R) A host-free lane constructs an `extern.regex` in-module.
+  const regExpProvider = supportsBackendCapability("native-regexp")
+    ? (pattern: string, flags: string) => irRuntimeFuncRef(ensureIrRegExpLiteralHelper(ctx, pattern, flags))
+    : undefined;
   const { supportsDateSnapshots, resolveHostVoidCallback, backendCapabilitySelectionOptions } =
     makeCalendarIrSelectionSupport(ctx, jsHostExterns, standaloneDomCapability, supportsBackendCapability);
   const moduleBindingOptions = {
@@ -2600,6 +2612,7 @@ export function compileIrPathFunctions(
       isArrayExpression,
       classifyArrayElementFamily,
       isRegExpExpression,
+      nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
@@ -4817,7 +4830,7 @@ export function compileIrPathFunctions(
     !runGlobalPreparation(
       () =>
         (healthyForLower = healthyForLower.map((entry) => {
-          const fn = attachIrExternSupport(entry.fn);
+          const fn = attachIrExternSupport(entry.fn, regExpProvider);
           return fn === entry.fn ? entry : { ...entry, fn };
         })),
     )
@@ -7110,6 +7123,7 @@ function makeFromAstResolver(
   nativeBufferSurface?: IrNativeBufferSurfacePlan, // (#7274)
 ): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
+  const isRegExpExpression = makeIrRegExpExpressionPredicate(ctx.checker);
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   // (#3526 F3-S3) Resolved once, pre-freeze: the arm below projects this value.
   const functionPrototypeCall = integrationFunctionPrototypeCallPolicy(ctx);
@@ -7155,7 +7169,7 @@ function makeFromAstResolver(
     },
     fnctorArrayMethodPlan(call: ts.CallExpression) {
       if (
-        !supportsBackendCapability("standalone-native-regexp-test-carrier") ||
+        !supportsBackendCapability("native-function-methods") ||
         !supportsBackendCapability("legacy-numeric-array-global") ||
         !moduleBindingResolver
       ) {
@@ -7166,7 +7180,7 @@ function makeFromAstResolver(
     },
     retainedFunctionMethodPlan(call: ts.CallExpression) {
       if (
-        !supportsBackendCapability("standalone-native-regexp-test-carrier") ||
+        !supportsBackendCapability("native-function-methods") ||
         !supportsBackendCapability("legacy-numeric-array-global") ||
         !moduleBindingResolver
       ) {
@@ -7175,13 +7189,13 @@ function makeFromAstResolver(
       const plan = moduleBindingResolver.retainedFunctionMethodPlan(call);
       return plan ? resolveRetainedFunctionMethod(ctx, plan) : null;
     },
-    standaloneRegExpTestPlan(receiver: ts.Expression) {
-      if (!supportsBackendCapability("standalone-native-regexp-test-carrier") || !moduleBindingResolver) return null;
-      const plan = moduleBindingResolver.staticRegExpTestPlan(receiver);
-      if (!plan) return null;
+    nativeRegExpTestPlan(receiver: ts.Expression) {
+      if (!supportsBackendCapability("native-regexp")) return null;
+      const stable = moduleBindingResolver?.staticRegExpTestPlan(receiver);
+      if (!stable && !isRegExpExpression(receiver)) return null;
       ensureStandaloneRegExpCarrierTestHelper(ctx);
       return {
-        receiverGlobal: resolveStandaloneRegExpTestGlobal(ctx, plan),
+        ...(stable ? { receiverGlobal: resolveStandaloneRegExpTestGlobal(ctx, stable) } : {}),
         funcName: STANDALONE_REGEXP_CARRIER_TEST_HELPER,
       };
     },
@@ -7936,6 +7950,8 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNumberToFixedProvider(ctx, fuseNativeNumberFormatCarriers);
   } else if (ref.binding.kind === "intrinsic" && parseIrDateSnapshotGetter(symbol) !== undefined) {
     index = ensureDateCivilHelper(ctx);
+  } else if (ref.binding.kind === "runtime" && symbol === STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER) {
+    index = ensureStandaloneRegExpCarrierToStringHelper(ctx);
   } else if (ref.binding.kind === "runtime" && symbol === "__str_replaceAll") {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);
