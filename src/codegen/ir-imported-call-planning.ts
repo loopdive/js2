@@ -57,7 +57,6 @@ export function makeIrFunctionObjectValueResolver(
     resolveImportedFunctionTarget: (node) => resolver.resolveImportedFunctionTarget(node),
     isImportBinding: (node) => resolver.isImportBinding(node),
     resolveTopLevelFunctionValueTarget(node) {
-      if (ctx.runtimeEvalGlobalFunctionBindings === true) return undefined;
       const target = resolver.resolveTopLevelFunctionValueTarget(node);
       return target && !ctx.reassignedFunctionDeclarations?.has(target.declaration) ? target : undefined;
     },
@@ -77,7 +76,6 @@ export function hasPreparedFunctionObjectReference(
     !plan?.objectReceiver ||
     !plan.accessor ||
     plan.ownerUnitId !== ownerUnitId ||
-    ctx.runtimeEvalGlobalFunctionBindings === true ||
     plan.target.binding.kind !== "unit" ||
     plan.accessor.binding.kind !== "support" ||
     plan.trampoline.binding.kind !== "support" ||
@@ -847,7 +845,7 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
             import("../ir/ast-lowering-plans.js").IrTopLevelFunctionValueLoweringPlan
           >(),
         };
-  if (functionObjectValues && ctx.runtimeEvalGlobalFunctionBindings !== true) {
+  if (functionObjectValues) {
     const identity = options.identityPlan;
     const source = identity.identityContext.sourceFileBySourceId;
     const addOwner = (ownerName: string, ownerUnitId: IrUnitId, root: ts.Node, selfGuardedOnly = false): void => {
@@ -1040,9 +1038,7 @@ export function planIrFunctionValueResolverState(
   // selection and reused by direct-call projection and the field-call proof.
   const identityResolver = resolveIdentity();
   const functionObjectValues =
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    (ctx.standalone || ctx.wasi) &&
-    ctx.runtimeEvalGlobalFunctionBindings !== true
+    ctx.targetProfile.semanticProviders === "native-first" && (ctx.standalone || ctx.wasi)
       ? makeIrFunctionObjectValueResolver(ctx, identityResolver)
       : undefined;
   const functionMemberClosures = functionObjectValues

@@ -59,7 +59,11 @@ import { localIsRewritten } from "./lattice-param-facts.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
-import { certifiedAliasCall, isStoredObjectDescriptorMemberRead } from "./uncurried-object-alias.js";
+import {
+  certifiedAliasCall,
+  isCertifiedBooleanAliasCall,
+  isStoredObjectDescriptorMemberRead,
+} from "./uncurried-object-alias.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
 import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
@@ -83,7 +87,11 @@ import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./modu
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
-import { type ArrayPrototypeBorrowCall, matchArrayPrototypeBorrowCall } from "./array-prototype-borrow-call.js";
+import {
+  type PrototypeBorrowCall,
+  ambientStringPrototypeBorrow,
+  matchArrayPrototypeBorrowCall,
+} from "./array-prototype-borrow-call.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
@@ -173,6 +181,7 @@ import type { IrFnctorAdmission, IrFnctorSelectionAdmissionResolver, LatticeType
 import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
+import { staticRegExpPair } from "../shared/regexp-static.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
@@ -197,6 +206,11 @@ import {
 } from "./literal-pattern-plan.js";
 import { declarationBindingWritten } from "./const-binding-writes.js";
 import { programPatchesDestructuringRealm } from "./realm-keys.js";
+import {
+  sourceMayPatchPrototype,
+  sourceNamesReflectiveRoute,
+  sourceWritesMemberNamed,
+} from "../shared/intrinsic-prototype-writes.js";
 import { collectBindingPatternNames } from "./analysis/ast-scope.js";
 import {
   conditionalJoinArmFamily,
@@ -679,6 +693,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * standalone codegen instead of selecting the host-extern IR ABI.
    */
   readonly isRegExpExpression?: (expr: ts.Expression) => boolean;
+  /** (#7106 lever R) Legacy's static RegExp compiler builds this pair (`standaloneStaticRegExpCompiles`). */
+  readonly nativeRegExpCompiles?: (pattern: string, flags: string) => boolean;
   /**
    * Checker-only ambient identity proof used by Math call selection when a
    * backend deliberately does not install the module-binding capability.
@@ -866,7 +882,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "host-regexp-constructor"
       | "host-object-define-property"
       | "standalone-function-prototype-call"
-      | "standalone-native-regexp-test-carrier"
+      | "native-regexp"
+      | "native-function-methods"
       | "standalone-wrapper-instanceof"
       | "primitive-wrapper-to-primitive"
       | "legacy-numeric-array-global"
@@ -879,7 +896,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-current-this"
       | "native-own-property-test"
       | "host-dynamic-method-call"
-      | "native-own-property-descriptor"
+      | "native-own-property-introspection"
       | "native-array-is-array"
       | "native-number-conversion"
       | "prepared-dynamic-helper-abi"
@@ -3346,6 +3363,20 @@ function concreteResultRecoversDynamic(
 }
 
 /**
+ * (#7265, #7283) A call whose result is an exact boolean, which boxes onto
+ * the carrier like a comparison: a local direct call that returns a boolean,
+ * or a certified boolean alias call through its module binding.
+ */
+function isBoolCallResult(concrete: ts.Expression, typeMap: TypeMap | undefined): boolean {
+  return (
+    isModuleBooleanAliasCall(concrete) ||
+    (ts.isCallExpression(concrete) &&
+      ts.isIdentifier(concrete.expression) &&
+      calleeReturnKind(concrete.expression.text, typeMap) === "bool")
+  );
+}
+
+/**
  * #2949 slice 2 — verify every use of a dynamic value in `fn`'s body is a
  * MOVE the from-ast builder can lower withOUT box/unbox/tag.test (which land
  * in slice 3). Allowed sinks for a dynamic value:
@@ -3550,7 +3581,8 @@ function dynamicUsesAreMoveOnly(
       //
       // Admission is exactly the operand family `boxConcreteToDynamic`
       // accepts, so the claim can never withdraw on a missing box.
-      if (!argumentIsDynamic && expectedKind === "dynamic" && concreteDynamicAssignmentOperandIsBuildable(unwrap(a))) {
+      const boxable = concreteDynamicAssignmentOperandIsBuildable(unwrap(a)) || isBoolCallResult(unwrap(a), typeMap);
+      if (!argumentIsDynamic && expectedKind === "dynamic" && boxable) {
         if (!scanExpr(a, false)) return false;
         continue;
       }
@@ -3874,12 +3906,10 @@ function dynamicUsesAreMoveOnly(
         if (!dynNames.has(e.left.text)) return scanExpr(e.right, false);
         if (isDynShaped(e.right)) return scanExpr(e.right, true);
         const concrete = unwrap(e.right);
-        // (#7265) A local call's boolean result boxes onto the carrier like a comparison.
-        const boolCall =
-          ts.isCallExpression(concrete) &&
-          ts.isIdentifier(concrete.expression) &&
-          calleeReturnKind(concrete.expression.text, typeMap) === "bool";
-        return (boolCall || concreteDynamicAssignmentOperandIsBuildable(concrete)) && scanExpr(concrete, false);
+        return (
+          (isBoolCallResult(concrete, typeMap) || concreteDynamicAssignmentOperandIsBuildable(concrete)) &&
+          scanExpr(concrete, false)
+        );
       }
       if (op === ts.SyntaxKind.PlusToken && (leftIsDyn || rightIsDyn)) {
         if (!currentDynamicRuntimeBuildable) return false;
@@ -3925,9 +3955,12 @@ function dynamicUsesAreMoveOnly(
             const concrete = unwrap(operand);
             // A scalar parameter projected from the direct declaration ABI is
             // just as boxable as a literal: from-ast has its exact f64/bool/
-            // string IrType and emits the canonical box before dyn.eq.
+            // string IrType and emits the canonical box before dyn.eq. So is
+            // (#7283) a boolean call result, under strict equality only (it
+            // compares tag and value; loose `==` would ToNumber it).
             return (
-              concreteDynamicEqualityOperandIsBuildable(concrete, isStrictEqualityOperator(op)) &&
+              (concreteDynamicEqualityOperandIsBuildable(concrete, isStrictEqualityOperator(op)) ||
+                (isStrictEqualityOperator(op) && isBoolCallResult(concrete, typeMap))) &&
               scanExpr(concrete, false)
             );
           };
@@ -4160,6 +4193,9 @@ function dynamicUsesAreMoveOnly(
       if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
         return scanDirectCallArgs(e, e.expression.text);
       }
+      // (#7283) …and a member call on a stable function object
+      // (`assert.sameValue(d, undefined, msg)`); other dyn-shaped calls keep theirs.
+      if (functionObjectMemberCallee(e) !== null) return scanExpr(e, true);
       // (#7305) A call through a dynamic value: callee and arguments are `__apply_closure` carriers.
       if (ts.isCallExpression(e) && dynamicValueCallTarget(e)) {
         return scanExpr(e.expression, true) && scanCarrierArguments(e.arguments);
@@ -5991,6 +6027,10 @@ function isPhase1ForInStatement(
   }
   const headName = declaration.name.text;
   if (scope.has(headName)) return shapeNo("forin-head-shadow", declaration.name);
+  // (#7288) In `<module-init>` the head hoists into its `__mod_<name>` slot, which the loop-local key slot never writes.
+  if (currentSubjectIsModuleInit && enclosingProjectionOwner(stmt) === undefined) {
+    return shapeNo("forin-head-module-var", declaration.name);
+  }
   // #2952 slice 6c — the head value is now READABLE in the body. The #2964
   // ABI already materialises the key into the head slot on every iteration
   // (slice 5 wrote it and simply had no reader), so the widening is
@@ -8371,6 +8411,19 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
 }
 
 /**
+ * (#7283) A certified boolean alias call through the module binding itself
+ * (`__hasOwnProperty(obj, name)`), not through a local that shadows it: the
+ * binding resolver answers only for the module declaration.
+ */
+function isModuleBooleanAliasCall(candidate: ts.Expression): boolean {
+  return (
+    ts.isCallExpression(candidate) &&
+    moduleBinding(candidate.expression) !== undefined &&
+    isCertifiedBooleanAliasCall(candidate, () => false)
+  );
+}
+
+/**
  * A `!` / `&&` / `||` operand whose module influence cannot be misread: every
  * module-derived value in it is boolean, or the whole operand is exactly
  * boolean (a comparison, S1g's `__hasOwnProperty(o, k)` alias call).
@@ -8498,7 +8551,10 @@ function isPhase1ConditionExpr(
   }
   // A bare `null` lowers only into a reference (`nullValueAdmissible`), never the i32 a condition reads.
   if (truthinessOperand.kind === ts.SyntaxKind.NullKeyword) return shapeNo("condition-null", expr);
-  if (!trackedModuleInfluenceIsBoolean(truthinessOperand) && !isTruthinessTestableModuleBinding(truthinessOperand)) {
+  if (
+    !moduleInfluenceIsExactBoolean(truthinessOperand, scope) &&
+    !isTruthinessTestableModuleBinding(truthinessOperand)
+  ) {
     return shapeNo("condition-module-value-nonbool", expr);
   }
   // Reached only through conditional / nullish wrappers of module values.
@@ -8738,7 +8794,7 @@ export function mixedPrimitiveConditionalArms(
 
 function booleanResultCondition(expr: ts.Expression, shadowed: (name: string) => boolean): boolean {
   const e = unwrapPhase1Parens(expr);
-  if (ts.isCallExpression(e)) return certifiedAliasCall(e, shadowed)?.result === "boolean";
+  if (ts.isCallExpression(e)) return isCertifiedBooleanAliasCall(e, shadowed);
   if (ts.isPrefixUnaryExpression(e)) {
     return e.operator === ts.SyntaxKind.ExclamationToken && booleanResultCondition(e.operand, shadowed);
   }
@@ -9084,6 +9140,29 @@ function hostRegExpUnavailable(): boolean {
   return currentSelectionOptions?.supportsBackendCapability?.("host-regexp-constructor") === false;
 }
 
+/**
+ * (#7106 lever R) A static construction (`staticRegExpPair`) a `native-regexp` lane builds in-module, where the IR
+ * consumes it: the receiver of `.test(…)`, a discarded statement (which still throws an invalid pair's SyntaxError),
+ * or (R3) an operand of `+`, which the `+` rule admits only beside a string (its `RegExp.prototype.toString`). A
+ * property read (`/a/.source`) or a binding has no lowering for it yet.
+ */
+function nativeStaticRegExp(expr: ts.Expression): boolean {
+  const pair = staticRegExpPair(expr, (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true);
+  const consumer = outermostParenthesized(expr).parent;
+  const testReceiver =
+    ts.isPropertyAccessExpression(consumer) &&
+    consumer.name.text === "test" &&
+    ts.isCallExpression(consumer.parent) &&
+    consumer.parent.expression === consumer;
+  const additionOperand = ts.isBinaryExpression(consumer) && consumer.operatorToken.kind === ts.SyntaxKind.PlusToken;
+  return (
+    pair !== undefined &&
+    (testReceiver || additionOperand || ts.isExpressionStatement(consumer)) &&
+    currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
+    currentSelectionOptions.nativeRegExpCompiles?.(pair.pattern, pair.flags) === true
+  );
+}
+
 const NO_LOCALS: ReadonlySet<string> = new Set();
 
 /**
@@ -9097,7 +9176,7 @@ const NO_LOCALS: ReadonlySet<string> = new Set();
 function ambientArrayPrototypeBorrowCall(
   expr: ts.CallExpression,
   locals: ReadonlySet<string>,
-): ArrayPrototypeBorrowCall | null {
+): PrototypeBorrowCall | null {
   const borrow = matchArrayPrototypeBorrowCall(expr);
   if (borrow === undefined || locals.has("Array") || !selectorSeesAmbientBinding(borrow.root)) return null;
   if (currentSelectionOptions?.supportsBackendCapability?.("dynamic-method-call-wrapper") !== true) return null;
@@ -9107,6 +9186,42 @@ function ambientArrayPrototypeBorrowCall(
     return null;
   }
   return borrow;
+}
+
+/**
+ * (#7106 lever P) `String.prototype.<m>.call(r, …a)` on the ambient `String`
+ * is `ToString(r).<m>(…a)` for a receiver that is never nullish: every ES5
+ * `String.prototype` method starts with RequireObjectCoercible + ToString on
+ * `this`. The receiver must be a proven primitive the `String(v)` arm renders,
+ * and the method a row of the string surface for the remaining arguments.
+ */
+function stringPrototypeBorrowSelection(
+  expr: ts.CallExpression,
+  borrow: PrototypeBorrowCall,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  // The surface row is the realm's own method reached as spelled, legacy's own
+  // trust: a source that may replace the method, `.call` or `String`, or that
+  // names a route to a prototype it does not spell, keeps legacy's lookup.
+  const source = expr.getSourceFile();
+  if (
+    sourceMayPatchPrototype(source, "String") ||
+    sourceMayPatchPrototype(source, "Function") ||
+    sourceNamesReflectiveRoute(source) ||
+    sourceWritesMemberNamed(source, "call") ||
+    sourceWritesMemberNamed(source, "String")
+  ) {
+    return capabilityNo("string-method-unsupported", "expr-string-borrow-patched-prototype", expr);
+  }
+  const family = provenIrFamily(borrow.receiver, scope);
+  if (family !== "string" && family !== "number" && family !== "boolean") {
+    return capabilityNo("string-method-unsupported", "expr-string-borrow-receiver", borrow.receiver);
+  }
+  const plan = stringMethodSelection(expr, borrow.method, borrow.args, scope);
+  if (plan === false) return false;
+  if (plan.literalArguments) return capabilityNo("string-method-unsupported", "expr-string-borrow-literal-plan", expr);
+  return [borrow.receiver, ...borrow.args].every((operand) => isPhase1Expr(operand, scope, localClasses));
 }
 
 /**
@@ -9421,6 +9536,7 @@ function binaryOperandFamily(
   if (isCarrierAddition(candidate, (side) => selectorCarrierValue(side, scope, localClasses))) return "dynamic";
   if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
   if (isUnshadowedUndefinedIdentifier(candidate, scope) || isVoidZero(candidate)) return "undefined";
+  if (nativeStaticRegExp(candidate)) return "regexp";
   const proven = provenIrFamily(operand, scope);
   return proven === "unknown" && obviousSelectorValueFamily(operand, scope) === "reference" ? "reference" : proven;
 }
@@ -9658,14 +9774,13 @@ function hasLiteralStringMethodArguments(expr: ts.CallExpression): boolean {
 function stringMethodSelection(
   expr: ts.CallExpression,
   method: string,
+  args: readonly ts.Expression[],
   scope: ReadonlySet<string>,
 ): StringMethodPlan | false {
   const backend = currentSelectionOptions?.backendTargetProfile?.backend ?? "wasmgc";
-  const plan = expr.arguments.some(ts.isSpreadElement)
-    ? null
-    : stringMethodPlan(backend, method, expr.arguments.length);
+  const plan = args.some(ts.isSpreadElement) ? null : stringMethodPlan(backend, method, args.length);
   if (plan === null) return capabilityNo("string-method-unsupported", "expr-string-method-surface", expr);
-  const unproven = expr.arguments.find((arg, i) => !stringMethodArgumentProven(plan.parameters[i]!.role, arg, scope));
+  const unproven = args.find((arg, i) => !stringMethodArgumentProven(plan.parameters[i]!.role, arg, scope));
   if (unproven !== undefined) return capabilityNo("string-method-unsupported", "expr-string-method-argument", unproven);
   return plan;
 }
@@ -11320,7 +11435,7 @@ function declaredExpressionHasExactFamily(
   if (
     expected === "boolean" &&
     ts.isCallExpression(candidate) &&
-    certifiedAliasCall(candidate, (name) => scope.has(name))?.result === "boolean"
+    isCertifiedBooleanAliasCall(candidate, (name) => scope.has(name))
   ) {
     return true;
   }
@@ -11582,7 +11697,7 @@ function phase1NewExpression(
     return true;
   }
   if (ctorName === "RegExp" && isAmbientConstructor && hostRegExpUnavailable()) {
-    return capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr);
+    return nativeStaticRegExp(expr) || capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr);
   }
   if (!isLocalClass && isKnownExternClass(ctorName) && !isAmbientConstructor) {
     return capabilityNo("constructor-resolution-unsupported", "expr-new-extern-identity", expr.expression);
@@ -11891,7 +12006,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // `src/codegen/index.ts:3274-3278`). Only the host-RegExp lane registers
   // `env.RegExp_new`; elsewhere legacy's native engine owns the literal.
   if (expr.kind === ts.SyntaxKind.RegularExpressionLiteral) {
-    return hostRegExpUnavailable() ? capabilityNo("regexp-constructor-unsupported", "expr-regexp-literal", expr) : true;
+    if (!hostRegExpUnavailable() || nativeStaticRegExp(expr)) return true;
+    return capabilityNo("regexp-constructor-unsupported", "expr-regexp-literal", expr);
   }
   // Slice 1 (issue #1168): claim string literals and `null` so that
   // `typeof x === "string"` / `x === null` / `x == null` patterns can
@@ -12469,7 +12585,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // lowering uses the existing closed dispatcher so `new this(...)`,
       // retained closure identity, and later property reads stay unchanged.
       if (
-        currentSelectionOptions?.supportsBackendCapability?.("standalone-native-regexp-test-carrier") === true &&
+        currentSelectionOptions?.supportsBackendCapability?.("native-function-methods") === true &&
         currentSelectionOptions.supportsBackendCapability?.("legacy-numeric-array-global") === true
       ) {
         const receiverFirstMethod = receiverFirstDynamicMethodPlan(expr);
@@ -12485,24 +12601,22 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
         hostRegExpUnavailable()
       ) {
-        // #3791 — host-free `.test` is claimable only for an exact stable
-        // top-level static RegExp whose real legacy externref carrier can be
-        // loaded and passed to the in-module native helper. This deliberately
-        // bypasses the generic receiver walk: the binding is not a general IR
-        // module value, and `.exec`, g/y stateful carriers, reassigned
-        // bindings, non-string subjects, and all other shapes keep the
-        // established target-capability refusal.
-        const nativePlan =
-          expr.expression.name.text === "test" &&
-          currentSelectionOptions?.supportsBackendCapability?.("standalone-native-regexp-test-carrier") === true
-            ? currentModuleBindingResolver?.staticRegExpTestPlan(expr.expression.expression)
-            : undefined;
+        // #3791, #7106 lever R — host-free `.test(subject)` calls the in-module
+        // carrier helper. An exact stable top-level carrier passes its real
+        // legacy externref global (that binding is not a general IR module
+        // value, so it bypasses the receiver walk); any other receiver must be
+        // an IR value. `.exec`, non-string subjects and all other shapes keep
+        // the established target-capability refusal.
+        const receiver = expr.expression.expression;
         if (
-          nativePlan !== undefined &&
+          expr.expression.name.text === "test" &&
+          currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
           expr.arguments.length === 1 &&
           !ts.isSpreadElement(expr.arguments[0]!) &&
           (expressionIsProvenString(expr.arguments[0]!) ||
-            currentSelectionOptions?.classifyPrimitiveExpression?.(expr.arguments[0]!) === "string")
+            currentSelectionOptions?.classifyPrimitiveExpression?.(expr.arguments[0]!) === "string") &&
+          (currentModuleBindingResolver?.staticRegExpTestPlan(receiver) !== undefined ||
+            isPhase1Expr(receiver, scope, localClasses))
         ) {
           return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
         }
@@ -12526,6 +12640,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // (#7106 S1c) `Object.prototype.toString.call(v)`: standalone classifier lanes only.
       const objectTagArg = scope.has("Object") ? null : ambientObjectToStringTagCall(expr);
       if (objectTagArg !== null) return isPhase1Expr(objectTagArg, scope, localClasses);
+      // (#7106 lever P) `String.prototype.<m>.call(<primitive>, …)`: `String(r).<m>(…)`.
+      const stringBorrow = ambientStringPrototypeBorrow(expr, scope, selectorSeesAmbientStringBinding);
+      if (stringBorrow !== undefined) {
+        return stringPrototypeBorrowSelection(expr, stringBorrow, scope, localClasses);
+      }
       // (#7106 compareArray.format) `Array.prototype.<m>.call(recv, …)`: borrow-wrapper lanes only.
       const arrayBorrow = ambientArrayPrototypeBorrowCall(expr, scope);
       if (arrayBorrow !== null) {
@@ -12649,7 +12768,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;
           return expr.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
         }
-        const plan = stringMethodSelection(expr, expr.expression.name.text, scope);
+        const plan = stringMethodSelection(expr, expr.expression.name.text, expr.arguments, scope);
         if (plan === false) return false;
         if (plan.literalArguments) {
           if (currentSelectionOptions?.supportsLiteralStringReplace !== true) {
@@ -13808,7 +13927,10 @@ export function buildLocalCallGraph(
             // Variable-backed callables use checker-resolved declaration
             // identity so a block-local alias cannot hide an ambient or
             // top-level call with the same text elsewhere in the function.
-          } else if (decls.has(callee)) {
+          } else if (decls.has(callee) && !localIsRewritten(decls.get(callee)!)) {
+            // (#7283) A function whose binding is reassigned (`f = …`) has no
+            // stable direct-call target: from-ast plans no direct call to it,
+            // so a call to it is external, not a graph edge.
             callees.get(callerName)!.add(callee);
             callers.get(callee)!.add(callerName);
           } else if (currentSelectionOptions?.fnctorNativeStringBoundary?.(node) === true) {
