@@ -62,6 +62,7 @@ import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-tar
 import {
   additiveOperandsProvable,
   binaryOperandsAdmissible,
+  booleanReadAsNumber,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
   isCarrierAddition,
@@ -135,6 +136,7 @@ import { staticMemberBindingIsUnsound } from "./class-overrides.js";
 // codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
 import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "./analysis/loop-shape.js";
 import { countedStringAppendPlanIsCurrent } from "./analysis/counted-string-append.js";
+import { stringBuilderSlotRole } from "./string-builder-shape.js";
 // (#3741) native-i32 slot storage for provably-int32 mutable locals
 import {
   compoundBitwiseToken,
@@ -294,11 +296,17 @@ import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts }
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import { collectPatternBindingNames } from "./analysis/ast-scope.js";
-import { isPatternDeclaration, type PatternDeclaration } from "../shared/pattern-declaration.js";
-import { planElementReads, planPropertyReads, type BindingLeaf, type SourceReadPlan } from "./binding-pattern-plan.js";
+import {
+  isPatternDeclaration,
+  planElementReads,
+  planPropertyReads,
+  type BindingLeaf,
+  type PatternDeclaration,
+  type SourceReadPlan,
+} from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
-import { isModuleInitVarList, moduleInitVarList } from "../shared/module-init-var-lists.js";
+import { isModuleInitVarList, moduleInitVarList } from "../shared/var-declaration-lists.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   boundedMixedConditionalPrimitiveFamily,
@@ -318,6 +326,7 @@ import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
 import {
+  isStatementDynamicModuleCall,
   localValueDeclaration,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrPrimitiveExpressionClassifier,
@@ -2390,7 +2399,7 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
       // (`host.appendChild(box);`, `console.log("…");`). Expression
       // position keeps throwing on void — only this flag differs.
       if (ts.isPropertyAccessExpression(s.expression.expression) && !s.expression.questionDotToken) {
-        void lowerMethodCallWithSourcePlan(s.expression, cx, /* statementPosition */ true);
+        lowerStatementMethodCall(s.expression, cx);
         return false;
       }
       // The result SSA value is unused; DCE strips it if pure.
@@ -2650,7 +2659,7 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
     const hostDateGetter = lowerHostDateGetterCall(expr, cx);
     if (hostDateGetter !== undefined) return;
     if (ts.isPropertyAccessExpression(expr.expression) && !expr.questionDotToken) {
-      void lowerMethodCallWithSourcePlan(expr, cx, /* statementPosition */ true);
+      lowerStatementMethodCall(expr, cx);
       return;
     }
     if (ts.isIdentifier(expr.expression) || expr.expression.kind === ts.SyntaxKind.SuperKeyword) {
@@ -4642,7 +4651,11 @@ function bindLocalName(
   if (!isConst && cx.mutatedLets.has(name)) {
     const representation = resolveMutableLocalRepresentation(inferred, widenDynamic, cx);
     if (representation) {
-      const slotIndex = cx.builder.declareSlot(name, representation.storageType);
+      const slotIndex = cx.builder.declareSlot(
+        name,
+        representation.storageType,
+        stringBuilderSlotRole(declaration, cx),
+      );
       cx.builder.emitSlotWrite(slotIndex, value);
       if (promoteI32Slot) {
         // (#3741) The Wasm slot is i32; the BINDING's logical type stays f64
@@ -7793,17 +7806,6 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (binding?.kind === "nestedFunc") {
     return lowerNestedFuncCall(binding, expr.arguments, cx);
   }
-  // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding.
-  const bindingLogicalType =
-    binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
-  if (bindingLogicalType?.kind === "dynamic") {
-    const callee = lowerExpr(expr.expression, cx, irDynamic());
-    if (cx.builder.typeOf(callee).kind !== "dynamic") {
-      demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
-    }
-    return functionObjects.lowerDynamicValueCall(expr, callee, functionObjectLoweringHost(cx));
-  }
-
   // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
   // `__propertyIsEnumerable(obj, name)`: both operands as carriers, then the
   // lane's provider — exactly legacy's lowering, never the generic bound call.
@@ -7828,6 +7830,30 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
       throw new Error(`ir/from-ast: __getOwnPropertyDescriptor produced no value in ${cx.funcName}`);
     }
     return descriptor;
+  }
+  // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding. After
+  // the propertyHelper alias arms, in the selector's order: those aliases are
+  // script `var`s in a dynamic module home too, but keep legacy's provider.
+  const bindingLogicalType =
+    binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
+  // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
+  const dynamicModuleCallee =
+    binding === undefined &&
+    isStatementDynamicModuleCall(
+      expr,
+      (callee) => cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic",
+    );
+  if (bindingLogicalType?.kind === "dynamic" || dynamicModuleCallee) {
+    const callee = lowerExpr(expr.expression, cx, irDynamic());
+    if (cx.builder.typeOf(callee).kind !== "dynamic") {
+      demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
+    }
+    const message = dynamicModuleCallee
+      ? functionObjects.scriptVarCalleeNotCallableMessages(
+          cx.checker && localValueDeclaration(expr.expression, cx.checker),
+        )
+      : undefined;
+    return functionObjects.lowerDynamicValueCall(expr, callee, functionObjectLoweringHost(cx), message);
   }
   const imported = cx.importedCalls?.get(expr);
   if (imported) return lowerImportedCall(expr, imported, cx, statementPosition);
@@ -9247,7 +9273,18 @@ function tryLowerObjectCreateDescriptorMapCall(expr: ts.CallExpression, cx: Lowe
   });
 }
 
-/** (#7274) A plan-certified native ArrayBuffer operation, lowered to its adapter call. */
+/**
+ * A method call whose result is discarded. Statement calls enter
+ * `lowerMethodCallWithSourcePlan` directly rather than through `lowerExpr`,
+ * so a certified native-buffer call (a DataView setter) is matched here.
+ */
+function lowerStatementMethodCall(expr: ts.CallExpression, cx: LowerCtx): void {
+  if (tryLowerNativeBufferOperation(expr, cx) === undefined) {
+    void lowerMethodCallWithSourcePlan(expr, cx, /* statementPosition */ true);
+  }
+}
+
+/** (#7274) A plan-certified native ArrayBuffer / DataView operation, lowered to its adapter call. */
 function tryLowerNativeBufferOperation(expr: ts.Expression, cx: LowerCtx): IrValueId | undefined {
   const op = cx.resolver?.nativeBufferOperation?.(expr);
   if (op === undefined) return undefined;
@@ -10399,8 +10436,8 @@ interface LoweredStringMethodArgument {
 
 /**
  * An argument as its role converts it: a string, or an i32 position or length.
- * Selection proved it; a literal with a static ToNumber folds, and `undefined`
- * takes the omitted value.
+ * Selection proved it; a static literal folds its ToNumber or ToString, and an
+ * `undefined` with an omitted value takes it.
  */
 function lowerStringMethodArgument(
   parameter: StringMethodParameter,
@@ -10413,10 +10450,12 @@ function lowerStringMethodArgument(
   const literal = staticStringMethodArgument(arg, (identifier) =>
     isGlobalUndefinedIdentifier(identifier, cx.scope, (id) => cx.resolver?.isDirectModuleBinding?.(id) === true),
   );
-  if (literal === "undefined") {
+  const textual = parameter.role === "search" || parameter.role === "fill";
+  if (literal === "undefined" && (!textual || parameter.omitted !== undefined)) {
     return { value: omittedStringMethodArgument(parameter.omitted ?? "zero", recv, receiverExpr, cx) };
   }
-  if (parameter.role === "search" || parameter.role === "fill") {
+  if (textual && literal !== undefined) return { value: cx.builder.emitStringConst(literal) };
+  if (textual) {
     const value = lowerExpr(arg, cx, { kind: "string" });
     if (cx.builder.typeOf(value).kind !== "string") {
       // invariant (selection): a search or fill argument is a proven string.
@@ -10428,8 +10467,9 @@ function lowerStringMethodArgument(
     }
     return { value };
   }
-  if (literal !== undefined)
-    return { value: cx.builder.emitConst({ kind: "i32", value: literal }, irVal({ kind: "i32" })) };
+  if (literal !== undefined) {
+    return { value: cx.builder.emitConst({ kind: "i32", value: literal === "true" ? 1 : 0 }, irVal({ kind: "i32" })) };
+  }
   const numeric = lowerExpr(arg, cx, irVal({ kind: "f64" }));
   const numberType = cx.builder.typeOf(numeric);
   if (asVal(numberType)?.kind === "i32") return { value: numeric, numberType };
@@ -12047,17 +12087,17 @@ function lowerPreparedCountedStringAppend(stmt: ts.ForStatement, cx: LowerCtx): 
   return true;
 }
 
-/** A `for (;;)` head: a declaration list through `lowerVarDecl`, or an expression whose value is dropped. */
+/** A `for (;;)` initializer, lowered in `cx`: a declaration list binds its names, an expression is dropped. */
 function lowerForInitializer(initializer: ts.ForInitializer, cx: LowerCtx): void {
-  if (!ts.isVariableDeclarationList(initializer)) {
+  if (ts.isVariableDeclarationList(initializer)) {
+    // Synthesize a VariableStatement so we can re-use lowerVarDecl.
+    // The flags carry let/const-ness (already validated by the selector).
+    const synthStmt = ts.factory.createVariableStatement(undefined, initializer);
+    if (cx.sourceMap) cx.sourceMapState!.synthetic.set(synthStmt, { cause: initializer, role: "binding-scaffold" });
+    lowerVarDecl(synthStmt, cx);
+  } else {
     void lowerExpr(initializer, cx, irVal({ kind: "f64" }));
-    return;
   }
-  // Synthesize a VariableStatement so we can re-use lowerVarDecl.
-  // The flags carry let/const-ness (already validated by the selector).
-  const synthStmt = ts.factory.createVariableStatement(undefined, initializer);
-  if (cx.sourceMap) cx.sourceMapState!.synthetic.set(synthStmt, { cause: initializer, role: "binding-scaffold" });
-  lowerVarDecl(synthStmt, cx);
 }
 
 function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (bodyCx: LowerCtx) => void): void {
@@ -12069,13 +12109,13 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
   // #2952 slice 3 — adopt a labeled statement's pre-allocated id when set
   // (consumed here; cleared so init/body contexts don't leak it inward).
   const loopLabel = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
-  // 1. Init — emit inline before the for.loop instr. (#7288) A module-init
-  // head is hoisted: it binds in the enclosing scope, like a top-level `var`
-  // statement, so a read after the loop sees the same module slot.
-  const hoistedHead = isModuleInitVarList(stmt.initializer);
-  if (hoistedHead) lowerForInitializer(stmt.initializer, cx);
+  // 1. Init — emit inline before the for.loop instr. (#7106 lever L) A
+  // `<module-init>` `var` head declares script `var`s, so it binds them in the
+  // enclosing scope, as a `var` statement does; any other head binds in the loop's.
+  const scriptVarHead = cx.moduleBindings !== undefined && isModuleInitVarList(stmt.initializer);
+  if (stmt.initializer && scriptVarHead) lowerForInitializer(stmt.initializer, { ...cx, pendingLoopLabel: undefined });
   const innerCx: LowerCtx = { ...cx, scope: new Map(cx.scope), pendingLoopLabel: undefined };
-  if (stmt.initializer && !hoistedHead) lowerForInitializer(stmt.initializer, innerCx);
+  if (stmt.initializer && !scriptVarHead) lowerForInitializer(stmt.initializer, innerCx);
 
   const loopCx: LowerCtx = { ...innerCx, scope: conservativeLoopStringEncodingScope(stmt, innerCx) };
 
@@ -13401,8 +13441,30 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
           ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
           : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
     const rhsValue = lowerExpr(rhs, cx, logicalType);
+    const rhsString = checkerOperandFamily(rhs, cx) === "string";
+    const store = (result: IrValueId, stringEncoding: Encoding) => {
+      if (storage.kind === "moduleGlobal") {
+        cx.builder.emitGlobalSet(storage.globalRef, result);
+      } else if (storage.kind === "slot") {
+        cx.builder.emitSlotWrite(storage.slotIndex, result);
+      } else {
+        cx.builder.emitRefCellSet(storage.value, result);
+      }
+      cx.scope.set(id.text, { ...storage, stringEncoding });
+    };
+    if (rhsString && cx.builder.typeOf(rhsValue).kind === "dynamic") {
+      // (#7287 review B2, S3) A checker-string RHS can lower to the dynamic
+      // carrier: `"a" + f` over a dynamic module var, or a JS `var` the checker
+      // types from its string initializer that the program reassigns
+      // (`s = 5`). Append through the dynamic `+` the dynamic-slot arm below
+      // uses (ToPrimitive, then ToString); with a string on its left it yields
+      // a string, whose code units are unknown.
+      const boxedLhs = cx.builder.emitBox(lhs, irDynamic(JS_TAG_IDS.String));
+      store(cx.builder.emitDynStringCarrier(emitDynamicAdd(boxedLhs, rhsValue, cx)), "wtf16");
+      return;
+    }
     const rhsType = cx.builder.typeOf(rhsValue);
-    if (checkerOperandFamily(rhs, cx) === "string" && rhsType.kind !== "string") {
+    if (rhsString && rhsType.kind !== "string") {
       // invariant (producer-promise): the checker POSITIVELY proves the RHS is a
       // string, yet the lowered carrier is not — a producer contradiction, not a
       // capability gap. #4502's sweep initially demoted this with the rest of
@@ -13425,15 +13487,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     }
     const symbol = cx.checker?.getSymbolAtLocation(id);
     const concatMode = symbol && cx.ownedStringAppendSymbols.has(symbol) ? "owned-append" : "immutable";
-    const result = cx.builder.emitStringConcat(lhs, rhsValue, proof.resultEncoding, concatMode);
-    if (storage.kind === "moduleGlobal") {
-      cx.builder.emitGlobalSet(storage.globalRef, result);
-    } else if (storage.kind === "slot") {
-      cx.builder.emitSlotWrite(storage.slotIndex, result);
-    } else {
-      cx.builder.emitRefCellSet(storage.value, result);
-    }
-    cx.scope.set(id.text, { ...storage, stringEncoding: proof.resultEncoding });
+    store(cx.builder.emitStringConcat(lhs, rhsValue, proof.resultEncoding, concatMode), proof.resultEncoding);
     return;
   }
   // (#7106 Stage 4) `message += …` on a dynamic slot (assert.js's reassigned
@@ -13458,9 +13512,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     const dynamicRhs = rhsType.kind === "dynamic" ? rhsValue : boxConcreteToDynamic(rhsValue, rhsType, rhs, cx);
     // invariant (producer-promise): `compoundWriteAdmissible` admits only boxable operands — #7144.
     if (dynamicRhs === null) throw new Error(`ir/from-ast: admitted dynamic "+=" operand did not box (${cx.funcName})`);
-    const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [lhs, dynamicRhs], irDynamic());
-    if (added === null) throw new Error(`ir/from-ast: dynamic '+=' produced no result in ${cx.funcName}`);
-    cx.builder.emitSlotWrite(storage.slotIndex, added);
+    cx.builder.emitSlotWrite(storage.slotIndex, emitDynamicAdd(lhs, dynamicRhs, cx));
     return;
   }
   // f64 arithmetic: the slot and the operator decide before the RHS is
@@ -15164,10 +15216,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
       const dynL = lt.kind === "dynamic" ? lhs : boxConcreteToDynamic(lhs, lt, expr.left, cx);
       const dynR = rt.kind === "dynamic" ? rhs : boxConcreteToDynamic(rhs, rt, expr.right, cx);
       if (dynL !== null && dynR !== null) {
-        const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [dynL, dynR], irDynamic());
-        // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-        if (added === null) throw new Error(`ir/from-ast: dynamic '+' produced no result in ${cx.funcName}`);
-        return added;
+        return emitDynamicAdd(dynL, dynR, cx);
       }
     }
     // #2949 S5.3 — dynamic relational: `<`/`>`/`<=`/`>=` where either operand
@@ -15368,7 +15417,8 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
 
 /**
  * Lower an eager operator's operands, left then right. A `null` operand of a
- * numeric reader is ToNumber(null) = +0. A fresh primitive wrapper becomes the
+ * numeric reader is ToNumber(null) = +0, and a boolean beside a number its
+ * ToNumber 0 / 1 (#7282). A fresh primitive wrapper becomes the
  * carrier of its ToPrimitive only after BOTH operands are evaluated, where the
  * operator's own ToPrimitive runs (#4208 S4, #7106). An operator that
  * ToNumerics its operands completes the left one before the right one's
@@ -15399,7 +15449,7 @@ function lowerBinaryOperands(
   const rhs = lower(expr.right, additiveProofs?.[0]);
   const leftWrapper = primitiveWrapperConstructorName(expr.left, cx) !== null;
   const rightWrapper = primitiveWrapperConstructorName(expr.right, cx) !== null;
-  if (!leftWrapper && !rightWrapper) return [lhs, rhs];
+  if (!leftWrapper && !rightWrapper) return booleansReadAsNumbers(expr, op, lhs, rhs, cx);
   if (wrapperComparisonIsIdentity(op, leftWrapper, rightWrapper)) {
     // invariant (producer-promise): selection refuses an identity comparison of a fresh wrapper.
     throw new IrInvariantError("selection-preparation-mismatch", "build", "ir/from-ast: fresh-wrapper identity");
@@ -15411,7 +15461,28 @@ function lowerBinaryOperands(
       : primitive;
   };
   const left = operand(leftWrapper, lhs);
-  return [left, operand(rightWrapper, rhs)];
+  return booleansReadAsNumbers(expr, op, left, operand(rightWrapper, rhs), cx);
+}
+
+/**
+ * (#7282) The one site where a numeric reader ToNumbers a boolean operand
+ * ({@link booleanReadAsNumber}) — after a fresh wrapper became its carrier, so
+ * `new Boolean(true) < true` converts the boolean beside that carrier too.
+ */
+function booleansReadAsNumbers(
+  expr: ts.BinaryExpression,
+  op: ts.SyntaxKind,
+  lhs: IrValueId,
+  rhs: IrValueId,
+  cx: LowerCtx,
+): readonly [IrValueId, IrValueId] {
+  const leftFamily = irOperandFamily(typeOfValue(lhs, cx), expr.left);
+  const rightFamily = irOperandFamily(typeOfValue(rhs, cx), expr.right);
+  if (!booleanReadAsNumber(op, leftFamily, rightFamily)) return [lhs, rhs];
+  // Signed and unsigned agree on 0 / 1; `f64.convert_i32_s` is the IR's i32→f64 unop.
+  const toNumber = (value: IrValueId, family: OperandFamily): IrValueId =>
+    family === "boolean" ? cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64) : value;
+  return [toNumber(lhs, leftFamily), toNumber(rhs, rightFamily)];
 }
 
 /**
@@ -16075,6 +16146,14 @@ function isValueVoid(operand: ts.Expression): boolean {
   return ts.isVoidExpression(candidate);
 }
 
+/** The dynamic `+` (`IR_DYN_ADD_FN`) over two carrier operands: the binary `+` and both `+=` arms. */
+function emitDynamicAdd(left: IrValueId, right: IrValueId, cx: LowerCtx): IrValueId {
+  const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [left, right], irDynamic());
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+  if (added === null) throw new Error(`ir/from-ast: dynamic '+' produced no result in ${cx.funcName}`);
+  return added;
+}
+
 /**
  * #2949 S5.2 — box a CONCRETE operand into the boxed-any carrier, tag-refined
  * from its family ({@link boxableIntoDynamic}). Returns `null` when the operand
@@ -16161,9 +16240,10 @@ function tryLowerDynamicRelational(
  * relational compare and the numeric-arithmetic arm): a dynamic carrier
  * ToNumbers via `dyn.to_number`; a concrete `f64` is used as-is. Any other
  * concrete kind (i32/ref/string) returns `null` so the caller demotes cleanly —
- * these slices only convert the dynamic side, and add no i32/string→number
- * coercion (numeric literals lower to `f64` under the f64 hint the operands
- * were lowered with, so `dyn > 0` / `dyn - 1` are covered).
+ * these slices only convert the dynamic side (numeric literals lower to `f64`
+ * under the f64 hint the operands were lowered with, so `dyn > 0` / `dyn - 1`
+ * are covered; a boolean partner arrives already converted by
+ * `lowerBinaryOperands`, #7282).
  */
 function relOperandToF64(v: IrValueId, t: IrType, cx: LowerCtx): IrValueId | null {
   if (t.kind === "dynamic") return cx.builder.emitDynToNumber(v);

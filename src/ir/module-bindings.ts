@@ -7,6 +7,7 @@
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
+import { dynamicCallArgumentAdmissible, type OperandFamily } from "./analysis/operand-admissibility.js";
 import * as bindingValue from "./module-binding-value-kinds.js";
 import { updateRetypesModuleBinding } from "./update-retyped-bindings.js";
 import { isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
@@ -25,14 +26,13 @@ import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fncto
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import * as classInstance from "./module-binding-class-instance.js";
+import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
-import { isModuleInitVarList } from "../shared/module-init-var-lists.js";
 import {
   carrierLeafReads,
   moduleBindingDeclarationOrder,
   moduleBindingLexicalFlags as lexicalFlags,
 } from "./module-init-vars.js";
-import { nullValueAdmissible } from "./analysis/operand-admissibility.js";
 import {
   IrPlanningIdentityInvariantError,
   requireIrPlanningOwnerUnitId,
@@ -934,7 +934,66 @@ function bindingDeclarationCandidates(
   source: BindingQuerySource,
 ): readonly (ts.Declaration | undefined)[] {
   const oracle = bindingOracle(source);
-  return [oracle.valueDeclarationOf(node), ...oracle.declarationsOf(node)];
+  const candidates = [oracle.valueDeclarationOf(node), ...oracle.declarationsOf(node)];
+  return scriptVarBehindLibGlobal(node, candidates) ?? candidates;
+}
+
+/**
+ * (#7287) A call `v(…)` in statement position whose callee is a script `var`
+ * in its dynamic module home: the Stage-4 dynamic call through that home, not
+ * a call-graph edge. Statement position only: a lib-named `var`'s call result
+ * is typed by the lib signature. Every argument must cross into the carrier
+ * (`dynamicCallArgumentAdmissible`). The selector and from-ast each pass their
+ * own resolver's answer for the callee.
+ */
+export function isStatementDynamicModuleCall(
+  call: ts.CallExpression,
+  isDynamicModuleBinding: (callee: ts.Identifier) => boolean,
+): boolean {
+  return (
+    ts.isExpressionStatement(call.parent) &&
+    ts.isIdentifier(call.expression) &&
+    isDynamicModuleBinding(call.expression) &&
+    call.arguments.every((argument) => dynamicCallArgumentAdmissible(syntacticArgumentFamily(argument)))
+  );
+}
+
+/** The families `dynamicCallArgumentAdmissible` refuses that an argument shows syntactically. */
+function syntacticArgumentFamily(argument: ts.Expression): OperandFamily {
+  const value = unwrapParens(argument);
+  if (value.kind === ts.SyntaxKind.NullKeyword) return "nullish";
+  return ts.isArrayLiteralExpression(value) ? "vec<other>" : "unknown";
+}
+
+/**
+ * (#7287) A script's top-level `var NAME` and a lib global of the same name
+ * (the test262 prelude's `var print = …` against lib.dom's
+ * `declare function print`) are a duplicate identifier to the checker, which
+ * binds every use to the lib declaration alone. At run time the script `var`
+ * IS the global binding — legacy binds its `__mod_NAME` slot by name — so a
+ * use whose every declaration is a lib one takes the file's unique top-level
+ * `var` of that name. A redeclared `var` stays unresolved, as an ordinary
+ * redeclaration does without `allowRedeclaredVar`.
+ */
+function scriptVarBehindLibGlobal(
+  node: ts.Identifier,
+  candidates: readonly (ts.Declaration | undefined)[],
+): readonly IrModuleBindingDeclaration[] | undefined {
+  const sourceFile = node.getSourceFile();
+  if (ts.isExternalModule(sourceFile)) return undefined;
+  const declared = candidates.filter((candidate) => candidate !== undefined);
+  if (declared.length === 0 || !declared.every((candidate) => candidate.getSourceFile().isDeclarationFile)) {
+    return undefined;
+  }
+  const vars = sourceFile.statements.flatMap((statement) =>
+    ts.isVariableStatement(statement)
+      ? statement.declarationList.declarations.filter(
+          (declaration) =>
+            ts.isIdentifier(declaration.name) && declaration.name.text === node.text && lexicalFlags(declaration) === 0,
+        )
+      : [],
+  );
+  return vars.length === 1 ? vars : undefined;
 }
 
 function isModuleBindingDeclaration(
@@ -942,20 +1001,15 @@ function isModuleBindingDeclaration(
   sourceFile: ts.SourceFile,
 ): candidate is IrModuleBindingDeclaration {
   if (!candidate || candidate.getSourceFile() !== sourceFile) return false;
-  if (ts.isVariableDeclaration(candidate)) {
-    const list = candidate.parent;
-    if (!ts.isIdentifier(candidate.name) || !ts.isVariableDeclarationList(list)) return false;
-    if (ts.isVariableStatement(list.parent)) return list.parent.parent === sourceFile;
-    // (#7288) A script's modelled `for (;;)` head shares the hoisted `__mod_<name>` slot.
-    return isModuleInitVarList(list);
+  const declaration = ts.isVariableDeclaration(candidate) || ts.isBindingElement(candidate) ? candidate : undefined;
+  if (!declaration || !ts.isIdentifier(declaration.name)) return false;
+  const list = bindingDeclarationList(declaration);
+  // A `VariableStatement`'s own name binds when the statement is top-level, in a script or an ES module.
+  if (ts.isVariableDeclaration(declaration) && list && ts.isVariableStatement(list.parent)) {
+    return list.parent.parent === sourceFile;
   }
-  // (#7106 S5) A leaf binds in a script's module-init `var` list.
-  return (
-    ts.isBindingElement(candidate) &&
-    ts.isIdentifier(candidate.name) &&
-    !ts.isExternalModule(sourceFile) &&
-    isModuleInitVarList(bindingDeclarationList(candidate))
-  );
+  // (#7106 S5, lever L) A leaf, or a `for` head's name, binds in a script's module-init `var` list.
+  return !ts.isExternalModule(sourceFile) && isModuleInitVarList(list);
 }
 
 function uniqueTopLevelVariableDeclaration(
@@ -1021,10 +1075,10 @@ function directTopLevelDeclaration(
   if (!sameSourceDeclarations.has(declaration)) return undefined;
   if (sameSourceDeclarations.size === 1) return declaration;
   // (#7106) Script redeclarations only — a merged function/class declaration
-  // of the same name still rejects. A JS expando target (`o` in `o.p = 1`)
-  // is a property declaration on the same binding, not a second binding.
+  // of the same name still rejects. A JS property declaration on the binding
+  // is not a second binding.
   const allDirectVars = [...sameSourceDeclarations].every(
-    (candidate) => isModuleBindingDeclaration(candidate, sourceFile) || isJsExpandoTarget(candidate),
+    (candidate) => isModuleBindingDeclaration(candidate, sourceFile) || isJsPropertyDeclarationTarget(candidate),
   );
   return script && allDirectVars ? declaration : undefined;
 }
@@ -1061,13 +1115,13 @@ function scriptVarReferenceKind(
   return home === "string" && isModuleStringStorageType(declaredType, checker) ? { kind: "string" } : undefined;
 }
 
-function isJsExpandoTarget(candidate: ts.Declaration): boolean {
-  const access = candidate.parent;
+// `o` in a JS property declaration on it: `o.p = v`, `o[k] = v`, `Object.defineProperty(o, …)` (#7106 lever S).
+function isJsPropertyDeclarationTarget(candidate: ts.Declaration): boolean {
+  const parent = candidate.parent;
+  if (!ts.isIdentifier(candidate) || parent === undefined) return false;
+  if (ts.isCallExpression(parent)) return parent.arguments[0] === candidate;
   return (
-    ts.isIdentifier(candidate) &&
-    access !== undefined &&
-    (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) &&
-    access.expression === candidate
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === candidate
   );
 }
 
@@ -1588,11 +1642,6 @@ function writeValueMatches(
   resolve: (node: ts.Identifier) => IrLegacyModuleBindingIdentity | undefined,
 ): boolean {
   const valueExpr = unwrapParens(value);
-  // (#7288) A bare `null` has no representation in the dynamic carrier: the
-  // same `nullValueAdmissible` proof from-ast's `null` arm applies.
-  if (valueExpr.kind === ts.SyntaxKind.NullKeyword && targetKind.kind === "dynamic") {
-    return nullValueAdmissible("dynamic");
-  }
   // (#7106) The script dynamic home accepts any value: the IR lowers it to the
   // dynamic carrier or refuses the unit when it has no boxing producer.
   if (targetKind.kind === "dynamic" && scriptVarHomeOf(declaration, options) === "dynamic") return true;
