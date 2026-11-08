@@ -13083,6 +13083,14 @@
       "nextBoundary": "Script-var string-array admission (#7292), the class-instance twin: separate the source-shape certification from the IR value kind when the frontend inventory is split from ir-core."
     },
     {
+      "path": "src/ir/module-binding-certified-homes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7292",
+      "nextBoundary": "The resolver's dispatch over the write-certified script-var homes (#7252 class instance, #7292 string vec): moves with their certifiers when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/ir/module-binding-script-var.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

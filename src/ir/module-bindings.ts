@@ -25,9 +25,11 @@ import type { IrClassShape } from "./nodes.js";
 import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
-import * as classInstance from "./module-binding-class-instance.js";
-import { scriptVarUseFollowsDeclaration } from "./module-binding-script-var.js";
-import { vecUseSupported, vecValueKind, vecWriteMatches } from "./module-binding-vec.js";
+import {
+  certifiedScriptVarKind,
+  certifiedScriptVarUse,
+  certifiedScriptVarWriteMatches,
+} from "./module-binding-certified-homes.js";
 import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
@@ -1111,8 +1113,8 @@ function scriptVarReferenceKind(
   declaredType: ts.Type,
   checker: ts.TypeChecker,
 ): IrModuleBindingValueKind | undefined {
-  if (home === "class-instance") return classInstance.classInstanceValueKind(checker, declaration, declaredType);
-  if (home === "vec") return vecValueKind(checker, declaration);
+  const certified = certifiedScriptVarKind(home, checker, declaration, declaredType);
+  if (certified) return certified;
   return home === "string" && isModuleStringStorageType(declaredType, checker) ? { kind: "string" } : undefined;
 }
 
@@ -1655,9 +1657,8 @@ function writeValueMatches(
   }
   // (#7106 S5) Only the carrier takes a carrier leaf's read: its checker type is no evidence.
   if (carrierLeafReads(valueExpr, resolve).length > 0) return false;
-  if (targetKind.kind === "class-instance")
-    return classInstance.classInstanceWriteMatches(checker, targetKind, valueExpr);
-  if (targetKind.kind === "vec") return vecWriteMatches(declaration, valueExpr);
+  const certifiedWrite = certifiedScriptVarWriteMatches(checker, declaration, targetKind, valueExpr);
+  if (certifiedWrite !== undefined) return certifiedWrite;
   if (targetKind.kind === "native-map") {
     // The native `$Map` carrier has exactly one producer in this slice.
     return isNativeMapConstruction(checker, valueExpr);
@@ -2401,14 +2402,8 @@ export function makeIrLegacyModuleBindingResolver(
       valueKind = { kind: "dynamic" } as const;
     }
     if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
-    // (#7252 / #7274 / #7292) A write-certified script var is read only where
-    // its slot is already written; a vec only in a use the IR vec lowers.
-    const certifiedUse =
-      valueKind.kind === "vec"
-        ? vecUseSupported(node, declaration)
-        : !(valueKind.kind === "class-instance" || scriptVarCapability) ||
-          scriptVarUseFollowsDeclaration(node, declaration);
-    if (!certifiedUse) return { kind: "unsupported", declaration, arm: "script-var-use-site" };
+    if (!certifiedScriptVarUse(valueKind, scriptVarCapability !== undefined, node, declaration))
+      return { kind: "unsupported", declaration, arm: "script-var-use-site" };
     if (
       writeValue !== undefined &&
       !writeValueMatches(checker, declaration, valueKind, writeValue, options, classifyPrimitiveExpression, resolve)

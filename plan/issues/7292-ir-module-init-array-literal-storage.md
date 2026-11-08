@@ -14,13 +14,6 @@ area: ir
 goal: ir-full-coverage
 related: [7252, 7128, 2949, 7274]
 assignee: "ttraenkler/lever-v" # handed over from c-lane-opus, 2026-11-07
-loc-budget-allow:
-  # 2026-11-08 (lever V, review round 2): the vec home's resolver arms (value
-  # kind, write match, one certified-use check folding the class-instance one)
-  # and the imports of the vec and shared script-var certifiers (+3 over main
-  # with lever L2's choke point); the certification itself lives in
-  # module-binding-vec.ts and module-binding-script-var.ts
-  - src/ir/module-bindings.ts
 ---
 
 # #7292 — IR module-init: script-var array-literal storage

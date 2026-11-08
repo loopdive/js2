@@ -6880,7 +6880,8 @@ function dynamicIndexedRead(recv: IrValueId, arg: ts.Expression, cx: LowerCtx): 
  */
 function isScriptVarVec(receiver: ts.Expression, cx: LowerCtx): boolean {
   const root = peelParensExpr(receiver);
-  return ts.isIdentifier(root) && cx.scope.get(root.text)?.kind === "moduleGlobal";
+  const binding = ts.isIdentifier(root) ? cx.scope.get(root.text) : undefined;
+  return binding?.kind === "moduleGlobal" && binding.type.kind === "vec";
 }
 
 /** (#7292) A vec as the dynamic carrier's object: the array legacy reads through the same carrier. */
@@ -15936,6 +15937,19 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
     return cx.builder.emitConst({ kind: "bool", value: isStrictEq }, IR_BOOL);
   }
   const other = leftU ? expr.right : expr.left;
+  // A typed array index has a non-undefined TypeScript element type even when
+  // the runtime index is out of bounds. Until the IR carries first-class
+  // `undefined` through a numeric-vector read, only a proven in-bounds access
+  // may participate in the never-undefined fold below. Unproven reads stay on
+  // the direct SAFE path instead of folding `a[i] === undefined` to false.
+  // (#7292) A script-var vec's read is the carrier: the tag test below.
+  if (ts.isElementAccessExpression(other) && !isProvenInBoundsIr(other, cx) && !isScriptVarVec(other.expression, cx)) {
+    throw new IrUnsupportedError(
+      "nullish-value-unsupported",
+      "build",
+      `ir/from-ast: unproven indexed read cannot be compared with undefined (${cx.funcName})`,
+    );
+  }
   const v = lowerExpr(other, cx, irVal({ kind: "externref" }));
   const t = cx.builder.typeOf(v);
   // #2949 S5.2 — a dynamic (boxed-any) operand: strict `=== undefined` /
@@ -15945,19 +15959,6 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
   if (t.kind === "dynamic") {
     const flag = cx.builder.emitTagTest(v, JS_TAG_IDS.Undefined);
     return isStrictNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
-  }
-  // A typed array index has a non-undefined TypeScript element type even when
-  // the runtime index is out of bounds. Until the IR carries first-class
-  // `undefined` through a numeric-vector read, only a proven in-bounds access
-  // may participate in the never-undefined fold below. Unproven reads stay on
-  // the direct SAFE path instead of folding `a[i] === undefined` to false. A
-  // read on the carrier (#7292's script-var vec) answered above.
-  if (ts.isElementAccessExpression(other) && !isProvenInBoundsIr(other, cx)) {
-    throw new IrUnsupportedError(
-      "nullish-value-unsupported",
-      "build",
-      `ir/from-ast: unproven indexed read cannot be compared with undefined (${cx.funcName})`,
-    );
   }
   const tv = asVal(t);
   // (#2955 slice 3) The string arm asks the resolver-owned rep predicate
