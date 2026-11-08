@@ -1087,10 +1087,12 @@ export function tryStaticEvalInline(
   // historically used eval-created vars as caller locals (#1102 AC2), while
   // the test262 script lane disables synthetic module strictness and therefore
   // still exercises the spec isolation path for explicit strict code.
+  // (#7336) Every provider bail below needs a linkable provider; on WASI it would turn the splice into a refusal.
+  const providerOwnsEval = runtimeEvalProviderLinkable(ctx);
   const explicitlyStrictEval = bodyIsStrict || (directEval && isStrictContext(expr, false));
-  if (explicitlyStrictEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
+  if (providerOwnsEval && explicitlyStrictEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
 
-  if (!explicitlyStrictEval && declarationNames.blockFunctionNames.size > 0) {
+  if (providerOwnsEval && !explicitlyStrictEval && declarationNames.blockFunctionNames.size > 0) {
     const annexBNames = declarationNames.blockFunctionNames;
     const collidesWithCaller =
       setsIntersect(annexBNames, declarationNames.varNames) ||
@@ -1127,13 +1129,13 @@ export function tryStaticEvalInline(
   // `blockFunctionNames` are deliberately NOT counted — B.3.3 keeps its own arm
   // above. `evalIsStrict` excludes strict bodies and strict direct-eval callers
   // (strict eval vars live in a private varEnv, never on the global), which
-  // preserves the #1102 AC2 TS-module lane. Standalone only: WASI has no
-  // provider (a bail would degrade splice into refusal) and host/gc keeps its
-  // existing dynamic `eval` fallback.
+  // preserves the #1102 AC2 TS-module lane. Not on WASI: it has no provider
+  // (a bail would degrade splice into refusal).
   //
   // Ordered AFTER the bucket-A global-lexical collision guard above: that error
   // is statically certain and also covers host mode, so it wins.
-  if (!evalIsStrict && declarationNames.varNames.size > 0 && (directEval ? fctx.name === "__module_init" : true)) {
+  const sloppyProviderEval = providerOwnsEval && !evalIsStrict;
+  if (sloppyProviderEval && declarationNames.varNames.size > 0 && (directEval ? fctx.name === "__module_init" : true)) {
     return undefined; // provider owns EvalDeclarationInstantiation here
   }
 
@@ -1150,7 +1152,12 @@ export function tryStaticEvalInline(
   // Keyed on FUNCTION declarations specifically, NOT on `varNames`: the
   // 192-file `declare-arguments` matrix is entirely function-scope var-only
   // eval and must keep splicing (named canary in the issue's verification).
-  if (!evalIsStrict && directEval && fctx.name !== "__module_init" && foldedEvalHasTopLevelFunctionDeclaration(sf)) {
+  if (
+    sloppyProviderEval &&
+    directEval &&
+    fctx.name !== "__module_init" &&
+    foldedEvalHasTopLevelFunctionDeclaration(sf)
+  ) {
     return undefined;
   }
 
@@ -1161,7 +1168,7 @@ export function tryStaticEvalInline(
   // both names compare equal only because both were null). Route those bodies
   // to the bytecode provider, where `%eval%` has a real realm-stable marker and
   // alias calls correctly become indirect eval.
-  if (containsEvalValueReference(sf)) return undefined;
+  if (providerOwnsEval && containsEvalValueReference(sf)) return undefined;
 
   // A `typeof` of one of the eval body's own lexical bindings, before that
   // binding's declaration, is a TDZ ReferenceError the splice statically folds
