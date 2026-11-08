@@ -37,14 +37,14 @@ export type UncurriedObjectAliasMethod = "hasOwnProperty" | "propertyIsEnumerabl
  * uses for an erased operand (`__extern_is_array`), so both answer from the
  * same runtime predicate.
  */
-export type StoredStaticAliasMethod = "getOwnPropertyDescriptor" | "isArray";
+export type StoredStaticAliasMethod = "getOwnPropertyDescriptor" | "getOwnPropertyNames" | "isArray";
 
 /** The object-runtime provider a stored static lowers to. */
-export type StoredStaticAliasProvider = "__getOwnPropertyDescriptor" | "__extern_is_array";
+export type StoredStaticAliasProvider = "__getOwnPropertyDescriptor" | "__getOwnPropertyNames" | "__extern_is_array";
 
 type CertifiedAliasCapability = Extract<
   IrBackendTargetCapability,
-  "native-own-property-test" | "native-own-property-descriptor" | "native-array-is-array"
+  "native-own-property-test" | "native-own-property-introspection" | "native-array-is-array"
 >;
 
 /** What a certified alias call lowers to: its result kind and the backend capability it needs. */
@@ -68,8 +68,18 @@ const STORED_STATICS: Readonly<
     receiver: "Object",
     arity: 2,
     result: "dynamic",
-    capability: "native-own-property-descriptor",
+    capability: "native-own-property-introspection",
     provider: "__getOwnPropertyDescriptor",
+  },
+  // (#7283) `var __getOwnPropertyNames = Object.getOwnPropertyNames;`: the
+  // object runtime's own-key list, exactly legacy's
+  // `emitStoredObjectIntrospectionCall`. The result is a dynamic array value.
+  getOwnPropertyNames: {
+    receiver: "Object",
+    arity: 1,
+    result: "dynamic",
+    capability: "native-own-property-introspection",
+    provider: "__getOwnPropertyNames",
   },
   isArray: {
     receiver: "Array",
@@ -288,6 +298,11 @@ export function certifiedAliasCall(
   if (alias.form === "uncurried") return call.arguments.length === 2 ? { ...alias, ...UNCURRIED } : undefined;
   const { arity, result, capability, provider } = STORED_STATICS[alias.method];
   return call.arguments.length === arity ? { ...alias, result, capability, provider } : undefined;
+}
+
+/** `call` invokes a certified alias whose native lowering answers an exact boolean. */
+export function isCertifiedBooleanAliasCall(call: ts.CallExpression, shadowed: (name: string) => boolean): boolean {
+  return certifiedAliasCall(call, shadowed)?.result === "boolean";
 }
 
 /**

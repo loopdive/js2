@@ -97,7 +97,7 @@ import {
   lowerSourceClosureInvocation,
   type SourceClosureInvocationPlan,
 } from "./source-closure-invocation.js";
-import { exactIndirectEvalStatement } from "../eval-call-shape.js";
+import { exactGlobalEvalStatement } from "../eval-call-shape.js";
 import { resolveOrdinaryObjectClosureSignature } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
 
@@ -117,11 +117,13 @@ import {
 } from "../codegen/dyn-ops.js";
 import { irDynamicMethodCallHelperName, irDynamicMethodCallNeedsWrapper } from "./dynamic-method-call-names.js";
 import {
-  type ArrayPrototypeBorrowCall,
+  type PrototypeBorrowCall,
   irArrayPrototypeBorrowHelperName,
+  ambientStringPrototypeBorrow,
   matchArrayPrototypeBorrowCall,
 } from "./array-prototype-borrow-call.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
+import { staticRegExpPair } from "../shared/regexp-static.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "../codegen/ir-native-map.js"; // (#4461) native $Map adapter ABI
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
@@ -523,8 +525,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
   sourceClosureCallableParameter?(node: ts.FunctionTypeNode): boolean;
-  /** Resolve the pre-collected exact JS-host indirect-eval import. */
-  hostIndirectEvalTarget?(): IrFuncRef | null;
+  /** (#7106 A2c) The runtime-eval support function a certified global eval statement calls with its source. */
+  globalEvalTarget?(call: ts.CallExpression): IrFuncRef | null;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
   /** Exact direct filter consumers of those sparse constructors. */
@@ -609,7 +611,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
   supportsBackendCapability?(
-    capability: "number-to-string" | "native-global-function-call" | "native-dynamic-member-read",
+    capability: "number-to-string" | "native-global-function-call" | "native-regexp" | "native-dynamic-member-read",
   ): boolean;
   /**
    * (#7253) The host-free provider legacy calls for a direct ambient
@@ -874,13 +876,14 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   resolveModuleBinding?(node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined;
   /**
-   * #3791 — exact standalone native RegExp `.test` bridge. The receiver is
-   * the real legacy module-global carrier; the helper is an in-module defined
-   * function with the canonical receiver-first externref ABI.
+   * #3791, #7106 lever R — the host-free `.test` bridge: the in-module
+   * carrier helper with the canonical receiver-first externref ABI. A stable
+   * top-level carrier's receiver is its real legacy module global; any other
+   * RegExp receiver is lowered as an IR value.
    */
-  standaloneRegExpTestPlan?(
+  nativeRegExpTestPlan?(
     receiver: ts.Expression,
-  ): { readonly receiverGlobal: IrGlobalRef; readonly funcName: string } | null;
+  ): { readonly receiverGlobal?: IrGlobalRef; readonly funcName: string } | null;
   /**
    * #3793 — existing retained function-object module carrier plus its live
    * receiver-preserving closed method dispatcher.
@@ -2665,7 +2668,8 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
       lowerStatementMethodCall(expr, cx);
       return;
     }
-    if (ts.isIdentifier(expr.expression) || expr.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    const callee = expr.expression;
+    if (ts.isIdentifier(callee) || callee.kind === ts.SyntaxKind.SuperKeyword || exactGlobalEvalStatement(expr)) {
       void lowerCall(expr, cx, /* statementPosition */ true);
       return;
     }
@@ -5148,7 +5152,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     return lowerPropertyAccess(expr, cx);
   }
   if (ts.isObjectLiteralExpression(expr)) {
-    return lowerObjectLiteral(expr, cx);
+    return lowerObjectLiteral(expr, cx, hint);
   }
   // #3522 returned-closure ownership. A literal produced in expression
   // position retains the internal closure carrier until an exact callable
@@ -5827,34 +5831,30 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
   return cx.builder.emitVecNewFixed(storedElementIds, storedElementType, resultType);
 }
 
+/** (#7106 lever R) `staticRegExpPair` over the resolver's lib-only proof, as the selector asks it. */
+function regExpPairOf(expr: ts.Expression, cx: LowerCtx): { pattern: string; flags: string } | undefined {
+  return staticRegExpPair(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true);
+}
+
+/** (#7106 lever R) A static construction this lane builds in-module: a `$NativeRegExp` carrier. */
+function lowersAsNativeRegExp(expr: ts.Expression, cx: LowerCtx): boolean {
+  return cx.resolver?.supportsBackendCapability?.("native-regexp") === true && regExpPairOf(expr, cx) !== undefined;
+}
+
 /**
- * Slice 10 (#1169i) — lower a `/pattern/flags` RegExp literal. Reuses the
- * legacy `parseRegExpLiteral` to extract pattern + flags from the literal
- * text. The flags string is normalized to `""` when no flags are present
- * (matches the legacy `compileRegExpLiteral` convention — see
- * `src/codegen/typeof-delete.ts:166-168`); a `null` flags arg would
- * otherwise produce `RegExp("...", null)` at runtime, which JS rejects
- * as `TypeError: Invalid flags 'null'`.
+ * Slice 10 (#1169i) — lower a static RegExp construction: a `/pattern/flags`
+ * literal, or (#7106 lever R, host-free lanes) `new RegExp(p?, f?)` over string
+ * literals (`staticRegExpPair`). The flags string is `""` when no flags are
+ * present (matches the legacy `compileRegExpLiteral` convention — see
+ * `src/codegen/typeof-delete.ts:166-168`); a `null` flags arg would otherwise
+ * produce `RegExp("...", null)` at runtime, which JS rejects as
+ * `TypeError: Invalid flags 'null'`.
  */
 function lowerRegExpLiteral(expr: ts.Expression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerRegExpLiteral(expr, cx));
-  const { pattern, flags } = parseRegExpLiteralText(expr.getText());
+  const { pattern, flags } = regExpPairOf(expr, cx)!;
   return cx.builder.emitRegExpLiteral(pattern, flags);
-}
-
-/**
- * Slice 10 (#1169i) — local copy of the legacy `parseRegExpLiteral` (in
- * `src/codegen/index.ts:3218`). Duplicated here to avoid importing from
- * `codegen/index.ts` from `ir/from-ast.ts`, which would add a second
- * pass-through over the existing `codegen/index.ts ↔ ir/integration.ts`
- * circular dependency. The two implementations are trivially identical;
- * any drift would surface as a behavioural mismatch in the slice-10
- * equivalence tests.
- */
-function parseRegExpLiteralText(text: string): { pattern: string; flags: string } {
-  const lastSlash = text.lastIndexOf("/");
-  return { pattern: text.slice(1, lastSlash), flags: text.slice(lastSlash + 1) };
 }
 
 /**
@@ -6619,9 +6619,9 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
  * compares equal across literals with different syntactic ordering. The
  * value list is reordered to match.
  */
-function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
+function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx, hint?: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerObjectLiteral(expr, cx));
+    return withNodeSourceSite(cx, expr, () => lowerObjectLiteral(expr, cx, hint));
   // #4471 — an empty literal is admitted only when the selector proved it
   // INERT (`empty-object-literal.ts`), and lowers to a zero-field
   // `object.new`. The property loop below is already a no-op at zero
@@ -6632,8 +6632,11 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
   // valueOf/toString path is not entered.
   // (#7128 S1) A referenced empty literal is instead the selector's open
   // carrier: legacy's raw-externref `$Object`, which the U2 read arm serves.
+  // An open-carrier literal stored into a dynamic-carrier slot crosses onto
+  // the carrier: a property of the slot, not of the admitting arm (#7280 S1).
   if (expr.properties.length === 0 && admittedEmptyLiteralIsOpenCarrier(expr)) {
-    return emitNewPlainObject(cx.builder, irVal({ kind: "externref" }));
+    const object = emitNewPlainObject(cx.builder, irVal({ kind: "externref" }));
+    return hint?.kind === "dynamic" ? cx.builder.emitBox(object, irDynamic()) : object;
   }
   if (
     expr.properties.some((property) => ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property))
@@ -7693,44 +7696,39 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (expr.questionDotToken) {
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
   }
-  const indirectEval = exactIndirectEvalStatement(expr);
-  if (indirectEval) {
-    const target = cx.resolver?.hostIndirectEvalTarget?.();
+  const globalEval = exactGlobalEvalStatement(expr);
+  if (globalEval) {
+    const target = cx.resolver?.globalEvalTarget?.(expr);
     if (
       !statementPosition ||
-      cx.resolver?.jsHostExterns?.() !== true ||
-      cx.resolver?.isAmbientBinding?.(indirectEval.evalIdentifier) !== true ||
+      cx.resolver?.isAmbientBinding?.(globalEval.evalIdentifier) !== true ||
       cx.scope.has("eval") ||
-      cx.resolver?.stringIsExternref?.() !== true ||
       !target
     ) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "build",
-        `ir/from-ast: certified host indirect eval lost an owning predicate (${cx.funcName})`,
+        `ir/from-ast: certified global eval lost an owning predicate (${cx.funcName})`,
       );
     }
-    const source = lowerExpr(indirectEval.source, cx, { kind: "string" });
+    const source = lowerExpr(globalEval.source, cx, { kind: "string" });
     if (cx.builder.typeOf(source).kind !== "string") {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "build",
-        `ir/from-ast: certified host indirect eval source is not a string (${cx.funcName})`,
+        `ir/from-ast: certified global eval source is not a string (${cx.funcName})`,
       );
     }
     const result = cx.builder.emitCall(
       target,
-      [
-        cx.builder.emitCoerceToExternref(source),
-        cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" })),
-      ],
+      [cx.builder.emitCoerceToExternref(source)],
       irVal({ kind: "externref" }),
     );
     if (result === null) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "build",
-        `ir/from-ast: host indirect eval provider returned void (${cx.funcName})`,
+        `ir/from-ast: global eval provider returned void (${cx.funcName})`,
       );
     }
     // Statement-position lowering records this as a zero-use side-effecting
@@ -8378,6 +8376,8 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   // — asking first materialized the whole `$Map` runtime on every `new`.
   const nativeMap = tryLowerNativeMapConstruction(expr, cx);
   if (nativeMap !== null) return nativeMap;
+  // (#7106 lever R) A host-free lane builds a static `new RegExp(…)` in-module, as it builds a literal.
+  if (lowersAsNativeRegExp(expr, cx)) return lowerRegExpLiteral(expr, cx);
   if (!ts.isIdentifier(expr.expression)) {
     demoteToLegacy(
       "unknown-class-construction",
@@ -9396,7 +9396,7 @@ function lowerDynamicOperands(operands: readonly ts.Expression[], cx: LowerCtx, 
  * ambient `Array`: one reflective call to the per-(method, arity) borrow
  * wrapper, receiver first, every operand the dynamic carrier.
  */
-function lowerArrayPrototypeBorrowCall(borrow: ArrayPrototypeBorrowCall, cx: LowerCtx): IrValueId {
+function lowerArrayPrototypeBorrowCall(borrow: PrototypeBorrowCall, cx: LowerCtx): IrValueId {
   const target = irArrayPrototypeBorrowHelperName(borrow.method, borrow.args.length);
   const operands = lowerDynamicOperands([borrow.receiver, ...borrow.args], cx, `${target} operand`);
   const result = cx.builder.emitCall(irRuntimeFuncRef(target), operands, irDynamic());
@@ -9528,19 +9528,21 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     return lowerReceiverFirstDynamicMethod(expr, cx, retainedMethod, "retained function method");
   }
 
-  // #3791 — standalone native RegExp `.test` on one exact, stable top-level
-  // carrier. Keep the real legacy module global as the receiver (no duplicate
-  // construction/cache), externalize the native subject string, then call the
-  // established `$NativeRegExp`-first carrier helper. The selector admits
-  // only this one-argument form and the resolver repeats the source proof.
+  // #3791, #7106 lever R — host-free RegExp `.test`. A stable top-level
+  // carrier keeps its real legacy module global as the receiver (no duplicate
+  // construction/cache); any other RegExp receiver is an IR value. Externalize
+  // the native subject string, then call the established `$NativeRegExp`-first
+  // carrier helper. The selector admits only this one-argument form.
   if (methodName === "test" && expr.arguments.length === 1 && !ts.isSpreadElement(expr.arguments[0]!)) {
-    const plan = cx.resolver?.standaloneRegExpTestPlan?.(expr.expression.expression) ?? null;
+    const plan = cx.resolver?.nativeRegExpTestPlan?.(expr.expression.expression) ?? null;
     if (plan !== null) {
       if (plan.funcName !== STANDALONE_REGEXP_CARRIER_TEST_HELPER) {
         // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
         throw new Error(`ir/from-ast: unexpected standalone RegExp test helper ${plan.funcName}`);
       }
-      const receiver = cx.builder.emitGlobalGet(plan.receiverGlobal, irVal({ kind: "externref" }));
+      const receiver = plan.receiverGlobal
+        ? cx.builder.emitGlobalGet(plan.receiverGlobal, irVal({ kind: "externref" }))
+        : lowerExpr(expr.expression.expression, cx, irVal({ kind: "externref" }));
       const subject = lowerExpr(expr.arguments[0]!, cx, { kind: "string" });
       if (cx.builder.typeOf(subject).kind !== "string") {
         throw new IrUnsupportedError(
@@ -9714,6 +9716,26 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   );
   if (consoleResult !== undefined) return consoleResult;
 
+  // (#7106 lever P) `String.prototype.<m>.call(r, …)` on the ambient `String`:
+  // the selector proved `r` a primitive, so the call is `String(r).<m>(…)`.
+  const stringBorrow = ambientStringPrototypeBorrow(
+    expr,
+    cx.scope,
+    (root) => cx.resolver?.isAmbientStringBinding?.(root) === true,
+  );
+  if (stringBorrow !== undefined) {
+    const receiver = lowerToStringOperand(stringBorrow.receiver, cx);
+    const args = ts.factory.createNodeArray(stringBorrow.args);
+    const result = lowerStringMethodCall(stringBorrow.method, receiver, stringBorrow.receiver, args, cx);
+    // invariant (producer-promise): selection claimed the borrow only for a method with a surface row.
+    if (result === null)
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: String.prototype.${stringBorrow.method} borrow has no plan`,
+      );
+    return result;
+  }
   // (#7106 compareArray.format) `Array.prototype.<m>.call(recv, …)` on the
   // ambient `Array`, intercepted before receiver lowering: `Array.prototype.<m>`
   // has no IR value (#7123); the wrapper runs legacy's borrow over the carrier.
@@ -13783,8 +13805,12 @@ function tryLowerAmbientStringToStringCall(expr: ts.CallExpression, cx: LowerCtx
   ) {
     return null;
   }
-  const argument = expr.arguments[0]!;
-  const value = lowerExpr(argument, cx, irDynamic());
+  return lowerToStringOperand(expr.arguments[0]!, cx);
+}
+
+/** `String(v)`'s ToString of one operand: the carrier through `dyn.to_string`, a primitive inline. */
+function lowerToStringOperand(operand: ts.Expression, cx: LowerCtx): IrValueId {
+  const value = lowerExpr(operand, cx, irDynamic());
   const type = cx.builder.typeOf(value);
   if (type.kind === "dynamic") return cx.builder.emitDynToString(value);
   // A string, a branded boolean or an f64: an unbranded `i32` may be a boolean.
@@ -14511,6 +14537,7 @@ function additiveLaneOf(cx: LowerCtx): AdditiveLane {
  */
 function additiveOperandProof(node: ts.Expression, cx: LowerCtx): AdditiveProof | null {
   if (addsAsCarrier(node, cx)) return "dynamic";
+  if (lowersAsNativeRegExp(peelParensExpr(node), cx)) return "regexp";
   const proof = proveAdditiveOperand(node, cx);
   return proof === "no-checker" ? null : proof;
 }

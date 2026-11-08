@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+//
+// #7106 A2c — the IR lowers a global-scope eval statement through the one
+// global-eval arm (`exactGlobalEvalStatement` → `globalEvalRoute`) exactly when
+// legacy would hand it to the runtime-eval provider: a literal indirect eval, or
+// a sloppy direct eval at script global, whose Script parses, raises no static
+// SyntaxError and declares a global var. Any other literal may fold at compile
+// time, so the module init holding it stays direct and no runtime call appears.
+
+import { describe, expect, it } from "vitest";
+
+import { compile } from "../src/index.js";
+
+const PROVIDER = "__runtime_indirect_eval_import";
+
+/**
+ * How many `call`s in the module reach the indirect-eval provider entry (the WAT names callees by index). The IR
+ * calls the support function, which the late inliner may fold into the caller; either way the entry is called.
+ */
+function providerCalls(wat: string): number {
+  const names: string[] = [];
+  const callees: number[] = [];
+  for (const line of wat.split("\n")) {
+    const declared = /^\s*\((?:import "[^"]*" "[^"]*" \()?func \$(\S+)/.exec(line);
+    if (declared) names.push(declared[1]!);
+    const call = /^\s*call (\d+)\s*$/.exec(line);
+    if (call) callees.push(Number(call[1]));
+  }
+  return callees.filter((index) => names[index] === PROVIDER).length;
+}
+
+async function moduleInit(source: string) {
+  const result = await compile(source, {
+    target: "standalone",
+    trackIrOutcomes: true,
+    fileName: "test.js",
+    allowJs: true,
+    emitWat: true,
+  });
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(result.irPostClaimErrors ?? []).toEqual([]);
+  const outcome = (result.irOutcomes ?? []).find((entry) => (entry.displayName ?? entry.name) === "<module-init>");
+  return { claimed: outcome?.irBodyEmitted === true, detail: String(outcome?.detail ?? ""), wat: result.wat };
+}
+
+describe("#7106 A2c — global-scope eval statements in the IR", () => {
+  it.each([
+    ["an indirect eval declaring a var", 'var f = 1;\n(0, eval)("var f = 5");\n'],
+    ["an indirect eval declaring a function", 'var g;\n(0, eval)("function g() { return 7; }");\n'],
+    ["a sloppy direct eval at script global", 'var y;\neval("var y = 2");\n'],
+    // An unread lexical gets no module slot, so legacy and the IR have no storage to disagree on.
+    ["an unread lexical declared after the eval", '(0, eval)("var z = 1");\nlet late = 2;\n'],
+  ])("claims the module init holding %s and calls the provider", async (_, source) => {
+    const init = await moduleInit(source);
+    expect(init.claimed, init.detail).toBe(true);
+    expect(providerCalls(init.wat)).toBeGreaterThan(0);
+  });
+
+  it.each([
+    // No declaration: the Script may fold, so the IR must not turn it into a runtime call.
+    ["a literal that only assigns", 'var x = 1;\n(0, eval)("x = 2");\n'],
+    // Static SyntaxErrors: legacy throws them without running the provider.
+    ["a source that does not parse", 'var a;\n(0, eval)("var a b");\n'],
+    ["a var colliding with a global lexical", 'let q = 1;\n(0, eval)("var q = 2");\n'],
+    // Not a global variable environment for a direct eval.
+    ["a direct eval inside a block", 'var w;\n{\n  eval("var w = 1");\n}\n'],
+    ["a direct eval in a strict script", '"use strict";\nvar s;\neval("var s = 1");\n'],
+    // Not a literal: the site has no recorded source.
+    ["a computed source", 'var src = "var c = 1";\nvar c;\n(0, eval)(src);\n'],
+    // A script lexical's slot is widened to externref for eval; the IR would type it by its declaration.
+    ["a script lexical the eval consumer widened", 'const S = "x";\nvar f = S;\n(0, eval)("var f = 5");\n'],
+    // The eval rebinds `f`; the IR would bind (and inline) the declaration it sees.
+    [
+      "a call of a function the eval rebinds",
+      "function f() { return 1; }\n(0, eval)('var z; f = function () { return 2; }');\nvar r = f();\n",
+    ],
+  ])("keeps the module init direct for %s", async (_, source) => {
+    const init = await moduleInit(source);
+    expect(init.claimed).toBe(false);
+  });
+
+  it("folds a literal that only assigns, with no runtime call", async () => {
+    const init = await moduleInit('var x = 1;\n(0, eval)("x = 2");\n');
+    expect(providerCalls(init.wat)).toBe(0);
+  });
+});

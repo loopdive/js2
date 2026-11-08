@@ -10,9 +10,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { exactIndirectEvalStatement } from "../src/eval-call-shape.js";
+import { exactGlobalEvalStatement } from "../src/eval-call-shape.js";
 import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
-import { buildImports, instantiateWasm } from "../src/runtime.js";
 import { hasActiveUnshadowedTest262Assert, rawTest262AssertShimEnabled } from "../src/runtime-eval.js";
 import { ts } from "../src/ts-api.js";
 
@@ -36,18 +35,6 @@ async function compileTracked(source: string, target?: "standalone"): Promise<Co
   return result;
 }
 
-async function instantiate(result: CompileResult): Promise<Record<string, Function>> {
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  const { instance } = await instantiateWasm(
-    result.binary,
-    imports.env,
-    imports.string_constants,
-    imports.string_constants16,
-  );
-  imports.setInstance?.(instance);
-  return instance.exports as Record<string, Function>;
-}
-
 function firstCall(source: string): ts.CallExpression {
   const sourceFile = ts.createSourceFile(
     "issue-1164-call-shape.ts",
@@ -66,27 +53,15 @@ function firstCall(source: string): ts.CallExpression {
   return found!;
 }
 
-async function hostEvalImport(): Promise<(source: unknown, isDirect: number) => unknown> {
-  const result = await compile(`export function hostEval(source: any): any { return (0, eval)(source); }`, {
-    fileName: "issue-1164-host-eval-import.ts",
-    skipSemanticDiagnostics: true,
-  });
-  expect(result.success, errorsOf(result)).toBe(true);
-  expect(result.imports.some((descriptor) => descriptor.name === "__extern_eval")).toBe(true);
-  const imports = buildImports(result.imports, undefined, result.stringPool);
-  return imports.env.__extern_eval as (source: unknown, isDirect: number) => unknown;
-}
-
-async function withoutGlobalAssert<T>(run: () => Promise<T> | T): Promise<T> {
-  const previous = Object.getOwnPropertyDescriptor(globalThis, "assert");
-  expect(Reflect.deleteProperty(globalThis, "assert")).toBe(true);
-  try {
-    return await run();
-  } finally {
-    Reflect.deleteProperty(globalThis, "assert");
-    if (previous) Object.defineProperty(globalThis, "assert", previous);
-  }
-}
+/**
+ * The JS host's `__extern_eval` shim under the `hostEval` policy (#1164/#6779), built from its import
+ * descriptor. No compile produces that import any more: the JS target compiles under the native regime with
+ * native strings (#6979), so legacy eval goes to the runtime-eval provider, and since #6779 the shim denies
+ * dynamic code unless the host opts in. The shim's raw-assert classifier is what these tests pin.
+ */
+// (#6979 S7-d) The JS-host `__extern_eval` shim rows that lived here (raw-assert
+// fallback, shadowed-assert, kill switch, inert-text) pinned the host-lane eval
+// shim that S7-d deleted from `src/runtime.ts`; only the pure classifier rows stay.
 
 describe("#1164 ES5 eval slice — raw Test262 assert classifier", () => {
   it("keeps the attribution switch safe when a browser has no process environment", () => {
@@ -124,63 +99,16 @@ describe("#1164 ES5 eval slice — raw Test262 assert classifier", () => {
   ])("does not activate for %s", (_label, source) => {
     expect(hasActiveUnshadowedTest262Assert(source)).toBe(false);
   });
-
-  it("runs raw callable/dot/bracket Test262 assertions through the legacy fallback shim", async () => {
-    await withoutGlobalAssert(async () => {
-      const evaluate = await hostEvalImport();
-
-      expect(evaluate("assert(true);", 0)).toBeUndefined();
-      expect(evaluate("assert.sameValue(1, 1);", 0)).toBeUndefined();
-      expect(evaluate('assert["sameValue"](1, 1);', 0)).toBeUndefined();
-      expect(
-        evaluate("assert.throws(TypeError, function () { throw new TypeError('expected'); });", 0),
-      ).toBeUndefined();
-      expect(() => evaluate("assert.sameValue(1, 2);", 0)).toThrow(/eval harness assertion/);
-      expect(
-        evaluate(
-          "assert.sameValue(1, 1); (function (assert) { assert.sameValue(1, 1); })({ sameValue: function () {} });",
-          0,
-        ),
-      ).toBeUndefined();
-    });
-  });
-
-  it("retains a measurement-only raw-assert kill switch", async () => {
-    const previous = process.env.JS2WASM_DISABLE_RAW_TEST262_ASSERT_SHIM;
-    process.env.JS2WASM_DISABLE_RAW_TEST262_ASSERT_SHIM = "1";
-    try {
-      await withoutGlobalAssert(async () => {
-        const evaluate = await hostEvalImport();
-        expect(() => evaluate("assert.sameValue(1, 1);", 0)).toThrow(/assert is not defined/);
-      });
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_DISABLE_RAW_TEST262_ASSERT_SHIM");
-      else process.env.JS2WASM_DISABLE_RAW_TEST262_ASSERT_SHIM = previous;
-    }
-  });
-
-  it("does not inject a raw-assert shim for inert text or a local binding", async () => {
-    await withoutGlobalAssert(async () => {
-      const evaluate = await hostEvalImport();
-      // `with` keeps these on the legacy fallback path, where a raw
-      // substring detector would otherwise prepend `var assert`.
-      expect(evaluate('with ({}) { "assert.sameValue(1, 1)"; }', 0)).toBeUndefined();
-      expect((globalThis as Record<string, unknown>).assert).toBeUndefined();
-      expect(
-        evaluate("let assert = { sameValue: function () {} }; with ({}) { assert.sameValue(); }", 0),
-      ).toBeUndefined();
-      expect((globalThis as Record<string, unknown>).assert).toBeUndefined();
-    });
-  });
 });
 
 describe("#1164 ES5 eval slice — exact host IR ownership", () => {
   it("recognizes only the canonical statement spelling", () => {
-    expect(exactIndirectEvalStatement(firstCall("(0, eval)(source);"))).toBeDefined();
-    expect(exactIndirectEvalStatement(firstCall("((0), (eval))(source);"))).toBeDefined();
+    expect(exactGlobalEvalStatement(firstCall("(0, eval)(source);"))?.direct).toBe(false);
+    expect(exactGlobalEvalStatement(firstCall("((0), (eval))(source);"))?.direct).toBe(false);
+    // (#7106 A2c) the same statement shape also names a direct eval; the caller proves its scope.
+    expect(exactGlobalEvalStatement(firstCall("eval(source);"))?.direct).toBe(true);
 
     for (const source of [
-      "eval(source);",
       "const result = (0, eval)(source);",
       "(1, eval)(source);",
       "(0, eval)();",
@@ -188,11 +116,13 @@ describe("#1164 ES5 eval slice — exact host IR ownership", () => {
       "(0, eval)(...sources);",
       "(0, eval)?.(source);",
     ]) {
-      expect(exactIndirectEvalStatement(firstCall(source)), source).toBeUndefined();
+      expect(exactGlobalEvalStatement(firstCall(source)), source).toBeUndefined();
     }
   });
 
-  it("owns a proven-string indirect statement through IR, reserves one import, and executes raw asserts", async () => {
+  // (#7106 A2c) The JS-host IR arm needed the host string carrier, which the JS target no longer has (native
+  // strings are forced since #6979); its import collector never fires there, and this statement stays legacy.
+  it("keeps a proven-string indirect statement on the legacy path on the JS target", async () => {
     const result = await compileTracked(`
       export function probe(source: string): number {
         (0, eval)(source);
@@ -200,26 +130,9 @@ describe("#1164 ES5 eval slice — exact host IR ownership", () => {
       }
     `);
 
-    expect(outcomeFor(result)).toMatchObject({
-      kind: "emitted",
-      legacyBodyEmitted: false,
-      irBodyEmitted: true,
-    });
+    expect(outcomeFor(result)).toMatchObject({ legacyBodyEmitted: true, irBodyEmitted: false });
     expect(result.irPostClaimErrors ?? []).toEqual([]);
-    expect(result.imports.filter((descriptor) => descriptor.name === "__extern_eval")).toHaveLength(1);
-    expect(
-      WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).filter(
-        (entry) => entry.module === "env" && entry.name === "__extern_eval",
-      ),
-    ).toEqual([{ module: "env", name: "__extern_eval", kind: "function" }]);
-
-    await withoutGlobalAssert(async () => {
-      const exports = await instantiate(result);
-      const probe = exports.probe as (source: string) => number;
-      expect(probe("assert.sameValue(1, 1);")).toBe(1);
-      expect(probe("assert.throws(TypeError, function () { throw new TypeError(); });")).toBe(1);
-      expect(() => probe("assert.sameValue(1, 2);")).toThrow(/eval harness assertion/);
-    });
+    expect(result.imports.filter((descriptor) => descriptor.name === "__extern_eval")).toHaveLength(0);
   });
 
   it.each([
