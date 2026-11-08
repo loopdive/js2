@@ -160,13 +160,13 @@ import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
-  isIrModuleClassInstanceValueKind,
+  isIrModuleStructValueKind,
   isIrModuleMapValueKind,
   isIrModuleNativeBufferValueKind,
   isIrModuleReferenceValueKind,
   isStatementDynamicModuleCall,
 } from "./module-bindings.js";
-import { outermostParenthesized } from "../shared/binding-writes.js";
+import { isStoreTarget, outermostParenthesized } from "../shared/binding-writes.js";
 import { firstConstBindingWrite } from "./const-binding-writes.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
@@ -650,6 +650,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly classifyDeclaredPrimitiveExpression?: (
     expr: ts.Expression,
   ) => IrDeclaredPrimitiveExpressionFamily | undefined;
+  /** (#7267) Does legacy fold this `JSON.parse(text)` at compile time? */
+  readonly jsonParseFoldsAtCompileTime?: (call: ts.CallExpression) => boolean;
   /**
    * Checker-backed proof that an expression is an Array or tuple. Used to
    * keep Array prototype methods without IR producers out of the claimed set
@@ -3494,6 +3496,8 @@ function dynamicUsesAreMoveOnly(
     ) {
       return false;
     }
+    // (#7267) `JSON.parse(<string>)` answers the codec's value graph on the carrier.
+    if (ts.isCallExpression(e) && selectorAmbientGlobalFunctionCall(e)?.result === "dynamic") return true;
     if (
       currentDynamicRuntimeBuildable &&
       ts.isCallExpression(e) &&
@@ -3637,6 +3641,11 @@ function dynamicUsesAreMoveOnly(
         if (expectDyn) return false;
         if (isDynShaped(jsonStringifyArg)) return currentDynamicRuntimeBuildable && scanExpr(jsonStringifyArg, true);
         return currentDynamicRuntimeBuildable && scanExpr(jsonStringifyArg, false);
+      }
+      // (#7267) `JSON.parse(<string>)`: a dynamic result over one concrete string operand.
+      const globalFunction = selectorAmbientGlobalFunctionCall(e);
+      if (globalFunction?.result === "dynamic") {
+        return expectDyn && globalFunction.arguments.every((argument) => scanExpr(argument, false));
       }
       // (#7106 S1c) `Object.prototype.toString.call(<dynamic>)` → `dyn.object_tag`.
       const objectTagArg = dynNames.has("Object") ? null : ambientObjectToStringTagCall(e);
@@ -4879,9 +4888,8 @@ function isPhase1StatementListInScope(
         if (lhs.questionDotToken !== undefined) {
           return shapeNo("nontail-elemstore-optional", lhs);
         }
-        if (!elementStoreReceiverAdmitted(lhs.expression, scope)) {
-          return shapeNo("nontail-elemstore-recv", lhs.expression);
-        }
+        const receiverRefusal = elementStoreReceiverRefusal(lhs.expression, scope);
+        if (receiverRefusal) return shapeNo(`nontail-elemstore-${receiverRefusal}`, lhs.expression);
         if (ts.isStringLiteralLike(lhs.argumentExpression) && !preflightClassPropertyWrite(lhs, scope)) return false;
         if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses))
           return shapeNo("nontail-elemstore-idx", lhs.argumentExpression);
@@ -6191,7 +6199,8 @@ function isPhase1MemberAssignment(
     if (lhs.questionDotToken !== undefined) {
       return shapeNo("body-elemstore-optional", lhs);
     }
-    if (!elementStoreReceiverAdmitted(lhs.expression, scope)) return shapeNo("body-elemstore-recv", lhs.expression);
+    const receiverRefusal = elementStoreReceiverRefusal(lhs.expression, scope);
+    if (receiverRefusal) return shapeNo(`body-elemstore-${receiverRefusal}`, lhs.expression);
     if (ts.isStringLiteralLike(lhs.argumentExpression) && !preflightClassPropertyWrite(lhs, scope)) return false;
     if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses)) return false;
     return isPhase1Expr(expr.right, scope, localClasses);
@@ -8116,9 +8125,7 @@ function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
   return expressionTouchesIdentifier(expr, (node) => {
     const binding = moduleBinding(node);
     const scalarBinding =
-      binding &&
-      !isIrModuleReferenceValueKind(binding.valueKind) &&
-      !isIrModuleClassInstanceValueKind(binding.valueKind);
+      binding && !isIrModuleReferenceValueKind(binding.valueKind) && !isIrModuleStructValueKind(binding.valueKind);
     return scalarBinding || moduleScalarAliasFamily(node) !== undefined;
   });
 }
@@ -8492,13 +8499,21 @@ function moduleExternConsumerIsProven(expr: ts.Expression, scope: ReadonlySet<st
 }
 
 /**
- * (#2856 C2) An element store's receiver: a plain in-scope identifier or a
- * stable dynamic root. (#7106 lever S2) A module binding answers for its own
- * use site, so a slot that refuses a store (`regexp-match`) is not one.
+ * (#2856 C2) Why an element store's receiver is refused, if it is: it must be
+ * a plain in-scope identifier or a stable dynamic root (`recv`). (#7292, #7106
+ * lever S2) A module binding answers for its own use site, so a slot that
+ * refuses a store (a script-var vec, `regexp-match`) is not one.
  */
-function elementStoreReceiverAdmitted(receiver: ts.Expression, scope: ReadonlySet<string>): boolean {
-  if (ts.isIdentifier(receiver) && scope.has(receiver.text)) return !isUnrepresentableModuleBinding(receiver);
-  return stableDynamicStoreReceiverHasAdmittedRoot(receiver);
+function elementStoreReceiverRefusal(
+  receiver: ts.Expression,
+  scope: ReadonlySet<string>,
+): "recv" | "module-storage-unrepresentable" | undefined {
+  const shaped =
+    (ts.isIdentifier(receiver) && scope.has(receiver.text)) || stableDynamicStoreReceiverHasAdmittedRoot(receiver);
+  if (!shaped) return "recv";
+  return ts.isIdentifier(receiver) && isUnrepresentableModuleBinding(receiver)
+    ? "module-storage-unrepresentable"
+    : undefined;
 }
 
 /** A real module lexical whose legacy storage has no sound IR representation. */
@@ -8990,6 +9005,17 @@ function selectorBuiltinProtoMemberLane(): BuiltinProtoMemberLane {
     isLibOnlyBinding: (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true,
     builtinProtoMember: currentSelectionOptions?.builtinProtoMember,
   };
+}
+
+/** (#7253 / #7267) The shared ambient-call admission, on the selector's lane and binding facts. */
+function selectorAmbientGlobalFunctionCall(expr: ts.CallExpression) {
+  const resolver = currentModuleBindingResolver;
+  return admitAmbientGlobalFunctionCall(expr, {
+    classify: currentSelectionOptions?.classifyDeclaredPrimitiveExpression,
+    supportsBackendCapability: currentSelectionOptions?.supportsBackendCapability,
+    isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding(node) === true,
+    foldsAtCompileTime: (call) => currentSelectionOptions?.jsonParseFoldsAtCompileTime?.(call) !== false,
+  });
 }
 
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
@@ -9484,7 +9510,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
   }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
   const carrierOperand = left === "dynamic" || right === "dynamic";
-  if (binOp === ts.SyntaxKind.PlusToken && carrierOperand && !carrierAdditionConsumed(expr)) {
+  if (binOp === ts.SyntaxKind.PlusToken && carrierOperand && !carrierValueConsumed(expr)) {
     return capabilityNo("operand-coercion-unsupported", "expr-wrapper-carrier-position", expr);
   }
   // An unbounded Boolean element can have an unknown IR family here, while
@@ -9560,17 +9586,68 @@ function selectorCarrierValue(
 }
 
 /**
- * Whether the consumer of a carrier `+` reads the carrier: a typed operator (S0
- * judges it), `typeof`, `!`, or a dynamic construct's argument. Anywhere else
- * it would be typed as the checker's string or number (#7034 round 2).
+ * Whether the consumer of a carrier value (a carrier `+`, #7292's script-var
+ * vec read) reads the carrier: a typed operator (S0 judges it), `typeof`, `!`,
+ * or a dynamic construct's argument. Anywhere else it would be typed as the
+ * checker's string or number (#7034 round 2).
  */
-function carrierAdditionConsumed(expr: ts.BinaryExpression): boolean {
+function carrierValueConsumed(expr: ts.Expression): boolean {
   const node = outermostParenthesized(expr);
   const parent = node.parent;
   if (ts.isBinaryExpression(parent)) return isTypedBinaryOperator(parent.operatorToken.kind);
   if (ts.isTypeOfExpression(parent)) return true;
   if (ts.isNewExpression(parent)) return parent.expression !== node && dynamicConstructCallee(parent) !== null;
   return ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken;
+}
+
+/**
+ * (#7292) A script-var vec's element read or expando read: from-ast reads the
+ * boxed vec through the dynamic reader, so it is the carrier, whatever type
+ * the checker gives it. `.length` stays the vec's f64.
+ */
+function isScriptVarVecCarrierRead(
+  expr: ts.Expression,
+): expr is ts.ElementAccessExpression | ts.PropertyAccessExpression {
+  const candidate = unwrapPhase1Parens(expr);
+  const isRead =
+    ts.isElementAccessExpression(candidate) ||
+    (ts.isPropertyAccessExpression(candidate) && candidate.name.text !== "length");
+  return isRead && !isStoreTarget(candidate) && moduleBinding(candidate.expression)?.valueKind.kind === "vec";
+}
+
+/**
+ * (#7292) A script-var vec carrier read is admitted where from-ast lowers it:
+ * the dynamic reader is buildable, an element key is a Number (the index the
+ * reader boxes), and the consumer takes the carrier — what reads any carrier
+ * (`carrierValueConsumed`), or an argument the callee takes as one: a
+ * function object's member call (`assert.sameValue`), which boxes every
+ * argument, or a top-level function's parameter resolved dynamic.
+ */
+function phase1ScriptVarVecReadAdmitted(expr: ts.Expression, scope: ReadonlySet<string>): boolean {
+  if (!isScriptVarVecCarrierRead(expr)) return true;
+  const read = unwrapPhase1Parens(expr) as ts.ElementAccessExpression | ts.PropertyAccessExpression;
+  if (!currentDynMemberReadBuildable)
+    return capabilityNo("operand-coercion-unsupported", "expr-vec-carrier-read", read);
+  if (ts.isElementAccessExpression(read) && provenIrFamily(read.argumentExpression, scope) !== "number") {
+    return capabilityNo("operand-coercion-unsupported", "expr-vec-index-family", read.argumentExpression);
+  }
+  const node = outermostParenthesized(read);
+  const call = node.parent;
+  if (!ts.isCallExpression(call) || call.expression === node) {
+    return (
+      carrierValueConsumed(node) || capabilityNo("operand-coercion-unsupported", "expr-vec-carrier-position", read)
+    );
+  }
+  const callee = unwrapPhase1Parens(call.expression);
+  const takesCarrier =
+    (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
+    ts.isIdentifier(callee.expression)
+      ? isFunctionObjectReceiver(callee.expression, currentSelectionOptions?.functionObjectValues)
+      : ts.isIdentifier(callee) &&
+        !scope.has(callee.text) &&
+        currentDynScanDecls?.has(callee.text) === true &&
+        calleeParamResolvedKind(callee.text, call.arguments.indexOf(node), currentClaimTypeMap) === "dynamic";
+  return takesCarrier || capabilityNo("operand-coercion-unsupported", "expr-vec-carrier-argument", read);
 }
 
 /** The leaf of a destructuring declaration that takes the literal plan, read through `expression`. */
@@ -11901,6 +11978,7 @@ function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): 
   }
   // An unannotated local: its family is its initializer's, which the caller traces.
   if (ts.isIdentifier(expression) && unannotatedLocal(expression) !== undefined) return "unknown";
+  if (isScriptVarVecCarrierRead(expression)) return "dynamic";
   if (moduleBinding(expression) !== undefined) {
     const slot = obviousModuleValueFamily(expression);
     return slot === "f64" ? "number" : slot === "boolean" ? "boolean" : "unknown";
@@ -11990,6 +12068,7 @@ function phase1NativeBufferVerdict(
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   const nativeBuffer = phase1NativeBufferVerdict(expr, scope, localClasses);
   if (nativeBuffer !== undefined) return nativeBuffer;
+  if (!phase1ScriptVarVecReadAdmitted(expr, scope)) return false;
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
     !moduleExternConsumerIsProven(expr, scope)
@@ -12676,6 +12755,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // (#7106 S1b) `JSON.stringify(v)`: one argument, native codec lanes only.
       const jsonStringifyArg = scope.has("JSON") ? null : ambientJsonStringifyCall(expr);
       if (jsonStringifyArg !== null) return isPhase1Expr(jsonStringifyArg, scope, localClasses);
+      // (#7267) `JSON.parse(text)` of a typed string: the shared #7253 admission.
+      const globalFunction = selectorAmbientGlobalFunctionCall(expr);
+      if (globalFunction) return globalFunction.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
       // (#7106 S1c) `Object.prototype.toString.call(v)`: standalone classifier lanes only.
       const objectTagArg = scope.has("Object") ? null : ambientObjectToStringTagCall(expr);
       if (objectTagArg !== null) return isPhase1Expr(objectTagArg, scope, localClasses);
@@ -13969,13 +14051,9 @@ export function buildLocalCallGraph(
             return;
           }
           // (#7253) …and the host-free global functions.
-          const globalFunctionArgs = admitAmbientGlobalFunctionCall(
-            node,
-            (callee) => currentModuleBindingResolver?.isLibOnlyBinding(callee) === true,
-            currentSelectionOptions,
-          );
-          if (globalFunctionArgs !== null) {
-            for (const argument of globalFunctionArgs) visit(argument);
+          const globalFunction = selectorAmbientGlobalFunctionCall(node);
+          if (globalFunction !== null) {
+            for (const argument of globalFunction.arguments) visit(argument);
             return;
           }
           const imported = certifyImportedIrCall(node, currentSelectionOptions?.importedFunctions);

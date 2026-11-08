@@ -47816,6 +47816,52 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-11-08T14:12:22.508Z",
+      "sourceRevision": "0a771c4860aee95cd42aff20cb8890b8b20accde",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "react-dom": {
+          "jsHost": {},
+          "standalone": {
+            "static": 0.3780903443004843,
+            "dynamic": 0.010847230211806943
+          }
+        },
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.0006041315731650579
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-11-08T16:58:24.819Z",
+      "sourceRevision": "b84ec3f97bf80e634f50b05f963faf3f41836e0e",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "react-dom": {
+          "jsHost": {},
+          "standalone": {
+            "static": 0.37294265967990275,
+            "dynamic": 0.01075398638922417
+          }
+        },
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.0005306122928675691
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }

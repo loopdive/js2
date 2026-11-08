@@ -33,7 +33,7 @@ const OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
 ]);
 
 /** The primitive family the caller's classifier proves (`makeIrPrimitiveExpressionClassifier`). */
-type ClassifyPrimitive = (expr: ts.Expression) => string | undefined;
+export type ClassifyPrimitive = (expr: ts.Expression) => string | undefined;
 
 /**
  * True when the IR consumes the match result `use` where its lowering reads
