@@ -209,7 +209,12 @@ import {
   type StringEncoding,
 } from "../codegen/native-string-literals.js";
 import type { RegExpCarrierMethod } from "../shared/regexp-static.js";
-import { ensureIrRegExpLiteralHelper, standaloneStaticRegExpCompiles } from "../codegen/regexp-standalone.js";
+import { STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER } from "./regexp-runtime-contract.js";
+import {
+  ensureIrRegExpLiteralHelper,
+  ensureStandaloneRegExpCarrierToStringHelper,
+  standaloneStaticRegExpCompiles,
+} from "../codegen/regexp-standalone.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../codegen/registry/imports.js";
 import { emitWasiErrorConstructor } from "../codegen/registry/error-types.js";
 import {
@@ -7974,6 +7979,8 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNumberToFixedProvider(ctx, fuseNativeNumberFormatCarriers);
   } else if (ref.binding.kind === "intrinsic" && parseIrDateSnapshotGetter(symbol) !== undefined) {
     index = ensureDateCivilHelper(ctx);
+  } else if (ref.binding.kind === "runtime" && symbol === STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER) {
+    index = ensureStandaloneRegExpCarrierToStringHelper(ctx);
   } else if (ref.binding.kind === "runtime" && symbol === "__str_replaceAll") {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);

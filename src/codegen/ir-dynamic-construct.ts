@@ -49,7 +49,7 @@ import { buildExplicitNullThisElseArm, explicitNullReceiverLane } from "./explic
 import { emitFnctorProtoGet } from "./expressions/fnctor-prototype.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
-import { isSelfGuardedConstructor, selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js";
+import { isSelfGuardedConstructor, selfGuardedConstructorLeavesFnctor } from "./helpers/self-guarded-constructor.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { emitGlobalObjectAsThis } from "./helpers/sloppy-this-global.js";
 import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
@@ -319,8 +319,7 @@ export function irFunctionCodeStrictness(ctx: CodegenContext, code: ts.FunctionD
  * which strictness? `undefined` = not on this lane / not this shape.
  */
 export function irFunctionThisStrictness(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean | undefined {
-  if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return undefined;
-  if (!isSelfGuardedConstructor(fn)) return undefined;
+  if (ctx.fast || !isSelfGuardedConstructor(fn) || !selfGuardedConstructorLeavesFnctor(ctx, fn)) return undefined;
   return irFunctionCodeStrictness(ctx, fn);
 }
 
@@ -338,11 +337,12 @@ export function irFunctionThisStrictness(ctx: CodegenContext, fn: ts.FunctionDec
  * builder has no plan for.
  */
 export function irSelfGuardedConstructorValue(ctx: CodegenContext, ident: ts.Identifier): boolean {
-  if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return false;
+  if (ctx.fast) return false;
   const classLike = ts.findAncestor(ident.parent, ts.isClassLike);
   if (classLike !== undefined && irSelfGuardedValueClassMethod(ident) === undefined) return false;
   const decl = ctx.oracle.valueDeclarationOf(ident);
   if (decl === undefined || !isSelfGuardedConstructor(decl) || decl.asteriskToken !== undefined) return false;
+  if (!selfGuardedConstructorLeavesFnctor(ctx, decl)) return false;
   return !identifierIsWrittenTo(ident.getSourceFile(), ident.text);
 }
 

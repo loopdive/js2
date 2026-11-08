@@ -117,8 +117,9 @@ import {
 } from "../codegen/dyn-ops.js";
 import { irDynamicMethodCallHelperName, irDynamicMethodCallNeedsWrapper } from "./dynamic-method-call-names.js";
 import {
-  type ArrayPrototypeBorrowCall,
+  type PrototypeBorrowCall,
   irArrayPrototypeBorrowHelperName,
+  ambientStringPrototypeBorrow,
   matchArrayPrototypeBorrowCall,
 } from "./array-prototype-borrow-call.js";
 import { REGEXP_CARRIER_METHODS } from "./regexp-runtime-contract.js";
@@ -5845,6 +5846,16 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
   return cx.builder.emitVecNewFixed(storedElementIds, storedElementType, resultType);
 }
 
+/** (#7106 lever R) `staticRegExpPair` over the resolver's lib-only proof, as the selector asks it. */
+function regExpPairOf(expr: ts.Expression, cx: LowerCtx): { pattern: string; flags: string } | undefined {
+  return staticRegExpPair(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true);
+}
+
+/** (#7106 lever R) A static construction this lane builds in-module: a `$NativeRegExp` carrier. */
+function lowersAsNativeRegExp(expr: ts.Expression, cx: LowerCtx): boolean {
+  return cx.resolver?.supportsBackendCapability?.("native-regexp") === true && regExpPairOf(expr, cx) !== undefined;
+}
+
 /**
  * Slice 10 (#1169i) — lower a static RegExp construction: a `/pattern/flags`
  * literal, or (#7106 lever R, host-free lanes) `new RegExp(p?, f?)` over string
@@ -5857,7 +5868,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
 function lowerRegExpLiteral(expr: ts.Expression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerRegExpLiteral(expr, cx));
-  const { pattern, flags } = staticRegExpPair(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true)!;
+  const { pattern, flags } = regExpPairOf(expr, cx)!;
   return cx.builder.emitRegExpLiteral(pattern, flags);
 }
 
@@ -8383,12 +8394,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   const nativeMap = tryLowerNativeMapConstruction(expr, cx);
   if (nativeMap !== null) return nativeMap;
   // (#7106 lever R) A host-free lane builds a static `new RegExp(…)` in-module, as it builds a literal.
-  if (
-    cx.resolver?.supportsBackendCapability?.("native-regexp") === true &&
-    staticRegExpPair(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true) !== undefined
-  ) {
-    return lowerRegExpLiteral(expr, cx);
-  }
+  if (lowersAsNativeRegExp(expr, cx)) return lowerRegExpLiteral(expr, cx);
   if (!ts.isIdentifier(expr.expression)) {
     demoteToLegacy(
       "unknown-class-construction",
@@ -9443,7 +9449,7 @@ function lowerDynamicOperands(operands: readonly ts.Expression[], cx: LowerCtx, 
  * ambient `Array`: one reflective call to the per-(method, arity) borrow
  * wrapper, receiver first, every operand the dynamic carrier.
  */
-function lowerArrayPrototypeBorrowCall(borrow: ArrayPrototypeBorrowCall, cx: LowerCtx): IrValueId {
+function lowerArrayPrototypeBorrowCall(borrow: PrototypeBorrowCall, cx: LowerCtx): IrValueId {
   const target = irArrayPrototypeBorrowHelperName(borrow.method, borrow.args.length);
   const operands = lowerDynamicOperands([borrow.receiver, ...borrow.args], cx, `${target} operand`);
   const result = cx.builder.emitCall(irRuntimeFuncRef(target), operands, irDynamic());
@@ -9732,6 +9738,26 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   );
   if (consoleResult !== undefined) return consoleResult;
 
+  // (#7106 lever P) `String.prototype.<m>.call(r, …)` on the ambient `String`:
+  // the selector proved `r` a primitive, so the call is `String(r).<m>(…)`.
+  const stringBorrow = ambientStringPrototypeBorrow(
+    expr,
+    cx.scope,
+    (root) => cx.resolver?.isAmbientStringBinding?.(root) === true,
+  );
+  if (stringBorrow !== undefined) {
+    const receiver = lowerToStringOperand(stringBorrow.receiver, cx);
+    const args = ts.factory.createNodeArray(stringBorrow.args);
+    const result = lowerStringMethodCall(stringBorrow.method, receiver, stringBorrow.receiver, args, cx);
+    // invariant (producer-promise): selection claimed the borrow only for a method with a surface row.
+    if (result === null)
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: String.prototype.${stringBorrow.method} borrow has no plan`,
+      );
+    return result;
+  }
   // (#7106 compareArray.format) `Array.prototype.<m>.call(recv, …)` on the
   // ambient `Array`, intercepted before receiver lowering: `Array.prototype.<m>`
   // has no IR value (#7123); the wrapper runs legacy's borrow over the carrier.
@@ -13801,8 +13827,12 @@ function tryLowerAmbientStringToStringCall(expr: ts.CallExpression, cx: LowerCtx
   ) {
     return null;
   }
-  const argument = expr.arguments[0]!;
-  const value = lowerExpr(argument, cx, irDynamic());
+  return lowerToStringOperand(expr.arguments[0]!, cx);
+}
+
+/** `String(v)`'s ToString of one operand: the carrier through `dyn.to_string`, a primitive inline. */
+function lowerToStringOperand(operand: ts.Expression, cx: LowerCtx): IrValueId {
+  const value = lowerExpr(operand, cx, irDynamic());
   const type = cx.builder.typeOf(value);
   if (type.kind === "dynamic") return cx.builder.emitDynToString(value);
   // A string, a branded boolean or an f64: an unbranded `i32` may be a boolean.
@@ -14529,6 +14559,7 @@ function additiveLaneOf(cx: LowerCtx): AdditiveLane {
  */
 function additiveOperandProof(node: ts.Expression, cx: LowerCtx): AdditiveProof | null {
   if (addsAsCarrier(node, cx)) return "dynamic";
+  if (lowersAsNativeRegExp(peelParensExpr(node), cx)) return "regexp";
   const proof = proveAdditiveOperand(node, cx);
   return proof === "no-checker" ? null : proof;
 }

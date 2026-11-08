@@ -6,7 +6,8 @@
 // (`ensureIrRegExpLiteralHelper` in `codegen/regexp-standalone.ts`); `.test(subject)` /
 // `.exec(subject)` call the existing `__regexp_test_carrier` / `__regexp_exec_carrier` on any IR
 // RegExp value (R1, R2). A script `var` holding an `.exec` result binds legacy's #1914 match-result
-// slot as a dynamic value (S2). No host import.
+// slot as a dynamic value (S2). R3: beside a string, `+` prints a RegExp as
+// `RegExp.prototype.toString` through legacy's rendering (`__regexp_to_string_carrier`). No host import.
 
 import { describe, expect, it } from "vitest";
 
@@ -74,6 +75,14 @@ const CLAIMED: Record<string, string> = {
     "assert.sameValue(null, (null));\n" +
     "var u = 0;\ntry { assert.sameValue(undefined, null); } catch (e) { u = 1; }\n" +
     "if (u !== 1) { throw new Test262Error('#2'); }",
+  // R3: ToString of a RegExp beside a string (§22.2.6.17 "/" + source + "/" + flags).
+  concatLiteral: "if (('#' + /a+b/gi) !== '#/a+b/gi') { throw new Test262Error('#1'); }",
+  concatLeft: "if ((/x/m + '!') !== '/x/m!') { throw new Test262Error('#1'); }",
+  concatConstructed: "if (('' + new RegExp('a/b', 'g')) !== '/a\\\\/b/g') { throw new Test262Error('#1'); }",
+  concatEmpty: "if (('' + new RegExp()) !== '/(?:)/') { throw new Test262Error('#1'); }",
+  // The S15.10.1 shape: the invalid pair throws SyntaxError before the message is built.
+  concatInvalid:
+    "try { throw new Test262Error('#1: ' + (new RegExp('a**'))); } catch (e) { if (!(e instanceof SyntaxError)) { throw new Test262Error('#2'); } }",
 };
 
 const REFUSED: Record<string, string> = {
@@ -117,9 +126,11 @@ const REFUSED: Record<string, string> = {
     "var __executed = /a/.exec('a');\nvar __executed = /b/.exec('b');\nassert.sameValue(__executed[0], 'b');",
   // A dynamic pattern needs the runtime compiler.
   dynamicPattern: "var p = 'a';\nif (!new RegExp(p).test('a')) { throw new Test262Error('#1'); }",
-  // R1 lowers a RegExp only as a `.test` receiver or a discarded statement: no property read, ToString (R3) or binding.
+  // A RegExp lowers only as a `.test` receiver, a discarded statement or a string `+` operand.
   sourceRead: "if (/1/.source !== '1') { throw new Test262Error('#1'); }",
-  concatenated: "try { throw new Test262Error('#1: ' + new RegExp('a**')); } catch (e) {}",
+  // R3 reads a RegExp only as a string `+` operand: not beside a number or another RegExp.
+  plusNumber: "if ((/a/ + 1) !== '/a/1') { throw new Test262Error('#1'); }",
+  plusRegExp: "if ((/a/ + /b/) !== '/a//b/') { throw new Test262Error('#1'); }",
   // A script's own `RegExp` is not the built-in, though the checker binds `new RegExp` to lib alone.
   userRegExp:
     "function RegExp(p) { this.test = function () { return 'mine'; }; }\n" +
