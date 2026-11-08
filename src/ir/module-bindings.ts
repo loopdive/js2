@@ -25,7 +25,11 @@ import type { IrClassShape } from "./nodes.js";
 import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
-import * as classInstance from "./module-binding-class-instance.js";
+import {
+  certifiedScriptVarKind,
+  certifiedScriptVarUse,
+  certifiedScriptVarWriteMatches,
+} from "./module-binding-certified-homes.js";
 import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
@@ -600,7 +604,7 @@ export type IrModuleBindingValueKind = bindingValue.IrModuleBindingValueKind;
 export type IrScriptVarHome = bindingValue.IrScriptVarHome;
 export {
   capabilityExternBindingOptions, // (#7274) DOM + native-buffer providers, for both planning sites
-  isIrModuleClassInstanceValueKind,
+  isIrModuleStructValueKind,
   isIrModuleMapValueKind,
   isIrModuleNativeBufferValueKind,
   isIrModuleReferenceValueKind,
@@ -1102,6 +1106,8 @@ function scriptVarHomeOf(
  * when the checker type agrees. A `dynamic` home needs no such agreement and
  * a `typed` one resolves through `scalarKind`. (#7252) A `class-instance` home
  * binds only when every write constructs the one class the checker names.
+ * (#7106 lever S2) A `regexp-match` home needs no checker agreement: legacy's
+ * #1914 inference already proved every write a match result.
  */
 function scriptVarReferenceKind(
   home: IrScriptVarHome | undefined,
@@ -1109,7 +1115,8 @@ function scriptVarReferenceKind(
   declaredType: ts.Type,
   checker: ts.TypeChecker,
 ): IrModuleBindingValueKind | undefined {
-  if (home === "class-instance") return classInstance.classInstanceValueKind(checker, declaration, declaredType);
+  const certified = certifiedScriptVarKind(home, checker, declaration, declaredType);
+  if (certified) return certified;
   return home === "string" && isModuleStringStorageType(declaredType, checker) ? { kind: "string" } : undefined;
 }
 
@@ -1659,8 +1666,8 @@ function writeValueMatches(
   // (#7288) …nor a direct read of any binding whose slot is the carrier (a
   // hoisted `var` read before its declaration): it lowers as a dynamic value.
   if (ts.isIdentifier(valueExpr) && resolve(valueExpr)?.valueKind.kind === "dynamic") return false;
-  if (targetKind.kind === "class-instance")
-    return classInstance.classInstanceWriteMatches(checker, targetKind, valueExpr);
+  const certifiedWrite = certifiedScriptVarWriteMatches(checker, declaration, targetKind, valueExpr);
+  if (certifiedWrite !== undefined) return certifiedWrite;
   if (targetKind.kind === "native-map") {
     // The native `$Map` carrier has exactly one producer in this slice.
     return isNativeMapConstruction(checker, valueExpr);
@@ -2404,12 +2411,8 @@ export function makeIrLegacyModuleBindingResolver(
       valueKind = { kind: "dynamic" } as const;
     }
     if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
-    // (#7252 / #7274) A write-certified script var is read through its typed
-    // handle only where its slot is already written.
-    if (
-      (valueKind.kind === "class-instance" || scriptVarCapability) &&
-      !classInstance.scriptVarUseFollowsDeclaration(node, declaration)
-    )
+    const capabilityCertified = scriptVarCapability !== undefined;
+    if (!certifiedScriptVarUse(valueKind, capabilityCertified, node, declaration, classifyPrimitiveExpression))
       return { kind: "unsupported", declaration, arm: "script-var-use-site" };
     if (
       writeValue !== undefined &&

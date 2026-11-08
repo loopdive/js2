@@ -122,8 +122,13 @@ import {
   ambientStringPrototypeBorrow,
   matchArrayPrototypeBorrowCall,
 } from "./array-prototype-borrow-call.js";
-import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
-import { staticRegExpPair } from "../shared/regexp-static.js";
+import { REGEXP_CARRIER_METHODS } from "./regexp-runtime-contract.js";
+import {
+  matchRegExpCarrierCall,
+  type RegExpCarrierCall,
+  type RegExpCarrierMethod,
+  staticRegExpPair,
+} from "../shared/regexp-static.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "../codegen/ir-native-map.js"; // (#4461) native $Map adapter ABI
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
@@ -310,7 +315,7 @@ import {
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
 import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
-import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
+import { objectIntegrityCallFold } from "./object-integrity.js";
 import {
   mixedPrimitiveConditionalArms,
   type MixedPrimitiveConditionalArms as MixedPrimitiveConditionalProof,
@@ -324,8 +329,10 @@ import {
   peelAssignmentChain,
   IR_MATH_METHOD_TABLE,
   admittedEmptyLiteralIsOpenCarrier,
+  admittedOwnPropertyCallMethod,
 } from "./select.js";
 import { openCarrierDefinePlan, type DataDescriptorField } from "./empty-object-literal.js";
+import type { OwnPropertyMethod } from "./dynamic-home-open-object.js";
 import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
@@ -885,14 +892,19 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   resolveModuleBinding?(node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined;
   /**
-   * #3791, #7106 lever R — the host-free `.test` bridge: the in-module
-   * carrier helper with the canonical receiver-first externref ABI. A stable
-   * top-level carrier's receiver is its real legacy module global; any other
-   * RegExp receiver is lowered as an IR value.
+   * #3791, #7106 lever R — the host-free `.test` / `.exec` bridge, over the
+   * in-module carrier helpers' canonical receiver-first externref ABI.
+   * `isNativeRegExpReceiver` is the side-effect-free question: a
+   * `native-regexp` lane and a RegExp receiver. `nativeRegExpMethodPlan`,
+   * asked only after it, registers the method's helper and names a stable
+   * top-level carrier's real legacy module global as the receiver (absent:
+   * the receiver is lowered as an IR value).
    */
-  nativeRegExpTestPlan?(
+  isNativeRegExpReceiver?(receiver: ts.Expression): boolean;
+  nativeRegExpMethodPlan?(
     receiver: ts.Expression,
-  ): { readonly receiverGlobal?: IrGlobalRef; readonly funcName: string } | null;
+    method: RegExpCarrierMethod,
+  ): { readonly receiverGlobal?: IrGlobalRef };
   /**
    * #3793 — existing retained function-object module carrier plus its live
    * receiver-preserving closed method dispatcher.
@@ -922,6 +934,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isLibOnlyBinding?(node: ts.Identifier): boolean;
   /** (#7127) The module's builtin-prototype brand companion is seeded. */
   builtinProtoCompanionSeeded?(): boolean;
+  /** (#7106 lever O) The program has a runtime-eval site that may run. */
+  runtimeEvalMayExecute?(): boolean;
   /** (#7294) `<builtin>.prototype.<member>`'s kind when its support function answers it on this lane. */
   builtinProtoMember?(builtin: string, member: string, anchor: ts.Node): "method" | "getter" | undefined;
   /** Exact source-bound Number call; no physical conversion provider is implied. */
@@ -5154,6 +5168,12 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
       const ty = hint.kind === "extern" ? irVal({ kind: "externref" }) : hint;
       return cx.builder.emitConst({ kind: "null", ty }, ty);
     }
+    // (#7106) On a lane whose dynamic carrier is externref, JS `null` is that
+    // carrier's null, exactly legacy's `ref.null.extern` (`undefined` is the
+    // distinct value `emitDynUndefined` pushes).
+    if (hint.kind === "dynamic" && cx.resolver?.dynamicCarrierIsExternref?.() === true) {
+      return cx.builder.emitConst({ kind: "null", ty: irDynamic() }, irDynamic());
+    }
     throw new IrUnsupportedError(
       "nullish-value-unsupported",
       "build",
@@ -6571,6 +6591,9 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
         }
         return cx.builder.emitVecLen(recv);
       }
+      // (#7292) A script-var vec's named property (an expando, `a.index`):
+      // the boxed vec through the dynamic reader, as legacy reads it.
+      if (isScriptVarVec(expr.expression, cx)) return dynamicNamedPropertyRead(boxVecToDynamic(recv, cx), propName, cx);
       demoteToLegacy(
         "property-access-unsupported",
         `ir/from-ast: .${propName} on vec not in slice 13 (${cx.funcName})`,
@@ -6600,8 +6623,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
         `ir/from-ast: .name of a logical-assignment NamedEvaluation target is a legacy static fold (${cx.funcName})`,
       );
     }
-    const key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
-    return cx.builder.emitDynMemberGet(recv, key);
+    return dynamicNamedPropertyRead(recv, propName, cx);
   }
   // (#7106 S1c) A raw externref receiver — the catch binding (`err.name`), a
   // #7128 open carrier, a host handle — is the host carrier unboxed: box it
@@ -6609,9 +6631,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
   // `__any_from_extern` on gc) and take the same unified reader. Admitted by
   // the selector for catch bindings and open carriers only.
   if (asVal(recvType)?.kind === "externref" && cx.resolver?.stringIsExternref?.() !== true) {
-    const boxedRecv = cx.builder.emitBox(recv, irDynamic());
-    const key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
-    return cx.builder.emitDynMemberGet(boxedRecv, key);
+    return dynamicNamedPropertyRead(cx.builder.emitBox(recv, irDynamic()), propName, cx);
   }
 
   demoteToLegacy(
@@ -6906,6 +6926,34 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
   if (!cx.safeIndexedArrays || cx.safeIndexedArrays.size === 0) return false;
   if (!ts.isIdentifier(expr.expression) || !ts.isIdentifier(expr.argumentExpression)) return false;
   return cx.safeIndexedArrays.has(expr.expression.text + ":" + expr.argumentExpression.text);
+}
+
+/** `recv.<propName>` through the dynamic reader, the name boxed as a string key. */
+function dynamicNamedPropertyRead(recv: IrValueId, propName: string, cx: LowerCtx): IrValueId {
+  const key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
+  return cx.builder.emitDynMemberGet(recv, key);
+}
+
+/** `recv[arg]` through the dynamic reader, a concrete index boxed onto the carrier. */
+function dynamicIndexedRead(recv: IrValueId, arg: ts.Expression, cx: LowerCtx): IrValueId {
+  const index = lowerExpr(arg, cx, irVal({ kind: "f64" }));
+  return cx.builder.emitDynMemberGet(recv, boxDynamicStoreOperand(index, arg, cx));
+}
+
+/**
+ * (#7292) A vec read from its script-var module slot: its uses are certified
+ * (`module-binding-vec.ts`), so its expando and element reads take the
+ * dynamic carrier. A function-local vec keeps the vec-only paths.
+ */
+function isScriptVarVec(receiver: ts.Expression, cx: LowerCtx): boolean {
+  const root = peelParensExpr(receiver);
+  const binding = ts.isIdentifier(root) ? cx.scope.get(root.text) : undefined;
+  return binding?.kind === "moduleGlobal" && binding.type.kind === "vec";
+}
+
+/** (#7292) A vec as the dynamic carrier's object: the array legacy reads through the same carrier. */
+function boxVecToDynamic(recv: IrValueId, cx: LowerCtx): IrValueId {
+  return cx.builder.emitBox(recv, irDynamic(JS_TAG_IDS.Object));
 }
 
 /** A dynamic member store's key or value, boxed onto the carrier when it lowers concrete. */
@@ -7301,6 +7349,12 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
     recvType.kind === "vec" ||
     (recvVal && (recvVal.kind === "ref" || recvVal.kind === "ref_null" || scalarVecCandidate))
   ) {
+    // (#7292) A script-var vec's element read is the carrier the selector
+    // typed it as (`phase1ScriptVarVecRead`): the boxed vec through the
+    // dynamic reader, which answers `undefined` out of bounds.
+    if (recvType.kind === "vec" && isScriptVarVec(expr.expression, cx)) {
+      return dynamicIndexedRead(boxVecToDynamic(recv, cx), arg, cx);
+    }
     const resolvedVec = resolveIrVecType(recvType, cx);
     if (resolvedVec) {
       const vec = resolvedVec.lowering;
@@ -7433,9 +7487,7 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
       const propName = (arg as ts.StringLiteral | ts.NoSubstitutionTemplateLiteral).text;
       key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
     } else {
-      const idx = lowerExpr(arg, cx, irVal({ kind: "f64" }));
-      const idxType = cx.builder.typeOf(idx);
-      key = idxType.kind === "dynamic" ? idx : boxConcreteToDynamic(idx, idxType, arg, cx);
+      return dynamicIndexedRead(recv, arg, cx);
     }
     if (key !== null) {
       return cx.builder.emitDynMemberGet(recv, key);
@@ -7683,6 +7735,8 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
+  const ownPropertyMethod = admittedOwnPropertyCallMethod(expr);
+  if (ownPropertyMethod !== undefined) return lowerOwnPropertyMethodCall(expr, ownPropertyMethod, cx);
   if (cx.resolver?.preparedObjectCreateCall?.(expr) === "null") {
     if (!isDirectObjectCreateNullCall(expr))
       throw new IrInvariantError(
@@ -8263,6 +8317,17 @@ function lowerAliasCarrierOperands(args: readonly ts.Expression[], aliasName: st
     carriers.push(value);
   }
   return carriers;
+}
+
+/**
+ * (#7335) `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on a
+ * selector-certified dynamic-home open object: both operands as carriers, then
+ * the lane's own-property provider, as the uncurried aliases lower.
+ */
+function lowerOwnPropertyMethodCall(expr: ts.CallExpression, method: OwnPropertyMethod, cx: LowerCtx): IrValueId {
+  const receiver = (expr.expression as ts.PropertyAccessExpression).expression;
+  const [object, key] = lowerAliasCarrierOperands([receiver, expr.arguments[0]!], method, cx);
+  return cx.builder.emitDynOwnProperty(object!, key!, method);
 }
 
 /**
@@ -8992,6 +9057,42 @@ function tryLowerConsoleMethodCall(
   return undefined;
 }
 
+/** (#3791, #7106 lever R) `re.test(s)` / `re.exec(s)`: the method's in-module carrier helper (`REGEXP_CARRIER_METHODS`). */
+function lowerRegExpCarrierCall(
+  { receiver: receiverExpr, subject: subjectExpr, method }: RegExpCarrierCall,
+  cx: LowerCtx,
+): IrValueId {
+  const plan = cx.resolver!.nativeRegExpMethodPlan!(receiverExpr, method);
+  const receiver = plan.receiverGlobal
+    ? cx.builder.emitGlobalGet(plan.receiverGlobal, irVal({ kind: "externref" }))
+    : lowerExpr(receiverExpr, cx, irVal({ kind: "externref" }));
+  const subject = lowerExpr(subjectExpr, cx, { kind: "string" });
+  if (cx.builder.typeOf(subject).kind !== "string") {
+    throw new IrUnsupportedError(
+      "operand-coercion-unsupported",
+      "build",
+      `ir/from-ast: standalone RegExp method subject is not a proven string (${cx.funcName})`,
+    );
+  }
+  const { helper, result: resultKind } = REGEXP_CARRIER_METHODS[method];
+  const result = cx.builder.emitCall(
+    irRuntimeFuncRef(helper),
+    [receiver, cx.builder.emitCoerceToExternref(subject)],
+    resultKind === "boolean" ? irVal({ kind: "i32", boolean: true }) : irDynamic(),
+  );
+  if (result === null) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+    throw new Error(`ir/from-ast: standalone RegExp helper returned void (${cx.funcName})`);
+  }
+  return result;
+}
+
+/** (#7106 lever R) `expr` is a carrier call the host-free lanes lower in-module (`lowerRegExpCarrierCall`). */
+function nativeRegExpCarrierCall(expr: ts.CallExpression, cx: LowerCtx): RegExpCarrierCall | undefined {
+  const call = matchRegExpCarrierCall(expr);
+  return call && cx.resolver?.isNativeRegExpReceiver?.(call.receiver) === true ? call : undefined;
+}
+
 /** Select prepared, host or native number formatting without re-evaluating the receiver. */
 function tryLowerNumberToStringCall(
   expr: ts.CallExpression,
@@ -9263,7 +9364,9 @@ function lowerObjectDefinePropertyCall(expr: ts.CallExpression, cx: LowerCtx): I
  */
 function lowerOpenCarrierDefineProperty(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
   const plan = openCarrierDefinePlan(expr);
-  const object = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
+  let object = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
+  // (#7335) A dynamic-home open object is read from its `dynamic` slot, whose carrier is that externref.
+  if (cx.builder.typeOf(object).kind === "dynamic") object = cx.builder.emitCoerceToExternref(object);
   if (plan === null || asVal(cx.builder.typeOf(object))?.kind !== "externref") {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
@@ -9542,42 +9645,11 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     return lowerReceiverFirstDynamicMethod(expr, cx, retainedMethod, "retained function method");
   }
 
-  // #3791, #7106 lever R — host-free RegExp `.test`. A stable top-level
-  // carrier keeps its real legacy module global as the receiver (no duplicate
-  // construction/cache); any other RegExp receiver is an IR value. Externalize
-  // the native subject string, then call the established `$NativeRegExp`-first
-  // carrier helper. The selector admits only this one-argument form.
-  if (methodName === "test" && expr.arguments.length === 1 && !ts.isSpreadElement(expr.arguments[0]!)) {
-    const plan = cx.resolver?.nativeRegExpTestPlan?.(expr.expression.expression) ?? null;
-    if (plan !== null) {
-      if (plan.funcName !== STANDALONE_REGEXP_CARRIER_TEST_HELPER) {
-        // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
-        throw new Error(`ir/from-ast: unexpected standalone RegExp test helper ${plan.funcName}`);
-      }
-      const receiver = plan.receiverGlobal
-        ? cx.builder.emitGlobalGet(plan.receiverGlobal, irVal({ kind: "externref" }))
-        : lowerExpr(expr.expression.expression, cx, irVal({ kind: "externref" }));
-      const subject = lowerExpr(expr.arguments[0]!, cx, { kind: "string" });
-      if (cx.builder.typeOf(subject).kind !== "string") {
-        throw new IrUnsupportedError(
-          "operand-coercion-unsupported",
-          "build",
-          `ir/from-ast: standalone RegExp.test subject is not a proven string (${cx.funcName})`,
-        );
-      }
-      const subjectExtern = cx.builder.emitCoerceToExternref(subject);
-      const result = cx.builder.emitCall(
-        irRuntimeFuncRef(plan.funcName),
-        [receiver, subjectExtern],
-        irVal({ kind: "i32", boolean: true }),
-      );
-      if (result === null) {
-        // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-        throw new Error(`ir/from-ast: standalone RegExp.test helper returned void (${cx.funcName})`);
-      }
-      return result;
-    }
-  }
+  // #3791, #7106 lever R — host-free RegExp `.test` / `.exec`. A stable
+  // top-level carrier keeps its real legacy module global as the receiver (no
+  // duplicate construction/cache); any other RegExp receiver is an IR value.
+  const regExpCall = nativeRegExpCarrierCall(expr, cx);
+  if (regExpCall) return lowerRegExpCarrierCall(regExpCall, cx);
 
   if (
     receiverIdentifier?.text === "Object" &&
@@ -9670,13 +9742,17 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     return result!;
   }
 
-  if (
-    isPristineEs5IntrinsicIsFrozenCall(
-      expr,
-      (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
-    )
-  ) {
-    return cx.builder.emitConst({ kind: "bool", value: false }, irVal({ kind: "i32", boolean: true }));
+  // (#7106 lever O) The selector's `objectIntegrityCallFold`: a constant, or a mutator's literal operand.
+  const integrityFold = objectIntegrityCallFold(expr, {
+    isAmbientBinding: (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
+    dynamicCodeMayRun: cx.resolver?.runtimeEvalMayExecute?.() !== false,
+  });
+  if (integrityFold?.kind === "answer") {
+    return cx.builder.emitConst({ kind: "bool", value: integrityFold.value }, irVal({ kind: "i32", boolean: true }));
+  }
+  if (integrityFold?.kind === "operand") {
+    const { operand, family } = integrityFold;
+    return lowerExpr(operand, cx, family === "number" ? IR_F64 : family === "boolean" ? IR_BOOL : { kind: "string" });
   }
 
   // #3000-E: `super.method(args)` — static-dispatch to the PARENT's method slot.
@@ -10695,16 +10771,17 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx, receiv
   // (#7106 S3c) `<dynamic>.name = v` in a function whose code strictness the
   // lowering knows (an ambient-`this` subject): `dyn.member_set` with the name
   // boxed as a string key, PutValue's strict/sloppy failure rule preserved.
-  if (
-    recvType.kind === "dynamic" &&
-    cx.functionCodeStrict !== undefined &&
-    ts.isPropertyAccessExpression(lhs) &&
-    ts.isIdentifier(lhs.name)
-  ) {
+  // (#7292) A script-var vec's expando (`a.index = 2`) is the same write on the
+  // boxed vec, through legacy's sloppy `__extern_set`: the native strict store
+  // keeps no expando for a vec, and `vecUseSupported` keeps the array private.
+  const moduleVec = recvType.kind === "vec" && isScriptVarVec(lhs.expression, cx);
+  const dynamicNamedWrite = (recvType.kind === "dynamic" && cx.functionCodeStrict !== undefined) || moduleVec;
+  if (dynamicNamedWrite && ts.isPropertyAccessExpression(lhs) && ts.isIdentifier(lhs.name)) {
+    const target = moduleVec ? boxVecToDynamic(recv, cx) : recv;
     const key = cx.builder.emitBox(cx.builder.emitStringConst(fieldName), irDynamic(JS_TAG_IDS.String));
     const result = lowerExpr(expr.right, cx, irDynamic());
     const value = boxDynamicStoreOperand(result, expr.right, cx);
-    cx.builder.emitDynMemberSet(recv, key, value, !cx.functionCodeStrict);
+    cx.builder.emitDynMemberSet(target, key, value, moduleVec || !cx.functionCodeStrict);
     return result;
   }
 
@@ -15038,10 +15115,11 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
       if (cx.scope.has(candidate.expression.text)) return expressionProducesDynamic(candidate.expression, cx);
       return cx.calleeTypes?.get(candidate.expression.text)?.returnType?.kind === "dynamic";
     }
-    return (
-      ts.isPropertyAccessExpression(candidate.expression) &&
-      expressionProducesDynamic(candidate.expression.expression, cx)
-    );
+    if (!ts.isPropertyAccessExpression(candidate.expression)) return false;
+    // (#7106 lever R2) A host-free `re.exec(s)` answers the match array or null as the carrier.
+    const regExpCall = nativeRegExpCarrierCall(candidate, cx);
+    if (regExpCall) return REGEXP_CARRIER_METHODS[regExpCall.method].result === "dynamic";
+    return expressionProducesDynamic(candidate.expression.expression, cx);
   }
   // (#7066) A claimed #5092 mixed-primitive conditional lowers to the carrier (`lowerConditional`).
   if (ts.isConditionalExpression(candidate)) {
@@ -16013,7 +16091,8 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
   // `undefined` through a numeric-vector read, only a proven in-bounds access
   // may participate in the never-undefined fold below. Unproven reads stay on
   // the direct SAFE path instead of folding `a[i] === undefined` to false.
-  if (ts.isElementAccessExpression(other) && !isProvenInBoundsIr(other, cx)) {
+  // (#7292) A script-var vec's read is the carrier: the tag test below.
+  if (ts.isElementAccessExpression(other) && !isProvenInBoundsIr(other, cx) && !isScriptVarVec(other.expression, cx)) {
     throw new IrUnsupportedError(
       "nullish-value-unsupported",
       "build",
