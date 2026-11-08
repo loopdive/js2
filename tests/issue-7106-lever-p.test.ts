@@ -3,7 +3,8 @@
 // #7106 lever P: `String.prototype.<m>.call(r, …)` on the ambient `String`,
 // with `r` a proven string, number or boolean, is `String(r).<m>(…)` and is
 // claimed by the IR through the string-method surface. A receiver that may be
-// nullish, an object or a wrapper, and `.apply`, stay on the legacy boundary.
+// nullish, an object or a wrapper, a method without a surface row, `.apply`,
+// and a program that may patch `String.prototype` stay on the legacy boundary.
 // Each row's expected value is the JS engine's answer, recorded with the row.
 
 import { describe, expect, it } from "vitest";
@@ -33,9 +34,19 @@ const REFUSED: Record<string, Row> = {
     "(function () { try { String.prototype.trim.call(null); return 0; } catch (e) { return e instanceof TypeError ? 1 : 2; } })()",
     1,
   ],
+  undefinedReceiver: [
+    "(function () { try { String.prototype.trim.call(undefined); return 0; } catch (e) { return e instanceof TypeError ? 1 : 2; } })()",
+    1,
+  ],
+  objectReceiver: ['String.prototype.trim.call({ toString() { return " o "; } })', "o"],
   wrapperReceiver: ['String.prototype.trim.call(new String(" s "))', "s"],
+  methodWithoutRow: ['String.prototype.localeCompare.call("a", "a")', 0],
   applyBorrow: ['String.prototype.trim.apply("  a ")', "a"],
 };
+
+/** A program that may replace a `String.prototype` method keeps legacy's lookup of it. */
+const PATCHED_PROTOTYPE = `String.prototype.trim = function () { return "patched"; };
+export function patched(): number { return String.prototype.trim.call(" a ") === "patched" ? 1 : 0; }`;
 
 function source(cases: Record<string, Row>): string {
   return Object.entries(cases)
@@ -88,5 +99,12 @@ describe("#7106 lever P — String.prototype borrow over a primitive receiver", 
       expect(outcome(result, name)?.irBodyEmitted, name).not.toBe(true);
       expect(exports[name]!(), name).toBe(1);
     }
+  });
+
+  it.each<CompileTarget>([undefined, "standalone"])("keeps a patched String.prototype legacy (%s)", async (target) => {
+    const result = await compileTarget(PATCHED_PROTOTYPE, target);
+    const exports = await instantiate(result);
+    expect(outcome(result, "patched")?.irBodyEmitted).not.toBe(true);
+    expect(exports.patched!()).toBe(1);
   });
 });

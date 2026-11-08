@@ -205,6 +205,7 @@ import {
 } from "./literal-pattern-plan.js";
 import { declarationBindingWritten } from "./const-binding-writes.js";
 import { programPatchesDestructuringRealm } from "./realm-keys.js";
+import { sourceMayPatchPrototype } from "../shared/intrinsic-prototype-writes.js";
 import { collectBindingPatternNames } from "./analysis/ast-scope.js";
 import {
   conditionalJoinArmFamily,
@@ -8930,6 +8931,10 @@ function stringPrototypeBorrowSelection(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  // The surface row is the realm's own method: a program that may replace it keeps legacy's lookup.
+  if (sourceMayPatchPrototype(expr.getSourceFile(), "String")) {
+    return capabilityNo("string-method-unsupported", "expr-string-borrow-patched-prototype", expr);
+  }
   const family = provenIrFamily(borrow.receiver, scope);
   if (family !== "string" && family !== "number" && family !== "boolean") {
     return capabilityNo("string-method-unsupported", "expr-string-borrow-receiver", borrow.receiver);

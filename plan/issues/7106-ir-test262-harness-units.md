@@ -6876,3 +6876,50 @@ no runtime, provider or host import is added.
 - **Static calls (8 files).** `Number.hasOwnProperty(…)` on the constructor
   object needs the same singleton; `String.fromCharCode` (2) is a follow-up
   row on the string surface.
+
+### Measured (2026-11-08, as built)
+
+Base `4d5478b37c` (origin/main; main's later commits touch no `src/`), head
+this branch, one niced worker per pass. Population: the 1,431 census files plus
+200 random ES5 files (`.tmp/rnd200.txt`), 1,603 distinct, 1,589 compiling on
+both sides, compiled as the runner does (original harness, `allowJs`).
+Pass/fail is `runTest262File` (sloppy run plus strict rerun) on every changed
+file, both trees.
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, base → head | 241 → 277 (**+36**) | 241 → 277 (**+36**) |
+| …of them in the random sample | 0 | 0 |
+| IR-only files lost | 0 | 0 |
+| units newly legacy | 0 | 0 |
+| new post-claim errors | 0 | 0 |
+| binaries changed | 36, each a newly claimed `<module-init>` | 36, the same files |
+| binaries byte-identical | 1,553 | 1,553 |
+| pass → fail on the changed files | 0 (36/36 pass on both) | 0 (36/36 pass on both) |
+| playground (13 programs) | identical | identical |
+
+The 36 are `String/prototype/trim/15.5.4.20-1-{3,4,7}` and `15.5.4.20-2-*`
+(33). The other trim borrows stay legacy by design or behind another arm: an
+object, array or nullish receiver (`.call({})`, `.call([1])`,
+`.call(undefined)`, refused as `expr-string-borrow-receiver`; the stubbed
+census counted one of them as its 37th), or a RegExp / Error constructor or
+another body shape elsewhere in the file.
+
+**Found and fixed in validation: a patched `String.prototype`.** Legacy looks
+the borrowed method up on the live prototype, so
+`String.prototype.trim = f; String.prototype.trim.call(" a ")` calls `f`. The
+first cut lowered the surface row regardless (a pass→fail outside the census
+population). The borrow now refuses when the program may patch
+`String.prototype` (`expr-string-borrow-patched-prototype`), asking the shared
+`sourceMayPatchPrototype`, whose intrinsic set gains `String`; its other
+callers ask only `Array` / `Object`, so nothing else moves. The 36 gained
+binaries are byte-identical before and after the fix. The ordinary method form
+(`" a ".trim()` after the same patch) is already claimed on main and answers the
+intrinsic; that is a pre-existing gap for its own issue, not this slice.
+
+**Next sub-shapes, by measured yield** (census above, files IR-only alone):
+`new X(v)` as a value (30; needs certified wrapper uses or wrapper-aware
+dynamic ops), `X.prototype` other than `.call` (14) and the static reads (39
+together with `new` and `Number.prototype`; both need #7294's intrinsic
+singletons), static calls (8; `String.fromCharCode` is 2 of them, a surface
+row).

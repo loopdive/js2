@@ -1,16 +1,18 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * What a program does to `Array.prototype` and `Object.prototype`, from one
- * pure-AST walk over every mention of them. Two consumers ask two questions:
+ * What a program does to `Array.prototype`, `Object.prototype` and
+ * `String.prototype`, from one pure-AST walk over every mention of them. Two
+ * consumers ask two questions:
  *
  *   - {@link sourceWritesPrototype}: the legacy array-iteration brand (#1719,
  *     `sourceOverridesArrayIterator`) asks whether the program writes a member
  *     with `=`, deletes one, or passes the prototype to
  *     `Object.defineProperty`/`defineProperties`. Its byte-identity contract
  *     pins exactly that set.
- *   - {@link sourceMayPatchPrototype}: the IR's destructuring readers (#7106)
- *     assume the realm's own prototypes, so they ask the conservative
- *     question. A prototype (`Array.prototype`, `globalThis.Object.prototype`,
+ *   - {@link sourceMayPatchPrototype}: the IR's destructuring readers and its
+ *     `String.prototype.<m>.call` borrow (#7106) assume the realm's own
+ *     prototypes, so they ask the conservative question. A prototype
+ *     (`Array.prototype`, `globalThis.Object.prototype`,
  *     …) may be patched unless every mention of it is the object of a plain
  *     member read (`Array.prototype.map.call(…)`). A stored-into member
  *     (compound, logical and destructuring targets included), a deleted one, a
@@ -23,7 +25,7 @@
 import { forEachChild, ts } from "../ts-api.js";
 import { isStoreTarget, skipOuterExpressions } from "./binding-writes.js";
 
-export type PatchableIntrinsic = "Array" | "Object";
+export type PatchableIntrinsic = "Array" | "Object" | "String";
 
 interface PrototypeUse {
   readonly writes: Set<PatchableIntrinsic>;
@@ -59,7 +61,7 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
   return use;
 }
 
-/** `Array` for `Array.prototype` / `globalThis.Array.prototype`, `Object` likewise. */
+/** `Array` for `Array.prototype` / `globalThis.Array.prototype`, `Object` and `String` likewise. */
 function prototypeOwner(
   expression: ts.PropertyAccessExpression,
 ): { readonly intrinsic: PatchableIntrinsic; readonly viaGlobalThis: boolean } | undefined {
@@ -70,7 +72,9 @@ function prototypeOwner(
     ts.isIdentifier(receiver.expression) &&
     receiver.expression.text === "globalThis";
   const owner = viaGlobalThis ? receiver.name : receiver;
-  if (!ts.isIdentifier(owner) || (owner.text !== "Array" && owner.text !== "Object")) return undefined;
+  if (!ts.isIdentifier(owner) || (owner.text !== "Array" && owner.text !== "Object" && owner.text !== "String")) {
+    return undefined;
+  }
   return { intrinsic: owner.text, viaGlobalThis };
 }
 
