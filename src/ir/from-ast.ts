@@ -306,7 +306,7 @@ import {
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
 import { isModuleInitVarList, moduleInitVarList } from "../shared/var-declaration-lists.js";
-import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
+import { objectIntegrityCallFold } from "./object-integrity.js";
 import {
   boundedMixedConditionalPrimitiveFamily,
   effectiveIrParamTypeNode,
@@ -9626,14 +9626,15 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     return result!;
   }
 
-  if (
-    isPristineEs5IntrinsicIsFrozenCall(
-      expr,
-      (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
-    )
-  ) {
-    return cx.builder.emitConst({ kind: "bool", value: false }, irVal({ kind: "i32", boolean: true }));
+  // (#7106 lever O) The selector's `objectIntegrityCallFold`: a constant, or a mutator's literal operand.
+  const integrityFold = objectIntegrityCallFold(
+    expr,
+    (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
+  );
+  if (integrityFold?.kind === "answer") {
+    return cx.builder.emitConst({ kind: "bool", value: integrityFold.value }, irVal({ kind: "i32", boolean: true }));
   }
+  if (integrityFold?.kind === "operand") return lowerExpr(integrityFold.operand, cx, IR_F64);
 
   // #3000-E: `super.method(args)` — static-dispatch to the PARENT's method slot.
   // Intercepted BEFORE receiver lowering: `super` is a keyword lowerExpr can't

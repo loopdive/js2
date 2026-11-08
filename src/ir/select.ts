@@ -152,7 +152,7 @@ import { nativeBufferOperationParts, type IrNativeBufferSurfacePlan } from "./na
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
-import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
+import { objectIntegrityCallFold } from "./object-integrity.js";
 import {
   isIrModuleClassInstanceValueKind,
   isIrModuleMapValueKind,
@@ -12259,10 +12259,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
       }
-      if (
-        isPristineEs5IntrinsicIsFrozenCall(expr, (node) => selectorSeesAmbientBinding(node) && !scope.has(node.text))
-      ) {
-        return true;
+      // (#7106 lever O) An integrity static with a fixed answer: a constant, or a mutator's own literal operand.
+      const integrityFold = objectIntegrityCallFold(
+        expr,
+        (node) => selectorSeesAmbientBinding(node) && !scope.has(node.text),
+      );
+      if (integrityFold !== undefined) {
+        return integrityFold.kind === "answer" || isPhase1Expr(integrityFold.operand, scope, localClasses);
       }
       // #3793 — exact retained function-object wrappers such as Acorn's
       // `parse(...) { return Parser.parse(...) }`. The checker resolver proves

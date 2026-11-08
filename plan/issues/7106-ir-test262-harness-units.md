@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-11-01
+updated: 2026-11-08
 priority: high
 horizon: l
 feasibility: hard
@@ -6568,3 +6568,53 @@ call site each, as before (no new arm beside them).
 - **Code quality:** one table-driven arm in the existing module; selector and
   from-ast call sites unchanged in number; no new module, import edge or budget
   grant; net `src/ir` growth stated.
+
+### Measured (2026-11-07, as built)
+
+Base `cb64e11d5f` (origin/main), head = this branch, niced workers. A/B
+population: the 265 ES5 files whose source names an integrity static, plus 200
+random other ES5 files (`shuf --random-source=<(yes 7106)`); 465 files, both
+lanes. Pass/fail is `runTest262File` (sloppy run plus strict rerun).
+
+This is a body-level measurement, not a label bound: the head compiles every
+file with the lever in place, so a refusal the `Object` label hid behind it in
+the same unit still counts against the file.
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, base → head | 43 → 100 (**+57**) | 43 → 100 (**+57**) |
+| …of them in the random sample | 0 | 0 |
+| IR-only files lost | 0 | 0 |
+| units newly legacy | 0 | 0 |
+| units newly claimed | 57 (each a `<module-init>`) | 57 |
+| new post-claim errors | 0 | 0 |
+| binaries changed | 57, exactly the newly IR-only files | 57, the same files |
+| binaries byte-identical | 408 (the whole random sample included) | 408 |
+| pass → fail on the changed files | 0 (57/57 pass on both) | 0 (57/57 pass on both) |
+
+By static: `isSealed` 25, `isExtensible` 21, `isFrozen` 5, `freeze` 3,
+`preventExtensions` 3. The 57 sit above the census estimate (≈53) because the
+census population covered only the overlay map's unsampled files.
+
+**Non-Object operands.** ES5 throws a TypeError for a primitive operand of all
+six statics; ES2015 (and test262, node and legacy) answers it instead. The fold
+answers as ES2015, which is what every changed file asserts.
+
+Playground: 26 binaries (13 examples × both lanes) identical. A refactor after
+the first A/B run was re-measured on all 465 files: every binary and every
+legacy-unit list identical to the first head.
+
+**Code.** `src/ir/object-integrity.ts` +85 net (the table, the operand classes,
+the per-file facts that now record which `Object.<name>` is reassigned); the
+selector and from-ast call sites +3 / +1 lines, under the issue's existing
+function grants; no new module, import edge or grant. Gates pass bare: loc and
+func (also against `cb64e11d5f`), coercion, oracle, dead exports, typecheck;
+equivalence gate no new regression. Tests: `issue-7106-lever-o` 61/61 on both
+lanes. `issue-3776`'s "shadowed bindings" case fails on base too (2/10, the
+`const Object = …` receiver), unchanged here.
+
+**Not done here.** The fresh-context adversarial review is the lead's to run.
+`getPrototypeOf` / `keys` / `getOwnPropertyNames` / `new Object` stay
+refused (see the census); a mutator with a `null` / `undefined` operand stays
+legacy (4 test262 files), as does a test of a non-literal primitive or of a
+dynamic object.
