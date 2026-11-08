@@ -36,6 +36,7 @@ import {
   stringBuilderAppendCodeUnitInstrs,
   stringBuilderAppendStringInstrs,
   stringBuilderInitInstrs,
+  stringBuilderPresizedInitInstrs,
   stringBuilderReadInstrs,
 } from "../../backend/wasmgc/lowering/wasm-string-builder.js";
 import type {
@@ -139,7 +140,13 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     return {
       bufType: { kind: "ref_null", typeIdx: t.data },
       flatType: { kind: "ref_null", typeIdx: t.flat },
-      init: (sb, out) => out.push(...stringBuilderInitInstrs(t, sb, STRING_BUILDER_INITIAL_CAP)),
+      stringType: { kind: "ref_null", typeIdx: t.any },
+      init: (sb, presize, out) =>
+        out.push(
+          ...(presize
+            ? stringBuilderPresizedInitInstrs(t, sb, presize)
+            : stringBuilderInitInstrs(t, sb, STRING_BUILDER_INITIAL_CAP)),
+        ),
       appendString: (sb, scratch, out) => out.push(...stringBuilderAppendStringInstrs(t, sb, scratch, helpers)),
       appendCodeUnit: (sb, scratch, out) =>
         out.push(...stringBuilderAppendCodeUnitInstrs(t, sb, scratch, helpers.nextCap)),

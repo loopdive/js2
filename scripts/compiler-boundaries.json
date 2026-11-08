@@ -11930,6 +11930,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/analysis/string-builder-presize.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Checker-based frontend analysis shared by legacy codegen and IR selection; separate pure IR contracts from frontend inventory."
+    },
+    {
       "path": "src/ir/analysis/dominance.ts",
       "state": "clean",
       "layer": "ir-analysis"
@@ -13251,6 +13259,14 @@
       "nextBoundary": "The one walker that lowers a destructuring plan into IR values (#7106); takes its AST-facing operations from the builder host, so it splits with from-ast's lowering seams."
     },
     {
+      "path": "src/shared/regexp-static.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Pure-AST static RegExp construction reader (a literal, or `new RegExp` over string literals) shared by legacy's `parseRegExpLiteral` and the IR selector and builder (#7106 lever R); becomes clean once src/ts-api.ts leaves migration debt."
+    },
+    {
       "path": "src/shared/named-evaluation.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13977,6 +13993,14 @@
       "destination": "ir-core",
       "owner": "7106-item1-harness-units",
       "nextBoundary": "Frontend source-shape certifier for the uncurried Object.prototype predicate aliases; move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/stored-static-alias-providers.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Import signatures of the object-runtime providers the stored-static aliases lower to (#7272); move next to the provider registry when the backend runtime-provider inventory is split from the integration bridge."
     },
     {
       "path": "src/ir/update-retyped-bindings.ts",

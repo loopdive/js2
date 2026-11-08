@@ -65,8 +65,8 @@
   {
     "name": "AOT compiled",
     "path": "string-hash",
-    "value": 689,
-    "label": "0.7 kB",
+    "value": 411,
+    "label": "0.4 kB",
     "jsUs": 238
   },
   {

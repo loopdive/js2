@@ -1656,6 +1656,9 @@ function writeValueMatches(
   }
   // (#7106 S5) Only the carrier takes a carrier leaf's read: its checker type is no evidence.
   if (carrierLeafReads(valueExpr, resolve).length > 0) return false;
+  // (#7288) …nor a direct read of any binding whose slot is the carrier (a
+  // hoisted `var` read before its declaration): it lowers as a dynamic value.
+  if (ts.isIdentifier(valueExpr) && resolve(valueExpr)?.valueKind.kind === "dynamic") return false;
   if (targetKind.kind === "class-instance")
     return classInstance.classInstanceWriteMatches(checker, targetKind, valueExpr);
   if (targetKind.kind === "native-map") {

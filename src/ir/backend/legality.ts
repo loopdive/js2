@@ -19,7 +19,8 @@ export type IrBackendTargetCapability =
   | "host-regexp-constructor"
   | "host-object-define-property"
   | "standalone-function-prototype-call"
-  | "standalone-native-regexp-test-carrier"
+  | "native-regexp"
+  | "native-function-methods"
   | "standalone-wrapper-instanceof"
   | "primitive-wrapper-to-primitive"
   | "legacy-numeric-array-global"
@@ -33,6 +34,7 @@ export type IrBackendTargetCapability =
   | "native-own-property-test"
   | "host-dynamic-method-call"
   | "native-own-property-descriptor"
+  | "native-array-is-array"
   | "native-number-conversion"
   | "prepared-dynamic-helper-abi"
   | "native-dynamic-member-read"
@@ -111,8 +113,12 @@ export function supportsIrBackendTargetCapability(
     case "host-object-define-property":
       return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
     case "standalone-function-prototype-call":
-      return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
-    case "standalone-native-regexp-test-carrier":
+    // (#3791, #7106 lever R) The in-module RegExp: construction from a static
+    // pattern (`ensureIrRegExpLiteralHelper`) and the `$NativeRegExp` carrier helpers.
+    case "native-regexp":
+    // (#3793) Fnctor array methods and retained function-object method wrappers
+    // through legacy's closed dispatcher.
+    case "native-function-methods":
       return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
     case "standalone-wrapper-instanceof":
       // The IR producer consumes the fast lane's native `$AnyValue` object
@@ -152,6 +158,11 @@ export function supportsIrBackendTargetCapability(
         profile.fast !== true &&
         (profile.target === "standalone" || profile.target === "wasi")
       );
+    case "native-array-is-array":
+      // (#7272) the stored `Array.isArray` alias reaches the object runtime's
+      // native `__extern_is_array` — the provider legacy's `Array.isArray`
+      // arm uses on standalone only (WASI keeps its inline `ref.test` chain).
+      return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "standalone";
     case "host-dynamic-method-call":
       // (#7117) `recv.m(…)` on a dynamic receiver through the generic
       // `__ir_dyn_method_call_N` → `__extern_method_call`. The host lane binds
