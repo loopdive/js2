@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-11-01
+updated: 2026-11-07
 priority: high
 horizon: l
 feasibility: hard
@@ -59,6 +59,8 @@ import-cycles-allow:
 # self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
 # stands down when runtime eval may share the realm.
 func-budget-allow:
+  # 2026-11-06 (#7106 lever R1): extern.regex joins its sibling extern ops' provider dependency arm
+  - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
   # 2026-10-22 (module-init lever A): one resolver entry for the namespace-constant fold
   # 2026-10-22 (propertyHelper arm 3): the dynamicDeleteSymbol method
   # 2026-11-01 (chunk-budget S2, +2): `moduleInitChunkName`, the chunk-name reservation the IR chunk lowering asks for
@@ -96,6 +98,8 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
+  # 2026-11-06 (#7106 lever R1): the constructor's static tail is exported unchanged as compileStandaloneStaticRegExp for the IR's extern.regex wrapper, plus standaloneStaticRegExpCompiles, the selection predicate over the same compiler
+  - src/codegen/regexp-standalone.ts
   # 2026-10-22 (module-init lever A): the table accessor beside legacy's fold
   - src/codegen/builtin-value-read.ts
   # 2026-10-22 (lever B): one provider-id set spread in the manifest registry
@@ -5709,6 +5713,274 @@ depends on it, not for its own gain.
 - Once this and #7037 have landed, S5 can drop its boolean-leaf refusal, and
   its test can use the shared `runHarnessOn`.
 
+## ES5 lever R: RegExp on the host-free lanes (plan 2026-11-06; R1 implemented 2026-11-07)
+
+Lever `R` of "ES5 IR-only: ranked levers": 548 files carry it, and the census
+estimated 135 freed by R alone (not unmasked). Plan only; nothing is
+implemented.
+
+**Ownership.** No IR RegExp lane is open. The done IR work this plan reuses:
+- #1169i: `extern.regex` on the host lane;
+- #3791: the `.test` bridge to a stable top-level carrier;
+- #3794: dynamic string/RegExp `replace`.
+
+The open RegExp issues are legacy-standalone engine and protocol correctness:
+#2723 linear-time matching, the dynamic-pattern refusals, flag getters,
+backreferences, and the god-file split of `regexp-standalone.ts`. #4237
+(compile-time specialization) is an exploration. None of them claims the IR
+front end.
+
+### What refuses today (main a67f11711f; census sample plus a 60-file probe)
+
+Every refusal is `regexp-constructor-unsupported`, raised in
+`src/ir/select.ts` behind `hostRegExpUnavailable()`, i.e. the lane lacks the
+`host-regexp-constructor` capability. That is the case on both host-free
+WasmGC lanes:
+
+| arm | site | shape |
+| --- | --- | --- |
+| `expr-regexp-literal` | `isPhase1Expr`, the literal arm (~L11545) | `/re/flags` anywhere |
+| `expr-new-regexp-target` | the `new` arm (~L11279) | `new RegExp(…)`, `new RegExp` |
+| `expr-regexp-method-target` | the call arm (~L12174/12182) | `re.test(s)` / `re.exec(s)` / any method on a RegExp receiver. Only #3791's exact `.test` on a stable top-level `var` carrier passes. |
+| `expr-string-method-surface` / `expr-string-replace-shape` | string-method arm | `s.split(/,/)`, `s.search(/c/)`, `s.replace(/b/, "x")` |
+| `external-call callee:RegExp` | call arm | `RegExp("a")` without `new` |
+
+`s.match(/b/)` and `re.lastIndex = n` stop earlier: storage of a script var
+holding the result or the RegExp (`vardecl-module-storage-unrepresentable`,
+lever `S`).
+
+- **Census:** 31 of the 1,100 sample files carry an R arm (module-init only):
+  - `expr-regexp-method-target` 13;
+  - `expr-regexp-literal` 15;
+  - `expr-new-regexp-target` 12.
+- **Probe:** the 31 census files plus 29 random ES5 `built-ins/RegExp` files,
+  every refusal shown.
+  - 24 files have **only** RegExp refusals: 16 of the 31 census files and 8
+    of the 29 extra.
+  - The rest also need `S`, mostly the S15.10.2 family
+    `var __executed = /re/.exec(s)` with `__expected` arrays.
+
+### What exists to reuse (the IR must call it, not a second engine)
+
+Legacy standalone RegExp compiles each pattern **at build time**:
+- `compileStandaloneRegExpLiteral` / `compileStandaloneRegExpConstructor` →
+  `emitStandaloneRegExpStruct` in `codegen/regexp-standalone.ts`;
+- the result is a `$NativeRegExp` struct: flags, group count, program
+  (`array<i32>`), class table, source, lastIndex;
+- an invalid `new RegExp("a**")` becomes a runtime `SyntaxError` throw
+  (`emitThrowRegExpSyntaxError`);
+- matching runs in-module (`ensureRegexSearch`, the engine #2723 is making
+  linear-time). There is no host import.
+
+The IR-facing pieces already in place:
+- **One IR instruction, `extern.regex`** (`builder.emitRegExpLiteral`). Its
+  only lowering (`lower-generic.ts` ~L3456) calls the host `env.RegExp_new`.
+- **Two in-module carrier helpers with an externref ABI:**
+  `__regexp_test_carrier` (`ir/regexp-runtime-contract.ts`, used by #3791)
+  and `__regexp_exec_carrier` (`codegen/regexp-exec-carrier.ts`, #6672).
+  They recover the struct, ToString the subject and run the shared engine,
+  including g/y `lastIndex`.
+- **The #3791 plumbing:** a backend capability
+  (`standalone-native-regexp-test-carrier`), a resolver hook
+  (`standaloneRegExpTestPlan`), and a module-binding plan
+  (`staticRegExpTestPlan`).
+
+### Scratch prototype (selection only, reverted)
+
+With `hostRegExpUnavailable()` forced false, 21 of the 24 only-RegExp files
+pass selection. They then withdraw at build, as expected with no
+standalone lowering. That names what R must lower:
+- `'…' + <RegExp or match result>`: a throw message concatenating
+  `new RegExp("a**")`, 12 files (the `+` needs the operand's ToString);
+- native `.test`: 6;
+- `.source`: 1;
+- the constructor's string argument and the RegExp-valued script var: 1 each.
+
+The other 3 hit other levers (`O` ToPrimitive object literal, `M` module
+scalar method, `RegExp(…)` without `new`).
+
+### Implementation Plan
+
+**One IR instruction, two lowerings: the dual-backend pattern (#679/#682).**
+`extern.regex` stays the IR's only RegExp construction. The backend picks its
+lowering, and from-ast and the selector read no lane fact beyond one
+capability.
+
+1. **Capability.** Generalize `standalone-native-regexp-test-carrier` in
+   `ir/backend/legality.ts` to `native-regexp`: in-module RegExp construction
+   plus the carrier helpers. `hostRegExpUnavailable()` refuses only where
+   neither the host constructor nor `native-regexp` exists.
+2. **Construction.** The `extern.regex` arm in `lower-generic.ts` asks the
+   resolver for a native constructor before falling back to `env.RegExp_new`.
+   - The resolver hook lives in `ir/integration.ts` beside
+     `standaloneRegExpTestPlan`.
+   - It returns a per-(pattern, flags) wrapper function built by a new
+     `codegen/ir-regexp-literal.ts`, the same shape as
+     `ir-dynamic-construct.ts`.
+   - The wrapper calls legacy's `emitStandaloneRegExpStruct` (or
+     `emitThrowRegExpSyntaxError` for an invalid pattern) and
+     `extern.convert_any`. Each evaluation makes a fresh object, as a literal
+     must.
+   - `new RegExp(p, f)` with literal-string arguments lowers to the same
+     instruction; a non-literal pattern stays refused (a later slice through
+     `ensureDynamicStandaloneRegExpCompiler`).
+3. **Methods.** `re.test(s)` / `re.exec(s)` on any IR RegExp value (an
+   externref) lower to calls of the two carrier helpers:
+   - `test` returns a boolean;
+   - `exec` returns the dynamic carrier: the match array or null.
+   - #3791's stable-global special case becomes the general arm. Its
+     selector bypass and `staticRegExpTestPlan` fold away once a RegExp-valued
+     script var is an `extern` module binding (lever `S`). Until then it stays
+     as the one receiver source the IR can read.
+4. **The constant.** `__regexp_exec_carrier`'s name moves to
+   `ir/regexp-runtime-contract.ts` beside the test helper's, so both helper
+   names live in one place below the IR.
+5. **ToString of a RegExp in `+`.** A RegExp value is the dynamic carrier's
+   object family to the #7066 additive rule, so `'…' + re` takes the dynamic
+   `+`, whose ToPrimitive reaches `RegExp.prototype.toString`
+   (`regexp-proto-to-string.ts`). Verify this before slicing; if the native
+   dynamic `+` cannot reach it, this is R's first follow-up.
+
+**Slices:**
+- **R1:** steps 1, 2, 3 for `.test` only, and 4. Literals and literal
+  `new RegExp`.
+- **R2:** `.exec` and the result as a dynamic value.
+- **R3:** step 5, and the flag/`source` getters through
+  `regexp-accessor-get-arm.ts`.
+- **R4:** string methods with a RegExp argument (`split`, `search`,
+  `replace`, `match`) through the existing protocol helpers
+  (`regexp-split-protocol.ts`, `regexp-replace-protocol.ts`): a `regexp`
+  argument role in `string-method-surface.ts`, not a second table.
+- **Later:** `lastIndex` writes (`regexp-lastindex-carrier.ts`) and dynamic
+  patterns.
+
+**Acceptance:**
+- **Correctness:**
+  - 0 pass→fail, both WasmGC lanes, on `built-ins/RegExp` (about 480 ES5
+    files) and `built-ins/String/prototype/{match,replace,split,search}`;
+  - 0 claim-then-demote: every shape the selector admits lowers;
+  - non-RegExp programs byte-identical, and the playground identical;
+  - the host-RegExp lane unchanged.
+- **Code quality:**
+  - no second engine, no new host import;
+  - RegExp construction is one IR instruction with backend-chosen lowering;
+  - helper names only in `regexp-runtime-contract.ts`;
+  - the wrapper module beside its siblings;
+  - no growth of `select.ts` beyond replacing the three
+    `hostRegExpUnavailable()` refusals with the capability question.
+- **Expected gain:**
+  - Upper bound about 101 ES5 files: 14 of the 31 census files pass
+    selection with R admitted, at about 7.2 files each. The census's 135
+    included files that the prototype shows also need other levers.
+  - R1 alone frees the `.test` / literal / constructor shapes; the 12
+    `'…' + re` throw messages need R3.
+  - About 25 more need `S` + R (the S15.10.2 `__executed` family).
+
+### R1 implemented (2026-11-07)
+
+**What landed** (steps 1, 2 and step 3 for `.test`; step 4 moves to R2, where the IR first calls the exec helper, since moving the name now would only add codegen→ir import edges):
+- `native-regexp` replaces `standalone-native-regexp-test-carrier`.
+- `extern.regex` carries an optional provider. On a `native-regexp` lane it is
+  the per-pair wrapper `ensureIrRegExpLiteralHelper` builds over legacy's
+  static construction (`compileStandaloneStaticRegExp`, split out of the
+  constructor tail); elsewhere the arm still calls `env.RegExp_new`.
+  - The wrapper sits beside that construction in `codegen/regexp-standalone.ts`,
+    not in its own module as planned. `integration.ts` already imports that
+    file; a new module would add an ir→codegen edge, grow the import SCC and
+    raise `integration.ts`'s layering count.
+  - It is built with the shared `helperFunctionContext` /
+    `publishHelperFunction` (`codegen/helpers/ir-helper-function.ts`), like
+    every other IR wrapper; integration turns its name into the `IrFuncRef`.
+- `staticRegExpPair` (`shared/regexp-static.ts`) reads a literal or a literal
+  `new RegExp(p?, f?)`, for from-ast and the selector alike. It sits below
+  both layers because legacy's `parseRegExpLiteral` is the same split.
+- `.test(s)` on any IR RegExp value calls `__regexp_test_carrier`.
+
+**Where a native RegExp is admitted.** Only where R1 consumes it: the
+receiver of `.test(…)`, or a discarded statement (`new RegExp('a**');` still
+throws its SyntaxError). The first census admitted it everywhere and found
+four withdrawals and one compile error, all a RegExp value meeting a consumer
+with no lowering yet:
+- `/1/.source`: a capability-deferred extern property read, a hard compile
+  error (R3's getters);
+- `'…' + new RegExp('a**')`: the builder's `+` proof has no RegExp family
+  (R3's ToString), 6 files;
+- `var __re = new RegExp;`: a dynamic script slot has no carrier for it;
+- a local `var re = /a/g` would reach the same reads.
+
+`nativeStaticRegExp` refuses every other position, so a binding (`S`) or a
+consumer (R2/R3) widens it with its own lowering.
+
+**R3 is not in this change.** `'…' + re` needs the RegExp value as a dynamic
+`+` operand whose ToPrimitive reaches `RegExp.prototype.toString`, plus the
+selector's `+` family for it. That is more than a second commit's worth, so R1
+ships alone.
+
+**Measured** (base 245e830d49 vs head, standalone and gc):
+- **Population:** 389 files: the 60-file R probe, 100 random ES5
+  `built-ins/RegExp` files, every ES5 `String.prototype.{match,replace,split,search}`
+  file, and the lever-T non-eval sample.
+- **Newly IR-only:** +12 on both lanes (2 → 14), all `S15.10.2.*` `.test`
+  shapes. All 12 pass on both trees and both lanes.
+- **Everything else:** 377 binaries byte-identical; 0 status changes; 0 new
+  post-claim; the playground is identical. The host-RegExp lane takes the
+  unchanged `env.RegExp_new` arm.
+- **ES5 IR-only estimate:** about 33 files: the 6 probe gains, plus 6 of the
+  100 random files scaled to the 451-file pool (about 27). The String-method
+  files gain nothing yet (R4).
+
+**Tests:** `tests/issue-7106-lever-r.test.ts`, on both lanes:
+- eight claimed shapes: a literal, an anchored miss, the `m` flag, a
+  constructed pattern with and without flags, the empty pattern, an invalid
+  pair's SyntaxError, and a fresh `g` literal per evaluation;
+- six refused at selection and never withdrawn: `exec`, a dynamic pattern,
+  `.source`, a `+`, a script binding and a local binding.
+
+### R3 implemented (2026-11-07): `'…' + re`
+
+**What changed.** The `+` rule now covers a RegExp operand beside a string; the
+string it adds is `RegExp.prototype.toString`'s, computed by legacy's
+existing code. Nothing new is computed.
+- **The `+` rule:**
+  - #7066's `additiveOperandsProvable` gains one proof, `regexp`. It
+    concatenates beside a string, like a string; beside a number or another
+    RegExp it is still refused.
+  - The selector names the operand family `regexp` (`binaryOperandFamily`).
+  - from-ast's `additiveOperandProof` gives the same proof
+    (`lowersAsNativeRegExp`).
+  - Both sides read one predicate, `staticRegExpPair`, over the same lib-only
+    proof.
+- **ToString:** `lowerConcatOperand` calls `__regexp_to_string_carrier`.
+  - It is a three-instruction adapter in `regexp-standalone.ts`:
+    `any.convert_extern`, then a call to legacy's `__regexp_to_string_dyn`
+    (#4465), which renders `"/" + source + "/" + flags`.
+  - Its name sits beside the test helper's in `regexp-runtime-contract.ts`.
+  - Integration's runtime-function resolver builds it on demand, so a module
+    without a RegExp `+` has none.
+- **Selection:** `nativeStaticRegExp` admits a `+` operand as a third consumer.
+  A property read and a binding still refuse.
+
+**Measured** (the merged R1 head vs R3, the same 389 files, standalone and gc):
+- **Newly IR-only:** +6 on both lanes (14 → 20):
+  - `S15.10.1_A1_T1`, `_T6`, `_T12`, `_T14` and `_T16`;
+  - `S15.10.4.1_A9_T2`.
+
+  Each is `'…' + (new RegExp(<invalid>))` inside a `try`. All 6 pass on both
+  trees and lanes.
+- **Everything else:** 383 binaries byte-identical; 0 status changes; 0 new
+  post-claim; the playground is identical.
+- **ES5 IR-only estimate:** about 17 more files: 3 probe gains, plus 3 of the
+  100 random files scaled to the 451-file pool (about 13.5). 78 ES5 RegExp
+  files put a RegExp in a `+`; most of the rest need another lever (`S`,
+  R2's `exec`, the getters).
+
+**Tests:** `tests/issue-7106-lever-r.test.ts`, on both lanes:
+- five more claimed shapes: a literal with flags, the RegExp on the left, an
+  escaped `/` in a constructed pattern, the empty pattern `/(?:)/`, and the
+  S15.10.1 invalid-pair throw;
+- `+` beside a number and `+` beside another RegExp are refused at selection;
+- a script's own `function RegExp` is refused, as on main.
+
 ## ES5 lever B: mixed-family operands of the numeric operators (plan, 2026-11-07)
 
 `expr-binary-operand-families` is the only code in **143 ES5 files** on the
@@ -7303,6 +7575,305 @@ slots alone.
   - The 14 files whose module init holds `(function () { eval(…) })()` stay
     legacy by design.
 
+### A2b handoff (branch `claude/7106-eval-a2b`, from A2a 06962e1289)
+
+Where the pieces live:
+
+- **Decode seam.** The IR's dynamic member and element read is ONE helper,
+  `__dyn_member_get`, built by `ensureDynMemberGet` (`codegen/dyn-read.ts`).
+  - It has two bodies: the `ctx.fast` `$AnyValue` carrier around line 790,
+    and the externref carrier around line 850. Each calls `__extern_get`.
+  - The decode belongs right after that call:
+    `buildRuntimeEvalValueUnwrap(ctx, locals, paramCount)`
+    (`codegen/runtime-eval-boundary.ts`). Legacy reaches the same builder
+    through `runtimeEvalSharedValueUnwrapInstrs` (`codegen/global-environment.ts`).
+  - Gate it on `ctx.runtimeEvalGlobalFunctionBindings === true`, the flag
+    every legacy decode site uses. It is set in
+    `registerReassignedFunctionGlobals`, before IR preregistration.
+- **Refusal to lift.** `scriptVarHomeSlot` (`codegen/index.ts`, near the
+  `scriptVarHome` doc comment) has the clause
+  `(standalone || wasi) && provider present && plan.sharedRealmMayContainCanonicalValues`.
+  Only that clause is A2b's. Lever S (afc4f80) owns the non-eval rest.
+- **Second gate, also needed for module init.** A1's wholesale withdrawal in
+  `planIrOverlay` (`codegen/index.ts`, the `callableBoundaryRequired` block)
+  sets `safeSelection.moduleInit = undefined`.
+- **Why IR-only files need more than the decode.** Almost every eval
+  program's module init holds the eval site itself (`(0,eval)(…)`,
+  `Function(…)`, a top-level `eval(…)`). So a file becomes IR-only only once
+  the IR lowers those sites. That is the A2 design's
+  `src/ir/runtime-eval-sites.ts` arm:
+  - it calls the A2a support function `__runtime_eval_global_call<entry>`
+    (`ensureRuntimeEvalGlobalCall`) through a runtime symbol;
+  - the IR's current refusal of these sites is
+    `phase1IndirectEvalStatementVerdict` (`ir/select.ts`,
+    `expr-indirect-eval-host-statement`) and the `callee:eval` external-call
+    gate in the module-init assessment.
+- **Measuring.**
+  - Scripts live in `.tmp/` of the agent worktree: `a1-probe.mts` for
+    compile, sha and units; `a1-host.mts` for verdicts (`LANE=host` for the
+    JS host); `sa-cmp.mjs` and `a1-cmp.mjs` for diffs.
+  - Base verdicts are `a1-int-base.jsonl` (101 / 40) and
+    `a1-host-base.jsonl` (98 / 43). The control list is `a1-control.txt`.
+  - Rebuild the interpreter provider per tree, with
+    `JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`.
+
+#### A2b progress (af4dd23233)
+
+- **Done, step 1: the decode.** `__dyn_member_get` applies the shared
+  runtime-eval value decode after `__extern_get`, in both carrier bodies.
+  - It is built by `dynMemberReadDecode` (`codegen/dyn-read.ts`) through
+    `runtimeEvalSharedValueDecode` (`codegen/global-environment.ts`).
+  - That is the builder the legacy read sites use; their
+    `runtimeEvalSharedValueUnwrapInstrs` now delegates to it, so there is no
+    second copy.
+  - It is gated on `ctx.runtimeEvalGlobalFunctionBindings`, the legacy flag.
+    There is no lane arm.
+- **Done, step 2: the refusal.** `scriptVarHomeSlot` no longer refuses script
+  vars in eval programs. A1's wholesale module-init withdrawal narrows to
+  `moduleInitHoldsEvalSite` (`codegen/ir-overlay-preparation.ts`): a
+  top-level statement, other than a function declaration, that contains a
+  site.
+- **Measured on the 141 (standalone):** 141 / 141 compile, 0 post-claim
+  errors, 830 units (unchanged), 0 IR-only files. 90 files change bytes, all
+  from the decode.
+  - Interpreter-provider verdicts: 0 pass→fail on standalone (101 / 40) and
+    on the JS host (98 / 43).
+  - The 40-file non-eval control is byte-identical to the A2a head.
+- **Why IR-only is still 0.** Every module init in the 141 holds its eval
+  site, so `moduleInitHoldsEvalSite` keeps all of them direct. Step 2 is a
+  prerequisite that nothing exercises yet.
+- **Next: lower the sites in the IR by generalising the existing host arm,
+  not by adding a second one.**
+  - The IR already lowers a certified host indirect-eval statement:
+    `certifiedHostIndirectEval` / `phase1IndirectEvalStatementVerdict`
+    (`ir/select.ts`), the `exactIndirectEvalStatement` arm in
+    `ir/from-ast.ts` (around line 7655), and the resolver's
+    `hostIndirectEvalTarget`, gated by `supportsHostIndirectEval`
+    (`ir/integration.ts` around line 2620, `codegen/index.ts` around line
+    3358).
+  - Parameterise that one arm by its target. On the JS host the target stays
+    the host import. With the runtime-eval provider it becomes the A2a
+    support function `__runtime_eval_global_call_indirect_eval`,
+    with one source argument instead of `(source, isDirect)`.
+  - Give the capability a name (`supportsGlobalIndirectEval`), not a lane
+    arm.
+  - Preregister the support function before Phase 3:
+    `ensureRuntimeEvalGlobalCall` adds a late import and flushes shifts.
+  - `moduleInitHoldsEvalSite` should then skip the sites that predicate
+    admits, by sharing the predicate rather than copying it.
+  - Then `Function(…)` and a sloppy top-level `eval(…)` (`callee:eval`) can
+    follow through the same arm.
+  - **Open question to measure first:** legacy folds a literal
+    `(0, eval)("…")` at compile time (`tryStaticEvalInline`). The IR arm must
+    not turn a folded literal into a runtime call. Either admit only
+    computed sources, or check what legacy does for each census file.
+
+### A2c implementation (branch `claude/7106-eval-a2c`, from A2b 9525d48818)
+
+#### The fold question, settled first
+
+Legacy folds some literal eval sources at compile time (`tryStaticEvalInline`)
+and hands others to the provider. Both options from the handoff were measured
+on the 141 files (standalone, A2b head, legacy fold decisions logged per site
+by a temporary, uncommitted hook):
+
+- **Admit only computed sources: 0 files.** Top-level eval sources are
+  literal almost everywhere. Of the 141 files, 21 hold a literal top-level
+  indirect-eval statement and 19 a literal direct one; only 1 file has a
+  computed top-level direct-eval source and 4 a computed `new Function`. Not
+  one of the files whose only module-init blocker is an eval site has a
+  computed source.
+- **Match legacy per site: chosen.** In module init, legacy sends 42 of 44
+  indirect-eval compilations and 36 of 136 direct-eval compilations to the
+  provider; the rest fold (a spliced Script or a static SyntaxError throw).
+  The counts are compilations, not sites: legacy compiles some sites twice.
+
+So the IR admits a site exactly when legacy's own fold pieces say the provider
+owns it. Those pieces moved out of `tryStaticEvalInline` into
+`codegen/expressions/eval-script.ts`, so the fold and the IR read one copy:
+
+- `parseEvalScript`: the Script, its statements, `bodyIsStrict`, `evalIsStrict`;
+- `foldedEvalStaticSyntaxError`: parse failure, Script early error, then a
+  var colliding with a global lexical (§19.2.1.3 step 5.a), in spec order;
+- `providerOwnsEvalDeclarations`: a sloppy Script whose variable environment
+  is global and that declares a var or function (§19.2.1.3 step 16).
+
+A literal is admitted when it parses, raises no static SyntaxError and the
+provider owns its declarations. Any other literal may fold, so its module init
+stays direct. Measured: all 9 sites the route admits on the 141 are sites
+legacy sent to the provider (0 that legacy folds).
+
+#### One generalised arm
+
+- **Shape.** `exactIndirectEvalStatement` became `exactGlobalEvalStatement`
+  (`src/eval-call-shape.ts`): `(0, eval)(source)` or `eval(source)` as an
+  expression statement, with a `direct` flag. The JS-host import collector
+  keeps the indirect half.
+- **Route.** `globalEvalRoute(ctx, call, hostEvalAbi)`
+  (`runtime-eval-provider.ts`) answers once for every consumer:
+  - `host-import`: an indirect statement where the caller proves the
+    `__extern_eval(source, isDirect)` ABI (the old `supportsHostIndirectEval`
+    condition, `jsHostExterns && !ctx.nativeStrings`);
+  - `runtime-eval-provider`: the boundary plan recorded the site as a literal
+    `indirect-eval`/`direct-eval`; a direct eval must run at script global
+    (`directEvalRunsAtScriptGlobal`); and the fold pieces above say the
+    provider owns it. The lane question goes through
+    `runtimeEvalPushPublishesCachedFunctionValues` and
+    `isRuntimeEvalProviderAbsent`; no new lane arm.
+- **Selector.** `supportsHostIndirectEval: boolean` became
+  `supportsGlobalEval(call)` (both planning sites pass `globalEvalRoute`).
+  `certifiedHostIndirectEval` became `certifiedGlobalEval`; it serves the
+  Phase-1 call gate (`phase1GlobalEvalStatementVerdict`, reject detail
+  `expr-global-eval-statement`) and the call-graph walk, which removes the
+  `callee:eval` external call.
+- **from-ast.** The one arm takes its callee from
+  `resolver.globalEvalTarget(call)`: `{ ref, passesIsDirect }`. The JS-host
+  import keeps `(source, 0)`; the provider route calls
+  `__runtime_eval_global_call_indirect_eval` with the source alone. A sloppy
+  script-global direct eval shares that entry, as legacy's
+  `directEvalRunsAtScriptGlobal` arm does. Module init's discarded-expression
+  lowering now passes statement position for that shape too.
+- **Support function, linked before Phase 3.** The resolver links it
+  (`linkRuntimeEvalGlobalEval` → `ensureRuntimeEvalGlobalCall`) while the IR
+  body is built. `ensureRuntimeEvalGlobalCall` now seeds the callable carrier
+  itself: every legacy site seeds it first, so this is a no-op there (byte
+  identity below), and an IR-only file still gets it.
+- **Module init.** `moduleInitHoldsEvalSite(ctx, sourceFile)` skips a site
+  whose call `globalEvalRoute` routes; it is the same predicate the selector
+  and resolver read. A1's per-function `eval-site` withdrawal is unchanged: a
+  function holding even an admitted site stays direct.
+- **Not done.** `Function(…)` stays legacy: its module-init sites fold (30 of
+  52 compilations) or carry computed sources, and its §20.2.1.1 join plus
+  carrier adapter would need its own route. A value-position eval
+  (`x === eval("var x")`) stays legacy: the arm is statement-only.
+
+Size: `eval-inline.ts` 2470 → 2357. Across `src`, +320 / −235 against A2b.
+`index.ts` is line-neutral; `integration.ts` grows by 1 (two facade imports
+for the resolver, offset by the resolver shrinking); no new grant.
+
+#### A2c measurement
+
+Setup: niced, one process. Interpreter provider rebuilt for this tree.
+Byte identity is a file-copy A/B against the A2b head 9525d48818.
+
+| check | result |
+| --- | --- |
+| IR-only files on the 141 (standalone) | **0 → 6** |
+| IR units on the 141 | 830 → 836 (one `<module-init>` per IR-only file) |
+| post-claim errors on the 141 | 0 |
+| verdicts, standalone (interpreter provider) | 101 / 40, 0 pass→fail, 0 changed failure messages |
+| verdicts, JS host (interpreter provider) | 98 / 43, 0 pass→fail |
+| bytes, 141 eval files, standalone and gc | 135 / 141 identical on each lane; the 6 that differ are exactly the IR-only files |
+| bytes, 40-file control, standalone and gc | 40 / 40 identical |
+| bytes, playground examples, standalone and gc | 13 / 13 identical |
+| eval test files (41) | the only new failure was the renamed shape test, fixed; 50 failures pre-exist on the A2b head |
+| equivalence gate, 8 shards | no new regressions in any shard |
+
+The 6 IR-only files are Annex B `global-*` rows (2 direct, 4 indirect).
+They fail on the base too and still fail, with the same message.
+The gc lane changes too, because the default JS target compiles under the
+native regime (`ctx.standalone` is the native regime, #5385).
+
+#### What still blocks
+
+- 78 of the 141 files had `<module-init>` as their only legacy unit. 21 of
+  those had only eval sites blocking module init:
+  - 6 are now IR-only.
+  - 5 Annex B rows hold a literal whose declarations are only block
+    functions. Legacy decides those by the B.3.3 rule, which reads the
+    caller's frame (`collidesWithCaller`, `unsupportedGlobalShape`), so the
+    route does not admit them.
+  - 9 hold literals legacy folds (e.g. `S11.2.3_A1`, `cptn-nrml-*`), plus 1
+    `Function` fold.
+  - 1 has a value-position eval (`S11.9.4_A6.1`).
+- A routed module init can still be blocked by its other statements:
+  `var-env-var-non-strict` (an IIFE with a direct eval) and `S7.3_A7_T1`
+  (`throw-module-scalar-unboxed`).
+- Names that only eval declares (`(0, eval)("var z = 1"); z;`) are
+  `expr-ident-not-in-scope` for the IR. That is a separate lever: a read of an
+  unresolvable script name through the global object.
+
+#### Review of #7177 (fresh context, 2026-11-07): APPROVE, quality fixes applied
+
+No correctness bug. The reviewer saw 0 post-claim errors over 208 compile
+pairs. Each finding was fixed in 27630b3237:
+
+1. **Unreachable JS-host route.** The host half of the arm needs
+   `!nativeStrings`, which is always on for the JS target since #6979. The
+   #1164 test "owns a proven-string indirect statement through IR" fails on
+   both the A2b head and A2c. The selector checked the host route first and
+   the resolver the provider route first, so the two could disagree.
+   - Every reader now asks one question, `runtimeEvalOwnsGlobalEval(ctx, call)`.
+   - The resolver's `globalEvalTarget` returns only the support function.
+   - `passesIsDirect` and the `hostEvalAbi` parameter are gone.
+   - The legacy import collector's `__extern_eval` pre-scan stays. It retires
+     with the JS-host lane, not here.
+2. **Carrier seeding was unchecked.** `ensureRuntimeEvalGlobalCall` now seeds
+   the callable carrier before it builds the support function, and returns
+   `undefined` when seeding fails, as legacy's callers refuse. The seed runs
+   in a detached context: for legacy it is a no-op, because the carrier is
+   already seeded.
+3. **The literal Script was re-parsed per query.** The answer is now memoized
+   per call node (a `WeakMap` per compile), so a Script is parsed once rather
+   than once each for the selector, `moduleInitHoldsEvalSite` and the
+   resolver.
+4. **Doc order in `dyn-read.ts`.** `dynMemberReadDecode` and its doc now sit
+   above `ensureDynMemberGet`'s doc block.
+5. **Wording in `eval-script.ts`.** It now says the IR lowers a statement
+   *only* when legacy routes it to the provider. The IR set is a strict
+   subset: legacy also routes Annex B collisions, strict scoped declarations,
+   caller lexical collisions and const-resolved direct sources.
+
+`integration.ts` no longer grows, so its A2c rationale line is dropped.
+
+Re-measured on 27630b3237, file-copy A/B against the A2b head 9525d48818:
+
+| check | result |
+| --- | --- |
+| bytes, 141 eval files, standalone and gc | 135 / 141 identical on each lane; the 6 that differ are the IR-only files, whose `<module-init>` is IR on both lanes |
+| bytes, 40-file control and 13 playground examples, both lanes | identical |
+| verdicts of the 6 IR-only files, both lanes (provider rebuilt) | fail as on the base; the standalone messages are identical |
+| focused tests (A2c, A2a, A1 unit boundary) | 13 / 13 pass |
+
+#### Follow-up: eval-declared vars read after the eval (interpreter engine only, local runs)
+
+A program that declares a var through eval and then reads it fails locally:
+`(0, eval)("var z = 1"); z;` throws in Wasm, while node passes. The reviewer
+saw it on both the A2b head and A2c (25 / 25 verdicts equal).
+
+This is a gap in the **interpreter** eval engine, and it appears only in local
+runs. It is not a compiler or shared-path bug, and it does not cap lever A in
+CI:
+
+- CI's standalone shards evaluate eval code with QuickJS
+  (`JS2WASM_EVAL_ENGINE` defaults to `quickjs` in `test262-sharded.yml`).
+  Local runs here used `JS2WASM_EVAL_ENGINE=interpreter`, because QuickJS is
+  not built in the container.
+- CI's standalone baseline (fetched 2026-11-07, built from main) passes
+  **141 / 141** of the eval files. That includes every one of the 40 that
+  fail locally, and the 6 A2c IR-only files.
+- The 40 local standalone failures, by message:
+
+  | files | message |
+  | --- | --- |
+  | 31 | `undefined` (the read-back shape above) |
+  | 6 | `ReferenceError: intrinsicErrorConstructor is not defined` |
+  | 2 | `SyntaxError: Binding rvalue` |
+  | 1 | `Thrown value was not an object!` |
+
+Local verdicts taken with the interpreter engine therefore **undercount**.
+The pass→fail comparisons in this plan stay valid, since base and head ran
+on the same engine. Absolute pass counts and lever A's gain must come from a
+QuickJS run, i.e. CI. Closing these interpreter gaps is its own issue against
+the interpreter provider, not lever A work.
+
+#### Follow-up: JS-host hostEval shadowed assert
+
+- JS-host `hostEval` shim: a raw `assert` beside a parameter that shadows
+  `assert` throws a non-Error value from the child Wasm module (`it.fails` in
+  `tests/issue-1164-es5-eval-slice.test.ts`). JS-host lane; file as its own
+  issue once ids can be allocated.
+
 ## `<module-init>` lever L — script `var` `for` heads (plan, 2026-11-07)
 
 Lever L is the S6 follow-up of the S5 `var`-pattern work: a script's top-level
@@ -7521,6 +8092,165 @@ loc, func (also against origin/main `5ef8f0aae5`), coercion, oracle, dead
 exports, typecheck, import cycles, standalone arms, IR layering, flat dir;
 compiler boundaries as on main. Tests: lever-l, var-pattern-heads,
 for-head-destructuring, script-var, uninitialized-var: 227/227.
+
+## ES5 lever P — primitive wrappers and statics (2026-11-08, root; claim on #6583)
+
+The `claim-issue.mjs --allocate` scan refused ("open-PR id scan DEGRADED",
+exit 6), so per the brief this section lives here, not in its own issue.
+
+### Census (origin/main `4d5478b37c`, standalone, body-level)
+
+Method: the body-bounds rewrite (`__ir_stub(…)` under a local-only selector
+flag that lowers to a dynamic `undefined`) over the 1,431 ES5 files carrying a
+`new String/Number/Boolean` or a `String.*`/`Number.*`/`Boolean.*` member
+chain, minus files already IR-only. **141** files become IR-only with every
+site stubbed. Split by sub-shape (each stubbed alone):
+
+| sub-shape | files IR-only alone | example |
+|---|---|---|
+| `String.prototype.<m>.call(r, …)` (`pcall`; all 41 are `trim`) | **37** | `String/prototype/trim/15.5.4.20-1-3.js` |
+| `new X(v)` as a value (`new`) | 30 | `String/15.5.5.5.2-1-1.js` |
+| `X.prototype…` other than `.call` (`Number.prototype.toString()`) | 14 | `Number/prototype/toString/…` |
+| static calls (`Number.hasOwnProperty`, `String.fromCharCode`) | 8 | |
+| static reads (`Number.NaN`, `±_INFINITY`) | 0 alone; 39 need `new` + `Number.prototype` + the reads together | |
+| `new` + `pcall` together | 71 (= 30 + 37 + 4) | |
+
+### Scope of this slice: `String.prototype.<m>.call(<primitive>, …)` (P1)
+
+`String.prototype.m.call(r, …a)` with `r` a proven string, number or boolean
+is `ToString(r).m(…a)` (§22.1.3: every ES5 String method starts with
+RequireObjectCoercible + ToString on `this`; a primitive is never nullish).
+The IR already lowers both halves: `String(v)` of a primitive
+(`lowerPrimitiveToString`) and a string-method call from the one surface
+(`string-method-surface.ts` → `lowerStringMethodCall`). The arm composes them;
+no runtime, provider or host import is added.
+
+- **Module.** The borrow shape becomes one matcher keyed by constructor:
+  `matchPrototypeBorrowCall(expr, "Array" | "String")` in
+  `src/ir/array-prototype-borrow-call.ts`. `matchArrayPrototypeBorrowCall`
+  keeps its wrapper-name gate on top of it.
+- **Selection** (`select.ts`, beside the Array borrow): the ambient `String`
+  (`selectorSeesAmbientStringBinding`), a receiver whose proven family is
+  string, number or boolean, and the method's plan through the existing
+  `stringMethodSelection` (now taking the argument list), so a method is
+  claimed exactly when the backend has a row. A nullish, dynamic, object or
+  wrapper receiver refuses at selection (`expr-string-borrow-receiver`).
+- **Lowering** (`from-ast.ts`): the receiver through the `String(v)` arm's
+  primitive conversion, then `lowerStringMethodCall` with the remaining
+  arguments.
+- **Duplicate removed.** The Array-only borrow walk becomes the shared,
+  constructor-keyed matcher; the `String(v)` primitive conversion is factored
+  out of `tryLowerAmbientStringToStringCall` and reused, not copied.
+- **Acceptance.**
+  - The `trim.call` files with primitive receivers become IR-only on
+    standalone; 0 pass→fail, 0 files lost, 0 units newly legacy, 0 post-claim
+    errors on the census set plus 200 random ES5 files, both lanes; gc and
+    playground bytes identical where nothing new is claimed.
+  - `tests/issue-7106-lever-p.test.ts`: claimed rows (string, number,
+    boolean, `-0`, `1e21` receivers; `trim`, `charAt`, `indexOf`, `slice`)
+    equal JS on both lanes; refused rows (`undefined`/`null`/object/wrapper
+    receiver, a method without a row, `.apply`) stay legacy and correct.
+  - Code quality: no second borrow matcher and no second primitive-ToString;
+    the new select and from-ast arms are each one function next to their
+    Array-borrow sibling, with no growth grant beyond the two arms.
+
+### Not in this slice, and why
+
+- **`new X(v)` as a value (30 files).** Measured by admitting the wrapper and
+  boxing it into the dynamic carrier: the dynamic runtime answers wrong for a
+  wrapper in three places the census files use — an index read
+  (`new String("abc")[1]` is `undefined`), a loose `==` against a string
+  (`false`), and a prototype method call (`(new Number(1)).toFixed()` throws
+  "not a function"). Claiming the value is only exact once each use is
+  certified (lever V's use-site pattern for a wrapper-holding script var) or
+  those dynamic ops learn the wrapper; both are their own slice.
+- **`Number.prototype` as a value and the static reads (39 + 14 files).** They
+  need the intrinsic-singleton value provider of #7294; no IR row reads a
+  builtin prototype object today.
+- **Static calls (8 files).** `Number.hasOwnProperty(…)` on the constructor
+  object needs the same singleton; `String.fromCharCode` (2) is a follow-up
+  row on the string surface.
+
+### Measured (2026-11-08, as built)
+
+Base `4d5478b37c` (origin/main; main's later commits touch no `src/`), head
+this branch, one niced worker per pass. Population: the 1,431 census files plus
+200 random ES5 files (`.tmp/rnd200.txt`), 1,603 distinct, 1,589 compiling on
+both sides, compiled as the runner does (original harness, `allowJs`).
+Pass/fail is `runTest262File` (sloppy run plus strict rerun) on every changed
+file, both trees.
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, base → head | 241 → 277 (**+36**) | 241 → 277 (**+36**) |
+| …of them in the random sample | 0 | 0 |
+| IR-only files lost | 0 | 0 |
+| units newly legacy | 0 | 0 |
+| new post-claim errors | 0 | 0 |
+| binaries changed | 36, each a newly claimed `<module-init>` | 36, the same files |
+| binaries byte-identical | 1,553 | 1,553 |
+| pass → fail on the changed files | 0 (36/36 pass on both) | 0 (36/36 pass on both) |
+| playground (13 programs) | identical | identical |
+
+The 36 are `String/prototype/trim/15.5.4.20-1-{3,4,7}` and `15.5.4.20-2-*`
+(33). The other trim borrows stay legacy by design or behind another arm: an
+object, array or nullish receiver (`.call({})`, `.call([1])`,
+`.call(undefined)`, refused as `expr-string-borrow-receiver`; the stubbed
+census counted one of them as its 37th), or a RegExp / Error constructor or
+another body shape elsewhere in the file.
+
+**Found and fixed in validation: a patched `String.prototype`.** Legacy looks
+the borrowed method up on the live prototype, so
+`String.prototype.trim = f; String.prototype.trim.call(" a ")` calls `f`. The
+first cut lowered the surface row regardless (a pass→fail outside the census
+population). The borrow now refuses when the program may patch
+`String.prototype` (`expr-string-borrow-patched-prototype`), asking the shared
+`sourceMayPatchPrototype`, whose intrinsic set gains `String`; its other
+callers ask only `Array` / `Object`, so nothing else moves. The 36 gained
+binaries are byte-identical before and after the fix. The ordinary method form
+(`" a ".trim()` after the same patch) is already claimed on main and answers the
+intrinsic; that is a pre-existing gap for its own issue, not this slice.
+
+**Trust boundary (review, 2026-11-08).** The borrow trusts the realm's
+`String.prototype.<m>` and `Function.prototype.call` exactly as legacy does: it
+is claimed only when the source shows no route that could replace what the
+call reaches. Refused at selection (`expr-string-borrow-patched-prototype`), all
+from one cached walk in `src/shared/intrinsic-prototype-writes.ts`:
+
+- `String.prototype` or `Function.prototype` used other than as the object of
+  a plain member read (`sourceMayPatchPrototype`): a store, `delete`,
+  `Object.defineProperty`, an alias or any other escape;
+- a store, `delete` or `Object.defineProperty` of any member or binding named
+  `call` or `String` (`sourceWritesMemberNamed`): `x.call = f`,
+  `String.prototype.trim.call = f`, `globalThis.String = v`, `String = v`;
+- a reflective name anywhere (`sourceNamesReflectiveRoute`): `getPrototypeOf`,
+  `setPrototypeOf`, `__proto__`, `Reflect`, `constructor` (except the two
+  read shapes assert.js uses, an identity compare and `.constructor.name`),
+  and any `with` statement.
+
+A bare mention of `globalThis` is not refused: the test262 runtime shim reads
+`globalThis.<name>` and stores `global: globalThis` in every test, so that rule
+would refuse all 36 files. A patch through the escaped global object still has
+to write a member named `String` (or `call`), which the name rule refuses; a
+computed key (`o["Str" + "ing"] = v`) is outside the boundary, as it is for
+legacy and for lever O. Legacy answers every listed route the same way (it
+does not model them either), so these refusals keep parity, not fix a
+regression. Re-measured on the 36 gained files plus 30 random ES5 files, both
+lanes: all 36 still claim, 66/66 binaries byte-identical to `c75028d573`.
+
+**Follow-up: one reflective-route helper.** Lever O (#7188,
+`src/ir/object-integrity.ts`) keeps the same `REFLECTIVE_NAMES` list and an
+`isObservedConstructor` twin for `Object`'s statics. Once both levers are on
+main, lever O's facts should read `sourceNamesReflectiveRoute` (and the shared
+`isObservedConstructor`) from `src/shared/intrinsic-prototype-writes.ts`,
+removing its copy.
+
+**Next sub-shapes, by measured yield** (census above, files IR-only alone):
+`new X(v)` as a value (30; needs certified wrapper uses or wrapper-aware
+dynamic ops), `X.prototype` other than `.call` (14) and the static reads (39
+together with `new` and `Number.prototype`; both need #7294's intrinsic
+singletons), static calls (8; `String.fromCharCode` is 2 of them, a surface
+row).
 
 ### Review round 2 (#7178, 2026-11-07) and main `a484c365fe`
 

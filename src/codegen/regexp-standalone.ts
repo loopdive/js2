@@ -29,6 +29,7 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 import { emitGenericFlagsGetterBody } from "./regexp-accessor-get-arm.js"; // (#5198 Slice F)
 import { coerceType } from "./type-coercion.js";
 import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
@@ -97,7 +98,10 @@ import { emitRegExpProtoToStringBody } from "./regexp-proto-to-string.js";
 import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
-import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
+import {
+  STANDALONE_REGEXP_CARRIER_TEST_HELPER,
+  STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER,
+} from "../ir/regexp-runtime-contract.js";
 import { integrityVarKey } from "./widened-var-key.js";
 import { emitRegExpSymbolMatchBody, emitRegExpSymbolSearchBody } from "./regexp-exec-protocol.js";
 import { emitRegExpSymbolReplaceBody } from "./regexp-replace-protocol.js";
@@ -226,7 +230,10 @@ const STANDALONE_REGEXP_STRUCT_NAME = "__StandaloneRegExp";
 const SUPPORTED_STANDALONE_FLAGS =
   RE_FLAG_G | RE_FLAG_I | RE_FLAG_Y | RE_FLAG_M | RE_FLAG_S | RE_FLAG_D | RE_FLAG_U | RE_FLAG_V;
 
-function reportStandaloneRegExpUnsupported(ctx: CodegenContext, node: ts.Node, detail: string): void {
+function reportStandaloneRegExpUnsupported(ctx: CodegenContext, node: ts.Node | undefined, detail: string): void {
+  // invariant (producer-promise): the IR's `extern.regex` wrapper (`ensureIrRegExpLiteralHelper`) has no source
+  // node, and selection admitted only a pattern `standaloneStaticRegExpCompiles` accepts — #7106 lever R.
+  if (node === undefined) throw new Error(`standalone RegExp wrapper reached an unsupported ${detail}`);
   reportError(
     ctx,
     node,
@@ -943,7 +950,7 @@ function compileStaticStandaloneRegExp(
   ctx: CodegenContext,
   pattern: string,
   flags: string,
-  node: ts.Node,
+  node: ts.Node | undefined,
 ): CompiledRegex | null {
   let flagBits: number;
   try {
@@ -2530,7 +2537,7 @@ function emitStandaloneRegExpStruct(
   fctx: FunctionContext,
   pattern: string,
   flags: string,
-  node: ts.Node,
+  node: ts.Node | undefined,
 ): ValType | null {
   const compiled = compileStaticStandaloneRegExp(ctx, pattern, flags, node);
   if (compiled === null) return null;
@@ -2569,7 +2576,7 @@ function compileStandaloneRegExpPattern(
   fctx: FunctionContext,
   pattern: string,
   flags: string,
-  node: ts.Node,
+  node: ts.Node | undefined,
 ): ValType | null {
   if (!hasStandaloneRegExpEngine(ctx)) {
     reportStandaloneRegExpUnsupported(ctx, node, "RegExp without an enabled standalone engine");
@@ -2604,6 +2611,15 @@ function finiteRegExpPatternCandidates(ctx: CodegenContext, expression: ts.Expre
     if (typeof value === "string") candidates.add(value);
   }
   return candidates.size === 0 ? undefined : [...candidates];
+}
+
+/**
+ * (#7106 lever R) Whether `compileStandaloneStaticRegExp` builds this pair
+ * without a diagnostic: the engine compiles it, or it is an invalid pair that
+ * throws SyntaxError when it evaluates.
+ */
+export function standaloneStaticRegExpCompiles(pattern: string, flags: string): boolean {
+  return isSupportedStaticRegExpCandidate(pattern, flags) || hostRegExpSyntaxErrorMessage(pattern, flags) !== null;
 }
 
 /** Whether the complete static backend can compile a candidate without emitting diagnostics. */
@@ -2987,19 +3003,56 @@ export function compileStandaloneRegExpConstructor(
     return { kind: "ref", typeIdx: ensureStandaloneRegExpStruct(ctx) };
   }
 
-  // §22.2.3.2: an invalid static pattern/flags pair throws SyntaxError when
-  // the constructor call evaluates — emit the runtime throw, not a compile
-  // refusal (#1912). Regex *literals* keep the compile-time diagnostic since
-  // an invalid literal is an early error.
-  const syntaxMsg = hostRegExpSyntaxErrorMessage(pattern ?? "", flags ?? "");
+  return compileStandaloneStaticRegExp(ctx, fctx, pattern ?? "", flags ?? "", node);
+}
+
+/**
+ * A `$NativeRegExp` over a static pattern and flags. §22.2.3.2: an invalid
+ * pair throws SyntaxError when the construction evaluates — emit the runtime
+ * throw, not a compile refusal (#1912). Regex *literals* keep the compile-time
+ * diagnostic since an invalid literal is an early error. Shared with the IR's
+ * `extern.regex` wrapper ({@link ensureIrRegExpLiteralHelper}).
+ */
+export function compileStandaloneStaticRegExp(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  pattern: string,
+  flags: string,
+  node: ts.Node | undefined,
+): ValType {
+  const syntaxMsg = hostRegExpSyntaxErrorMessage(pattern, flags);
   if (syntaxMsg !== null && hasStandaloneRegExpEngine(ctx)) {
     return emitThrowRegExpSyntaxError(ctx, fctx, syntaxMsg);
   }
 
-  const compiled = compileStandaloneRegExpPattern(ctx, fctx, pattern ?? "", flags ?? "", node);
+  const compiled = compileStandaloneRegExpPattern(ctx, fctx, pattern, flags, node);
   if (compiled !== null) return compiled;
   fctx.body.push({ op: "unreachable" });
   return { kind: "ref", typeIdx: ensureStandaloneRegExpStruct(ctx) };
+}
+
+const irRegExpLiteralHelpers = new WeakMap<CodegenContext, Map<string, string>>();
+
+/**
+ * (#7106 lever R) The host-free lanes' `extern.regex` provider: one `() -> externref` helper per (pattern, flags)
+ * whose body is {@link compileStandaloneStaticRegExp}, so each evaluation is a fresh `$NativeRegExp` (§13.2.7.3)
+ * or the SyntaxError an invalid pair throws. No second engine, no host import. Built while
+ * `attachIrExternSupport` prepares the final IR, before any Phase-3 body, so minting is append-safe.
+ */
+export function ensureIrRegExpLiteralHelper(ctx: CodegenContext, pattern: string, flags: string): string {
+  const byPair = irRegExpLiteralHelpers.get(ctx) ?? new Map<string, string>();
+  irRegExpLiteralHelpers.set(ctx, byPair);
+  const key = `${flags}/${pattern}`;
+  const existing = byPair.get(key);
+  if (existing !== undefined) return existing;
+  const helper = helperFunctionContext(`__ir_regexp_literal_${byPair.size}`, [], { kind: "externref" });
+  compileStandaloneStaticRegExp(ctx, helper, pattern, flags, undefined);
+  helper.body.push({ op: "extern.convert_any" });
+  // Late imports the construction registered mid-body shift every baked call index.
+  flushLateImportShifts(ctx, helper);
+  publishHelperFunction(ctx, helper);
+  byPair.set(key, helper.name);
+  return helper.name;
 }
 
 function isStandaloneRegExpValue(
@@ -5686,6 +5739,25 @@ export function ensureStandaloneRegExpToStringDyn(ctx: CodegenContext): number |
     exported: false,
   });
   return funcIdx;
+}
+
+/**
+ * (#7106 lever R3) `__regexp_to_string_carrier(externref) -> ref $AnyString`: the IR's ToString of a native RegExp
+ * in a string `+`. The carrier ABI of `__regexp_test_carrier` over {@link ensureStandaloneRegExpToStringDyn}'s
+ * rendering; the IR passes only a `$NativeRegExp` it constructed.
+ */
+export function ensureStandaloneRegExpCarrierToStringHelper(ctx: CodegenContext): number | undefined {
+  const existing = ctx.funcMap.get(STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER);
+  if (existing !== undefined) return existing;
+  const toStringDyn = ensureStandaloneRegExpToStringDyn(ctx);
+  if (toStringDyn === undefined) return undefined;
+  const helper = helperFunctionContext(
+    STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER,
+    [{ name: "recv", type: { kind: "externref" } }],
+    { kind: "ref", typeIdx: ctx.anyStrTypeIdx },
+  );
+  helper.body.push({ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "call", funcIdx: toStringDyn });
+  return publishHelperFunction(ctx, helper);
 }
 
 /** (#4465) The `$__StandaloneRegExp` struct type index, when the module has one. */

@@ -98,8 +98,17 @@ export function emitRealmGlobalPrimitiveMethodWriteback(
  * from the shared runtime-eval realm object. Values seeded by the caller are
  * not wrapped; the structural type test preserves them unchanged. */
 export function runtimeEvalSharedValueUnwrapInstrs(ctx: CodegenContext, fctx: FunctionContext): Instr[] {
+  return runtimeEvalSharedValueDecode(ctx, fctx.locals, fctx.params.length);
+}
+
+/** (#7106 A2b) The same decode for a support body that is not a FunctionContext. */
+export function runtimeEvalSharedValueDecode(
+  ctx: CodegenContext,
+  locals: { name: string; type: ValType }[],
+  paramCount: number,
+): Instr[] {
   ensureAnyHelpers(ctx);
-  return buildRuntimeEvalValueUnwrap(ctx, fctx.locals, fctx.params.length);
+  return buildRuntimeEvalValueUnwrap(ctx, locals, paramCount);
 }
 
 export function emitRuntimeEvalSharedValueUnwrap(ctx: CodegenContext, fctx: FunctionContext): void {
