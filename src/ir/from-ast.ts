@@ -9729,6 +9729,8 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const args = ts.factory.createNodeArray(stringBorrow.args);
     const result = lowerStringMethodCall(stringBorrow.method, receiver, stringBorrow.receiver, args, cx);
     // invariant (producer-promise): selection claimed the borrow only for a method with a surface row.
+    // `lowerStringMethodCall` also declines a `charCodeAt` on a `const` substring receiver, but the
+    // borrow's receiver proof (`provenIrFamily`) never proves a variable read, so no such borrow is claimed.
     if (result === null)
       throw new IrInvariantError(
         "selection-preparation-mismatch",

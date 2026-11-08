@@ -8130,7 +8130,7 @@ Each argument conversion is the method's own, per ES2024 §22.1.3 (ES5 §15.5.4)
 | 2 | the `var` proof was not tied to scope; `arguments`, `NaN`/`Infinity` | fixed: the read must lie in a declaring scope; `arguments` and host-global names decline |
 | 3 | proof weaker than `bindingIsUniqueAndNeverWritten` | fixed: `eval`/`Function` identifiers, reflective routes, and an escaping `this`/`globalThis` decline |
 | 4 | `@@search` reads `Object.prototype` / `Boolean.prototype`; constructor aliases | fixed: `Object` in the guard, boolean patterns refused, and any escape of a patchable constructor (`var R = RegExp`) counts as may-patch; a constructor used only as a borrowed array method's callback (assert.js `Array.prototype.map.call(a, String)`) stays inert |
-| 5 | `isBindingName` duplicated codegen's binding-site test | fixed: one `isBindingSiteName` in `shared/binding-writes.ts`, used by both |
+| 5 | `isBindingName` duplicated codegen's binding-site test | fixed: one `isBindingSiteName` in `shared/binding-writes.ts`, used by both; codegen's heritage check now also counts `import X =` binding sites, which only makes it decline more |
 | 6 | four walks, three predicates for an unevaluated argument | fixed: one `isUnevaluatedStringMethodArgument`, keyed on the parent call (a borrow over a primitive or a direct call on a proven string, with a plan); `isEmptyFunctionCall` moved next to the `var` proof |
 | 7 | `arity` on the plan; `undefined → ""` encoded twice | fixed: `arity` is a row field; an `undefined` pattern takes the omitted default only |
 | 8 | `const t = s.substring(1)` borrow reaching the "borrow has no plan" invariant | rebutted: no such receiver passes selection; every spelling tried (unannotated, annotated, `as string`, `!`, parenthesised, module `const`, wrapper) is refused at `expr-string-borrow-receiver` on lever P and on SR, with 0 post-claim errors |
@@ -8143,3 +8143,30 @@ IR-only 100 → 123, gain 23, 0 lost, 0 units newly legacy, 0 post-claim
 errors, 669 binaries byte-identical, every changed binary a newly claimed
 file. Runner pass/fail on the 23: 23/23 pass on both lanes, 0 pass→fail.
 Playground examples byte-identical on both lanes.
+
+### Review round 2 (fresh-context re-review, 2026-11-08)
+
+| # | finding | verdict |
+| --- | --- | --- |
+| N1 | `globalThis["RegExp"]`, `this.RegExp`, `self.RegExp`, `this.String` slipped the prototype guards (`"abc".search("b")` → 1 after `globalThis["RegExp"].prototype.exec = …`) | fixed: any member or literal-keyed element access named like a patchable constructor is a reference to it (`referencedName`), for `X.prototype` owners and for constructor escapes alike; the same rule makes `self`, `window`, `global` and `$262.global` global-object references |
+| N2 | a parameter initializer read a body `var` as proven (`function f(a = "x".concat(v)) { var v; }`) | fixed: a function's proving scope is its body; checked on the proof directly, since the IR refuses that function on its parameters first |
+| N3 | `GLOBAL_VALUE_NAMES` lacks `print`, `$262`, `self`, `window`, `global`, `Iterator`, `Float16Array`, `Temporal` | fixed: a `HOST_GLOBAL_NAMES` supplement beside the checker's table; the realm catalog has no global-object entry, so `realmStringKeys` cannot answer it |
+| N4 | `Function("RegExp.prototype.exec = …")()` passed both guards | fixed: one `sourceRunsDynamicCode` fact (`eval` / `Function` by any name route, except a `prototype` read or an operand) in `intrinsic-prototype-writes.ts`, used by the `var` proof, `regExpProtocolMayBePatched` and lever P's borrow guard |
+| N6 | tests | fixed: one guarded row per N1, N3, N4 (both forms), each asserting its refusal arm; the N2 proof row |
+| nits | | fixed: the array-callback exception is `String`-only; every refused and guarded row asserts its arm (`JS2WASM_IR_SHAPE_DIAG` compile); one `isProvenStringReceiver` serves isPhase1Expr and the unevaluated-argument predicate; #8's invariant is stated at the throw |
+
+**Result after round 2** (same 706 files, base main `248841a4fe` with lever P,
+standalone lane; the gc rerun was cut for the wrap-up, and round 1 measured the
+two lanes identical): IR-only 101 → 124, gain 23, 0 lost, 0 units newly
+legacy, 0 post-claim errors, 669 binaries byte-identical, every changed binary
+a newly claimed file. The 23 targets claim and run on both lanes.
+
+### Not covered
+
+- **N5, runtime-built keys** (pre-existing): a key computed at run time
+  (`/a/["con" + "structor"]`, `o[k]` for a built `k`) reaches a prototype
+  past every reflective check, which reads only literal names.
+- **Legacy miscompiles of the guarded rows** (pre-existing): on both lanes
+  legacy ignores a patched `RegExp.prototype.exec`, `Object.prototype[@@search]`,
+  an aliased or member-reached constructor patch, and a computed global write,
+  so the guarded rows assert the refusal and are not compared against JS.

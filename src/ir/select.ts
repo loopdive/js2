@@ -206,6 +206,7 @@ import { programPatchesDestructuringRealm } from "./realm-keys.js";
 import {
   sourceMayPatchPrototype,
   sourceNamesReflectiveRoute,
+  sourceRunsDynamicCode,
   sourceWritesMemberNamed,
 } from "../shared/intrinsic-prototype-writes.js";
 import { collectBindingPatternNames } from "./analysis/ast-scope.js";
@@ -9120,13 +9121,15 @@ function stringPrototypeBorrowSelection(
   localClasses: ReadonlySet<string>,
 ): boolean {
   // The surface row is the realm's own method reached as spelled, legacy's own
-  // trust: a source that may replace the method, `.call` or `String`, or that
-  // names a route to a prototype it does not spell, keeps legacy's lookup.
+  // trust: a source that may replace the method, `.call` or `String`, that
+  // names a route to a prototype it does not spell, or that runs code it does
+  // not spell, keeps legacy's lookup.
   const source = expr.getSourceFile();
   if (
     sourceMayPatchPrototype(source, "String") ||
     sourceMayPatchPrototype(source, "Function") ||
     sourceNamesReflectiveRoute(source) ||
+    sourceRunsDynamicCode(source) ||
     sourceWritesMemberNamed(source, "call") ||
     sourceWritesMemberNamed(source, "String")
   ) {
@@ -9712,14 +9715,16 @@ function stringSurfaceBackend(): IrBackendKind {
 
 /**
  * (#7106 lever SR) RegExpCreate and the `@@search` lookup read the `RegExp`,
- * `String` and `Object` prototypes (§22.1.3.23), which the source may replace.
+ * `String` and `Object` prototypes (§22.1.3.23), which the source may replace,
+ * by name, by a reflective route, or in code it does not spell.
  */
 function regExpProtocolMayBePatched(source: ts.SourceFile): boolean {
   return (
     sourceMayPatchPrototype(source, "RegExp") ||
     sourceMayPatchPrototype(source, "String") ||
     sourceMayPatchPrototype(source, "Object") ||
-    sourceNamesReflectiveRoute(source)
+    sourceNamesReflectiveRoute(source) ||
+    sourceRunsDynamicCode(source)
   );
 }
 
@@ -9775,9 +9780,17 @@ function provenReceiverStringMethodCall(
   if (borrow !== undefined) {
     return BORROW_RECEIVER_FAMILIES.has(provenIrFamily(borrow.receiver, scope)) ? borrow : undefined;
   }
-  if (!ts.isPropertyAccessExpression(call.expression)) return undefined;
-  if (provenIrFamily(call.expression.expression, scope) !== "string") return undefined;
+  if (!ts.isPropertyAccessExpression(call.expression) || !isProvenStringReceiver(call.expression.expression)) {
+    return undefined;
+  }
   return { method: call.expression.name.text, args: call.arguments };
+}
+
+/** A direct string-method receiver the selector plans on: classified or proven a string. */
+function isProvenStringReceiver(receiver: ts.Expression): boolean {
+  return (
+    currentSelectionOptions?.classifyPrimitiveExpression?.(receiver) === "string" || expressionIsProvenString(receiver)
+  );
 }
 
 function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
@@ -12702,7 +12715,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         (scalarReceiverFamily === "f64" ? "number" : scalarReceiverFamily === "boolean" ? "boolean" : undefined);
       const provenReceiverFamily = currentSelectionOptions?.classifyPrimitiveExpression?.(builtinReceiver);
       const isNumberReceiver = provenReceiverFamily === "number" || expressionIsProvenNumber(builtinReceiver);
-      const isStringReceiver = provenReceiverFamily === "string" || expressionIsProvenString(builtinReceiver);
+      const isStringReceiver = isProvenStringReceiver(builtinReceiver);
       // (#7106 compareArray.format) A method call ON a borrow result
       // (`Array.prototype.map.call(…).join(", ")`): the receiver is the dynamic
       // carrier, whatever the checker types the borrow, so it takes the generic
@@ -12908,7 +12921,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         // expanding spread would blur them. Reject for now.
         if (ts.isSpreadElement(arg)) return false;
         // (#7106 lever SR) A static argument of a planned string method is never lowered.
-        if (isStringReceiver && isUnevaluatedStringMethodArgument(arg, scope)) continue;
+        if (isUnevaluatedStringMethodArgument(arg, scope)) continue;
         if (!isPhase1Expr(arg, scope, localClasses)) return false;
       }
       return true;

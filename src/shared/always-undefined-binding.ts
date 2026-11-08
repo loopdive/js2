@@ -17,10 +17,11 @@
  */
 import { GLOBAL_VALUE_NAMES } from "../checker/inhouse-globals.js";
 import { forEachChild, ts } from "../ts-api.js";
-import { hasDynamicScope, isBindingSiteName, stripParens } from "./binding-writes.js";
+import { isBindingSiteName, stripParens } from "./binding-writes.js";
 import {
   sourceMayWriteGlobalObject,
   sourceNamesReflectiveRoute,
+  sourceRunsDynamicCode,
   sourceWritesMemberNamed,
 } from "./intrinsic-prototype-writes.js";
 
@@ -37,6 +38,21 @@ export function isEmptyFunctionCall(expression: ts.Expression): boolean {
   );
 }
 
+/**
+ * Global names the hosts define beyond {@link GLOBAL_VALUE_NAMES} (the
+ * checker's curated table): newer ES globals and test262's host names.
+ */
+const HOST_GLOBAL_NAMES: ReadonlySet<string> = new Set([
+  "$262",
+  "print",
+  "self",
+  "window",
+  "global",
+  "Iterator",
+  "Float16Array",
+  "Temporal",
+]);
+
 /** Per file and name: the scopes whose `var` declarators prove the name, or `undefined` when it is not proven. */
 const cache = new WeakMap<ts.SourceFile, Map<string, ReadonlySet<ts.Node> | undefined>>();
 
@@ -44,8 +60,8 @@ const cache = new WeakMap<ts.SourceFile, Map<string, ReadonlySet<ts.Node> | unde
  * A read of a `var` that is declared without a value and never written. A
  * script-level declarator binds a property of the global object, so a name the
  * host already defines (`NaN`, `Array`, `print`) keeps its value, and a write
- * through `this` / `globalThis` under a computed name reaches it: both
- * decline. `arguments` is never proven, since every function binds it.
+ * through the global object under a computed name reaches it: both decline.
+ * `arguments` is never proven, since every function binds it.
  */
 export function isAlwaysUndefinedVar(identifier: ts.Identifier): boolean {
   if (identifier.text === "arguments") return false;
@@ -66,7 +82,7 @@ export function isAlwaysUndefinedVar(identifier: ts.Identifier): boolean {
 
 function provingScopes(sourceFile: ts.SourceFile, name: string): ReadonlySet<ts.Node> | undefined {
   if (
-    hasDynamicScope(sourceFile) ||
+    sourceRunsDynamicCode(sourceFile) ||
     sourceNamesReflectiveRoute(sourceFile) ||
     sourceWritesMemberNamed(sourceFile, name)
   ) {
@@ -76,26 +92,30 @@ function provingScopes(sourceFile: ts.SourceFile, name: string): ReadonlySet<ts.
   let declined = false;
   const visit = (node: ts.Node): void => {
     if (declined) return;
-    if (ts.isIdentifier(node)) {
-      // `(0, eval)(…)` and `Function(…)` run code that may write the name unseen.
-      if (node.text === "eval" || node.text === "Function") declined = true;
-      if (node.text === name && isBindingSiteName(node)) {
-        const scope = undefinedVarScope(node.parent);
-        if (scope === undefined) declined = true;
-        else scopes.add(scope);
-      }
+    if (ts.isIdentifier(node) && node.text === name && isBindingSiteName(node)) {
+      const scope = undefinedVarScope(node.parent);
+      if (scope === undefined) declined = true;
+      else scopes.add(scope);
     }
     forEachChild(node, visit);
   };
   visit(sourceFile);
   if (declined || scopes.size === 0) return undefined;
-  if (scopes.has(sourceFile) && (GLOBAL_VALUE_NAMES.has(name) || sourceMayWriteGlobalObject(sourceFile))) {
+  const scriptLevel = scopes.has(sourceFile);
+  if (
+    scriptLevel &&
+    (GLOBAL_VALUE_NAMES.has(name) || HOST_GLOBAL_NAMES.has(name) || sourceMayWriteGlobalObject(sourceFile))
+  ) {
     return undefined;
   }
   return scopes;
 }
 
-/** The function or script whose variable an initializer-less `var` declarator declares, or `undefined` for any other binding. */
+/**
+ * Where an initializer-less `var` declarator's variable is visible: the script,
+ * or the declaring function's body (its parameter initializers cannot see
+ * it); `undefined` for any other binding.
+ */
 function undefinedVarScope(declaration: ts.Node): ts.Node | undefined {
   if (!ts.isVariableDeclaration(declaration) || declaration.initializer !== undefined) return undefined;
   const list = declaration.parent;
@@ -106,5 +126,5 @@ function undefinedVarScope(declaration: ts.Node): ts.Node | undefined {
   while (!ts.isSourceFile(scope) && !ts.isFunctionLike(scope) && !ts.isClassStaticBlockDeclaration(scope)) {
     scope = scope.parent;
   }
-  return scope;
+  return ts.isSourceFile(scope) ? scope : (scope as ts.FunctionLikeDeclaration | ts.ClassStaticBlockDeclaration).body;
 }

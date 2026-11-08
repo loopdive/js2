@@ -21,15 +21,20 @@
  *     `Object.setPrototypeOf`, an alias, an operand) all count. So does any
  *     escape of the constructor itself (`var S = String; S.prototype.m = f`,
  *     `f(String)`, `String["prototype"]`): only a call, a `new`, a member
- *     read and a `typeof` / `instanceof` / equality operand are inert. A patch that
+ *     read and a `typeof` / `instanceof` / equality operand are inert. A
+ *     constructor reached as a member of any object (`globalThis["String"]`,
+ *     `this.String`) is the constructor. A patch that
  *     never names the prototype (`%ArrayIteratorPrototype%` reached through
  *     `Object.getPrototypeOf`) is not seen by it; a consumer that must also
  *     exclude those routes asks {@link sourceNamesReflectiveRoute}, and
  *     {@link sourceWritesMemberNamed} for a member it reads by name.
  *   - {@link sourceMayWriteGlobalObject}: the always-`undefined` `var` proof
  *     asks whether a global `var` may be written as a property of the global
- *     object under a name the source does not spell: `this` or `globalThis`
- *     anywhere but an inert use (`this[k] = v`, `Object.assign(this, …)`).
+ *     object under a name the source does not spell: `this`, `globalThis`,
+ *     `self`, `window` or `global` anywhere but an inert use (`this[k] = v`,
+ *     `Object.assign(this, …)`).
+ *   - {@link sourceRunsDynamicCode}: the same consumers ask whether code the
+ *     walk cannot see may run (`eval`, `Function`, by any name route).
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { isBindingSiteName, isStoreTarget, skipOuterExpressions } from "./binding-writes.js";
@@ -43,11 +48,19 @@ interface PrototypeUse {
   readonly writtenNames: Set<string>;
   /** The source names a {@link REFLECTIVE_NAMES} route or has a `with` statement. */
   reflective: boolean;
-  /** `this` or `globalThis` has a use other than an inert one. */
+  /** The global object (`this`, `globalThis`, `self`, `window`, `global`) has a use other than an inert one. */
   globalObjectEscapes: boolean;
+  /** `eval` or `Function` is read other than as an operand or for its `prototype`: code the walk cannot see may run. */
+  dynamicCode: boolean;
 }
 
 const PATCHABLE: ReadonlySet<string> = new Set<PatchableIntrinsic>(["Array", "Function", "Object", "RegExp", "String"]);
+
+/** Names the global object goes by: the standard one and the hosts' (`$262.global` included). */
+const GLOBAL_OBJECT_NAMES: ReadonlySet<string> = new Set(["globalThis", "self", "window", "global"]);
+
+/** Names that run source text as code. */
+const DYNAMIC_CODE_NAMES: ReadonlySet<string> = new Set(["eval", "Function"]);
 
 /**
  * Names that reach a prototype without spelling `X.prototype`:
@@ -81,9 +94,14 @@ export function sourceNamesReflectiveRoute(sourceFile: ts.SourceFile): boolean {
   return prototypeUse(sourceFile).reflective;
 }
 
-/** Whether `this` or `globalThis` escapes, so a global property may be written under a computed name. */
+/** Whether the global object escapes, so a global property may be written under a computed name. */
 export function sourceMayWriteGlobalObject(sourceFile: ts.SourceFile): boolean {
   return prototypeUse(sourceFile).globalObjectEscapes;
+}
+
+/** Whether the source may run code it does not spell: `eval` (direct or indirect) or `Function`, by any name route. */
+export function sourceRunsDynamicCode(sourceFile: ts.SourceFile): boolean {
+  return prototypeUse(sourceFile).dynamicCode;
 }
 
 /** Whether the source writes, deletes or defines a member or binding named `name` (`x.call = f`, `String = v`). */
@@ -100,35 +118,42 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
       writtenNames: new Set(),
       reflective: false,
       globalObjectEscapes: false,
+      dynamicCode: false,
     };
     const found = use;
     const callbacks: { readonly intrinsic: PatchableIntrinsic; readonly method: string }[] = [];
     const visit = (node: ts.Node): void => {
       if (ts.isPropertyAccessExpression(node)) {
         const owner = prototypeOwner(node);
-        if (owner && !owner.viaGlobalThis && isLegacyWrite(node)) found.writes.add(owner.intrinsic);
+        if (owner && !owner.qualified && isLegacyWrite(node)) found.writes.add(owner.intrinsic);
         if (owner && !isPlainMemberRead(node)) found.mayPatch.add(owner.intrinsic);
       }
-      const intrinsic = intrinsicReference(node);
-      if (intrinsic !== undefined && !isInertUse(node as ts.Expression)) {
-        const method = arrayCallbackMethod(node as ts.Expression);
-        if (method === undefined) found.mayPatch.add(intrinsic);
-        else callbacks.push({ intrinsic, method });
+      const name = referencedName(node);
+      if (name !== undefined) {
+        const reference = node as ts.Expression;
+        if (PATCHABLE.has(name) && !isInertUse(reference)) {
+          const method = name === "String" ? arrayCallbackMethod(reference) : undefined;
+          if (method === undefined) found.mayPatch.add(name as PatchableIntrinsic);
+          else callbacks.push({ intrinsic: "String", method });
+        }
+        if (GLOBAL_OBJECT_NAMES.has(name) && !isInertUse(reference)) found.globalObjectEscapes = true;
+        if (DYNAMIC_CODE_NAMES.has(name) && !isPrototypeReadOrOperand(reference)) found.dynamicCode = true;
       }
-      if (isGlobalObjectReference(node) && !isInertUse(node as ts.Expression)) found.globalObjectEscapes = true;
+      if (node.kind === ts.SyntaxKind.ThisKeyword && !isInertUse(node as ts.Expression))
+        found.globalObjectEscapes = true;
       const written = writtenName(node);
       if (written !== undefined) found.writtenNames.add(written);
-      const name = nameText(node);
+      const text = nameText(node);
       if (
         ts.isWithStatement(node) ||
-        (name !== undefined && REFLECTIVE_NAMES.has(name) && !isObservedConstructor(node))
+        (text !== undefined && REFLECTIVE_NAMES.has(text) && !isObservedConstructor(node))
       ) {
         found.reflective = true;
       }
       forEachChild(node, visit);
     };
     visit(sourceFile);
-    // A constructor handed to a realm array method as its callback is only called, unless that method may not be the realm's.
+    // `String` handed to a realm array method as its callback is only called, unless that method may not be the realm's.
     const handedOn = (method: string): boolean =>
       found.mayPatch.has("Array") ||
       found.mayPatch.has("Function") ||
@@ -140,36 +165,32 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
   return use;
 }
 
-/** `Array` for `Array.prototype` / `globalThis.Array.prototype`, and each other patchable intrinsic likewise. */
+/**
+ * `Array` for `Array.prototype`, and for a member of that name on any object
+ * (`globalThis.Array.prototype`, `this["Array"].prototype`); each other
+ * patchable intrinsic likewise. `qualified` is anything but the bare name.
+ */
 function prototypeOwner(
   expression: ts.PropertyAccessExpression,
-): { readonly intrinsic: PatchableIntrinsic; readonly viaGlobalThis: boolean } | undefined {
+): { readonly intrinsic: PatchableIntrinsic; readonly qualified: boolean } | undefined {
   if (expression.name.text !== "prototype") return undefined;
-  const receiver = expression.expression;
-  const viaGlobalThis =
-    ts.isPropertyAccessExpression(receiver) &&
-    ts.isIdentifier(receiver.expression) &&
-    receiver.expression.text === "globalThis";
-  const owner = viaGlobalThis ? receiver.name : receiver;
-  if (!ts.isIdentifier(owner) || !PATCHABLE.has(owner.text)) return undefined;
-  return { intrinsic: owner.text as PatchableIntrinsic, viaGlobalThis };
+  const name = referencedName(skipOuterExpressions(expression.expression));
+  if (name === undefined || !PATCHABLE.has(name)) return undefined;
+  return { intrinsic: name as PatchableIntrinsic, qualified: !ts.isIdentifier(expression.expression) };
 }
 
-/** The intrinsic a value reference names: `String`, or `globalThis.String`. */
-function intrinsicReference(node: ts.Node): PatchableIntrinsic | undefined {
-  if (ts.isIdentifier(node))
-    return PATCHABLE.has(node.text) && isValueReference(node) ? (node.text as PatchableIntrinsic) : undefined;
-  return ts.isPropertyAccessExpression(node) &&
-    ts.isIdentifier(node.expression) &&
-    node.expression.text === "globalThis" &&
-    PATCHABLE.has(node.name.text)
-    ? (node.name.text as PatchableIntrinsic)
-    : undefined;
-}
-
-function isGlobalObjectReference(node: ts.Node): boolean {
-  if (node.kind === ts.SyntaxKind.ThisKeyword) return true;
-  return ts.isIdentifier(node) && node.text === "globalThis" && isValueReference(node);
+/**
+ * The name `node` reads: an identifier that reads a binding, or a member of
+ * any object by a literal name (`o.String`, `o["String"]`). A global reached
+ * through any object counts, since the walk cannot tell which object is the
+ * global one.
+ */
+function referencedName(node: ts.Node): string | undefined {
+  if (ts.isIdentifier(node)) return isValueReference(node) ? node.text : undefined;
+  if (ts.isPropertyAccessExpression(node)) return node.name.text;
+  if (!ts.isElementAccessExpression(node)) return undefined;
+  const key = skipOuterExpressions(node.argumentExpression);
+  return ts.isStringLiteralLike(key) ? key.text : undefined;
 }
 
 /** An identifier that reads a binding: not a declared name, a member or property name, a label or a type. */
@@ -221,6 +242,14 @@ function arrayCallbackMethod(reference: ts.Expression): string | undefined {
     : undefined;
 }
 
+/** `Function.prototype…`, or a `typeof`, `instanceof` or equality operand: a read that runs no code. */
+function isPrototypeReadOrOperand(reference: ts.Expression): boolean {
+  const use = outermost(reference);
+  const user = use.parent;
+  if (ts.isPropertyAccessExpression(user) && user.expression === use && user.name.text === "prototype") return true;
+  return isOperandUse(user);
+}
+
 /**
  * A use that neither stores nor hands the object on: the callee of a call or
  * `new`, the object of a member access (a computed key only as a literal other
@@ -235,6 +264,11 @@ function isInertUse(reference: ts.Expression): boolean {
     const key = skipOuterExpressions(user.argumentExpression);
     return (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)) && key.text !== "prototype";
   }
+  return isOperandUse(user);
+}
+
+/** A `typeof`, `instanceof` or equality operand. */
+function isOperandUse(user: ts.Node): boolean {
   if (ts.isTypeOfExpression(user)) return true;
   return (
     ts.isBinaryExpression(user) &&
