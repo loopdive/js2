@@ -97,7 +97,13 @@ import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
-import { emptyObjectLiteralBinding, isOpenCarrierUse, type EmptyObjectLiteralBinding } from "./empty-object-literal.js";
+import {
+  emptyObjectLiteralBinding,
+  isOpenCarrierUse,
+  openCarrierDefinePlan,
+  type EmptyObjectLiteralBinding,
+} from "./empty-object-literal.js";
+import * as dynamicHome from "./dynamic-home-open-object.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
@@ -181,7 +187,8 @@ import type { IrFnctorAdmission, IrFnctorSelectionAdmissionResolver, LatticeType
 import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
-import { staticRegExpPair } from "../shared/regexp-static.js";
+import { matchRegExpCarrierCall, staticRegExpPair } from "../shared/regexp-static.js";
+import { regExpMatchReadValueAdmitted, regExpMatchUseAdmitted } from "./regexp-match-uses.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
@@ -4896,12 +4903,8 @@ function isPhase1StatementListInScope(
         if (lhs.questionDotToken !== undefined) {
           return shapeNo("nontail-elemstore-optional", lhs);
         }
-        if (
-          (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text)) &&
-          !stableDynamicStoreReceiverHasAdmittedRoot(lhs.expression)
-        ) {
-          return shapeNo("nontail-elemstore-recv", lhs.expression);
-        }
+        const receiverRefusal = elementStoreReceiverRefusal(lhs.expression, scope);
+        if (receiverRefusal) return shapeNo(`nontail-elemstore-${receiverRefusal}`, lhs.expression);
         if (ts.isStringLiteralLike(lhs.argumentExpression) && !preflightClassPropertyWrite(lhs, scope)) return false;
         if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses))
           return shapeNo("nontail-elemstore-idx", lhs.argumentExpression);
@@ -6213,16 +6216,8 @@ function isPhase1MemberAssignment(
     if (lhs.questionDotToken !== undefined) {
       return shapeNo("body-elemstore-optional", lhs);
     }
-    if (
-      (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text)) &&
-      !stableDynamicStoreReceiverHasAdmittedRoot(lhs.expression)
-    ) {
-      return shapeNo("body-elemstore-recv", lhs.expression);
-    }
-    // (#7292) A module binding's receiver is a use its resolver certifies (a script-var vec refuses stores).
-    if (ts.isIdentifier(lhs.expression) && isUnrepresentableModuleBinding(lhs.expression)) {
-      return shapeNo("body-elemstore-module-storage-unrepresentable", lhs.expression);
-    }
+    const receiverRefusal = elementStoreReceiverRefusal(lhs.expression, scope);
+    if (receiverRefusal) return shapeNo(`body-elemstore-${receiverRefusal}`, lhs.expression);
     if (ts.isStringLiteralLike(lhs.argumentExpression) && !preflightClassPropertyWrite(lhs, scope)) return false;
     if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses)) return false;
     return isPhase1Expr(expr.right, scope, localClasses);
@@ -8409,6 +8404,7 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
     return trackedModuleInfluenceIsBoolean(candidate.whenTrue) && trackedModuleInfluenceIsBoolean(candidate.whenFalse);
   }
   if (ts.isCallExpression(candidate)) {
+    if (dynamicHomeOwnPropertyMethod(candidate) !== undefined) return true; // (#7335) an i32 boolean test
     if (expressionIsModuleBindingRootedCall(candidate)) return false;
     return currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "boolean";
   }
@@ -8527,6 +8523,24 @@ function moduleExternConsumerIsProven(expr: ts.Expression, scope: ReadonlySet<st
     );
   }
   return false;
+}
+
+/**
+ * (#2856 C2) Why an element store's receiver is refused, if it is: it must be
+ * a plain in-scope identifier or a stable dynamic root (`recv`). (#7292, #7106
+ * lever S2) A module binding answers for its own use site, so a slot that
+ * refuses a store (a script-var vec, `regexp-match`) is not one.
+ */
+function elementStoreReceiverRefusal(
+  receiver: ts.Expression,
+  scope: ReadonlySet<string>,
+): "recv" | "module-storage-unrepresentable" | undefined {
+  const shaped =
+    (ts.isIdentifier(receiver) && scope.has(receiver.text)) || stableDynamicStoreReceiverHasAdmittedRoot(receiver);
+  if (!shaped) return "recv";
+  return ts.isIdentifier(receiver) && isUnrepresentableModuleBinding(receiver)
+    ? "module-storage-unrepresentable"
+    : undefined;
 }
 
 /** A real module lexical whose legacy storage has no sound IR representation. */
@@ -9147,24 +9161,59 @@ function hostRegExpUnavailable(): boolean {
 
 /**
  * (#7106 lever R) A static construction (`staticRegExpPair`) a `native-regexp` lane builds in-module, where the IR
- * consumes it: the receiver of `.test(…)`, a discarded statement (which still throws an invalid pair's SyntaxError),
- * or (R3) an operand of `+`, which the `+` rule admits only beside a string (its `RegExp.prototype.toString`). A
- * property read (`/a/.source`) or a binding has no lowering for it yet.
+ * consumes it: the receiver of `.test(…)` / `.exec(…)` (R1/R2), a discarded statement (which still throws an invalid
+ * pair's SyntaxError), or (R3) an operand of `+`, which the `+` rule admits only beside a string (its
+ * `RegExp.prototype.toString`). A property read (`/a/.source`) or a binding has no lowering for it yet.
  */
 function nativeStaticRegExp(expr: ts.Expression): boolean {
   const pair = staticRegExpPair(expr, (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true);
   const consumer = outermostParenthesized(expr).parent;
-  const testReceiver =
+  const methodReceiver =
     ts.isPropertyAccessExpression(consumer) &&
-    consumer.name.text === "test" &&
     ts.isCallExpression(consumer.parent) &&
-    consumer.parent.expression === consumer;
+    consumer.parent.expression === consumer &&
+    matchRegExpCarrierCall(consumer.parent) !== undefined;
   const additionOperand = ts.isBinaryExpression(consumer) && consumer.operatorToken.kind === ts.SyntaxKind.PlusToken;
   return (
     pair !== undefined &&
-    (testReceiver || additionOperand || ts.isExpressionStatement(consumer)) &&
+    (methodReceiver || additionOperand || ts.isExpressionStatement(consumer)) &&
     currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
     currentSelectionOptions.nativeRegExpCompiles?.(pair.pattern, pair.flags) === true
+  );
+}
+
+/** (#7106 levers R2, S2) A read of a match result: an `.exec` call's, or a `regexp-match` slot's. */
+function isRegExpMatchRead(expr: ts.Expression): expr is ts.PropertyAccessExpression | ts.ElementAccessExpression {
+  if (!ts.isPropertyAccessExpression(expr) && !ts.isElementAccessExpression(expr)) return false;
+  const receiver = unwrapPhase1Parens(expr.expression);
+  if (ts.isIdentifier(receiver)) return currentModuleBindingResolver?.(receiver)?.valueKind.kind === "regexp-match";
+  const call = ts.isCallExpression(receiver) ? matchRegExpCarrierCall(receiver) : undefined;
+  return call?.method === "exec" && currentSelectionOptions?.isRegExpExpression?.(call.receiver) === true;
+}
+
+/** A function-object member call (`assert.sameValue(…)`), whose lowering boxes every argument. */
+function isFunctionObjectMemberCall(call: ts.CallExpression): boolean {
+  const callee = call.expression;
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    isFunctionObjectReceiver(callee.expression, currentSelectionOptions?.functionObjectValues)
+  );
+}
+
+/**
+ * (#7106 lever S2) `call` (an `.exec`) initializes a `regexp-match` script
+ * slot, whose every use the module-binding resolver checks. Any other `var`
+ * (a function local) would be a dynamic local whose uses nothing checks.
+ */
+function initializesRegExpMatchSlot(call: ts.CallExpression): boolean {
+  const value = outermostParenthesized(call);
+  const declaration = value.parent;
+  return (
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer === value &&
+    ts.isIdentifier(declaration.name) &&
+    currentModuleBindingResolver?.(declaration.name, call)?.valueKind.kind === "regexp-match"
   );
 }
 
@@ -12132,6 +12181,14 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   ) {
     return shapeNo("expr-module-extern-consumer", expr);
   }
+  // (#7106 levers R2, S2) A match result's served field goes only where its dynamic value lowers.
+  if (
+    currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
+    isRegExpMatchRead(expr) &&
+    !regExpMatchReadValueAdmitted(expr, isFunctionObjectMemberCall)
+  ) {
+    return capabilityNo("operand-coercion-unsupported", "expr-regexp-match-read", expr);
+  }
   if (ts.isParenthesizedExpression(expr)) return isPhase1Expr(expr.expression, scope, localClasses);
   // (#3583) Type-erased assertion wrappers emit nothing; `lowerExpr` unwraps the identical operand shape.
   // Other `isAsExpression` sites are analysis-local, not this shape gate; these
@@ -12774,38 +12831,33 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           return true;
         }
       }
+      // #3791, #7106 lever R — a host-free method on a RegExp value. Only
+      // `.test(subject)` / `.exec(subject)` lower, through the in-module
+      // carrier helper: an exact stable top-level carrier passes its real
+      // legacy externref global (that binding is not a general IR module
+      // value, so it bypasses the receiver walk), any other receiver must be
+      // an IR value, and an `.exec` result only where `regExpMatchUseAdmitted`
+      // places it. (#7014) Every other method (`(/a/g).toString()`), a
+      // non-string subject and all other shapes keep the target-capability
+      // refusal; claimed, they hit from-ast's capability-violation assert.
       if (
-        (expr.expression.name.text === "test" || expr.expression.name.text === "exec") &&
         currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
         hostRegExpUnavailable()
       ) {
-        // #3791, #7106 lever R — host-free `.test(subject)` calls the in-module
-        // carrier helper. An exact stable top-level carrier passes its real
-        // legacy externref global (that binding is not a general IR module
-        // value, so it bypasses the receiver walk); any other receiver must be
-        // an IR value. `.exec`, non-string subjects and all other shapes keep
-        // the established target-capability refusal.
-        const receiver = expr.expression.expression;
+        const call = matchRegExpCarrierCall(expr);
         if (
-          expr.expression.name.text === "test" &&
+          call !== undefined &&
           currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
-          expr.arguments.length === 1 &&
-          !ts.isSpreadElement(expr.arguments[0]!) &&
-          (expressionIsProvenString(expr.arguments[0]!) ||
-            currentSelectionOptions?.classifyPrimitiveExpression?.(expr.arguments[0]!) === "string") &&
-          (currentModuleBindingResolver?.staticRegExpTestPlan(receiver) !== undefined ||
-            isPhase1Expr(receiver, scope, localClasses))
+          (expressionIsProvenString(call.subject) ||
+            currentSelectionOptions?.classifyPrimitiveExpression?.(call.subject) === "string") &&
+          (call.method === "test" ||
+            regExpMatchUseAdmitted(expr, currentSelectionOptions?.classifyPrimitiveExpression) ||
+            initializesRegExpMatchSlot(expr)) &&
+          (currentModuleBindingResolver?.staticRegExpTestPlan(call.receiver) !== undefined ||
+            isPhase1Expr(call.receiver, scope, localClasses))
         ) {
-          return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
+          return isPhase1Expr(call.subject, scope, localClasses);
         }
-        return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
-      }
-      // (#7014) Every OTHER host-free RegExp method (`(/a/g).toString()`) keeps
-      // that refusal; claimed, it hit from-ast's capability-violation assert.
-      if (
-        currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
-        hostRegExpUnavailable()
-      ) {
         return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
       }
       if (currentSelectionOptions?.preparedAsyncDateNowCall?.(expr) === true) return true;
@@ -12998,6 +13050,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return true;
       }
+      if (admitDynamicHomeOwnPropertyCall(expr)) return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
       if (expressionTouchesScalarModuleBinding(expr.expression.expression, scope)) {
         if (!isExactF64ScalarToStringCall(expr)) {
           return shapeNo("expr-module-scalar-method", expr);
@@ -13654,10 +13707,7 @@ function isDynamicHomeOpenCarrier(literal: ts.ObjectLiteralExpression): boolean 
   if (
     !ts.isVariableDeclaration(decl) ||
     decl.initializer !== literal ||
-    !ts.isIdentifier(decl.name) ||
-    !isModuleInitVarList(decl.parent) ||
-    currentModuleBindingResolver?.(decl.name)?.valueKind.kind !== "dynamic" ||
-    currentSelectionOptions?.isOpenObjectBinding?.(decl) !== true ||
+    !isDynamicHomeOpenCarrierDeclaration(decl) ||
     !unitInKeysAreOwnOnly(literal)
   ) {
     return false;
@@ -13666,16 +13716,68 @@ function isDynamicHomeOpenCarrier(literal: ts.ObjectLiteralExpression): boolean 
   return true;
 }
 
-/** (#7128 S1) A U1 define on an admitted open-carrier binding, in the current subject's own body. */
-function isOpenCarrierDefine(call: ts.CallExpression): boolean {
-  const target = call.arguments[0];
+/** (#7280 S1) The declaration half of {@link isDynamicHomeOpenCarrier}; (#7335) its define and own-property arms ask it too. */
+function isDynamicHomeOpenCarrierDeclaration(decl: ts.VariableDeclaration): boolean {
   return (
-    target !== undefined &&
-    ts.isIdentifier(target) &&
-    currentOpenCarrierNames.has(target.text) &&
-    enclosingProjectionOwner(call) === currentSelectionSubject
+    ts.isIdentifier(decl.name) &&
+    isModuleInitVarList(decl.parent) &&
+    currentModuleBindingResolver?.(decl.name)?.valueKind.kind === "dynamic" &&
+    currentSelectionOptions?.isOpenObjectBinding?.(decl) === true
   );
 }
+
+/**
+ * (#7128 S1) A U1 define on an admitted open-carrier binding, in the current
+ * subject's own body; (#7335) or a U1 define on a #7280 dynamic-home carrier
+ * whose every use is served (`dynamic-home-open-object.ts`), from any unit,
+ * since that binding holds the one `$Object` throughout.
+ */
+function isOpenCarrierDefine(call: ts.CallExpression): boolean {
+  const target = call.arguments[0];
+  if (target === undefined || !ts.isIdentifier(target)) return false;
+  if (currentOpenCarrierNames.has(target.text) && enclosingProjectionOwner(call) === currentSelectionSubject)
+    return true;
+  return isOpenCarrierUse(target, isAmbientObjectDefineProperty) && dynamicHome.isReference(target, DYNAMIC_HOME_QUERY);
+}
+
+/**
+ * (#7335) The method of `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on
+ * a dynamic-home open object, where the lane builds the own-property provider
+ * the certified uncurried aliases lower to (#7106 S1g).
+ */
+function dynamicHomeOwnPropertyMethod(call: ts.CallExpression): dynamicHome.OwnPropertyMethod | undefined {
+  if (
+    !currentDynamicRuntimeBuildable ||
+    currentSelectionOptions?.supportsBackendCapability?.("native-own-property-test") !== true
+  ) {
+    return undefined;
+  }
+  return dynamicHome.ownPropertyMethod(call, DYNAMIC_HOME_QUERY);
+}
+
+/** (#7335) Admit a {@link dynamicHomeOwnPropertyMethod} call, recording its method for the lowering. */
+function admitDynamicHomeOwnPropertyCall(call: ts.CallExpression): boolean {
+  const method = dynamicHomeOwnPropertyMethod(call);
+  if (method === undefined) return false;
+  admittedOwnPropertyCalls.set(call, method);
+  return true;
+}
+
+const admittedOwnPropertyCalls = new WeakMap<ts.CallExpression, dynamicHome.OwnPropertyMethod>();
+
+/** (#7335) The own-property method of a certified `o.<method>(k)` call on a dynamic-home open object. */
+export function admittedOwnPropertyCallMethod(call: ts.CallExpression): dynamicHome.OwnPropertyMethod | undefined {
+  return admittedOwnPropertyCalls.get(call);
+}
+
+/** (#7335) The selector state a #7280 dynamic-home carrier's uses are judged against, read live. */
+const DYNAMIC_HOME_QUERY: dynamicHome.DynamicHomeQuery = {
+  get resolve() {
+    return currentModuleBindingResolver;
+  },
+  isCarrier: (decl) => isDynamicHomeOpenCarrierDeclaration(decl),
+  isAmbientDefineProperty: (call) => isAmbientObjectDefineProperty(call),
+};
 
 /** `Object.defineProperty(…)` on the ambient `Object`. */
 function isAmbientObjectDefineProperty(call: ts.CallExpression): boolean {

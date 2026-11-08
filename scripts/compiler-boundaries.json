@@ -13128,7 +13128,7 @@
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "7292",
-      "nextBoundary": "The resolver's dispatch over the write-certified script-var homes (#7252 class instance, #7292 string vec): moves with their certifiers when the frontend inventory is split from ir-core."
+      "nextBoundary": "The resolver's dispatch over the write-certified script-var homes (#7252 class instance, #7292 string vec, #7106 lever S2 match result): moves with their certifiers when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/module-binding-script-var.ts",
@@ -13145,6 +13145,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/regexp-match-uses.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape admission for the uses of a RegExp match result (an `.exec` call or a `regexp-match` script var, #7106 levers R2/S2); move with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/module-binding-value-kinds.ts",
@@ -13233,6 +13241,14 @@
       "destination": "ir-core",
       "owner": "7135",
       "nextBoundary": "JavaScript producer emits canonical boxing and runtime callable bindings; separate runtime-provider preparation from pure IR contracts."
+    },
+    {
+      "path": "src/ir/dynamic-home-open-object.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7335",
+      "nextBoundary": "Frontend source-shape certifier for the #7335 dynamic-home open object (a script `var o = {}` on the dynamic module slot); move with the empty-object-literal arms when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/empty-object-literal.ts",
