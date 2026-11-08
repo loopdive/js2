@@ -3,7 +3,11 @@
 import type { AllocSiteId, IrFuncRef, IrGlobalRef, IrStringLengthProvider } from "../nodes.js";
 import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
 import type { ValType } from "../types.js";
-import type { StringBuilderScratch, StringBuilderSlots } from "../../backend/wasmgc/lowering/wasm-string-builder.js";
+import type {
+  StringBuilderPresize,
+  StringBuilderScratch,
+  StringBuilderSlots,
+} from "../../backend/wasmgc/lowering/wasm-string-builder.js";
 
 /**
  * Typed lowering boundary for shared string instructions. Operands are already
@@ -44,10 +48,12 @@ export interface StringBackendEmitter<Sink> {
  * consumes its operands from the sink and pushes nothing.
  */
 export interface StringBuilderEmitter<Sink> {
-  /** Local types: the code-unit buffer and a flattened string. */
+  /** Local types: the code-unit buffer, a flattened string and any string. */
   readonly bufType: ValType;
   readonly flatType: ValType;
-  init(sb: StringBuilderSlots, out: Sink): void;
+  readonly stringType: ValType;
+  /** A presized builder is sized once from its loop bound and never grows. */
+  init(sb: StringBuilderSlots, presize: StringBuilderPresize | undefined, out: Sink): void;
   /** Consumes a string. */
   appendString(sb: StringBuilderSlots, scratch: StringBuilderScratch, out: Sink): void;
   /** Consumes an i32 code unit. */

@@ -31,6 +31,10 @@ func-budget-allow:
   # #2949 code, filed as #7307. Restates #7265's grant.
   - src/ir/select.ts::dynamicUsesAreMoveOnly
   - src/ir/select.ts::scanExprInner
+  # 2026-11-08: +3 in buildLocalCallGraph, the review-2 fix that treats a
+  # rewritten local function binding as external (`localIsRewritten`), so its
+  # callers refuse before the claim. It is the call-graph rule itself.
+  - src/ir/select.ts::buildLocalCallGraph
 assignee: "ttraenkler/c-r11"
 ---
 

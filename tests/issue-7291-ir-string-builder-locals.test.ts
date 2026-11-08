@@ -46,6 +46,41 @@ function build(n: number): string {
 function inner(): string { return build(6); }`,
     builder: "build",
   },
+  "charAt on a concatenated (non-flat) receiver flattens it": {
+    source: `
+function build(n: number): string {
+  let r = "abc";
+  r = r + "defg";
+  let s = "";
+  for (let i = 0; i < n; i++) { s += r.charAt(i % 7); }
+  return s;
+}
+function inner(): string { return build(20); }`,
+    builder: "build",
+  },
+  "a fractional and a negative bound size the presized buffer by ceil": {
+    source: `
+function build(n: number): string {
+  let s = "";
+  for (let i = 0; i < n; i++) { s += "ab"; s += "c"; }
+  return s;
+}
+function inner(): string { return build(2.5) + "|" + build(0.5) + "|" + build(-3) + "|" + build(0); }`,
+    builder: "build",
+  },
+  "an exported builder also called in the file takes the IR builder (#7143 review)": {
+    source: `
+export function run(n: number): number {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz012345";
+  let text = "";
+  for (let i = 0; i < n; i++) { const a = (i * 13) & 31; const b = (a + 7) & 31; text += alphabet.charAt(a); text += alphabet.charAt(b); text += ";"; }
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  return hash | 0;
+}
+function inner(): string { return "" + run(10) + "|" + run(1000); }`,
+    builder: "run",
+  },
   "a surrogate pair split by charAt keeps both units": {
     source: `
 function build(n: number): string {
