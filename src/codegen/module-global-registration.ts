@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { GlobalDef, Instr, ValType } from "../ir/types.js";
-import { isModuleInitVarList } from "../shared/module-init-var-lists.js";
+import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
 import type { CodegenContext } from "./context/types.js";
@@ -186,6 +186,20 @@ export function objectLiteralReadsAmbientRedeclaredVar(ctx: CodegenContext, expr
 }
 
 /**
+ * (#7106 lever L) Is `decl` a name of a script's top-level `for` head `var`
+ * list? The IR shares it as a module binding (the resolver's
+ * `isModuleBindingDeclaration`), so `registerModuleGlobal` observes its slot. A
+ * top-level statement's own declaration is observed by the source-order pass.
+ */
+export function isScriptForHeadVar(decl: ts.VariableDeclaration): boolean {
+  return (
+    !ts.isExternalModule(decl.getSourceFile()) &&
+    !ts.isVariableStatement(decl.parent.parent) &&
+    isModuleInitVarList(decl.parent)
+  );
+}
+
+/**
  * Register one module-level global and expose its exact allocator object to
  * the structural ABI sidecar when the source declaration is authoritative.
  */
@@ -221,7 +235,13 @@ export function registerModuleGlobal(
   }
   const existingGlobalIdx = ctx.moduleGlobals.get(name);
   if (existingGlobalIdx !== undefined) {
-    if (declaration) observeModuleGlobal(ctx, name, existingGlobalIdx, declaration);
+    if (declaration) {
+      const existingGlobal = ctx.mod.globals[localGlobalIdx(ctx, existingGlobalIdx)];
+      if (!existingGlobal) {
+        throw new TypeError(`module global ${name} has no allocator object at index ${existingGlobalIdx}`);
+      }
+      ctx.programAbiGlobals?.observeModuleValue(declaration, name, existingGlobal);
+    }
     return;
   }
   if (ctx.classSet.has(name)) return;
@@ -254,35 +274,6 @@ export function registerModuleGlobal(
   ctx.moduleGlobals.set(name, globalIdx);
   if (declaration) {
     ctx.programAbiGlobals?.observeModuleValue(declaration, name, global);
-  }
-}
-
-/** Observe `declaration` as an owner of the allocator's existing `__mod_<name>` value global at `globalIdx`. */
-function observeModuleGlobal(
-  ctx: CodegenContext,
-  name: string,
-  globalIdx: number,
-  declaration: ts.VariableDeclaration | ts.BindingElement,
-): void {
-  const global = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
-  if (!global) throw new TypeError(`module global ${name} has no allocator object at index ${globalIdx}`);
-  ctx.programAbiGlobals?.observeModuleValue(declaration, name, global);
-}
-
-/**
- * (#7288) The hoisted `var`s of a top-level `for (;;)` head the IR models as
- * module bindings (`isModuleInitVarList`): their slots are registered by name
- * with the other nested `var`s, so they are observed under their exact
- * declarations here, where the IR's module-binding resolver looks them up. A
- * name with no `__mod_` slot (a same-named function owns it) stays unobserved.
- */
-export function observeHoistedForHeadVars(ctx: CodegenContext, list: ts.VariableDeclarationList): void {
-  if (!isModuleInitVarList(list)) return;
-  for (const declaration of list.declarations) {
-    if (!ts.isIdentifier(declaration.name)) continue;
-    const name = declaration.name.text;
-    const globalIdx = ctx.moduleGlobals.get(name);
-    if (globalIdx !== undefined) observeModuleGlobal(ctx, name, globalIdx, declaration);
   }
 }
 

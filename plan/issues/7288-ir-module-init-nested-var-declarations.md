@@ -13,29 +13,17 @@ reasoning_effort: high
 task_type: implementation
 area: ir
 goal: ir-full-coverage
-related: [7276, 3523, 7315]
+related: [7276, 3523, 7315, 7106]
 assignee: "ttraenkler/c-lead"
 loc-budget-allow:
-  # 2026-11-06 (#7288): one shared predicate, `isModuleInitVarList`, decides
-  # which hoisted `var` lists are module bindings; the growth is its wiring.
-  # module-bindings.ts +2: `isModuleBindingDeclaration` admits a script's
-  # modelled `for (;;)` head. declarations.ts +2: the one call that observes
-  # the head's `__mod_<name>` slot under its exact declaration, and its import.
-  #
-  # select.ts +13: `isDirectModuleDeclaration` (the statement path's "direct
-  # module declaration" test, now shared with hoisted heads), and the for-init
-  # arm routing a hoisted head through the `var`-statement check
-  # (`isPhase1VarDecl`), which replaces a partial copy of its checks.
-  # from-ast.ts +4: `lowerForInitializer`, so that a hoisted head lowers in
-  # the enclosing scope and the loop keeps its inner one.
-  - src/ir/module-bindings.ts
-  - src/codegen/declarations.ts
+  # 2026-11-07 (#7288, after merging #7106 lever L): main's lever L
+  # (PR #7178) now carries the for-head mechanism. What remains here is two
+  # up-front refusals main lacks, each next to its sibling check:
+  #   - select.ts +4: the `forin-head-module-var` refusal in the for-in arm;
+  #   - module-bindings.ts +3: `writeValueMatches` refuses a direct read of a
+  #     carrier-slot binding (a hoisted `var` read before its declaration).
   - src/ir/select.ts
-  - src/ir/from-ast.ts
-func-budget-allow:
-  # 2026-11-06 (#7288): the one observe call in the for-head arm of
-  # `walkModuleStmtForVars`, which is nested in `collectDeclarations`.
-  - src/codegen/declarations.ts::collectDeclarations
+  - src/ir/module-bindings.ts
 ---
 
 # #7288: nested top-level `var` in `<module-init>`
@@ -163,3 +151,39 @@ Found correct by the reviewer:
   `PatternDeclaration` type moved down to `src/shared/pattern-declaration.ts`,
   and the IR (`select.ts`, `from-ast.ts`) imports it from there: one
   definition.
+
+## Overlap with #7106 lever L (PR #7178, merged as fb8e676c on 2026-11-07)
+
+Lever L landed the same mechanism on main:
+- `src/shared/var-declaration-lists.ts` is the same certifier as this PR's
+  `src/shared/module-init-var-lists.ts`;
+- it models top-level `for (;;)` `var` heads as module-init vars, with legacy's
+  slot observation in `module-global-registration.ts`;
+- it adds the from-ast for-initializer lowering and the selector routing.
+
+The merge of main resolves to main's code in every overlapping file:
+`declarations.ts`, `module-global-registration.ts`, `from-ast.ts`,
+`function-local-var.ts`, `module-bindings.ts`, `module-init-vars.ts` and
+`select.ts`. This PR's own module and `src/shared/pattern-declaration.ts` are
+deleted, so `isPatternDeclaration` is back in `ir/binding-pattern-plan.ts`
+exactly as on main. Main does not restrict an ES module's identifier head to
+pattern heads, and the "ES-module head beside a dynamic `++`" case passes on
+main, so that rule is dropped too.
+
+**Dropped (main covers it).** Each of this PR's 18 cases × 3 lanes was run
+against main `cb64e11d` (lever L included):
+- the head lowering, labels, pattern heads, a head named like a function, a
+  `toString` head, the ES-module head and the null head all pass on main;
+- the #7315 known withdrawal behaves the same.
+
+**Kept (main lacks it).** Two claim-then-withdraw shapes fail on main and pass
+on the merge, 3 lanes each:
+
+| case | main `cb64e11d` | merge |
+| --- | --- | --- |
+| `for (var k in o)` at top level | claimed, then withdrawn (`irPostClaimErrors`) | refused at selection, `forin-head-module-var` |
+| `var pre = i; for (var i = 0; …)` | claimed, then withdrawn | refused at selection by `writeValueMatches` |
+
+The test file `tests/issue-7288-module-init-for-head-var.test.ts` stays as the
+regression guard for both, plus the 16 cases main already passes.
+

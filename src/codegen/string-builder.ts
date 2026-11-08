@@ -28,13 +28,24 @@
  * a wrong optimization corrupts results.
  */
 import { ts, forEachChild } from "../ts-api.js";
-import type { Instr, ValType } from "../ir/types.js";
+import type { ValType } from "../ir/types.js";
+import {
+  STRING_BUILDER_INITIAL_CAP,
+  stringBuilderAppendCodeUnitInstrs,
+  stringBuilderAppendStringInstrs,
+  stringBuilderInitInstrs,
+  stringBuilderPresizedAllocInstrs,
+  stringBuilderReadInstrs,
+  stringBuilderResetInstrs,
+  type StringBuilderSlots,
+} from "../backend/wasmgc/lowering/wasm-string-builder.js";
 import { collectReferencedIdentifiers } from "./closures.js";
 import { allocLocal } from "./context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { compileExpression } from "./shared.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { nativeStrHelperHandle } from "./func-space.js";
+import { nativeStringBuilderTypes } from "./native-strings.js";
 import { readEnv } from "../env.js";
 
 /**
@@ -692,463 +703,113 @@ export function compileStringBuilderInit(
   name: string,
   presize?: StringBuilderPresizeInfo,
 ): void {
-  const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
-  const anyStrTypeIdx = ctx.anyStrTypeIdx;
-
-  // Default doubling initial capacity 16 — small enough that a never-iterated
-  // builder (the post-loop reads but never enters the loop) doesn't waste
-  // memory; large enough that a few iterations don't immediately trigger a
-  // grow.
-  const initialCap = 16;
-
-  const bufLocalIdx = allocLocal(fctx, `${name}$buf`, {
-    kind: "ref_null",
-    typeIdx: strDataTypeIdx,
-  });
-  const lenLocalIdx = allocLocal(fctx, `${name}$len`, { kind: "i32" });
-  const capLocalIdx = allocLocal(fctx, `${name}$cap`, { kind: "i32" });
-  const materializedLocalIdx = allocLocal(fctx, `${name}$mat`, {
-    kind: "ref_null",
-    typeIdx: anyStrTypeIdx,
-  });
-
-  // #1761: try to emit a presized buffer. If the bound expression fails to
-  // compile to a numeric value we silently fall back to the doubling buffer.
-  let presized = false;
-  if (presize) {
-    presized = emitPresizedBufferAlloc(ctx, fctx, presize, bufLocalIdx, capLocalIdx, strDataTypeIdx);
-  }
-  if (!presized) {
-    // buf = array.new_default<__str_data>(initialCap)
-    fctx.body.push({ op: "i32.const", value: initialCap });
-    fctx.body.push({ op: "array.new_default", typeIdx: strDataTypeIdx });
-    fctx.body.push({ op: "local.set", index: bufLocalIdx });
-    // cap = initialCap
-    fctx.body.push({ op: "i32.const", value: initialCap });
-    fctx.body.push({ op: "local.set", index: capLocalIdx });
-  }
-  // len = 0
-  fctx.body.push({ op: "i32.const", value: 0 });
-  fctx.body.push({ op: "local.set", index: lenLocalIdx });
-  // mat = ref.null $AnyString
-  fctx.body.push({ op: "ref.null", typeIdx: anyStrTypeIdx });
-  fctx.body.push({ op: "local.set", index: materializedLocalIdx });
-
+  const slots = {
+    buf: allocLocal(fctx, `${name}$buf`, { kind: "ref_null", typeIdx: ctx.nativeStrDataTypeIdx }),
+    len: allocLocal(fctx, `${name}$len`, { kind: "i32" }),
+    cap: allocLocal(fctx, `${name}$cap`, { kind: "i32" }),
+    mat: allocLocal(fctx, `${name}$mat`, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx }),
+  };
+  const t = nativeStringBuilderTypes(ctx);
+  // #1761: presize when the bound compiles to a number, else keep doubling.
+  const presized = presize !== undefined && emitPresizedBufferAlloc(ctx, fctx, presize, { ...slots, presized: true });
+  const sb: StringBuilderSlots = { ...slots, presized };
+  fctx.body.push(
+    ...(presized ? stringBuilderResetInstrs(t, sb) : stringBuilderInitInstrs(t, sb, STRING_BUILDER_INITIAL_CAP)),
+  );
   if (!fctx.stringBuilders) fctx.stringBuilders = new Map();
-  fctx.stringBuilders.set(name, {
-    bufLocalIdx,
-    lenLocalIdx,
-    capLocalIdx,
-    materializedLocalIdx,
-    presized,
-  });
+  fctx.stringBuilders.set(name, sb);
 }
 
 /**
- * #1761 — emit `cap = max(0, bound) * unitsPerIter; buf = array.new_default(cap)`.
- *
- * The bound is compiled to an i32 and clamped to be non-negative so a negative
- * bound (the loop body would never run) yields a 0-length buffer rather than
- * trapping in `array.new_default` with a size reinterpreted as a huge unsigned
- * count. WebAssembly has no scalar `i32.max`, so the clamp is a `select`:
- * `select(bound, 0, bound > 0)`. `unitsPerIter` is folded in as a constant
- * multiply.
- *
- * Returns `true` on success (presized path emitted) or `false` if the bound
- * could not be compiled to an i32 (caller falls back to the doubling buffer).
+ * #1761 — compile the loop bound to an i32 and emit the presized buffer.
+ * Returns `false` when the bound does not compile to a number; the caller
+ * then falls back to the doubling buffer.
  */
 function emitPresizedBufferAlloc(
   ctx: CodegenContext,
   fctx: FunctionContext,
   presize: StringBuilderPresizeInfo,
-  bufLocalIdx: number,
-  capLocalIdx: number,
-  strDataTypeIdx: number,
+  sb: StringBuilderSlots,
 ): boolean {
-  // #1919 — snapshot the full speculative state so a failed bound-compile rolls
-  // back not just the body but also any locals / late imports / errors it leaked
-  // (the caller falls back to the doubling buffer, which re-emits independently).
+  // #1919 — a failed bound compile rolls back the body, locals, late imports
+  // and errors it leaked.
   const snap = snapshotSpeculative(ctx, fctx);
-  // Compile the bound expression, requesting an i32 (loop counters/bounds are
-  // typically i32 or f64). compileExpression returns the produced ValType.
   const boundType = compileExpression(ctx, fctx, presize.boundExpr, { kind: "i32" });
-  if (boundType === null) {
-    rollbackSpeculative(ctx, fctx, snap);
-    return false;
-  }
-  if (boundType.kind === "f64") {
-    // bound came back as f64 — truncate to i32 (towards zero; the loop test
-    // `i < bound` with an integer counter observes the truncated bound).
+  if (boundType?.kind === "f64") {
+    // `i < bound` with an integer counter observes the truncated bound.
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-  } else if (boundType.kind !== "i32") {
-    // Unexpected type — roll back, keep the doubling buffer.
+  } else if (boundType?.kind !== "i32") {
     rollbackSpeculative(ctx, fctx, snap);
     return false;
   }
-  // Stash bound in a temp so we can reference it three times for the clamp.
   const boundTmp = allocLocal(fctx, `__sb_bound_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "local.set", index: boundTmp });
-  // clamped = select(bound, 0, bound > 0)  — select pops [a, b, cond], yields
-  // a if cond != 0 else b.
-  fctx.body.push({ op: "local.get", index: boundTmp }); // a = bound
-  fctx.body.push({ op: "i32.const", value: 0 }); // b = 0
-  fctx.body.push({ op: "local.get", index: boundTmp }); // bound
-  fctx.body.push({ op: "i32.const", value: 0 });
-  fctx.body.push({ op: "i32.gt_s" }); // cond = bound > 0
-  fctx.body.push({ op: "select" });
-  // cap = clamped * unitsPerIter
-  if (presize.unitsPerIter !== 1) {
-    fctx.body.push({ op: "i32.const", value: presize.unitsPerIter });
-    fctx.body.push({ op: "i32.mul" });
-  }
-  // Store cap, then allocate the buffer at that exact length.
-  fctx.body.push({ op: "local.set", index: capLocalIdx });
-  fctx.body.push({ op: "local.get", index: capLocalIdx });
-  fctx.body.push({ op: "array.new_default", typeIdx: strDataTypeIdx });
-  fctx.body.push({ op: "local.set", index: bufLocalIdx });
+  fctx.body.push(
+    ...stringBuilderPresizedAllocInstrs(nativeStringBuilderTypes(ctx), sb, boundTmp, presize.unitsPerIter),
+  );
   return true;
 }
 
 /**
- * Append a string-typed expression to a string-builder binding. The RHS
- * value is left-on-stack as `ref $AnyString` by the caller via
- * `coerceRhsToAnyStringRef`; this helper consumes it and emits:
- *
- *   1. Flatten the RHS so we have access to `data`/`off`/`len`.
- *   2. needed = sb.len + rhs.len
- *   3. If needed > sb.cap, grow `sb.buf` to a doubled capacity and copy
- *      the existing prefix in.
- *   4. array.copy(sb.buf, sb.len, rhs.data, rhs.off, rhs.len)
- *   5. sb.len = needed
- *   6. Invalidate sb.mat (set to null) so the next read re-materializes.
- *
- * The result is `ref_null $AnyString` (always pushes ref.null) — for the
- * common statement-level `s += "x";` the caller drops it. If used as an
- * expression value, this is a behavioural change vs. the legacy concat
- * path (which returned the new string ref). The detector only matches
- * `s += <expr>` as a side-effecting statement — uses where the expression
- * value is consumed are conservative and rare; they will materialize via
- * the next identifier read.
+ * Append the `ref $AnyString` on the stack to the builder. The detector
+ * matches `s += <expr>` only as a statement, so nothing is left on the stack.
  */
-export interface StringBuilderInfo {
-  bufLocalIdx: number;
-  lenLocalIdx: number;
-  capLocalIdx: number;
-  materializedLocalIdx: number;
-  /**
-   * #1761: when true, the buffer was presized to the provably-final length, so
-   * every append's `len+N > cap` cap-check / grow branch is statically known
-   * to be unreachable and is omitted. When false (or absent), appends keep the
-   * doubling grow path.
-   */
-  presized?: boolean;
-}
-
-export function compileStringBuilderAppend(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  rhsAnyStrType: ValType,
-  sb: StringBuilderInfo,
-): void {
-  const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
-  const anyStrTypeIdx = ctx.anyStrTypeIdx;
-  const flatStrTypeIdx = ctx.nativeStrTypeIdx;
-  // Look up by NAME at emit time so the funcIdx reflects the current binary
-  // layout — `ctx.nativeStrHelpers` indices can be stale relative to actual
-  // module-function positions when prior `addImport` calls bumped
-  // `numImportFuncs` without shifting helper indices (the addImport path is
-  // not coupled to the late-import shift mechanism). The walk is O(N) where
-  // N ≈ 30 helpers — negligible compared to the work the helper performs.
-  const flattenIdx = lookupModuleFuncByName(ctx, "__str_flatten");
-  const nextCapIdx = lookupModuleFuncByName(ctx, "__str_buf_next_cap");
-  if (flattenIdx < 0 || nextCapIdx < 0) {
-    // Defensive: helpers must be emitted by `compileStringBuilderInit`. If
-    // missing here, something went wrong upstream — bail with a no-op so
-    // codegen continues. Validation will surface the issue.
-    return;
-  }
-  void rhsAnyStrType; // retained for future type checks; flatten accepts ref $AnyString
-
-  // Stack on entry: rhs (ref $AnyString)
-  // 1. rhs = __str_flatten(rhs) → ref $NativeString. Store in temp local.
-  fctx.body.push({ op: "call", funcIdx: flattenIdx });
-  const rhsLocal = allocLocal(fctx, `__sb_rhs_${fctx.locals.length}`, {
-    kind: "ref_null",
-    typeIdx: flatStrTypeIdx,
-  });
-  fctx.body.push({ op: "local.set", index: rhsLocal });
-
-  // 2. rhsLen = rhs.len
-  const rhsLenLocal = allocLocal(fctx, `__sb_rhsLen_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "local.get", index: rhsLocal });
-  fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "struct.get", typeIdx: flatStrTypeIdx, fieldIdx: 0 });
-  fctx.body.push({ op: "local.set", index: rhsLenLocal });
-
-  // 3. needed = sb.len + rhsLen
-  const neededLocal = allocLocal(fctx, `__sb_needed_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "local.get", index: sb.lenLocalIdx });
-  fctx.body.push({ op: "local.get", index: rhsLenLocal });
-  fctx.body.push({ op: "i32.add" });
-  fctx.body.push({ op: "local.set", index: neededLocal });
-
-  // 4. if (needed > sb.cap) grow:
-  //      newCap = __str_buf_next_cap(sb.cap, needed)
-  //      oldBufTmp = sb.buf                 ; stash old reference
-  //      sb.buf = array.new_default(newCap)
-  //      array.copy(sb.buf, 0, oldBufTmp, 0, sb.len)
-  //      sb.cap = newCap
-  // Note: a temp local for oldBuf is required because `local.tee sb.buf`
-  // overwrites the old reference before array.copy can read it as src.
-  //
-  // #1761: a presized builder has a buffer proven large enough for every
-  // append (cap == final length), so this grow branch is statically dead —
-  // omit it entirely. That removes the per-append `needed > cap` compare +
-  // conditional (the dominant fixed cost on a 60k-append loop) and the
-  // __str_buf_next_cap call site.
-  if (!sb.presized) {
-    const oldBufTmp = allocLocal(fctx, `__sb_oldBuf_${fctx.locals.length}`, {
-      kind: "ref_null",
-      typeIdx: strDataTypeIdx,
-    });
-    fctx.body.push({ op: "local.get", index: neededLocal });
-    fctx.body.push({ op: "local.get", index: sb.capLocalIdx });
-    fctx.body.push({ op: "i32.gt_s" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        // sb.cap = __str_buf_next_cap(sb.cap, needed)
-        { op: "local.get", index: sb.capLocalIdx },
-        { op: "local.get", index: neededLocal },
-        { op: "call", funcIdx: nextCapIdx },
-        { op: "local.set", index: sb.capLocalIdx },
-        // oldBufTmp = sb.buf
-        { op: "local.get", index: sb.bufLocalIdx },
-        { op: "local.set", index: oldBufTmp },
-        // sb.buf = array.new_default(sb.cap)
-        { op: "local.get", index: sb.capLocalIdx },
-        { op: "array.new_default", typeIdx: strDataTypeIdx },
-        { op: "local.set", index: sb.bufLocalIdx },
-        // array.copy(sb.buf, 0, oldBufTmp, 0, sb.len)
-        { op: "local.get", index: sb.bufLocalIdx },
-        { op: "ref.as_non_null" },
-        { op: "i32.const", value: 0 },
-        { op: "local.get", index: oldBufTmp },
-        { op: "ref.as_non_null" },
-        { op: "i32.const", value: 0 },
-        { op: "local.get", index: sb.lenLocalIdx },
-        { op: "array.copy", dstTypeIdx: strDataTypeIdx, srcTypeIdx: strDataTypeIdx },
-      ],
-    });
-  }
-
-  // 5. array.copy(sb.buf, sb.len, rhs.data, rhs.off, rhsLen)
-  fctx.body.push({ op: "local.get", index: sb.bufLocalIdx });
-  fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "local.get", index: sb.lenLocalIdx });
-  fctx.body.push({ op: "local.get", index: rhsLocal });
-  fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "struct.get", typeIdx: flatStrTypeIdx, fieldIdx: 2 }); // data
-  fctx.body.push({ op: "local.get", index: rhsLocal });
-  fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "struct.get", typeIdx: flatStrTypeIdx, fieldIdx: 1 }); // off
-  fctx.body.push({ op: "local.get", index: rhsLenLocal });
-  fctx.body.push({
-    op: "array.copy",
-    dstTypeIdx: strDataTypeIdx,
-    srcTypeIdx: strDataTypeIdx,
-  });
-
-  // 6. sb.len = needed
-  fctx.body.push({ op: "local.get", index: neededLocal });
-  fctx.body.push({ op: "local.set", index: sb.lenLocalIdx });
-
-  // 7. Invalidate the materialized cache: sb.mat = null. Any prior reader
-  //    holds a NativeString that points at a buffer we may have replaced
-  //    above — the existing reference remains valid (it was the OLD buf or
-  //    the NEW one with stale len), but new reads must rematerialize from
-  //    the current (buf, len, off=0) tuple.
-  fctx.body.push({ op: "ref.null", typeIdx: anyStrTypeIdx });
-  fctx.body.push({ op: "local.set", index: sb.materializedLocalIdx });
-
-  // No result on stack. Caller's discardability check sees null return type.
-  void anyStrTypeIdx;
+export function compileStringBuilderAppend(ctx: CodegenContext, fctx: FunctionContext, sb: StringBuilderSlots): void {
+  // Resolve at emit time: an earlier `addImport` may have moved the helpers (#3909).
+  const flatten = lookupModuleFuncByName(ctx, "__str_flatten");
+  const nextCap = lookupModuleFuncByName(ctx, "__str_buf_next_cap");
+  // Both helpers are emitted with the native string runtime; validation
+  // reports their absence.
+  if (flatten < 0 || nextCap < 0) return;
+  const rhs = allocLocal(fctx, `__sb_rhs_${fctx.locals.length}`, { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx });
+  const rhsLen = allocLocal(fctx, `__sb_rhsLen_${fctx.locals.length}`, { kind: "i32" });
+  const needed = allocLocal(fctx, `__sb_needed_${fctx.locals.length}`, { kind: "i32" });
+  const oldBuf = sb.presized ? undefined : allocOldBuf(ctx, fctx, "__sb_oldBuf_");
+  fctx.body.push(
+    ...stringBuilderAppendStringInstrs(
+      nativeStringBuilderTypes(ctx),
+      sb,
+      { rhs, rhsLen, needed, oldBuf },
+      { flatten, nextCap },
+    ),
+  );
 }
 
 /**
- * #1744 — single-code-unit append fast path.
- *
- * Appends ONE i16 code unit to the string-builder buffer without allocating
- * an intermediate `$NativeString`. The caller has already pushed the code
- * unit (an `i32` in 0..0xFFFF) onto the stack; this consumes it and emits:
- *
- *   1. cu = <stack top>                      ; stash the code unit
- *   2. if (sb.len + 1 > sb.cap) grow buffer  ; same doubling policy as append
- *   3. sb.buf[sb.len] = cu
- *   4. sb.len = sb.len + 1
- *   5. sb.mat = null                         ; invalidate the cache
- *
- * This is the hot path for `buf += X.charAt(i)` / `buf += "<1 char>"`: the
- * generic `compileStringBuilderAppend` would otherwise materialise a 1-char
- * `$NativeString` (`array.new_fixed` + `struct.new`) per iteration just to
- * copy a single character out of it (~40k throwaway allocations on the
- * string-hash benchmark). Reading the code unit directly and `array.set`ing
- * it removes both the allocation and the per-iteration `__str_flatten` on the
- * result.
- *
- * Correctness: this is a verbatim code-unit copy. `charAt` is itself
- * code-unit-indexed (it returns the WTF-16 unit at the index, splitting
- * surrogate pairs), so copying the raw unit into the i16 buffer is exactly
- * what the string-roundtrip path does — no surrogate handling differs.
+ * #1744 — append the i32 code unit on the stack without materialising a
+ * one-unit `$NativeString`: the `s += x.charAt(i)` hot path. `charAt` is
+ * code-unit indexed, so copying the raw unit is exact.
  */
 export function emitStringBuilderAppendCodeUnit(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  sb: StringBuilderInfo,
+  sb: StringBuilderSlots,
 ): void {
-  const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
-  const anyStrTypeIdx = ctx.anyStrTypeIdx;
-  // #1761: a presized builder never grows, so the __str_buf_next_cap helper is
-  // not needed for it. Only require the helper on the doubling path.
-  const nextCapIdx = sb.presized ? 0 : lookupModuleFuncByName(ctx, "__str_buf_next_cap");
-  if (!sb.presized && nextCapIdx < 0) {
-    // Defensive: helper must exist (emitted by compileStringBuilderInit).
-    // Drop the code unit and bail so codegen continues; validation surfaces it.
+  // #1761: a presized builder never grows and needs no growth helper.
+  const nextCap = sb.presized ? 0 : lookupModuleFuncByName(ctx, "__str_buf_next_cap");
+  if (nextCap < 0) {
     fctx.body.push({ op: "drop" });
     return;
   }
-
-  // Stack on entry: cu (i32 code unit). Stash it.
-  const cuLocal = allocLocal(fctx, `__sb_cu_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "local.set", index: cuLocal });
-
-  // needed = sb.len + 1
-  const neededLocal = allocLocal(fctx, `__sb_needed1_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "local.get", index: sb.lenLocalIdx });
-  fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "i32.add" });
-  fctx.body.push({ op: "local.set", index: neededLocal });
-
-  // if (needed > sb.cap) grow — identical doubling policy to the bulk append.
-  // #1761: omitted entirely for a presized builder (cap proven sufficient for
-  // every append; the single-char append is the string-hash hot path, so
-  // removing this per-append compare + branch is the bulk of the win).
-  if (!sb.presized) {
-    const oldBufTmp = allocLocal(fctx, `__sb_oldBuf1_${fctx.locals.length}`, {
-      kind: "ref_null",
-      typeIdx: strDataTypeIdx,
-    });
-    fctx.body.push({ op: "local.get", index: neededLocal });
-    fctx.body.push({ op: "local.get", index: sb.capLocalIdx });
-    fctx.body.push({ op: "i32.gt_s" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: sb.capLocalIdx },
-        { op: "local.get", index: neededLocal },
-        { op: "call", funcIdx: nextCapIdx },
-        { op: "local.set", index: sb.capLocalIdx },
-        { op: "local.get", index: sb.bufLocalIdx },
-        { op: "local.set", index: oldBufTmp },
-        { op: "local.get", index: sb.capLocalIdx },
-        { op: "array.new_default", typeIdx: strDataTypeIdx },
-        { op: "local.set", index: sb.bufLocalIdx },
-        { op: "local.get", index: sb.bufLocalIdx },
-        { op: "ref.as_non_null" },
-        { op: "i32.const", value: 0 },
-        { op: "local.get", index: oldBufTmp },
-        { op: "ref.as_non_null" },
-        { op: "i32.const", value: 0 },
-        { op: "local.get", index: sb.lenLocalIdx },
-        { op: "array.copy", dstTypeIdx: strDataTypeIdx, srcTypeIdx: strDataTypeIdx },
-      ],
-    });
-  }
-
-  // sb.buf[sb.len] = cu
-  fctx.body.push({ op: "local.get", index: sb.bufLocalIdx });
-  fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "local.get", index: sb.lenLocalIdx });
-  fctx.body.push({ op: "local.get", index: cuLocal });
-  fctx.body.push({ op: "array.set", typeIdx: strDataTypeIdx });
-
-  // sb.len = needed
-  fctx.body.push({ op: "local.get", index: neededLocal });
-  fctx.body.push({ op: "local.set", index: sb.lenLocalIdx });
-
-  // sb.mat = null
-  fctx.body.push({ op: "ref.null", typeIdx: anyStrTypeIdx });
-  fctx.body.push({ op: "local.set", index: sb.materializedLocalIdx });
+  const cu = allocLocal(fctx, `__sb_cu_${fctx.locals.length}`, { kind: "i32" });
+  const needed = allocLocal(fctx, `__sb_needed1_${fctx.locals.length}`, { kind: "i32" });
+  const oldBuf = sb.presized ? undefined : allocOldBuf(ctx, fctx, "__sb_oldBuf1_");
+  fctx.body.push(
+    ...stringBuilderAppendCodeUnitInstrs(nativeStringBuilderTypes(ctx), sb, { cu, needed, oldBuf }, nextCap),
+  );
 }
 
-/**
- * Materialize the current contents of a string builder into a `ref $NativeString`
- * (compatible with `ref $AnyString`). Pushes the materialized ref onto the
- * stack. Caches the result in `sb.mat` so repeated reads (e.g.
- * `s.length` then `s.charCodeAt(...)` in the same expression) reuse one
- * struct allocation. The cache is invalidated by `compileStringBuilderAppend`.
- *
- * Returns the value type of the pushed ref so the caller can stitch it into
- * the surrounding expression.
- */
-export function emitStringBuilderRead(ctx: CodegenContext, fctx: FunctionContext, sb: StringBuilderInfo): ValType {
-  const flatStrTypeIdx = ctx.nativeStrTypeIdx;
-  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+/** #1580 — push the builder's contents as `ref $NativeString`, cached in `mat`. */
+export function emitStringBuilderRead(ctx: CodegenContext, fctx: FunctionContext, sb: StringBuilderSlots): ValType {
+  fctx.body.push(...stringBuilderReadInstrs(nativeStringBuilderTypes(ctx), sb));
+  return { kind: "ref", typeIdx: ctx.nativeStrTypeIdx };
+}
 
-  // #1580: cache a materialized `$NativeString` view in `sb.mat` and reuse
-  // it on subsequent reads until the next `+=` invalidates the cache (see
-  // `compileStringBuilderAppend` step 7, which sets `sb.mat = null`).
-  //
-  // Without caching, a hot loop like `for (let i=0;i<s.length;i++)
-  // hash = hash*31 + s.charCodeAt(i)` allocates two structs per iteration
-  // (one for `.length`, one for `.charCodeAt`). On a 20k-character builder
-  // that's 40,000 allocations — wasm-opt's SROA collapses them in `-O3`,
-  // but the unoptimized emitter pays the full cost (≈25ms on the
-  // string-hash benchmark vs. ≈20ms with caching, with V8 at ~1ms warm).
-  //
-  // Emit:
-  //   if (sb.mat == null) {
-  //     sb.mat = struct.new $NativeString(sb.len, 0, sb.buf)
-  //   }
-  //   <result> = sb.mat ref.as_non_null
-  //
-  // Note: `$NativeString.len` is non-mutable, so we cannot patch a cached
-  // struct in place after a `+=`. The append path invalidates the cache by
-  // writing null. The branch is monomorphic in steady-state — predictable
-  // for the engine, and `ref.as_non_null` is essentially free.
-  //
-  // The cache is typed as `ref null $AnyString` so we widen `$NativeString
-  // <: $AnyString` when caching, and narrow back on read.
-  fctx.body.push({ op: "local.get", index: sb.materializedLocalIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: [
-      // sb.mat = struct.new $NativeString(sb.len, 0, sb.buf)
-      { op: "local.get", index: sb.lenLocalIdx },
-      { op: "i32.const", value: 0 },
-      { op: "local.get", index: sb.bufLocalIdx },
-      { op: "ref.as_non_null" },
-      { op: "struct.new", typeIdx: flatStrTypeIdx },
-      { op: "local.set", index: sb.materializedLocalIdx },
-    ],
-  });
-  fctx.body.push({ op: "local.get", index: sb.materializedLocalIdx });
-  // The cache slot is typed `ref null $AnyString`. Use `ref.cast` (non-null
-  // variant) to narrow to `ref $NativeString` so callers that expect
-  // `flatStringType(ctx)` (charCodeAt, charAt, ...) can do
-  // `struct.get $NativeString.<field>` directly. The `if` block above
-  // guarantees the slot is non-null on the fall-through path.
-  fctx.body.push({ op: "ref.cast", typeIdx: flatStrTypeIdx });
-  void anyStrTypeIdx;
-  return { kind: "ref", typeIdx: flatStrTypeIdx };
+function allocOldBuf(ctx: CodegenContext, fctx: FunctionContext, prefix: string): number {
+  return allocLocal(fctx, `${prefix}${fctx.locals.length}`, { kind: "ref_null", typeIdx: ctx.nativeStrDataTypeIdx });
 }
 
 /** Helper to look up an active builder by binding name. */
-export function getBuilderInfo(fctx: FunctionContext, name: string): StringBuilderInfo | undefined {
+export function getBuilderInfo(fctx: FunctionContext, name: string): StringBuilderSlots | undefined {
   return fctx.stringBuilders?.get(name);
 }
 

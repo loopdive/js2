@@ -1,15 +1,16 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7106 S5 / #7288 — which top-level `var` lists the synthetic module
-// initializer models as module bindings (see `ir/module-init-vars.ts` for the
-// bindings they declare). Shared below both the IR and codegen: legacy observes
-// exactly the `__mod_<name>` slots of these lists under their declarations
-// (`codegen/module-global-registration.ts`), and the IR resolves them there.
+// `var`-kind declaration lists, and (#7106 S5, lever L) the ones the synthetic
+// module initializer models: a top-level `var` statement's list, and a
+// top-level `for (;;)` `var` head, labelled or not. Their names are script
+// `var`s, each in an exact persistent `__mod_<name>` slot, so they need no
+// hoisting support. Shared by the IR (selection, lowering, binding identity)
+// and by legacy's module-global registration, which hands a head's slot to the
+// Program ABI.
 
 import { ts } from "../ts-api.js";
-import { isPatternDeclaration } from "./pattern-declaration.js";
 
-/** A `var` list (not `let` / `const` / `using`). */
+/** A `var` list: not `let`, `const`, `using` or `await using`. */
 export function isVarDeclarationList(list: ts.VariableDeclarationList): boolean {
   return (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) === 0;
 }
@@ -22,16 +23,11 @@ export function moduleInitVarList(statement: ts.Node): ts.VariableDeclarationLis
     : ts.isForStatement(loop) && loop.initializer && ts.isVariableDeclarationList(loop.initializer)
       ? loop.initializer
       : undefined;
-  if (!list || !isVarDeclarationList(list)) return undefined;
-  // (#7288) An identifier head binds a module global in a script only; an ES module keeps the S5 pattern heads.
-  const script = !ts.isExternalModule(statement.getSourceFile());
-  return ts.isVariableStatement(statement) || script || list.declarations.every(isPatternDeclaration)
-    ? list
-    : undefined;
+  return list && isVarDeclarationList(list) ? list : undefined;
 }
 
 /** Whether `node` is the `var` list of a top-level statement that {@link moduleInitVarList} models. */
-export function isModuleInitVarList(node: ts.Node | undefined): node is ts.VariableDeclarationList {
+export function isModuleInitVarList(node: ts.Node | undefined): boolean {
   if (node === undefined || !ts.isVariableDeclarationList(node)) return false;
   let statement: ts.Node = node.parent;
   while (ts.isLabeledStatement(statement.parent)) statement = statement.parent;

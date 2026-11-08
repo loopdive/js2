@@ -53,13 +53,13 @@ const CLAIMED: Record<string, string> = {
   readBeforeDeclaration: "assert.sameValue(h, undefined);\nvar [h] = [1];\nassert.sameValue(h, 1);",
   // Review round 1: a labelled head is still the statement's head.
   labelledHead: loop("var { k } = { k: 2 }", "assert.sameValue(k, 2);").replace("for (", "outer: for ("),
+  // Lever L: an identifier name beside a pattern in the same head (`issue-7106-lever-l.test.ts` covers the rest).
+  mixedHead: loop("var i = 0, [x] = [1]", "assert.sameValue(i, 0); assert.sameValue(x, 1);"),
   // The preceding Boolean-slot repair must hold in the new S5 paths too.
   booleanFromDefaultNumberLeaf: "var [a = 1] = [3]; var b = a > 2; assert.sameValue(b, true);",
   booleanBesideCarrierLeaf:
     "var x = 3; var [q] = [1]; var b = x > 2; assert.sameValue(b, true); assert.sameValue(q, 1);",
   booleanWriteAfterPattern: "var [a = 1] = [3]; var b = false; b = a > 2; assert.sameValue(b, true);",
-  // (#7288) S6: an identifier `for` head is a module binding too.
-  identifierHead: loop("var i = 0", "assert.sameValue(i, 0);"),
 };
 
 // Refused at selection.

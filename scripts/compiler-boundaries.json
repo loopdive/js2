@@ -2300,6 +2300,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/in-operator-helper.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/ir/analysis/contracts/allocations.ts",
       "state": "clean",
       "layer": "ir-analysis"
@@ -10712,6 +10717,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/buffers/data-view-native.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/buffers/ir-native-buffer.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12590,6 +12603,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/native-buffer-operands.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
       "path": "src/ir/native-buffer-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12814,22 +12835,6 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/shared/pattern-declaration.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "frontend-ts",
-      "owner": "7288",
-      "nextBoundary": "TypeScript-AST predicate for a destructuring declaration, shared by the IR binding-pattern plan and the module-initializer var-list certifier; moves with the frontend inventory split."
-    },
-    {
-      "path": "src/shared/module-init-var-lists.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "frontend-ts",
-      "owner": "7288",
-      "nextBoundary": "TypeScript-AST certifier for which top-level `var` lists the module initializer models (#7106 S5, #7288); shared by the IR resolver and legacy's slot observation, moves with the frontend inventory split."
-    },
-    {
       "path": "src/shared/ambient-intrinsics.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13046,6 +13051,14 @@
       "nextBoundary": "Generic string operation orchestration uses an injected emitter and only type-imports the clean semantic IR nodes and the still-unmigrated string emitter contract; establish a complete generic lowering contract closure before activation."
     },
     {
+      "path": "src/ir/lowering/string-builder.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Builder-slot lowering uses an injected emitter and only type-imports the clean semantic IR nodes, the still-unmigrated string emitter contract and the backend-wasmgc builder slot shapes; establish a complete generic lowering contract closure before activation."
+    },
+    {
       "path": "src/ir/lower.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13204,6 +13217,14 @@
       "destination": "frontend-ts",
       "owner": "7106",
       "nextBoundary": "Frontend source-shape classifier for the top-level `var` lists the module initializer models and the bindings they declare (#7106 S5); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/shared/var-declaration-lists.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape predicates: the `var`-kind list test (shared by IR and codegen analyses) and the top-level `var` lists (statement and `for` head) the module initializer models (#7106 lever L), shared by the IR and legacy's module-global registration; moves with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/string-method-surface.ts",
@@ -16813,6 +16834,11 @@
       "layer": "ir-runtime"
     },
     {
+      "path": "src/ir/runtime/string-builder-verification.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
       "path": "src/ir/program/allocations.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -16919,6 +16945,11 @@
     },
     {
       "path": "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/lowering/wasm-string-builder.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },
