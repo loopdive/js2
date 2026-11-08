@@ -175,6 +175,7 @@ export {
   mapNestedBuffers,
   directUses,
   collectUses,
+  collectTerminatorUses,
   IrValueIdAllocator,
 } from "./core/nodes.js";
 export type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./async-plan.js";

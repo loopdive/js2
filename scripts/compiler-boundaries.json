@@ -13051,6 +13051,14 @@
       "nextBoundary": "Generic string operation orchestration uses an injected emitter and only type-imports the clean semantic IR nodes and the still-unmigrated string emitter contract; establish a complete generic lowering contract closure before activation."
     },
     {
+      "path": "src/ir/lowering/string-builder.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Builder-slot lowering uses an injected emitter and only type-imports the clean semantic IR nodes, the still-unmigrated string emitter contract and the backend-wasmgc builder slot shapes; establish a complete generic lowering contract closure before activation."
+    },
+    {
       "path": "src/ir/lower.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -16834,6 +16842,11 @@
       "layer": "ir-runtime"
     },
     {
+      "path": "src/ir/runtime/string-builder-verification.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
       "path": "src/ir/program/allocations.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -16940,6 +16953,11 @@
     },
     {
       "path": "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/lowering/wasm-string-builder.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },

@@ -16,6 +16,14 @@ goal: ir-full-coverage
 parent: 7250
 related: [7269, 2949, 7266, 7106, 5092, 7289]
 assignee: "ttraenkler/c-r11"
+loc-budget-allow:
+  # 2026-11-08: +80 in select.ts vs main after #7111 (#7269) landed and its
+  # grant stopped applying to this PR: #7272's stored-static alias admission, the
+  # mixed primitive conditional arms (shared with from-ast), the
+  # boolean-result condition rule and the carrier-local tracking, each beside
+  # its sibling arm in the selector's move-only scan and conditional rules.
+  # Splitting the scan is #7307.
+  - src/ir/select.ts
 func-budget-allow:
   # 2026-11-07: after main's post-merge baseline refresh lowered the ceilings,
   # +7 in dynamicUsesAreMoveOnly / +4 in its scanExprInner closure (the #7269 +

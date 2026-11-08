@@ -84,6 +84,7 @@ func-budget-allow:
   - src/ir/select.ts::dynamicUsesAreMoveOnly
   - src/ir/select.ts::scanExpr
   # 2026-10-31 (boolean statics, round 4): the 3-line adapter call beside the Math arms (+3)
+  # 2026-11-07 (lever W, review round 1): the unary `-`/`+` wrapper-operand arm, refusing through the shared `selectorWrapperToPrimitiveSupported` (+7)
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select.ts::collectCallGraph
   - src/ir/select.ts::whyNotIrClaimable
@@ -117,6 +118,7 @@ loc-budget-allow:
   - src/ir/runtime/verify.ts
   # 2026-10-31 (boolean statics, round 5): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+89); the rule lives in src/ir/static-predicates/
   # 2026-11-01 (#7106 S5): `moduleVarLeavesStorable`, the per-leaf slot fit of a module-init `var` pattern (+36)
+  # 2026-11-07 (lever W, review round 1): the unary `-`/`+` wrapper-operand arm and `selectorWrapperToPrimitiveSupported`, the wrapper capability refusal now shared with the binary arm (+11; the binary arm nets -2)
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
@@ -5707,6 +5709,225 @@ depends on it, not for its own gain.
 - Once this and #7037 have landed, S5 can drop its boolean-leaf refusal, and
   its test can use the shared `runHarnessOn`.
 
+## ES5 blocker map (2026-11-07)
+
+**What this is.** For every ES5 test262 file on standalone, this map lists
+which IR refusals still keep the file from compiling fully through the IR
+("IR-only"). It ranks the remaining levers by payoff.
+
+**Method.**
+- **Population: 9,174 ES5 files.** This is the edition ratchet's classifier
+  (`classifyEdition` in `scripts/generate-editions.ts`). 457 files are
+  negative, raw or module tests, which the census skips. 126 files hit a
+  compile error. That leaves 8,591 files that compile.
+- **One census row per file**, with `JS2WASM_IR_SHAPE_DIAG=1` and
+  `JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, so every refused top-level statement
+  reports its own refusal.
+- **A file's code set** is every distinct refusal code across its legacy
+  units:
+  - for a `<module-init>`, the arm of each unmasked refusal;
+  - for a function unit, its arm, marked `{fn}`.
+- **LANE-C.** `vardecl-module-storage-unrepresentable` on an array or object
+  literal initializer is tagged `[LANE-C]`. That is lane C's literal-home
+  work (#7280 / #7292).
+
+**Trees.**
+- **Main:** origin/main a484c365fe, which includes #7121.
+  - #7292 is **not** in it: PR #7152 merged only the #7292 plan. On main, even
+    `var a = [1, 2]` still refuses as `vardecl-module-storage-unrepresentable`.
+- **Overlay:** main plus the pending lever branches, merged locally and not
+  pushed:
+  - R2 (`claude/7106-lever-r2` c4265fb9b5);
+  - S (`claude/7106-lever-s` 376bc4b9ae);
+  - T (`claude/7106-lever-t` 8cb4b7b88c);
+  - L (`claude/7106-lever-l` 4cf965aa1f);
+  - A2c (`claude/7106-eval-a2c` 8d6550fa23);
+  - R3 (`claude/7106-lever-r3` 0c7c555214);
+  - A3 (`claude/7106-eval-a3` 2b231a5b67).
+- **Merge conflicts.** L, A2c and R3 conflicted.
+  - L and A2c: one import and one re-export line each, plus the plan file.
+    Resolved by keeping both sides.
+  - R3 against R2: both edit the same RegExp arms, so the R3 resolution is
+    hand-made and more than a union. In `select.ts`, `nativeStaticRegExp`
+    admits R3's `+` operand next to R2's method receiver.
+  - `tests/issue-7106-lever-r.test.ts` passes 90/92 on the overlay. The 2
+    failures are the `concatenated` row on each lane: R3 is meant to claim
+    it, and that R3 test row was not merged.
+
+### Headline
+
+| | IR-only ES5 files |
+| --- | --- |
+| main a484c365fe | **710** |
+| overlay (main + R2, S, T, L, A2c, R3, A3) | **910** (+200) |
+
+- **The main count is not a full run.** Main was compiled on the overlay's 910
+  IR-only files plus a random 400 of the rest. None of those 400 is IR-only on
+  main without also being IR-only on the overlay, so 710 is the main count up
+  to that sample.
+- **Where the +200 comes from:** 91 in `built-ins/RegExp`, 37 in
+  `annexB/language`, 22 in `language/statements`, 17 in
+  `language/expressions`, the rest scattered.
+- **What remains on the overlay:**
+  - 7,681 compiled files still have a legacy unit;
+  - 45 of them fail after the claim on the overlay. 12 are the harness
+    `assert` direct call ("no exact AST-site plan"), and 9 are a bare `null`
+    under an f64 hint;
+  - by unit kind, 5,848 refuse only in `<module-init>`, 1,830 also in a
+    function unit, and 3 only in a function unit.
+- **Codes per file:** 1 code in 2,352 files, 2 in 1,943, 3 in 1,003, 4 in
+  642, 5 or more in 1,741.
+
+### Codes, by sole-blocker payoff (overlay)
+
+A "sole-blocker" file is one where this is the file's only code.
+
+| code | carrier files | sole-blocker files |
+| --- | --- | --- |
+| `expr-ident-not-in-scope` | 3816 | 607 |
+| `vardecl-module-storage-unrepresentable [LANE-C]` | 1217 | 259 |
+| `body-exprstmt-other(expr-call-callee-nonident)` | 403 | 166 |
+| `expr-binary-operand-families` | 178 | 143 |
+| `expr-new-ctor-unknown` | 920 | 140 |
+| `expr-global-eval-statement` | 306 | 91 |
+| `external-call(eval)` | 77 | 75 |
+| `closure-return-type` | 217 | 65 |
+| `expr-call-callee-nonident` | 377 | 64 |
+| `body-exprstmt-other(expr-ident-not-in-scope)` | 114 | 63 |
+| `body-shape-rejected` | 329 | 53 |
+| `vardecl-var-kind` | 246 | 48 |
+| `expr-module-extern-consumer` | 138 | 43 |
+| `expr-new-regexp-target` | 106 | 38 |
+| `body-unhandled-stmt` | 132 | 26 |
+| `body-if-cond` | 49 | 26 |
+| `expr-module-extern-call-brand` | 51 | 18 |
+| `compound-dynamic-module` | 162 | 17 |
+| `expr-regexp-literal` | 118 | 17 |
+| `expr-object-define-property-target` | 1658 | 16 |
+| `expr-string-method-argument` | 26 | 16 |
+| `expr-string-method-surface` | 23 | 16 |
+| `expr-logical-value-family` | 67 | 15 |
+| `expr-static-predicate-operand` | 31 | 15 |
+| `external-call(Function)` | 18 | 15 |
+| `vardecl-module-storage-unrepresentable` | 411 | 14 |
+| `expr-binary-op-instanceof` | 72 | 14 |
+| `forin-receiver-not-dynamic-externref` | 306 | 12 |
+| `nullish-value-unsupported` | 11 | 11 |
+| `external-call(Object)` | 10 | 10 |
+
+### The 25 commonest code pairs (the file's only two codes)
+
+| code pair | files |
+| --- | --- |
+| `expr-ident-not-in-scope` + `vardecl-module-storage-unrepresentable [LANE-C]` | 133 |
+| `compound-dynamic-module` + `expr-new-ctor-unknown` | 100 |
+| `expr-ident-not-in-scope` + `expr-module-scalar-method` | 86 |
+| `body-exprstmt-other(expr-call-callee-nonident)` + `expr-local-call-target` | 84 |
+| `expr-ident-not-in-scope` + `objectlit-empty` | 67 |
+| `expr-ident-not-in-scope` + `expr-new-ctor-unknown` | 65 |
+| `expr-global-eval-statement` + `expr-ident-not-in-scope` | 64 |
+| `body-unhandled-stmt` + `expr-ident-not-in-scope` | 56 |
+| `expr-object-define-property-target` + `vardecl-module-storage-unrepresentable [LANE-C]` | 50 |
+| `expr-module-scalar-method` + `expr-new-ctor-unknown` | 47 |
+| `expr-ident-not-in-scope` + `forin-receiver-not-dynamic-externref` | 41 |
+| `call-graph-closure` + `vardecl-var-kind {fn}` | 36 |
+| `body-shape-rejected {fn}` + `expr-function-invocation-method` | 36 |
+| `objectlit-property-kind` + `with-target-not-objectlit` | 30 |
+| `expr-object-define-property-target` + `objectlit-empty` | 25 |
+| `expr-new-ctor-unknown` + `vardecl-module-storage-unrepresentable` | 24 |
+| `expr-delete-no-ir-lowering` + `expr-ident-not-in-scope` | 23 |
+| `expr-local-call-target` + `vardecl-let-closure` | 23 |
+| `expr-ident-not-in-scope` + `vardecl-var-kind` | 22 |
+| `expr-call-callee-nonident` + `expr-ident-not-in-scope` | 21 |
+| `vardecl-module-storage-unrepresentable` + `vardecl-module-storage-unrepresentable [LANE-C]` | 19 |
+| `body-exprstmt-other(expr-call-callee-nonident)` + `expr-ident-not-in-scope` | 19 |
+| `vardecl-module-storage-unrepresentable [LANE-C]` + `vardecl-var-kind` | 19 |
+| `body-exprstmt-other(expr-local-call-target)` + `vardecl-let-closure` | 18 |
+| `call-graph-closure` + `param-dynamic-carrier-diverges-from-legacy {fn}` | 17 |
+
+### LANE-C share
+
+- **Every code is LANE-C in 259 of the 7,681 non-IR-only files (3.4%).**
+  #7292 alone would make those 259 IR-only.
+- **LANE-C appears in 1,217 files.** In 133 of them its only partner is
+  `expr-ident-not-in-scope`; in 50, `expr-object-define-property-target`.
+- **The S15.10.2 exec family is not counted in the 259.** Its 193 files also
+  need L's `for (var` head, and after L, LANE-C is their only code. A rerun of
+  those 193 on R2 merged with main confirms it: they refuse with exactly
+  `vardecl-module-storage-unrepresentable` (`__expected = [...]`) and
+  `for-init-var-kind`.
+
+### `expr-ident-not-in-scope` by name
+
+Counts are of files where `expr-ident-not-in-scope` is the only code. The
+member columns count the commonest members of that name the files read.
+
+| name | sole files | commonest members read |
+| --- | --- | --- |
+| `Object` | 369 | `getOwnPropertyDescriptor` 167, `create` 57, `isSealed` 27, `isExtensible` 24, `getPrototypeOf` 17, `defineProperties` 10, `isFrozen` 9, `freeze` 7 |
+| `String` | 106 | `prototype.trim` 48, `prototype.*` (`charAt`, `indexOf`, `split`, …) |
+| `Date` | 48 | `prototype.*` 45 |
+| `JSON` | 39 | `parse` 33 |
+| `Function` | 35 | `prototype.bind` 10, `prototype.toString` 6 |
+| `Math` | 29 | constants and functions not yet folded (`PI`, `E`, `atan2`, …) |
+| `Number` | 29 | `prototype.*`, `MAX_VALUE`, `NaN`, … |
+| `Array` | 27 | `prototype.*` 23 |
+| `RegExp` | 18 | `prototype.*` |
+
+As a carrier code, `expr-ident-not-in-scope` is dominated by `Object` (1,922
+files) and `Function` (998). The harness names (`verifyProperty` 899,
+`assert` 430, `compareArray` 423) are never sole: they trail another refusal.
+
+### Top 5 non-LANE-C levers, by sole-blocker payoff
+
+1. **Ambient `Object.*` statics: 369 sole files.**
+   - Shape: `Object.getOwnPropertyDescriptor`, `create`, `isSealed`,
+     `isExtensible`, `getPrototypeOf`, `isFrozen` and `defineProperties` on
+     the unshadowed ambient `Object`, read or called in `<module-init>`.
+   - Module: the ambient-intrinsic seam (`shared/ambient-intrinsics.ts`) and
+     the selector's ambient call arms, beside lever A/B and the
+     `Object.defineProperty` arm. Each call reaches legacy's native object
+     runtime through a provider, not a new runtime.
+2. **Immediately-invoked function expressions: 166 + 64 sole files.**
+   - Shape: `(function () { … })()` and `(function () { … }).call(…)`
+     (`body-exprstmt-other(expr-call-callee-nonident)`,
+     `expr-call-callee-nonident`).
+   - Another 84 files pair the shape with `expr-local-call-target`.
+   - Module: the select and from-ast call arm, as a closure literal callee
+     lowered through the existing `closure.new` / `closure.call`.
+3. **Mixed-family binary operators: 143 sole files.**
+   - Shape: `expr-binary-operand-families`. An object with
+     `valueOf` / `toString`, a string, `null`, `true` or a wrapper meets an
+     arithmetic or relational operator. Example: `"b" * null`, or
+     `{valueOf: …} - 1`.
+   - Module: `ir/analysis/operand-admissibility.ts` plus `lowerBinary`.
+     ToNumber and ToPrimitive go through the dynamic carrier (`dyn.to_number`,
+     like the #7066 additive rule).
+4. **Primitive-wrapper and `Object` construction: 140 sole files.**
+   - Shape: `expr-new-ctor-unknown`. Of those, `new Object(…)` is 47,
+     `new String(…)` 41, `new Number(…)` 33, `new Boolean(…)` 12 and
+     `new Function(…)` 10.
+   - Another 100 files pair it with `compound-dynamic-module`.
+   - Module: the `new` arm (`phase1NewExpression`) and the #4208
+     primitive-wrapper runtime.
+5. **`String.prototype.*` reads on the ambient `String`: 106 sole files.**
+   - Shape: `String.prototype.trim` (48) and other `String.prototype` members
+     read as values or called through `.call`.
+   - Module: `ir/string-method-surface.ts`, with the ambient
+     `String.prototype` read as a builtin-value read.
+
+**Not ranked, owned by another lane:** eval. `expr-global-eval-statement`
+(91 sole) and `external-call(eval)` (75) are lever A's, so they are left
+out.
+
+**Next after these five:**
+- `closure-return-type`: 65 sole files;
+- `body-exprstmt-other(expr-ident-not-in-scope)`: 63;
+- `vardecl-var-kind`: 48;
+- `Date`: 48;
+- `expr-module-extern-consumer`: 43;
+- `JSON.parse`: 39.
+
 ## Lever A — the runtime-eval boundary, per unit (plan, 2026-11-06)
 
 ES5 census context: 14.4 % of weighted ES5 files contain a runtime-eval site
@@ -6026,6 +6247,122 @@ Scratch experiment on those 34 files (the defineProperty target accepted like
 - one predicate for JS property declarations;
 - no new storage kind;
 - no change to `scriptVarHomeSlot`.
+
+## ES5 lever W: `new` of a primitive wrapper in `<module-init>` (2026-11-07)
+
+**Question.** `expr-new-ctor-unknown` is the most common refusal in the
+module-init map. Can the IR take `new String/Number/Boolean/Object(…)` there?
+#7295 (`new <LibBuiltin>(…)` at module init) is `blocked`: measured at 0 yield.
+
+### Scope check (main 83c5c23daf, standalone)
+
+**Population:** the map's 240 files (140 it listed with the code as the only
+module-init refusal, 100 paired with a compound assignment). Re-census:
+- 0 IR-only and 0 post-claim errors on main.
+- `expr-new-ctor-unknown` in 230 files, the sole refusal in **85**.
+- Beside it: `throw-module-scalar-unboxed` in 133, `expr-ident-not-in-scope`
+  in 13.
+- Constructors named: String 225, Number 219, Boolean 171, Object 70,
+  Function 10, Array 4.
+- The other 145 files with the code also refuse elsewhere; they are the
+  compound-assignment matrix (`x op= …` on a dynamic module var).
+
+**Probes on the 85 sole files** (scratch builds, not committed):
+
+| probe | IR-only | post-claim | still refused |
+| --- | ---: | ---: | --- |
+| admit a wrapper `new` anywhere, plus `new Object()` | 5 | 15 | 31 on `callee:new Object`, 29 on `expr-new-ctor-unknown` |
+| rewrite `new Object()` to `{}` | 0 | 0 | 31 on `objectlit-empty` |
+
+The 15 post-claim errors of the first probe split into:
+- a wrapper stored in a module var and read back as a carrier (8);
+- a method call on a wrapper (5);
+- `!wrapper` (2).
+
+Admitting wrappers everywhere is claim-then-demote, so it is not an option.
+The 5 IR-only files are unary `-`/`+` of a fresh wrapper
+(`unary-minus/S11.4.7_A3_T1..T3`, `unary-plus/S11.4.6_A3_T1..T2`). They pass on
+both lanes.
+
+### The arm (built)
+
+- **Where:** `isPhase1Expr`'s prefix-unary arm in `src/ir/select.ts`.
+- **What:** unary `-`/`+` takes a fresh wrapper construction operand
+  (`selectorPrimitiveWrapperConstruction`). It is gated on the
+  `primitive-wrapper-to-primitive` capability with the same refusal as the
+  binary arm (`selectorPrimitiveWrapperOrGenericBinary`).
+- **Reuse:** no new helper and no lowering change. `lowerPrefixUnary` already
+  applies ToNumber through the wrapper's ToPrimitive carrier, the same path
+  the binary operands use (#4208 S4, #7144).
+- **Still refused:** `!`, `~`, `typeof`, `void` on a wrapper, and
+  `new Object()`. `selectorPrimitiveWrapperConstruction` covers only
+  `String`/`Number`/`Boolean` with one argument of the matching family.
+- **Size:** +11 lines in `select.ts` (+7 in `isPhase1Expr`), granted in
+  the frontmatter. The capability refusal is one helper,
+  `selectorWrapperToPrimitiveSupported`, shared with the binary wrapper arm
+  (review round 1 folded the copy the first cut had inlined).
+- **Tests:** `tests/issue-7106-lever-w-unary-wrapper.test.ts` on both lanes:
+  - claimed: `-new Number(1)`, `+new String("1")`, `-new Boolean(true)`,
+    `+new Boolean(false)`, `-new String("0x10")`, `+new String("x")`, each
+    checked against the JS result;
+  - refused (legacy body, same result): `!new Boolean(false)`,
+    `~new Number(1)`, `+new Object()`;
+  - the claimed rows fail on main.
+
+**Acceptance:**
+- the 85 sole files gain the 5 target files as IR-only, with 0 pass→fail and
+  0 post-claim errors on both lanes;
+- binaries are byte-identical outside the claimed files on a random ES5
+  sample;
+- the playground is identical;
+- the equivalence gate passes.
+
+**Code quality:** one arm beside its siblings, no new helper, no duplicated
+lowering.
+
+### Measured
+
+Base main 83c5c23daf against head, A/B by file copy of `select.ts`, the
+in-process runner (`runTest262File`) on both lanes, one niced worker:
+
+- **The 85 sole files:**
+  - 5 binaries change on each lane, exactly the 5 target files;
+  - those 5 are now IR-only (0 legacy units) with 0 post-claim errors on
+    both lanes, and they pass on both before and after;
+  - 0 status changes; all 85 pass on both lanes before and after;
+  - `unary-plus/S11.4.6_A3_T3` stays legacy (unchanged binary): it builds
+    `new Number("-1")`, and `selectorPrimitiveWrapperConstruction` takes only
+    an argument of the constructor's own family.
+- **Random ES5 sample** (200 files, `shuf` seeded with `yes 7106`, from the
+  10,171 ES5-named test files outside `intl402`/`annexB`):
+  - every binary is byte-identical on both lanes;
+  - 191 pass, 6 fail, 3 skip on each lane, before and after.
+- **Playground:** all 13 examples compile byte-identically on both lanes.
+- **Equivalence gate:** all 8 shards, "No new equivalence regressions"
+  (every failing file is in the baseline's known failures).
+
+### Follow-ups (not built)
+
+1. **Wrapper values as dynamic carriers / extern receivers.** A wrapper
+   stored in a var, a method call on it, and `!wrapper` were the 15
+   post-claim errors of the probe. They need a wrapper to live as a dynamic
+   carrier value, not only as an operand.
+2. **A callable `__to_object`.** Extract legacy's `emitObjectCoercion` into a
+   helper the IR can call, so `new Object(v)` lowers without a legacy body.
+3. **An open-carrier `{}` that allows property writes,** so `new Object()`
+   can become `{}` (the 31 `objectlit-empty` rows of the second probe; this
+   joins #7280).
+4. **`x op= …` on a dynamic module var.** The 145 paired files need the
+   compound assignment, whatever its right-hand side.
+5. **A wrapper whose argument is another family,** such as
+   `new Number("-1")` (`unary-plus/S11.4.6_A3_T3`). Construction would apply
+   ToNumber/ToString/ToBoolean to the argument first.
+
+### Handoff (2026-11-07)
+
+Lever W is built and measured on branch `claude/7106-lever-w`. Nothing from
+this lane is in flight. Open: follow-ups 1–5 above (none claimed) and #7295,
+which stays `blocked` until follow-ups 1–3 land.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
