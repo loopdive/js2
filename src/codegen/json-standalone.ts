@@ -288,6 +288,16 @@ export function tryEmitJsonStringifyStatic(
   return compileStringLiteral(ctx, fctx, serialized);
 }
 
+/**
+ * (#7267) Does `JSON.parse(text)` take this module's compile-time fold — a
+ * static text (literal or `const` chain) the host parser accepts? The IR's
+ * ambient `JSON.parse` row refuses exactly these, so the fold (and its exact
+ * number parse) stays legacy's.
+ */
+export function jsonParseTextFoldsAtCompileTime(ctx: CodegenContext, call: ts.CallExpression): boolean {
+  return call.arguments.length >= 1 && parsedJsonLiteral(ctx, call.arguments[0]!) !== UNSUPPORTED;
+}
+
 export function tryEmitJsonParseLiteral(
   ctx: CodegenContext,
   fctx: FunctionContext,

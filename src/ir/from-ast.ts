@@ -97,7 +97,7 @@ import {
   lowerSourceClosureInvocation,
   type SourceClosureInvocationPlan,
 } from "./source-closure-invocation.js";
-import { exactIndirectEvalStatement } from "../eval-call-shape.js";
+import { exactGlobalEvalStatement } from "../eval-call-shape.js";
 import { resolveOrdinaryObjectClosureSignature } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
 
@@ -379,7 +379,11 @@ import {
 } from "./nodes.js";
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
-import { lowerAmbientGlobalFunctionCall, type IrAmbientGlobalFunctionName } from "./ambient-global-function-call.js";
+import {
+  lowerAmbientGlobalFunctionCall,
+  type IrAmbientGlobalFunctionCapability,
+  type IrAmbientGlobalFunctionName,
+} from "./ambient-global-function-call.js";
 import { lowerBuiltinProtoMember, type BuiltinProtoMemberLane } from "./builtin-proto-member.js";
 import {
   IR_HOLEY_ARRAY_ELEM_SET,
@@ -525,8 +529,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
   sourceClosureCallableParameter?(node: ts.FunctionTypeNode): boolean;
-  /** Resolve the pre-collected exact JS-host indirect-eval import. */
-  hostIndirectEvalTarget?(): IrFuncRef | null;
+  /** (#7106 A2c) The runtime-eval support function a certified global eval statement calls with its source. */
+  globalEvalTarget?(call: ts.CallExpression): IrFuncRef | null;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
   /** Exact direct filter consumers of those sparse constructors. */
@@ -611,15 +615,18 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
   supportsBackendCapability?(
-    capability: "number-to-string" | "native-global-function-call" | "native-regexp" | "native-dynamic-member-read",
+    capability: "number-to-string" | "native-regexp" | IrAmbientGlobalFunctionCapability,
   ): boolean;
   /**
    * (#7253) The host-free provider legacy calls for a direct ambient
    * `parseInt` / `parseFloat` (`(externref, f64) -> f64` / `(externref) -> f64`)
-   * or `escape` / `unescape` (`(externref) -> externref`); null when the lane
-   * has none, which keeps the legacy call.
+   * or `escape` / `unescape` (`(externref) -> externref`), and (#7267) the
+   * native codec's `JSON.parse` entry (`(externref) -> anyref`); null when the
+   * lane has none, which keeps the legacy call.
    */
   ambientGlobalFunctionTarget?(name: Exclude<IrAmbientGlobalFunctionName, "isNaN">): IrFuncRef | null;
+  /** (#7267) The selector's `jsonParseFoldsAtCompileTime`, asked again per call. */
+  jsonParseFoldsAtCompileTime?(call: ts.CallExpression): boolean;
   /**
    * Does this lane own a host-free `Number::toFixed` provider whose result is
    * already the IR string carrier? The bounded literal-digits lowering asks
@@ -2670,7 +2677,8 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
       lowerStatementMethodCall(expr, cx);
       return;
     }
-    if (ts.isIdentifier(expr.expression) || expr.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    const callee = expr.expression;
+    if (ts.isIdentifier(callee) || callee.kind === ts.SyntaxKind.SuperKeyword || exactGlobalEvalStatement(expr)) {
       void lowerCall(expr, cx, /* statementPosition */ true);
       return;
     }
@@ -5153,7 +5161,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     return lowerPropertyAccess(expr, cx);
   }
   if (ts.isObjectLiteralExpression(expr)) {
-    return lowerObjectLiteral(expr, cx);
+    return lowerObjectLiteral(expr, cx, hint);
   }
   // #3522 returned-closure ownership. A literal produced in expression
   // position retains the internal closure carrier until an exact callable
@@ -6620,9 +6628,9 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
  * compares equal across literals with different syntactic ordering. The
  * value list is reordered to match.
  */
-function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
+function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx, hint?: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerObjectLiteral(expr, cx));
+    return withNodeSourceSite(cx, expr, () => lowerObjectLiteral(expr, cx, hint));
   // #4471 — an empty literal is admitted only when the selector proved it
   // INERT (`empty-object-literal.ts`), and lowers to a zero-field
   // `object.new`. The property loop below is already a no-op at zero
@@ -6633,8 +6641,11 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
   // valueOf/toString path is not entered.
   // (#7128 S1) A referenced empty literal is instead the selector's open
   // carrier: legacy's raw-externref `$Object`, which the U2 read arm serves.
+  // An open-carrier literal stored into a dynamic-carrier slot crosses onto
+  // the carrier: a property of the slot, not of the admitting arm (#7280 S1).
   if (expr.properties.length === 0 && admittedEmptyLiteralIsOpenCarrier(expr)) {
-    return emitNewPlainObject(cx.builder, irVal({ kind: "externref" }));
+    const object = emitNewPlainObject(cx.builder, irVal({ kind: "externref" }));
+    return hint?.kind === "dynamic" ? cx.builder.emitBox(object, irDynamic()) : object;
   }
   if (
     expr.properties.some((property) => ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property))
@@ -7694,44 +7705,39 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (expr.questionDotToken) {
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
   }
-  const indirectEval = exactIndirectEvalStatement(expr);
-  if (indirectEval) {
-    const target = cx.resolver?.hostIndirectEvalTarget?.();
+  const globalEval = exactGlobalEvalStatement(expr);
+  if (globalEval) {
+    const target = cx.resolver?.globalEvalTarget?.(expr);
     if (
       !statementPosition ||
-      cx.resolver?.jsHostExterns?.() !== true ||
-      cx.resolver?.isAmbientBinding?.(indirectEval.evalIdentifier) !== true ||
+      cx.resolver?.isAmbientBinding?.(globalEval.evalIdentifier) !== true ||
       cx.scope.has("eval") ||
-      cx.resolver?.stringIsExternref?.() !== true ||
       !target
     ) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "build",
-        `ir/from-ast: certified host indirect eval lost an owning predicate (${cx.funcName})`,
+        `ir/from-ast: certified global eval lost an owning predicate (${cx.funcName})`,
       );
     }
-    const source = lowerExpr(indirectEval.source, cx, { kind: "string" });
+    const source = lowerExpr(globalEval.source, cx, { kind: "string" });
     if (cx.builder.typeOf(source).kind !== "string") {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "build",
-        `ir/from-ast: certified host indirect eval source is not a string (${cx.funcName})`,
+        `ir/from-ast: certified global eval source is not a string (${cx.funcName})`,
       );
     }
     const result = cx.builder.emitCall(
       target,
-      [
-        cx.builder.emitCoerceToExternref(source),
-        cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" })),
-      ],
+      [cx.builder.emitCoerceToExternref(source)],
       irVal({ kind: "externref" }),
     );
     if (result === null) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "build",
-        `ir/from-ast: host indirect eval provider returned void (${cx.funcName})`,
+        `ir/from-ast: global eval provider returned void (${cx.funcName})`,
       );
     }
     // Statement-position lowering records this as a zero-use side-effecting
@@ -9361,6 +9367,8 @@ function lowerMethodCallWithSourcePlan(
   }
   const objectCreate = tryLowerObjectCreateDescriptorMapCall(expr, cx);
   if (objectCreate !== null) return objectCreate;
+  const globalFunction = tryLowerAmbientGlobalFunctionCall(expr, cx); // (#7267) `JSON.parse(s);`
+  if (globalFunction !== null) return globalFunction;
   const closureInvocation = cx.resolver?.sourceClosureInvocation?.(expr);
   if (closureInvocation)
     return lowerSourceClosureInvocation(closureInvocation, {
@@ -13843,10 +13851,16 @@ function tryLowerAmbientGlobalFunctionCall(expr: ts.CallExpression, cx: LowerCtx
   if (!cx.checker) return null;
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => tryLowerAmbientGlobalFunctionCall(expr, cx));
+  const resolver = cx.resolver;
   return lowerAmbientGlobalFunctionCall(expr, {
     builder: cx.builder,
-    resolver: cx.resolver,
-    classify: makeIrDeclaredPrimitiveExpressionClassifier(cx.checker),
+    admission: {
+      classify: makeIrDeclaredPrimitiveExpressionClassifier(cx.checker),
+      supportsBackendCapability: (capability) => resolver?.supportsBackendCapability?.(capability) === true,
+      isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding?.(node) === true,
+      foldsAtCompileTime: (call) => resolver?.jsonParseFoldsAtCompileTime?.(call) !== false,
+    },
+    target: (name) => resolver?.ambientGlobalFunctionTarget?.(name) ?? null,
     lowerOperand: (argument, family) => lowerExpr(argument, cx, family === "string" ? { kind: "string" } : IR_F64),
     refuseOperand: (name, index, type) =>
       demoteToLegacy(
