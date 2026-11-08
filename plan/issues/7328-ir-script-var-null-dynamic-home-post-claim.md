@@ -67,6 +67,10 @@ var nv = null; nv;
 var nv = null; function u(g) { g(1); } u(nv);
 ```
 
+Pinned by `tests/issue-7305-dynamic-function-value-call.test.ts` ("bare
+compile, null held in a script var"), which asserts `irPostClaimErrors` is empty
+on standalone, wasi and gc.
+
 The `null` producer option (`dyn.null`) is not taken. The related literal
 `null` into an `f64` context is #7332.
 

@@ -94,6 +94,8 @@ const BARE_MODULE_INIT: Record<string, string> = {
   "null argument": "function u(g) { g(1); }\nu(null);",
   "null argument in try": 'var R = ""; function u(g) { g(1); }\ntry { u(null); } catch (e) { R += "x"; }',
   "object literal argument": "function u(g) { g(1); }\nu({ a: 1 });",
+  // #7328: the null reaches `u` through a script var; its initializer is refused.
+  "null held in a script var": "var nv = null; function u(g) { g(1); }\nu(nv);",
 };
 
 describe("#7305 statement call through a top-level dynamic parameter", () => {
