@@ -158,7 +158,7 @@ import { nativeBufferOperationParts, type IrNativeBufferSurfacePlan } from "./na
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
-import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
+import { objectIntegrityCallFold } from "./object-integrity.js";
 import {
   isIrModuleStructValueKind,
   isIrModuleMapValueKind,
@@ -757,6 +757,12 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly builtinProtoCompanionSeeded?: boolean;
   /** (#7294) `<builtin>.prototype.<member>`'s kind when its support function answers it on this lane. */
   readonly builtinProtoMember?: (builtin: string, member: string, anchor: ts.Node) => "method" | "getter" | undefined;
+  /**
+   * (#7106 lever O) The program has a runtime-eval site that may run (the
+   * boundary plan's `providerMayExecute`). Undefined ⇒ true: no fold that
+   * assumes a pristine realm.
+   */
+  readonly runtimeEvalMayExecute?: boolean;
   /**
    * #2952 slice 5 — certify that this exact `for (head in receiver)` source
    * expression uses the non-fast dynamic externref carrier. The callback is
@@ -12648,10 +12654,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
       }
-      if (
-        isPristineEs5IntrinsicIsFrozenCall(expr, (node) => selectorSeesAmbientBinding(node) && !scope.has(node.text))
-      ) {
-        return true;
+      // (#7106 lever O) An integrity static with a fixed answer: a constant, or a mutator's own literal operand.
+      const integrityFold = objectIntegrityCallFold(expr, {
+        isAmbientBinding: (node) => selectorSeesAmbientBinding(node) && !scope.has(node.text),
+        dynamicCodeMayRun: currentSelectionOptions?.runtimeEvalMayExecute !== false,
+      });
+      if (integrityFold !== undefined) {
+        return integrityFold.kind === "answer" || isPhase1Expr(integrityFold.operand, scope, localClasses);
       }
       // #3793 — exact retained function-object wrappers such as Acorn's
       // `parse(...) { return Parser.parse(...) }`. The checker resolver proves

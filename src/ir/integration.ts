@@ -7521,6 +7521,7 @@ function makeFromAstResolver(
       return moduleBindingResolver?.isLibOnlyBinding(node) === true;
     },
     builtinProtoCompanionSeeded: () => ctx.protoMemberDirty, // (#7127)
+    runtimeEvalMayExecute: () => ctx.runtimeEvalBoundaryPlan?.providerMayExecute !== false, // (#7106 lever O)
     builtinProtoMember: (builtin: string, member: string, anchor: ts.Node) =>
       builtinProtoMemberProvided(ctx, builtin, member, anchor), // (#7294)
     isAmbientStringBinding,
