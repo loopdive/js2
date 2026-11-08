@@ -1,7 +1,8 @@
 ---
 id: 7305
-title: "IR: function values in dynamic slots and their call from top-level units — design + measurement"
-status: ready
+title: "IR: a statement call through a top-level subject's dynamic parameter (function value in a dynamic slot)"
+status: done
+completed: 2026-11-07
 sprint: current
 created: 2026-11-07
 updated: 2026-11-07
@@ -9,11 +10,39 @@ priority: medium
 horizon: m
 feasibility: medium
 reasoning_effort: high
-task_type: design
+task_type: implementation
 area: ir
 goal: ir-full-coverage
 related: [7287, 7277, 7286, 7272, 7283, 7294, 7298, 7106, 2949, 7127]
 assignee: "ttraenkler/c-lane-opus"
+loc-budget-allow:
+  # 2026-11-07 (#7305): select.ts +29 net. `ownParameterStatementCall` (the
+  # structural half both the selector and the call graph read), the widened
+  # `dynamicValueCallTarget` membership with its doc, the one move-only sink,
+  # and the shared `scanCarrierArguments` (which replaces S3a's inline loop).
+  # from-ast.ts +5: the closure-argument box at the direct-call boundary.
+  # Restated here because the #7287 grants this branch stacks on are
+  # stranded once #7287 merges.
+  # 2026-11-07 (#7166 review B1): select-identity.ts +2. The identity
+  # selector hands its helper type map to the module-init assessment, which
+  # needs callee parameter kinds for the carrier-boundary gate.
+  - src/ir/select.ts
+  - src/ir/from-ast.ts
+  - src/ir/select-identity.ts
+func-budget-allow:
+  # 2026-11-07 (#7305): dynamicUsesAreMoveOnly +4. It gains one sink (the
+  # callee and arguments of a statement call through a dynamic value), and
+  # the argument loop is now shared with S3a's `new g()` arm. The scan's arms
+  # are closures over its state (`dynNames`, `isDynShaped`, `scanExpr`), so
+  # this sink cannot move out without the scan refactor #2949 tracks.
+  # 2026-11-07 (#7166 review M1): buildLocalCallGraph +4 is the
+  # own-parameter statement-call arm, a sibling of #7287's script-var arm
+  # (the walk is one visitor; its arms cannot leave it without splitting the
+  # graph). planIrCompilationByIdentity +1 passes `helperTypes` to the
+  # module-init assessment (#7166 review B1).
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::buildLocalCallGraph
+  - src/ir/select-identity.ts::planIrCompilationByIdentity
 ---
 
 # #7305: function values in dynamic slots, and calling them
@@ -109,10 +138,13 @@ All paths are under `src/`.
 
 ## 3. The smallest general extension, and what it unblocks
 
-**Extension.** Let a *top-level* subject take `dynamicValueCallTarget` when
-the callee is one of its own dynamic-carrier locals (a `dynNames` entry: a
-dynamic parameter or a `var`/`const` aliasing a dynamic value), in statement
-position. The lowering and runtime are unchanged. Value position stays
+**Extension.** Let a top-level function declaration take `dynamicValueCallTarget` when
+the callee is one of its own dynamic **parameters** (`currentDynamicParamNames`,
+the membership S3a's `new g()` already uses), in statement position in its own
+body, and it has no ambient `this`. `var`/`const` aliases of a dynamic value are
+deferred: whether a local is dynamic is only known once the move-only scan has
+run (`dynNames` grows there), after the Phase-1 call check. Class members are
+out of scope. The lowering and runtime are unchanged. Value position stays
 refused, as in #7287. The receiver is undefined.
 
 **Consumers**, measured with a throwaway admission that bypassed (a) the
@@ -148,8 +180,8 @@ The rule to add:
 
 That rule is *already* `dynamicValueCallTarget`. The extension should widen
 **that one predicate's membership test** from "a planned closure's dynamic
-parameter or read local" to "…or a top-level subject's dynamic-carrier
-local". It should not add a sibling predicate or a second arm.
+parameter or read local" to "…or a top-level function declaration's own
+dynamic parameter" (§3). It should not add a sibling predicate or a second arm.
 
 `dynamicUsesAreMoveOnly` then needs one sink line: "the callee of a bare
 statement call when `dynamicValueCallTarget` holds". It reads the same
@@ -206,3 +238,43 @@ will not claim it. Constraints carried over from #7287:
 
 The widening in §4 touches the same predicate family but not R9's
 module-binding arm.
+
+## Adversarial review (fresh context, 2026-11-07)
+
+Verdict: no blockers, sound in every compiled probe (`irPostClaimErrors`
+empty, standalone and gc pass).
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 (should-fix) | the arm also claimed class instance / static methods (`currentDynamicParamNames` holds their parameters); sound, but undocumented and untested | owner restricted to a `FunctionDeclaration`; methods pinned as refused, `new u(f)` pinned as claimed |
+| 2 (should-fix) | §3/§4 promised `var`/`const` aliases; the code admits parameters only | §3/§4 now say parameters only, and why aliases are deferred |
+| 3 (nit) | `decls.has(callee)` runs before the structural check, so a parameter shadowing a top-level function still adds a graph edge | kept: moving the check ahead of `decls.has` would also put it ahead of the propertyHelper alias arms (#7287's ordering rule), and the extra edge only makes the unit more conservative |
+| 4 (nit) | the closure-or-primitive box choice appears at two from-ast boundaries | kept: two users; folding it is a follow-up if a third appears |
+| 5 (nit) | the catch-binding paragraph read as covering the new arm | now says it describes the closure arm |
+
+
+## RV7166 review (6702803650, delta 6703081743)
+
+| # | finding | resolution |
+| --- | --- | --- |
+| B1 (blocker) | with `u` claimed, `<module-init>` is claimed over `u(null)` / `u({ a: 1 })`, then from-ast refuses them (bare compiles) | `assessModuleInit` refuses a direct call that passes a callee's dynamic parameter a bare `null` or an object literal (`callPassesUncarriedDynamicArgument`, sharing `bodyCallsDynamicParamCallee`'s walk). Functions meet the same rule through the move-only scan. Pinned by bare-compile tests on standalone, wasi and gc. |
+| M1 | `lowerCall` and `buildLocalCallGraph` growth ungranted against the stacked base | granted (7320 / 7305 frontmatter) |
+| N1–N4 | doc and guard nits | N2–N4 fixed; N1 rebutted (a typed parameter never enters `currentDynamicParamNames`) |
+
+### Known pre-existing failures this arm can newly reach
+
+Each reproduces on base `63018c49` without this arm, once `<module-init>` or
+`u` is claimed for another reason (`function u(g) { return typeof g; }`).
+#7305 only removes the legacy `u` that used to keep `<module-init>`
+unclaimed.
+
+- **`R +=` in a `catch`**: `var R = ""; try { R += "no"; } catch (e) { R += (e instanceof TypeError) + ":" + e.message; }`.
+  - On #7164's head this is a post-claim "typed string += requires … evidence"; on 63018c49 it is a hard "contradictory carrier" failure.
+  - It needs no function at all. Routed to [#7287](./7287-ir-script-var-closure-storage-and-call.md), PR #7164, whose `+=` recovery it is.
+- **A `null` in a script `var`**: `var nv = null; nv;` gives a post-claim "bare 'null' in non-reference context (dynamic)", with no call.
+  - The failing node is the initializer, not a call argument.
+  - `writeValueMatches` (`module-bindings.ts`) accepts any value into the script dynamic home, but from-ast has no `null` producer for the carrier.
+  - `u(nv)` only reaches it. Filed as [#7328](./7328-ir-script-var-null-dynamic-home-post-claim.md).
+- **A BigInt argument**: `function u(g) { return typeof g; } u(1n);` withdraws `u` itself ("function typeIdx parity mismatch … keeping legacy body").
+  - That is a parity withdrawal, not a wrong result.
+  - With this arm, `function u(g) { g(1); } u(1n);` reaches it too. Filed as [#7329](./7329-ir-bigint-arg-dynamic-param-typeidx-parity.md).
