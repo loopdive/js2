@@ -226,7 +226,11 @@ import {
   removeMultiIrAttemptedCallableUnits,
 } from "./multi-prepared-callable-orchestration.js";
 import { createCodegenContext } from "./context/create-context.js";
-import { expressionHasWidenedPropertyType, markIndexedPropertyStale } from "./strict-eq-stale-type.js";
+import {
+  expressionHasWidenedStaticType,
+  functionReturnsWidenedValue,
+  markIndexedPropertyStale,
+} from "./strict-eq-stale-type.js";
 import { bindingHoldsStandaloneClassProto } from "./class-proto-object.js"; // (#7053)
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
@@ -3504,7 +3508,9 @@ function planIrOverlay(
           ? ({ kind: "val", val: { kind: "externref" } } as IrType)
           : isVoidReturn
             ? null
-            : resolvePositionType(effectiveReturnNode, entry?.returnType, ctx, classShapeSidecar);
+            : functionReturnsWidenedValue(ctx, declaration)
+              ? irDynamic()
+              : resolvePositionType(effectiveReturnNode, entry?.returnType, ctx, classShapeSidecar);
       const params: IrType[] = [];
       for (let i = 0; i < declaration.parameters.length; i++) {
         const p = declaration.parameters[i]!;
@@ -14418,7 +14424,7 @@ function hoistVarDecl(
       forInTargetForcesExternref ||
       transferredArrayLikeResult ||
       bindingHoldsStandaloneClassProto(ctx, decl) || // (#7053)
-      (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
+      (!!decl.initializer && !decl.type && expressionHasWidenedStaticType(ctx, decl.initializer));
     const usageF64 = hardForcesExternref
       ? null
       : mixedAssignmentCarrier
@@ -15182,7 +15188,7 @@ function walkStmtForLetConst(
           realmStructuralCarrier ||
           (mixedAssignmentCarrier && !mixedCarrierProvenF64) ||
           bindingHoldsStandaloneClassProto(ctx, decl) || // (#7053)
-          (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
+          (!!decl.initializer && !decl.type && expressionHasWidenedStaticType(ctx, decl.initializer));
         // (#4616) Empty-array (or Array<any>) initializer: use the SAME
         // usage-based vec inference `compileVariableStatement` applies
         // (`inferArrayVecType`, mirroring the var hoister above). Without it

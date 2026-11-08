@@ -1,11 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Runtime-carrier guards for expressions whose checker type is stale after
- * an indexed or union-alias object property write. Arithmetic, storage and
- * output consumers must preserve that value until the actual JS operation.
+ * a heterogeneous binding or indexed/union-alias property write. Arithmetic,
+ * storage and output consumers must preserve it until the actual JS operation.
  */
 import { ts } from "../ts-api.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { bindingHasMixedAssignmentCarrier } from "./analysis/mixed-assignment-carrier.js";
 import { paramReadIsJsDefaultGuess } from "./js-default-param-type-guess.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
@@ -20,13 +21,8 @@ export function markIndexedPropertyStale(ctx: CodegenContext, property: ts.Decla
   stale.add(property);
 }
 
-/** Whether a value derives from a property whose carrier was widened. */
-export function expressionHasWidenedPropertyType(
-  ctx: CodegenContext,
-  expr: ts.Expression,
-  seen?: Set<ts.Node>,
-): boolean {
-  if (!indexedStaleProperties.get(ctx)?.size) return false;
+/** Whether the checker type excludes values the shared carrier analysis admits. */
+export function expressionHasWidenedStaticType(ctx: CodegenContext, expr: ts.Expression, seen?: Set<ts.Node>): boolean {
   seen ??= new Set<ts.Node>();
   if (seen.has(expr)) return false;
   seen.add(expr);
@@ -35,16 +31,26 @@ export function expressionHasWidenedPropertyType(
   }
   if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.PlusToken) {
     return (
-      expressionHasWidenedPropertyType(ctx, expr.left, seen) || expressionHasWidenedPropertyType(ctx, expr.right, seen)
+      expressionHasWidenedStaticType(ctx, expr.left, seen) || expressionHasWidenedStaticType(ctx, expr.right, seen)
     );
   }
 
-  if (ts.isIdentifier(expr) && ctx.objectLiteralIndexedAssignedPropertyTypes.size > 0) {
-    const declaration = ctx.oracle.valueDeclarationOf(expr);
-    if (declaration && ts.isVariableDeclaration(declaration) && !declaration.type && declaration.initializer) {
-      return expressionHasWidenedPropertyType(ctx, declaration.initializer, seen);
+  if (ts.isIdentifier(expr)) {
+    const declaration = ctx.oracle.variableDeclarationOf(expr);
+    if (declaration) {
+      if (bindingHasMixedAssignmentCarrier(ctx, declaration)) return true;
+      if (!declaration.type && declaration.initializer) {
+        return expressionHasWidenedStaticType(ctx, declaration.initializer, seen);
+      }
     }
   }
+  if (ts.isCallExpression(expr) && ts.isIdentifier(expr.expression)) {
+    const declaration = ctx.oracle.valueDeclarationOf(expr.expression);
+    if (declaration && ts.isFunctionDeclaration(declaration)) {
+      return functionReturnsWidenedValue(ctx, declaration, seen);
+    }
+  }
+  if (!indexedStaleProperties.get(ctx)?.size) return false;
 
   let key: string | undefined;
   let receiver: ts.Expression | undefined;
@@ -84,6 +90,26 @@ export function expressionHasWidenedPropertyType(
     ctx.oracle.typeFactOf(propertyReceiver).kind === "object" &&
     ctx.oracle.propertyFactOf(propertyReceiver, propertyKey).kind !== "unresolvable"
   );
+}
+
+/** An inferred return must retain every value admitted by its source carrier. */
+export function functionReturnsWidenedValue(
+  ctx: CodegenContext,
+  fn: ts.FunctionDeclaration,
+  seen = new Set<ts.Node>(),
+): boolean {
+  if (!fn.body || fn.type || seen.has(fn)) return false;
+  seen.add(fn);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found || ts.isFunctionLike(node)) return;
+    if (ts.isReturnStatement(node) && node.expression) {
+      found = expressionHasWidenedStaticType(ctx, node.expression, seen);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(fn.body);
+  return found;
 }
 
 // (#6651 VR1) Fourth stale carrier, same kind as the three below: an
@@ -175,6 +201,6 @@ export function equalityOperandHasStaleStaticType(
     // `Type(number) !== Type(boolean)` and answered a constant `false` for
     // `a === false` without ever reading the boxed boolean that arrived.
     paramReadIsJsDefaultGuess(ctx, expr) ||
-    expressionHasWidenedPropertyType(ctx, expr)
+    expressionHasWidenedStaticType(ctx, expr)
   );
 }

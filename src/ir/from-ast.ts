@@ -791,6 +791,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * be a `Map`.
    */
   ensureNativeMapStorageType?(): IrType | undefined;
+  /** Shared binding inference, settled before the initializer is lowered. */
+  localNeedsDynamicCarrier?(declaration: ts.VariableDeclaration): boolean;
   /**
    * (#2856) Console-argument variant selection for `console.<m>(arg)` —
    * returns the import-name suffix (`console_<m>_<variant>`). MUST use the
@@ -4501,7 +4503,10 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   // the slot) would double-evaluate any side effect in `let s = f() | 0`.
   // Every other hint source wins: an explicit annotation, an empty-array
   // inference and a module binding each pin the representation.
-  const widenDynamic = cx.dynamicStringLocals.has(name) || moduleBinding?.type.kind === "dynamic";
+  const widenDynamic =
+    cx.dynamicStringLocals.has(name) ||
+    moduleBinding?.type.kind === "dynamic" ||
+    (!isConst && !d.type && cx.resolver?.localNeedsDynamicCarrier?.(d) === true);
   const promoteI32Slot =
     annotated === undefined &&
     inferredEmptyArrayHint === undefined &&

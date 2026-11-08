@@ -43,6 +43,8 @@ import {
   irStringConcatManyDemand,
 } from "./program-runtime-demands.js";
 import { ts } from "../ts-api.js";
+import { expressionHasWidenedStaticType } from "../codegen/strict-eq-stale-type.js";
+import { bindingHasMixedAssignmentCarrier } from "../codegen/analysis/mixed-assignment-carrier.js";
 import type { IrIntegrationOptions } from "./integration-options.js";
 export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
@@ -7507,12 +7509,14 @@ function makeFromAstResolver(
     builtinProtoMember: (builtin: string, member: string, anchor: ts.Node) =>
       builtinProtoMemberProvided(ctx, builtin, member, anchor), // (#7294)
     isAmbientStringBinding,
+    localNeedsDynamicCarrier: (declaration) => bindingHasMixedAssignmentCarrier(ctx, declaration),
     // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
     // predicates as the legacy `collectConsoleImports` registration scan
     // (string → bool → number → externref, in that order), so the import
     // name the IR resolves (`console_<m>_<variant>`) is registered by
     // construction.
     consoleArgVariant(arg: ts.Expression) {
+      if (expressionHasWidenedStaticType(ctx, arg)) return "externref";
       const argType = ctx.checker.getTypeAtLocation(arg);
       if (isStringType(argType)) return "string";
       if (isBooleanType(argType)) return "bool";

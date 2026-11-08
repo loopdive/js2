@@ -41,31 +41,17 @@
 //   * BEFORE dead-import elimination, so the added import is seen as live (it
 //     is called) and is not pruned;
 //   * BEFORE the #1984 index-space freeze, so `ensureLateImport` is legal.
-// Emission is gated on `ctx.needsInitMarshalHelpers`, so a module that never
-// takes the host TypedArray construct bridge is byte-identical.
+// Only JavaScript environments with startup marshalling boundaries participate.
 
 import type { IrUnitId } from "../ir/identity.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { type CodegenContext, hostFreeEnvironment } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { ensureNativeStringMemoryReader } from "./native-string-memory-reader.js";
 import { definedFuncHandleOf } from "./func-space.js";
-import { noJsHost } from "./js-errors.js";
 
-/**
- * Runtime contract: keep in lock-step with `_INIT_MARSHAL_HELPER_NAMES` in
- * `src/runtime.ts`. The ARRAY POSITION is the wire id — append only.
- */
-export const INIT_MARSHAL_HELPERS: readonly string[] = [
-  "__vec_len",
-  "__vec_get",
-  "__is_vec",
-  "__dv_byte_len",
-  "__dv_byte_get",
-  "__ab_max_len",
-  // (#5208) The Date carrier's classifier + reader — see the runtime twin.
-  "__\0js2_is_date",
-  "__\0js2_date_value",
-];
+import { INIT_MARSHAL_HELPER_NAMES as INIT_MARSHAL_HELPERS } from "../shared/contracts/init-marshal-helpers.js";
+export { INIT_MARSHAL_HELPERS };
 
 const REGISTER_IMPORT = "__register_init_export";
 
@@ -120,8 +106,12 @@ function helperFunc(ctx: CodegenContext, name: string): WasmFunction | undefined
  * a JS-host module with a compiler-created module initializer.
  */
 export function emitInitMarshalHelperRegistration(ctx: CodegenContext, preferredUnitId?: IrUnitId): void {
-  if (!ctx.needsInitMarshalHelpers && !usesDynamicExternMethodCall(ctx) && !ownsDateCarrier(ctx)) return;
-  if (ctx.wasi || noJsHost(ctx)) return;
+  if (hostFreeEnvironment(ctx)) return;
+  const primitiveBridge = ctx.mod.imports.some(
+    (imp) => imp.desc.kind === "func" && (imp.name === "__str_from_mem" || /^console_\w+_externref$/.test(imp.name)),
+  );
+  if (!ctx.needsInitMarshalHelpers && !usesDynamicExternMethodCall(ctx) && !ownsDateCarrier(ctx) && !primitiveBridge)
+    return;
   // Same initializer selection as `finalizeInModuleInitFlag` (index.ts), so the
   // multi-source pipeline patches the exact prepared unit it owns.
   const initFn =
@@ -129,6 +119,8 @@ export function emitInitMarshalHelperRegistration(ctx: CodegenContext, preferred
       ? ctx.programAbiModuleInitCallables?.functionForUnit(preferredUnitId)
       : ctx.programAbiModuleInitCallables?.firstFunction();
   if (!initFn) return;
+
+  ensureNativeStringMemoryReader(ctx);
 
   // Nothing to hand over ⇒ leave the module byte-identical.
   const present = INIT_MARSHAL_HELPERS.map((name, id) => ({ id, fn: helperFunc(ctx, name) })).filter(
