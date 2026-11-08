@@ -193,6 +193,8 @@ import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failur
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
   staticStringMethodArgument,
+  staticStringNumber,
+  staticStringPattern,
   stringMethodPlan,
   type StringArgumentRole,
   type StringMethodPlan,
@@ -216,6 +218,7 @@ import { programPatchesDestructuringRealm } from "./realm-keys.js";
 import {
   sourceMayPatchPrototype,
   sourceNamesReflectiveRoute,
+  sourceRunsDynamicCode,
   sourceWritesMemberNamed,
 } from "../shared/intrinsic-prototype-writes.js";
 import { collectBindingPatternNames } from "./analysis/ast-scope.js";
@@ -5120,8 +5123,8 @@ function isPhase1ThrowStatement(
   // family (`thrownValueFamily`). Its `+` is judged by `checkerProvesBinaryOperands` in `isPhase1Expr`; this arm
   // only names the result family. A top-level throw is withdrawn by integration after the claim outside WASI.
   const thrown = unwrapPhase1Parens(stmt.expression);
-  if (expressionTouchesScalarModuleBinding(thrown)) {
-    const family = thrownValueFamily(thrown);
+  if (expressionTouchesScalarModuleBinding(thrown, scope)) {
+    const family = thrownValueFamily(thrown, scope);
     if (family === "nullish") return shapeNo("throw-module-nullish", stmt.expression);
     if (!throwOperandAdmissible(family)) return shapeNo("throw-module-scalar-unboxed", stmt.expression);
     if (ts.isSourceFile(stmt.parent)) return shapeNo("throw-module-top-level", stmt.expression);
@@ -5134,10 +5137,10 @@ function isPhase1ThrowStatement(
  * `new` throws an object (`reference`) unless an argument passes the unboxed
  * scalar itself (`argumentPassesUnboxedScalar`), which makes it `unknown`.
  */
-function thrownValueFamily(thrown: ts.Expression): OperandFamily {
+function thrownValueFamily(thrown: ts.Expression, scope: ReadonlySet<string>): OperandFamily {
   const value = unwrapPhase1Parens(thrown);
   if (!ts.isNewExpression(value)) return OBVIOUS_OPERAND_FAMILIES[obviousModuleValueFamily(value) ?? "unknown"];
-  return value.arguments?.some(argumentPassesUnboxedScalar) ? "unknown" : "reference";
+  return value.arguments?.some((argument) => argumentPassesUnboxedScalar(argument, scope)) ? "unknown" : "reference";
 }
 
 /**
@@ -5147,11 +5150,13 @@ function thrownValueFamily(thrown: ts.Expression): OperandFamily {
  * `new Test262Error('Actual: ' + x)` passes a string, and a `+` whose family the
  * slots cannot name is left to the checker's proof in `isPhase1Expr`.
  */
-function argumentPassesUnboxedScalar(argument: ts.Expression): boolean {
-  if (!expressionTouchesScalarModuleBinding(argument)) return false;
+function argumentPassesUnboxedScalar(argument: ts.Expression, scope: ReadonlySet<string>): boolean {
+  if (!expressionTouchesScalarModuleBinding(argument, scope)) return false;
   const value = unwrapPhase1Parens(argument);
   if (ts.isSpreadElement(value)) return true;
-  if (ts.isNewExpression(value)) return value.arguments?.some(argumentPassesUnboxedScalar) ?? false;
+  if (ts.isNewExpression(value)) {
+    return value.arguments?.some((nested) => argumentPassesUnboxedScalar(nested, scope)) ?? false;
+  }
   const family = obviousModuleValueFamily(value);
   return family === "f64" || family === "boolean" || family === "nullish";
 }
@@ -8105,11 +8110,15 @@ function trackedModuleAliasHasName(name: string): boolean {
   return false;
 }
 
-/** Whether any identifier in `expr` satisfies `matches`. */
-function expressionTouchesIdentifier(expr: ts.Expression, matches: (node: ts.Identifier) => boolean): boolean {
+/** Whether any identifier in `expr`, outside the subtrees `skips` names, satisfies `matches`. */
+function expressionTouchesIdentifier(
+  expr: ts.Expression,
+  matches: (node: ts.Identifier) => boolean,
+  skips?: (node: ts.Node) => boolean,
+): boolean {
   let touched = false;
   const visit = (node: ts.Node): void => {
-    if (touched) return;
+    if (touched || skips?.(node) === true) return;
     if (ts.isIdentifier(node) && matches(node)) {
       touched = true;
       return;
@@ -8133,13 +8142,18 @@ function expressionTouchesBooleanModuleBinding(expr: ts.Expression): boolean {
 }
 
 /** True when an expression contains an f64/boolean module-storage read. */
-function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
-  return expressionTouchesIdentifier(expr, (node) => {
-    const binding = moduleBinding(node);
-    const scalarBinding =
-      binding && !isIrModuleReferenceValueKind(binding.valueKind) && !isIrModuleStructValueKind(binding.valueKind);
-    return scalarBinding || moduleScalarAliasFamily(node) !== undefined;
-  });
+function expressionTouchesScalarModuleBinding(expr: ts.Expression, scope: ReadonlySet<string>): boolean {
+  return expressionTouchesIdentifier(
+    expr,
+    (node) => {
+      const binding = moduleBinding(node);
+      const scalarBinding =
+        binding && !isIrModuleReferenceValueKind(binding.valueKind) && !isIrModuleStructValueKind(binding.valueKind);
+      return scalarBinding || moduleScalarAliasFamily(node) !== undefined;
+    },
+    // (#7106 lever SR) A static argument of a planned string method is never read.
+    (node) => isUnevaluatedStringMethodArgument(node, scope),
+  );
 }
 
 function expressionTouchesTrackedModuleValue(expr: ts.Expression): boolean {
@@ -9242,26 +9256,30 @@ function stringPrototypeBorrowSelection(
   localClasses: ReadonlySet<string>,
 ): boolean {
   // The surface row is the realm's own method reached as spelled, legacy's own
-  // trust: a source that may replace the method, `.call` or `String`, or that
-  // names a route to a prototype it does not spell, keeps legacy's lookup.
+  // trust: a source that may replace the method, `.call` or `String`, that
+  // names a route to a prototype it does not spell, or that runs code it does
+  // not spell, keeps legacy's lookup.
   const source = expr.getSourceFile();
   if (
     sourceMayPatchPrototype(source, "String") ||
     sourceMayPatchPrototype(source, "Function") ||
     sourceNamesReflectiveRoute(source) ||
+    sourceRunsDynamicCode(source) ||
     sourceWritesMemberNamed(source, "call") ||
     sourceWritesMemberNamed(source, "String")
   ) {
     return capabilityNo("string-method-unsupported", "expr-string-borrow-patched-prototype", expr);
   }
-  const family = provenIrFamily(borrow.receiver, scope);
-  if (family !== "string" && family !== "number" && family !== "boolean") {
+  if (!BORROW_RECEIVER_FAMILIES.has(provenIrFamily(borrow.receiver, scope))) {
     return capabilityNo("string-method-unsupported", "expr-string-borrow-receiver", borrow.receiver);
   }
   const plan = stringMethodSelection(expr, borrow.method, borrow.args, scope);
   if (plan === false) return false;
   if (plan.literalArguments) return capabilityNo("string-method-unsupported", "expr-string-borrow-literal-plan", expr);
-  return [borrow.receiver, ...borrow.args].every((operand) => isPhase1Expr(operand, scope, localClasses));
+  return (
+    isPhase1Expr(borrow.receiver, scope, localClasses) &&
+    borrow.args.every((arg) => isUnevaluatedStringMethodArgument(arg, scope) || isPhase1Expr(arg, scope, localClasses))
+  );
 }
 
 /**
@@ -9889,23 +9907,98 @@ function stringMethodSelection(
   args: readonly ts.Expression[],
   scope: ReadonlySet<string>,
 ): StringMethodPlan | false {
-  const backend = currentSelectionOptions?.backendTargetProfile?.backend ?? "wasmgc";
-  const plan = args.some(ts.isSpreadElement) ? null : stringMethodPlan(backend, method, args.length);
+  const plan = args.some(ts.isSpreadElement) ? null : stringMethodPlan(stringSurfaceBackend(), method, args.length);
   if (plan === null) return capabilityNo("string-method-unsupported", "expr-string-method-surface", expr);
+  if (plan.readsRegExpProtocol && regExpProtocolMayBePatched(expr.getSourceFile())) {
+    return capabilityNo("string-method-unsupported", "expr-string-method-regexp-protocol", expr);
+  }
   const unproven = args.find((arg, i) => !stringMethodArgumentProven(plan.parameters[i]!.role, arg, scope));
   if (unproven !== undefined) return capabilityNo("string-method-unsupported", "expr-string-method-argument", unproven);
   return plan;
 }
 
+function stringSurfaceBackend(): IrBackendKind {
+  return currentSelectionOptions?.backendTargetProfile?.backend ?? "wasmgc";
+}
+
 /**
- * A literal with static conversions (`undefined`, `null`, `true`, `false`)
- * stands for any role: the builder folds its ToNumber for a position or a
- * length, its ToString for a search or a fill (#7313), and an `undefined`
- * that has an omitted value takes it.
+ * (#7106 lever SR) RegExpCreate and the `@@search` lookup read the `RegExp`,
+ * `String` and `Object` prototypes (§22.1.3.23), which the source may replace,
+ * by name, by a reflective route, or in code it does not spell.
+ */
+function regExpProtocolMayBePatched(source: ts.SourceFile): boolean {
+  return (
+    sourceMayPatchPrototype(source, "RegExp") ||
+    sourceMayPatchPrototype(source, "String") ||
+    sourceMayPatchPrototype(source, "Object") ||
+    sourceNamesReflectiveRoute(source) ||
+    sourceRunsDynamicCode(source)
+  );
+}
+
+/**
+ * Whether `arg` is proven for its role. A static argument
+ * ({@link staticStringMethodArgument}) stands for any role but `pattern`:
+ * the builder folds its ToNumber for a position or a length and its ToString
+ * for a search or a fill (#7313), and an `undefined` that has an omitted
+ * value takes it. A string literal in a number role folds its ToNumber. A
+ * `pattern` is `undefined` or a static text ({@link staticStringPattern}).
  */
 function stringMethodArgumentProven(role: StringArgumentRole, arg: ts.Expression, scope: ReadonlySet<string>): boolean {
-  if (staticStringMethodArgument(arg, (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope))) return true;
-  return role === "search" || role === "fill" ? expressionIsClassifiedString(arg) : expressionIsProvenNumber(arg);
+  const literal = staticStringMethodArgument(arg, undefinedArgument(scope));
+  if (role === "pattern") return literal === "undefined" || staticStringPattern(arg) !== undefined;
+  if (literal !== undefined) return true;
+  if (role === "search" || role === "fill") return expressionIsClassifiedString(arg);
+  return expressionIsProvenNumber(arg) || staticStringNumber(arg) !== undefined;
+}
+
+/** The selector's view of a global `undefined` argument (`staticStringMethodArgument`'s predicate). */
+function undefinedArgument(scope: ReadonlySet<string>): (identifier: ts.Identifier) => boolean {
+  return (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope);
+}
+
+/** The receiver families a `String.prototype` borrow converts with ToString (#7106 lever P). */
+const BORROW_RECEIVER_FAMILIES: ReadonlySet<OperandFamily> = new Set<OperandFamily>(["string", "number", "boolean"]);
+
+/**
+ * (#7106 lever SR) `node` is a static argument ({@link staticStringMethodArgument})
+ * of a string-method call the surface plans: a `String.prototype` borrow
+ * (`String.prototype.m.call(v, x)`, `new String(v).m(x)`) over a primitive,
+ * or a direct call on a proven string. Lowering converts it at compile time
+ * and never evaluates it, so a walk over what the call evaluates skips it.
+ */
+function isUnevaluatedStringMethodArgument(node: ts.Node, scope: ReadonlySet<string>): boolean {
+  const call = node.parent;
+  if (!ts.isExpression(node) || !ts.isCallExpression(call)) return false;
+  if (staticStringMethodArgument(node, undefinedArgument(scope)) === undefined) return false;
+  const planned = provenReceiverStringMethodCall(call, scope);
+  return (
+    planned !== undefined &&
+    planned.args.includes(node) &&
+    stringMethodPlan(stringSurfaceBackend(), planned.method, planned.args.length) !== null
+  );
+}
+
+/** The method and source arguments of a string-method call whose receiver is proven, borrowed or direct. */
+function provenReceiverStringMethodCall(
+  call: ts.CallExpression,
+  scope: ReadonlySet<string>,
+): { readonly method: string; readonly args: readonly ts.Expression[] } | undefined {
+  const borrow = ambientStringPrototypeBorrow(call, scope, selectorSeesAmbientStringBinding);
+  if (borrow !== undefined) {
+    return BORROW_RECEIVER_FAMILIES.has(provenIrFamily(borrow.receiver, scope)) ? borrow : undefined;
+  }
+  if (!ts.isPropertyAccessExpression(call.expression) || !isProvenStringReceiver(call.expression.expression)) {
+    return undefined;
+  }
+  return { method: call.expression.name.text, args: call.arguments };
+}
+
+/** A direct string-method receiver the selector plans on: classified or proven a string. */
+function isProvenStringReceiver(receiver: ts.Expression): boolean {
+  return (
+    currentSelectionOptions?.classifyPrimitiveExpression?.(receiver) === "string" || expressionIsProvenString(receiver)
+  );
 }
 
 function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
@@ -12857,7 +12950,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         (scalarReceiverFamily === "f64" ? "number" : scalarReceiverFamily === "boolean" ? "boolean" : undefined);
       const provenReceiverFamily = currentSelectionOptions?.classifyPrimitiveExpression?.(builtinReceiver);
       const isNumberReceiver = provenReceiverFamily === "number" || expressionIsProvenNumber(builtinReceiver);
-      const isStringReceiver = provenReceiverFamily === "string" || expressionIsProvenString(builtinReceiver);
+      const isStringReceiver = isProvenStringReceiver(builtinReceiver);
       // (#7106 compareArray.format) A method call ON a borrow result
       // (`Array.prototype.map.call(…).join(", ")`): the receiver is the dynamic
       // carrier, whatever the checker types the borrow, so it takes the generic
@@ -12958,7 +13051,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         return true;
       }
       if (admitDynamicHomeOwnPropertyCall(expr)) return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
-      if (expressionTouchesScalarModuleBinding(expr.expression.expression)) {
+      if (expressionTouchesScalarModuleBinding(expr.expression.expression, scope)) {
         if (!isExactF64ScalarToStringCall(expr)) {
           return shapeNo("expr-module-scalar-method", expr);
         }
@@ -13063,6 +13156,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         // out of scope — methods on classes have known signatures and
         // expanding spread would blur them. Reject for now.
         if (ts.isSpreadElement(arg)) return false;
+        // (#7106 lever SR) A static argument of a planned string method is never lowered.
+        if (isUnevaluatedStringMethodArgument(arg, scope)) continue;
         if (!isPhase1Expr(arg, scope, localClasses)) return false;
       }
       return true;
@@ -13198,7 +13293,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         return shapeNo("expr-module-extern-template", span.expression);
       }
       if (
-        expressionTouchesScalarModuleBinding(span.expression) &&
+        expressionTouchesScalarModuleBinding(span.expression, scope) &&
         obviousModuleValueFamily(span.expression) !== substitutionFamily
       ) {
         return shapeNo("expr-module-scalar-template", span.expression);
@@ -14086,6 +14181,8 @@ export function buildLocalCallGraph(
         return;
       }
       if (ts.isCallExpression(node)) {
+        // (#7106 lever SR) An unevaluated empty IIFE is no call edge; selection re-asks with its scope.
+        if (isUnevaluatedStringMethodArgument(node, NO_LOCALS)) return;
         if (
           !certifiedImportedHofCall(node, currentSelectionOptions?.importedFunctions) &&
           visitProgramCallableUse(currentSelectionOptions?.resolveProgramCallableUse, node, visit, () =>
