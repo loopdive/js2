@@ -14,6 +14,13 @@ area: ir
 goal: ir-full-coverage
 related: [7252, 7128, 2949, 7274]
 assignee: "ttraenkler/lever-v" # handed over from c-lane-opus, 2026-11-07
+loc-budget-allow:
+  # 2026-11-08 (lever V, review round 2): the vec home's resolver arms (value
+  # kind, write match, one certified-use check folding the class-instance one)
+  # and the imports of the vec and shared script-var certifiers (+3 over main
+  # with lever L2's choke point); the certification itself lives in
+  # module-binding-vec.ts and module-binding-script-var.ts
+  - src/ir/module-bindings.ts
 ---
 
 # #7292 — IR module-init: script-var array-literal storage
@@ -271,6 +278,49 @@ legacy, a skipped staging file) is a measurement artifact: compiled alone it is
 byte-identical on both sides; the census resumed the base run in a fresh
 process after a restart, and that file's binary depends on what the same
 process compiled before it.
+
+### Review round 2 (PR #7186, 2026-11-08)
+
+Round 1's call-argument whitelist and checker-number key re-implemented the
+selector's own checks, and got both wrong: `var k = 0; k = "01"; a[k]` (the key
+is the dynamic carrier in the IR, a number to the checker) and
+`function g(s) { return s + "!"; } g(a[1])` (a typed parameter takes no
+carrier) were claimed and then withdrawn. Fixed in `002d2790e1`:
+
+- **The selector types the read.** `provenIrFamily` answers `dynamic` for a
+  script-var vec's element read and expando read (`isScriptVarVecCarrierRead`),
+  so the binary-operator family judge sees the carrier. `phase1ScriptVarVecReadAdmitted`
+  admits one only where from-ast lowers it: the dynamic reader is buildable, an
+  element key's IR family is `number`, and the consumer takes the carrier —
+  `carrierValueConsumed` (renamed from `carrierAdditionConsumed`, now shared
+  with the carrier `+`), a function object's member call (`assert.sameValue`
+  boxes every argument), or a top-level function's parameter resolved dynamic.
+  The resolver keeps only the use shapes (`vecUseSupported`): no whitelist and
+  no raw `checker.getTypeAtLocation`.
+- **from-ast lowers every script-var vec element read through the dynamic
+  reader**, before the index is lowered (so it is lowered once), matching the
+  selector's type. `a[9] === undefined` now claims: the undefined compare tests
+  a carrier operand's tag before it refuses an unproven typed read.
+- **Shared module.** `scriptVarWrites` and `scriptVarUseFollowsDeclaration` live
+  in `module-binding-script-var.ts`; the class-instance, vec and native-buffer
+  certifiers import them from there. The class-instance verdict keeps its
+  per-declaration cache. In `module-bindings.ts` the class-instance and vec
+  use-site checks are one `certifiedUse` test.
+- **Rows**: the four dynamic keys (`"01"`, `"1"`, `" 1"`, `"-0"`) and the
+  string parameter refuse at select; `=== undefined`, `typeof a[i]` and an
+  expando passed to a dynamic parameter claim and run.
+
+Re-measured after round 2 (base: lever L2 + main `6d723c6949` with #7176
+merged locally; head: lever V after round 2, same overlay; neither pushed), on
+the 177 files round 1 claimed plus the seeded random 200:
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, 177 set | 0 → 177 (**+177**) | 0 → 177 (+177) |
+| IR-only files lost / new post-claim errors | 0 / 0 | 0 / 0 |
+| binaries changed | 177, each a newly claimed `<module-init>` | 177 |
+| random 200 | 0 changes (5 / 4 IR-only both sides) | 0 changes |
+| pass → fail on the 177 | 0 (177/177 pass on both sides) | 0 |
 
 ### Follow-ups
 
