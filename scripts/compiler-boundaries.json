@@ -5741,6 +5741,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/expressions/eval-script.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7106",
+      "nextBoundary": "Eval-source analysis (parse, early errors, provider-owned declarations) shared by legacy and the IR selector; moves to the front end with the rest of the eval-source analysis once it no longer needs CodegenContext."
+    },
+    {
       "path": "src/codegen/expressions/eval-source.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

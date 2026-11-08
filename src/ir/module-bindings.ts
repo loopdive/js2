@@ -1641,8 +1641,12 @@ function writeValueMatches(
 ): boolean {
   const valueExpr = unwrapParens(value);
   // (#7106) The script dynamic home accepts any value: the IR lowers it to the
-  // dynamic carrier or refuses the unit when it has no boxing producer.
-  if (targetKind.kind === "dynamic" && scriptVarHomeOf(declaration, options) === "dynamic") return true;
+  // dynamic carrier or refuses the unit when it has no boxing producer. A bare
+  // `null` is the exception the builder refuses at the write (from-ast's `null`
+  // arm: `nullValueAdmissible` has no dynamic carrier for it). #7127 lowers it;
+  // when that lands, this refusal goes.
+  if (targetKind.kind === "dynamic" && scriptVarHomeOf(declaration, options) === "dynamic")
+    return valueExpr.kind !== ts.SyntaxKind.NullKeyword;
   if (targetKind.kind === "dynamic") {
     // The current IR boxing producer accepts exactly the three primitive
     // families. Object/wrapper initializers still receive the same widened

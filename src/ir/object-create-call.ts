@@ -114,12 +114,13 @@ export function objectCreateDescriptorMap(
 const inKeysByUnit = new WeakMap<ts.Node, boolean>();
 
 /**
- * Every `in` under the call's enclosing unit (its function, or the source
+ * Every `in` under the enclosing unit of `expr` (its function, or the source
  * file for `<module-init>`), nested functions included, has a string-literal
  * key that `%Object.prototype%` does not own: an own-key probe, which the
- * native `in` answers for an open `$Object` exactly as legacy does.
+ * native `in` answers for an open `$Object` exactly as legacy does. Shared
+ * with the #7280 empty-literal carrier, which builds the same object.
  */
-function unitInKeysAreOwnOnly(expr: ts.CallExpression): boolean {
+export function unitInKeysAreOwnOnly(expr: ts.Node): boolean {
   let unit: ts.Node = expr.getSourceFile();
   for (let node: ts.Node | undefined = expr.parent; node; node = node.parent) {
     if (ts.isFunctionLike(node)) {

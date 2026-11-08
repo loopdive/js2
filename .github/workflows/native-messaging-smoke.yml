@@ -42,17 +42,15 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # v46 is what the example was verified against; it supports the GC /
+      # function-references / tail-call / exceptions proposals the module uses
+      # via the explicit -W flags the smoke script enables. (Do NOT bump to
+      # all-proposals: it turns on stack-switching, which these modules don't use.)
       - name: Install wasmtime (pinned)
-        run: |
-          # Pin a current release for reproducibility. v46 is what the example
-          # was verified against; it supports the GC / function-references /
-          # tail-call / exceptions proposals the module uses via the explicit
-          # -W flags the smoke script enables. (Do NOT bump to all-proposals:
-          # it turns on stack-switching, which these modules don't use.)
-          WASMTIME_VERSION=v46.0.1
-          curl -L "https://github.com/bytecodealliance/wasmtime/releases/download/${WASMTIME_VERSION}/wasmtime-${WASMTIME_VERSION}-x86_64-linux.tar.xz" \
-            | tar xJ
-          echo "$PWD/wasmtime-${WASMTIME_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+        uses: ./.github/actions/setup-wasmtime
+        with:
+          version: "46.0.1"
+          sha256: "9ae0b17ea298bcc52277a8208d6ab7fae8e1a89579672f9d82f9d86c116edb62"
 
       - name: Verify wasmtime is on PATH
         run: wasmtime --version
