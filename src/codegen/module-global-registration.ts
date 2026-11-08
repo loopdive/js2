@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { GlobalDef, Instr, ValType } from "../ir/types.js";
+import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
 import type { CodegenContext } from "./context/types.js";
@@ -181,6 +182,20 @@ export function objectLiteralReadsAmbientRedeclaredVar(ctx: CodegenContext, expr
     (p) =>
       (ts.isPropertyAssignment(p) && readsAmbientRedeclaringScriptVar(ctx, p.initializer)) ||
       (ts.isShorthandPropertyAssignment(p) && readsAmbientRedeclaringScriptVar(ctx, p.name)),
+  );
+}
+
+/**
+ * (#7106 lever L) Is `decl` a name of a script's top-level `for` head `var`
+ * list? The IR shares it as a module binding (the resolver's
+ * `isModuleBindingDeclaration`), so `registerModuleGlobal` observes its slot. A
+ * top-level statement's own declaration is observed by the source-order pass.
+ */
+export function isScriptForHeadVar(decl: ts.VariableDeclaration): boolean {
+  return (
+    !ts.isExternalModule(decl.getSourceFile()) &&
+    !ts.isVariableStatement(decl.parent.parent) &&
+    isModuleInitVarList(decl.parent)
   );
 }
 

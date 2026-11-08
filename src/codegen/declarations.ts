@@ -194,6 +194,7 @@ import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
+  isScriptForHeadVar,
   prepareModuleTdzGlobals,
   prepareSelfImportingModuleTdzGlobals,
   registerModuleGlobal,
@@ -3532,9 +3533,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) return;
     for (const decl of list.declarations) {
       if (ts.isIdentifier(decl.name)) {
-        const varType = moduleVarDeclType(decl);
-        const wasmType = moduleGlobalWasmType(decl, varType);
-        registerModuleGlobal(ctx, decl.name.text, wasmType);
+        const wasmType = moduleGlobalWasmType(decl, moduleVarDeclType(decl));
+        registerModuleGlobal(ctx, decl.name.text, wasmType, isScriptForHeadVar(decl) ? decl : undefined);
       } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
         registerBindingNames(decl.name);
       }
