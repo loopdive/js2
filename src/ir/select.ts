@@ -97,7 +97,13 @@ import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
-import { emptyObjectLiteralBinding, isOpenCarrierUse, type EmptyObjectLiteralBinding } from "./empty-object-literal.js";
+import {
+  emptyObjectLiteralBinding,
+  isOpenCarrierUse,
+  openCarrierDefinePlan,
+  type EmptyObjectLiteralBinding,
+} from "./empty-object-literal.js";
+import * as dynamicHome from "./dynamic-home-open-object.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
@@ -8384,6 +8390,7 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
     return trackedModuleInfluenceIsBoolean(candidate.whenTrue) && trackedModuleInfluenceIsBoolean(candidate.whenFalse);
   }
   if (ts.isCallExpression(candidate)) {
+    if (dynamicHomeOwnPropertyMethod(candidate) !== undefined) return true; // (#7335) an i32 boolean test
     if (expressionIsModuleBindingRootedCall(candidate)) return false;
     return currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "boolean";
   }
@@ -12950,6 +12957,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return true;
       }
+      if (admitDynamicHomeOwnPropertyCall(expr)) return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
       if (expressionTouchesScalarModuleBinding(expr.expression.expression)) {
         if (!isExactF64ScalarToStringCall(expr)) {
           return shapeNo("expr-module-scalar-method", expr);
@@ -13604,10 +13612,7 @@ function isDynamicHomeOpenCarrier(literal: ts.ObjectLiteralExpression): boolean 
   if (
     !ts.isVariableDeclaration(decl) ||
     decl.initializer !== literal ||
-    !ts.isIdentifier(decl.name) ||
-    !isModuleInitVarList(decl.parent) ||
-    currentModuleBindingResolver?.(decl.name)?.valueKind.kind !== "dynamic" ||
-    currentSelectionOptions?.isOpenObjectBinding?.(decl) !== true ||
+    !isDynamicHomeOpenCarrierDeclaration(decl) ||
     !unitInKeysAreOwnOnly(literal)
   ) {
     return false;
@@ -13616,16 +13621,68 @@ function isDynamicHomeOpenCarrier(literal: ts.ObjectLiteralExpression): boolean 
   return true;
 }
 
-/** (#7128 S1) A U1 define on an admitted open-carrier binding, in the current subject's own body. */
-function isOpenCarrierDefine(call: ts.CallExpression): boolean {
-  const target = call.arguments[0];
+/** (#7280 S1) The declaration half of {@link isDynamicHomeOpenCarrier}; (#7335) its define and own-property arms ask it too. */
+function isDynamicHomeOpenCarrierDeclaration(decl: ts.VariableDeclaration): boolean {
   return (
-    target !== undefined &&
-    ts.isIdentifier(target) &&
-    currentOpenCarrierNames.has(target.text) &&
-    enclosingProjectionOwner(call) === currentSelectionSubject
+    ts.isIdentifier(decl.name) &&
+    isModuleInitVarList(decl.parent) &&
+    currentModuleBindingResolver?.(decl.name)?.valueKind.kind === "dynamic" &&
+    currentSelectionOptions?.isOpenObjectBinding?.(decl) === true
   );
 }
+
+/**
+ * (#7128 S1) A U1 define on an admitted open-carrier binding, in the current
+ * subject's own body; (#7335) or a U1 define on a #7280 dynamic-home carrier
+ * whose every use is served (`dynamic-home-open-object.ts`), from any unit,
+ * since that binding holds the one `$Object` throughout.
+ */
+function isOpenCarrierDefine(call: ts.CallExpression): boolean {
+  const target = call.arguments[0];
+  if (target === undefined || !ts.isIdentifier(target)) return false;
+  if (currentOpenCarrierNames.has(target.text) && enclosingProjectionOwner(call) === currentSelectionSubject)
+    return true;
+  return isOpenCarrierUse(target, isAmbientObjectDefineProperty) && dynamicHome.isReference(target, DYNAMIC_HOME_QUERY);
+}
+
+/**
+ * (#7335) The method of `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on
+ * a dynamic-home open object, where the lane builds the own-property provider
+ * the certified uncurried aliases lower to (#7106 S1g).
+ */
+function dynamicHomeOwnPropertyMethod(call: ts.CallExpression): dynamicHome.OwnPropertyMethod | undefined {
+  if (
+    !currentDynamicRuntimeBuildable ||
+    currentSelectionOptions?.supportsBackendCapability?.("native-own-property-test") !== true
+  ) {
+    return undefined;
+  }
+  return dynamicHome.ownPropertyMethod(call, DYNAMIC_HOME_QUERY);
+}
+
+/** (#7335) Admit a {@link dynamicHomeOwnPropertyMethod} call, recording its method for the lowering. */
+function admitDynamicHomeOwnPropertyCall(call: ts.CallExpression): boolean {
+  const method = dynamicHomeOwnPropertyMethod(call);
+  if (method === undefined) return false;
+  admittedOwnPropertyCalls.set(call, method);
+  return true;
+}
+
+const admittedOwnPropertyCalls = new WeakMap<ts.CallExpression, dynamicHome.OwnPropertyMethod>();
+
+/** (#7335) The own-property method of a certified `o.<method>(k)` call on a dynamic-home open object. */
+export function admittedOwnPropertyCallMethod(call: ts.CallExpression): dynamicHome.OwnPropertyMethod | undefined {
+  return admittedOwnPropertyCalls.get(call);
+}
+
+/** (#7335) The selector state a #7280 dynamic-home carrier's uses are judged against, read live. */
+const DYNAMIC_HOME_QUERY: dynamicHome.DynamicHomeQuery = {
+  get resolve() {
+    return currentModuleBindingResolver;
+  },
+  isCarrier: (decl) => isDynamicHomeOpenCarrierDeclaration(decl),
+  isAmbientDefineProperty: (call) => isAmbientObjectDefineProperty(call),
+};
 
 /** `Object.defineProperty(…)` on the ambient `Object`. */
 function isAmbientObjectDefineProperty(call: ts.CallExpression): boolean {

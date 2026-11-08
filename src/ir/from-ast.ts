@@ -329,8 +329,10 @@ import {
   peelAssignmentChain,
   IR_MATH_METHOD_TABLE,
   admittedEmptyLiteralIsOpenCarrier,
+  admittedOwnPropertyCallMethod,
 } from "./select.js";
 import { openCarrierDefinePlan, type DataDescriptorField } from "./empty-object-literal.js";
+import type { OwnPropertyMethod } from "./dynamic-home-open-object.js";
 import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
@@ -7728,6 +7730,8 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
+  const ownPropertyMethod = admittedOwnPropertyCallMethod(expr);
+  if (ownPropertyMethod !== undefined) return lowerOwnPropertyMethodCall(expr, ownPropertyMethod, cx);
   if (cx.resolver?.preparedObjectCreateCall?.(expr) === "null") {
     if (!isDirectObjectCreateNullCall(expr))
       throw new IrInvariantError(
@@ -8308,6 +8312,17 @@ function lowerAliasCarrierOperands(args: readonly ts.Expression[], aliasName: st
     carriers.push(value);
   }
   return carriers;
+}
+
+/**
+ * (#7335) `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on a
+ * selector-certified dynamic-home open object: both operands as carriers, then
+ * the lane's own-property provider, as the uncurried aliases lower.
+ */
+function lowerOwnPropertyMethodCall(expr: ts.CallExpression, method: OwnPropertyMethod, cx: LowerCtx): IrValueId {
+  const receiver = (expr.expression as ts.PropertyAccessExpression).expression;
+  const [object, key] = lowerAliasCarrierOperands([receiver, expr.arguments[0]!], method, cx);
+  return cx.builder.emitDynOwnProperty(object!, key!, method);
 }
 
 /**
@@ -9344,7 +9359,9 @@ function lowerObjectDefinePropertyCall(expr: ts.CallExpression, cx: LowerCtx): I
  */
 function lowerOpenCarrierDefineProperty(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
   const plan = openCarrierDefinePlan(expr);
-  const object = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
+  let object = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
+  // (#7335) A dynamic-home open object is read from its `dynamic` slot, whose carrier is that externref.
+  if (cx.builder.typeOf(object).kind === "dynamic") object = cx.builder.emitCoerceToExternref(object);
   if (plan === null || asVal(cx.builder.typeOf(object))?.kind !== "externref") {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
