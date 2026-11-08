@@ -1,0 +1,106 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+//
+// #7106 A3 — write-precise runtime-eval liveness. A literal eval source makes a
+// top-level function live (routed through its global, kept off the IR) only
+// when it names it (a write, or a call: eval code reaches the function through
+// that live binding); a computed source still makes every function live. With
+// liveness precise, the harness's function objects (`assert`, `compareArray`,
+// `Test262Error`) keep their IR value route under the push.
+
+import { describe, expect, it } from "vitest";
+
+import { compile } from "../src/index.js";
+import { compileHarnessBody } from "./helpers/harness-module-init.js";
+
+async function outcomes(source: string) {
+  const result = await compile(source, { target: "standalone", trackIrOutcomes: true, fileName: "test.ts" });
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(result.irPostClaimErrors ?? []).toEqual([]);
+  return new Map((result.irOutcomes ?? []).map((outcome) => [outcome.displayName ?? outcome.name, outcome]));
+}
+
+const program = (evalCall: string) => `
+function f(): number { return 1; }
+function g(): number { return f(); }
+${evalCall}
+export function run(): number { return g(); }
+`;
+
+describe("#7106 A3 — write-precise runtime-eval liveness", () => {
+  it("leaves a function a literal source does not name static (and `(0, eval)` is no escaped value)", async () => {
+    const byName = await outcomes(program('(0, eval)("var unrelated = 1; unrelated + 1");'));
+    for (const name of ["f", "g", "run"]) expect(byName.get(name)?.irBodyEmitted, name).toBe(true);
+  });
+
+  it.each([
+    // (#7163 merge-group regression, 15.3.5.4_2-57gs) a call names the function:
+    // a non-live `f` dropped `eval("f()")`'s call
+    ["an indirect-eval call", '(0, eval)("f()");'],
+    ["a direct-eval call", 'eval("f();");'],
+    ["an assignment", '(0, eval)("f = function () { return 2; }");'],
+    ["an Annex B block function", '(0, eval)("{ function f() { return 2; } }");'],
+    ["a string-keyed global write", "(0, eval)(\"this['f'] = function () { return 2; }\");"],
+    ["a property-defining call", "(0, eval)(\"Object.defineProperty(this, 'f', { value: 2 })\");"],
+    ["nested dynamic code that writes", "(0, eval)(\"eval('f = function () { return 2; }')\");"],
+    ["nested computed code", '(0, eval)("eval(x)");'],
+    ["a computed source", 'var src = "1"; (0, eval)(src);'],
+    ["an escaped eval value", 'var e = eval; e("1");'],
+    // (#7146 review) a fragment that reaches eval / Function without naming them
+    ["a function's constructor", "(0, eval)(\"(function () {}).constructor('f = function () { return 2; }')()\");"],
+    ["a constructor chain", "(0, eval)(\"[].constructor.constructor('f = function () { return 2; }')()\");"],
+    [
+      "the generator constructor",
+      "(0, eval)(\"Object.getPrototypeOf(function* () {}).constructor('f = function () { return 2; }')().next()\");",
+    ],
+    ["a string-keyed eval", "(0, eval)(\"this['eval']('f = function () { return 2; }')\");"],
+    ["a computed eval key", "(0, eval)(\"this['ev' + 'al']('f = function () { return 2; }')\");"],
+    ["a string-keyed Function", "(0, eval)(\"this['Function']('f = function () { return 2; }')()\");"],
+    // (#7146 review round 2) a computed key and `%Function%` reached through any `.constructor` read
+    ["a variable member key", "(0, eval)(\"var k = 'f'; this[k] = function () { return 2; }\");"],
+    [
+      "a stored constructor",
+      "(0, eval)(\"var c = (function () {}).constructor; c('f = function () { return 2; }')()\");",
+    ],
+    ["Object.constructor", "(0, eval)(\"var c = Object.constructor; c('f = function () { return 2; }')()\");"],
+    ["a constructor called through call", "(0, eval)(\"[].constructor.constructor.call(null, 'f = 2')()\");"],
+    ["a constructor called through apply", "(0, eval)(\"(function () {}).constructor.apply(null, ['f = 2'])()\");"],
+    ["a constructed constructor", "(0, eval)(\"new (Object.constructor)('f = function () { return 2; }')()\");"],
+    ["a member delete", '(0, eval)("delete this.f");'],
+    ["a getter definition", "(0, eval)(\"this.__defineGetter__('f', function () { return 2; })\");"],
+    // (#7146 review round 3) `constructor` named without a literal `.constructor`
+    ["a concatenated key", "(0, eval)(\"var c = (function () {})['constr' + 'uctor']; c('f = 2')()\");"],
+    ["Reflect.get", "(0, eval)(\"var c = Reflect.get(function () {}, 'constructor'); c('f = 2')()\");"],
+    ["a destructured constructor", "(0, eval)(\"var { constructor: c } = function () {}; c('f = 2')()\");"],
+    ["a with-scoped constructor", "(0, eval)(\"with (function () {}) { constructor('f = 2')(); }\");"],
+    [
+      "a constructor descriptor",
+      "(0, eval)(\"Object.getOwnPropertyDescriptor(Object.getPrototypeOf(function () {}), 'constructor').value('f = 2')()\");",
+    ],
+    // the same reaches in the program itself
+    ["globalThis.eval", 'globalThis.eval("f = function () { return 2; }");'],
+    ['globalThis["eval"]', 'globalThis["eval"]("f = function () { return 2; }");'],
+    ["a program-level function constructor", '(function () {}).constructor("f = function () { return 2; }")();'],
+  ])("makes the function live for %s", async (_, evalCall) => {
+    const byName = await outcomes(program(evalCall));
+    expect(byName.get("g")?.irBodyEmitted).toBe(false);
+    expect(byName.get("g")?.detail).toContain("eval-visible-binding");
+  });
+
+  it("keeps the harness function objects on the IR under the push", async () => {
+    const result = await compileHarnessBody(
+      'var e = new Test262Error("m"); (0, eval)("1"); assert.sameValue(e.constructor, Test262Error);',
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    for (const name of ["assert", "compareArray", "Test262Error"]) {
+      expect(result.irOutcomes?.find((outcome) => outcome.displayName === name)?.irBodyEmitted, name).toBe(true);
+    }
+  });
+
+  it("keeps a self-guarded constructor evaluated code may rebind on the fnctor path", async () => {
+    const result = await compileHarnessBody('(0, eval)("Test262Error = function () {};");');
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    expect(result.irOutcomes?.find((outcome) => outcome.displayName === "Test262Error")?.irBodyEmitted).toBe(false);
+  });
+});
