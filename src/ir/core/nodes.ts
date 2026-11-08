@@ -1828,7 +1828,16 @@ export interface IrSlotDef {
    * empty initializer and `s + rhs` owned appends (the verifier holds the
    * producer to that), so a backend may keep it as buffer locals.
    */
-  readonly stringBuilder?: true;
+  readonly stringBuilder?: IrStringBuilderRole;
+}
+
+export interface IrStringBuilderRole {
+  /**
+   * (#1761) The loop appends at most `unitsPerIter` units on each of
+   * `ceil(bound)` iterations; the f64 `boundSlot` holds the bound, written
+   * before the builder, so the buffer is sized once and never grows.
+   */
+  readonly presize?: { readonly boundSlot: number; readonly unitsPerIter: number };
 }
 
 // ---------------------------------------------------------------------------

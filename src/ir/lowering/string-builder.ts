@@ -6,12 +6,17 @@
  */
 import type { BackendEmitter } from "../backend/emitter.js";
 import type { StringBuilderEmitter } from "../backend/string-contract.js";
-import type { StringBuilderScratch, StringBuilderSlots } from "../../backend/wasmgc/lowering/wasm-string-builder.js";
+import type {
+  StringBuilderPresize,
+  StringBuilderScratch,
+  StringBuilderSlots,
+} from "../../backend/wasmgc/lowering/wasm-string-builder.js";
 import type { IrInstr, IrSlotDef, IrValueId } from "../core/nodes.js";
 import type { ValType } from "../types.js";
 
 export interface IrStringBuilderLocals {
   readonly slots: StringBuilderSlots;
+  readonly presize: StringBuilderPresize | undefined;
   readonly scratch: StringBuilderScratch;
 }
 
@@ -41,23 +46,26 @@ export function createStringBuilderLowering<S>(
   const builders = new Map<number, IrStringBuilderLocals>();
   const i32: ValType = { kind: "i32" };
   for (const slot of slotDefs) {
-    if (!slot.stringBuilder) continue;
+    const role = slot.stringBuilder;
+    if (!role) continue;
     const local = (suffix: string, type: ValType): number => allocLocal(`$slot_${slot.name}$${suffix}`, type);
+    const [buf, len, cap] = [local("buf", builder.bufType), local("len", i32), local("cap", i32)];
+    const presize = role.presize && {
+      bound: slotLocal(role.presize.boundSlot),
+      boundTmp: local("boundTmp", i32),
+      unitsPerIter: role.presize.unitsPerIter,
+    };
     builders.set(slot.index, {
-      slots: {
-        buf: local("buf", builder.bufType),
-        len: local("len", i32),
-        cap: local("cap", i32),
-        mat: slotLocal(slot.index),
-        presized: false,
-      },
+      slots: { buf, len, cap, mat: slotLocal(slot.index), presized: presize !== undefined },
+      presize,
       scratch: {
         needed: local("needed", i32),
-        oldBuf: local("oldBuf", builder.bufType),
+        oldBuf: presize ? undefined : local("oldBuf", builder.bufType),
         rhs: local("rhs", builder.flatType),
         rhsLen: local("rhsLen", i32),
         cu: local("cu", i32),
         receiver: local("receiver", builder.flatType),
+        receiverAny: local("receiverAny", builder.stringType),
         index: local("index", i32),
       },
     });
@@ -82,7 +90,7 @@ export function tryEmitStringBuilderWrite<S>(
   const locals = cx.builders.get(slotIndex);
   if (!locals) return false;
   const def = cx.inlineDef(value);
-  if (def?.kind === "string.const") cx.builder.init(locals.slots, out);
+  if (def?.kind === "string.const") cx.builder.init(locals.slots, locals.presize, out);
   else if (def?.kind === "string.concat") emitStringBuilderAppend(locals, def.rhs, cx, out);
   else throw new Error("ir/lower: a string-builder slot write is neither its initializer nor an owned append");
   return true;
