@@ -38,11 +38,23 @@ export function irExternCallableProviderRef(instr: IrInstr): IrFuncRef | undefin
  * Prepared-component sealing can then prove the same Program ABI import that
  * lowering will consume. Repeated preparation is idempotent and rejects a
  * stale or conflicting attachment.
+ *
+ * (#7106 lever R) `regExpProvider` is a host-free lane's in-module
+ * construction of an `extern.regex`; without it the host `RegExp_new` path
+ * keeps its string dependencies and stays unattached.
  */
-export function attachIrExternSupport(fn: IrFunction): IrFunction {
+export function attachIrExternSupport(
+  fn: IrFunction,
+  regExpProvider?: (pattern: string, flags: string) => IrFuncRef,
+): IrFunction {
   const mapBuffer = (buffer: readonly IrInstr[]): readonly IrInstr[] => mapArray(buffer, mapInstr);
   const mapInstr = (instr: IrInstr): IrInstr => {
     const nested = mapNestedBuffers(instr, mapBuffer);
+    if (nested.kind === "extern.regex") {
+      return regExpProvider && !nested.provider
+        ? { ...nested, provider: regExpProvider(nested.pattern, nested.flags) }
+        : nested;
+    }
     if (
       nested.kind !== "extern.new" &&
       nested.kind !== "extern.call" &&

@@ -17,7 +17,8 @@
  * Writes/updates (only for inputs that were passed and exist):
  *   <runs-dir>/editions-index.json            — [{ timestamp, gitHash, editions: [{edition, pass, total}] }]
  *   <runs-dir>/standalone-editions-index.json — same shape, host-free lane (#4362)
- *   <runs-dir>/standalone-index.json          — [{ timestamp, gitHash, pass, fail, ce, skip, total }]
+ *   <runs-dir>/standalone-index.json          — [{ timestamp, gitHash, pass, fail, ce, skip, total, ir_only_pass? }]
+ *     (`ir_only_pass`: passes compiled with no legacy unit, when the report measured it)
  *
  * Best-effort: each file is appended independently, and any failure (missing
  * or malformed input) is logged and skipped rather than failing the process —
@@ -128,12 +129,13 @@ function appendStandalone(runsDir, reportPath, gitHash) {
       ce: Number(s.compile_error || 0),
       skip: Number(s.skip || 0),
       total: Number(s.total || 0),
+      ...(Number.isFinite(s.ir_only_pass) ? { ir_only_pass: s.ir_only_pass } : {}),
     };
     if (entry.total <= 0) return;
     appendEntry(
       join(runsDir, "standalone-index.json"),
       entry,
-      (last, next) => last.pass === next.pass && last.total === next.total,
+      (last, next) => last.pass === next.pass && last.total === next.total && last.ir_only_pass === next.ir_only_pass,
     );
   } catch (err) {
     console.log(`append-run-history: standalone-index.json append failed (non-fatal): ${err.message}`);
