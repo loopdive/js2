@@ -19,8 +19,8 @@ import { irWrapperSymbol, irWrapperSymbolIsNameable, parseIrWrapperSymbol } from
 
 const IR_ARRAY_BORROW_PREFIX = "__ir_arr_borrow_";
 
-export interface ArrayPrototypeBorrowCall {
-  /** The `Array` identifier — callers settle shadowing and ambient-ness. */
+export interface PrototypeBorrowCall {
+  /** The constructor identifier — callers settle shadowing and ambient-ness. */
   readonly root: ts.Identifier;
   readonly method: string;
   /** The borrowed receiver: `.call`'s first argument. */
@@ -30,12 +30,15 @@ export interface ArrayPrototypeBorrowCall {
 }
 
 /**
- * Match the exact `Array.prototype.<m>.call(recv, …args)` shape: a `.call`
- * on a `.prototype.<m>` read off the identifier `Array`, at least the receiver
- * argument, no spread, a nameable (method, arity). Pure syntax — no scope,
- * ambient or lane question is answered here.
+ * Match the exact `<constructor>.prototype.<m>.call(recv, …args)` shape: a
+ * `.call` on a `.prototype.<m>` read off the identifier `constructorName`, at
+ * least the receiver argument, no spread. Pure syntax — no scope, ambient or
+ * lane question is answered here. (#7106 lever P) `String`'s borrow reads it too.
  */
-export function matchArrayPrototypeBorrowCall(expr: ts.CallExpression): ArrayPrototypeBorrowCall | undefined {
+function matchPrototypeBorrowCall(
+  expr: ts.CallExpression,
+  constructorName: "Array" | "String",
+): PrototypeBorrowCall | undefined {
   const callee = expr.expression;
   if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "call") return undefined;
   const methodAccess = callee.expression;
@@ -43,12 +46,31 @@ export function matchArrayPrototypeBorrowCall(expr: ts.CallExpression): ArrayPro
   const proto = methodAccess.expression;
   if (!ts.isPropertyAccessExpression(proto) || proto.name.text !== "prototype") return undefined;
   const root = proto.expression;
-  if (!ts.isIdentifier(root) || root.text !== "Array") return undefined;
+  if (!ts.isIdentifier(root) || root.text !== constructorName) return undefined;
   const [receiver, ...args] = expr.arguments;
   if (receiver === undefined || expr.arguments.some(ts.isSpreadElement)) return undefined;
-  const method = methodAccess.name.text;
-  if (!irWrapperSymbolIsNameable(method, args.length)) return undefined;
-  return { root, method, receiver, args };
+  return { root, method: methodAccess.name.text, receiver, args };
+}
+
+/**
+ * (#7106 lever P) The `String` borrow off the ambient `String`: no local of
+ * that name in `locals`, and `isAmbient` (the caller's view of the global
+ * binding) takes the root for the realm's constructor.
+ */
+export function ambientStringPrototypeBorrow(
+  expr: ts.CallExpression,
+  locals: { has(name: string): boolean },
+  isAmbient: (root: ts.Identifier) => boolean,
+): PrototypeBorrowCall | undefined {
+  if (locals.has("String")) return undefined;
+  const borrow = matchPrototypeBorrowCall(expr, "String");
+  return borrow !== undefined && isAmbient(borrow.root) ? borrow : undefined;
+}
+
+/** The `Array` borrow, for a (method, arity) the wrapper symbol can name. */
+export function matchArrayPrototypeBorrowCall(expr: ts.CallExpression): PrototypeBorrowCall | undefined {
+  const borrow = matchPrototypeBorrowCall(expr, "Array");
+  return borrow && irWrapperSymbolIsNameable(borrow.method, borrow.args.length) ? borrow : undefined;
 }
 
 export function irArrayPrototypeBorrowHelperName(method: string, arity: number): string {
