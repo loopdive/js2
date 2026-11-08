@@ -6798,3 +6798,81 @@ loc, func (also against origin/main `5ef8f0aae5`), coercion, oracle, dead
 exports, typecheck, import cycles, standalone arms, IR layering, flat dir;
 compiler boundaries as on main. Tests: lever-l, var-pattern-heads,
 for-head-destructuring, script-var, uninitialized-var: 227/227.
+
+## ES5 lever P — primitive wrappers and statics (2026-11-08, root; claim on #6583)
+
+The `claim-issue.mjs --allocate` scan refused ("open-PR id scan DEGRADED",
+exit 6), so per the brief this section lives here, not in its own issue.
+
+### Census (origin/main `4d5478b37c`, standalone, body-level)
+
+Method: the body-bounds rewrite (`__ir_stub(…)` under a local-only selector
+flag that lowers to a dynamic `undefined`) over the 1,431 ES5 files carrying a
+`new String/Number/Boolean` or a `String.*`/`Number.*`/`Boolean.*` member
+chain, minus files already IR-only. **141** files become IR-only with every
+site stubbed. Split by sub-shape (each stubbed alone):
+
+| sub-shape | files IR-only alone | example |
+|---|---|---|
+| `String.prototype.<m>.call(r, …)` (`pcall`; all 41 are `trim`) | **37** | `String/prototype/trim/15.5.4.20-1-3.js` |
+| `new X(v)` as a value (`new`) | 30 | `String/15.5.5.5.2-1-1.js` |
+| `X.prototype…` other than `.call` (`Number.prototype.toString()`) | 14 | `Number/prototype/toString/…` |
+| static calls (`Number.hasOwnProperty`, `String.fromCharCode`) | 8 | |
+| static reads (`Number.NaN`, `±_INFINITY`) | 0 alone; 39 need `new` + `Number.prototype` + the reads together | |
+| `new` + `pcall` together | 71 (= 30 + 37 + 4) | |
+
+### Scope of this slice: `String.prototype.<m>.call(<primitive>, …)` (P1)
+
+`String.prototype.m.call(r, …a)` with `r` a proven string, number or boolean
+is `ToString(r).m(…a)` (§22.1.3: every ES5 String method starts with
+RequireObjectCoercible + ToString on `this`; a primitive is never nullish).
+The IR already lowers both halves: `String(v)` of a primitive
+(`lowerPrimitiveToString`) and a string-method call from the one surface
+(`string-method-surface.ts` → `lowerStringMethodCall`). The arm composes them;
+no runtime, provider or host import is added.
+
+- **Module.** The borrow shape becomes one matcher keyed by constructor:
+  `matchPrototypeBorrowCall(expr, "Array" | "String")` in
+  `src/ir/array-prototype-borrow-call.ts`. `matchArrayPrototypeBorrowCall`
+  keeps its wrapper-name gate on top of it.
+- **Selection** (`select.ts`, beside the Array borrow): the ambient `String`
+  (`selectorSeesAmbientStringBinding`), a receiver whose proven family is
+  string, number or boolean, and the method's plan through the existing
+  `stringMethodSelection` (now taking the argument list), so a method is
+  claimed exactly when the backend has a row. A nullish, dynamic, object or
+  wrapper receiver refuses at selection (`expr-string-borrow-receiver`).
+- **Lowering** (`from-ast.ts`): the receiver through the `String(v)` arm's
+  primitive conversion, then `lowerStringMethodCall` with the remaining
+  arguments.
+- **Duplicate removed.** The Array-only borrow walk becomes the shared,
+  constructor-keyed matcher; the `String(v)` primitive conversion is factored
+  out of `tryLowerAmbientStringToStringCall` and reused, not copied.
+- **Acceptance.**
+  - The `trim.call` files with primitive receivers become IR-only on
+    standalone; 0 pass→fail, 0 files lost, 0 units newly legacy, 0 post-claim
+    errors on the census set plus 200 random ES5 files, both lanes; gc and
+    playground bytes identical where nothing new is claimed.
+  - `tests/issue-7106-lever-p.test.ts`: claimed rows (string, number,
+    boolean, `-0`, `1e21` receivers; `trim`, `charAt`, `indexOf`, `slice`)
+    equal JS on both lanes; refused rows (`undefined`/`null`/object/wrapper
+    receiver, a method without a row, `.apply`) stay legacy and correct.
+  - Code quality: no second borrow matcher and no second primitive-ToString;
+    the new select and from-ast arms are each one function next to their
+    Array-borrow sibling, with no growth grant beyond the two arms.
+
+### Not in this slice, and why
+
+- **`new X(v)` as a value (30 files).** Measured by admitting the wrapper and
+  boxing it into the dynamic carrier: the dynamic runtime answers wrong for a
+  wrapper in three places the census files use — an index read
+  (`new String("abc")[1]` is `undefined`), a loose `==` against a string
+  (`false`), and a prototype method call (`(new Number(1)).toFixed()` throws
+  "not a function"). Claiming the value is only exact once each use is
+  certified (lever V's use-site pattern for a wrapper-holding script var) or
+  those dynamic ops learn the wrapper; both are their own slice.
+- **`Number.prototype` as a value and the static reads (39 + 14 files).** They
+  need the intrinsic-singleton value provider of #7294; no IR row reads a
+  builtin prototype object today.
+- **Static calls (8 files).** `Number.hasOwnProperty(…)` on the constructor
+  object needs the same singleton; `String.fromCharCode` (2) is a follow-up
+  row on the string surface.
