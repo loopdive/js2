@@ -49,6 +49,8 @@ import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./sel
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import {
   staticStringMethodArgument,
+  staticStringNumber,
+  staticStringPattern,
   type StringArgumentDefault,
   type StringMethodParameter,
   type StringMethodPlan,
@@ -9818,6 +9820,8 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const args = ts.factory.createNodeArray(stringBorrow.args);
     const result = lowerStringMethodCall(stringBorrow.method, receiver, stringBorrow.receiver, args, cx);
     // invariant (producer-promise): selection claimed the borrow only for a method with a surface row.
+    // `lowerStringMethodCall` also declines a `charCodeAt` on a `const` substring receiver, but the
+    // borrow's receiver proof (`provenIrFamily`) never proves a variable read, so no such borrow is claimed.
     if (result === null)
       throw new IrInvariantError(
         "selection-preparation-mismatch",
@@ -10586,6 +10590,18 @@ function lowerStringMethodArgument(
   if (literal === "undefined" && (!textual || parameter.omitted !== undefined)) {
     return { value: omittedStringMethodArgument(parameter.omitted ?? "zero", recv, receiverExpr, cx) };
   }
+  if (parameter.role === "pattern") {
+    const pattern = staticStringPattern(arg);
+    // invariant (selection): a `pattern` other than `undefined` has a static text.
+    if (pattern === undefined) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: String.${methodName} pattern`,
+      );
+    }
+    return { value: cx.builder.emitStringConst(pattern) };
+  }
   if (textual && literal !== undefined) return { value: cx.builder.emitStringConst(literal) };
   if (textual) {
     const value = lowerExpr(arg, cx, { kind: "string" });
@@ -10602,7 +10618,12 @@ function lowerStringMethodArgument(
   if (literal !== undefined) {
     return { value: cx.builder.emitConst({ kind: "i32", value: literal === "true" ? 1 : 0 }, irVal({ kind: "i32" })) };
   }
-  const numeric = lowerExpr(arg, cx, irVal({ kind: "f64" }));
+  // (#7106 lever SR) A string literal's ToNumber is a constant on the same path.
+  const literalNumber = staticStringNumber(arg);
+  const numeric =
+    literalNumber === undefined
+      ? lowerExpr(arg, cx, irVal({ kind: "f64" }))
+      : cx.builder.emitConst({ kind: "f64", value: literalNumber }, irVal({ kind: "f64" }));
   const numberType = cx.builder.typeOf(numeric);
   if (asVal(numberType)?.kind === "i32") return { value: numeric, numberType };
   const integer = cx.builder.emitUnary("i32.trunc_sat_f64_s", numeric, irVal({ kind: "i32" }));
@@ -10621,6 +10642,8 @@ function omittedStringMethodArgument(
   cx: LowerCtx,
 ): IrValueId {
   if (omitted === "space") return cx.builder.emitStringConst(" ");
+  if (omitted === "undefined") return cx.builder.emitStringConst("undefined");
+  if (omitted === "empty") return cx.builder.emitStringConst("");
   if (omitted === "length") {
     const length = cx.builder.emitStringLen(recv, inferStringEncoding(receiverExpr, cx));
     return cx.builder.emitUnary("i32.trunc_sat_f64_s", length, irVal({ kind: "i32" }));

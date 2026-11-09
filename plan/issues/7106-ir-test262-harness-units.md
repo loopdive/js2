@@ -99,6 +99,8 @@ func-budget-allow:
   # 2026-11-07 (lever W, review round 1): the unary `-`/`+` wrapper-operand arm, refusing through the shared `selectorWrapperToPrimitiveSupported` (+7)
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select.ts::collectCallGraph
+  # 2026-11-08 (lever SR, review round 1, +2): an unevaluated string-method argument adds no call edge (`isUnevaluatedStringMethodArgument`); also restates lever P's +7 indirect-route walk, whose ceiling main's baseline refresh reset
+  - src/ir/select.ts::buildLocalCallGraph
   - src/ir/select.ts::whyNotIrClaimable
   - src/codegen/index.ts::planIrOverlay
   - src/ir/integration.ts::compileIrPathFunctions
@@ -9184,3 +9186,261 @@ regressions, 4,850 passing, 20 failing, all in the known-failures baseline.
 **Tests**: lever-l2 (60), and with lever-l, var-pattern-heads,
 for-head-destructuring, script-var, script-var-reference-homes and the
 #7252/#7253/var-hoisting/binding-null-guard equivalence files: all pass.
+
+## ES5 lever SR — String receivers and arguments (plan, 2026-11-08)
+
+This folds the two census-only sections "ES5 lever P2" (branch
+`claude/7106-lever-p2`) and "ES5 lever S (string-method argument proofs)"
+(branch `claude/7106-lever-s-args`) into one lever. Neither half cleared the
+bar alone: P2 reached 13 files, S at most 19.
+
+### Census (lever P head `8af326da35`, standalone and gc)
+
+Population: the 518 ES5 files that call a String.prototype method, compiled as
+the runner does, with every refused top-level statement reporting its arm.
+**30** files have `<module-init>` as their only legacy unit and only
+argument-surface refusals, or argument refusals beside a fresh `new String(v)`
+receiver. A substitution probe stood in for the census stub: each blocked
+argument or receiver was rewritten to a form the IR already claims, and the
+file recompiled. **23** of the 30 then become IR-only on both lanes; nothing
+else in those files is refused.
+
+| shape | files | claims after the substitution |
+| --- | --- | --- |
+| fresh `new String(v)` receiver with a hoisted-`undefined` `var x` or an empty IIFE argument (`S15.5.4.{4,5,6,7,8,12,13,15}_A1_T6`, `{4,5,6}_A1_T9`) | 11 | 11 |
+| zero-argument `indexOf()`, `lastIndexOf()`, `search()` (`A1_T4`, `A1.1_T1`) | 4 | 4 |
+| `search(undefined)` on a primitive (`S15.5.4.12_A1_T7`) | 1 | 1 |
+| nullish argument to `concat` (`S15.5.4.6_A1_T7`, `_T8`) | 2 | 2 |
+| empty IIFE argument (`slice`/`substring` `_A1_T14`) | 2 | 2 |
+| string literal in a number role (`charAt("x")`, `slice("e")`, `substring("e")`) | 3 | 3 |
+| IIFE receiver `function(){return "…"}().m(null)` (`concat` `_T5`, `match` `_T5`, `search` `_T5`) | 3 | 0 (the IIFE receiver is refused; out of scope) |
+| `"lego".concat()` with no argument | 1 | skipped (see Scope) |
+| strict IIFE closure (`10.4.3-1-102-s`, `-102gs`), `replace` callback | 3 | out of scope |
+
+**Target: 23 files on each lane.**
+
+### Scope and spec
+
+Each argument conversion is the method's own, per ES2024 §22.1.3 (ES5 §15.5.4):
+
+- **Hoisted-`undefined` `var` read** (`var x;` read before or after its
+  declaration, never written): the value is `undefined`, so it converts as the
+  literal does.
+  - The proof is name-based and whole-file, like
+    `bindingIsUniqueAndNeverWritten`:
+    - every binding site of the name is an initializer-less `var` declarator;
+    - nothing writes it (no store, `delete`, `defineProperty` or member write
+      of that name, so no `this.x = v` either);
+    - no `with`, no `eval` or `Function` identifier (direct or indirect), no
+      reflective route.
+  - (Review round 1) The read must sit inside the function or script that
+    declares one of those declarators, so a read cannot fall through to an
+    undeclared global. `arguments` is never proven. A script-level declarator
+    is a global-object property, so it declines for a name the host already
+    defines (`GLOBAL_VALUE_NAMES`: `NaN`, `Array`, `console`, …) and when
+    `this` or `globalThis` escapes (`this[k] = v`, `Object.assign(this, …)`).
+  - The read has no side effect, so not evaluating it is exact.
+- **Empty IIFE argument** (`function(){}()`, no parameters, no arguments, an
+  empty body, not a generator or async): the value is `undefined` and the call
+  has no observable effect.
+- **String literal in a number role** (`position`/`length`): ToNumber of the
+  literal is a compile-time constant (`Number(text)`, StringToNumber), fed to
+  the role's existing ToIntegerOrInfinity path as an `f64` constant. NaN
+  reaches the same `i32.trunc_sat` and `lastIndexOf` NaN rule as a runtime
+  number.
+- **Zero-argument `indexOf()` / `lastIndexOf()`:** searchString is
+  ToString(undefined) = `"undefined"` (§22.1.3.9 step 3). The `search`
+  parameter of these two rows gets the omitted default `"undefined"`. An
+  explicit `undefined` already converts to the same text.
+- **`concat(v)` with one argument:** ToString(this) followed by ToString(v),
+  where `null` gives `"null"` and `undefined` / `void 0` give `"undefined"`. A
+  new row over the existing `__str_concat` helper, one `search`-role
+  (ToString) parameter, no omitted default. `concat()` with no argument is out
+  of scope: a nullish argument must not take the empty default, and one file
+  does not pay for the extra parameter rule.
+- **`search(p)` with a static pattern** (none, `undefined`, `null`, or a
+  string literal without RegExp SyntaxCharacters; review round 1 dropped
+  `true`/`false`, whose `@@search` lookup reads `Boolean.prototype`):
+  - ES2024 §22.1.3.23:
+    - for a nullish pattern, GetMethod is skipped and the RegExp is created
+      from the pattern;
+    - for a string literal, the GetMethod reads `String.prototype[@@search]`,
+      which is guarded below;
+    - `RegExpCreate(p)` uses source `""` for `undefined` (the empty regexp
+      matches at 0) and ToString(p) otherwise;
+    - with no syntax characters it matches exactly the literal text, so
+      `search` is `indexOf(text, 0)`.
+  - New argument role `pattern`, row over `__str_indexOf` with one user
+    argument (extra arguments are refused) and a hidden zero position.
+  - Trust boundary: refused when the source may patch `RegExp.prototype`,
+    `String.prototype` or `Object.prototype` (a string pattern's `@@search`
+    lookup reaches `Object.prototype`), or names a reflective route. `RegExp`
+    joins the patchable intrinsics. (Review round 1) The guard is a property
+    of the row (`readsRegExpProtocol`), checked once per call, so `search()`
+    with no argument is guarded too.
+- **`match(null)`:** returns an array; out of scope.
+- **Fresh `new String(v)` receiver** (exactly one argument `v`, a proven
+  string, number or boolean, on the ambient `String`):
+  - `new String(v).m(…)` is String.prototype.m with `this` = a fresh wrapper.
+    Every row's method starts with RequireObjectCoercible + ToString(this),
+    and ToString(wrapper) = ToPrimitive(wrapper, string) =
+    `String.prototype.toString` of its [[StringData]] = ToString(v).
+  - That is lever P's borrow with receiver `v`, behind lever P's trust boundary
+    (`String.prototype` / `Function.prototype` patches, members or bindings
+    named `call` or `String` written, reflective routes).
+  - The wrapper is consumed only as `this` of a method that converts it, so
+    its identity is never observable. A wrapper anywhere else (stored, compared,
+    passed or returned) is not this shape and stays refused.
+  - Evaluation order is kept: `v`, then the arguments, then the call. ToString
+    of a primitive has no effect.
+
+### Design
+
+- **`src/ir/string-method-surface.ts`** (the one surface table): the rows
+  (`concat`, `search`, the `"undefined"` default on `indexOf`/`lastIndexOf`),
+  the `pattern` role, the `empty`/`"undefined"` omitted defaults, the user
+  arity cap for `search`, and the static argument classification. That last
+  one gains the empty IIFE, the always-`undefined` `var` (via the shared proof)
+  and the string literal's ToNumber. No per-method arm: every addition is a row
+  or a role.
+- **`src/shared/always-undefined-binding.ts`** (new, pure AST): the
+  never-written, initializer-less `var` proof. Selector and builder ask the
+  same function, so they cannot disagree.
+- **`src/ir/array-prototype-borrow-call.ts`:** `ambientStringPrototypeBorrow`
+  also matches `new String(v).m(…)` and returns the same `PrototypeBorrowCall`
+  (receiver `v`). Lever P's selection and lowering then apply unchanged.
+- **`select.ts`:**
+  - `stringMethodArgumentProven` reads the extended static classification and
+    the number-role literal;
+  - the `pattern` role is proven only for a static pattern, behind its trust
+    boundary;
+  - a static argument is not walked by `isPhase1Expr`, because lowering never
+    lowers it. The same fact (`isUnevaluatedStringMethodArgument`) is
+    applied at the two other walks that would otherwise see it: the local call
+    graph adds no edge for it, and the throw-value module-scalar walk skips
+    it, since it is never evaluated.
+- **`from-ast.ts`:** `lowerStringMethodArgument` lowers a number-role string
+  literal as its `f64` ToNumber through the existing numeric path, and the
+  `pattern` role as its static text. `omittedStringMethodArgument` gains the
+  two textual defaults.
+- **Reused:**
+  - lever P's borrow selection, lowering and trust boundary;
+  - `staticStringMethodArgument`, `stringMethodPlan`, `__str_indexOf` and
+    `__str_concat`;
+  - the omitted-argument machinery and the numeric position path;
+  - `sourceMayPatchPrototype`, `sourceNamesReflectiveRoute` and
+    `sourceWritesMemberNamed`.
+- **Duplicate removed:** none of the new cases gets its own matcher or
+  conversion. The wrapper receiver rides the borrow; zero arguments and
+  nullish arguments ride the omitted/static machinery.
+
+### Acceptance
+
+- The 23 files claim on both lanes. A/B over the 518 String-method files plus
+  200 random ES5 files, both lanes:
+  - 0 files lost;
+  - 0 units newly legacy;
+  - 0 new post-claim errors;
+  - 0 pass→fail on the changed files;
+  - every binary without a newly claimed unit byte-identical.
+- `tests/issue-7106-lever-sr.test.ts`, both lanes:
+  - claimed rows checked against JS: each conversion, a wrapper receiver of a
+    string, a number and a boolean, the `search` patterns;
+  - refused rows, which stay legacy and correct:
+    - a written or initialized `x`;
+    - a non-empty IIFE;
+    - a `search` pattern with syntax characters;
+    - an extra `search` argument;
+    - a wrapper of an object, of `null`, or with no argument (a stored,
+      compared or passed wrapper is not the matched shape at all);
+    - a patched `String.prototype` / `RegExp.prototype`.
+- The equivalence gate, and the source gates run bare.
+- **Code quality:**
+  - every new case is a row, role or default of the one surface table, or the
+    one shared proof;
+  - no per-method arm, no consumer whitelist;
+  - the wrapper receiver adds no lowering of its own;
+  - no growth grant beyond what the gates require (stated here, dated, if
+    any).
+
+### Result (measured 2026-11-08, base lever P `8af326da35`)
+
+- **Claims:** the 23 target files are IR-only on both lanes; the other 7 of
+  the census 30 stay legacy as scoped (IIFE receivers, `concat()`, the strict
+  closures, the `replace` callback).
+- **A/B**, 706 files (the 518 String-method files ∪ the 200 random ES5 files;
+  14 negative/raw/module files are not compiled), per lane:
+
+  | lane | IR-only base → head | gain | lost | units newly legacy | new post-claim errors | binaries changed | changed without a new claim |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | standalone | 100 → 123 | 23 | 0 | 0 | 0 | 23 | 0 |
+  | gc | 100 → 123 | 23 | 0 | 0 | 0 | 23 | 0 |
+
+  None of the gains falls in the random sample: the lever is specific to
+  String-method files. 669 binaries per lane are byte-identical, and the 13
+  playground examples are byte-identical on both lanes.
+- **Runner pass/fail** on the 23 changed files, base and head, both lanes: 23
+  pass on each side; 0 pass→fail. Legacy already passed them, so the gain is
+  IR ownership, not conformance.
+- **Pre-existing gap, not this lever's:** a direct call on a primitive
+  (`"a".trim()`, now also `"a".concat(null)`) ignores a patched
+  `String.prototype` method on both the legacy and the IR path, measured on the
+  base and the head alike. The borrow, the wrapper receiver and the `search`
+  pattern are behind the trust boundary; the direct surface never was.
+- **Grant:** `buildLocalCallGraph` +2 for the unevaluated-argument call edge, which also
+  restates lever P's +7 against main's refreshed ceiling.
+- **Gates:**
+  - equivalence gate: 0 new regressions (4850 passing);
+  - linear tests: 243/243;
+  - loc and func budgets, at the fork point and against `origin/main`:
+    green;
+  - coercion, oracle-ratchet, dead-exports and typecheck: green.
+
+### Review round 1 (fresh-context adversarial review, 2026-11-08)
+
+| # | finding | verdict |
+| --- | --- | --- |
+| 1 | `search()` with no argument skipped the patch guard | fixed: `readsRegExpProtocol` row flag, checked once in `stringMethodSelection` |
+| 2 | the `var` proof was not tied to scope; `arguments`, `NaN`/`Infinity` | fixed: the read must lie in a declaring scope; `arguments` and host-global names decline |
+| 3 | proof weaker than `bindingIsUniqueAndNeverWritten` | fixed: `eval`/`Function` identifiers, reflective routes, and an escaping `this`/`globalThis` decline |
+| 4 | `@@search` reads `Object.prototype` / `Boolean.prototype`; constructor aliases | fixed: `Object` in the guard, boolean patterns refused, and any escape of a patchable constructor (`var R = RegExp`) counts as may-patch; a constructor used only as a borrowed array method's callback (assert.js `Array.prototype.map.call(a, String)`) stays inert |
+| 5 | `isBindingName` duplicated codegen's binding-site test | fixed: one `isBindingSiteName` in `shared/binding-writes.ts`, used by both; codegen's heritage check now also counts `import X =` binding sites, which only makes it decline more |
+| 6 | four walks, three predicates for an unevaluated argument | fixed: one `isUnevaluatedStringMethodArgument`, keyed on the parent call (a borrow over a primitive or a direct call on a proven string, with a plan); `isEmptyFunctionCall` moved next to the `var` proof |
+| 7 | `arity` on the plan; `undefined → ""` encoded twice | fixed: `arity` is a row field; an `undefined` pattern takes the omitted default only |
+| 8 | `const t = s.substring(1)` borrow reaching the "borrow has no plan" invariant | rebutted: no such receiver passes selection; every spelling tried (unannotated, annotated, `as string`, `!`, parenthesised, module `const`, wrapper) is refused at `expr-string-borrow-receiver` on lever P and on SR, with 0 post-claim errors |
+| 9 | the wrapper matcher matched any method name | fixed: only names with a surface row (`isStringSurfaceMethod`) |
+| 10 | tests | fixed: refusal reason asserted; guarded rows for 1–4 (legacy's own answer is wrong on them, measured, so they assert the refusal and are not compared); `lastIndexOf()`, `search(true)`, a static-argument `.call` borrow and a receiver-before-argument evaluation-order row added |
+| 11 | nits | fixed: `/` is not a SyntaxCharacter; stale doc; module header; `prototypeOwner` reads a set |
+
+**Result after round 1** (same 706 files, base lever P `8af326da35`): per lane
+IR-only 100 → 123, gain 23, 0 lost, 0 units newly legacy, 0 post-claim
+errors, 669 binaries byte-identical, every changed binary a newly claimed
+file. Runner pass/fail on the 23: 23/23 pass on both lanes, 0 pass→fail.
+Playground examples byte-identical on both lanes.
+
+### Review round 2 (fresh-context re-review, 2026-11-08)
+
+| # | finding | verdict |
+| --- | --- | --- |
+| N1 | `globalThis["RegExp"]`, `this.RegExp`, `self.RegExp`, `this.String` slipped the prototype guards (`"abc".search("b")` → 1 after `globalThis["RegExp"].prototype.exec = …`) | fixed: any member or literal-keyed element access named like a patchable constructor is a reference to it (`referencedName`), for `X.prototype` owners and for constructor escapes alike; the same rule makes `self`, `window`, `global` and `$262.global` global-object references |
+| N2 | a parameter initializer read a body `var` as proven (`function f(a = "x".concat(v)) { var v; }`) | fixed: a function's proving scope is its body; checked on the proof directly, since the IR refuses that function on its parameters first |
+| N3 | `GLOBAL_VALUE_NAMES` lacks `print`, `$262`, `self`, `window`, `global`, `Iterator`, `Float16Array`, `Temporal` | fixed: a `HOST_GLOBAL_NAMES` supplement beside the checker's table; the realm catalog has no global-object entry, so `realmStringKeys` cannot answer it |
+| N4 | `Function("RegExp.prototype.exec = …")()` passed both guards | fixed: one `sourceRunsDynamicCode` fact (`eval` / `Function` by any name route, except a `prototype` read or an operand) in `intrinsic-prototype-writes.ts`, used by the `var` proof, `regExpProtocolMayBePatched` and lever P's borrow guard |
+| N6 | tests | fixed: one guarded row per N1, N3, N4 (both forms), each asserting its refusal arm; the N2 proof row |
+| nits | | fixed: the array-callback exception is `String`-only; every refused and guarded row asserts its arm (`JS2WASM_IR_SHAPE_DIAG` compile); one `isProvenStringReceiver` serves isPhase1Expr and the unevaluated-argument predicate; #8's invariant is stated at the throw |
+
+**Result after round 2** (same 706 files, base main `248841a4fe` with lever P,
+standalone lane; the gc rerun was cut for the wrap-up, and round 1 measured the
+two lanes identical): IR-only 101 → 124, gain 23, 0 lost, 0 units newly
+legacy, 0 post-claim errors, 669 binaries byte-identical, every changed binary
+a newly claimed file. The 23 targets claim and run on both lanes.
+
+### Not covered
+
+- **N5, runtime-built keys** (pre-existing): a key computed at run time
+  (`/a/["con" + "structor"]`, `o[k]` for a built `k`) reaches a prototype
+  past every reflective check, which reads only literal names.
+- **Legacy miscompiles of the guarded rows** (pre-existing): on both lanes
+  legacy ignores a patched `RegExp.prototype.exec`, `Object.prototype[@@search]`,
+  an aliased or member-reached constructor patch, and a computed global write,
+  so the guarded rows assert the refusal and are not compared against JS.
