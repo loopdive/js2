@@ -4,7 +4,7 @@
   "executionCompilerPath": "unknown",
   "configuredCompilerPath": "hybrid",
   "measurementState": "measured",
-  "attemptedCases": 57705,
+  "attemptedCases": 57704,
   "completedCases": 48735,
   "skippedCases": 114,
   "compileErrorCases": 1401,
@@ -12,9 +12,9 @@
   "verifiedExecutionCases": 0,
   "verifiedFrontendCases": 0,
   "unverifiedExecutionCases": 48621,
-  "timestamp": "2026-11-10T16:37:05.832Z",
-  "baseline_generated_at": "2026-11-10T16:37:05.832Z",
-  "baseline_sha": "cc998fe49e8d7f824d540fc360f0170b833b86b2",
+  "timestamp": "2026-11-10T21:07:36.907Z",
+  "baseline_generated_at": "2026-11-10T21:07:36.907Z",
+  "baseline_sha": "432ffcf720db85610f87b43a5a099754554d61af",
   "oracle_version": 16,
   "mode": {
     "target": "standalone",
@@ -1848,7 +1848,7 @@
           "test/built-ins/Temporal/PlainMonthDay/from/argument-string-calendar-case-insensitive.js",
           "test/built-ins/Temporal/Duration/prototype/round/valid-increments.js",
           "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
-          "test/built-ins/Temporal/PlainDate/prototype/toLocaleString/return-string.js"
+          "test/built-ins/Temporal/ZonedDateTime/prototype/since/roundingmode-ceil.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: round to 1e8-# days with plain relativeTo: days result: Expected SameValue(«#», «#») to be true",
@@ -1896,8 +1896,8 @@
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "assertion_fail:Test262Error: Symbol(Symbol.asyncDispose) should be an own property",
-          "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«null», «[object Object]») to be true",
+          "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: Expected stack2 to be an instance of AsyncDisposableStack"
         ]
       },
@@ -2664,8 +2664,8 @@
           "ES2020": 17,
           "ES2018": 12,
           "ES2024": 15,
-          "ES2015": 14,
           "ES2023": 5,
+          "ES2015": 14,
           "ES2022": 19,
           "ES2019": 14,
           "ES2021": 13,
