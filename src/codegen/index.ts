@@ -888,6 +888,8 @@ installObjectModelPorts(() => ({
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
   irNativeI32SlotRead,
+  expressionHasWidenedStaticType, // (#7337) IR resolver seam
+  bindingHasMixedAssignmentCarrier,
   hasExportModifier,
   hasDeclareModifier,
   hasAsyncModifier,

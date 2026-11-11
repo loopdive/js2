@@ -23,8 +23,6 @@ func-budget-allow:
   # 2026-11-08: +2 lines each, shared inference wiring in existing planning seams.
   - src/codegen/index.ts::planIrOverlay
   - src/ir/integration.ts::makeFromAstResolver
-import-cycles-allow:
-  - ir->codegen: 86 # 2026-11-11 (#7337): src/ir/integration.ts, the IR-to-codegen resolver seam, gains two ctx-bound binding-carrier queries (strict-eq-stale-type, analysis/mixed-assignment-carrier) so IR and legacy agree on widened carriers; SCC counts do not grow.
 ---
 
 # Preserve values from heterogeneous mutable bindings

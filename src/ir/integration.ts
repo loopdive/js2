@@ -43,8 +43,6 @@ import {
   irStringConcatManyDemand,
 } from "./program-runtime-demands.js";
 import { ts } from "../ts-api.js";
-import { expressionHasWidenedStaticType } from "../codegen/strict-eq-stale-type.js";
-import { bindingHasMixedAssignmentCarrier } from "../codegen/analysis/mixed-assignment-carrier.js";
 import type { IrIntegrationOptions } from "./integration-options.js";
 export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
@@ -111,6 +109,8 @@ import {
   runtimeEvalOwnsGlobalEval,
   irNativeBufferProvider, // (#7274) native ArrayBuffer / DataView providers
   nativeBufferProvidersAvailable,
+  expressionHasWidenedStaticType, // (#7337) binding-carrier queries shared with legacy
+  bindingHasMixedAssignmentCarrier,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonParseText, emitJsonStringifyValue, JSON_PARSE_TEXT_FN } from "../codegen/json-codec-native.js";
