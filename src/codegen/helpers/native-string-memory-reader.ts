@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { NATIVE_STRING_MEMORY_READER } from "../shared/contracts/init-marshal-helpers.js";
-import type { CodegenContext } from "./context/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { addFuncType } from "./registry/types.js";
+import { NATIVE_STRING_MEMORY_READER } from "../../shared/contracts/init-marshal-helpers.js";
+import type { CodegenContext } from "../context/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import { addFuncType } from "../registry/types.js";
 
 /** Read the existing string bridge's UTF-16 memory before instance.exports exists. */
 export function ensureNativeStringMemoryReader(ctx: CodegenContext): void {
