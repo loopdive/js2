@@ -114,6 +114,7 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
+import { objectProtoNameMissInstrs, registerInHelperNatives } from "./object-proto-name-in.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
@@ -128,6 +129,7 @@ import {
   getOrRegisterVecType,
   isVecBaseSubtype,
 } from "./registry/types.js";
+import { assignEnumerationArmTags, classArmTags, enumerationArmTagGuard } from "./class-arm-tag-guard.js"; // (#7158)
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
 import * as bc from "./builtin-ctor-callable.js"; // (#4394/#4656) constructor [[Call]] arms
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
@@ -4142,6 +4144,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         blockType: { kind: "empty" },
         then: [{ op: "i32.const", value: 1 }, { op: "return" }],
       },
+      ...objectProtoNameMissInstrs(registerInHelperNatives(ctx, registerNative, strFlattenIdx, strEqualsIdx)),
       { op: "local.get", index: 2 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       {
@@ -4175,9 +4178,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               ],
             },
           ] satisfies Instr[])),
-      // The compiler selected this helper only for one of the fixed
-      // Object.prototype names. Non-`$Object`/non-fnctor receivers retain the
-      // prior permissive constant rather than gaining a new runtime miss.
+      // Any other receiver keeps the permissive implicit-terminal answer (see #7304 for its gaps).
       { op: "i32.const", value: 1 },
     ];
   }
@@ -8485,7 +8486,7 @@ export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
  * all previously-baked call indices remain stable.
  */
 export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if (!noJsHost(ctx) || ctx.anyStrTypeIdx < 0) return;
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (flattenIdx === undefined || equalsIdx === undefined) return;
@@ -8504,6 +8505,8 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
      * base words at fixed indices regardless of where the VALUE went.
      */
     shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
+    /** (#7200) `__tag` guard against a same-layout twin class (`classArmTags`). */
+    classTags?: number[];
   };
   const byField = new Map<string, Entry[]>();
   for (const [structName, fields] of ctx.structFields) {
@@ -8512,6 +8515,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     if (typeIdx === undefined) continue;
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
+    const tagged = ((tags) => (tags ? { classTags: tags } : {}))(classArmTags(ctx, structName)); // (#7200)
     for (const field of fields) {
       if (field?.name === undefined || isInternalStructFieldName(ctx, structName, field.name)) continue;
       const presenceSlot = presenceSlotOf(fields, field.name);
@@ -8538,6 +8542,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         typeIdx,
         ...(presenceSlot ? { presenceSlot } : {}),
         ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
+        ...tagged,
       });
     }
     // (#3927) The split moved these names off the main struct, so the loop above
@@ -8555,6 +8560,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         typeIdx,
         cold,
         ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
+        ...tagged,
       });
     }
     // (#3927 per-type layouts) The split moved the flow-grown union names off
@@ -8573,6 +8579,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         typeIdx,
         presenceSlot: layoutField.presenceSlot,
         ...(shapeRange ? { shapeRange } : {}),
+        ...tagged,
       });
     }
   }
@@ -8647,6 +8654,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
           { op: "local.get", index: 0 },
           { op: "any.convert_extern" },
           { op: "ref.test", typeIdx: entry.typeIdx },
+          ...enumerationArmTagGuard(entry.typeIdx, entry.classTags), // (#7200) a twin passes `ref.test`
           {
             op: "if",
             blockType: { kind: "empty" },
@@ -8799,6 +8807,9 @@ type EnumShapeEntry = {
    * stamps instead of enumerating the wrong name list.
    */
   shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
+  /** (#7158) Nominal `__tag` guard inputs; see `assignEnumerationArmTags`. */
+  classTags?: number[];
+  structName?: string;
 };
 
 /**
@@ -8868,12 +8879,14 @@ function collectClosedStructEnumerationEntries(ctx: CodegenContext, emptyTypeIdx
     const shapeId = ctx.shapeIdByStructName.get(structName);
     const shapeRange = fnctorLayoutShapeRangeFor(ctx, structName);
     entries.push({
+      structName,
       typeIdx,
       fields: orderedNames.map((name) => byName.get(name)!),
       ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
       ...(shapeRange ? { shapeRange } : {}),
     });
   }
+  assignEnumerationArmTags(ctx, entries);
   return entries;
 }
 
@@ -8979,6 +8992,7 @@ function buildClosedStructEnumerationArms(
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: entry.typeIdx },
+      ...enumerationArmTagGuard(entry.typeIdx, entry.classTags),
       { op: "if", blockType: { kind: "empty" }, then: exactThen },
     );
   }
@@ -8986,7 +9000,7 @@ function buildClosedStructEnumerationArms(
 }
 
 export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!noJsHost(ctx)) return;
   const targets = ["__getOwnPropertyNames"]
     .map((name) => ctx.mod.functions.find((candidate) => candidate.name === name))
     .filter((f): f is NonNullable<typeof f> => f !== undefined);
@@ -9147,7 +9161,7 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
  * reports the physical field.
  */
 export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if (!noJsHost(ctx) || ctx.anyStrTypeIdx < 0) return;
   const inheritedSetGetMissActive = inheritedSetAnyDirty(ctx);
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");

@@ -1,21 +1,24 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 /**
- * (#7108) IR lowering of `Array.prototype.indexOf` / `includes` / `join` on a
- * vec receiver whose element family the selector proved (`number` or
- * `string`, see `./selection.ts`).
+ * (#7108) IR lowering of `Array.prototype.indexOf` / `lastIndexOf` /
+ * `includes` / `join` on a vec receiver whose element family the selector
+ * proved (`number`, `string` or `boolean`, see `./selection.ts`).
  *
- * Every method is a counted scan over `[0, length)` built from existing IR
+ * Every method is a counted scan over the vec built from existing IR
  * primitives (`vec.len`, `vec.get`, slots, `for.loop`, `if.stmt`,
  * `string.concat`, `string.eq`) plus the mode-neutral `(f64) -> string`
  * provider the template-literal lowering already uses. No new runtime helper
  * and no new IR instruction: the backends lower these like a hand-written loop.
  *
- * Semantics (ECMA-262 §23.1.3.17 indexOf, §23.1.3.16 includes, §23.1.3.18
- * join) restricted to the shapes the selector admits:
- *   - indexOf / includes take exactly the search value (no `fromIndex`).
- *     indexOf is IsStrictlyEqual (NaN never matches, -0 === +0); includes is
- *     SameValueZero (NaN matches NaN).
+ * Semantics (ECMA-262 §23.1.3.17 indexOf, §23.1.3.20 lastIndexOf, §23.1.3.16
+ * includes, §23.1.3.18 join) restricted to the shapes the selector admits:
+ *   - indexOf / lastIndexOf / includes take the search value and an optional
+ *     proven-number `fromIndex` (#7313). indexOf and lastIndexOf are
+ *     IsStrictlyEqual (NaN never matches, -0 === +0); includes is
+ *     SameValueZero (NaN matches NaN). lastIndexOf scans down from its start.
+ *   - A boolean vec holds 0 / 1 in its i32 carrier, so its match is the
+ *     numeric one.
  *   - A legacy-produced f64 vec stores `undefined` and holes as the sNaN
  *     markers `UNDEF_F64_BITS` / `HOLE_F64_BITS` (codegen/value-tags.ts). Both
  *     are NaNs, so indexOf never matches them; includes excludes them from the
@@ -32,6 +35,7 @@ import { ts } from "../../ts-api.js";
 import { isF64Hole } from "../array-element-lowering.js";
 import type { IrFunctionBuilder } from "../builder.js";
 import { irBool } from "../boolean-brand.js";
+import { emitF64IsUndefined } from "../f64-undefined-marker.js";
 import { irIntrinsicFuncRef } from "../callable-bindings.js";
 import { asVal, irVal, type IrType, type IrValueId } from "../nodes.js";
 import { demoteToLegacy } from "../outcomes.js";
@@ -39,7 +43,7 @@ import { IR_NUMBER_TO_STRING_FN } from "../string-runtime.js";
 import type { ValType } from "../types.js";
 
 /** Array methods this module lowers on a vec receiver. */
-export const IR_VEC_SEARCH_JOIN_METHODS: ReadonlySet<string> = new Set(["indexOf", "includes", "join"]);
+export const IR_VEC_SEARCH_JOIN_METHODS: ReadonlySet<string> = new Set(["indexOf", "lastIndexOf", "includes", "join"]);
 
 const I32: IrType = irVal({ kind: "i32" });
 const F64: IrType = irVal({ kind: "f64" });
@@ -97,8 +101,18 @@ export function tryLowerVecSearchOrJoin(
     if (expr.arguments.length > 1) unsupported(`.join with ${expr.arguments.length} arguments`, host);
     return lowerJoin(expr.arguments[0], receiver, kind, host);
   }
-  if (expr.arguments.length !== 1) unsupported(`.${methodName} with ${expr.arguments.length} arguments`, host);
-  return lowerSearch(expr.arguments[0]!, methodName === "includes", receiver, kind, host);
+  const [value, fromIndex, ...rest] = expr.arguments;
+  if (value === undefined || rest.length > 0) {
+    unsupported(`.${methodName} with ${expr.arguments.length} arguments`, host);
+  }
+  const search: SearchMode = { sameValueZero: methodName === "includes", downward: methodName === "lastIndexOf" };
+  return lowerSearch(value, fromIndex, search, receiver, kind, host);
+}
+
+/** includes: SameValueZero, else IsStrictlyEqual; lastIndexOf scans downward. */
+interface SearchMode {
+  readonly sameValueZero: boolean;
+  readonly downward: boolean;
 }
 
 function i32Const(builder: IrFunctionBuilder, value: number): IrValueId {
@@ -123,11 +137,7 @@ function lowerNeedle(arg: ts.Expression, kind: ElementKind, host: IrVecSearchJoi
     if (b.typeOf(value).kind !== "string") unsupported("string search value did not lower to a string", host);
     return value;
   }
-  const value = host.lowerExpr(arg, F64);
-  const scalar = asVal(b.typeOf(value))?.kind;
-  if (scalar === "f64") return value;
-  if (scalar === "i32") return b.emitUnary("f64.convert_i32_s", value, F64);
-  return unsupported("numeric search value did not lower to a number", host);
+  return lowerNumber(arg, "numeric search value", host);
 }
 
 /** Element `i` compared to the needle under IsStrictlyEqual / SameValueZero. */
@@ -157,18 +167,67 @@ function emitMatch(
   // `undefined` and is never SameValueZero to a number.
   const elementNaN = b.emitBinary("f64.ne", element, element, I32);
   const needleNaN = b.emitBinary("f64.ne", needle, needle, I32);
-  const notHole = b.emitUnary("i32.eqz", isF64Hole(element, b), I32);
+  const notHole = b.emitUnary("i32.eqz", emitF64IsUndefined(element, b), I32);
   const bothNaN = b.emitBinary("i32.and", b.emitBinary("i32.and", elementNaN, needleNaN, I32), notHole, I32);
   return b.emitBinary("i32.or", eq, bothNaN, I32);
 }
 
 /**
- * `found = -1; for (i = 0; i < len && found < 0; i++) if (match(i)) found = i;`
- * then `found` (indexOf, as f64) or `found >= 0` (includes, boolean-branded).
+ * Lower a numeric argument to f64 (an i32 converts exactly); the selector
+ * proved its family.
+ */
+function lowerNumber(arg: ts.Expression, what: string, host: IrVecSearchJoinHost): IrValueId {
+  const b = host.builder;
+  const value = host.lowerExpr(arg, F64);
+  const scalar = asVal(b.typeOf(value))?.kind;
+  if (scalar === "f64") return value;
+  if (scalar === "i32") return b.emitUnary("f64.convert_i32_s", value, F64);
+  return unsupported(`${what} did not lower to a number`, host);
+}
+
+/**
+ * The first index the scan visits: §23.1.3.17 steps 4-9 (upward) and
+ * §23.1.3.20 steps 4-7 (downward) over `n = ToIntegerOrInfinity(fromIndex)`,
+ * computed in f64 and saturated to i32. An infinite start lands outside
+ * `[0, len)`, so the loop runs zero times. Absent `fromIndex`: `0` upward,
+ * `len - 1` downward.
+ */
+function emitSearchStart(
+  fromIndex: ts.Expression | undefined,
+  downward: boolean,
+  len: IrValueId,
+  host: IrVecSearchJoinHost,
+): IrValueId {
+  const b = host.builder;
+  if (fromIndex === undefined) return downward ? b.emitBinary("i32.sub", len, i32Const(b, 1), I32) : i32Const(b, 0);
+  const raw = lowerNumber(fromIndex, "fromIndex", host);
+  const zero = b.emitConst({ kind: "f64", value: 0 }, F64);
+  const notANumber = b.emitBinary("f64.ne", raw, raw, I32);
+  const n = b.emitSelect(notANumber, zero, b.emitUnary("f64.trunc", raw, F64), F64);
+  const length = b.emitUnary("f64.convert_i32_s", len, F64);
+  const fromEnd = b.emitBinary("f64.add", length, n, F64);
+  const nonNegative = b.emitBinary("f64.ge", n, zero, I32);
+  let start: IrValueId;
+  if (downward) {
+    const last = b.emitBinary("f64.sub", length, b.emitConst({ kind: "f64", value: 1 }, F64), F64);
+    const clamped = b.emitSelect(b.emitBinary("f64.lt", n, last, I32), n, last, F64);
+    start = b.emitSelect(nonNegative, clamped, fromEnd, F64);
+  } else {
+    const clamped = b.emitSelect(b.emitBinary("f64.lt", fromEnd, zero, I32), zero, fromEnd, F64);
+    start = b.emitSelect(nonNegative, n, clamped, F64);
+  }
+  return b.emitUnary("i32.trunc_sat_f64_s", start, I32);
+}
+
+/**
+ * `found = -1; for (i = start; i in [0, len) && found < 0; i += step) if (match(i)) found = i;`
+ * then `found` (indexOf / lastIndexOf, as f64) or `found >= 0` (includes,
+ * boolean-branded).
  */
 function lowerSearch(
   arg: ts.Expression,
-  sameValueZero: boolean,
+  fromIndex: ts.Expression | undefined,
+  mode: SearchMode,
   receiver: IrVecSearchJoinReceiver,
   kind: ElementKind,
   host: IrVecSearchJoinHost,
@@ -176,31 +235,35 @@ function lowerSearch(
   const b = host.builder;
   // §23.1.3.17 step 1-3: the receiver's length is read before the search value
   // is coerced, but neither has an observable side effect for a proven-number
-  // / proven-string argument, so the argument is evaluated first (source order).
+  // / proven-string argument, so the arguments are evaluated first (source order).
   const needle = lowerNeedle(arg, kind, host);
   const len = b.emitVecLenI32(receiver.recv);
   const iSlot = b.declareSlot("__vsearch_i", { kind: "i32" });
   const foundSlot = b.declareSlot("__vsearch_found", { kind: "i32" });
-  b.emitSlotWrite(iSlot, i32Const(b, 0));
+  b.emitSlotWrite(iSlot, emitSearchStart(fromIndex, mode.downward, len, host));
   b.emitSlotWrite(foundSlot, i32Const(b, -1));
   const cond = b.collectBodyInstrs(() => {
-    const inRange = b.emitBinary("i32.lt_s", b.emitSlotRead(iSlot), len, I32);
+    const i = b.emitSlotRead(iSlot);
+    const inRange = mode.downward
+      ? b.emitBinary("i32.ge_s", i, i32Const(b, 0), I32)
+      : b.emitBinary("i32.lt_s", i, len, I32);
     const notFound = b.emitBinary("i32.lt_s", b.emitSlotRead(foundSlot), i32Const(b, 0), I32);
     b.emitBinary("i32.and", inRange, notFound, I32);
   });
   const condValue = cond[cond.length - 1]!.result!;
   const body = b.collectBodyInstrs(() => {
     const i = b.emitSlotRead(iSlot);
-    const matched = emitMatch(receiver, kind, i, needle, sameValueZero, b);
+    const matched = emitMatch(receiver, kind, i, needle, mode.sameValueZero, b);
     const then = b.collectBodyInstrs(() => b.emitSlotWrite(foundSlot, b.emitSlotRead(iSlot)));
     b.emitIfStmt({ cond: matched, then, else: [] });
   });
   const update = b.collectBodyInstrs(() => {
-    b.emitSlotWrite(iSlot, b.emitBinary("i32.add", b.emitSlotRead(iSlot), i32Const(b, 1), I32));
+    const step = mode.downward ? "i32.sub" : "i32.add";
+    b.emitSlotWrite(iSlot, b.emitBinary(step, b.emitSlotRead(iSlot), i32Const(b, 1), I32));
   });
   b.emitForLoop({ cond, condValue, body, update });
   const found = b.emitSlotRead(foundSlot);
-  if (sameValueZero) return b.emitBinary("i32.ge_s", found, i32Const(b, 0), irBool());
+  if (mode.sameValueZero) return b.emitBinary("i32.ge_s", found, i32Const(b, 0), irBool());
   return b.emitUnary("f64.convert_i32_s", found, F64);
 }
 
@@ -235,7 +298,11 @@ function emitAppendElement(
     return;
   }
   const isHole =
-    kind === "f64" ? isF64Hole(raw, b) : stringElementNullable(receiver) ? b.emitUnary("ref.is_null", raw, I32) : null;
+    kind === "f64"
+      ? emitF64IsUndefined(raw, b)
+      : stringElementNullable(receiver)
+        ? b.emitUnary("ref.is_null", raw, I32)
+        : null;
   if (isHole === null) {
     append(() => raw);
     return;

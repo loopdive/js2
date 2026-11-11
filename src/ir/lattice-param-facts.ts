@@ -118,6 +118,25 @@ function collectWrittenNamesIncludingNested(root: ts.Node): Set<string> {
   return written;
 }
 
+const writtenNamesByFunction = new WeakMap<ts.Node, ReadonlySet<string>>();
+
+/**
+ * (#7106) Is the local `declaration` written after it is declared, anywhere in
+ * its function (nested functions included, the same over-approximation as
+ * above)? A destructured declaration counts as written: its leaves are not
+ * tracked by name here. (#7283) A function declaration's binding is checked
+ * the same way: `f = …` anywhere in its scope rebinds it.
+ */
+export function localIsRewritten(declaration: ts.VariableDeclaration | ts.FunctionDeclaration): boolean {
+  const scope = ts.findAncestor(declaration.parent, (node) => ts.isFunctionLike(node) || ts.isSourceFile(node))!;
+  let written = writtenNamesByFunction.get(scope);
+  if (written === undefined) {
+    written = collectWrittenNamesIncludingNested(scope);
+    writtenNamesByFunction.set(scope, written);
+  }
+  return declaration.name === undefined || !ts.isIdentifier(declaration.name) || written.has(declaration.name.text);
+}
+
 /**
  * Build the per-parameter primitive facts map consumed via
  * `LowerCtx.latticeParamFacts`. `resolvedParams` is the same

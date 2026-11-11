@@ -4428,6 +4428,42 @@ async function getTest262TemporalProvider(target?: "standalone"): Promise<Tempor
   return promise;
 }
 
+/**
+ * The compile options {@link runTest262File} uses for an original-harness
+ * variant (#7240: exported so `scripts/ir-claim-ledger.mts --wrapped` measures
+ * the SAME compile instead of a copy). Pure: depends only on `meta` + `target`.
+ */
+export function originalHarnessCompileOptions(meta: Test262Meta, target?: "standalone") {
+  return {
+    allowJs: true,
+    sourceMap: true,
+    emitWat: false,
+    skipSemanticDiagnostics: true,
+    // #6776: the runner validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
+    validate: false,
+    inferModuleStrictArguments: meta.flags?.includes("module") === true,
+    // (#2860 F3) Standalone joins the host lane's deferTopLevelInit rule
+    // (mirrors scripts/test262-worker.mjs doCompile): under the `(start)`
+    // model every top-level throw — i.e. every runtime failure in
+    // original-harness mode — surfaced from WebAssembly.instantiate with
+    // instance === null, making the #2962 native exception render
+    // unreachable and collapsing ~8,600 standalone failures onto the
+    // opaque "wasm exception during module init" label. The exec path
+    // below already calls the exported __module_init after setInstance.
+    ...(target ? { target } : {}),
+    ...(target === undefined || target === "standalone" ? { deferTopLevelInit: true } : {}),
+    // (#4035) The harness INSPECTS the module from JS — it renders native
+    // exception payloads via `__exn_render_*` (#2962) and drains the
+    // host-free print sink via `__stdout_*` (#3469). Standalone/WASI now
+    // default to `hostBridge: "off"` (a deployed pure-Wasm module needs
+    // only its own exports), so the runner must ask for the bridge
+    // explicitly or those two channels vanish and the conformance numbers
+    // collapse onto opaque labels. This is the harness opt-in the flag was
+    // designed around; do not drop it to "shrink the test binaries".
+    hostBridge: "always",
+  } as const;
+}
+
 async function runOriginalHarnessVariant(
   variant: OriginalHarnessVariant,
   originalSource: string,
@@ -4461,34 +4497,7 @@ async function runOriginalHarnessVariant(
       // `variant.source` is left untouched here on purpose: every reporting path
       // below (`appendOriginalHarnessFailureContext`, the negative matchers)
       // reads the ORIGINAL assembly, so its line numbers never shift.
-      const compileOptions = {
-        allowJs: true,
-        sourceMap: true,
-        emitWat: false,
-        skipSemanticDiagnostics: true,
-        // #6776: the runner validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
-        validate: false,
-        inferModuleStrictArguments: meta.flags?.includes("module") === true,
-        // (#2860 F3) Standalone joins the host lane's deferTopLevelInit rule
-        // (mirrors scripts/test262-worker.mjs doCompile): under the `(start)`
-        // model every top-level throw — i.e. every runtime failure in
-        // original-harness mode — surfaced from WebAssembly.instantiate with
-        // instance === null, making the #2962 native exception render
-        // unreachable and collapsing ~8,600 standalone failures onto the
-        // opaque "wasm exception during module init" label. The exec path
-        // below already calls the exported __module_init after setInstance.
-        ...(target ? { target } : {}),
-        ...(target === undefined || target === "standalone" ? { deferTopLevelInit: true } : {}),
-        // (#4035) The harness INSPECTS the module from JS — it renders native
-        // exception payloads via `__exn_render_*` (#2962) and drains the
-        // host-free print sink via `__stdout_*` (#3469). Standalone/WASI now
-        // default to `hostBridge: "off"` (a deployed pure-Wasm module needs
-        // only its own exports), so the runner must ask for the bridge
-        // explicitly or those two channels vanish and the conformance numbers
-        // collapse onto opaque labels. This is the harness opt-in the flag was
-        // designed around; do not drop it to "shrink the test binaries".
-        hostBridge: "always",
-      } as const;
+      const compileOptions = originalHarnessCompileOptions(meta, target);
       // Test262's module-namespace cases intentionally self-import the entry
       // (`import * as ns from './<own-file>.js'`) to obtain that module's
       // namespace object. The ordinary single-source compiler has no module

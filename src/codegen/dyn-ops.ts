@@ -6,7 +6,9 @@ import type { Instr, ValType } from "../ir/types.js";
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureAnyToExternHelper } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { makeHelperFctx, reservePlaceholder } from "./helpers/reserved-helper-funcs.js";
+import { emitAnyAddFromExternTemps } from "./native-addition.js";
 import {
   ensureNativeStringHelpers,
   nativeStringLiteralInstrs,
@@ -120,29 +122,24 @@ function ensureDynamicAdd(ctx: CodegenContext, carrier: ValType): void {
     return;
   }
 
-  ensureAnyHelpers(ctx);
-  const honest = ensureAnyFromExternHelper(ctx, { forceHonest: true });
-  const toExtern = ensureAnyToExternHelper(ctx);
-  const anyAdd = ctx.funcMap.get("__any_add");
-  if (honest === undefined || toExtern === undefined || anyAdd === undefined) {
-    throw new Error(
-      `dyn-ops: standalone dynamic add dependencies unavailable (fromExtern=${honest !== undefined}, toExtern=${toExtern !== undefined}, anyAdd=${anyAdd !== undefined})`,
-    );
+  // (#7223) The externref carrier takes the same §13.15.3 dispatch binary `+`
+  // emits (`emitAnyAddFromExternTemps`: ToPrimitive(default) — user `valueOf`
+  // before `toString`, `Symbol.toPrimitive`, a Symbol operand throws TypeError —
+  // then concat or numeric add). `__any_add` reads only the `$AnyValue` tag, so a
+  // boxed object reached it as "[object Object]" without calling `valueOf`.
+  if (ctx.funcMap.has(IR_DYN_ADD_FN)) return;
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureObjectRuntime(ctx); // `__to_primitive`, as `emitAnyAdd`
+  const fctx = makeHelperFctx(IR_DYN_ADD_FN, "lhs", carrier);
+  fctx.params.push({ name: "rhs", type: carrier });
+  const funcIdx = reservePlaceholder(ctx, IR_DYN_ADD_FN, [carrier, carrier], IR_DYN_ADD_FN);
+  if (emitAnyAddFromExternTemps(ctx, fctx, 0, 1).kind === "f64") {
+    ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__box_number")! });
   }
-  addHelper(
-    ctx,
-    IR_DYN_ADD_FN,
-    [carrier, carrier],
-    [carrier],
-    [
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: honest },
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: honest },
-      { op: "call", funcIdx: anyAdd },
-      { op: "call", funcIdx: toExtern },
-    ],
-  );
+  const helper = definedFuncAt(ctx, ctx.funcMap.get(IR_DYN_ADD_FN) ?? funcIdx)!;
+  helper.locals = fctx.locals;
+  helper.body = fctx.body;
 }
 
 function ensureDynamicRel(ctx: CodegenContext, carrier: ValType, op: RelNeed): void {

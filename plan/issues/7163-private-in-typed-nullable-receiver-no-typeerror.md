@@ -1,10 +1,10 @@
 ---
 id: 7163
 title: "Native-first and standalone: `#x in o` with o typed `C | null` returns false for null instead of throwing TypeError"
-status: ready
+status: blocked
 sprint: current
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-11-01
 priority: low
 horizon: s
 feasibility: medium
@@ -14,7 +14,7 @@ area: codegen
 language_feature: classes
 goal: correctness
 parent: 6979
-related: [7150, 7162]
+related: [7150, 7162, 7222]
 ---
 
 # #7163 — the #7150 guard never runs on a typed nullable receiver
@@ -49,3 +49,11 @@ skipped; the brand test on null yields `false`.
 Acceptance: TypeError on null/undefined for nullable typed receivers; non-null
 typed receivers byte-identical; host-assisted gc bytes unchanged; equivalence
 gate no new regressions.
+
+## Blocked (2026-11-01)
+
+PR #7013 tried a local guard in `binary-ops-in.ts`; its review found it throws
+TypeError on real non-`C` objects passed through `any`, because the shared
+guarded cast has already turned them into null. No correct local fix exists.
+Blocked on #7222 (the shared-cast change), which needs session A's agreement
+under the #6583 constraint. PR #7013 stays on `hold`.

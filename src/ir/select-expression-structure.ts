@@ -1,12 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { isStaticArrayIndex, staticElementKey } from "../shared/array-index-key.js";
 import { skipTransparentExpressions } from "../shared/transparent-expressions.js";
 import { literalFieldName } from "./fnctor-field-writes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import type { IrSelectionOptions } from "./select.js";
+import { realmStringKeys } from "./realm-keys.js";
 
 /**
  * (#7106) An Array element key the vec lane leaves to legacy because it names
@@ -81,9 +81,7 @@ export function effectiveIrParamTypeNode(param: ts.ParameterDeclaration): ts.Typ
  * mapping. In particular, this helper does not turn an unannotated, `any`,
  * union, or otherwise unsupported signature into a primitive claim.
  */
-export function effectiveIrReturnTypeNode(
-  fn: ts.FunctionDeclaration | ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
-): ts.TypeNode | undefined {
+export function effectiveIrReturnTypeNode(fn: ts.SignatureDeclaration): ts.TypeNode | undefined {
   return fn.type ?? ts.getJSDocReturnType(fn);
 }
 
@@ -131,11 +129,7 @@ export function isFunctionObjectReceiverUse(node: ts.Identifier, opts: { readonl
  * also owns as non-writable built-ins) and %Object.prototype%'s (`valueOf`,
  * `hasOwnProperty`, …).
  */
-const FUNCTION_REALM_MEMBER_NAMES: ReadonlySet<string> = new Set(
-  NATIVE_REALM_CATALOG.intrinsics
-    .filter(({ id }) => id === "%Function.prototype%" || id === "%Object.prototype%")
-    .flatMap(({ properties }) => properties.flatMap(({ key }) => (key.kind === "string" ? [key.value] : []))),
-);
+const FUNCTION_REALM_MEMBER_NAMES = realmStringKeys("%Function.prototype%", "%Object.prototype%");
 
 /**
  * (#7106) Does `access` name an own expando of the function object: a literal

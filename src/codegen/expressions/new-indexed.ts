@@ -14,7 +14,6 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
-import { explicitUndefinedExternTestInstrs, getOrRegisterDvWindowType } from "../dataview-native.js";
 import { getArrTypeIdxFromVec, getOrRegisterResizableAbType, getOrRegisterVecType, resolveWasmType } from "../index.js";
 import { getOrRegisterHoleyArrayType } from "../registry/types.js";
 import { ensureHoleyArrayNew } from "../vec-elem-set.js";
@@ -28,6 +27,24 @@ import { compileOneElementArray, widenDenseArrayElementType } from "./array-cons
 import { inferArrayElementType } from "./new-super.js";
 import { emitSabConstruct } from "../buffers/shared-array-buffer.js"; // (#7011)
 import { noJsHost } from "../js-errors.js";
+import {
+  emitArrayBufferAllocFixed,
+  emitArrayBufferLengthToIndex,
+  emitResizableAbAlloc,
+  emitResizableAbLength,
+  emitResizableAbMaxLength,
+} from "../buffers/array-buffer-native.js"; // (#7274) shared with the IR adapters
+import {
+  dataViewBufferByteLengthInstrs,
+  emitDataViewBufferBrandCheck,
+  emitDataViewDefaultLength,
+  emitDataViewDetachedCheck,
+  emitDataViewLengthFromExtern,
+  emitDataViewLengthToIndex,
+  emitDataViewOffsetBoundsCheck,
+  emitDataViewOffsetToIndex,
+  emitDataViewWindow,
+} from "../buffers/data-view-native.js"; // (#7274) shared with the IR adapters
 
 /** Sentinel: the `new` target is not one of the indexed built-in constructors. */
 export const NEW_INDEXED_FALLTHROUGH = Symbol("new-indexed-fallthrough");
@@ -85,91 +102,10 @@ export function tryCompileIndexedBuiltinNew(
       // byteLength (arg 0) → i32, with the same non-negative-integer RangeError
       // guard the plain path uses.
       compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
-      const lenF64 = allocLocal(fctx, `__rab_len_f64_${fctx.locals.length}`, { kind: "f64" });
-      fctx.body.push({ op: "local.tee", index: lenF64 });
-      fctx.body.push({ op: "local.get", index: lenF64 });
-      fctx.body.push({ op: "f64.floor" });
-      fctx.body.push({ op: "f64.ne" });
-      fctx.body.push({ op: "local.get", index: lenF64 });
-      fctx.body.push({ op: "f64.const", value: 0 });
-      fctx.body.push({ op: "f64.lt" });
-      fctx.body.push({ op: "i32.or" });
-      {
-        const rangeErrMsg = "RangeError: Invalid array buffer length";
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
-          else: [],
-        });
-      }
-      const lenI32 = allocLocal(fctx, `__rab_len_i32_${fctx.locals.length}`, { kind: "i32" });
-      fctx.body.push({ op: "local.get", index: lenF64 });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      fctx.body.push({ op: "local.set", index: lenI32 });
-
-      // maxByteLength (options) → i32 via ToIndex: NaN→0, truncate toward zero,
-      // and `< 0` → RangeError (the upper 2^53-1 bound is subsumed by the i32 cap).
+      const lenI32 = emitResizableAbLength(ctx, fctx);
       compileExpression(ctx, fctx, maxByteLenInit, { kind: "f64" });
-      const maxF64 = allocLocal(fctx, `__rab_max_f64_${fctx.locals.length}`, { kind: "f64" });
-      fctx.body.push({ op: "local.set", index: maxF64 });
-      // NaN → 0
-      fctx.body.push({ op: "local.get", index: maxF64 });
-      fctx.body.push({ op: "local.get", index: maxF64 });
-      fctx.body.push({ op: "f64.ne" });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "f64.const", value: 0 },
-          { op: "local.set", index: maxF64 },
-        ],
-        else: [],
-      });
-      // truncate toward zero
-      fctx.body.push({ op: "local.get", index: maxF64 });
-      fctx.body.push({ op: "f64.trunc" });
-      fctx.body.push({ op: "local.set", index: maxF64 });
-      // maxByteLength < 0 → RangeError
-      fctx.body.push({ op: "local.get", index: maxF64 });
-      fctx.body.push({ op: "f64.const", value: 0 });
-      fctx.body.push({ op: "f64.lt" });
-      {
-        const rangeErrMsg = "RangeError: Invalid array buffer max byte length";
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
-          else: [],
-        });
-      }
-      const maxI32 = allocLocal(fctx, `__rab_max_i32_${fctx.locals.length}`, { kind: "i32" });
-      fctx.body.push({ op: "local.get", index: maxF64 });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      fctx.body.push({ op: "local.set", index: maxI32 });
-
-      // AllocateArrayBuffer: byteLength > maxByteLength → RangeError.
-      fctx.body.push({ op: "local.get", index: lenI32 });
-      fctx.body.push({ op: "local.get", index: maxI32 });
-      fctx.body.push({ op: "i32.gt_s" });
-      {
-        const rangeErrMsg = "RangeError: ArrayBuffer byteLength exceeds maxByteLength";
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
-          else: [],
-        });
-      }
-
-      // struct.new $__resizable_ab { length = byteLength, data = new i8[byteLength],
-      // maxByteLength }. The backing array is sized to the CURRENT byteLength (GC
-      // arrays are fixed-length; `.resize()` reallocs + swaps `data`, per A.2).
-      fctx.body.push({ op: "local.get", index: lenI32 });
-      fctx.body.push({ op: "local.get", index: lenI32 });
-      fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
-      fctx.body.push({ op: "local.get", index: maxI32 });
-      fctx.body.push({ op: "struct.new", typeIdx: rabTypeIdx });
+      const maxI32 = emitResizableAbMaxLength(ctx, fctx);
+      emitResizableAbAlloc(ctx, fctx, arrTypeIdx, rabTypeIdx, lenI32, maxI32);
       // Return the PARENT vec type: a `$__resizable_ab` IS-A `$__vec_i32_byte`, so
       // every downstream buffer consumer (byteLength, DataView, TA views, slice)
       // treats it identically — only `.resize()`/`.maxByteLength`/`.resizable`
@@ -202,57 +138,13 @@ export function tryCompileIndexedBuiltinNew(
         else if (lenTy.kind !== "f64") coerceType(ctx, fctx, lenTy, { kind: "f64" });
       }
 
-      // RangeError validation: byteLength must be a non-negative integer < 2^31
-      // (We use i32 internally so cap at i32 max)
-      const lenF64Local = allocLocal(fctx, `__ab_len_f64_${fctx.locals.length}`, { kind: "f64" });
-      fctx.body.push({ op: "local.tee", index: lenF64Local });
-      // (#5150) ToIndex maps NaN (and `undefined`) to 0 and TRUNCATES toward
-      // zero; it does not reject a fractional length. The old `len !== floor(len)`
-      // test rejected both, so `new ArrayBuffer(1.9)` threw where the spec wants
-      // a 1-byte buffer.
-      fctx.body.push({ op: "f64.const", value: 0 });
-      fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "f64.eq" }); // false only for NaN
-      fctx.body.push({ op: "select" });
-      fctx.body.push({ op: "f64.trunc" });
-      fctx.body.push({ op: "local.set", index: lenF64Local });
-      // Check len < 0 (ToIndex step 2b)
-      fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "f64.const", value: 0 });
-      fctx.body.push({ op: "f64.lt" });
-      // (#5150) …and an upper bound BEFORE `array.new_default`, which otherwise
-      // traps uncatchably ("requested new array is too large" —
-      // `allocation-limit.js` / `length-is-too-large-throws.js`). §25.1.3.1
-      // permits a RangeError for any length the implementation cannot allocate;
-      // the backing vec is i32-indexed, so 2^31-1 is the ceiling.
-      fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "f64.const", value: 2147483647 });
-      fctx.body.push({ op: "f64.gt" });
-      fctx.body.push({ op: "i32.or" });
-      {
-        const rangeErrMsg = "RangeError: Invalid array buffer length";
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
-          else: [],
-        });
-      }
-
-      fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+      // ToIndex + the RangeError bounds check (array-buffer-native.ts).
+      emitArrayBufferLengthToIndex(ctx, fctx);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }
 
-    const sizeLocal = allocLocal(fctx, `__ab_size_${fctx.locals.length}`, {
-      kind: "i32",
-    });
-    fctx.body.push({ op: "local.tee", index: sizeLocal });
-    fctx.body.push({ op: "local.get", index: sizeLocal });
-    fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
-    fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+    emitArrayBufferAllocFixed(fctx, vecTypeIdx, arrTypeIdx);
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
@@ -344,154 +236,46 @@ export function tryCompileIndexedBuiltinNew(
         kind: "f64",
       });
 
-      // (#5150) Push the buffer's byte length as f64. Works for BOTH carriers:
-      // an already struct-typed local, and the common standalone shape where an
-      // `ArrayBuffer` binding is an externref that has to be recovered. Only
-      // reachable on the native lane, where the buffer really is an i32_byte vec.
-      const pushBufByteLenF64 = (): void => {
-        fctx.body.push({ op: "local.get", index: bufLocal });
-        if (!isStructBuf) {
-          fctx.body.push({ op: "any.convert_extern" });
-          fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
-        }
-        fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-        fctx.body.push({ op: "f64.convert_i32_s" });
-      };
+      // (#5150) The buffer's byte length as f64, for both carriers: an
+      // already struct-typed local, and the common standalone shape where an
+      // `ArrayBuffer` binding is an externref that has to be recovered.
+      const bufferByteLength = dataViewBufferByteLengthInstrs(bufLocal, isStructBuf, vecTypeIdx);
 
       // (#5150) §25.3.2.1 step 2, RUNTIME half: the static type could not decide
       // (an `any` binding, a DataView instance widened to externref). Runs
       // BEFORE ToIndex(byteOffset) — `buffer-does-not-have-arraybuffer-data-
       // throws.js` asserts the offset's `valueOf` never runs.
-      if (!isStructBuf) {
-        fctx.body.push({ op: "local.get", index: bufLocal });
-        fctx.body.push({ op: "any.convert_extern" });
-        fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx });
-        fctx.body.push({ op: "i32.eqz" });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(
-            ctx,
-            "TypeError",
-            "First argument to DataView constructor must be an ArrayBuffer",
-            { flush: fctx },
-          ),
-          else: [],
-        });
-      }
+      if (!isStructBuf) emitDataViewBufferBrandCheck(ctx, fctx, bufLocal, vecTypeIdx);
 
       if (args.length >= 2) {
-        // #1515 ToIndex(byteOffset) per ECMA §7.1.22:
-        //   1. If undefined → 0
-        //   2. integer = ToIntegerOrInfinity(ToNumber(value))   (NaN → 0; truncate toward 0)
-        //   3. If integer < 0 or integer > 2^53-1 → RangeError
-        // Previous code threw for any non-integer (1.5 → RangeError) and treated NaN
-        // as invalid; spec wants 1.5 → 1 and NaN → 0. Both incorrect behaviors
-        // failed `toindex-byteoffset.js` test262 cases.
-        // (#3481) ToIndex → ToNumber throws on a Symbol before ANY of the
-        // NaN-folding / truncation / RangeError steps below can observe it.
-        // The buffer operand is already evaluated (it is in `bufLocal`), so
-        // §13.3.6.1 argument order is preserved by guarding here.
+        // #1515 ToIndex(byteOffset) per ECMA §7.1.22 (buffers/data-view-native.ts).
+        // (#3481) ToIndex → ToNumber throws on a Symbol first. The buffer
+        // operand is already evaluated (it is in `bufLocal`), so §13.3.6.1
+        // argument order is preserved by guarding here.
         if (emitSymbolOperandCoercionThrow(ctx, fctx, args[1]!, "number")) {
           return { kind: "ref_null", typeIdx: vecTypeIdx };
         }
         compileExpression(ctx, fctx, args[1]!, { kind: "f64" });
-        fctx.body.push({ op: "local.set", index: offsetF64 });
-        // If NaN, replace with 0 (NaN != NaN is the only condition where v != v).
-        fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "f64.ne" });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "f64.const", value: 0 },
-            { op: "local.set", index: offsetF64 },
-          ],
-          else: [],
-        });
-        // Truncate toward zero (ToIntegerOrInfinity for finite non-NaN).
-        fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "f64.trunc" });
-        fctx.body.push({ op: "local.set", index: offsetF64 });
-
-        // Check: offset < 0 OR offset > 2^53-1 (ToIndex bounds → RangeError)
-        fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "f64.const", value: 0 });
-        fctx.body.push({ op: "f64.lt" });
-        fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "f64.const", value: 9007199254740991 }); // 2^53 - 1
-        fctx.body.push({ op: "f64.gt" });
-        fctx.body.push({ op: "i32.or" });
-
-        // (#5150) The `offset > bufferByteLength` half moved OUT of this
-        // condition: §25.3.2.1 orders it at step 9, i.e. AFTER the step-7
-        // detached TypeError, and folding the two produced a RangeError for a
-        // detached buffer (`detached-buffer.js`). What remains here is the
-        // ToIndex RangeError of step 4.
-        {
-          const rangeErrMsg = "RangeError: Start offset is outside the bounds of the buffer";
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
-            else: [],
-          });
-        }
+        emitDataViewOffsetToIndex(ctx, fctx, offsetF64);
       } else {
         // No explicit byteOffset — default to 0
         fctx.body.push({ op: "f64.const", value: 0 });
         fctx.body.push({ op: "local.set", index: offsetF64 });
       }
 
-      // (#5150) §25.3.2.1 step 7: IsDetachedBuffer(buffer) → TypeError. AFTER
-      // ToIndex(byteOffset) (the offset's `valueOf` must have run exactly once)
-      // and BEFORE the step-9 bounds check. The standalone detach marker is the
-      // shared vec's `length` field forced negative (dataview-native.ts), so a
-      // NEGATIVE byte length is the test.
-      pushBufByteLenF64();
-      fctx.body.push({ op: "f64.const", value: 0 });
-      fctx.body.push({ op: "f64.lt" });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "empty" },
-        then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot construct a DataView on a detached ArrayBuffer", {
-          flush: fctx,
-        }),
-        else: [],
-      });
-
-      // (#5150) §25.3.2.1 step 9: offset > bufferByteLength → RangeError, now
-      // also for the externref-carried buffer, which is the common standalone
-      // shape (`var ab = new ArrayBuffer(1); new DataView(ab, 2)`).
-      if (args.length >= 2) {
-        fctx.body.push({ op: "local.get", index: offsetF64 });
-        pushBufByteLenF64();
-        fctx.body.push({ op: "f64.gt" });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(
-            ctx,
-            "RangeError",
-            "RangeError: Start offset is outside the bounds of the buffer",
-            { flush: fctx },
-          ),
-          else: [],
-        });
-      }
+      // (#5150) Step 7 (detached) after ToIndex(byteOffset) — whose `valueOf`
+      // must have run exactly once — and before the step-9 bounds check.
+      emitDataViewDetachedCheck(ctx, fctx, bufferByteLength);
+      if (args.length >= 2) emitDataViewOffsetBoundsCheck(ctx, fctx, offsetF64, bufferByteLength);
 
       if (args.length >= 3) {
-        // #1515 ToIndex(byteLength) — same ToIndex semantics as byteOffset above.
-        // (#3481) …including the §7.1.4 Symbol TypeError.
+        // #1515 ToIndex(byteLength). (#3481) …including the §7.1.4 Symbol TypeError.
         if (emitSymbolOperandCoercionThrow(ctx, fctx, args[2]!, "number")) {
           return { kind: "ref_null", typeIdx: vecTypeIdx };
         }
-        // (#5150) §25.3.2.1 step 11: an EXPLICIT `undefined` byteLength means
-        // "to the end of the buffer" (`defined-byteoffset-undefined-bytelength.js`
-        // asserts byteLength 4, not 0), while `null` keeps coercing to 0. Keep
-        // the compiled argument as an externref so the singleton stays
-        // distinguishable, then override the length below.
+        // (#5150) An EXPLICIT `undefined` byteLength means "to the end of the
+        // buffer", while `null` keeps coercing to 0: a non-number argument is
+        // kept as an externref so the singleton stays distinguishable.
         const lenWasUndefined = allocLocal(fctx, `__dv_len_undef_${fctx.locals.length}`, { kind: "i32" });
         fctx.body.push({ op: "i32.const", value: 0 });
         fctx.body.push({ op: "local.set", index: lenWasUndefined });
@@ -502,167 +286,21 @@ export function tryCompileIndexedBuiltinNew(
           const lenTy = compileExpression(ctx, fctx, args[2]!, { kind: "externref" });
           if (lenTy === null) fctx.body.push({ op: "ref.null.extern" });
           else if (lenTy.kind !== "externref") coerceType(ctx, fctx, lenTy, { kind: "externref" });
-          fctx.body.push({ op: "local.tee", index: lenExtern });
-          fctx.body.push(...explicitUndefinedExternTestInstrs(ctx, lenExtern));
-          fctx.body.push({ op: "local.set", index: lenWasUndefined });
-          coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+          emitDataViewLengthFromExtern(ctx, fctx, lenExtern, lenWasUndefined);
         }
-        fctx.body.push({ op: "local.set", index: lenF64 });
-        // NaN → 0
-        fctx.body.push({ op: "local.get", index: lenF64 });
-        fctx.body.push({ op: "local.get", index: lenF64 });
-        fctx.body.push({ op: "f64.ne" });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "f64.const", value: 0 },
-            { op: "local.set", index: lenF64 },
-          ],
-          else: [],
-        });
-        // Truncate toward zero
-        fctx.body.push({ op: "local.get", index: lenF64 });
-        fctx.body.push({ op: "f64.trunc" });
-        fctx.body.push({ op: "local.set", index: lenF64 });
-
-        // Check: len < 0 OR len > 2^53-1 → RangeError
-        fctx.body.push({ op: "local.get", index: lenF64 });
-        fctx.body.push({ op: "f64.const", value: 0 });
-        fctx.body.push({ op: "f64.lt" });
-        fctx.body.push({ op: "local.get", index: lenF64 });
-        fctx.body.push({ op: "f64.const", value: 9007199254740991 }); // 2^53 - 1
-        fctx.body.push({ op: "f64.gt" });
-        fctx.body.push({ op: "i32.or" });
-
-        // Check: offset + length > bufferByteLength (§25.3.2.1 step 11.b.ii).
-        // (#5150) …now also for the externref carrier — `excessive-bytelength-
-        // throws.js` passes a plain `var buffer = new ArrayBuffer(n)`.
-        fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "local.get", index: lenF64 });
-        fctx.body.push({ op: "f64.add" });
-        pushBufByteLenF64();
-        fctx.body.push({ op: "f64.gt" });
-        fctx.body.push({ op: "i32.or" });
-
-        {
-          const rangeErrMsg = "RangeError: Invalid DataView length";
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
-            else: [],
-          });
-        }
-
-        // (#5150) …and the explicit-`undefined` default, applied after the
-        // bounds check (which the 0-length placeholder always passes).
-        fctx.body.push({ op: "local.get", index: lenWasUndefined });
-        const defaultLen: Instr[] = [];
-        const savedBody = fctx.body;
-        fctx.body = defaultLen;
-        pushBufByteLenF64();
-        fctx.body = savedBody;
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            ...defaultLen,
-            { op: "local.get", index: offsetF64 },
-            { op: "f64.sub" },
-            { op: "local.set", index: lenF64 },
-          ],
-          else: [],
-        });
-      } else if (isStructBuf) {
-        // Default byteLength = bufferByteLength - offset
-        fctx.body.push({ op: "local.get", index: bufLocal });
-        fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-        fctx.body.push({ op: "f64.convert_i32_s" });
-        fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "f64.sub" });
-        fctx.body.push({ op: "local.set", index: lenF64 });
+        emitDataViewLengthToIndex(ctx, fctx, { lenF64, offsetF64, lenWasUndefined }, bufferByteLength);
       } else {
-        // (#2159/#38) Standalone externref buffer (the common case — ArrayBuffer
-        // locals are typed externref): recover the i32_byte vec struct at runtime
-        // (any.convert_extern + ref.cast) and read its byte length, so the default
-        // windowed byteLength = bufferByteLength - offset is correct without a
-        // host handler.
-        fctx.body.push({ op: "local.get", index: bufLocal });
-        fctx.body.push({ op: "any.convert_extern" });
-        fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
-        fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-        fctx.body.push({ op: "f64.convert_i32_s" });
-        fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "f64.sub" });
-        fctx.body.push({ op: "local.set", index: lenF64 });
+        emitDataViewDefaultLength(fctx, lenF64, offsetF64, bufferByteLength);
       }
 
-      // #1064: register view metadata with host so the runtime bridge can
-      // reconstruct a correctly-windowed native DataView on method dispatch.
-      // Always register, even for externref buffers — ArrayBuffer variables
-      // in user code are lowered to externref (see checker/type-mapper.ts),
-      // but the actual wasmGC struct is what the bridge dispatches on.
-      //
-      // (#2159) Standalone / WASI mode has no JS host: the accessor
-      // (`get/set{Int,Uint,Float}N`) is lowered to pure-Wasm byte reads/writes
-      // directly on the i32_byte backing struct (see dataview-native.ts), so
-      // there is no runtime bridge to register with. Emitting the host call
-      // unconditionally leaked an unsatisfiable `env::__dv_register_view`
-      // import, making EVERY `new DataView(...)` a hard instantiate failure
-      // standalone. Gate the registration on JS-host mode; standalone evaluates
-      // the offset/length args above for their side effects + RangeError checks
-      // and then operates on the struct directly. (The view-window base offset
-      // for `new DataView(buf, n>0)` is a separate representation slice, shared
-      // with TypedArray-on-buffer windowing; offset-0 views — the dominant
-      // case — are fully native here.)
-
-      // (#2159/#38, #3173) Standalone DataView: wrap the shared backing buffer
-      // in a `$__dv_window {buf, byteOffset, byteLength}` so the native
-      // accessors add the base offset and `dv.byteOffset` / `dv.byteLength`
-      // reflect the ctor args. (#3173) The wrap is now UNCONDITIONAL (was:
-      // windowed views only) — `$__dv_window` IS the standalone [[DataView]]
-      // internal-slot brand, so an offset-0 default-length view must also be
-      // distinguishable from its bare ArrayBuffer vec (a bare vec receiver on
-      // an accessor now throws the §24.3.1.1/2 brand TypeError). The wrap is
-      // RUNTIME-GATED on the buffer actually being an `i32_byte` vec (a
-      // `$__resizable_ab` passes too — it subtypes the vec): a non-vec buffer
-      // (host object, exotic value) passes through unwrapped, exactly the
-      // pre-#3173 behaviour, so no new trap is introduced.
-      const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
-      const wrapWindow: Instr[] = [
-        // buf (ref null vec) — the cast is safe under the ref.test gate below.
-        { op: "local.get", index: bufLocal },
-        ...(!isStructBuf ? ([{ op: "any.convert_extern" }] satisfies Instr[]) : []),
-        { op: "ref.cast", typeIdx: vecTypeIdx },
-        // byteOffset (i32) — offsetF64 is already ToIndex-normalized & validated.
-        { op: "local.get", index: offsetF64 },
-        { op: "i32.trunc_sat_f64_s" },
-        // byteLength (i32) — lenF64 holds the windowed length (explicit arg or
-        // bufferByteLength - offset default computed above).
-        { op: "local.get", index: lenF64 },
-        { op: "i32.trunc_sat_f64_s" },
-        { op: "ref.null.extern" }, // #3371 constructProto (intrinsic default)
-        { op: "struct.new", typeIdx: dvWinTypeIdx },
-        // DataView locals are externref (EXTERNREF_GLOBAL_NAMES) — hand back an
-        // externref so the wrapper survives the variable store and is recovered
-        // (any.convert_extern + ref.test $__dv_window) on accessor dispatch.
-        { op: "extern.convert_any" },
-      ];
-      const passThrough: Instr[] = [
-        { op: "local.get", index: bufLocal },
-        ...(isStructBuf ? ([{ op: "extern.convert_any" }] satisfies Instr[]) : []),
-      ];
-      // Gate: is the buffer (a subtype of) the i32_byte vec?
-      fctx.body.push({ op: "local.get", index: bufLocal });
-      if (!isStructBuf) fctx.body.push({ op: "any.convert_extern" });
-      fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: wrapWindow,
-        else: passThrough,
-      });
+      // (#2159/#38, #3173) Standalone DataView: a `$__dv_window` over the
+      // shared backing buffer, so the native accessors add the base offset and
+      // `dv.byteOffset` / `dv.byteLength` reflect the ctor args. The window IS
+      // the standalone [[DataView]] brand (an offset-0 view must also be
+      // distinguishable from its bare vec); a non-vec buffer passes through
+      // unwrapped. No `__dv_register_view` host call: that import is
+      // unsatisfiable standalone (#2159).
+      emitDataViewWindow(ctx, fctx, { bufLocal, isStructBuf, offsetF64, lenF64 }, vecTypeIdx);
       return { kind: "externref" };
     } else {
       return dvBrandThrow();

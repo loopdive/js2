@@ -14,10 +14,17 @@ import { resolveStructNameForExpr, resolveStructName } from "./property-access.j
 import { compileExpression, coerceType, flushLateImportShifts } from "./shared.js";
 import { addUnionImports } from "./index.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { ensureLateImport } from "./expressions/late-imports.js";
+import { emitUndefined, ensureLateImport } from "./expressions/late-imports.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./expressions/helpers.js";
 import { collectConcatOperands } from "./native-batched-concat.js";
-import { compileStringBinaryOp } from "./string-ops.js";
+import {
+  compileNativeConcatOperand,
+  compileStringBinaryOp,
+  tryThrowOnSymbolStringCoercion,
+  valueExprTsType,
+} from "./string-ops.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
 import { readEnv } from "../env.js";
 
 // (#3753 S2) An `any`-typed operand the whole-program fixpoint already PROVED
@@ -730,4 +737,78 @@ export function compileStringBinaryOpWithNativeAddition(
   };
   // Return the runtime representation, not the type asserted on the source.
   return emitAnyAdd(ctx, fctx, expr, [callableText(expr.left, leftType), callableText(expr.right, rightType)]);
+}
+
+/**
+ * (#7214) `slot += rhs` where the slot holds a native string and its current
+ * value (of `slotType`) is already on the stack — the `string + rhs` dispatch of
+ * {@link compileStringBinaryOpWithNativeAddition} with the left operand already
+ * evaluated, so the receiver is read once. A primitive-producing `rhs` takes the
+ * native concat; anything else takes the ToPrimitive(default) `+` dispatch, so
+ * `valueOf` runs first and a Symbol throws. Leaves a `ref $AnyString`. Requires
+ * native strings; every lane has no JS host since #6979, which is the
+ * `compileNativeConcatOperand` precondition.
+ */
+export function emitNativeStringSlotPlus(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.Expression,
+  rhs: ts.Expression,
+  slotType: ValType,
+): boolean {
+  // An empty slot of a field typed `T | undefined` (e.g. `f?: string`) holds
+  // `undefined`, which the plain read surfaces as such.
+  const { nullable, undefinable } = ctx.oracle.nullabilityOf(target);
+  const emptyIsUndefined = slotType.kind === "ref_null" && undefinable && !nullable;
+  if (isPrimitiveConcatProducer(rhs, ctx, fctx)) {
+    const concatIdx = ctx.nativeStrHelpers.get("__str_concat");
+    if (concatIdx === undefined) return false;
+    if (emptyIsUndefined) {
+      const slotTmp = allocTempLocal(fctx, slotType);
+      fctx.body.push({ op: "local.tee", index: slotTmp }, { op: "ref.is_null" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx } },
+        then: nativeStringLiteralInstrs(ctx, "undefined"),
+        else: [{ op: "local.get", index: slotTmp }, { op: "ref.as_non_null" }],
+      });
+      releaseTempLocal(fctx, slotTmp);
+    } else if (!compileNativeConcatOperand(ctx, fctx, target, false, slotType)) {
+      return false;
+    }
+    // §7.1.17: a statically Symbol-typed operand throws (its slot holds an id).
+    if (!tryThrowOnSymbolStringCoercion(ctx, fctx, rhs) && !compileNativeConcatOperand(ctx, fctx, rhs)) return false;
+    fctx.body.push({ op: "call", funcIdx: concatIdx });
+    return true;
+  }
+  ensureObjectRuntime(ctx);
+  // Left as an externref: an empty slot is `null`, or `undefined` per its type.
+  const slotTmp = allocTempLocal(fctx, slotType);
+  const lTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: slotTmp });
+  if (emptyIsUndefined) emitUndefined(ctx, fctx);
+  else fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "local.set", index: lTmp });
+  fctx.body.push({ op: "local.get", index: slotTmp }, { op: "ref.is_null" }, { op: "i32.eqz" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [{ op: "local.get", index: slotTmp }, { op: "extern.convert_any" }, { op: "local.set", index: lTmp }],
+    else: [],
+  });
+  releaseTempLocal(fctx, slotTmp);
+  const rhsType = valueExprTsType(ctx, rhs);
+  const rhsText = callableToStringLiteral(rhsType);
+  const deferred: DeferredAddOperand[] = [];
+  const callableText =
+    rhsText !== undefined && !admitsObjectAddition(ctx, rhsType, rhsType, rhs, rhs) ? rhsText : undefined;
+  const rTmp = emitAddOperand(ctx, fctx, rhs, deferred, callableText);
+  if (rTmp === null) {
+    releaseTempLocal(fctx, lTmp);
+    return false;
+  }
+  if (emitAnyAddFromExternTemps(ctx, fctx, lTmp, rTmp, deferred).kind !== "externref") return false;
+  // ToString of the sum (already a string unless an empty slot met a number).
+  emitExternrefSlotToAnyStr(ctx, fctx);
+  return true;
 }

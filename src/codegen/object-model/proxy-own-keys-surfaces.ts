@@ -691,7 +691,7 @@ function ensureProxyEnumerableOwnProperties(ctx: CodegenContext, withKeys: boole
  * 2=out 3=n 4=i 5=k
  */
 export function installClosedStructPropertiesGuard(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!ctx.standalone && !ctx.wasi) return; // (#7201) wasi registers the classifier too; no js-errors import (leaf)
   const fn = ctx.mod.functions.find((f) => f.name === "__defineProperties");
   const selfIdx = ctx.funcMap.get("__defineProperties");
   const classifier = ctx.funcMap.get("__object_assign_closed_struct_source");

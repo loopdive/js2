@@ -125,16 +125,13 @@ describe("#7106 Stage 4 — calls through a dynamic value", () => {
 
   // This exercises the planner's lane gate, not a capability: the arm is
   // reachable only through a planned member closure, and `planMemberClosure`
-  // mints no plan on host-assisted gc or on the fast lane. The same shape
-  // claims on standalone and stays legacy — refused at select, before any
-  // claim — on those two lanes.
+  // mints no plan on the fast lane. The same shape claims on standalone
+  // and stays legacy — refused at select, before any claim — on fast.
+  // #6979 retired host-assisted gc; that public input rejects before selection.
   it("admits the call only where a member-closure plan exists (no claim-then-demote elsewhere)", async () => {
     const standalone = await compile(DYNAMIC_CALL, OPTIONS);
     expect(row(standalone, "<module-init>")).toMatchObject({ irBodyEmitted: true, legacyBodyEmitted: false });
-    for (const lane of [
-      { target: "gc", semanticProviders: "host-assisted" },
-      { target: "standalone", fast: true },
-    ] as const) {
+    for (const lane of [{ target: "standalone", fast: true }] as const) {
       const result = await compile(DYNAMIC_CALL, { ...OPTIONS, ...lane });
       expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
       expect(row(result, "<module-init>"), JSON.stringify(lane)).toMatchObject({
@@ -145,5 +142,18 @@ describe("#7106 Stage 4 — calls through a dynamic value", () => {
       });
       expect(result.irPostClaimErrors ?? [], JSON.stringify(lane)).toEqual([]);
     }
+    // Exercise the removed spelling at the public JavaScript argument boundary.
+    await expect(
+      Reflect.apply(compile, undefined, [
+        DYNAMIC_CALL,
+        {
+          ...OPTIONS,
+          target: "gc",
+          semanticProviders: "host-assisted",
+        },
+      ]),
+    ).rejects.toThrow(
+      'Compile option semanticProviders: "host-assisted" selected the host-assisted semantic profile, which #6979 removed',
+    );
   }, 60_000);
 });

@@ -58,6 +58,8 @@ import { reserveReplacerDriver, reserveReviverDriver, reserveToJsonDriver } from
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { buildRawJsonSymbolToStringGuard, prepareRawJsonSymbolToString } from "./json-rawjson-symbol.js";
 import {
+  ensureJsonCallablePredicate,
+  jsonCallableSkipInstrs,
   jsonClosedStructTestInstrs,
   jsonCycleEnterInstrs,
   jsonToJsonMethodLookupInstrs,
@@ -149,6 +151,7 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   const objTypes = ensureObjectRuntime(ctx);
   emitNativeNumberFormat(ctx, new Set(["number_toString"]));
   const quoteIdx = emitJsonQuoteString(ctx);
+  ensureJsonCallablePredicate(ctx); // (#7159)
 
   const concatIdx = ctx.nativeStrHelpers.get("__str_concat")!;
   const orderedIdx = ctx.funcMap.get("__obj_ordered")!;
@@ -285,6 +288,7 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   const litStr = (s: string): Instr[] => nativeStringLiteralInstrs(ctx, s);
   // (#1599) closed user struct screen (undefined outside standalone).
   const closedStructTest = jsonClosedStructTestInstrs(ctx, L_ANY);
+  const callableSkip = jsonCallableSkipInstrs(ctx, L_ANY, anyStrTypeIdx); // (#7159)
 
   // out = __str_concat(out, <piece in L_PIECE, non-null>)
   const appendPiece: Instr[] = [
@@ -1246,6 +1250,7 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
             ],
           },
         ] satisfies Instr[])),
+    ...callableSkip, // (#7159) §25.5.2 step 11, after toJSON: a callable → undefined
     ...buildRawJsonStringifyArm(ctx, L_ANY, objectTypeIdx, anyStrTypeIdx, externGetIdxTJ),
     // (#1599) §25.5.2.5/6 step 1 — a value already on the stack is a cycle.
     ...jsonCycleEnterInstrs(ctx, objVecArrTypeIdx, L_ANY, P_DEPTH),
@@ -1971,8 +1976,11 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
  *
  * Returns the `__json_parse_text` funcIdx.
  */
+/** The parse entry's function name (`(externref) -> anyref`), shared with the IR's provider row (#7267). */
+export const JSON_PARSE_TEXT_FN = "__json_parse_text";
+
 export function emitJsonParseText(ctx: CodegenContext): number {
-  const existing = ctx.funcMap.get("__json_parse_text");
+  const existing = ctx.funcMap.get(JSON_PARSE_TEXT_FN);
   if (existing !== undefined) return existing;
 
   // Dependencies (all idempotent).
@@ -2076,7 +2084,7 @@ export function emitJsonParseText(ctx: CodegenContext): number {
 
   const textTypeIdx = addFuncType(ctx, [externref], [anyref]);
   const textFuncIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set("__json_parse_text", textFuncIdx);
+  ctx.funcMap.set(JSON_PARSE_TEXT_FN, textFuncIdx);
 
   // ════════════════════════════════════════════════════════════════════════
   // __json_parse_value(p: anyref) -> anyref
@@ -3420,7 +3428,7 @@ export function emitJsonParseText(ctx: CodegenContext): number {
   } as unknown as (typeof ctx.mod.functions)[number]);
 
   pushDefinedFunc(ctx, textFuncIdx, {
-    name: "__json_parse_text",
+    name: JSON_PARSE_TEXT_FN,
     typeIdx: textTypeIdx,
     locals: [
       { count: 1, type: strRefNative }, // T_FLAT

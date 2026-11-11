@@ -16,7 +16,8 @@
  *      (NaN → +0); without comparefn the ToString forms compare by code unit.
  *   5. `sort` writes the sorted items back with Set(O, k, v, true) and deletes
  *      O[itemCount .. len) (DeletePropertyOrThrow), returning O; `toSorted`
- *      returns a fresh `$ObjVec`.
+ *      returns a fresh `$ObjVec`. A closed-struct receiver's declared index
+ *      slots are also written by key string (#7167, `array-sort-declared-slots.ts`).
  *
  * The comparefn is called through `__apply_closure(fn, undefined, args)` with
  * a two-element `$ObjVec` argument carrier. Both members take the variadic
@@ -35,10 +36,11 @@ import { holeTestInstrs } from "../array-holes.js";
 import { stringVecElementIsNullable } from "../array-join-element.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
-import { ensureNativeStringHelpers } from "../native-strings.js";
+import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "../native-strings.js";
 import { getOrRegisterArrayType } from "../registry/types.js";
 import { coerceType, ensureLateImport, flushLateImportShifts } from "../shared.js";
 import { ensureSpecExternrefToStringProvider } from "../coercion-engine.js";
+import { sortDeclaredSlotWrite } from "./array-sort-declared-slots.js";
 
 const EXT: ValType = { kind: "externref" };
 const F64: ValType = { kind: "f64" };
@@ -328,12 +330,17 @@ export function emitArraySortMemberBody(
       get(items),
     );
   } else {
+    // (#7167) A closed-struct receiver's declared index slots first; `[]` for every other module.
+    const slotWrite = sortDeclaredSlotWrite(ctx, 1, i, elemAt, fn.__extern_set_strict!, (key) =>
+      stringConstantExternrefInstrs(ctx, key),
+    );
     fctx.body.push(
       i32(0),
       set(i),
       loop(
         [get(i), get(n), { op: "i32.ge_u" }],
         [
+          ...slotWrite,
           get(1),
           get(i),
           { op: "f64.convert_i32_u" },

@@ -700,24 +700,31 @@ a missing feature.
 
 - [ ] A native-first test262 lane and npm-compat lane exist, run in CI on
       dispatch/nightly, and their baselines are committed (Phase 1).
+      _(2026-11-05: test262 lanes retired 2026-10-12, standalone ratchet
+      guards the regime arms; a schedule-only regime lane is still a
+      stakeholder question — not closed by S7-e.)_
 - [x] Host-vs-native-first runtime performance is measured and recorded here
       (Phase 1). #7087 closed the one string-kernel blocker at 1.426x
       native-first / host-assisted; the S6 runtime-performance bar is met.
 - [ ] Native-first official pass ≥ host official pass minus the explicitly
-      deferred set; standalone floor unchanged (Phase 2).
+      deferred set; standalone floor unchanged (Phase 2). _(pending S7-b..d)_
 - [ ] `semanticProviders` defaults to `native-first` in every environment;
       `wasm:js-string`, host RegExp/Date/Intl are per-family opt-ins; a
       whole-profile rollback alias exists for one release (Phase 3).
+      _(pending S7-b..d)_
 - [ ] `legacy-semantic` is a compile error in every profile;
       `compatibility-*-adapter.ts` and the legacy `resolveImport` arms are
       deleted; `runtime.ts` ≤ ~9k lines; `ctx.standalone`/`ctx.wasi`/
       `ctx.nativeStrings` gates remaining are environment- or opt-in-shaped
-      only (Phase 4).
+      only (Phase 4). _(pending S7-b..d)_
 - [ ] No npm-compat package regresses from `measured` to error on the JS
       lane; the value-adapter identity/callability/multi-instance tests
       (`tests/issue-4399*`, `tests/issue-4397*`) stay green throughout.
-- [ ] `CLAUDE.md`, `docs/cli.md`, `docs/architecture/codegen-axes.md` and
+      _(pending S7-b..d)_
+- [x] `CLAUDE.md`, `docs/cli.md`, `docs/architecture/codegen-axes.md` and
       `marshaling-contract.md` describe one semantic core, not two modes.
+      _(#6979 S7-e, 2026-11-05; also README, STATUS, methodology,
+      target-architecture, landing page, report page, whitepaper headline.)_
 
 
 ### 2026-10-14/15 checkpoint — S6 implemented, flip PR waiting on five fix PRs (Fable lead, Opus implementers)
@@ -1024,3 +1031,52 @@ last two are `it.fails` rows on PR 6701.
 **Still open for the stakeholder:** README conformance line after retirement
 (S7 entry condition 5, S7-e implements it); schedule-only regime test262 lane;
 PR 6707 (#7010) on `hold`.
+
+### 2026-11-05 — S7-a on main; S7-e decisions recorded
+
+S7-a merged into main on 2026-10-26 as PR #6899 (the stakeholder's review
+lane re-homed PR 6701's head with a round-2 review fix; 6701 closed in its
+favour). Main moved ~1,250 commits over the pause; S7-b (PR 6705), S7-c
+(PR 6896), the S7-c continuation (711 → 2 `ctx.standalone` hits,
+`CodegenContext.standalone` removed, 15 dead modules deleted; branch
+`issue-6979-s7c2-fold-remaining-arms`) and S7-d (`src/runtime.ts` 11,539 →
+4,995 lines, `resolveImport` 1,940 → 206 lines; branch
+`issue-6979-s7d-runtime-adapters`, `be55974a1e`) are being re-merged onto
+main in that order.
+
+**Stakeholder decisions for S7-e (2026-10-25 and 2026-11-05):**
+
+1. README first conformance line: **standalone only** (the figure CI
+   measures). The frozen host figure leaves the README.
+2. Website/dashboard conformance graph: the JS-host series **stays as a
+   background series** (historical context, frozen at the 2026-10-12
+   retirement) and the **JS-host toggle is removed**; the standalone series
+   is the only interactive one.
+
+S7-e implements both; `scripts/preserve-frozen-host-baseline.mjs` keeps
+publishing the frozen snapshot that the background series reads.
+
+### 2026-11-05 — S7-e: stakeholder decisions on the conformance line and graph; docs and dashboards retire the two-mode story
+
+**Stakeholder decisions (S7 entry condition 5), relayed by the lead lane:**
+
+1. The README's first conformance line shows the **standalone figure only**;
+   the frozen JS-host figure leaves the README.
+2. The website/dashboard conformance graph keeps the JS-host series as a
+   **background series** — frozen at the 2026-10-12 retirement, historical
+   context, not interactive, visually subdued — and the **JS-host toggle is
+   removed**, so the standalone series is the only interactive one.
+
+**Implemented in #6979 S7-e** (details and the before-state table in the
+#6979 file, "S7-e measurement" / "S7-e landing"): README standalone-only via a
+standalone-only mode in `sync-conformance-numbers.mjs`; the landing page's
+"JS host" toggle and its state removed; `<t262-conformance-trend>` draws
+standalone as the primary series and the host lane as a dashed, dimmed
+background line ending on 2026-10-12, labelled "JS-host lane, retired
+2026-10-12"; one-core wording in CLAUDE.md, docs/cli.md, methodology,
+target-architecture, marshaling-contract, STATUS.md, the landing FAQ and the
+whitepaper headline. The program-acceptance docs item is closed; the others
+wait on S7-b..d.
+
+**Still open for the stakeholder:** schedule-only regime test262 lane; PR
+6707 (#7010) on `hold`.

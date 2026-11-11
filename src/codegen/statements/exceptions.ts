@@ -17,7 +17,7 @@ import {
   ensureBindingLocals,
 } from "./destructuring.js";
 import { emitExternrefDestructureGuard } from "../destructuring-params.js";
-import { collectBindingNames } from "../../ir/analysis/loop-shape.js";
+import { collectPatternBindingNames } from "../../ir/analysis/ast-scope.js";
 import { adjustRethrowDepth, restoreBlockScopedShadows, saveBlockScopedShadows } from "./shared.js";
 import { beginFinallyCompletionSnapshot, endFinallyCompletionSnapshot } from "./eval-completion-value.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
@@ -32,7 +32,7 @@ function catchClauseBoundNames(clause: ts.CatchClause): string[] {
   const name = clause.variableDeclaration?.name;
   if (!name) return [];
   if (ts.isIdentifier(name)) return [name.text];
-  return collectBindingNames(name);
+  return [...collectPatternBindingNames(name)];
 }
 
 /**

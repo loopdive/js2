@@ -518,6 +518,9 @@ export function isSideEffecting(i: IrInstr): boolean {
     // slot.read is pure (load a Wasm local) but always-keep to avoid
     // breaking the for-of body's load/use pattern.
     i.kind === "slot.write" ||
+    // Void vector writes must retain their operand definitions, not only the operation.
+    i.kind === "vec.set" ||
+    i.kind === "vec.set_length" ||
     // #3795: strict dynamic [[Set]] is void-result but its three carrier
     // operands must seed DCE liveness. The generic null-result keep rule
     // preserves only the instruction itself, not the definitions it uses.
@@ -528,6 +531,22 @@ export function isSideEffecting(i: IrInstr): boolean {
     // (§7.2.15) is observation-free and stays droppable.
     i.kind === "dyn.to_number" ||
     (i.kind === "dyn.eq" && i.loose) ||
+    // (#7269) The value-producing dyn ops `effectsOf` already calls
+    // call-like, because they run user code or mutate protocol state that an
+    // unused result does not undo. Each must still execute:
+    //   - `dyn.own_property` and `dyn.member_get` run ToPropertyKey on the
+    //     key, Proxy traps and getters;
+    //   - `dyn.instanceof` reads `target.prototype` (an accessor may run) and
+    //     throws for a non-callable target;
+    //   - `dyn.instanceof_fn` walks the value's prototype chain, where a
+    //     Proxy trap may run;
+    //   - `dyn.arguments_length` consumes and clears the published `__argc`.
+    // `dyn.current_this` and `dyn.global_object` only read, and stay droppable.
+    i.kind === "dyn.own_property" ||
+    i.kind === "dyn.member_get" ||
+    i.kind === "dyn.instanceof" ||
+    i.kind === "dyn.instanceof_fn" ||
+    i.kind === "dyn.arguments_length" ||
     i.kind === "forof.vec" ||
     // Slice 6 part 3 (#1182): host-iterator protocol ops mutate iterator
     // state (advance pointer, dispose). DCE must not eliminate them

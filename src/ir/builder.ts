@@ -1766,9 +1766,9 @@ export class IrFunctionBuilder {
    * the slot's stable index, usable with `slot.read` / `slot.write`.
    * `type` must be a primitive ValType (no struct refs in slice 6).
    */
-  declareSlot(name: string, type: ValType): number {
+  declareSlot(name: string, type: ValType, role: Pick<IrSlotDef, "stringBuilder"> = {}): number {
     const index = this.slotDefs.length;
-    this.slotDefs.push({ index, name, type });
+    this.slotDefs.push({ index, name, type, ...role });
     return index;
   }
 

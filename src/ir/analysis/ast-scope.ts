@@ -48,16 +48,9 @@ export function isFunctionScopeBoundary(node: ts.Node): boolean {
   );
 }
 
-/** Collect all identifier names from a binding pattern (destructuring parameter) */
+/** Collect every identifier a binding pattern binds, at any depth, into `names`. */
 export function collectBindingPatternNames(pattern: ts.BindingPattern, names: Set<string>): void {
-  for (const element of pattern.elements) {
-    if (ts.isOmittedExpression(element)) continue;
-    if (ts.isIdentifier(element.name)) {
-      names.add(element.name.text);
-    } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
-      collectBindingPatternNames(element.name, names);
-    }
-  }
+  for (const name of collectPatternBindingNames(pattern)) names.add(name);
 }
 
 /**

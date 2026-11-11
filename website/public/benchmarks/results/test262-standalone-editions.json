@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11566,
-    "fail": 125,
+    "pass": 11567,
+    "fail": 124,
     "ce": 13,
     "skip": 0,
     "total": 11704,
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4344,
-    "fail": 1247,
+    "pass": 4347,
+    "fail": 1244,
     "ce": 201,
     "skip": 0,
     "total": 5792,
@@ -2213,8 +2213,8 @@
       },
       {
         "name": "class-methods-private",
-        "pass": 1488,
-        "fail": 187,
+        "pass": 1489,
+        "fail": 186,
         "ce": 34,
         "skip": 0,
         "total": 1709,
@@ -2222,8 +2222,8 @@
       },
       {
         "name": "class-static-methods-private",
-        "pass": 1197,
-        "fail": 214,
+        "pass": 1198,
+        "fail": 213,
         "ce": 102,
         "skip": 0,
         "total": 1513,
@@ -2276,8 +2276,8 @@
       },
       {
         "name": "resizable-arraybuffer",
-        "pass": 158,
-        "fail": 272,
+        "pass": 159,
+        "fail": 271,
         "ce": 2,
         "skip": 0,
         "total": 432,
@@ -2465,12 +2465,12 @@
       },
       {
         "name": "class-fields-private-in",
-        "pass": 11,
-        "fail": 5,
+        "pass": 13,
+        "fail": 3,
         "ce": 3,
         "skip": 0,
         "total": 19,
-        "pct": 58
+        "pct": 68
       },
       {
         "name": "object-spread",
@@ -2683,12 +2683,12 @@
   },
   {
     "edition": "ES2023",
-    "pass": 195,
-    "fail": 139,
+    "pass": 198,
+    "fail": 136,
     "ce": 0,
     "skip": 0,
     "total": 334,
-    "pct": 58,
+    "pct": 59,
     "features": [
       {
         "name": "change-array-by-copy",
@@ -2710,12 +2710,12 @@
       },
       {
         "name": "array-find-from-last",
-        "pass": 91,
-        "fail": 18,
+        "pass": 94,
+        "fail": 15,
         "ce": 0,
         "skip": 0,
         "total": 109,
-        "pct": 83
+        "pct": 86
       },
       {
         "name": "ShadowRealm",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4581,
+    "pass": 4585,
     "fail": 197,
-    "ce": 143,
+    "ce": 139,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4482,
+        "pass": 4486,
         "fail": 106,
-        "ce": 23,
+        "ce": 19,
         "skip": 0,
         "total": 4611,
         "pct": 97
@@ -3789,12 +3789,12 @@
   },
   {
     "edition": "ES2027",
-    "pass": 388,
-    "fail": 360,
+    "pass": 392,
+    "fail": 356,
     "ce": 149,
     "skip": 0,
     "total": 897,
-    "pct": 43,
+    "pct": 44,
     "features": [
       {
         "name": "explicit-resource-management",
@@ -3816,12 +3816,12 @@
       },
       {
         "name": "joint-iteration",
-        "pass": 14,
-        "fail": 21,
+        "pass": 18,
+        "fail": 17,
         "ce": 47,
         "skip": 0,
         "total": 82,
-        "pct": 17
+        "pct": 22
       },
       {
         "name": "immutable-arraybuffer",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4720,
-    "fail": 661,
+    "pass": 4725,
+    "fail": 656,
     "ce": 64,
     "skip": 0,
     "total": 5445,

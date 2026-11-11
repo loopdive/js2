@@ -136,6 +136,7 @@ function openBodyKey(
   returnsValue: boolean,
   allowThis: boolean,
   identifierCalls: boolean,
+  moduleGlobals: boolean,
 ): string | undefined {
   const facts: Array<string | number> = [];
   let ok = true;
@@ -162,7 +163,11 @@ function openBodyKey(
         return;
       }
       const declaration = oracle.valueDeclarationOf(node);
-      if (declaration !== undefined && isScriptLevelBinding(declaration, expression.getSourceFile())) {
+      if (
+        !moduleGlobals &&
+        declaration !== undefined &&
+        isScriptLevelBinding(declaration, expression.getSourceFile())
+      ) {
         ok = false;
         return;
       }
@@ -263,6 +268,8 @@ interface FunctionClosureSite {
   readonly requiresVoid: boolean;
   /** Bare `f()` calls may appear: the site's receiver unit joins the component. */
   readonly identifierCalls: boolean;
+  /** #7130: actual moduleGlobal bindings are reached directly, not captured into an environment. */
+  readonly moduleGlobals?: boolean;
   isCurrent(): boolean;
 }
 
@@ -410,6 +417,60 @@ function callArgumentSite(
 }
 
 /**
+ * (#7130) A closure argument of a same-source top-level function value, in
+ * module-init or a top-level function's statement at any block depth. Keep
+ * the existing #7195 call site and #7198 script-var site intact; this site
+ * uses their current canonical signature and source-unit proofs below.
+ */
+function argumentPositionSite(
+  ctx: CodegenContext,
+  identity: IrPlanningIdentityContext,
+  resolver: IrIdentityImportedFunctionResolver,
+  expression: ts.FunctionExpression,
+): FunctionClosureSite | undefined {
+  const call = expression.parent;
+  if (!ts.isCallExpression(call) || call.questionDotToken || call.typeArguments?.length) return;
+  const index = call.arguments.indexOf(expression);
+  if (index < 0) return;
+  const callee = call.expression;
+  const calleeName = ts.isIdentifier(callee)
+    ? callee
+    : ts.isPropertyAccessExpression(callee) &&
+        !callee.questionDotToken &&
+        ts.isIdentifier(callee.name) &&
+        ts.isIdentifier(callee.expression)
+      ? callee.expression
+      : undefined;
+  if (!calleeName) return;
+  const target = sameSourceFunctionTarget(ctx, identity, resolver, calleeName);
+  if (!target) return;
+  let ownerNode: ts.Node = call.parent;
+  while (!ts.isSourceFile(ownerNode) && !ts.isFunctionLike(ownerNode)) {
+    if (ts.isClassLike(ownerNode)) return;
+    ownerNode = ownerNode.parent;
+  }
+  if (!ts.isSourceFile(ownerNode) && !(ts.isFunctionDeclaration(ownerNode) && ts.isSourceFile(ownerNode.parent)))
+    return;
+  const ownerUnitId = ts.isSourceFile(ownerNode)
+    ? identity.moduleInitUnitIdBySourceFile.get(ownerNode)
+    : identity.unitIdByDeclaration.get(ownerNode);
+  if (!ownerUnitId) return;
+  return {
+    kind: "call-argument",
+    ownerUnitId,
+    chained: false,
+    requiresVoid: false,
+    identifierCalls: true,
+    moduleGlobals: true,
+    isCurrent: () =>
+      expression.parent === call &&
+      call.arguments[index] === expression &&
+      call.expression === callee &&
+      sameTargetAgain(resolver, calleeName, target),
+  };
+}
+
+/**
  * (#7198) A script `var f = function () {}` at the top level. The selector
  * admits it only when the slot is the dynamic home, where the closure is boxed
  * into the carrier. The boxed value is not legacy's function object (its `name`
@@ -476,6 +537,26 @@ function scriptVarReferencesAreValueUses(ctx: CodegenContext, declaration: ts.Va
   return valueUsesOnly;
 }
 
+/**
+ * (#7106 A3) Can evaluated code replace the member or script var this closure
+ * is stored in? Only a computed source or a literal one that writes the name
+ * (`IrRuntimeEvalBoundaryPlan.dynamicSourceWrites`) can; a call argument has
+ * no binding to replace.
+ */
+function runtimeEvalMayRebindClosureSite(ctx: CodegenContext, expression: ts.FunctionExpression): boolean {
+  const plan = ctx.runtimeEvalBoundaryPlan;
+  if (ctx.runtimeEvalGlobalFunctionBindings !== true || plan === undefined) return false;
+  if (plan.unknownDynamicSource) return true;
+  const site = expression.parent;
+  const name =
+    ts.isBinaryExpression(site) && ts.isPropertyAccessExpression(site.left)
+      ? site.left.name.text
+      : ts.isVariableDeclaration(site) && ts.isIdentifier(site.name)
+        ? site.name.text
+        : undefined;
+  return name !== undefined && plan.dynamicSourceWrites.has(name);
+}
+
 /** Exact raw-versus-logical adapter proof for one same-source member assignment, call argument or script var. */
 function planMemberClosure(
   ctx: CodegenContext,
@@ -490,7 +571,7 @@ function planMemberClosure(
     !operations.dynamicCarrierIsExternref() ||
     ctx.targetProfile.semanticProviders !== "native-first" ||
     !(ctx.standalone || ctx.wasi) ||
-    ctx.runtimeEvalGlobalFunctionBindings === true ||
+    runtimeEvalMayRebindClosureSite(ctx, expression) ||
     expression.name ||
     expression.type ||
     expression.asteriskToken ||
@@ -501,6 +582,7 @@ function planMemberClosure(
     return;
   const site =
     memberAssignmentSite(ctx, identity, resolver, expression) ??
+    argumentPositionSite(ctx, identity, resolver, expression) ??
     callArgumentSite(ctx, identity, resolver, expression) ??
     scriptVarSite(ctx, identity, expression);
   if (!site) return;
@@ -602,7 +684,7 @@ function planMemberClosure(
   }
   const bodyKeyOf = (): string | undefined =>
     returnsVoid || returnsString
-      ? openBodyKey(expression, ctx.oracle, returnsString, readsThis, site.identifierCalls)
+      ? openBodyKey(expression, ctx.oracle, returnsString, readsThis, site.identifierCalls, site.moduleGlobals === true)
       : closedScalarBodyKey(expression, ctx.oracle, parameters);
   const bodyKey = bodyKeyOf();
   if (bodyKey === undefined) return;
