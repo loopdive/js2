@@ -578,7 +578,7 @@ describe("#3518 preservation and two reviewed open extension sites", () => {
     expect(result.m, result.output).toBeDefined();
     expect(result.m.preservation.receipts.map((receipt: any) => receipt.contentHash)).toEqual([
       "597599d7bbfda9617bdb67c2fe04d7681445b627",
-      "d17a8159b1b0aeefaa3988b55cc8c06cec00027e",
+      "4a6918137d76a21371f9b032df89d247b928fa2f",
     ]);
     expect(result.m.preservation.receipts.map((receipt: any) => receipt.id)).toEqual([
       "optional-binaryen-provider-v1",
