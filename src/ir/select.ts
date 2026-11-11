@@ -9583,9 +9583,10 @@ function selectorPrimitiveWrapperOrGenericBinary(
 
 /**
  * A non-wrapper binary operand's family, as `irOperandFamily` names it once
- * lowered: a carrier `+` is `dynamic`, `null` `nullish`, the global `undefined`
- * `undefined`; then {@link provenIrFamily}'s answer, or `reference` for an
- * object, a closure or a local class value.
+ * lowered: a carrier `+` is `dynamic`, another `+` its additive result family,
+ * a local function's call its resolved return family, `null` `nullish`, the
+ * global `undefined` `undefined`; then {@link provenIrFamily}'s answer, or
+ * `reference` for an object, a closure or a local class value.
  */
 function binaryOperandFamily(
   operand: ts.Expression,
@@ -9594,6 +9595,19 @@ function binaryOperandFamily(
 ): OperandFamily {
   const candidate = unwrapPhase1Parens(operand);
   if (isCarrierAddition(candidate, (side) => selectorCarrierValue(side, scope, localClasses))) return "dynamic";
+  if (ts.isBinaryExpression(candidate) && candidate.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const family = (side: ts.Expression) => binaryOperandFamily(side, scope, localClasses);
+    return additiveResultFamily(candidate, family(candidate.left), family(candidate.right), additiveLane());
+  }
+  // A local function's call lowers to its resolved return representation.
+  if (
+    ts.isCallExpression(candidate) &&
+    ts.isIdentifier(candidate.expression) &&
+    !scope.has(candidate.expression.text)
+  ) {
+    const returned = resolvedKindFamily(calleeReturnKind(candidate.expression.text, currentClaimTypeMap));
+    if (returned !== "unknown") return returned;
+  }
   if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
   if (isUnshadowedUndefinedIdentifier(candidate, scope) || isVoidZero(candidate)) return "undefined";
   if (nativeStaticRegExp(candidate)) return "regexp";
