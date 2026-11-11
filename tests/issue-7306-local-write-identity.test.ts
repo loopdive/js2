@@ -107,3 +107,34 @@ for (const [tail, admitted] of [
     expect(verdict?.admitted).toBe(admitted);
   });
 }
+
+// Without a resolver (a bare selector), the same write definition applies by name.
+for (const tail of [
+  "var x=5;",
+  "for(var x of [2]) {}",
+  "for(var x in {}) {}",
+  "(x as any)=2;",
+  'eval("x=2");',
+  "with(o) { x=2; }",
+])
+  it(`counts the same writes without a resolver: ${tail}`, () => {
+    const { declaration } = fixture(`var x=1; ${tail}`);
+    expect(localIsRewritten(declaration)).toBe(true);
+  });
+
+// mixedConditionalCarrierLocal: a repeated `var` replaces the conditional's carrier.
+it("a repeated var initializer rewrites the mixed-conditional local", () => {
+  const { declaration, resolve } = fixture('var v = c ? 4294967295 : "unlikely"; var v = 5;');
+  expect(localIsRewritten(declaration, resolve)).toBe(true);
+  expect(localIsRewritten(declaration)).toBe(true);
+});
+
+// The call graph: `var f = …` rebinds a function declaration, so `f()` has no direct-call edge.
+it("a var initializer rebinds a function declaration", () => {
+  const { source, resolve } = fixture(
+    "var h = 0; function g() { return 1; } var g = function () { return 2; }; return g();",
+  );
+  const fn = (source.statements[0] as ts.FunctionDeclaration).body!.statements[1] as ts.FunctionDeclaration;
+  expect(localIsRewritten(fn, resolve)).toBe(true);
+  expect(localIsRewritten(fn)).toBe(true);
+});

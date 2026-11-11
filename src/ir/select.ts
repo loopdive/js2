@@ -341,7 +341,7 @@ function expressionStatementCatchAllNo(arm: string, expr: ts.Expression): false 
   return shapeNo(inner === null ? arm : `${arm}(${inner})`, expr);
 }
 
-/** (#7003) Selector-owned hooks for `./closure-signature-flow.ts`. */
+/** (#7003) Selector-owned hooks for `./closure-signature-flow.ts`; `resolveValue` also gives `localIsRewritten` binding identity (#7306). */
 const closureSignatureFlowHooks = {
   slotSignature: (node: ts.FunctionTypeNode) => irClosureSignatureFromFunctionTypeNode(node),
   get resolveValue() {
@@ -8853,7 +8853,7 @@ function mixedConditionalCarrierLocal(identifier: ts.Identifier): boolean {
   return (
     ts.isConditionalExpression(initializer) &&
     currentProvenMixedConditionals.has(initializer) &&
-    !localIsRewritten(declaration)
+    !localIsRewritten(declaration, closureSignatureFlowHooks.resolveValue)
   );
 }
 
@@ -12044,7 +12044,7 @@ function isPhase1StaticPredicateCall(
     isAmbientNamespace: (receiver) => !scope.has(receiver.text) && selectorSeesAmbientBinding(receiver),
     isGlobalUndefined: (operand) => isUnshadowedUndefinedIdentifier(operand, scope),
     localDeclaration: closureLocalDeclaration,
-    valueDeclaration: (identifier) => currentModuleBindingResolver?.localValueDeclaration(identifier),
+    valueDeclaration: closureSignatureFlowHooks.resolveValue,
     family: (expression) => provenIrFamily(expression, scope),
     additiveLane: additiveLane(),
     isStringMethodCall: (call) =>
@@ -14239,7 +14239,10 @@ export function buildLocalCallGraph(
             // Variable-backed callables use checker-resolved declaration
             // identity so a block-local alias cannot hide an ambient or
             // top-level call with the same text elsewhere in the function.
-          } else if (decls.has(callee) && !localIsRewritten(decls.get(callee)!)) {
+          } else if (
+            decls.has(callee) &&
+            !localIsRewritten(decls.get(callee)!, closureSignatureFlowHooks.resolveValue)
+          ) {
             // (#7283) A function whose binding is reassigned (`f = …`) has no
             // stable direct-call target: from-ast plans no direct call to it,
             // so a call to it is external, not a graph edge.

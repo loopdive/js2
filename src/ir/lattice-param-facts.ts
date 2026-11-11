@@ -119,41 +119,31 @@ function collectWrittenNamesIncludingNested(root: ts.Node): Set<string> {
   return written;
 }
 
-const writtenNamesByFunction = new WeakMap<ts.Node, ReadonlySet<string>>();
-
 /**
  * (#7106) Is the local `declaration` written after it is declared, anywhere in
  * its function (nested functions included)? A destructured declaration counts
  * as written. (#7283) A function declaration's binding is checked the same way.
  *
- * (#7306) With `resolve`, a write counts only when it resolves to this
- * binding: canonical declarations unify repeated `var`s, and unknown identity,
- * `with` and direct `eval` fail closed. Without it, any same-name write counts
- * (the cached over-approximation above).
+ * (#7306) The writes are `identifierWritesOf`'s: assignments, updates,
+ * for-in/of heads and repeated `var` initializers; `with` and direct `eval`
+ * fail closed. With `resolve`, a same-name write counts only when it resolves
+ * to this binding (or to nothing); without it, every same-name write counts.
  */
 export function localIsRewritten(
   declaration: ts.VariableDeclaration | ts.FunctionDeclaration,
   resolve?: (identifier: ts.Identifier) => ts.Declaration | undefined,
 ): boolean {
   if (declaration.name === undefined || !ts.isIdentifier(declaration.name)) return true;
-  const scope = ts.findAncestor(declaration.parent, (node) => ts.isFunctionLike(node) || ts.isSourceFile(node))!;
-  if (resolve) return bindingIsRewritten(declaration, declaration.name, scope, resolve);
-  let written = writtenNamesByFunction.get(scope);
-  if (written === undefined) {
-    written = collectWrittenNamesIncludingNested(scope);
-    writtenNamesByFunction.set(scope, written);
-  }
-  return written.has(declaration.name.text);
-}
-
-function bindingIsRewritten(
-  declaration: ts.Declaration,
-  name: ts.Identifier,
-  scope: ts.Node,
-  resolve: (identifier: ts.Identifier) => ts.Declaration | undefined,
-): boolean {
-  const identity = resolve(name);
-  if (!identity) return true;
+  const name = declaration.name;
+  const identity = resolve?.(name);
+  if (resolve && !identity) return true;
+  const writesBinding = (target: ts.Identifier): boolean => {
+    if (target.text !== name.text) return false;
+    if (!resolve) return true;
+    const written = resolve(target);
+    return !written || written === identity || sameVarScopedBinding(written, identity!);
+  };
+  const scope = varScopeOf(declaration);
   let rewritten = false;
   const visit = (node: ts.Node): void => {
     if (rewritten) return;
@@ -162,17 +152,29 @@ function bindingIsRewritten(
       const callee = skipOuterExpressions(node.expression);
       if (ts.isIdentifier(callee) && callee.text === "eval") rewritten = true;
     }
-    if (node !== declaration) {
-      for (const { target } of identifierWritesOf(node)) {
-        if (target.text !== name.text) continue;
-        const written = resolve(target);
-        if (!written || written === identity) rewritten = true;
-      }
-    }
+    if (node !== declaration && identifierWritesOf(node).some(({ target }) => writesBinding(target))) rewritten = true;
     forEachChild(node, visit);
   };
   visit(scope);
   return rewritten;
+}
+
+function varScopeOf(node: ts.Node): ts.Node {
+  return ts.findAncestor(node.parent, (parent) => ts.isFunctionLike(parent) || ts.isSourceFile(parent))!;
+}
+
+function isVarScoped(node: ts.Declaration): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    (ts.isVariableDeclaration(node) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & ts.NodeFlags.BlockScoped) === 0)
+  );
+}
+
+/** `var` and function declarations of one name in one function scope are one binding. */
+function sameVarScopedBinding(a: ts.Declaration, b: ts.Declaration): boolean {
+  return isVarScoped(a) && isVarScoped(b) && varScopeOf(a) === varScopeOf(b);
 }
 
 /**
