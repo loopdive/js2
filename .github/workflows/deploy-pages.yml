@@ -150,6 +150,9 @@ jobs:
             if (response.artifacts.length < 100) break;
           }
           const runs = [];
+          const editionRuns = [];
+          // Edition artifacts are optional (older measurements predate them): absent means unmeasured.
+          const optional = path => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return undefined; } };
           let latest;
           for (const artifact of artifacts.filter(a => !a.expired && a.workflow_run?.head_branch === 'main')
               .sort((a, b) => b.id - a.id)) {
@@ -181,7 +184,15 @@ jobs:
               throw new Error('IR status contradicts its actual requested result');
             const { categories, ...metadata } = report;
             const row = { ...metadata, runId: String(execution.id), sourceSha: execution.head_sha };
-            if (report.measurementState === 'measured') runs.push(row);
+            if (report.measurementState === 'measured') {
+              runs.push(row);
+              const editionHistory = optional(`${directory}/ir/runs/standalone-editions-index.json`);
+              if (editionHistory && (editionHistory.compilerPath !== 'ir' || editionHistory.baseline_sha !== report.baseline_sha ||
+                  !Array.isArray(editionHistory.runs)))
+                throw new Error('IR edition history does not match its actual source run');
+              for (const snapshot of editionHistory?.runs ?? [])
+                editionRuns.push({ ...snapshot, runId: row.runId, sourceSha: row.sourceSha });
+            }
             latest ||= { directory, report, row, status };
           }
           mkdirSync('benchmarks/results/ir/runs', { recursive: true });
@@ -192,6 +203,18 @@ jobs:
               const envelope = JSON.parse(readFileSync(`${latest.directory}/ir/test262-standalone-categories.json`, 'utf8'));
               writeFileSync('benchmarks/results/ir/test262-standalone-categories.json', JSON.stringify(envelope));
               writeFileSync('benchmarks/results/ir/runs/standalone-index.json', JSON.stringify({ ...latest.row, runs }));
+              for (const [file, field] of [['test262-standalone-editions.json', 'editions'],
+                  ['test262-category-editions.json', 'data'], ['test262-file-editions.json', 'data']]) {
+                const edition = optional(`${latest.directory}/ir/${file}`);
+                if (!edition) continue;
+                if (edition.compilerPath !== 'ir' || edition.baseline_sha !== latest.report.baseline_sha ||
+                    edition.mode?.target !== 'standalone' || edition[field] === undefined)
+                  throw new Error('IR edition artifact does not match its actual source run');
+                writeFileSync(`benchmarks/results/ir/${file}`, JSON.stringify(edition));
+              }
+              if (editionRuns.length > 0)
+                writeFileSync('benchmarks/results/ir/runs/standalone-editions-index.json',
+                  JSON.stringify({ ...latest.row, runs: editionRuns }));
             } else {
               rmSync('benchmarks/results/test262-standalone-ir-report.json', { force: true });
             }
