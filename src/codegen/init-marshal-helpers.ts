@@ -47,7 +47,7 @@ import type { IrUnitId } from "../ir/identity.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { type CodegenContext, hostFreeEnvironment } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
-import { ensureNativeStringMemoryReader } from "./native-string-memory-reader.js";
+import { ensureNativeStringMemoryReader } from "./helpers/native-string-memory-reader.js";
 import { definedFuncHandleOf } from "./func-space.js";
 
 import { INIT_MARSHAL_HELPER_NAMES as INIT_MARSHAL_HELPERS } from "../shared/contracts/init-marshal-helpers.js";

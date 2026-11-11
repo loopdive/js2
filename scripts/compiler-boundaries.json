@@ -8021,7 +8021,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/native-string-memory-reader.ts",
+      "path": "src/codegen/helpers/native-string-memory-reader.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
