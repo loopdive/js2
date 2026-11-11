@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { expect, it } from "vitest";
 import { ts } from "../src/ts-api.js";
-import { localIsRewritten } from "../src/ir/lattice-param-facts.js";
+import { collectLatticeParamFacts, localIsRewritten } from "../src/ir/lattice-param-facts.js";
 import { selectStaticPredicateCall } from "../src/ir/static-predicates/selection.js";
 import { localValueDeclaration } from "../src/ir/module-bindings.js";
+import { irVal } from "../src/ir/index.js";
 
 function fixture(body: string) {
   const file = "/issue7306.js";
@@ -138,3 +139,23 @@ it("a var initializer rebinds a function declaration", () => {
   expect(localIsRewritten(fn, resolve)).toBe(true);
   expect(localIsRewritten(fn)).toBe(true);
 });
+
+// Parameter facts read the same write definition: a `var` re-declaring the
+// parameter writes it, and `with` / direct `eval` may write any parameter.
+for (const [body, fact] of [
+  ["return p + 1;", "number"],
+  ['var p = "s"; return p + 1;', undefined],
+  ['eval("p = 2"); return p + 1;', undefined],
+] as const)
+  it(`parameter fact for f(p) { ${body} }`, () => {
+    const source = ts.createSourceFile(
+      "/p.js",
+      `function f(p) { ${body} }`,
+      ts.ScriptTarget.ESNext,
+      true,
+      ts.ScriptKind.JS,
+    );
+    const fn = source.statements[0] as ts.FunctionDeclaration;
+    const facts = collectLatticeParamFacts(fn, [{ name: "p", type: irVal({ kind: "f64" }) }]);
+    expect(facts?.get(fn.parameters[0]!)).toBe(fact);
+  });

@@ -50,73 +50,53 @@ function peelParens(e: ts.Expression): ts.Expression {
   return e;
 }
 
+interface IdentifierWriteSite {
+  readonly target: ts.Identifier;
+  /** The node performing the write (`identifierWritesOf`'s argument). */
+  readonly node: ts.Node;
+}
+
+interface WriteIndex {
+  /** A `with` statement or a direct `eval` may write any name under the root. */
+  readonly dynamicScope: boolean;
+  readonly byName: ReadonlyMap<string, readonly IdentifierWriteSite[]>;
+}
+
+const writeIndexes = new WeakMap<ts.Node, WriteIndex>();
+
 /**
- * Every name written ANYWHERE inside `root`, including nested function bodies
- * (deliberately unlike from-ast's `collectMutatedLetNamesFromBlock`, which
- * stops at nested-function boundaries because it governs outer-scope slot
- * allocation). Used only to EXCLUDE parameters from
- * {@link collectLatticeParamFacts}: a parameter reassigned by a nested closure
- * still invalidates the fixpoint's incoming-value fact for outer reads that
- * follow the closure's invocation, so the exclusion must see through function
- * boundaries. Over-approximation (a nested function's own shadowing local
- * write drops an unrelated outer fact) is conservative and therefore safe.
+ * Every identifier write ANYWHERE inside `root`, nested function bodies
+ * included, as `identifierWritesOf` defines a write: assignments (plain,
+ * compound, logical, destructuring), `++`/`--`, for-in/of heads and `var`
+ * initializers. Member writes are not variable writes. Built once per root:
+ * the parameter facts and every `localIsRewritten` query read the same index.
  *
- * Write forms collected: plain/compound assignment to an identifier,
- * destructuring-assignment targets (`[n] = …`, `({ x: n } = …)`, shorthand
- * `({ n } = …)`), pre/postfix `++`/`--`, and a `for (n of/in …)` head that
- * rebinds an existing identifier. Member writes (`obj.n = …`) are NOT
- * variable writes and are deliberately not collected.
+ * Nested bodies are deliberately included (unlike from-ast's
+ * `collectMutatedLetNamesFromBlock`): a binding written by a nested closure is
+ * still written for reads that follow the closure's invocation.
  */
-function collectWrittenNamesIncludingNested(root: ts.Node): Set<string> {
-  const written = new Set<string>();
-  const addTargets = (target: ts.Expression): void => {
-    const t = peelParens(target);
-    if (ts.isIdentifier(t)) {
-      written.add(t.text);
-      return;
-    }
-    if (ts.isArrayLiteralExpression(t)) {
-      for (const el of t.elements) {
-        if (ts.isOmittedExpression(el)) continue;
-        if (ts.isSpreadElement(el)) addTargets(el.expression);
-        else if (ts.isBinaryExpression(el) && el.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-          addTargets(el.left); // defaulted destructuring target `[n = 1] = …`
-        } else addTargets(el);
-      }
-      return;
-    }
-    if (ts.isObjectLiteralExpression(t)) {
-      for (const prop of t.properties) {
-        if (ts.isPropertyAssignment(prop)) addTargets(prop.initializer);
-        else if (ts.isShorthandPropertyAssignment(prop)) written.add(prop.name.text);
-        else if (ts.isSpreadAssignment(prop)) addTargets(prop.expression);
-      }
-    }
-    // PropertyAccess / ElementAccess targets write a property, not a variable.
-  };
+function writeIndexOf(root: ts.Node): WriteIndex {
+  const cached = writeIndexes.get(root);
+  if (cached) return cached;
+  let dynamicScope = false;
+  const byName = new Map<string, IdentifierWriteSite[]>();
   const visit = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node)) {
-      const op = node.operatorToken.kind;
-      if (
-        op === ts.SyntaxKind.EqualsToken ||
-        (op >= ts.SyntaxKind.PlusEqualsToken && op <= ts.SyntaxKind.CaretEqualsToken)
-      ) {
-        addTargets(node.left);
-      }
+    if (ts.isWithStatement(node)) dynamicScope = true;
+    if (ts.isCallExpression(node)) {
+      const callee = skipOuterExpressions(node.expression);
+      if (ts.isIdentifier(callee) && callee.text === "eval") dynamicScope = true;
     }
-    if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-      const op = node.operator;
-      if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
-        addTargets(node.operand);
-      }
-    }
-    if ((ts.isForOfStatement(node) || ts.isForInStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) {
-      addTargets(node.initializer as ts.Expression);
+    for (const { target } of identifierWritesOf(node)) {
+      const sites = byName.get(target.text);
+      if (sites) sites.push({ target, node });
+      else byName.set(target.text, [{ target, node }]);
     }
     forEachChild(node, visit);
   };
   visit(root);
-  return written;
+  const index = { dynamicScope, byName };
+  writeIndexes.set(root, index);
+  return index;
 }
 
 /**
@@ -138,25 +118,13 @@ export function localIsRewritten(
   const identity = resolve?.(name);
   if (resolve && !identity) return true;
   const writesBinding = (target: ts.Identifier): boolean => {
-    if (target.text !== name.text) return false;
     if (!resolve) return true;
     const written = resolve(target);
     return !written || written === identity || sameVarScopedBinding(written, identity!);
   };
-  const scope = varScopeOf(declaration);
-  let rewritten = false;
-  const visit = (node: ts.Node): void => {
-    if (rewritten) return;
-    if (ts.isWithStatement(node)) rewritten = true;
-    if (ts.isCallExpression(node)) {
-      const callee = skipOuterExpressions(node.expression);
-      if (ts.isIdentifier(callee) && callee.text === "eval") rewritten = true;
-    }
-    if (node !== declaration && identifierWritesOf(node).some(({ target }) => writesBinding(target))) rewritten = true;
-    forEachChild(node, visit);
-  };
-  visit(scope);
-  return rewritten;
+  const index = writeIndexOf(varScopeOf(declaration));
+  if (index.dynamicScope) return true;
+  return (index.byName.get(name.text) ?? []).some(({ target, node }) => node !== declaration && writesBinding(target));
 }
 
 function varScopeOf(node: ts.Node): ts.Node {
@@ -195,12 +163,13 @@ export function collectLatticeParamFacts(
   resolvedParams: readonly { name: string; type: IrType }[],
 ): LatticeParamFacts | undefined {
   if (!fn.body || fn.parameters.length === 0) return undefined;
-  const written = collectWrittenNamesIncludingNested(fn.body);
+  const writes = writeIndexOf(fn.body);
+  if (writes.dynamicScope) return undefined; // `with` / direct `eval` may write any parameter
   const facts = new Map<ts.ParameterDeclaration, "number" | "string">();
   for (let i = 0; i < fn.parameters.length; i++) {
     const astParam = fn.parameters[i]!;
     if (!ts.isIdentifier(astParam.name)) continue; // pattern params bind leaves, not the param itself
-    if (written.has(astParam.name.text)) continue;
+    if (writes.byName.has(astParam.name.text)) continue;
     const resolved = resolvedParams[i]?.type;
     if (!resolved) continue;
     if (asVal(resolved)?.kind === "f64") facts.set(astParam, "number");
