@@ -57,7 +57,6 @@ export function makeIrFunctionObjectValueResolver(
     resolveImportedFunctionTarget: (node) => resolver.resolveImportedFunctionTarget(node),
     isImportBinding: (node) => resolver.isImportBinding(node),
     resolveTopLevelFunctionValueTarget(node) {
-      if (ctx.runtimeEvalGlobalFunctionBindings === true) return undefined;
       const target = resolver.resolveTopLevelFunctionValueTarget(node);
       return target && !ctx.reassignedFunctionDeclarations?.has(target.declaration) ? target : undefined;
     },
@@ -77,7 +76,6 @@ export function hasPreparedFunctionObjectReference(
     !plan?.objectReceiver ||
     !plan.accessor ||
     plan.ownerUnitId !== ownerUnitId ||
-    ctx.runtimeEvalGlobalFunctionBindings === true ||
     plan.target.binding.kind !== "unit" ||
     plan.accessor.binding.kind !== "support" ||
     plan.trampoline.binding.kind !== "support" ||
@@ -377,6 +375,19 @@ function targetBodyUsesArguments(declaration: ts.FunctionDeclaration): boolean {
   return found;
 }
 
+/**
+ * Test hook (#3519, #7325): `JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW` makes
+ * planning an imported call in `ownerName` (or in every unit, with `1`) throw
+ * an internal error, on both routes a cross-module call takes: the program
+ * callable graph (native-first) and the certified module import.
+ */
+function injectImportedPlanningFailure(ownerName: string): void {
+  const injected = readEnv("JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW");
+  if (injected === "1" || injected === ownerName) {
+    throw new Error(`injected imported-call planning failure for ${ownerName}`);
+  }
+}
+
 function planProgramCallableCall(
   identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
   ownerName: string,
@@ -555,6 +566,7 @@ function planSourceUnitImportedCalls(
           : programCallableBoundaryUse(ctx, identityPlan, ownerUnitId, node);
         if (graphUse) {
           try {
+            injectImportedPlanningFailure(ownerName);
             importedCalls.set(
               node,
               planProgramCallableCall(
@@ -575,12 +587,7 @@ function planSourceUnitImportedCalls(
           const certified = certifyImportedIrCall(node, legacyImportedFunctions);
           if (certified) {
             try {
-              if (
-                readEnv("JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW") === "1" ||
-                readEnv("JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW") === ownerName
-              ) {
-                throw new Error(`injected imported-call planning failure for ${ownerName}`);
-              }
+              injectImportedPlanningFailure(ownerName);
               const params = certified.target.declaration.parameters.map((parameter) =>
                 resolvePositionType(effectiveIrParamTypeNode(parameter), undefined, classShapeSidecar),
               );
@@ -838,7 +845,7 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
             import("../ir/ast-lowering-plans.js").IrTopLevelFunctionValueLoweringPlan
           >(),
         };
-  if (functionObjectValues && ctx.runtimeEvalGlobalFunctionBindings !== true) {
+  if (functionObjectValues) {
     const identity = options.identityPlan;
     const source = identity.identityContext.sourceFileBySourceId;
     const addOwner = (ownerName: string, ownerUnitId: IrUnitId, root: ts.Node, selfGuardedOnly = false): void => {
@@ -1031,9 +1038,7 @@ export function planIrFunctionValueResolverState(
   // selection and reused by direct-call projection and the field-call proof.
   const identityResolver = resolveIdentity();
   const functionObjectValues =
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    (ctx.standalone || ctx.wasi) &&
-    ctx.runtimeEvalGlobalFunctionBindings !== true
+    ctx.targetProfile.semanticProviders === "native-first" && (ctx.standalone || ctx.wasi)
       ? makeIrFunctionObjectValueResolver(ctx, identityResolver)
       : undefined;
   const functionMemberClosures = functionObjectValues

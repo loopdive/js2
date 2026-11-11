@@ -14,7 +14,7 @@ import {
   isStringType,
 } from "../../checker/type-mapper.js";
 import { forEachChild, ts } from "../../ts-api.js";
-import { exactIndirectEvalStatement } from "../../eval-call-shape.js";
+import { exactGlobalEvalStatement } from "../../eval-call-shape.js";
 import { ensureWrapperTypes } from "../any-helpers.js";
 import { asyncGenDrivableUnderCarrier, asyncGenStem } from "../async-frame.js";
 import { unwrapTransparentExpression } from "../object-descriptor-analysis.js";
@@ -291,10 +291,9 @@ function needsHostIndirectEvalImport(ctx: CodegenContext, node: ts.Node): boolea
   if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings || !ts.isCallExpression(node)) {
     return false;
   }
-  const shape = exactIndirectEvalStatement(node);
-  return (
-    !!shape && collectorSeesAmbientEval(ctx, shape.evalIdentifier) && collectorProvesHostEvalString(ctx, shape.source)
-  );
+  const shape = exactGlobalEvalStatement(node);
+  if (!shape || shape.direct) return false;
+  return collectorSeesAmbientEval(ctx, shape.evalIdentifier) && collectorProvesHostEvalString(ctx, shape.source);
 }
 
 /**

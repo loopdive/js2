@@ -71,7 +71,8 @@ import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js"; // (#3673 round 13) direct-call argc preset
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 13) under-application gate
-import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { definedFuncAt, mintDefinedFunc, ownedHelperHandle, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { dataViewAccessorFn } from "../shared/contracts/native-buffer-adapters.js";
 import { wrapClosureCallFastArm } from "./closure-call-fast.js"; // (#4185) closure-receiver fast `.call` arm
 import { buildFnctorArrayHofTargetTest } from "./fnctor-array-prototype.js";
 import { reserveVecMethodHelper, resolveVecHostBridgeHelper } from "./vec-access-exports.js";
@@ -1792,7 +1793,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // still wins); a `$__dv_window` can never match a closed-struct arm, so the
     // relative order is behavior-neutral there. Standalone/wasi only.
     {
-      const dvHelperIdx = ctx.funcMap.get(`__dv_m_${methodName}`);
+      const dvHelperIdx = ownedHelperHandle(ctx, dataViewAccessorFn(methodName));
       if ((ctx.standalone || ctx.wasi) && dvHelperIdx !== undefined && ctx.dvWindowTypeIdx >= 0) {
         // Helper signature: recv + (get → offset, le | set → offset, value, le).
         const helperArgs = methodName.startsWith("get") ? 2 : 3;

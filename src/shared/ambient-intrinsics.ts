@@ -68,12 +68,31 @@ export function isAmbientIntrinsicValueUse(
 ): boolean {
   return (
     isAmbientIntrinsicName(node.text) &&
-    isLibOnlyBinding(node) &&
-    !declaredNames(node.getSourceFile()).has(node.text) &&
+    isUnshadowedLibBinding(node, isLibOnlyBinding) &&
     (isOpaqueIntrinsicUse(node) ||
       isExactStaticMethodValueRead(node) ||
       (seed?.builtinProtoCompanionSeeded?.() === true && isExactProtoMethodValueRead(node)))
   );
+}
+
+/**
+ * Every declaration of `node`'s symbol is a lib one AND nothing in its file
+ * declares the name: a script's top-level `function Error() {}` is reported by
+ * the checker as the lib declarations alone. (#7274) Also the native
+ * ArrayBuffer surface's constructor identity, (#7276) the `Object.create`
+ * admission (`ir/object-create-call.ts`), and the #7253 / #7267 ambient-call
+ * admission (`ir/ambient-global-function-call.ts`).
+ */
+export function isUnshadowedLibBinding(
+  node: ts.Identifier,
+  isLibOnlyBinding: (node: ts.Identifier) => boolean,
+): boolean {
+  return isLibOnlyBinding(node) && !declaredNames(node.getSourceFile()).has(node.text);
+}
+
+/** (#7274) `undefined` read as the global value: nothing in the file declares the name. */
+export function isUnshadowedUndefined(node: ts.Expression): boolean {
+  return ts.isIdentifier(node) && node.text === "undefined" && !declaredNames(node.getSourceFile()).has("undefined");
 }
 
 const declaredNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
@@ -86,7 +105,9 @@ function declaredNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
   const visit = (node: ts.Node): void => {
     if (
       (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
         ts.isClassDeclaration(node) ||
+        ts.isClassExpression(node) ||
         ts.isVariableDeclaration(node) ||
         ts.isParameter(node) ||
         ts.isBindingElement(node)) &&
@@ -485,4 +506,100 @@ function isPlainMethodValue(methodAccess: MemberAccess): boolean {
   if (ts.isPrefixUnaryExpression(parent)) return parent.operator === ts.SyntaxKind.ExclamationToken;
   if (ts.isVariableDeclaration(parent)) return parent.initializer === use;
   return ts.isBinaryExpression(parent) && STRICT_EQUALITY_OPERATORS.has(parent.operatorToken.kind);
+}
+
+// ── (#7294) Builtin-prototype own members, answered by named support functions ──
+
+/**
+ * The two support functions codegen mints per (builtin, member) — the member's
+ * singleton value and its `getOwnPropertyDescriptor` result — named by the
+ * runtime symbols below. Selection, from-ast and the provider resolution all
+ * name them through this one pair of functions.
+ */
+export type BuiltinProtoMemberRole = "value" | "descriptor";
+
+const SYMBOL_PREFIX: Readonly<Record<BuiltinProtoMemberRole, string>> = {
+  value: "__builtin_proto_value$",
+  descriptor: "__builtin_proto_gopd$",
+};
+
+/** The runtime symbol naming one (builtin, member) support function. */
+export function builtinProtoMemberSymbol(role: BuiltinProtoMemberRole, builtin: string, member: string): string {
+  return `${SYMBOL_PREFIX[role]}${builtin}$${member}`;
+}
+
+/** Inverse of {@link builtinProtoMemberSymbol}; `undefined` for any other symbol. */
+export function parseBuiltinProtoMemberSymbol(
+  symbol: string,
+): { readonly role: BuiltinProtoMemberRole; readonly builtin: string; readonly member: string } | undefined {
+  for (const role of ["value", "descriptor"] as const) {
+    if (!symbol.startsWith(SYMBOL_PREFIX[role])) continue;
+    const key = symbol.slice(SYMBOL_PREFIX[role].length);
+    const split = key.indexOf("$"); // a builtin name never contains `$`; a member key may
+    return split > 0 && split < key.length - 1
+      ? { role, builtin: key.slice(0, split), member: key.slice(split + 1) }
+      : undefined;
+  }
+  return undefined;
+}
+
+/** The `<B>` and `"<m>"` of a `<B>.prototype.<m>` value read or a `gOPD(<B>.prototype, "<m>")` call. */
+export interface BuiltinProtoMemberRef {
+  readonly builtin: ts.Identifier;
+  readonly member: string;
+  /** Lib globals the shape reads besides `builtin` (`Object` in `Object.getOwnPropertyDescriptor`). */
+  readonly namespaces: readonly ts.Identifier[];
+}
+
+/** `<Identifier>.prototype` → the identifier. */
+function prototypeReceiver(expr: ts.Expression): ts.Identifier | undefined {
+  return ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "prototype" &&
+    !expr.questionDotToken &&
+    ts.isIdentifier(expr.expression)
+    ? expr.expression
+    : undefined;
+}
+
+/**
+ * `<B>.prototype.<m>` read as a value where only its identity is observed: a
+ * `===` / `!==` operand, a call argument (`assert.sameValue(d.value,
+ * Array.prototype.slice)`) or a variable initializer. Anything that reads the
+ * value further (`.length`, `.call`, `delete`, `"" + f`) is not this shape.
+ */
+export function builtinProtoMemberValueRead(expr: ts.Expression): BuiltinProtoMemberRef | undefined {
+  if (!ts.isPropertyAccessExpression(expr) || expr.questionDotToken || !ts.isIdentifier(expr.name)) return undefined;
+  const builtin = prototypeReceiver(expr.expression);
+  if (builtin === undefined) return undefined;
+  const use = outermostParenthesized(expr);
+  const parent = use.parent;
+  const valuePosition =
+    parent !== undefined &&
+    ((ts.isVariableDeclaration(parent) && parent.initializer === use) ||
+      (ts.isBinaryExpression(parent) && STRICT_EQUALITY_OPERATORS.has(parent.operatorToken.kind)) ||
+      (ts.isCallExpression(parent) && parent.expression !== use));
+  return valuePosition ? { builtin, member: expr.name.text, namespaces: [] } : undefined;
+}
+
+/** `Object.getOwnPropertyDescriptor(<B>.prototype, "<m>")` with a literal key. */
+export function builtinProtoDescriptorCall(call: ts.CallExpression): BuiltinProtoMemberRef | undefined {
+  const callee = call.expression;
+  if (call.questionDotToken || call.arguments.length !== 2 || !ts.isPropertyAccessExpression(callee)) return undefined;
+  if (callee.name.text !== "getOwnPropertyDescriptor" || !ts.isIdentifier(callee.expression)) return undefined;
+  if (callee.expression.text !== "Object") return undefined;
+  const builtin = prototypeReceiver(call.arguments[0]!);
+  const key = call.arguments[1]!;
+  return builtin !== undefined && ts.isStringLiteralLike(key)
+    ? { builtin, member: key.text, namespaces: [callee.expression] }
+    : undefined;
+}
+
+/** Every global the shape names is the lib one: no source declaration in the file shadows it. */
+export function builtinProtoMemberGlobalsUnshadowed(
+  ref: BuiltinProtoMemberRef,
+  isLibOnlyBinding: (node: ts.Identifier) => boolean,
+): boolean {
+  return [ref.builtin, ...ref.namespaces].every(
+    (node) => isLibOnlyBinding(node) && !declaredNames(node.getSourceFile()).has(node.text),
+  );
 }

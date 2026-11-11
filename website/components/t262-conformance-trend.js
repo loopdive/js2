@@ -23,6 +23,12 @@
  * quietly-wrong number #4362 set out to kill — so a lane with no history is
  * simply absent from the plot and marked "(no history yet)" in the legend.
  *
+ * The standalone IR-only lane (overall scope only) is a dotted line under the
+ * standalone one: the share of tests that pass with every unit compiled by the
+ * IR, no legacy fallback (`ir_only_pass` in standalone-index.json). Runs
+ * recorded before the history carried that field have no value, so the line
+ * starts at its first measured run instead of ramping up from zero.
+ *
  * Requires <trend-chart> (components/trend-chart.js) to be loaded; the data is
  * applied via customElements.whenDefined so load order does not matter.
  */
@@ -38,7 +44,11 @@ const LANE_FILES = {
   edition: { host: "editions-index.json", standalone: "standalone-editions-index.json" },
 };
 
-const LANE_LABEL = { host: "JS-host lane, retired 2026-10-12", standalone: "Standalone pass rate" };
+const LANE_LABEL = {
+  host: "JS-host lane, retired 2026-10-12",
+  standalone: "Standalone pass rate",
+  irOnly: "Standalone IR-only (no legacy fallback)",
+};
 
 // The JS-host test262 lane's last measurement day. Its frozen snapshot is
 // still published (scripts/preserve-frozen-host-baseline.mjs), but no run
@@ -91,9 +101,12 @@ const fetchRuns = (url) => {
  * `{ pass, total, timestampRaw }` or null to skip the run — that indirection is
  * what lets the same gap-filling / stale-endpoint / sparse-run handling serve
  * the overall history AND one ES edition's slice of an editions index.
+ * `minRate` drops runs below that pass rate (a broken run, for a pass-rate
+ * lane); `anchorAtProjectStart` starts the line at zero on the project's first
+ * day. A lane whose history begins late, such as IR-only, turns both off.
  * Returns null when there isn't enough real data to draw.
  */
-export function t262BuildHistoryPoints(runs, extract) {
+export function t262BuildHistoryPoints(runs, extract, { minRate = 5, anchorAtProjectStart = true } = {}) {
   if (!Array.isArray(runs)) return null;
 
   const extracted = runs
@@ -119,7 +132,7 @@ export function t262BuildHistoryPoints(runs, extract) {
         rate: run.total > 0 ? (run.pass / run.total) * 100 : 0,
       };
     })
-    .filter((point) => point.total > 0 && point.rate >= 5);
+    .filter((point) => point.total > 0 && point.rate >= minRate);
 
   // A run whose corpus suddenly shrank by a quarter is a partial/aborted run,
   // not a conformance cliff — drop it rather than plotting the dive.
@@ -131,7 +144,7 @@ export function t262BuildHistoryPoints(runs, extract) {
   }
 
   const firstPoint = points[0];
-  if (firstPoint?.timestamp) {
+  if (anchorAtProjectStart && firstPoint?.timestamp) {
     const firstDate = new Date(firstPoint.timestamp);
     if (
       Number.isFinite(firstDate.getTime()) &&
@@ -158,7 +171,7 @@ export function t262BuildHistoryPoints(runs, extract) {
     const now = new Date();
     if (
       Number.isFinite(lastRate) &&
-      lastRate >= 5 &&
+      lastRate >= minRate &&
       lastDate instanceof Date &&
       Number.isFinite(lastDate.getTime()) &&
       now.getTime() - lastDate.getTime() > 12 * 60 * 60 * 1000
@@ -179,14 +192,6 @@ export function t262BuildHistoryPoints(runs, extract) {
 }
 
 /**
- * Interleave the two lanes onto one x axis. A given timestamp usually has a
- * value for only one lane, so each lane's last known value is carried forward
- * across the other's points (a step chart of a cumulative measure — the rate
- * holds until the next run says otherwise). A lane stays null BEFORE its first
- * run so <trend-chart> breaks the line instead of drawing a fabricated leading
- * segment.
- */
-/**
  * Clip a lane's points at `endsAt`: drop everything later and, if anything was
  * dropped, hold the last kept value to exactly `endsAt` so the line ends on the
  * retirement date rather than at its last run. Returns null when fewer than
@@ -205,9 +210,18 @@ export function t262ClipLaneAt(points, endsAt) {
   return kept.length >= 2 ? kept : null;
 }
 
-export function t262MergeConformanceLanes(hostPoints, standalonePoints, { hostEndsAt = null } = {}) {
+/**
+ * Interleave the lanes (`{ seriesKey: points }`) onto one x axis. A given
+ * timestamp usually has a value for only one lane, so each lane's last known
+ * value is carried forward across the other lanes' points (a step chart of a
+ * cumulative measure — the rate holds until the next run says otherwise). A
+ * lane stays null BEFORE its first run so <trend-chart> breaks the line instead
+ * of drawing a fabricated leading segment, and null AFTER its `endsAt` date (a
+ * retired lane is not carried forward to "now").
+ */
+export function t262MergeConformanceLanes(lanes, { endsAt = {} } = {}) {
   const byTime = new Map();
-  const collect = (points, key) => {
+  for (const [key, points] of Object.entries(lanes)) {
     for (const point of points ?? []) {
       const existing = byTime.get(point.time) ?? {
         label: point.label,
@@ -217,18 +231,14 @@ export function t262MergeConformanceLanes(hostPoints, standalonePoints, { hostEn
       existing[key] = point.rate;
       byTime.set(point.time, existing);
     }
-  };
-  collect(hostPoints, "hostRate");
-  collect(standalonePoints, "standaloneRate");
+  }
 
   const merged = [...byTime.values()].sort((a, b) => a.time - b.time);
-  // A retired lane is NOT carried forward past its end: null from there on
-  // makes <trend-chart> stop the line instead of drawing it to "now".
-  const hostEnd = hostEndsAt instanceof Date ? hostEndsAt.getTime() : null;
-  for (const key of ["hostRate", "standaloneRate"]) {
+  for (const key of Object.keys(lanes)) {
+    const end = endsAt[key] instanceof Date ? endsAt[key].getTime() : null;
     let last = null;
     for (const point of merged) {
-      if (key === "hostRate" && hostEnd !== null && point.time > hostEnd) point[key] = null;
+      if (end !== null && point.time > end) point[key] = null;
       else if (typeof point[key] === "number") last = point[key];
       else point[key] = last;
     }
@@ -283,6 +293,7 @@ class T262ConformanceTrend extends HTMLElement {
           letter-spacing: 0.04em;
         }
         .item { display: inline-flex; align-items: center; gap: 8px; }
+        .item[hidden] { display: none; }
         /* Standalone is the thick white line; the retired JS-host lane is a
            thin, dashed, dim background line. The legend mirrors that
            weighting so the two curves are told apart without a colour key. */
@@ -291,6 +302,10 @@ class T262ConformanceTrend extends HTMLElement {
           border-top-width: 1px;
           border-top-style: dashed;
           border-top-color: rgba(255, 255, 255, 0.32);
+        }
+        .item[data-lane="irOnly"] .swatch {
+          border-top-style: dotted;
+          border-top-color: rgba(255, 255, 255, 0.75);
         }
         .item[data-lane="standalone"] { color: var(--t262-trend-text, #fff); }
         .item[data-lane="host"] { opacity: 0.7; }
@@ -307,6 +322,9 @@ class T262ConformanceTrend extends HTMLElement {
       <div class="empty" hidden>No conformance history available yet.</div>
       <div class="legend">
         <span class="item" data-lane="standalone" data-available="true">
+          <span class="swatch"></span><span class="label"></span><span class="note"></span>
+        </span>
+        <span class="item" data-lane="irOnly" data-available="true">
           <span class="swatch"></span><span class="label"></span><span class="note"></span>
         </span>
         <span class="item" data-lane="host" data-available="true">
@@ -366,11 +384,27 @@ class T262ConformanceTrend extends HTMLElement {
 
     const hostPoints = t262ClipLaneAt(t262BuildHistoryPoints(hostRuns, extract), T262_HOST_LANE_RETIRED_AT);
     const standalonePoints = t262BuildHistoryPoints(standaloneRuns, extract);
-    const points = t262MergeConformanceLanes(hostPoints, standalonePoints, { hostEndsAt: T262_HOST_LANE_RETIRED_AT });
+    // Only the overall standalone history records `ir_only_pass`.
+    const irOnlyPoints = isOverallScope
+      ? t262BuildHistoryPoints(
+          standaloneRuns,
+          (run) =>
+            run?.ir_only_pass === undefined
+              ? null
+              : { pass: run.ir_only_pass, total: run.total, timestampRaw: run.timestamp },
+          { minRate: 0, anchorAtProjectStart: false },
+        )
+      : null;
+    const points = t262MergeConformanceLanes(
+      { standaloneRate: standalonePoints, irOnlyRate: irOnlyPoints, hostRate: hostPoints },
+      { endsAt: { hostRate: T262_HOST_LANE_RETIRED_AT } },
+    );
 
+    const lanePoints = { host: hostPoints, standalone: standalonePoints, irOnly: irOnlyPoints };
     for (const item of this.shadowRoot.querySelectorAll(".item")) {
       const lane = item.dataset.lane;
-      const available = lane === "host" ? !!hostPoints : !!standalonePoints;
+      const available = !!lanePoints[lane];
+      item.hidden = lane === "irOnly" && !isOverallScope;
       item.dataset.available = String(available);
       item.querySelector(".note").textContent = available ? "" : "(no history yet)";
     }
@@ -394,6 +428,7 @@ class T262ConformanceTrend extends HTMLElement {
     // peak label to seriesDef[0], so the retired host lane gets neither.
     const series = [
       { key: "standaloneRate", color: "#ffffff", fill: true },
+      { key: "irOnlyRate", color: "#ffffff", lineWidth: 2, lineOpacity: 0.9, dasharray: "2 3" },
       { key: "hostRate", color: "#ffffff", lineWidth: 1, lineOpacity: 0.32, dasharray: "3 3", background: true },
     ];
     this._chart.setAttribute("labels-key", "label");
