@@ -9,6 +9,7 @@ import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
   currentDirectEvalBindings,
+  directEvalRunsAtScriptGlobal,
   ensureDirectEvalActivationStatePoolLocal,
   emitEnsureDirectEvalActivationStatePoolInitialized,
 } from "../direct-eval-environment.js";
@@ -34,6 +35,13 @@ import {
 } from "../runtime-eval-callable.js";
 import { buildRuntimeEvalValueUnwrap, ensureRuntimeEvalProviderActiveGlobal } from "../runtime-eval-boundary.js";
 import { coerceType, compileExpression } from "../shared.js";
+import {
+  ensureRuntimeEvalCallableCarrier,
+  foldedEvalDeclarationNames,
+} from "../registry/expression-helper-delegates.js";
+import { exactGlobalEvalStatement } from "../../eval-call-shape.js";
+import { foldedEvalStaticSyntaxError, parseEvalScript, providerOwnsEvalDeclarations } from "./eval-script.js";
+import { isRuntimeEvalProviderAbsent } from "./standalone-dynamic-code.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 
 /** Core-Wasm provider namespace owned by #2928/#2527. */
@@ -259,10 +267,10 @@ function ensureRuntimeEvalGlobalLexicalCell(
   return { globalIdx, refCellTypeIdx };
 }
 
-function runtimeEvalSyncFunctionContext(ctx: CodegenContext, name: string): FunctionContext {
+function runtimeEvalSyncFunctionContext(ctx: CodegenContext, name: string, params: ValType[] = []): FunctionContext {
   const fctx: FunctionContext = {
     name,
-    params: [],
+    params: params.map((type, index) => ({ name: `source${index}`, type })),
     locals: [],
     localMap: new Map(),
     returnType: null,
@@ -748,6 +756,104 @@ export function emitHostEvalGlobalBindingSeed(ctx: CodegenContext, fctx: Functio
   }
   const pushIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
   if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
+}
+
+/** (#7106 A2) Each global-scope provider entry, by its source-argument count. */
+const RUNTIME_EVAL_GLOBAL_ENTRY_ARITY = {
+  __runtime_indirect_eval: 1,
+  __runtime_script_eval: 1,
+  __runtime_new_function: 2,
+} as const;
+export type RuntimeEvalGlobalEntry = keyof typeof RUNTIME_EVAL_GLOBAL_ENTRY_ARITY;
+
+/** The support function's name: the entry without its `__runtime_` prefix. */
+function runtimeEvalGlobalCallName(entry: RuntimeEvalGlobalEntry): string {
+  return `__runtime_eval_global_call_${entry.slice("__runtime_".length)}`;
+}
+
+/**
+ * (#7106 A2) The one support function for a global-scope provider entry,
+ * `(source…: externref) -> externref`: publish the script bindings and mark
+ * the provider active (`emitRuntimeEvalGlobalBindingSeed`), append the realm's
+ * global environment object, call the entry, then pull the bindings back and
+ * unwrap the result envelope (`emitRuntimeEvalResultUnwrap`). Callers evaluate
+ * the sources first, so the push observes every side effect of the arguments
+ * (§19.2.1.1: the argument is evaluated before PerformEval). `undefined` when
+ * the entry cannot link.
+ */
+export function ensureRuntimeEvalGlobalCall(ctx: CodegenContext, entry: RuntimeEvalGlobalEntry): number | undefined {
+  const name = runtimeEvalGlobalCallName(entry);
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  // Every legacy site seeds the callable carrier before calling here and refuses
+  // when it cannot; an IR site has no legacy frame, so seed (and refuse) here.
+  // A no-op once seeded; the detached context discards the seed's dead closure.
+  if (!ensureRuntimeEvalCallableCarrier(ctx, runtimeEvalSyncFunctionContext(ctx, name))) return undefined;
+  const externref: ValType = { kind: "externref" };
+  const sources = new Array<ValType>(RUNTIME_EVAL_GLOBAL_ENTRY_ARITY[entry]).fill(externref);
+  const importIdx = ensureLateImport(ctx, entry, [...sources, externref], [externref], RUNTIME_EVAL_IMPORT_MODULE);
+  flushLateImportShifts(ctx, null);
+  if (importIdx === undefined) return undefined;
+  const funcIdx = mintDefinedFunc(ctx);
+  const typeIdx = addFuncType(ctx, sources, [externref]);
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: [], body: [], exported: false });
+  ctx.funcMap.set(name, funcIdx);
+  const fctx = runtimeEvalSyncFunctionContext(ctx, name, sources);
+  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
+  sources.forEach((_, index) => fctx.body.push({ op: "local.get", index }));
+  if (emitGlobalEnvironmentObject(ctx, fctx) === null) fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(entry) ?? importIdx });
+  emitRuntimeEvalResultUnwrap(ctx, fctx);
+  definedFuncAt(ctx, ctx.funcMap.get(name)!)!.locals = fctx.locals;
+  return ctx.funcMap.get(name);
+}
+
+/** Per compile, each global eval statement's answer: a literal Script is parsed once, not per query. */
+const providerOwnedGlobalEvals = new WeakMap<CodegenContext, WeakMap<ts.CallExpression, boolean>>();
+
+/**
+ * (#7106 A2c) Does a global-scope eval statement (`exactGlobalEvalStatement`)
+ * lower through the global support function? Only for a literal indirect eval,
+ * or a sloppy direct eval running at script global, whose Script legacy can
+ * only hand to the provider: it parses, raises no static SyntaxError and
+ * declares a global var (`providerOwnsEvalDeclarations`). Any other literal may
+ * fold, so it stays with the direct frontend. The site is the one the
+ * runtime-eval boundary plan recorded; this never re-detects eval syntax. The
+ * selector, `moduleInitCrossesEvalBoundary` and the IR resolver all read this answer.
+ */
+export function runtimeEvalOwnsGlobalEval(ctx: CodegenContext, call: ts.CallExpression): boolean {
+  const answers = providerOwnedGlobalEvals.get(ctx) ?? new WeakMap<ts.CallExpression, boolean>();
+  providerOwnedGlobalEvals.set(ctx, answers);
+  let answer = answers.get(call);
+  if (answer === undefined) answers.set(call, (answer = decideRuntimeEvalOwnsGlobalEval(ctx, call)));
+  return answer;
+}
+
+function decideRuntimeEvalOwnsGlobalEval(ctx: CodegenContext, call: ts.CallExpression): boolean {
+  const shape = exactGlobalEvalStatement(call);
+  if (!shape || !runtimeEvalPushPublishesCachedFunctionValues(ctx) || isRuntimeEvalProviderAbsent(ctx)) return false;
+  if (shape.direct && !directEvalRunsAtScriptGlobal(call, ctx)) return false;
+  const start = call.getStart();
+  const site = ctx.runtimeEvalBoundaryPlan?.sites.find((entry) => entry.start === start && entry.end === call.end);
+  if (site?.literalSource === undefined || (site.kind !== "indirect-eval" && site.kind !== "direct-eval")) {
+    return false;
+  }
+  const script = parseEvalScript(ctx, call, shape.direct, site.literalSource);
+  const names = foldedEvalDeclarationNames(script.sourceFile);
+  const thrown = foldedEvalStaticSyntaxError(call, shape.direct, script, names, ctx.globalLexicalBindings ?? new Set());
+  return thrown === undefined && providerOwnsEvalDeclarations(script, names, true);
+}
+
+/**
+ * The callee of a call `runtimeEvalOwnsGlobalEval` admits, linked now so it
+ * exists before any IR body is emitted: the indirect-eval support function,
+ * which a sloppy script-global direct eval shares. `undefined` for any other
+ * call, or when the support function cannot link.
+ */
+export function linkRuntimeEvalGlobalEval(ctx: CodegenContext, call: ts.CallExpression): string | undefined {
+  const entry = "__runtime_indirect_eval";
+  if (!runtimeEvalOwnsGlobalEval(ctx, call)) return undefined;
+  return ensureRuntimeEvalGlobalCall(ctx, entry) === undefined ? undefined : runtimeEvalGlobalCallName(entry);
 }
 
 /** Mark whether carrier calls are executing across the provider boundary. */

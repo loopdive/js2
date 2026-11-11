@@ -537,6 +537,26 @@ function scriptVarReferencesAreValueUses(ctx: CodegenContext, declaration: ts.Va
   return valueUsesOnly;
 }
 
+/**
+ * (#7106 A3) Can evaluated code replace the member or script var this closure
+ * is stored in? Only a computed source or a literal one that writes the name
+ * (`IrRuntimeEvalBoundaryPlan.dynamicSourceWrites`) can; a call argument has
+ * no binding to replace.
+ */
+function runtimeEvalMayRebindClosureSite(ctx: CodegenContext, expression: ts.FunctionExpression): boolean {
+  const plan = ctx.runtimeEvalBoundaryPlan;
+  if (ctx.runtimeEvalGlobalFunctionBindings !== true || plan === undefined) return false;
+  if (plan.unknownDynamicSource) return true;
+  const site = expression.parent;
+  const name =
+    ts.isBinaryExpression(site) && ts.isPropertyAccessExpression(site.left)
+      ? site.left.name.text
+      : ts.isVariableDeclaration(site) && ts.isIdentifier(site.name)
+        ? site.name.text
+        : undefined;
+  return name !== undefined && plan.dynamicSourceWrites.has(name);
+}
+
 /** Exact raw-versus-logical adapter proof for one same-source member assignment, call argument or script var. */
 function planMemberClosure(
   ctx: CodegenContext,
@@ -551,7 +571,7 @@ function planMemberClosure(
     !operations.dynamicCarrierIsExternref() ||
     ctx.targetProfile.semanticProviders !== "native-first" ||
     !(ctx.standalone || ctx.wasi) ||
-    ctx.runtimeEvalGlobalFunctionBindings === true ||
+    runtimeEvalMayRebindClosureSite(ctx, expression) ||
     expression.name ||
     expression.type ||
     expression.asteriskToken ||

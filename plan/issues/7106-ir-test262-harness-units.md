@@ -4,7 +4,9 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-11-01
+updated: 2026-11-08
+
+updated: 2026-11-07
 priority: high
 horizon: l
 feasibility: hard
@@ -45,9 +47,15 @@ flat-dir-budget-allow:
   - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
   - src/codegen/ir-dynamic-delete.ts # 2026-10-22 (#7106 propertyHelper arm 3): the dynamic delete wrapper beside ir-dynamic-construct.ts
   - src/codegen/ir-dynamic-instanceof.ts # 2026-10-22 (#7106 dyn.instanceof): the generic dynamic instanceof wrapper beside ir-dynamic-delete.ts
+loc-budget-allow:
+  - src/ir/select.ts # 2026-11-06 (#7106 lever T): +34 net — the builder's own rules at selection (the checker `+` proof, throwOperandAdmissible, the void-call, dynamic-compound and in-function dynamic `+` refusals) and the three throw refusal codes; folding the two compound arms and the three touch walkers offsets part of it
+  # 2026-11-06 (#7106 lever T review round 2): +4, writeValueMatches refuses a bare null into the script dynamic home as the builder does; #7127 removes it
+  - src/ir/module-bindings.ts
+func-budget-allow:
+  - src/ir/select.ts::isPhase1Expr # 2026-11-06 (#7106 lever T): +5 — the module `+` reads the builder's checker proof (`checkerAdditionVerdict`) instead of requiring equal families, a void local call operand is refused, and so is a function's unproven `+` over a dynamic script var
 import-cycles-allow:
   - ir->codegen: 84 # 2026-10-29 (merge-group fix, restated on main's 83 after #6977/#6979 + this borrow wrapper); 2026-10-29 (revive, restated on main's 81 + #7119's wrapper module + this borrow wrapper); 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (module-init lever A): the bridge reads legacy's Math/Number constant table (`codegen/builtin-value-read.ts`); 2026-10-22 (lever B): …and pre-registers the Number(v) provider (`codegen/helpers/ir-number-from-value.ts`); 2026-10-22 (compareArray.format): …and the Array.prototype borrow wrapper
-  - codegen->ir: 303 # 2026-11-06 (#7106 string-method surface): the self-hosted string resolver (`codegen/stdlib-selfhost.ts`) reads the one string-method table (`ir/string-method-surface.ts`) instead of keeping its own copy; main already sits at 302; 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
+  - codegen->ir: 306 # 2026-11-08 (restated on main's 305 after the merge of origin/main, +1 for lever R2's edge below); 2026-11-07 (#7106 lever R2): `codegen/regexp-exec-carrier.ts` names its helper from `ir/regexp-runtime-contract.ts`, beside the test helper's name (plan step 4); 2026-11-06 (#7106 string-method surface): the self-hosted string resolver (`codegen/stdlib-selfhost.ts`) reads the one string-method table (`ir/string-method-surface.ts`) instead of keeping its own copy; main already sits at 302; 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
   - ir->frontend: 8 # 2026-10-22 (#7106 lever B): the bridge builds the source-bound Number-conversion plan (`frontend/builtins/prepare-number-conversion.ts`) for the selector, as program-source.ts does for its resolver
   - ir->runtime: 10 # 2026-10-29 (#7106 function-object realm members): `ir/select-expression-structure.ts` reads %Function.prototype%'s and %Object.prototype%'s keys from the native realm catalog (`runtime/contracts/native-realm-catalog.ts`, pure data), as `ir/program/native-realm-requirements.ts` already does; a hand copy of those 19 names would duplicate the catalog
   - largestSccSize: 728 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it; 2026-10-22 (dyn.instanceof): codegen/ir-dynamic-instanceof.ts joins it the same way; 2026-10-22 (lever B): codegen/helpers/ir-number-from-value.ts joins it; 2026-10-22 (compareArray.format): codegen/array/ir-array-prototype-borrow.ts joins it
@@ -59,6 +67,10 @@ import-cycles-allow:
 # self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
 # stands down when runtime eval may share the realm.
 func-budget-allow:
+  # 2026-11-07 (#7106 lever S2, review round 1): `resolveGlobalType`, the slot ValType `emitModuleSlotAdapter` derives a module slot's read/write adapter from (+3)
+  - src/ir/integration.ts::makeResolver
+  # 2026-11-06 (#7106 lever R1): extern.regex joins its sibling extern ops' provider dependency arm
+  - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
   # 2026-10-22 (module-init lever A): one resolver entry for the namespace-constant fold
   # 2026-10-22 (propertyHelper arm 3): the dynamicDeleteSymbol method
   # 2026-11-01 (chunk-budget S2, +2): `moduleInitChunkName`, the chunk-name reservation the IR chunk lowering asks for
@@ -84,8 +96,11 @@ func-budget-allow:
   - src/ir/select.ts::dynamicUsesAreMoveOnly
   - src/ir/select.ts::scanExpr
   # 2026-10-31 (boolean statics, round 4): the 3-line adapter call beside the Math arms (+3)
+  # 2026-11-07 (lever W, review round 1): the unary `-`/`+` wrapper-operand arm, refusing through the shared `selectorWrapperToPrimitiveSupported` (+7)
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select.ts::collectCallGraph
+  # 2026-11-08 (lever SR, review round 1, +2): an unevaluated string-method argument adds no call edge (`isUnevaluatedStringMethodArgument`); also restates lever P's +7 indirect-route walk, whose ceiling main's baseline refresh reset
+  - src/ir/select.ts::buildLocalCallGraph
   - src/ir/select.ts::whyNotIrClaimable
   - src/codegen/index.ts::planIrOverlay
   - src/ir/integration.ts::compileIrPathFunctions
@@ -95,6 +110,10 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
+  # 2026-11-08 (merge of origin/main): the `regexp-match` home's doc line and the classifier `certifiedScriptVarUse` now takes (+3); its kind, write and use arms joined lever V's dispatch in src/ir/module-binding-certified-homes.ts. 2026-11-07 (#7106 levers R2 + S2): the admission lives in src/ir/regexp-match-uses.ts
+  - src/ir/module-bindings.ts
+  # 2026-11-06 (#7106 lever R1): the constructor's static tail is exported unchanged as compileStandaloneStaticRegExp for the IR's extern.regex wrapper, plus standaloneStaticRegExpCompiles, the selection predicate over the same compiler
+  - src/codegen/regexp-standalone.ts
   # 2026-10-22 (module-init lever A): the table accessor beside legacy's fold
   - src/codegen/builtin-value-read.ts
   # 2026-10-22 (lever B): one provider-id set spread in the manifest registry
@@ -117,6 +136,7 @@ loc-budget-allow:
   - src/ir/runtime/verify.ts
   # 2026-10-31 (boolean statics, round 5): the selection adapter, the IR-representation family proof and the argument / declared-type slot families it needs from select.ts's private resolvers, mapped by one resolvedKindFamily (+89); the rule lives in src/ir/static-predicates/
   # 2026-11-01 (#7106 S5): `moduleVarLeavesStorable`, the per-leaf slot fit of a module-init `var` pattern (+36)
+  # 2026-11-07 (lever W, review round 1): the unary `-`/`+` wrapper-operand arm and `selectorWrapperToPrimitiveSupported`, the wrapper capability refusal now shared with the binary arm (+11; the binary arm nets -2)
   - src/ir/select.ts
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
@@ -5629,9 +5649,29 @@ the claim: "function member operand has no canonical carrier".
 **Change.** One arm in `src/ir/integration.ts`, `resolveModuleBindingGlobal`:
 the `i32` kind reads as `irBool()`.
 - It reuses the #4503 boolean brand (`boolean-brand.ts`). The brand changes
-  no representation, and `irTypeEquals` erases it, so no join, slot write or
-  verifier check changes. No second boolean rule is added; the value kind
-  already says `boolean`.
+  no representation, and `irTypeEquals` erases it, so no join or verifier
+  check changes. No second boolean rule is added; the value kind already says
+  `boolean`.
+- **Numeric coercion did change** (review round 1). `isNumericIrSlot` refuses
+  a boolean, so a branded read stopped converting into a number result
+  (`let flag = true; function t(): number { return flag; }`) and into a
+  numeric compound field write. Standalone withdrew both after the claim,
+  where main converts the bare `i32`.
+  - `coerceIrToNumber` (`numeric-slot-coercion.ts`) is ToNumber into a
+    numeric slot: a numeric slot's value, or a boolean, whose ToNumber is its
+    0 or 1. Only its real ToNumber consumers take it: a compound field
+    update's operands (`numericFieldUpdate`) and a declared number result.
+  - `coerceIrNumeric` stays slot to slot, so a plain field write keeps the
+    boolean itself (`o.n = true` stores `true`; review round 2 found that
+    widening it stored 1).
+  - The compound write's right-side gate accepts a boolean on both lanes,
+    since its ToNumber needs no recovered domain. The field slot check is
+    main's `laneNumericSlot`.
+  - A boolean is still no numeric target. So a branded read converts exactly
+    where main's bare one did.
+- The selector's `provenIrFamily` names the slot `boolean`, not `int32`, as
+  the brand does. That newly claims `Object.is(x, true)` on both lanes, with
+  the right answer.
 - The `f64` and `i32` arms stay separate. `integration.ts` grows by 2 lines
   (the import and the one-line why), under its existing grant with a dated
   note.
@@ -5662,13 +5702,1105 @@ depends on it, not for its own gain.
 **Acceptance.**
 - **Correctness:** no claim-then-demote for a boolean module `var`, 0 flips
   on both lanes, and legacy bytes and the playground identical.
-- **Tests:** `tests/issue-7106-module-bool-slot.test.ts`, both lanes: six
-  claimed shapes, and the S5 boolean-leaf shape, which withdraws nothing.
+- **Tests:** `tests/issue-7106-module-bool-slot.test.ts`:
+  - on both lanes, seven claimed shapes, and the S5 boolean-leaf shape, which
+    withdraws nothing;
+  - on standalone, two numeric consumers that keep main's claim;
+  - on both lanes, a boolean written to an object's number field keeps
+    `true`, and a boolean compound operand (`o.n += flag`) converts, claimed.
+
+  It and `issue-7106-for-head-destructuring.test.ts` share
+  `compileHarnessOn` / `runHarnessOn`
+  (`tests/helpers/harness-module-init.ts`), which take the lane.
 - **Code quality:**
   - one arm changed;
-  - no new predicate or boolean rule (the existing brand and value kind are
-    reused);
-  - no new function.
+  - one conversion added, `coerceIrToNumber`, sharing
+    `coerceIrNumeric`'s body and used by its two ToNumber consumers;
+  - no second boolean rule (the existing brand and value kind are reused).
+
+**Follow-ups.**
+- **Latent: a conditional keeps its true arm's type.** `lowerConditional`
+  keeps the true arm's `IrType`, brand included. So `c ? flag : k`, with `k`
+  a native `i32`, would box `k` as a boolean if it were ever claimed. It is
+  not claimed today, and literal `true` arms on main already carry the same
+  hazard.
+- Once this and #7037 have landed, S5 can drop its boolean-leaf refusal, and
+  its test can use the shared `runHarnessOn`.
+
+## ES5 lever R: RegExp on the host-free lanes (plan 2026-11-06; R1, R2 + S2 implemented 2026-11-07)
+
+## ES5 lever T: `throw new Test262Error('…' + x)` over a script scalar (implemented, 2026-11-06)
+
+Lever `T` of "ES5 IR-only: ranked levers" (census branch
+`claude/7106-es5-ir-only-census`): 463 files carry it, and the census
+estimated 52 freed by T alone. #7251 (the `Test262Error` harness unit) and S3c
+own the constructor; this lever is only the test body's `throw` and its
+message.
+
+### Root cause
+
+The ES5 `S…` shape is
+`var x = 1; if (x !== 1) { throw new Test262Error('#1: ' + x); }`. Two
+selector rules in `src/ir/select.ts` refused it, in module-binding terms that
+the builder's rules do not use:
+
+1. **`throw-module-scalar-unboxed`** (`isPhase1ThrowStatement`). It refused a
+   thrown value that merely *touched* a scalar script var, unless the whole
+   value was a string. So `new Test262Error('#1: ' + x)`, an object that only
+   reads `x`, was refused like `throw x`. `lowerThrowStatement` judges the
+   thrown value's own family (`throwOperandAdmissible`).
+2. **The module `+` rules.** `expr-module-value-representation-mismatch` and
+   `expr-module-boolean-nonboolean-op` refused a `+` whose operands have
+   different module families. But the selector's own `obviousModuleValueFamily`
+   already reads that `+` through #7066's `additiveResultFamily`.
+
+### What changed (`src/ir/select.ts`, plus one write rule in `src/ir/module-bindings.ts`)
+
+- **Throw arm.** The thrown value's own family decides, through
+  `throwOperandAdmissible` as `lowerThrowStatement` judges it: a construction
+  (`new …(…)`) is a reference, a string passes, and a number, boolean or
+  unknown value is refused. When the value reads a script scalar, each
+  refusal has its own code:
+  - `throw-module-nullish`: a nullish value;
+  - `throw-module-scalar-unboxed`: a family `throwOperandAdmissible` refuses;
+  - `throw-module-top-level`: a top-level `throw`, which integration withdraws
+    after the claim outside WASI.
+
+  The arm still reads the result family of a thrown `'#' + x` from
+  `obviousModuleValueFamily`, not from `checkerAdditionVerdict`. The verdict
+  answers "does this `+` lower", which `isPhase1Expr` already asks of the
+  thrown expression; the arm needs the result family (string or number), and
+  `obviousModuleValueFamily` serves 15 other storage-family callers, so it is
+  not folded.
+- **A `null` written into a dynamic script slot** (review round 2). The
+  builder refuses the write ("bare 'null' in non-reference context
+  (dynamic)", `nullValueAdmissible`), whether it is the initializer
+  (`var x = null`) or an assignment (`x = null`). `writeValueMatches`, the one
+  write check every module-write arm (declaration, statement, tail) asks, now
+  refuses it for the script dynamic home. This replaces round 1's read-side
+  rule in the throw arm, which missed `x = null` and `var z = a + n`. #7127
+  lowers the write; when it lands, this refusal goes.
+- **Module `+`.** It is judged by the builder's own proof: #7066's additive
+  rule over the checker's types at the use site (`checkerAdditionVerdict`, the
+  selector's twin of `provenAdditiveOperands`), not by the storage family. A
+  guard that narrows the read to `never` (`var x = true; if (x !== true)
+  { … '#1: ' + x }`, S8.3_A1_T1), or a `null` operand, proves nothing and keeps
+  the family checks. The element-concat backstop asks the same verdict.
+- **Three builder refusals the selector now makes first.** Without them T
+  would unmask post-claim withdrawals.
+  - *A compound write to a dynamic script var* (`var y; y = 1; y *= -1;`).
+    `isSelectableNumberCompound`, the one admission every compound arm reads,
+    refuses it: `lowerCompoundAssignment` writes no dynamic script var yet.
+    #7130 lowers it and removes this refusal.
+  - *A void local call used as a binary operand* (`f() !== undefined`,
+    `'…' + f()`, S13.2.1_A9_T1). from-ast throws "returned void used as
+    expression". The refusal reuses the callee's resolved return kind:
+    `calleeReturnIsDynamic` becomes `calleeReturnKind`, read by both. A void
+    call in other value positions (`var v = f()`, `typeof f()`) withdraws on
+    main too; refusing those needs a value-position flag the walk does not
+    carry, so it is left as is.
+  - *A `+` over a dynamic script var read inside a function*
+    (`function g() { throw new Test262Error('#1: ' + x); }`, review round 2).
+    from-ast takes a dynamic script var as the carrier only where it is in
+    scope (`<module-init>`); a function reads it through
+    `resolveModuleBinding`, which `addsAsCarrier` does not consult, so the
+    checker proof decides and refuses. `moduleAdditionVerdict`, beside
+    `checkerAdditionVerdict`, answers the module `+` once (admit, refuse as
+    `expr-module-dynamic-addition`, or leave it to the family checks). The same withdrawal
+    exists on main for `return '#1: ' + x`; this refusal fixes that as well.
+    Teaching `addsAsCarrier` the resolver read would claim these instead; that
+    is a builder change with its own census, left as a follow-up.
+- **Leave it better.**
+  - The body and non-tail statement arms for `<id> <op>= e` were the same code
+    with different refusal prefixes. They are now one helper,
+    `isPhase1IdentifierCompound`.
+  - The three module-binding touch walkers (`expressionTouchesModuleBinding`,
+    `…BooleanModuleBinding`, `…ScalarModuleBinding`) were one walk with
+    different predicates. They are now one walk, `expressionTouchesIdentifier`,
+    and the throw arm's dynamic-var case is one more predicate.
+
+### Measured (origin/main 245e830d49 vs head, standalone and gc)
+
+- **Population:** the 56 T files of the census sample, plus 299 random ES5
+  files (355 in total).
+- **Newly IR-only:** +4 (26 → 30) on both lanes, all ES5 and all from the T
+  sample, and all pass on both trees:
+  - `S13_A3_T3`
+  - `S12.6.2_A4_T1`
+  - `S8.1_A2_T1`
+  - `S7.2_A3.5_T2`
+
+  At the census weight that is about 29 ES5 files. That is below the
+  census's 52, because the prototype it measured had neither selector refusal
+  (the four dynamic-compound files and S13.2.1_A9_T1 would have withdrawn).
+- **Other files:** the 351 other binaries are byte-identical; there are 0
+  status changes and 0 new post-claim errors on both lanes, and the playground
+  is identical.
+- **Review round 1 (2026-11-06), the reviewer's 207 probes × both lanes,
+  main vs head:** 0 new post-claim errors, 0 wrong answers, 132 rows newly
+  claimed, and the post-claim rows fall from 34 to 20 (the void-call operand
+  ones). `S8.3_A1_T1` is refused at selection, not withdrawn.
+- **Most T files need another lever:**
+  - `N`: `new Object/String/Boolean`, `isNaN`;
+  - `P`: compound on dynamic vars, now refused cleanly;
+  - `D`: `for (var …)`;
+  - chained assignment.
+
+**Tests:** `tests/issue-7106-lever-t.test.ts`, on both lanes:
+- seven claimed shapes: a number, `'…' + (x)`, a rewritten var, 1.5, -0,
+  1e21 and a boolean;
+- thirteen refused at selection and never withdrawn:
+  - throw of a number;
+  - boolean + number;
+  - dynamic `*=`;
+  - dynamic `+=`;
+  - the void-call operand;
+  - a read the guard narrows to `never` (boolean, `typeof`);
+  - a `null` written into a script var: initialized or assigned, read in a
+    guard, a message or a `+`;
+  - a dynamic script var concatenated inside a function;
+- a failing check that throws.
+
+**Code quality:**
+- No new predicate. The rules are `throwOperandAdmissible`'s families, #7066's
+  additive verdict, `compoundWriteAdmissible` and the existing return-kind
+  resolver.
+- One duplicate is folded: the two `<id> <op>= e` arms.
+- `select.ts` grows by 34 lines, `module-bindings.ts` by 4 and `isPhase1Expr`
+  by 5, granted in the frontmatter. The two refusals are new arms the builder already implied, so
+  the plan's "no growth" did not hold.
+
+## ES5 lever R: RegExp on the host-free lanes (plan 2026-11-06; R1 implemented 2026-11-07)
+
+Lever `R` of "ES5 IR-only: ranked levers": 548 files carry it, and the census
+estimated 135 freed by R alone (not unmasked). Plan only; nothing is
+implemented.
+
+**Ownership.** No IR RegExp lane is open. The done IR work this plan reuses:
+- #1169i: `extern.regex` on the host lane;
+- #3791: the `.test` bridge to a stable top-level carrier;
+- #3794: dynamic string/RegExp `replace`.
+
+The open RegExp issues are legacy-standalone engine and protocol correctness:
+#2723 linear-time matching, the dynamic-pattern refusals, flag getters,
+backreferences, and the god-file split of `regexp-standalone.ts`. #4237
+(compile-time specialization) is an exploration. None of them claims the IR
+front end.
+
+### What refuses today (main a67f11711f; census sample plus a 60-file probe)
+
+Every refusal is `regexp-constructor-unsupported`, raised in
+`src/ir/select.ts` behind `hostRegExpUnavailable()`, i.e. the lane lacks the
+`host-regexp-constructor` capability. That is the case on both host-free
+WasmGC lanes:
+
+| arm | site | shape |
+| --- | --- | --- |
+| `expr-regexp-literal` | `isPhase1Expr`, the literal arm (~L11545) | `/re/flags` anywhere |
+| `expr-new-regexp-target` | the `new` arm (~L11279) | `new RegExp(…)`, `new RegExp` |
+| `expr-regexp-method-target` | the call arm (~L12174/12182) | `re.test(s)` / `re.exec(s)` / any method on a RegExp receiver. Only #3791's exact `.test` on a stable top-level `var` carrier passes. |
+| `expr-string-method-surface` / `expr-string-replace-shape` | string-method arm | `s.split(/,/)`, `s.search(/c/)`, `s.replace(/b/, "x")` |
+| `external-call callee:RegExp` | call arm | `RegExp("a")` without `new` |
+
+`s.match(/b/)` and `re.lastIndex = n` stop earlier: storage of a script var
+holding the result or the RegExp (`vardecl-module-storage-unrepresentable`,
+lever `S`).
+
+- **Census:** 31 of the 1,100 sample files carry an R arm (module-init only):
+  - `expr-regexp-method-target` 13;
+  - `expr-regexp-literal` 15;
+  - `expr-new-regexp-target` 12.
+- **Probe:** the 31 census files plus 29 random ES5 `built-ins/RegExp` files,
+  every refusal shown.
+  - 24 files have **only** RegExp refusals: 16 of the 31 census files and 8
+    of the 29 extra.
+  - The rest also need `S`, mostly the S15.10.2 family
+    `var __executed = /re/.exec(s)` with `__expected` arrays.
+
+### What exists to reuse (the IR must call it, not a second engine)
+
+Legacy standalone RegExp compiles each pattern **at build time**:
+- `compileStandaloneRegExpLiteral` / `compileStandaloneRegExpConstructor` →
+  `emitStandaloneRegExpStruct` in `codegen/regexp-standalone.ts`;
+- the result is a `$NativeRegExp` struct: flags, group count, program
+  (`array<i32>`), class table, source, lastIndex;
+- an invalid `new RegExp("a**")` becomes a runtime `SyntaxError` throw
+  (`emitThrowRegExpSyntaxError`);
+- matching runs in-module (`ensureRegexSearch`, the engine #2723 is making
+  linear-time). There is no host import.
+
+The IR-facing pieces already in place:
+- **One IR instruction, `extern.regex`** (`builder.emitRegExpLiteral`). Its
+  only lowering (`lower-generic.ts` ~L3456) calls the host `env.RegExp_new`.
+- **Two in-module carrier helpers with an externref ABI:**
+  `__regexp_test_carrier` (`ir/regexp-runtime-contract.ts`, used by #3791)
+  and `__regexp_exec_carrier` (`codegen/regexp-exec-carrier.ts`, #6672).
+  They recover the struct, ToString the subject and run the shared engine,
+  including g/y `lastIndex`.
+- **The #3791 plumbing:** a backend capability
+  (`standalone-native-regexp-test-carrier`), a resolver hook
+  (`standaloneRegExpTestPlan`), and a module-binding plan
+  (`staticRegExpTestPlan`).
+
+### Scratch prototype (selection only, reverted)
+
+With `hostRegExpUnavailable()` forced false, 21 of the 24 only-RegExp files
+pass selection. They then withdraw at build, as expected with no
+standalone lowering. That names what R must lower:
+- `'…' + <RegExp or match result>`: a throw message concatenating
+  `new RegExp("a**")`, 12 files (the `+` needs the operand's ToString);
+- native `.test`: 6;
+- `.source`: 1;
+- the constructor's string argument and the RegExp-valued script var: 1 each.
+
+The other 3 hit other levers (`O` ToPrimitive object literal, `M` module
+scalar method, `RegExp(…)` without `new`).
+
+### Implementation Plan
+
+**One IR instruction, two lowerings: the dual-backend pattern (#679/#682).**
+`extern.regex` stays the IR's only RegExp construction. The backend picks its
+lowering, and from-ast and the selector read no lane fact beyond one
+capability.
+
+1. **Capability.** Generalize `standalone-native-regexp-test-carrier` in
+   `ir/backend/legality.ts` to `native-regexp`: in-module RegExp construction
+   plus the carrier helpers. `hostRegExpUnavailable()` refuses only where
+   neither the host constructor nor `native-regexp` exists.
+2. **Construction.** The `extern.regex` arm in `lower-generic.ts` asks the
+   resolver for a native constructor before falling back to `env.RegExp_new`.
+   - The resolver hook lives in `ir/integration.ts` beside
+     `standaloneRegExpTestPlan`.
+   - It returns a per-(pattern, flags) wrapper function built by a new
+     `codegen/ir-regexp-literal.ts`, the same shape as
+     `ir-dynamic-construct.ts`.
+   - The wrapper calls legacy's `emitStandaloneRegExpStruct` (or
+     `emitThrowRegExpSyntaxError` for an invalid pattern) and
+     `extern.convert_any`. Each evaluation makes a fresh object, as a literal
+     must.
+   - `new RegExp(p, f)` with literal-string arguments lowers to the same
+     instruction; a non-literal pattern stays refused (a later slice through
+     `ensureDynamicStandaloneRegExpCompiler`).
+3. **Methods.** `re.test(s)` / `re.exec(s)` on any IR RegExp value (an
+   externref) lower to calls of the two carrier helpers:
+   - `test` returns a boolean;
+   - `exec` returns the dynamic carrier: the match array or null.
+   - #3791's stable-global special case becomes the general arm. Its
+     selector bypass and `staticRegExpTestPlan` fold away once a RegExp-valued
+     script var is an `extern` module binding (lever `S`). Until then it stays
+     as the one receiver source the IR can read.
+4. **The constant.** `__regexp_exec_carrier`'s name moves to
+   `ir/regexp-runtime-contract.ts` beside the test helper's, so both helper
+   names live in one place below the IR.
+5. **ToString of a RegExp in `+`.** A RegExp value is the dynamic carrier's
+   object family to the #7066 additive rule, so `'…' + re` takes the dynamic
+   `+`, whose ToPrimitive reaches `RegExp.prototype.toString`
+   (`regexp-proto-to-string.ts`). Verify this before slicing; if the native
+   dynamic `+` cannot reach it, this is R's first follow-up.
+
+**Slices:**
+- **R1:** steps 1, 2, 3 for `.test` only, and 4. Literals and literal
+  `new RegExp`.
+- **R2:** `.exec` and the result as a dynamic value.
+- **R3:** step 5, and the flag/`source` getters through
+  `regexp-accessor-get-arm.ts`.
+- **R4:** string methods with a RegExp argument (`split`, `search`,
+  `replace`, `match`) through the existing protocol helpers
+  (`regexp-split-protocol.ts`, `regexp-replace-protocol.ts`): a `regexp`
+  argument role in `string-method-surface.ts`, not a second table.
+- **Later:** `lastIndex` writes (`regexp-lastindex-carrier.ts`) and dynamic
+  patterns.
+
+**Acceptance:**
+- **Correctness:**
+  - 0 pass→fail, both WasmGC lanes, on `built-ins/RegExp` (about 480 ES5
+    files) and `built-ins/String/prototype/{match,replace,split,search}`;
+  - 0 claim-then-demote: every shape the selector admits lowers;
+  - non-RegExp programs byte-identical, and the playground identical;
+  - the host-RegExp lane unchanged.
+- **Code quality:**
+  - no second engine, no new host import;
+  - RegExp construction is one IR instruction with backend-chosen lowering;
+  - helper names only in `regexp-runtime-contract.ts`;
+  - the wrapper module beside its siblings;
+  - no growth of `select.ts` beyond replacing the three
+    `hostRegExpUnavailable()` refusals with the capability question.
+- **Expected gain:**
+  - Upper bound about 101 ES5 files: 14 of the 31 census files pass
+    selection with R admitted, at about 7.2 files each. The census's 135
+    included files that the prototype shows also need other levers.
+  - R1 alone frees the `.test` / literal / constructor shapes; the 12
+    `'…' + re` throw messages need R3.
+  - About 25 more need `S` + R (the S15.10.2 `__executed` family).
+
+### R1 implemented (2026-11-07)
+
+**What landed** (steps 1, 2 and step 3 for `.test`; step 4 moves to R2, where the IR first calls the exec helper, since moving the name now would only add codegen→ir import edges):
+- `native-regexp` replaces `standalone-native-regexp-test-carrier`.
+- `extern.regex` carries an optional provider. On a `native-regexp` lane it is
+  the per-pair wrapper `ensureIrRegExpLiteralHelper` builds over legacy's
+  static construction (`compileStandaloneStaticRegExp`, split out of the
+  constructor tail); elsewhere the arm still calls `env.RegExp_new`.
+  - The wrapper sits beside that construction in `codegen/regexp-standalone.ts`,
+    not in its own module as planned. `integration.ts` already imports that
+    file; a new module would add an ir→codegen edge, grow the import SCC and
+    raise `integration.ts`'s layering count.
+  - It is built with the shared `helperFunctionContext` /
+    `publishHelperFunction` (`codegen/helpers/ir-helper-function.ts`), like
+    every other IR wrapper; integration turns its name into the `IrFuncRef`.
+- `staticRegExpPair` (`shared/regexp-static.ts`) reads a literal or a literal
+  `new RegExp(p?, f?)`, for from-ast and the selector alike. It sits below
+  both layers because legacy's `parseRegExpLiteral` is the same split.
+- `.test(s)` on any IR RegExp value calls `__regexp_test_carrier`.
+
+**Where a native RegExp is admitted.** Only where R1 consumes it: the
+receiver of `.test(…)`, or a discarded statement (`new RegExp('a**');` still
+throws its SyntaxError). The first census admitted it everywhere and found
+four withdrawals and one compile error, all a RegExp value meeting a consumer
+with no lowering yet:
+- `/1/.source`: a capability-deferred extern property read, a hard compile
+  error (R3's getters);
+- `'…' + new RegExp('a**')`: the builder's `+` proof has no RegExp family
+  (R3's ToString), 6 files;
+- `var __re = new RegExp;`: a dynamic script slot has no carrier for it;
+- a local `var re = /a/g` would reach the same reads.
+
+`nativeStaticRegExp` refuses every other position, so a binding (`S`) or a
+consumer (R2/R3) widens it with its own lowering.
+
+**R3 is not in this change.** `'…' + re` needs the RegExp value as a dynamic
+`+` operand whose ToPrimitive reaches `RegExp.prototype.toString`, plus the
+selector's `+` family for it. That is more than a second commit's worth, so R1
+ships alone.
+
+**Measured** (base 245e830d49 vs head, standalone and gc):
+- **Population:** 389 files: the 60-file R probe, 100 random ES5
+  `built-ins/RegExp` files, every ES5 `String.prototype.{match,replace,split,search}`
+  file, and the lever-T non-eval sample.
+- **Newly IR-only:** +12 on both lanes (2 → 14), all `S15.10.2.*` `.test`
+  shapes. All 12 pass on both trees and both lanes.
+- **Everything else:** 377 binaries byte-identical; 0 status changes; 0 new
+  post-claim; the playground is identical. The host-RegExp lane takes the
+  unchanged `env.RegExp_new` arm.
+- **ES5 IR-only estimate:** about 33 files: the 6 probe gains, plus 6 of the
+  100 random files scaled to the 451-file pool (about 27). The String-method
+  files gain nothing yet (R4).
+
+**Tests:** `tests/issue-7106-lever-r.test.ts`, on both lanes:
+- eight claimed shapes: a literal, an anchored miss, the `m` flag, a
+  constructed pattern with and without flags, the empty pattern, an invalid
+  pair's SyntaxError, and a fresh `g` literal per evaluation;
+- six refused at selection and never withdrawn: `exec`, a dynamic pattern,
+  `.source`, a `+`, a script binding and a local binding.
+
+### R2 + S2 design (2026-11-07)
+
+**R2: `re.exec(s)`.** It lowers like `.test`: a call to the existing
+`__regexp_exec_carrier(recv, subject)` with an `externref` result, typed
+`dynamic` in the IR, the same as `lowerReceiverFirstDynamicMethod`'s result.
+- The helper's name moves to `ir/regexp-runtime-contract.ts`, beside the test
+  helper's name (plan step 4).
+- The resolver's `nativeRegExpTestPlan` becomes `nativeRegExpMethodPlan(receiver,
+  method)`, so `test` and `exec` share one plan, one selector arm and one
+  from-ast arm. They differ only in helper and result type.
+- `nativeStaticRegExp` admits an `.exec(…)` receiver as well as a `.test(…)`
+  receiver.
+
+**S2: the result bound in a script `var`.**
+- **The slot.** For `var __executed = /re/.exec(s)`, legacy types
+  `__mod___executed` as `(ref null $__regexp_match_vec)`. This is #1914's
+  `inferStandaloneRegExpMatchResultType`, which proves that every write in the
+  source is a match result. It picks the capture subtype, or the flat
+  native-string vec if any write is a global `match`.
+- **Design question.** The carrier gives an `externref`, but the slot is a
+  typed struct. How does the IR value get into it?
+- **Decision.** Bind legacy's slot as the `regexp-match` value kind, following
+  #7252 (`class-instance`).
+  - `scriptVarHome` names the slot `regexp-match` when its type is one of the
+    two match-result carriers.
+  - The binding's IR type is `dynamic`. The existing dynamic arms then read it:
+    `.length`, `.index`, `.input`, `[i]` and `=== null`. These are the same
+    runtime readers legacy uses for an exec result whose static type was erased
+    (#6672: marked's untyped `exec`).
+  - The slot boundary converts in both directions:
+    - a read is `global.get` then `extern.convert_any`;
+    - a write is `any.convert_extern`, `ref.cast null $slot`, then `global.set`.
+- **How the conversion reaches lowering.** `ModuleBindingGlobal` carries the
+  typed slot (`slot`). from-ast hands it to `global.get` / `global.set`, and
+  lowering calls the emitter's existing `emitToExternref` /
+  `emitFromExternref`.
+  - A nullable target type makes `emitDowncast` emit `ref.cast null`.
+  - Every current caller passes a type index, so no existing output changes.
+- **Why the cast cannot trap.** The IR admits a write only when the written
+  value is a `.exec(…)` call on a RegExp receiver. That value is `null` or the
+  capture subtype, which is the slot's type or a subtype of the flat base.
+  Writes outside the IR are legacy's, and #1914 proves them.
+- **Lane condition.** Only lanes where `dynamic` is `externref`, so not fast
+  mode. This is the same condition as the `dynamic` home.
+
+**Rejected alternatives.**
+- **Use the exact `val (ref null $match_vec)` as the IR type,** as the
+  `native-map` kind does. No IR consumer reads a match vector, so `.index` and
+  `[i]` would refuse, and the write would still need the same cast.
+- **Admit only results that legacy also types as `externref`.** Legacy types
+  every `var __executed = …exec(…)` slot as the vector, so this frees none of
+  the S15.10.2 family. It is left to the unbound shapes R2 already covers:
+  `/a/.exec(s) === null` and `/a/.exec(s)[0]`.
+- **Add a typed-result twin of the carrier.** That would be a second exec entry
+  point for one user.
+
+**Dependency.** The S15.10.2 family also writes `var __expected = [...]` and
+`__expected.index = n`. These are lane C's #7292 (script-var array literals),
+so many files become IR-only only when both changes are in. The measurement
+below reports units moved, files now IR-only, and files whose only remaining
+refusal is #7292's.
+
+### R2 + S2 implemented (2026-11-07)
+
+**What landed** (as revised by review round 1, below).
+
+R2: `re.exec(s)`.
+- **One path for `.test` and `.exec`.**
+  - `matchRegExpCarrierCall` (`shared/regexp-static.ts`) is the one
+    syntactic matcher, for the selector and the builder alike.
+  - `REGEXP_CARRIER_METHODS` (`ir/regexp-runtime-contract.ts`) is the one
+    table of each method's helper and IR result: `test` answers `boolean`,
+    `exec` answers `dynamic`.
+  - The resolver splits into two hooks. `isNativeRegExpReceiver` is the pure
+    question. `nativeRegExpMethodPlan`, asked only by the lowering arm
+    `lowerRegExpCarrierCall`, registers the helper and throws an invariant if
+    the lane has none.
+- **The helper name is below the IR.** It moved to the contract, which adds
+  one codegen→ir edge from `regexp-exec-carrier.ts`; the `import-cycles-allow`
+  grant covers it. The IR reaches the `exec` builder through the
+  `codegen/index.ts` facade, as it reaches the dynamic delete and instanceof
+  wrappers. So the ir→codegen layering count is unchanged and there is no
+  re-export cycle.
+- **Where an `.exec` result is admitted.** `ir/regexp-match-uses.ts` allows
+  only these uses:
+  - a plain property or element read. Not `groups` / `indices`, which the
+    dynamic reader does not serve on the native match vector. Not a store, a
+    callee or a `delete`. Element keys must be numbers;
+  - an operand of `===`, `!==`, the dynamic `+` or `typeof`;
+  - a `var` initializer.
+
+  `expressionProducesDynamic` names such a call, so `'…' + re.exec(s)` takes
+  the dynamic `+`.
+
+S2: the result bound in a script `var`.
+- **The value kind.** `scriptVarHome` names `$__regexp_match_vec` (off fast
+  mode) as the `regexp-match` home.
+  - The resolver binds the slot only at the declaration's own name, and at
+    the same admitted uses (`regExpMatchUseSupported`).
+  - The one IR write is the declaration's `.exec(…)` initializer.
+  - An element store's receiver now asks its module binding's use-site proof,
+    as every other identifier does.
+- **The slot boundary.** `emitModuleSlotAdapter` (`lower-generic.ts`) derives a
+  module slot's adapter from the pair (slot ValType, IR type). The slot
+  ValType comes from the new `IrLowerResolver.resolveGlobalType`.
+  - It reproduces #7252's `ref.as_non_null` for a class instance.
+  - On an externref carrier it adds a `ref_null` slot behind a `dynamic`
+    value:
+    - a read goes through `extern.convert_any`;
+    - a write goes through `any.convert_extern` and `ref.cast null`.
+  - `WasmGcEmitter.emitDowncast` emits `ref.cast null` for a `ref_null` IrType
+    target. No earlier caller passes one.
+- **A bare `null` in a dynamic position.** On a lane whose dynamic carrier is
+  externref, `lowerExprUnchecked`'s `null` arm emits the carrier's null. That
+  is legacy's `ref.null.extern`; `undefined` is the distinct value
+  `emitDynUndefined` pushes. `const null` of a `dynamic` type lowers through
+  the carrier, as the `vec` case does.
+  - Before, every such `null` failed after the claim ("bare 'null' in
+    non-reference context (dynamic)"), e.g. `assert.sameValue(x, null)` or
+    `chk(null)`.
+  - A probe checks the semantics: to `assert.sameValue`, `null` is neither
+    `undefined` nor `1`.
+
+**First build, measured** (superseded by review round 1, below).
+Base 4748040724 (R1 merged with main b631a4bcab) against head cd9a9d6c6c.
+- **Population: 636 files.** Every ES5 `built-ins/{RegExp,String}` file that
+  calls `.exec` (340), plus the 389-file R1 population (100 random ES5
+  `built-ins/RegExp` files, the R probe, the String-method files and the
+  lever-T sample).
+- **Results, identical on standalone and gc:**
+
+  | measure | standalone | gc |
+  | --- | --- | --- |
+  | `<module-init>` moved legacy → IR | 42 | 42 |
+  | legacy units | 739 → 697 | 735 → 693 |
+  | newly IR-only files | +42, all `S15.10.2.*` exec shapes | +42 |
+  | IR-only files lost | 0 | 0 |
+  | new post-claim errors | 0 | 0 |
+  | changed binaries | the same 42 files | the same 42 files |
+  | pass/fail of the 42, base and head | 42/42 pass | 42/42 pass |
+
+  - The other 594 binaries are byte-identical, so there is no pass→fail.
+  - The playground is identical: 26 binaries.
+- **ES5 IR-only gain: 42 files.** The `.exec` family is enumerated
+  exhaustively, and no file outside it moved. Only two ES5 files outside
+  `RegExp`/`String` call `.exec`.
+- **Blocked by #7292.** 194 exec-family files now stop first at
+  `var __expected = [...]`.
+  - An unmasked rerun with `JS2WASM_IR_MODULE_INIT_ALL_REJECTS` over the 296
+    still-legacy files finds **no file blocked by #7292 alone**: every one
+    also carries the top-level `for (var index = 0; …)` head
+    (`for-init-var-kind`).
+  - **193 files are blocked only by #7292 plus `for-init-var-kind`.** These are
+    the S2 family's remaining gain once both land.
+  - The other refusals: 16 `__executed instanceof Array`, 16 dynamic or
+    unsupported literals (`/(?:ab|cd)\d?/`, lever R's later slices), and a
+    tail of `throw-module-scalar-unboxed` and `lastIndex` / g-flag shapes.
+
+**Tests.** `tests/issue-7106-lever-r.test.ts` runs on both lanes.
+- **Claimed:** an exec miss, captures (`length` / `index` / `[1]`), a
+  constructed pattern, the bound result (`length` / `index` / `input` /
+  `[1]`), and a bound miss through `assert.sameValue(__executed, null)`.
+- **Refused, never withdrawn:** a number subject, a reassigned binding and a
+  redeclared binding.
+
+**Not done.**
+- The fresh-context adversarial review has not run. It belongs to the PR
+  hold.
+- `__executed instanceof Array` (16 files) is the next S-family blocker
+  after #7292 and the for-var head.
+
+### R2 + S2 review round 1 (2026-11-07)
+
+The fresh-context review of c338ad786c returned CHANGES REQUESTED. Every
+finding was fixed in 083d99adc9.
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 | `__e[0] = 'z'` claimed, then trapped | The element-store receiver asks its binding's use-site proof (`elementStoreReceiverAdmitted`), and a store is not an admitted use. |
+| 2 | `.groups` / `.indices` read `undefined` through the dynamic reader | Refused: `groups` / `indices` are not admitted fields, and element keys must be numbers. |
+| 3 | `compareArray(re.exec(s), [...])`, `__e.length = 1`, `__e != null` failed after the claim | Refused: a call argument, a store and a loose `!=` are not admitted uses (`ir/regexp-match-uses.ts`). |
+| 4 | the `null` fix lived in one consumer | Moved to `lowerExprUnchecked`'s `null` arm, which covers any dynamic hint on an externref carrier. The per-consumer hook is gone. |
+| 5 | two unrelated `global.get` adapters, and a `slot` field that duplicated the global's ValType | One `emitModuleSlotAdapter`, derived from (`resolveGlobalType`, IR type). The `slot` field is gone from the IR, the builder, `ModuleBindingGlobal` and the scope. |
+| 6 | three "carrier call" tests, and the method→helper mapping twice | `matchRegExpCarrierCall` and `REGEXP_CARRIER_METHODS`. The `plan.funcName` check is dropped. |
+| 7 | a type query minted a helper | `isNativeRegExpReceiver` is pure. Only `nativeRegExpMethodPlan` registers, and it is called by the lowering arm alone. |
+| 8 | an unreachable `funcIdx === undefined → null` | It throws an invariant now. |
+| 9 | a re-export cycle `regexp-standalone` ↔ `regexp-exec-carrier` | The re-exports are gone. The IR imports the builder through the `codegen/index.ts` facade, the established route for IR wrappers (`ir-dynamic-delete`, `ir-dynamic-instanceof`). A direct import would grow the ir-layering baseline, which a PR may not edit. `ensureRegexMatchVecType` is no longer needed: the slot is the global's own ValType. |
+| 10 | orphaned grant comment | Deleted. The `makeResolver` grant (+3, `resolveGlobalType`) is dated. |
+| 11 | doc overclaim and a signature that differed from its sibling | The write test's doc states that legacy's proof carries it. `regExpMatchUseSupported(node, declaration, classify)` now matches its sibling's argument order. |
+| 12 | inaccurate boundary class | Classified `frontend-ts` / owner 7106, like `module-init-vars.ts`. |
+| 13 | `slot` naming and a braceless `if` | Both are gone. |
+| 14 | tests | Added `execConcatenated` and `nullArgument` (claimed). Added, refused: `execArgument`, `execLooseNull`, `execGroups`, `execGroupsTypeof`, `execBoundGroups`, `execIndices`, `execElementStore`, `execLengthStore`, `execIndexStore`, `execExpandoStore`. 68/68 pass on both lanes. |
+
+**Re-measured.** Base 4748040724 against head 083d99adc9.
+- **Population: 858 files.**
+  - Every file of every edition that calls `.exec`: 412 (394 in
+    `built-ins/{RegExp,String}`). Staging, intl402 and fixtures are left out.
+  - The 389-file R1 population.
+  - 150 random files that pass a bare `null` argument, for the `null` arm.
+- **Results, identical on standalone and gc:**
+
+  | measure | standalone | gc |
+  | --- | --- | --- |
+  | `<module-init>` moved legacy → IR | 43 | 43 |
+  | legacy units | 1,454 → 1,411 | 1,450 → 1,407 |
+  | newly IR-only files | +43, all in the `.exec` family | +43 |
+  | IR-only files lost | 0 | 0 |
+  | new post-claim errors | 0 | 0 |
+  | changed binaries | the same 43 files | the same 43 files |
+  | pass/fail of those 43, base and head | 43/43 pass | 43/43 pass |
+
+  - The other 815 binaries are byte-identical. This includes the whole
+    `null` sample, so the `null` arm changes no binary there.
+  - The playground is identical: 26 binaries.
+- **Against the first build:**
+  - `S15.10.2.13_A1_T17` is no longer claimed: `assert.sameValue(__executed,
+    null)` passes the match result as a call argument.
+  - Two files outside ES5 are newly claimed:
+    `annexB/language/literals/regexp/legacy-octal-escape.js` and
+    `built-ins/RegExp/prototype/exec/u-captured-value.js`.
+  - **The ES5 IR-only gain is 41 files.**
+- The #7292 figures above come from the first build. They change by at most
+  that one file.
+
+### R2 + S2 review round 2 (2026-11-07)
+
+The review of 61258cb98c found holes in the round-1 allow-list. They are
+fixed in b2d66208f2 and 570cf99a8c.
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 | an inherited `Array.prototype` member (`typeof m.join`) was read as `undefined` | The blocklist is replaced by the fields the dynamic reader serves: `length`, `index`, `input` and proven-number keys. |
+| 2 | a function-local `var m = re.exec(s)` let `m`'s uses go unchecked | An `.exec` call may initialize only a `regexp-match` script slot (`initializesRegExpMatchSlot`), whose every use the resolver checks. |
+| 3 | an indexed read compared with `undefined` failed after the claim | Refused (`comparedWithUndefined`). |
+| 3b | a probe set (below) found more post-claim failures: `Math.max(m.length, 1)`, `return re.exec(s).length`, `m[0] == null`. One more was a hard compile error: `'s'.indexOf(m[0])` | The selector also checks where a served field's own value goes (`regExpMatchReadValueAdmitted`): only to a `===` / `!==` / `+` / `typeof` operand, a function-object member call's argument, or a further `.length`. |
+| 4 | misplaced JSDoc | Restored above `isUnrepresentableModuleBinding`. |
+| 5 | inconsistent import route | Both carrier builders come through the `codegen/index.ts` facade. |
+| 6 | unnamed type | `RegExpCarrierCall` is now exported. |
+| 7 | seven copies of `ctx.mod.globals[localGlobalIdx(...)]` in `integration.ts` | Folded into `moduleGlobalDef`. |
+
+**Probe set.** 62 synthetic bodies, base and head, both lanes, each asserting
+its JS result. Their shapes:
+- inherited member reads and calls;
+- `groups` and `indices`;
+- comparisons with `undefined` / `null`;
+- function-local and returned `.exec` results;
+- truthiness, `||` and `?:`;
+- `for-in`, `Array.isArray`, `instanceof`, `String(m)` and `m + ''`;
+- array and object literal elements;
+- a stable carrier and a `g` carrier;
+- field values passed to `Math.max`, string methods, `push`, a direct call
+  and the harness.
+
+Head results:
+- **0 pass→fail.**
+- **0 new post-claim errors.**
+- **12 bodies newly claimed, all passing.** One of them,
+  `typeof m[1] === 'undefined'`, fails on base, so head fixes it.
+- The bodies are in `.tmp/r2/probes/` in the worktree; the plan does not
+  commit them.
+
+**Re-measured** over the same 858 files (base 4748040724, head 570cf99a8c).
+Both lanes give the same result:
+- 42 `<module-init>` units move to the IR, and 42 files become newly IR-only,
+  all calling `.exec`. 41 of them are ES5.
+- 0 files lose IR-only status, and there are 0 new post-claim errors.
+- The same 42 binaries change on both lanes, and all 42 pass on both trees.
+- The other 816 binaries and the playground are byte-identical.
+
+Against round 1, one file is no longer claimed:
+`built-ins/RegExp/prototype/exec/u-captured-value.js` (not ES5). It passes a
+field's value somewhere `regExpMatchReadValueAdmitted` does not admit.
+
+### R3 implemented (2026-11-07): `'…' + re`
+
+**What changed.** The `+` rule now covers a RegExp operand beside a string; the
+string it adds is `RegExp.prototype.toString`'s, computed by legacy's
+existing code. Nothing new is computed.
+- **The `+` rule:**
+  - #7066's `additiveOperandsProvable` gains one proof, `regexp`. It
+    concatenates beside a string, like a string; beside a number or another
+    RegExp it is still refused.
+  - The selector names the operand family `regexp` (`binaryOperandFamily`).
+  - from-ast's `additiveOperandProof` gives the same proof
+    (`lowersAsNativeRegExp`).
+  - Both sides read one predicate, `staticRegExpPair`, over the same lib-only
+    proof.
+- **ToString:** `lowerConcatOperand` calls `__regexp_to_string_carrier`.
+  - It is a three-instruction adapter in `regexp-standalone.ts`:
+    `any.convert_extern`, then a call to legacy's `__regexp_to_string_dyn`
+    (#4465), which renders `"/" + source + "/" + flags`.
+  - Its name sits beside the test helper's in `regexp-runtime-contract.ts`.
+  - Integration's runtime-function resolver builds it on demand, so a module
+    without a RegExp `+` has none.
+- **Selection:** `nativeStaticRegExp` admits a `+` operand as a third consumer.
+  A property read and a binding still refuse.
+
+**Measured** (the merged R1 head vs R3, the same 389 files, standalone and gc):
+- **Newly IR-only:** +6 on both lanes (14 → 20):
+  - `S15.10.1_A1_T1`, `_T6`, `_T12`, `_T14` and `_T16`;
+  - `S15.10.4.1_A9_T2`.
+
+  Each is `'…' + (new RegExp(<invalid>))` inside a `try`. All 6 pass on both
+  trees and lanes.
+- **Everything else:** 383 binaries byte-identical; 0 status changes; 0 new
+  post-claim; the playground is identical.
+- **ES5 IR-only estimate:** about 17 more files: 3 probe gains, plus 3 of the
+  100 random files scaled to the 451-file pool (about 13.5). 78 ES5 RegExp
+  files put a RegExp in a `+`; most of the rest need another lever (`S`,
+  R2's `exec`, the getters).
+
+**Tests:** `tests/issue-7106-lever-r.test.ts`, on both lanes:
+- five more claimed shapes: a literal with flags, the RegExp on the left, an
+  escaped `/` in a constructed pattern, the empty pattern `/(?:)/`, and the
+  S15.10.1 invalid-pair throw;
+- `+` beside a number and `+` beside another RegExp are refused at selection;
+- a script's own `function RegExp` is refused, as on main.
+
+## ES5 lever B: mixed-family operands of the numeric operators (plan, 2026-11-07)
+
+`expr-binary-operand-families` is the only code in **143 ES5 files** on the
+overlay of the blocker map. Lane: #6583 (claimed).
+
+### Census (the 143 files)
+
+- **By directory:** almost all are the `S11.x_A3_T*` "type conversion" tests
+  of `language/expressions`, about 10 files per operator:
+  - `<<` and `>>>`: 11 each;
+  - `&`, `^`, `/`, `>=`, `>`, `<=`, `<`, `%`, `*`, `>>` and `-`: 10 each;
+  - `+`: 8 (`addition`) and 2 (`concatenation`); `grouping`: 1.
+- **By operand family** (a static scan of each body's binary expressions):
+  - 125 files use a fresh primitive wrapper (`new Number` / `new String` /
+    `new Boolean`) beside a primitive: a number, a string, a boolean, `null`
+    or `undefined`;
+  - 14 use an object literal or a function expression (`{} - 1`,
+    `function () {} * {}`), whose ToPrimitive is `Object.prototype`'s;
+  - 4 are primitive-only `+` (`true + true`, `1 + null`, `null + undefined`, …).
+- **The commonest operand pairs** (files, summed over operators), with a number
+  on one side and a boolean, string, `null` or `undefined` on the other:
+  - boolean × number, `Boolean` wrapper × number: 16 each;
+  - boolean × boolean, boolean × `Boolean` wrapper: 14 each;
+  - string × number, `String` wrapper × string, `Number` wrapper × string: 13
+    each.
+- **No user `valueOf` / `toString`.** No file in the 143 makes a user call
+  observable: a wrapper's ToPrimitive is the built-in `valueOf`, and an object
+  literal's is `Object.prototype`'s. Call order is still kept, below.
+
+### What refuses today
+
+`binaryOperandsAdmissible` (`ir/analysis/operand-admissibility.ts`), the one
+predicate that the selector and `lowerBinary` share (#7144), admits a numeric
+reader in these cases only:
+- a numeric reader (`- * / %`, the bitwise operators, the relationals)
+  admits a dynamic operand only beside a dynamic operand or a number;
+- otherwise both sides must share one carrier: two numbers, two i32s, or two
+  strings for a relational.
+
+A fresh wrapper is the dynamic carrier of its ToPrimitive (#4208 S4). So
+`new Number(1) - 1` lowers, but every pair that has a boolean or string beside
+a number or the carrier refuses, e.g. `true * 1`, `"1" - 1`,
+`new String("1") - "1"` and `true < new Boolean(true)`.
+
+### Design
+
+**Rule.** A boolean or string operand of a numeric reader is boxed into the
+dynamic carrier, so the pair takes the existing dynamic arm. Boxing preserves
+both ToNumber and the type test, so nothing new is needed below it:
+- `- * / %` and the bitwise operators: `tryLowerDynamicArithmetic`, i.e.
+  `dyn.to_number` on each side and then `emitNumberBinary`;
+- the relationals: `tryLowerDynamicRelational`, i.e. `dyn.to_number` beside an
+  f64, or `__ir_dyn_lt` / `le` / `gt` / `ge` for two carriers. Those helpers
+  compare two strings as strings and anything else as numbers, which is
+  IsLessThan over primitives (§7.2.13). So `"10" < new String("9")` is still
+  `true`.
+
+**Where it lives.**
+- `binaryOperandsAdmissible` gains one arm, `carrierNumericReaderOperands`.
+  It applies when the operator is a numeric reader, both families are in
+  {number, boolean, string, dynamic} after the `null` / `undefined` →
+  number mapping, at least one is a boolean or a string, and the existing
+  rules refuse the pair.
+  - Pairs that lower today keep their arm: two i32s, two strings for a
+    relational. Their bytes do not change.
+- `lowerBinary` asks the same predicate. For an admitted pair it boxes the
+  boolean / string side with `boxConcreteToDynamic` before the dynamic arm.
+- No new runtime helper and no new IR instruction.
+
+**What it reuses.**
+- The #7066 shape: the shared predicate decides and the builder produces.
+- `boxConcreteToDynamic`, `dyn.to_number`, `emitNumberBinary`, `__ir_dyn_*`.
+- The wrapper's `__to_primitive` boundary (`freshWrapperToDynamic`).
+
+**What duplicate goes.** `tryLowerDynamicRelational` and
+`tryLowerDynamicArithmetic` each re-derive "which operand is not an f64";
+`relOperandToF64` already makes that one decision. No second rule is added.
+
+**Spec order** (§13.15.3 ApplyStringOrNumericBinaryOperator, §7.2.13
+IsLessThan). Both operand expressions are evaluated first, left then right
+(`lowerBinaryOperands`). Then:
+- the arithmetic and bitwise operators run ToNumeric(left) in full before
+  ToNumeric(right): the wrapper's ToPrimitive and `dyn.to_number` are emitted
+  per operand, left first;
+- the relationals run ToPrimitive(left) and then ToPrimitive(right), and only
+  then decide between the string and the numeric comparison.
+
+Boxing a primitive is not observable. A wrapper's `valueOf` stays a real call
+through `__to_primitive`, in this order, so a redefined
+`Number.prototype.valueOf` still sees left before right.
+
+**Out of scope.**
+- The 14 object-literal / function operands. They need ToPrimitive of an
+  ordinary object through `__to_primitive` and a `reference` family in the
+  predicate, which is a follow-up.
+- `+` with booleans / `null` / `undefined` (the 10 `addition` /
+  `concatenation` files). That is the #7066 rule's job: `null` / `undefined`
+  beside a string and numeric `+` over booleans.
+- Unary `-`, `+` and `~`. None of the 143 files needs them.
+
+**Acceptance.**
+- **Correctness:**
+  - the 143 files, a random 400 ES5 files and the playground: 0 pass→fail on
+    both lanes;
+  - 0 new post-claim errors;
+  - IR-only gains reported, and 0 IR-only files lost.
+- **Byte identity:** standalone and gc binaries byte-identical wherever the
+  IR's claim does not change; the equivalence gate green.
+- **Code quality:**
+  - one new arm in the shared predicate, and one boxing step in `lowerBinary`
+    before the existing dynamic arm;
+  - no new helper, instruction or table;
+  - no growth of `select.ts`.
+- **Tests:** `tests/issue-7106-lever-b.test.ts`, on both lanes:
+  - claimed rows for each operator group (arithmetic, bitwise, relational)
+    over boolean, string and wrapper operands, including the string×string
+    relational through a wrapper;
+  - refused rows for the object-literal operand and a `+`.
+
+### Lever B implemented (2026-11-07)
+
+**What landed:** the design above. `carrierNumericReaderOperands` is the new
+arm of `binaryOperandsAdmissible`, which the selector and the builder share.
+`boxNumericReaderOperands` is the boxing step at the end of
+`lowerBinaryOperands`. The rest of `lowerBinary` is unchanged: the boxed pair
+reaches the existing dynamic arm.
+
+**Order cannot be tested on a claimed body.** The only way to observe it is a
+redefined `Number.prototype.valueOf`, and the IR refuses that body
+(`expr-ident-not-in-scope: Number`). The order stays structural: both operands
+are lowered, then each wrapper's `__to_primitive` and `dyn.to_number` run left
+first.
+
+**Measured** (base origin/main 0fa19fca78 against head 7c29b69936,
+standalone and gc).
+- **Population: 543 files.** The 143 sole-blocker files plus a random 400 ES5
+  files (seed 70106).
+- **Results, identical on both lanes:**
+
+  | measure | standalone | gc |
+  | --- | --- | --- |
+  | `<module-init>` moved legacy → IR | 119 | 119 |
+  | legacy units | 1,126 → 1,007 | 1,126 → 1,007 |
+  | newly IR-only files | +119, all lever-B files | +119 |
+  | IR-only files lost | 0 | 0 |
+  | new post-claim errors | 0 | 0 |
+  | changed binaries | the same 119 files | the same 119 files |
+  | pass/fail of those 119, base and head | 119/119 pass | 119/119 pass |
+
+  - The other 424 binaries are byte-identical, and so are the 26 playground
+    binaries.
+- **The 24 lever-B files still refused:**
+  - 10 are `+` (`addition`, `concatenation`), the #7066 rule's job;
+  - 13 are the object-literal / function operand files, one per operator
+    directory;
+  - 1 is `grouping`.
+
+  All 24 refuse at selection.
+
+**Tests.** `tests/issue-7106-lever-b.test.ts` passes 14/14 on both lanes:
+- claimed: the arithmetic, bitwise and relational operators over boolean,
+  string, `null` / `undefined` and wrapper operands, including
+  `"10" < new String("9")`;
+- refused: an object operand, and `true + true`.
+
+**Equivalence gate:** green on all 8 shards. Every failure is among the 22
+the baseline already knows, and there is no new regression.
+
+**Follow-ups, not this lever:**
+- ToPrimitive of an ordinary object as a `reference` operand (13 files);
+- `+` with a boolean, `null` or `undefined` (10 files).
+
+## ES5 blocker map (2026-11-07)
+
+**What this is.** For every ES5 test262 file on standalone, this map lists
+which IR refusals still keep the file from compiling fully through the IR
+("IR-only"). It ranks the remaining levers by payoff.
+
+**Method.**
+- **Population: 9,174 ES5 files.** This is the edition ratchet's classifier
+  (`classifyEdition` in `scripts/generate-editions.ts`). 457 files are
+  negative, raw or module tests, which the census skips. 126 files hit a
+  compile error. That leaves 8,591 files that compile.
+- **One census row per file**, with `JS2WASM_IR_SHAPE_DIAG=1` and
+  `JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, so every refused top-level statement
+  reports its own refusal.
+- **A file's code set** is every distinct refusal code across its legacy
+  units:
+  - for a `<module-init>`, the arm of each unmasked refusal;
+  - for a function unit, its arm, marked `{fn}`.
+- **LANE-C.** `vardecl-module-storage-unrepresentable` on an array or object
+  literal initializer is tagged `[LANE-C]`. That is lane C's literal-home
+  work (#7280 / #7292).
+
+**Trees.**
+- **Main:** origin/main a484c365fe, which includes #7121.
+  - #7292 is **not** in it: PR #7152 merged only the #7292 plan. On main, even
+    `var a = [1, 2]` still refuses as `vardecl-module-storage-unrepresentable`.
+- **Overlay:** main plus the pending lever branches, merged locally and not
+  pushed:
+  - R2 (`claude/7106-lever-r2` c4265fb9b5);
+  - S (`claude/7106-lever-s` 376bc4b9ae);
+  - T (`claude/7106-lever-t` 8cb4b7b88c);
+  - L (`claude/7106-lever-l` 4cf965aa1f);
+  - A2c (`claude/7106-eval-a2c` 8d6550fa23);
+  - R3 (`claude/7106-lever-r3` 0c7c555214);
+  - A3 (`claude/7106-eval-a3` 2b231a5b67).
+- **Merge conflicts.** L, A2c and R3 conflicted.
+  - L and A2c: one import and one re-export line each, plus the plan file.
+    Resolved by keeping both sides.
+  - R3 against R2: both edit the same RegExp arms, so the R3 resolution is
+    hand-made and more than a union. In `select.ts`, `nativeStaticRegExp`
+    admits R3's `+` operand next to R2's method receiver.
+  - `tests/issue-7106-lever-r.test.ts` passes 90/92 on the overlay. The 2
+    failures are the `concatenated` row on each lane: R3 is meant to claim
+    it, and that R3 test row was not merged.
+
+### Headline
+
+| | IR-only ES5 files |
+| --- | --- |
+| main a484c365fe | **710** |
+| overlay (main + R2, S, T, L, A2c, R3, A3) | **910** (+200) |
+
+- **The main count is not a full run.** Main was compiled on the overlay's 910
+  IR-only files plus a random 400 of the rest. None of those 400 is IR-only on
+  main without also being IR-only on the overlay, so 710 is the main count up
+  to that sample.
+- **Where the +200 comes from:** 91 in `built-ins/RegExp`, 37 in
+  `annexB/language`, 22 in `language/statements`, 17 in
+  `language/expressions`, the rest scattered.
+- **What remains on the overlay:**
+  - 7,681 compiled files still have a legacy unit;
+  - 45 of them fail after the claim on the overlay. 12 are the harness
+    `assert` direct call ("no exact AST-site plan"), and 9 are a bare `null`
+    under an f64 hint;
+  - by unit kind, 5,848 refuse only in `<module-init>`, 1,830 also in a
+    function unit, and 3 only in a function unit.
+- **Codes per file:** 1 code in 2,352 files, 2 in 1,943, 3 in 1,003, 4 in
+  642, 5 or more in 1,741.
+
+### Codes, by sole-blocker payoff (overlay)
+
+A "sole-blocker" file is one where this is the file's only code.
+
+| code | carrier files | sole-blocker files |
+| --- | --- | --- |
+| `expr-ident-not-in-scope` | 3816 | 607 |
+| `vardecl-module-storage-unrepresentable [LANE-C]` | 1217 | 259 |
+| `body-exprstmt-other(expr-call-callee-nonident)` | 403 | 166 |
+| `expr-binary-operand-families` | 178 | 143 |
+| `expr-new-ctor-unknown` | 920 | 140 |
+| `expr-global-eval-statement` | 306 | 91 |
+| `external-call(eval)` | 77 | 75 |
+| `closure-return-type` | 217 | 65 |
+| `expr-call-callee-nonident` | 377 | 64 |
+| `body-exprstmt-other(expr-ident-not-in-scope)` | 114 | 63 |
+| `body-shape-rejected` | 329 | 53 |
+| `vardecl-var-kind` | 246 | 48 |
+| `expr-module-extern-consumer` | 138 | 43 |
+| `expr-new-regexp-target` | 106 | 38 |
+| `body-unhandled-stmt` | 132 | 26 |
+| `body-if-cond` | 49 | 26 |
+| `expr-module-extern-call-brand` | 51 | 18 |
+| `compound-dynamic-module` | 162 | 17 |
+| `expr-regexp-literal` | 118 | 17 |
+| `expr-object-define-property-target` | 1658 | 16 |
+| `expr-string-method-argument` | 26 | 16 |
+| `expr-string-method-surface` | 23 | 16 |
+| `expr-logical-value-family` | 67 | 15 |
+| `expr-static-predicate-operand` | 31 | 15 |
+| `external-call(Function)` | 18 | 15 |
+| `vardecl-module-storage-unrepresentable` | 411 | 14 |
+| `expr-binary-op-instanceof` | 72 | 14 |
+| `forin-receiver-not-dynamic-externref` | 306 | 12 |
+| `nullish-value-unsupported` | 11 | 11 |
+| `external-call(Object)` | 10 | 10 |
+
+### The 25 commonest code pairs (the file's only two codes)
+
+| code pair | files |
+| --- | --- |
+| `expr-ident-not-in-scope` + `vardecl-module-storage-unrepresentable [LANE-C]` | 133 |
+| `compound-dynamic-module` + `expr-new-ctor-unknown` | 100 |
+| `expr-ident-not-in-scope` + `expr-module-scalar-method` | 86 |
+| `body-exprstmt-other(expr-call-callee-nonident)` + `expr-local-call-target` | 84 |
+| `expr-ident-not-in-scope` + `objectlit-empty` | 67 |
+| `expr-ident-not-in-scope` + `expr-new-ctor-unknown` | 65 |
+| `expr-global-eval-statement` + `expr-ident-not-in-scope` | 64 |
+| `body-unhandled-stmt` + `expr-ident-not-in-scope` | 56 |
+| `expr-object-define-property-target` + `vardecl-module-storage-unrepresentable [LANE-C]` | 50 |
+| `expr-module-scalar-method` + `expr-new-ctor-unknown` | 47 |
+| `expr-ident-not-in-scope` + `forin-receiver-not-dynamic-externref` | 41 |
+| `call-graph-closure` + `vardecl-var-kind {fn}` | 36 |
+| `body-shape-rejected {fn}` + `expr-function-invocation-method` | 36 |
+| `objectlit-property-kind` + `with-target-not-objectlit` | 30 |
+| `expr-object-define-property-target` + `objectlit-empty` | 25 |
+| `expr-new-ctor-unknown` + `vardecl-module-storage-unrepresentable` | 24 |
+| `expr-delete-no-ir-lowering` + `expr-ident-not-in-scope` | 23 |
+| `expr-local-call-target` + `vardecl-let-closure` | 23 |
+| `expr-ident-not-in-scope` + `vardecl-var-kind` | 22 |
+| `expr-call-callee-nonident` + `expr-ident-not-in-scope` | 21 |
+| `vardecl-module-storage-unrepresentable` + `vardecl-module-storage-unrepresentable [LANE-C]` | 19 |
+| `body-exprstmt-other(expr-call-callee-nonident)` + `expr-ident-not-in-scope` | 19 |
+| `vardecl-module-storage-unrepresentable [LANE-C]` + `vardecl-var-kind` | 19 |
+| `body-exprstmt-other(expr-local-call-target)` + `vardecl-let-closure` | 18 |
+| `call-graph-closure` + `param-dynamic-carrier-diverges-from-legacy {fn}` | 17 |
+
+### LANE-C share
+
+- **Every code is LANE-C in 259 of the 7,681 non-IR-only files (3.4%).**
+  #7292 alone would make those 259 IR-only.
+- **LANE-C appears in 1,217 files.** In 133 of them its only partner is
+  `expr-ident-not-in-scope`; in 50, `expr-object-define-property-target`.
+- **The S15.10.2 exec family is not counted in the 259.** Its 193 files also
+  need L's `for (var` head, and after L, LANE-C is their only code. A rerun of
+  those 193 on R2 merged with main confirms it: they refuse with exactly
+  `vardecl-module-storage-unrepresentable` (`__expected = [...]`) and
+  `for-init-var-kind`.
+
+### `expr-ident-not-in-scope` by name
+
+Counts are of files where `expr-ident-not-in-scope` is the only code. The
+member columns count the commonest members of that name the files read.
+
+| name | sole files | commonest members read |
+| --- | --- | --- |
+| `Object` | 369 | `getOwnPropertyDescriptor` 167, `create` 57, `isSealed` 27, `isExtensible` 24, `getPrototypeOf` 17, `defineProperties` 10, `isFrozen` 9, `freeze` 7 |
+| `String` | 106 | `prototype.trim` 48, `prototype.*` (`charAt`, `indexOf`, `split`, …) |
+| `Date` | 48 | `prototype.*` 45 |
+| `JSON` | 39 | `parse` 33 |
+| `Function` | 35 | `prototype.bind` 10, `prototype.toString` 6 |
+| `Math` | 29 | constants and functions not yet folded (`PI`, `E`, `atan2`, …) |
+| `Number` | 29 | `prototype.*`, `MAX_VALUE`, `NaN`, … |
+| `Array` | 27 | `prototype.*` 23 |
+| `RegExp` | 18 | `prototype.*` |
+
+As a carrier code, `expr-ident-not-in-scope` is dominated by `Object` (1,922
+files) and `Function` (998). The harness names (`verifyProperty` 899,
+`assert` 430, `compareArray` 423) are never sole: they trail another refusal.
+
+### Top 5 non-LANE-C levers, by sole-blocker payoff
+
+1. **Ambient `Object.*` statics: 369 sole files.**
+   - Shape: `Object.getOwnPropertyDescriptor`, `create`, `isSealed`,
+     `isExtensible`, `getPrototypeOf`, `isFrozen` and `defineProperties` on
+     the unshadowed ambient `Object`, read or called in `<module-init>`.
+   - Module: the ambient-intrinsic seam (`shared/ambient-intrinsics.ts`) and
+     the selector's ambient call arms, beside lever A/B and the
+     `Object.defineProperty` arm. Each call reaches legacy's native object
+     runtime through a provider, not a new runtime.
+2. **Immediately-invoked function expressions: 166 + 64 sole files.**
+   - Shape: `(function () { … })()` and `(function () { … }).call(…)`
+     (`body-exprstmt-other(expr-call-callee-nonident)`,
+     `expr-call-callee-nonident`).
+   - Another 84 files pair the shape with `expr-local-call-target`.
+   - Module: the select and from-ast call arm, as a closure literal callee
+     lowered through the existing `closure.new` / `closure.call`.
+3. **Mixed-family binary operators: 143 sole files.**
+   - Shape: `expr-binary-operand-families`. An object with
+     `valueOf` / `toString`, a string, `null`, `true` or a wrapper meets an
+     arithmetic or relational operator. Example: `"b" * null`, or
+     `{valueOf: …} - 1`.
+   - Module: `ir/analysis/operand-admissibility.ts` plus `lowerBinary`.
+     ToNumber and ToPrimitive go through the dynamic carrier (`dyn.to_number`,
+     like the #7066 additive rule).
+4. **Primitive-wrapper and `Object` construction: 140 sole files.**
+   - Shape: `expr-new-ctor-unknown`. Of those, `new Object(…)` is 47,
+     `new String(…)` 41, `new Number(…)` 33, `new Boolean(…)` 12 and
+     `new Function(…)` 10.
+   - Another 100 files pair it with `compound-dynamic-module`.
+   - Module: the `new` arm (`phase1NewExpression`) and the #4208
+     primitive-wrapper runtime.
+5. **`String.prototype.*` reads on the ambient `String`: 106 sole files.**
+   - Shape: `String.prototype.trim` (48) and other `String.prototype` members
+     read as values or called through `.call`.
+   - Module: `ir/string-method-surface.ts`, with the ambient
+     `String.prototype` read as a builtin-value read.
+
+**Not ranked, owned by another lane:** eval. `expr-global-eval-statement`
+(91 sole) and `external-call(eval)` (75) are lever A's, so they are left
+out.
+
+**Next after these five:**
+- `closure-return-type`: 65 sole files;
+- `body-exprstmt-other(expr-ident-not-in-scope)`: 63;
+- `vardecl-var-kind`: 48;
+- `Date`: 48;
+- `expr-module-extern-consumer`: 43;
+- `JSON.parse`: 39.
 
 ## Lever A — the runtime-eval boundary, per unit (plan, 2026-11-06)
 
@@ -5839,6 +6971,247 @@ the eval rows fail locally with "quickjs provider is not built".
   base. The other failures there match base (353 failing tests, mostly
   `issue-3518` receipt history and the missing QuickJS provider).
 
+### A1 forward fix — a self-reference crosses the boundary (2026-11-07)
+
+- **Bug.** `runtimeEvalBoundaryCrossing` counted a reference as local when
+  its declaration lay inside the function's own range. A recursive `f(n - 1)`
+  resolves to that same `FunctionDeclaration`, whose name is bound in the
+  script scope. So a function eval may rebind kept a static self-call on the
+  IR. An alias call (`var saved = f; …; saved(1)`) leaves no call-graph edge
+  that would rescue it.
+- **Fix.** A reference that resolves to the declaration itself reaches the
+  script binding. Declarations nested in it, and a named function
+  expression's own name, stay local. Admission stays per unit.
+- **Tests:** `tests/issue-7106-runtime-eval-a1-selfref.test.ts`.
+  - The recursive function stays direct (`eval-visible-binding`). This row
+    fails on the base.
+  - Two controls stay IR: a named function expression that recurses on its
+    own name, and a call to a nested same-named declaration.
+- **Measured** (base c03f7d0e3f vs fix, standalone):
+  - all 141 eval files and the 40-file control are byte-identical;
+  - IR units unchanged (513 on the 141, 344 on the control);
+  - 0 new post-claim errors;
+  - the interpreter provider built from each tree is byte-identical, so the
+    verdicts cannot differ.
+
+  None of the 141 has the shape: the fix only changes programs where an
+  eval-visible top-level function calls itself.
+- **The end-to-end answer is blocked by a provider gap, not by this fix.**
+  With the interpreter provider, the repro answers 1 on standalone and
+  overflows the stack on the JS host, before and after the fix. The same
+  holds for a direct `f(1)` after the rebind, and for `(0, eval)("f = …")`.
+  - So the eval rebinding of a top-level function declaration is not
+    observed even by legacy code: the gap A3's focused probes recorded.
+  - The test therefore pins the boundary decision, not the value.
+
+### A3 implementation — write-precise eval liveness (2026-11-06)
+
+Branch `claude/7106-eval-a3`, stacked on A1 (#7136, da9e4611b0), because A3
+relies on A1's per-unit boundary and pre-seal value targets. It follows the
+plan on `claude/7106-eval-a2-plan` (bcfdb27dbb).
+
+#### Changes
+
+- **One literal-source write scan.** `literalSourceWrites`
+  (`src/ir/runtime-eval-boundary-plan.ts`) parses each literal fragment
+  once. The plan exposes the result as `dynamicSourceWrites`, and folds an
+  unnameable fragment into `unknownDynamicSource`.
+  - A name counts as written when it is an assignment, `++`/`--` or
+    `for-in`/`of` target, a declared name, an object-literal key or a string
+    literal.
+  - A fragment is unnameable when it has a computed assignment target, a
+    `defineProperty`/`defineProperties`/`assign`/`set` call, or a nested
+    `eval`/`Function`.
+  - `registerReassignedFunctionGlobals` drops its inline
+    `mentionedByDynamicSource` substring search and reads
+    `dynamicSourceWrites`. `dynamicSourceFragments` leaves the plan, since it
+    had no other reader.
+- **`(0, eval)`.** `isDirectCalleeIntrinsicValue` now walks through the
+  parentheses, so the comma callee is the indirect eval's callee, not an
+  escaped `eval` value. A bare `eval` read anywhere else still escapes.
+- **Function-object values under the push.**
+  - The blanket `runtimeEvalGlobalFunctionBindings` checks in
+    `ir-imported-call-planning.ts` go:
+    - `makeIrFunctionObjectValueResolver`;
+    - `hasPreparedFunctionObjectReference`;
+    - the receiver planner;
+    - `planIrFunctionValueResolverState`.
+  - Their per-declaration `reassignedFunctionDeclarations` checks already
+    refuse every live function.
+  - A fifth copy sat in `planMemberClosure`
+    (`function-member-closure-planning.ts`). It becomes
+    `runtimeEvalMayRebindClosureSite`: refused only when a source is computed
+    or a literal one writes the member or var name.
+  - That fifth copy was the "closure-return-type on
+    `assert._isSameValue = function (a, b) {…}`" blocker the plan asked to
+    diagnose: the member closure had no plan under the push. It is part of
+    this lever, not a separate one.
+- **S3c self-guarded constructor.**
+  - `selfGuardedConstructorsLeaveFnctor(ctx)` (whole-program) becomes
+    `selfGuardedConstructorLeavesFnctor(ctx, decl)`.
+  - It stands down only when a computed source exists, or a literal source
+    writes that constructor's name. The pr-6844 identity split needs a live
+    binding, so this keeps the guard exact.
+  - Its users all pass the declaration: the escape gate's `leavesFnctor`
+    parameter, `calleeIsStandaloneSelfGuardedConstructor`,
+    `irFunctionThisStrictness` and `irSelfGuardedConstructorValue`.
+- **Shared-wrapper identity: not needed.** The focused identity probes
+  (below) pass with the push unchanged, so neither the shared wrapper nor
+  the mention-based fallback was implemented.
+  - I did not trace why the published carrier compares equal to the IR
+    value. The probes are the evidence, not a proof of the mechanism.
+  - If a later shape breaks identity, add the shared wrapper then.
+- **Left for A2.** One more blanket check stays:
+  `preparedModuleInitMemberEvidence` in `ir-imported-call-planning.ts`. It
+  is module-init only, and A1 still withdraws module init in eval programs.
+
+#### Measurement
+
+Setup: niced, one process, standalone unless stated. The verdicts use the
+interpreter provider (`JS2WASM_EVAL_ENGINE=interpreter
+TEST262_FULL_RUNTIME_EVAL=1`), built per tree.
+
+| check | result |
+| --- | --- |
+| 141 eval files, standalone verdicts | 0 pass→fail (101 pass / 40 fail, same as base) |
+| 141 eval files, JS host verdicts | 0 pass→fail (98 pass / 43 fail, same as base) |
+| 141 eval files, compile (standalone and JS host) | 141 / 141 each, 0 post-claim errors |
+| IR units on the 141 | 513 → 830. `assert` IR in 89 files, `compareArray` 90, `Test262Error` 90, `isNegativeZero` back to 91 |
+| IR-only files on the 141 | 0 (expected: module init is still withdrawn wholesale until A2) |
+| 40-file non-eval control | 40 / 40 byte-identical to the A1 head da9e4611b0 |
+
+13 focused probes, run on standalone and the JS host against the A1 head:
+
+- identical verdicts on both lanes;
+- passing: `assert === (0,eval)("assert")`, `e.constructor === Test262Error`
+  on both the IR side and the eval side, an eval-written `assert.extraProp`
+  visible to IR, a read-only mention, and a computed source;
+- failing on base as well:
+  - eval rebinding of a top-level function (`f = …`, `defineProperty`,
+    an Annex B block function, `Function(...)`, `this['f']`);
+  - `assert.throws` called from inside eval code.
+
+  These are legacy provider gaps, not A3.
+
+60-file census (`JS2WASM_IR_SHAPE_DIAG=1`):
+
+- `assert`, `compareArray` and `Test262Error` are IR in 36 / 60 files.
+- In the other 24, every function stays live (a computed source, or an
+  unnameable fragment).
+- `<module-init>` is the sole blocker in 32 files. What is left is A2's
+  ground: eval-visible slots, sites, and direct eval inside functions.
+
+#### Tests
+
+- New: `tests/issue-7106-runtime-eval-a3-liveness.test.ts`. It pins:
+  - a read-only mention leaves `f`, `g` and `run` on the IR;
+  - each write form, plus computed, nested and escaped sources, keeps them
+    live;
+  - the harness function objects stay on the IR under the push;
+  - an eval-written `Test262Error` keeps the constructor off the
+    self-guarded route.
+
+#### Review round 1 (#7146)
+
+- **Soundness.** A fragment could reach `eval` / `Function` without naming
+  them (`(function(){}).constructor(…)`, `[].constructor.constructor(…)`,
+  `this["ev" + "al"](…)`), so its writes went unseen.
+  - The fragment scan now runs the plan's own site visitor
+    (`visitRuntimeEvalSites`, extracted from the builder). A literal nested
+    source is scanned recursively; a computed one is unnameable.
+  - Any `.constructor(…)` call and any computed-member call in a fragment is
+    unnameable.
+  - The six review repros, plus the generator-constructor spelling, keep
+    `f` and `g` live (test rows).
+- **Fewer walkers.** Write targets come from the shared
+  `identifierWritesOf` / `isStoreTarget` (`src/shared/binding-writes.ts`).
+  The private declared-name, string-literal and object-key rules are gone.
+- **Program-level reaches (pre-existing).**
+  - `globalThis.eval(src)` / `this.eval` / `globalThis["eval"]` now record
+    their argument as a fragment; any other use counts as a computed source.
+  - `(function(){}).constructor(src)` in the program records a
+    `function-constructor` site.
+- **Nits.** Dropped the impossible `decl.name?.text ?? ""` fallback;
+  `isPropertyDefiningCall` matches `.set` only on `Reflect`.
+- **Measured** (head fd24068b24): units on the 141 unchanged at 830, 141 /
+  141 compile with 0 post-claim errors, the 40-file control byte-identical.
+  Interpreter-provider verdicts: 0 pass→fail on standalone (101 / 40) and on
+  the JS host (98 / 43).
+
+#### Review round 2 (#7146)
+
+- **HIGH — a variable member key.** `this[k] = …` recorded the variable `k`
+  as the written name.
+  - Now `memberKeyName` names a property access by its `.name`, and an
+    element access only by a string-literal key.
+  - Any other key is unknown.
+- **MEDIUM — `%Function%` through a stored or forwarded `.constructor`.**
+  `var c = (…).constructor; c(…)`, `Object.constructor`, `.call` / `.apply`,
+  and `new (Object.constructor)(…)` escaped the call-only check.
+  - Any `.constructor` read in a fragment (`X.constructor` or
+    `X["constructor"]`) now makes the fragment unknown, called or not.
+  - That read replaces the call-only test, and the scan has one fewer rule.
+- **LOW — member closures.**
+  - A `delete` of `X.m` / `X["m"]` counts as a write of `m`.
+  - `__defineGetter__` / `__defineSetter__` join the property-defining calls,
+    which count as unknown.
+- **LOW — program-level `.constructor` reaches: follow-up, not fixed here.**
+  The cases are `Object.constructor("…")()`, `g.constructor("…")()`,
+  `var c = (…).constructor; c(…)` and `.call`.
+  - The fragment rule ("any `.constructor` read") is not cheap at program
+    level: the harness itself reads `.constructor` (`assert.throws`,
+    `e.constructor === Test262Error`). Every eval file would become unknown,
+    and A3's gain would be lost.
+  - A precise version needs a receiver test (a value that is a function) that
+    the oracle can answer, plus a site kind for a non-call escape. That is
+    its own change.
+- **Nit.** The "single immutable runtime-eval routing authority" comment is
+  back above `buildIrRuntimeEvalBoundaryPlan`.
+- **Also ported:** the A1 self-reference forward fix
+  (`claude/7106-eval-a1-selfref`), by merging that branch. It brings in
+  origin/main.
+- **Tests:** eight new rows: the variable key, the five `.constructor`
+  spellings, a member delete, and a getter definition. All eight fail on the
+  round-1 scan.
+- **Measured** (base = round 1 merged with origin/main, 61c6fb5d67):
+  - the 141 eval files and the 40-file control are byte-identical (standalone);
+  - IR units unchanged at 830 on the 141 and 344 on the control, with 0
+    post-claim errors on the 141;
+  - the interpreter provider built from each tree is byte-identical, so the
+    verdicts cannot differ from the base.
+
+  None of the 141 has these spellings in an eval string, so the stricter
+  scan costs nothing measurable.
+
+#### Review round 3 (#7146)
+
+- **Token-level `constructor` rule.** `mayNameConstructor` replaces the
+  `.constructor` read rule. A fragment is unknown when any token in it may
+  name `constructor`:
+  - the identifier or property name itself (a member, a destructuring key,
+    a `with`-scoped call);
+  - a string literal containing it (`Reflect.get(f, "constructor")`,
+    `getOwnPropertyDescriptor(…, "constructor")`);
+  - a name the scan cannot read without evaluating it: a `+` / `+=` with a
+    string operand, or a template with substitutions.
+- **Concatenation is not evaluated, so the operator itself counts as
+  unknown.** `'constr' + 'uctor'` and `` `constr${x}` `` count as unknown.
+- **Not caught (recorded follow-up).** A name built without `+`
+  (`["constr", "uctor"].join("")`, `String.fromCharCode(…)`), then used as a
+  computed member key or passed to a reflective API.
+  - A first cut also counted every computed member READ as unknown.
+  - That over-fired on `arr[ind]` in `for-in/S12.6.4_A3.1.js` (8 → 2 units),
+    so it was dropped. A computed member store stays unknown.
+  - Closing this residue needs real evaluation, or a rule that every call
+    and computed key can build a name.
+- **Tests:** five new rows (concatenated key, `Reflect.get`, destructuring,
+  `with`, the descriptor `.value`), all failing on round 2.
+- **Measured** (against round 2, 0db798be87):
+  - the 141 eval files and the 40-file control are byte-identical
+    (standalone);
+  - IR units are 830 on the 141 and 344 on the control;
+  - 0 post-claim errors on the 141.
+
 ### A2 and A3 (outline; each gets its own measured plan before code)
 
 - **A2.**
@@ -5854,6 +7227,224 @@ the eval rows fail locally with "quickjs provider is not built".
   - `makeIrFunctionObjectValueResolver` is then re-enabled for non-live
     names, so `assert`, `Test262Error` and `compareArray` keep static
     bindings and function-object values.
+
+## ES5 lever S: module storage — `vardecl-module-storage-unrepresentable` (plan, 2026-11-07)
+
+Claimed for lane L in #6583. Lane C owns the neighbouring work, and S does not
+overlap it: script-var object literals (#7280), array literals (#7292), the
+parameter carrier (#7277), `expr-ident-not-in-scope` (#7278) and default
+parameters (#7279). af35410's A2b owns the eval gate in `scriptVarHomeSlot`.
+
+### What refuses (measured on main cc27f70dfd, standalone)
+
+**Sample:** every 40th test262 file (1,340 files). Two temporary logs ran in a
+scratch tree:
+- `directTopLevelDeclaration` logs why it declines a script `var`;
+- `inspectDirectBinding` logs why it declines a lexical binding.
+
+**Counts:**
+- 389 files' `<module-init>` refuses for this reason, 167 of them as their
+  only legacy unit.
+- 40 are eval programs (A2b's), counted apart.
+- 101 are Temporal.
+
+**Non-eval, non-Temporal rows by cause:**
+
+| cause | rows | sole unit | ES5 sole | owner |
+| --- | ---: | ---: | ---: | --- |
+| array-literal slot (`ref_null` vec/array struct) | ~105 | ~32 | ~6 | C #7292 |
+| object literal, `merged-declaration` (see below) | 34 | 34 | 17 | **S** (identity) + C #7280 (value) |
+| object literal, struct slot (`ref_null` struct) | ~10 | ~7 | ~2 | C #7280 |
+| `var r = /…/.exec(s)` (`RegExpExecArray` struct slot) | 7 | 7 | 7 | R2 + S, and C #7292 for `__expected` |
+| `var s = Symbol()` in a typed slot | 9 | 5 | 0 | unowned, not ES5 |
+| lexical `Set`/`Map`/`Error`/generator/`new C`/function value | ~30 | ~8 | 0 | unowned, not ES5 |
+
+**The `merged-declaration` arm.** In a JS file,
+`Object.defineProperty(obj, "p", …)` makes the argument `obj` one more checker
+declaration of the binding. `directTopLevelDeclaration` then sees two
+declarations and declines the binding as merged, though they are the same
+slot. `isJsExpandoTarget` already accepts the `obj.p = v` and `obj[k] = v`
+spellings of the same thing. Typical case: the ES5 Array generic tests,
+`var obj = {}; Object.defineProperty(obj, "length", …)`.
+
+Scratch experiment on those 34 files (the defineProperty target accepted like
+`isJsExpandoTarget`):
+- 0 post-claim errors;
+- every file moves on to its next refusal: `objectlit-empty` (`var obj = {}`)
+  in 23 (#7280), `call-resolution-unsupported` in 8, others in 3;
+- no file becomes IR-only on its own.
+
+### Plan
+
+- **S1 — identity (module-bindings.ts, `directTopLevelDeclaration`).**
+  - **Change:** the first argument of a JS `Object.defineProperty(<id>, …)`
+    property declaration counts as the same binding, beside
+    `isJsExpandoTarget`. Both are folded into one predicate,
+    "a JS property declaration on this binding".
+  - **Storage:** none new. The binding resolves to legacy's existing
+    `__mod_<name>` slot through `scriptVarHome`.
+  - **Guards:** the eval gate and every other `scriptVarHomeSlot` arm are left
+    alone.
+  - **Gain on its own:** 0 files. It removes the identity refusal so #7280's
+    object-literal value lowering can claim these files. With #7280, the 13
+    ES5 `typeof obj` rows scale to about 520 ES5 files (×40), as an upper
+    bound; each file still needs its own next lever.
+- **S1 implemented (2026-11-07).**
+  - **Change:** `isJsExpandoTarget` became `isJsPropertyDeclarationTarget`.
+    The binding of `o.p = v`, of `o[k] = v`, or the first argument of
+    `Object.defineProperty(o, …)` is the same binding.
+  - **Size:** `module-bindings.ts` grows by 0 lines.
+  - **Measured** (main cc27f70dfd vs head, the 1,340-file sample):
+    - +0 IR-only on both lanes, as expected for an enabler;
+    - 0 status changes and 0 new post-claim;
+    - gc binaries are all identical. On standalone, 3 async tests hashed
+      differently inside the long census process; compiled alone, main and
+      head give identical hashes;
+    - the playground is identical.
+  - **The 34 target files** all move on:
+    - `objectlit-empty` in 23 (#7280);
+    - `call-resolution-unsupported` in 8: `Object.defineProperty` is
+      host-only in the IR, and the host-free path is the open-carrier define
+      that follows #7280's object literal;
+    - three others in 3;
+    - 0 claim-then-withdraw.
+  - **Tests:** `tests/issue-7106-lever-s.test.ts`, at the resolver: the plain
+    `var`, an expando, a `defineProperty` target, and both together. The
+    defineProperty rows fail on main.
+- **S2 — the `exec` result slot.** Stacked on R2 (`.exec` as a carrier
+  value). It binds the legacy struct slot for `RegExpExecArray` the way #7252
+  bound class instances, which needs R2 first. The `__expected` arrays in the
+  same tests need #7292.
+- **Not planned:** symbol-typed slots and the lexical `Set`/`Map`/generator/
+  function-value bindings. None of them is ES5, and the ES5 goal is what this
+  lever serves.
+
+**Acceptance:**
+- 0 pass→fail on both lanes;
+- 0 claim-then-withdraw;
+- byte identity outside the changed files;
+- the gates.
+
+**Code quality:**
+- one predicate for JS property declarations;
+- no new storage kind;
+- no change to `scriptVarHomeSlot`.
+
+## ES5 lever W: `new` of a primitive wrapper in `<module-init>` (2026-11-07)
+
+**Question.** `expr-new-ctor-unknown` is the most common refusal in the
+module-init map. Can the IR take `new String/Number/Boolean/Object(…)` there?
+#7295 (`new <LibBuiltin>(…)` at module init) is `blocked`: measured at 0 yield.
+
+### Scope check (main 83c5c23daf, standalone)
+
+**Population:** the map's 240 files (140 it listed with the code as the only
+module-init refusal, 100 paired with a compound assignment). Re-census:
+- 0 IR-only and 0 post-claim errors on main.
+- `expr-new-ctor-unknown` in 230 files, the sole refusal in **85**.
+- Beside it: `throw-module-scalar-unboxed` in 133, `expr-ident-not-in-scope`
+  in 13.
+- Constructors named: String 225, Number 219, Boolean 171, Object 70,
+  Function 10, Array 4.
+- The other 145 files with the code also refuse elsewhere; they are the
+  compound-assignment matrix (`x op= …` on a dynamic module var).
+
+**Probes on the 85 sole files** (scratch builds, not committed):
+
+| probe | IR-only | post-claim | still refused |
+| --- | ---: | ---: | --- |
+| admit a wrapper `new` anywhere, plus `new Object()` | 5 | 15 | 31 on `callee:new Object`, 29 on `expr-new-ctor-unknown` |
+| rewrite `new Object()` to `{}` | 0 | 0 | 31 on `objectlit-empty` |
+
+The 15 post-claim errors of the first probe split into:
+- a wrapper stored in a module var and read back as a carrier (8);
+- a method call on a wrapper (5);
+- `!wrapper` (2).
+
+Admitting wrappers everywhere is claim-then-demote, so it is not an option.
+The 5 IR-only files are unary `-`/`+` of a fresh wrapper
+(`unary-minus/S11.4.7_A3_T1..T3`, `unary-plus/S11.4.6_A3_T1..T2`). They pass on
+both lanes.
+
+### The arm (built)
+
+- **Where:** `isPhase1Expr`'s prefix-unary arm in `src/ir/select.ts`.
+- **What:** unary `-`/`+` takes a fresh wrapper construction operand
+  (`selectorPrimitiveWrapperConstruction`). It is gated on the
+  `primitive-wrapper-to-primitive` capability with the same refusal as the
+  binary arm (`selectorPrimitiveWrapperOrGenericBinary`).
+- **Reuse:** no new helper and no lowering change. `lowerPrefixUnary` already
+  applies ToNumber through the wrapper's ToPrimitive carrier, the same path
+  the binary operands use (#4208 S4, #7144).
+- **Still refused:** `!`, `~`, `typeof`, `void` on a wrapper, and
+  `new Object()`. `selectorPrimitiveWrapperConstruction` covers only
+  `String`/`Number`/`Boolean` with one argument of the matching family.
+- **Size:** +11 lines in `select.ts` (+7 in `isPhase1Expr`), granted in
+  the frontmatter. The capability refusal is one helper,
+  `selectorWrapperToPrimitiveSupported`, shared with the binary wrapper arm
+  (review round 1 folded the copy the first cut had inlined).
+- **Tests:** `tests/issue-7106-lever-w-unary-wrapper.test.ts` on both lanes:
+  - claimed: `-new Number(1)`, `+new String("1")`, `-new Boolean(true)`,
+    `+new Boolean(false)`, `-new String("0x10")`, `+new String("x")`, each
+    checked against the JS result;
+  - refused (legacy body, same result): `!new Boolean(false)`,
+    `~new Number(1)`, `+new Object()`;
+  - the claimed rows fail on main.
+
+**Acceptance:**
+- the 85 sole files gain the 5 target files as IR-only, with 0 pass→fail and
+  0 post-claim errors on both lanes;
+- binaries are byte-identical outside the claimed files on a random ES5
+  sample;
+- the playground is identical;
+- the equivalence gate passes.
+
+**Code quality:** one arm beside its siblings, no new helper, no duplicated
+lowering.
+
+### Measured
+
+Base main 83c5c23daf against head, A/B by file copy of `select.ts`, the
+in-process runner (`runTest262File`) on both lanes, one niced worker:
+
+- **The 85 sole files:**
+  - 5 binaries change on each lane, exactly the 5 target files;
+  - those 5 are now IR-only (0 legacy units) with 0 post-claim errors on
+    both lanes, and they pass on both before and after;
+  - 0 status changes; all 85 pass on both lanes before and after;
+  - `unary-plus/S11.4.6_A3_T3` stays legacy (unchanged binary): it builds
+    `new Number("-1")`, and `selectorPrimitiveWrapperConstruction` takes only
+    an argument of the constructor's own family.
+- **Random ES5 sample** (200 files, `shuf` seeded with `yes 7106`, from the
+  10,171 ES5-named test files outside `intl402`/`annexB`):
+  - every binary is byte-identical on both lanes;
+  - 191 pass, 6 fail, 3 skip on each lane, before and after.
+- **Playground:** all 13 examples compile byte-identically on both lanes.
+- **Equivalence gate:** all 8 shards, "No new equivalence regressions"
+  (every failing file is in the baseline's known failures).
+
+### Follow-ups (not built)
+
+1. **Wrapper values as dynamic carriers / extern receivers.** A wrapper
+   stored in a var, a method call on it, and `!wrapper` were the 15
+   post-claim errors of the probe. They need a wrapper to live as a dynamic
+   carrier value, not only as an operand.
+2. **A callable `__to_object`.** Extract legacy's `emitObjectCoercion` into a
+   helper the IR can call, so `new Object(v)` lowers without a legacy body.
+3. **An open-carrier `{}` that allows property writes,** so `new Object()`
+   can become `{}` (the 31 `objectlit-empty` rows of the second probe; this
+   joins #7280).
+4. **`x op= …` on a dynamic module var.** The 145 paired files need the
+   compound assignment, whatever its right-hand side.
+5. **A wrapper whose argument is another family,** such as
+   `new Number("-1")` (`unary-plus/S11.4.6_A3_T3`). Construction would apply
+   ToNumber/ToString/ToBoolean to the argument first.
+
+### Handoff (2026-11-07)
+
+Lever W is built and measured on branch `claude/7106-lever-w`. Nothing from
+this lane is in flight. Open: follow-ups 1–5 above (none claimed) and #7295,
+which stays `blocked` until follow-ups 1–3 land.
 
 ## Historical #6876 measurement appendix (reconciled 2026-10-30)
 
@@ -6070,3 +7661,1786 @@ Normal commit/push hooks and this PR's protected CI remain required. The
 November1 census, legacy-byte and playground results above are historical,
 not fresh receiving measurements. No fresh full-suite conformance gain is
 claimed from these focused tests.
+
+## Lever A2 — global-scope eval sites in IR (plan, 2026-11-06)
+
+This continues "Lever A — the runtime-eval boundary, per unit" (A1, PR #7136,
+head 843236bc12). Plan only: a fresh agent implements it. A3 (write-precise
+eval-string liveness) is specified here only as far as A2 depends on it.
+
+### Census (A1 head 843236bc12, standalone)
+
+- **Sample:** 60 of the 141 eval files (every 7k+0/2/4/6 line of
+  `evalA-sample.txt`), one process, `nice`.
+- **Flags:** `JS2WASM_IR_SHAPE_DIAG=1` and
+  `JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`.
+- **Classification:** each file goes in the lightest class that clears every
+  one of its legacy units.
+- **IR-only today:** 0 / 60.
+
+| class | files (of 60) | ~ of 141 | what clears it |
+| --- | --- | --- | --- |
+| direct eval inside a function (`(function(){ eval(…) })()`) | 15 (25 %) | ~35 | never in lever A: stays legacy by design |
+| IR-only after A3 alone | 10 (17 %) | ~24 | A3 |
+| IR-only after A2 + A3 | 19 (32 %) | ~45 | A2 and A3 |
+| also needs a non-eval lever | 16 (27 %) | ~38 | e.g. `Object.defineProperty(fnGlobalObject(), …)` (8), `param-dynamic-carrier-diverges-from-legacy` (5), logical value family (4) |
+
+Blocker shares per unit, out of 60 files:
+
+- **`assert`, `compareArray`, `<module-init>` (60 / 60):**
+  `expr-ident-not-in-scope «assert» / «compareArray» / «Test262Error»`.
+  - Cause: `planIrFunctionValueResolverState` turns the function-object value
+    resolver off whenever `ctx.runtimeEvalGlobalFunctionBindings` is set, so
+    a harness function used as a value (`assert.sameValue`) has no IR binding.
+  - Owner: A3.
+- **`Test262Error` (60 / 60):** `return-type-unresolved(lattice=dynamic)`.
+  The same unit is IR in non-eval files, so the likely cause is the same
+  resolver. Owner: A3, to be verified first.
+- **`<module-init>` eval-visible storage (27 / 60):**
+  `vardecl-module-storage-unrepresentable` (`print = function…`, `$262 = {…}`,
+  `__isArray = Array.isArray`, …).
+  - `registerReassignedFunctionGlobals` widens every eval-visible script
+    var/lexical slot to externref; the IR module-binding resolver refuses that
+    slot.
+  - The follow-on `expr-ident-not-in-scope «__globalObject» /
+    «nonIndexNumericPropertyName» / «verifyPrimordialProperty»` comes from the
+    same slots.
+  - `vardecl-noinit` (`var after;`, 11 files) is probably the same cause;
+    verify first.
+  - Owner: A2.
+- **`<module-init>` eval sites:**
+  - `call-resolution-unsupported@expr-indirect-eval-host-statement`
+    (`(0,eval)(…)`, 11 / 60);
+  - `vardecl-var-kind «var f = new Function(p, body)»` (3).
+  - Owner: A2.
+- **Test functions (35 / 60):**
+  - A1's `eval-visible-binding` (70 units) and `boundary-closure` (33 units);
+  - `new Test262Error` with `expr-new-ctor-unknown` (27).
+  - Owner: A3 (liveness and function values), plus A2's eval-visible slot
+    typing.
+
+Caveats:
+
+- The "A3 alone" files hold only a literal top-level direct eval or
+  `Function(…)` that no module-init reject names. Static eval inlining
+  probably folds those today. The implementer must confirm this before
+  counting them as A3-only.
+- Every share is an upper bound. The census sees only the rejects reported
+  today, and a cleared blocker can uncover the next one.
+
+### Order
+
+1. **A3 first.** It is the only lever that pays off alone. Its blockers (the
+   harness function names, `Test262Error`) sit in all 60 files, so A2
+   without A3 makes 0 files IR-only. Static classification: A3 ≤ 10 / 60, then
+   A2 + A3 ≤ 29 / 60 (~68 / 141). The A3 prototype (see "Lever A3", Gain)
+   measured A3 alone at 0 / 60, and exposed one more module-init blocker.
+2. **The `(0,eval)` escaped-value liveness belongs in A3.**
+   - `buildIrRuntimeEvalBoundaryPlan` also records the bare `eval` in
+     `(0, eval)(…)` as an `intrinsic-value` site, which sets
+     `unknownDynamicSource`. `registerReassignedFunctionGlobals` then makes
+     every top-level function live (A1 measured this: `(0,eval)("literal")`
+     turned `helper`, `shadow`, … live).
+   - Of the 19 A2+A3 files, 8 contain that shape. While every function stays
+     live, A3's function-value resolver cannot turn `assert` back on.
+   - A3 must therefore classify the comma-callee `eval` as the callee of an
+     indirect eval: the same carve-out `isDirectCalleeIntrinsicValue` gives a
+     direct callee. A literal source then contributes a fragment, not an
+     unknown source.
+3. **A2 after A3**, as its own PR.
+
+### A3 scope that A2 relies on (outline; A3 writes its own measured plan)
+
+- **(a) Write-precise liveness.** A literal fragment makes a function live
+  only when it **writes** the name: an assignment target, or a `function`,
+  `var`, `let` or `const` declaration of it. A mere mention does not. Parse
+  the fragment with the TypeScript parser and walk only assignment targets
+  and declarations.
+- **(b) The `(0, eval)` callee carve-out** described in Order, step 2.
+- **(c) Function-object values for non-live names.**
+  `planIrFunctionValueResolverState` keeps
+  `makeIrFunctionObjectValueResolver` on when the push is active, and the
+  resolver refuses only live names (`ctx.liveFuncBindingGlobals`). This is
+  safe because the push publishes the same cached singleton
+  `prepareTopLevelFunctionValueTargetSupport` plans: A1 made every top-level
+  function a value target.
+- **(d) A1's `eval-visible-binding` rule** then narrows to live functions
+  only, once A2's slot typing covers the var/lexical half. Until then it
+  keeps both halves.
+
+### A2 design
+
+#### What A2 lowers
+
+- **Indirect eval anywhere:** `(0, eval)(src)`, `(eval)` with a comma callee,
+  and a `globalThis.eval` read through a realm-object receiver. It always
+  runs global code (§19.2.1.1, `direct` false).
+- **`Function(…)` and `new Function(…)` anywhere.** CreateDynamicFunction
+  always closes over the global environment (§20.2.1.1.1), so a site inside
+  a function body is global-scoped too.
+- **Direct `eval(src)` only at sloppy script top level.** There PerformEval
+  with `direct = true` uses the global variable environment and the global
+  `this`, exactly like indirect eval. So it lowers through the same helper,
+  passing the caller's strictness (sloppy).
+- **Still refused at select:**
+  - a strict script's top-level direct eval (eval code is then strict, and
+    its `var`s stay local to it);
+  - every direct eval inside a function, arrow or method;
+  - a module-init whose nested function expression contains a direct eval.
+
+  The strict test262 variant therefore keeps its top-level direct-eval rows
+  on legacy.
+
+#### Module and reuse: one support function per provider entry
+
+- **The duplicate it removes.** `emitStandaloneIndirectEvalRuntime` and
+  `emitStandaloneGlobalScriptEvalRuntime` (`codegen/expressions/eval-inline.ts`,
+  a god file at its 2544-line budget) are the same sequence, differing only
+  in the import name. Each does:
+  1. seed: `emitRuntimeEvalGlobalBindingSeed` = `__runtime_eval_push_globals`
+     plus provider-active;
+  2. source: coerce to externref, and evaluate-and-drop the extra arguments;
+  3. `emitGlobalEnvironmentObject`;
+  4. the provider import call;
+  5. `emitRuntimeEvalResultUnwrap` = `__runtime_eval_pull_globals`,
+     provider-inactive, envelope decode, rethrow on the caller's tag.
+
+  The `Function` route
+  (`eval-inline.ts`, `__runtime_new_function`) repeats steps 1 and 3 to 5
+  around its own parameter/body string join.
+- **The new helper.** It lives in
+  `codegen/expressions/runtime-eval-provider.ts`, which already owns push,
+  pull, seed and unwrap.
+  - It mints a compiler-support function per provider entry with the
+    signature `(source…: externref) -> externref`: `__runtime_indirect_eval`,
+    `__runtime_script_eval` and `__runtime_new_function`.
+  - The function's body is steps 1 and 3 to 5. Its arguments are the
+    already-evaluated strings.
+- **One parameterised legacy path.** The two legacy emitters become one,
+  parameterised by the entry. Each evaluates the source and extra arguments,
+  then emits one `call` to the support function. The `Function` emitter
+  keeps its §20.2.1.1 ToString/join, then calls its support function, then
+  applies its existing interpreted-callable adapter and prototype seed.
+- **IR uses the same function.** It is named through a runtime symbol (the
+  `irRuntimeFuncRef` pattern already used for e.g. `__str_replaceAll`,
+  declared in `src/ir/runtime/callable-declarations.ts`). There is no second
+  copy of push, pull or unwrap.
+- **Evaluation-order fix.** Legacy indirect eval seeds *before* it evaluates
+  the source argument. With the support function, the source is evaluated
+  first and the seed happens inside the call. That is the order §19.2.1.1
+  requires (argument evaluation precedes PerformEval), and it matches what
+  the `Function` route already does: its comment explains why the seed must
+  follow every user coercion.
+  - Repro to pin: `var x = 1; (0, eval)((x = 2, "x"))` returns 2.
+- **IR side: a new small module `src/ir/runtime-eval-sites.ts`.**
+  - It holds the selection predicate and the from-ast lowering arm, the same
+    layout as `ir-dynamic-construct`'s split.
+  - The predicate reads the existing `IrRuntimeEvalBoundaryPlan.sites`, so
+    the IR never re-detects eval syntax. A site is admitted when its `kind`
+    and position are in the "What A2 lowers" list above.
+  - The arm lowers the arguments as dynamic values, then emits one
+    `emitCall` to the runtime symbol, with an externref result.
+  - `new Function`'s carrier adapter stays a codegen step behind the same
+    symbol. If that does not fit the call ABI, keep `Function` sites legacy
+    and say so; do not inline the adapter in the IR.
+- **A1 boundary changes.**
+  - The `eval-site` arm of `withdrawEvalBoundaryFunctions` refuses only the
+    sites the predicate does not admit, by sharing that predicate rather than
+    a second copy.
+  - The wholesale module-init withdrawal in `planIrOverlay` lifts for a
+    module-init the predicate fully admits.
+- **Eval-visible slots: the 27 / 60 module-init blocker.**
+  - The IR module-binding resolver types an eval-visible var/lexical slot by
+    the legacy global's actual (widened) type, an externref/dynamic slot, the
+    #7132 dynamic-slot route. It must not re-infer f64.
+  - IR reads and writes those slots through `global.get`/`global.set` at
+    every use, never forwarding a value across an eval call: the pull
+    rewrites them.
+  - Once this lands, A1's `eval-visible-binding` refusal can drop the
+    var/lexical half; that is A3 (d).
+
+### Acceptance
+
+- **Correctness**, on the 141 eval files with the interpreter provider built
+  per tree (`JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`):
+  - 0 pass→fail on standalone and on the JS host;
+  - linked-harness lane: 141 / 141 compile.
+- **Focused tests**, both lanes:
+  - indirect-eval `var` leaks to the global (`(0,eval)("var z = 1"); z === 1`);
+  - an assignment inside eval code is visible to IR code afterwards
+    (`var x = 1; (0,eval)("x = 2"); x === 2`);
+  - `Function("return typeof local")` sees the global, not the caller's
+    local;
+  - `new Function` gives a constructible function with a fresh `prototype`;
+  - a SyntaxError thrown inside eval is caught by an IR `try`;
+  - the source-before-seed order (repro above);
+  - a sloppy top-level direct eval leaks its `var`;
+  - a strict top-level direct eval and a direct eval inside a function stay
+    legacy.
+- **0 claim-then-demote:** `irPostClaimErrors` stays empty on the 141 files
+  and on the focused tests.
+- **Non-eval byte identity:** the A1 40-file control and the playground
+  examples are byte-identical on gc and standalone.
+- **Report:**
+  - the IR-only file count on the 141 (expected: about what A3 left, plus up
+    to 19 / 60 ≈ 45);
+  - IR units moved;
+  - the census classes re-run.
+- **Code quality:**
+  - **One support function per provider entry**, shared by legacy and IR:
+    the indirect/script emitter pair collapses into one parameterised path
+    (`eval-inline.ts` shrinks).
+  - **One site classifier.** The IR site predicate reads
+    `IrRuntimeEvalBoundaryPlan.sites`, and A1's withdrawal reuses it; there
+    is no second eval-syntax scanner.
+  - **No new arms or growth.** No new `ctx.standalone`/`ctx.wasi` arms
+    (lane questions go through `runtimeEvalPushPublishesCachedFunctionValues`
+    or an equally capability-named predicate); `index.ts` and `planIrOverlay`
+    do not grow.
+  - **No new flat `src/codegen` file, no grants.** The new IR module sits
+    under `src/ir/`, and the codegen half goes in `runtime-eval-provider.ts`.
+    The cycle, flat-dir and LOC gates pass with no grant.
+
+### A2 split (2026-11-06)
+
+A2 turned out large, so it ships in two slices:
+
+- **A2a (this branch):** the support functions and the evaluation-order fix.
+  Legacy only. No IR change and no unit change.
+- **A2b (next):** IR site lowering through `src/ir/runtime-eval-sites.ts`
+  plus module-init admission. It needs one more seam, which this plan did not
+  name (see "A2b blocker" below).
+
+### A2a implementation
+
+- **One support function per provider entry.**
+  - `ensureRuntimeEvalGlobalCall(ctx, entry)` in `runtime-eval-provider.ts`
+    mints `__runtime_eval_global_call_<entry>` (the entry without its
+    `__runtime_` prefix, e.g. `__runtime_eval_global_call_indirect_eval`), typed
+    `(source…: externref) -> externref`.
+  - `RUNTIME_EVAL_GLOBAL_ENTRY_ARITY` gives each entry its argument count:
+    indirect eval and script eval take 1, `__runtime_new_function` takes 2.
+  - The body runs: seed (push plus provider-active), the sources, the global
+    environment object, the entry import, then the pull and unwrap.
+    `runtimeEvalSyncFunctionContext` gained a `params` argument for it.
+- **One legacy emitter.**
+  - `emitStandaloneIndirectEvalRuntime` and
+    `emitStandaloneGlobalScriptEvalRuntime` became
+    `emitStandaloneGlobalEvalRuntime(ctx, fctx, entry, args, sourceLocal?)`.
+  - It evaluates the source and any extra arguments, then emits one `call`.
+  - The `Function` route keeps its §20.2.1.1 join and its carrier adapter, but
+    replaces its own seed / environment / unwrap copy with a call to the
+    `__runtime_new_function` support function.
+  - Callers updated: `calls.ts`, `eval-spread-args.ts`,
+    `generator-function-dynamic.ts` and the helper registry.
+  - `eval-inline.ts` shrank 2544 → 2470 lines. Across `src`: +79 / −113.
+- **Evaluation order.** Each site now evaluates its sources before the push,
+  which happens inside the support function (§19.2.1.1).
+  - The repro `var x = 1; (0, eval)((x = 2, "x"))` passed on the base as
+    well, so the old order was not observable through it.
+  - The new test pins the structure instead: no site calls the push itself.
+- **Test:** `tests/issue-7106-runtime-eval-a2-global-call.test.ts`. It reads
+  the call graph from the WAT and checks:
+  - each provider import is called only from its support function;
+  - the support functions push, and their call sites do not;
+  - two indirect sites and a script-level direct eval share one support
+    function.
+
+#### A2a measurement
+
+Setup: niced, one process, interpreter provider built per tree. The final
+tree is A2a merged with the A3 head 2b231a5b67 (round 3, which includes
+origin/main and the A1 self-reference fix).
+
+| check | result |
+| --- | --- |
+| 141 eval files, standalone verdicts | 0 pass→fail (101 / 40, same as base) |
+| 141 eval files, JS host verdicts | 0 pass→fail (98 / 43, same as base) |
+| 141 eval files, compile | 141 / 141, 0 post-claim errors, IR units unchanged at 830, 82 files change bytes (eval sites only) |
+| 40-file non-eval control | 40 / 40 byte-identical to the A3 head 2b231a5b67 |
+| 11 focused probes (`.tmp/a2t`), both lanes | identical verdicts to the A3 head 6756a64218 |
+
+The standalone run was paused at 71 / 141 and resumed after the merge.
+That is sound because the merge left all 141 binaries byte-identical to the
+paused tree.
+
+The JS host lane does not reach the support function at all:
+`emitStandaloneGlobalEvalRuntime` answers only for the native provider, as
+`emitStandaloneIndirectEvalRuntime` did before.
+
+### A2b blocker: canonical values from the shared realm
+
+Module init in an eval program cannot be admitted by typing the widened
+slots alone.
+
+- `scriptVarHomeSlot` (`codegen/index.ts`) refuses every script `var` when
+  the provider is present and `plan.sharedRealmMayContainCanonicalValues`
+  holds. That refusal is what the census reports as
+  `vardecl-module-storage-unrepresentable` and `vardecl-noinit` (`var after;`).
+- The slot itself is safe to share: the pull decodes and coerces every value
+  it writes back (`emitRuntimeEvalGlobalBindingPullBody`).
+- **The unsafe part is reads through those values.** An object built by eval
+  code holds canonical provider values. Legacy decodes them at about seven
+  read sites, all behind `ctx.runtimeEvalGlobalFunctionBindings`, through
+  `emitRuntimeEvalSharedValueUnwrap` / `runtimeEvalSharedValueUnwrapInstrs`:
+  - dynamic member gets (`property-access-dispatch.ts` ×5,
+    `property-access-exact-shapes.ts`);
+  - primitive-prototype member gets (`primitive-proto-member-get.ts`);
+  - captured direct-eval cells (`identifiers.ts`);
+  - compound assignment (`operator-assignment.ts`);
+  - the typed-lane overlay route.
+
+  The IR's dynamic member-read lowering has no such step.
+- **Seam A2b needs:**
+  - in programs where values may cross the provider boundary, the IR's
+    dynamic member read applies the same unwrap;
+  - it reaches it through one codegen helper, named by a runtime symbol;
+  - it is gated by a capability-named predicate, not by a lane arm.
+
+  Only then can `scriptVarHomeSlot` drop its eval refusal.
+- **What this changes for the gain.** Under that seam, the reachable files
+  are the module-init-only ones whose remaining blockers are top-level eval
+  sites (`callee:eval`, `expr-indirect-eval-host-statement`, `Function`) or
+  eval-visible slots. That is about 13 of the 60-file census.
+  - The 14 files whose module init holds `(function () { eval(…) })()` stay
+    legacy by design.
+
+### A2b handoff (branch `claude/7106-eval-a2b`, from A2a 06962e1289)
+
+Where the pieces live:
+
+- **Decode seam.** The IR's dynamic member and element read is ONE helper,
+  `__dyn_member_get`, built by `ensureDynMemberGet` (`codegen/dyn-read.ts`).
+  - It has two bodies: the `ctx.fast` `$AnyValue` carrier around line 790,
+    and the externref carrier around line 850. Each calls `__extern_get`.
+  - The decode belongs right after that call:
+    `buildRuntimeEvalValueUnwrap(ctx, locals, paramCount)`
+    (`codegen/runtime-eval-boundary.ts`). Legacy reaches the same builder
+    through `runtimeEvalSharedValueUnwrapInstrs` (`codegen/global-environment.ts`).
+  - Gate it on `ctx.runtimeEvalGlobalFunctionBindings === true`, the flag
+    every legacy decode site uses. It is set in
+    `registerReassignedFunctionGlobals`, before IR preregistration.
+- **Refusal to lift.** `scriptVarHomeSlot` (`codegen/index.ts`, near the
+  `scriptVarHome` doc comment) has the clause
+  `(standalone || wasi) && provider present && plan.sharedRealmMayContainCanonicalValues`.
+  Only that clause is A2b's. Lever S (afc4f80) owns the non-eval rest.
+- **Second gate, also needed for module init.** A1's wholesale withdrawal in
+  `planIrOverlay` (`codegen/index.ts`, the `callableBoundaryRequired` block)
+  sets `safeSelection.moduleInit = undefined`.
+- **Why IR-only files need more than the decode.** Almost every eval
+  program's module init holds the eval site itself (`(0,eval)(…)`,
+  `Function(…)`, a top-level `eval(…)`). So a file becomes IR-only only once
+  the IR lowers those sites. That is the A2 design's
+  `src/ir/runtime-eval-sites.ts` arm:
+  - it calls the A2a support function `__runtime_eval_global_call<entry>`
+    (`ensureRuntimeEvalGlobalCall`) through a runtime symbol;
+  - the IR's current refusal of these sites is
+    `phase1IndirectEvalStatementVerdict` (`ir/select.ts`,
+    `expr-indirect-eval-host-statement`) and the `callee:eval` external-call
+    gate in the module-init assessment.
+- **Measuring.**
+  - Scripts live in `.tmp/` of the agent worktree: `a1-probe.mts` for
+    compile, sha and units; `a1-host.mts` for verdicts (`LANE=host` for the
+    JS host); `sa-cmp.mjs` and `a1-cmp.mjs` for diffs.
+  - Base verdicts are `a1-int-base.jsonl` (101 / 40) and
+    `a1-host-base.jsonl` (98 / 43). The control list is `a1-control.txt`.
+  - Rebuild the interpreter provider per tree, with
+    `JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`.
+
+#### A2b progress (af4dd23233)
+
+- **Done, step 1: the decode.** `__dyn_member_get` applies the shared
+  runtime-eval value decode after `__extern_get`, in both carrier bodies.
+  - It is built by `dynMemberReadDecode` (`codegen/dyn-read.ts`) through
+    `runtimeEvalSharedValueDecode` (`codegen/global-environment.ts`).
+  - That is the builder the legacy read sites use; their
+    `runtimeEvalSharedValueUnwrapInstrs` now delegates to it, so there is no
+    second copy.
+  - It is gated on `ctx.runtimeEvalGlobalFunctionBindings`, the legacy flag.
+    There is no lane arm.
+- **Done, step 2: the refusal.** `scriptVarHomeSlot` no longer refuses script
+  vars in eval programs. A1's wholesale module-init withdrawal narrows to
+  `moduleInitHoldsEvalSite` (`codegen/ir-overlay-preparation.ts`): a
+  top-level statement, other than a function declaration, that contains a
+  site.
+- **Measured on the 141 (standalone):** 141 / 141 compile, 0 post-claim
+  errors, 830 units (unchanged), 0 IR-only files. 90 files change bytes, all
+  from the decode.
+  - Interpreter-provider verdicts: 0 pass→fail on standalone (101 / 40) and
+    on the JS host (98 / 43).
+  - The 40-file non-eval control is byte-identical to the A2a head.
+- **Why IR-only is still 0.** Every module init in the 141 holds its eval
+  site, so `moduleInitHoldsEvalSite` keeps all of them direct. Step 2 is a
+  prerequisite that nothing exercises yet.
+- **Next: lower the sites in the IR by generalising the existing host arm,
+  not by adding a second one.**
+  - The IR already lowers a certified host indirect-eval statement:
+    `certifiedHostIndirectEval` / `phase1IndirectEvalStatementVerdict`
+    (`ir/select.ts`), the `exactIndirectEvalStatement` arm in
+    `ir/from-ast.ts` (around line 7655), and the resolver's
+    `hostIndirectEvalTarget`, gated by `supportsHostIndirectEval`
+    (`ir/integration.ts` around line 2620, `codegen/index.ts` around line
+    3358).
+  - Parameterise that one arm by its target. On the JS host the target stays
+    the host import. With the runtime-eval provider it becomes the A2a
+    support function `__runtime_eval_global_call_indirect_eval`,
+    with one source argument instead of `(source, isDirect)`.
+  - Give the capability a name (`supportsGlobalIndirectEval`), not a lane
+    arm.
+  - Preregister the support function before Phase 3:
+    `ensureRuntimeEvalGlobalCall` adds a late import and flushes shifts.
+  - `moduleInitHoldsEvalSite` should then skip the sites that predicate
+    admits, by sharing the predicate rather than copying it.
+  - Then `Function(…)` and a sloppy top-level `eval(…)` (`callee:eval`) can
+    follow through the same arm.
+  - **Open question to measure first:** legacy folds a literal
+    `(0, eval)("…")` at compile time (`tryStaticEvalInline`). The IR arm must
+    not turn a folded literal into a runtime call. Either admit only
+    computed sources, or check what legacy does for each census file.
+
+### A2c implementation (branch `claude/7106-eval-a2c`, from A2b 9525d48818)
+
+#### The fold question, settled first
+
+Legacy folds some literal eval sources at compile time (`tryStaticEvalInline`)
+and hands others to the provider. Both options from the handoff were measured
+on the 141 files (standalone, A2b head, legacy fold decisions logged per site
+by a temporary, uncommitted hook):
+
+- **Admit only computed sources: 0 files.** Top-level eval sources are
+  literal almost everywhere. Of the 141 files, 21 hold a literal top-level
+  indirect-eval statement and 19 a literal direct one; only 1 file has a
+  computed top-level direct-eval source and 4 a computed `new Function`. Not
+  one of the files whose only module-init blocker is an eval site has a
+  computed source.
+- **Match legacy per site: chosen.** In module init, legacy sends 42 of 44
+  indirect-eval compilations and 36 of 136 direct-eval compilations to the
+  provider; the rest fold (a spliced Script or a static SyntaxError throw).
+  The counts are compilations, not sites: legacy compiles some sites twice.
+
+So the IR admits a site exactly when legacy's own fold pieces say the provider
+owns it. Those pieces moved out of `tryStaticEvalInline` into
+`codegen/expressions/eval-script.ts`, so the fold and the IR read one copy:
+
+- `parseEvalScript`: the Script, its statements, `bodyIsStrict`, `evalIsStrict`;
+- `foldedEvalStaticSyntaxError`: parse failure, Script early error, then a
+  var colliding with a global lexical (§19.2.1.3 step 5.a), in spec order;
+- `providerOwnsEvalDeclarations`: a sloppy Script whose variable environment
+  is global and that declares a var or function (§19.2.1.3 step 16).
+
+A literal is admitted when it parses, raises no static SyntaxError and the
+provider owns its declarations. Any other literal may fold, so its module init
+stays direct. Measured: all 9 sites the route admits on the 141 are sites
+legacy sent to the provider (0 that legacy folds).
+
+#### One generalised arm
+
+- **Shape.** `exactIndirectEvalStatement` became `exactGlobalEvalStatement`
+  (`src/eval-call-shape.ts`): `(0, eval)(source)` or `eval(source)` as an
+  expression statement, with a `direct` flag. The JS-host import collector
+  keeps the indirect half.
+- **Route.** `globalEvalRoute(ctx, call, hostEvalAbi)`
+  (`runtime-eval-provider.ts`) answers once for every consumer:
+  - `host-import`: an indirect statement where the caller proves the
+    `__extern_eval(source, isDirect)` ABI (the old `supportsHostIndirectEval`
+    condition, `jsHostExterns && !ctx.nativeStrings`);
+  - `runtime-eval-provider`: the boundary plan recorded the site as a literal
+    `indirect-eval`/`direct-eval`; a direct eval must run at script global
+    (`directEvalRunsAtScriptGlobal`); and the fold pieces above say the
+    provider owns it. The lane question goes through
+    `runtimeEvalPushPublishesCachedFunctionValues` and
+    `isRuntimeEvalProviderAbsent`; no new lane arm.
+- **Selector.** `supportsHostIndirectEval: boolean` became
+  `supportsGlobalEval(call)` (both planning sites pass `globalEvalRoute`).
+  `certifiedHostIndirectEval` became `certifiedGlobalEval`; it serves the
+  Phase-1 call gate (`phase1GlobalEvalStatementVerdict`, reject detail
+  `expr-global-eval-statement`) and the call-graph walk, which removes the
+  `callee:eval` external call.
+- **from-ast.** The one arm takes its callee from
+  `resolver.globalEvalTarget(call)`: `{ ref, passesIsDirect }`. The JS-host
+  import keeps `(source, 0)`; the provider route calls
+  `__runtime_eval_global_call_indirect_eval` with the source alone. A sloppy
+  script-global direct eval shares that entry, as legacy's
+  `directEvalRunsAtScriptGlobal` arm does. Module init's discarded-expression
+  lowering now passes statement position for that shape too.
+- **Support function, linked before Phase 3.** The resolver links it
+  (`linkRuntimeEvalGlobalEval` → `ensureRuntimeEvalGlobalCall`) while the IR
+  body is built. `ensureRuntimeEvalGlobalCall` now seeds the callable carrier
+  itself: every legacy site seeds it first, so this is a no-op there (byte
+  identity below), and an IR-only file still gets it.
+- **Module init.** `moduleInitHoldsEvalSite(ctx, sourceFile)` skips a site
+  whose call `globalEvalRoute` routes; it is the same predicate the selector
+  and resolver read. A1's per-function `eval-site` withdrawal is unchanged: a
+  function holding even an admitted site stays direct.
+- **Not done.** `Function(…)` stays legacy: its module-init sites fold (30 of
+  52 compilations) or carry computed sources, and its §20.2.1.1 join plus
+  carrier adapter would need its own route. A value-position eval
+  (`x === eval("var x")`) stays legacy: the arm is statement-only.
+
+Size: `eval-inline.ts` 2470 → 2357. Across `src`, +320 / −235 against A2b.
+`index.ts` is line-neutral; `integration.ts` grows by 1 (two facade imports
+for the resolver, offset by the resolver shrinking); no new grant.
+
+#### A2c measurement
+
+Setup: niced, one process. Interpreter provider rebuilt for this tree.
+Byte identity is a file-copy A/B against the A2b head 9525d48818.
+
+| check | result |
+| --- | --- |
+| IR-only files on the 141 (standalone) | **0 → 6** |
+| IR units on the 141 | 830 → 836 (one `<module-init>` per IR-only file) |
+| post-claim errors on the 141 | 0 |
+| verdicts, standalone (interpreter provider) | 101 / 40, 0 pass→fail, 0 changed failure messages |
+| verdicts, JS host (interpreter provider) | 98 / 43, 0 pass→fail |
+| bytes, 141 eval files, standalone and gc | 135 / 141 identical on each lane; the 6 that differ are exactly the IR-only files |
+| bytes, 40-file control, standalone and gc | 40 / 40 identical |
+| bytes, playground examples, standalone and gc | 13 / 13 identical |
+| eval test files (41) | the only new failure was the renamed shape test, fixed; 50 failures pre-exist on the A2b head |
+| equivalence gate, 8 shards | no new regressions in any shard |
+
+The 6 IR-only files are Annex B `global-*` rows (2 direct, 4 indirect).
+They fail on the base too and still fail, with the same message.
+The gc lane changes too, because the default JS target compiles under the
+native regime (`ctx.standalone` is the native regime, #5385).
+
+#### What still blocks
+
+- 78 of the 141 files had `<module-init>` as their only legacy unit. 21 of
+  those had only eval sites blocking module init:
+  - 6 are now IR-only.
+  - 5 Annex B rows hold a literal whose declarations are only block
+    functions. Legacy decides those by the B.3.3 rule, which reads the
+    caller's frame (`collidesWithCaller`, `unsupportedGlobalShape`), so the
+    route does not admit them.
+  - 9 hold literals legacy folds (e.g. `S11.2.3_A1`, `cptn-nrml-*`), plus 1
+    `Function` fold.
+  - 1 has a value-position eval (`S11.9.4_A6.1`).
+- A routed module init can still be blocked by its other statements:
+  `var-env-var-non-strict` (an IIFE with a direct eval) and `S7.3_A7_T1`
+  (`throw-module-scalar-unboxed`).
+- Names that only eval declares (`(0, eval)("var z = 1"); z;`) are
+  `expr-ident-not-in-scope` for the IR. That is a separate lever: a read of an
+  unresolvable script name through the global object.
+
+#### Review of #7177 (fresh context, 2026-11-07): APPROVE, quality fixes applied
+
+No correctness bug. The reviewer saw 0 post-claim errors over 208 compile
+pairs. Each finding was fixed in 27630b3237:
+
+1. **Unreachable JS-host route.** The host half of the arm needs
+   `!nativeStrings`, which is always on for the JS target since #6979. The
+   #1164 test "owns a proven-string indirect statement through IR" fails on
+   both the A2b head and A2c. The selector checked the host route first and
+   the resolver the provider route first, so the two could disagree.
+   - Every reader now asks one question, `runtimeEvalOwnsGlobalEval(ctx, call)`.
+   - The resolver's `globalEvalTarget` returns only the support function.
+   - `passesIsDirect` and the `hostEvalAbi` parameter are gone.
+   - The legacy import collector's `__extern_eval` pre-scan stays. It retires
+     with the JS-host lane, not here.
+2. **Carrier seeding was unchecked.** `ensureRuntimeEvalGlobalCall` now seeds
+   the callable carrier before it builds the support function, and returns
+   `undefined` when seeding fails, as legacy's callers refuse. The seed runs
+   in a detached context: for legacy it is a no-op, because the carrier is
+   already seeded.
+3. **The literal Script was re-parsed per query.** The answer is now memoized
+   per call node (a `WeakMap` per compile), so a Script is parsed once rather
+   than once each for the selector, `moduleInitHoldsEvalSite` and the
+   resolver.
+4. **Doc order in `dyn-read.ts`.** `dynMemberReadDecode` and its doc now sit
+   above `ensureDynMemberGet`'s doc block.
+5. **Wording in `eval-script.ts`.** It now says the IR lowers a statement
+   *only* when legacy routes it to the provider. The IR set is a strict
+   subset: legacy also routes Annex B collisions, strict scoped declarations,
+   caller lexical collisions and const-resolved direct sources.
+
+`integration.ts` no longer grows, so its A2c rationale line is dropped.
+
+Re-measured on 27630b3237, file-copy A/B against the A2b head 9525d48818:
+
+| check | result |
+| --- | --- |
+| bytes, 141 eval files, standalone and gc | 135 / 141 identical on each lane; the 6 that differ are the IR-only files, whose `<module-init>` is IR on both lanes |
+| bytes, 40-file control and 13 playground examples, both lanes | identical |
+| verdicts of the 6 IR-only files, both lanes (provider rebuilt) | fail as on the base; the standalone messages are identical |
+| focused tests (A2c, A2a, A1 unit boundary) | 13 / 13 pass |
+
+#### Follow-up: eval-declared vars read after the eval (interpreter engine only, local runs)
+
+A program that declares a var through eval and then reads it fails locally:
+`(0, eval)("var z = 1"); z;` throws in Wasm, while node passes. The reviewer
+saw it on both the A2b head and A2c (25 / 25 verdicts equal).
+
+This is a gap in the **interpreter** eval engine, and it appears only in local
+runs. It is not a compiler or shared-path bug, and it does not cap lever A in
+CI:
+
+- CI's standalone shards evaluate eval code with QuickJS
+  (`JS2WASM_EVAL_ENGINE` defaults to `quickjs` in `test262-sharded.yml`).
+  Local runs here used `JS2WASM_EVAL_ENGINE=interpreter`, because QuickJS is
+  not built in the container.
+- CI's standalone baseline (fetched 2026-11-07, built from main) passes
+  **141 / 141** of the eval files. That includes every one of the 40 that
+  fail locally, and the 6 A2c IR-only files.
+- The 40 local standalone failures, by message:
+
+  | files | message |
+  | --- | --- |
+  | 31 | `undefined` (the read-back shape above) |
+  | 6 | `ReferenceError: intrinsicErrorConstructor is not defined` |
+  | 2 | `SyntaxError: Binding rvalue` |
+  | 1 | `Thrown value was not an object!` |
+
+Local verdicts taken with the interpreter engine therefore **undercount**.
+The pass→fail comparisons in this plan stay valid, since base and head ran
+on the same engine. Absolute pass counts and lever A's gain must come from a
+QuickJS run, i.e. CI. Closing these interpreter gaps is its own issue against
+the interpreter provider, not lever A work.
+
+#### Follow-up: JS-host hostEval shadowed assert
+
+- JS-host `hostEval` shim: a raw `assert` beside a parameter that shadows
+  `assert` throws a non-Error value from the child Wasm module (`it.fails` in
+  `tests/issue-1164-es5-eval-slice.test.ts`). JS-host lane; file as its own
+  issue once ids can be allocated.
+
+## `<module-init>` lever L — script `var` `for` heads (plan, 2026-11-07)
+
+Lever L is the S6 follow-up of the S5 `var`-pattern work: a script's top-level
+`for (var i = …; …; …)` is refused today, although its names are script `var`s
+in the same `__mod_<name>` slots a top-level `var` statement already writes.
+
+### Problem (measured)
+
+Base `b631a4bcab` (origin/main), standalone, one niced worker. The census
+compiles the runner's harness assembly with `JS2WASM_IR_SHAPE_DIAG=1
+JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, so every refused top-level statement
+reports its own refusal. Population: the 790 ES5 files (edition classifier of
+`scripts/test262-edition-ratchet.ts`, 9,174 ES5 files in all) whose source has
+a `for (var` head; 11 are skipped by the runner (negative/raw/module), 3 do not
+compile, 776 compile.
+
+| measure | files |
+| --- | --- |
+| `<module-init>` refused with `for-init-var-kind` (309 as its shape refusal, 34 behind an earlier constructor / RegExp refusal) | 343 |
+| …and it is `<module-init>`'s only refusal | 62 |
+| …and no other unit is legacy (upper bound of the IR-only gain) | 61 |
+| `for-init-var-kind` plus exactly one other `<module-init>` refusal, no other legacy unit | 30 (15 `expr-new-ctor-unknown`, 8 `vardecl-module-storage-unrepresentable`, …) |
+
+The bound is loose: a head refusal stops the `for` arm before the condition,
+update and body, and the unmasked census skips the call-graph gate, so a
+refused head can hide refusals behind it.
+
+**Why the head is refused.** `moduleInitVarList` models a `for` head only when
+every declaration is a pattern (S5 deferred identifier heads), so the head's
+list is not in `currentIrSafeVarDeclarationLists`. Three layers follow from
+that one predicate: the module-binding resolver does not know the head's
+declaration (`isModuleBindingDeclaration`), legacy never hands the head's slot
+to the Program ABI (`registerVarDeclListGlobals` calls `registerModuleGlobal`
+without the declaration), and the ordinal enumerator does not number it.
+
+### Implementation Plan
+
+One idea: **a top-level `var` `for` head is a module-init `var` list, so its
+names are script `var`s, checked and lowered by the `var` statement's own arm.**
+No new home kind, no new module, no legacy fallback.
+
+1. **The list predicate** (`src/ir/module-init-vars.ts`). `moduleInitVarList`
+   drops its pattern-only clause. `moduleInitLeaves` becomes
+   `moduleInitVarBindings`: every module-init binding that is not a top-level
+   statement's own declaration (pattern leaves and head names), in source
+   order, cached per file. `moduleBindingDeclarationOrder` appends them after
+   the statement declarations as before (no statement binding id moves), and
+   `carrierLeafReads` keeps reading only the leaf names from the same cache.
+2. **The resolver** (`src/ir/module-bindings.ts`). `isModuleBindingDeclaration`
+   folds its leaf clause into one: an identifier declaration or leaf of a
+   script's module-init `var` list. ES modules are unchanged (no playground
+   example has a top-level `for (var`).
+3. **Legacy observation** (`src/codegen/declarations.ts`).
+   `registerVarDeclListGlobals` passes a head's declaration to
+   `registerModuleGlobal` when its list is a module-init `var` list, as S5 does
+   for leaves. Observation is a map entry on the same slot; a statement's own
+   declarations stay observed by the source-order pass, so global allocation
+   order does not move.
+4. **Selection** (`src/ir/select.ts`).
+   - `isPhase1VarDecl`'s per-declaration loop becomes
+     `isPhase1VarDeclarationList`. The `for` arm calls it for a
+     `<module-init>` `var` head, so storage
+     (`vardecl-module-storage-unrepresentable`), value flow
+     (`vardecl-module-value-flow`), repeated declarations, shadowing and the
+     bare `var i;` no-op are decided by one arm for a statement and a head.
+   - The `for` arm's own loop moves into `isPhase1LoopHeadDeclarations`
+     (loop-scoped heads only). S5's pattern head now also goes through the
+     list arm, which calls the same `isPhase1DeclarationPattern`.
+   - `recordForInitLeaks` does not mark a script-`var` head's names as
+     sibling-redeclarable, so a later `for (let i …)` stays refused
+     (`for-init-shadow`) instead of writing the script slot.
+5. **Lowering** (`src/ir/from-ast.ts`): `lowerForStatement` lowers its head
+   through `lowerVarDecl`, whose module arm (`storeModuleBinding`) writes the
+   slot, and `moduleInitContainsNestedVar` already skips any
+   `moduleInitVarList`. *Corrected in review round 1:* the head must bind in
+   the enclosing scope, not the loop's copy (see below).
+
+**Reused:** `isModuleInitVarList`, the `var` statement's selector arm, the
+resolver's script-var home (#7105/#6985), `storeModuleBinding`,
+`emitModuleVarUndefinedSeeds` (it already seeds head names). **Removed
+duplicate:** the `for` arm's identifier checks no longer stand beside the
+statement arm for a module-init list; S5's twin `isModuleInitVarList` /
+pattern-only test in the predicate goes.
+
+### Semantics kept
+
+- Hoisting: the name reads `undefined` (carrier slot) before the loop.
+- `i++` / `i += k` in the update write the slot (`moduleGlobal` binding).
+- Two heads, or a head and a statement, of the same name: the first
+  declaration is the identity, the others are writes (`redeclaredModuleVar`).
+- A head that shares a function's name, a nested head (`{ for (var …) }`), a
+  `let` head after a `var` head of one name, and eval / `with` programs stay
+  refused as today.
+
+### Acceptance
+
+- **Gain** measured base vs head, both lanes, on the 790 files plus a random
+  400-file ES5 sample (seeded `shuf`).
+- **Zero** IR-only files lost, pass → fail flips, and new post-claim errors.
+- Every binary without a newly claimed unit is byte-identical; the playground
+  is identical on both lanes.
+- **Tests** (`tests/issue-7106-lever-l.test.ts`, both lanes): claimed heads
+  run correctly; the refused shapes above stay legacy and run.
+- **Code quality:** one list arm for statement and head; no new module or
+  import edge beyond `codegen/declarations.ts` → `ir/module-init-vars.ts`; no
+  new budget grant unless a gate says so (then stated here, dated); net
+  `src/ir` growth stated.
+
+### Measured (2026-11-07, as built)
+
+Base `b631a4bcab` (origin/main), head `c7df95521c`, one niced worker. Census
+population: the 790 `for (var` files plus 400 random ES5 files (`shuf
+--random-source=<(yes 7106)`), 1,130 distinct; 1,103 compile on both sides
+(the rest are runner-skipped or compile errors on both, unchanged).
+Pass/fail is `runTest262File` (sloppy run plus strict rerun). Census scripts:
+the lever worktree's `.tmp/l/` (`census.mts`, `cmp.py`, `run.mts`).
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, base → head | 25 → 41 (**+16**) | 25 → 41 (**+16**) |
+| …of them in the random sample | 0 | 0 |
+| IR-only files lost | 0 | 0 |
+| binaries changed | 16, each a newly claimed `<module-init>` | 16, the same files |
+| binaries byte-identical | 1,087 (the whole random sample included) | 1,087 |
+| units newly legacy | 0 | 0 |
+| new post-claim errors (on these 1,103 files) | 0 | 0 |
+| pass → fail on the changed files | 0 (16/16 pass on both) | 0 (16/16 pass on both) |
+| playground (26 binaries, both lanes) | identical | identical |
+
+The 16: `statements/break/12.8-1`, `statements/continue/12.7-1`,
+`statements/for/12.6.3_2-3-a-ii-{11,13..21}`,
+`statements/for/head-init-var-check-empty-inc-empty-syntax`,
+`statements/try/S12.14_A11_T{2,4}`, `statements/variable/S12.2_A10`.
+
+**What blocks the rest.** The census bound (61) was loose, as expected: a head
+refusal hid the loop's own refusals. Over the 309 files whose shape refusal was
+`for-init-var-kind`, 16 now claim `<module-init>`; of the rest, by the
+refusal the head now reports (a file counts once per arm):
+
+| files | arm | sole arm, no other legacy unit |
+| --- | --- | --- |
+| 269 | `vardecl-module-storage-unrepresentable`: a script `var` whose home the resolver cannot place, overwhelmingly an array / object / RegExp-match literal (`var __expected = [...]` 260, `__executed = /…/.exec(…)` 226, `obj = {...}` 126) | 199 |
+| 28 | `throw-module-scalar-unboxed` | 6 |
+| 15 | `expr-binary-op-instanceof` | 0 |
+| 12 | `for-init-var-kind` (a nested head, `{ for (var …) }`) | 3 |
+| 12 | `expr-prefix-op-++` (`++i` on a script `var`) | 0 |
+| 11 | `vardecl-var-kind` (a `var` statement in the loop body) | 5 |
+
+The 199 are lane C's object/array literal homes (#7280/#7292), not this lever.
+The next lever-L-adjacent arms are `var` statements nested in top-level
+control flow (`vardecl-var-kind`) and prefix updates of a script `var`.
+
+**Code.** Net `src/ir` +4 lines (+109/−105); the list predicates (37 lines)
+moved to `src/shared/module-init-var-list.ts` so legacy's registration reads
+them without a new codegen→ir edge; `codegen/module-global-registration.ts`
++10. No budget grant: loc, func (also against `origin/main`), coercion,
+oracle, dead exports, typecheck, import cycles, standalone arms, IR layering,
+flat dir, IR fallbacks all pass; compiler boundaries reports the same
+`inventory-valid-architecture-incomplete` as main, with the new module
+classified (owner 7106).
+
+**Not done here.** The adversarial fresh-context review the IR rule requires
+is the lead's to run before the hold is released. A function declared above a
+head that returns its name (`function g() { return i; } for (var i = 0;;)`)
+is claimed and then withdrawn on main's ABI parity check, as its statement
+twin (`function g() { return i; } var i = 0;`) already is on main: legacy
+widens such a return to `externref` (`functionReturnsPreInitVarValue`) and the
+selector does not mirror it. No census file reaches it; it is a selector
+follow-up for both forms.
+
+
+### Review round 1 (#7178, 2026-11-07)
+
+The verdict was changes requested: one bug, one inherited reach, two quality
+findings and three nits. Fixed in `fa9eecdddb` + `bab312aea8` (the first
+commit carries only the rename because a failed `git add` left the rest
+unstaged; the second carries the changes its message lists).
+
+1. **Fixed — claim-then-demote after the loop.** The head bound its
+   `moduleGlobal` in the loop's scope copy, so `i++`, `i--`, `i += k` or
+   `while (…) i++` after the loop was claimed and then failed to lower
+   ("undeclared"). A `<module-init>` `var` head now lowers in the enclosing
+   scope (`lowerForInitializer`, split out of `lowerForStatement`), as a `var`
+   statement does. The four shapes (and `--i`) are in
+   `tests/issue-7106-lever-l.test.ts`, claimed and correct on both lanes.
+2. **Scoped, not fixed — inherited reach.** `for (var j = i, i = 2;;)`,
+   `for (var i = k;;){} var k = 5` and `function g(){ return i } for (var i …)`
+   are claimed and then withdrawn ("initializer is dynamic but its global is
+   f64", or the ABI parity check). Their statement twins do the same on main
+   with identical bytes; the root is the selector's missing pre-initialization
+   (`undefined`) value flow for a script `var`, shared by statements and
+   heads. "0 new post-claim errors" above is now scoped to the census files,
+   where none of these shapes occurs. Follow-up: one selector refusal for a
+   read of a script `var` that can observe its pre-initialization value,
+   for statements and heads alike; a head-only refusal would leave the twins.
+3. **Fixed — misplaced predicate.** The shared module is now
+   `src/shared/var-declaration-lists.ts`: the general `isVarDeclarationList`
+   and the module-init list predicates. The three inline copies of its flag
+   test (`ir/with-environment.ts`, `ir/analysis/loop-shape.ts`,
+   `codegen/declarations/object-shape-widening.ts`) call it. The plan's "no
+   new module" was wrong: the module exists so legacy's registration reads the
+   list predicate without a new codegen→ir import edge.
+4. **Fixed — repeated condition.** `isScriptVarList(list)` in select.ts serves
+   all four sites; the `var` statement and the `for` arm compute it once and
+   pass it to `isPhase1VarDeclarationList`.
+5. **Fixed.** The codegen helper is a predicate, `isScriptForHeadVar`, with
+   the resolver's script-only test; the call site keeps the ternary.
+6. **Fixed.** `isModuleBindingDeclaration` branches on the declaration kind.
+7. **Fixed.** Stale import tag removed; `moduleInitBindings` doc names heads.
+
+**Re-measured** at `bab312aea8`, same 1,103 files, both lanes: identical to
+the first head (every binary byte-identical to `c7df95521c`'s), so the table
+above holds: +16 IR-only per lane, 0 lost, 0 new post-claim errors, 16/16
+pass on both sides, playground 26/26 identical (re-run). Gates pass bare:
+loc, func (also against origin/main `5ef8f0aae5`), coercion, oracle, dead
+exports, typecheck, import cycles, standalone arms, IR layering, flat dir;
+compiler boundaries as on main. Tests: lever-l, var-pattern-heads,
+for-head-destructuring, script-var, uninitialized-var: 227/227.
+
+
+## ES5 lever O — ambient `Object.*` statics (plan, 2026-11-07)
+
+The IR refuses a read of the ambient `Object` (`expr-ident-not-in-scope(Object)`,
+1,183 carrier files on the 2026-11-07 overlay map) and `new Object(…)`
+(`expr-new-ctor-unknown(Object)`). This lever measures which `Object.*`
+statics actually block files and lowers the ones with yield.
+`Object.getOwnPropertyDescriptor` (#7294) and `Object.create` /
+`defineProperty` / `defineProperties` (existing arms) are out of scope.
+
+### Census (measured on base `cb64e11d5f`, standalone)
+
+Population: the 176 overlay-map files whose only refusals are the two
+`Object` arms, plus every ES5 file the overlay map did not sample whose source
+names `Object` (1,207); 1,383 files, 1,370 compile. Method as the 2026-11-07
+map (`JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, original
+harness, `analyze.py`'s reason folding). **262 files** are blocked by the two
+`Object` arms and nothing else. A TypeScript walk classifies every `Object`
+occurrence in each of them; the table counts the files whose occurrences are
+all of one shape.
+
+| shape (sole `Object` use) | files | operands |
+| --- | --- | --- |
+| `Object.create(…)` (out of scope: own arm) | 39 | |
+| `new Object()` / `new Object(v)` | 41 | |
+| `Object.isSealed(x)` | 24 | 22 ES5 intrinsics or `X.prototype`, `0`, `this` |
+| `Object.isExtensible(x)` | 23 | 15 intrinsics, 5 primitive literals, `this` ×2, `foo` |
+| `Object.getOwnPropertyDescriptor` (out of scope: #7294) | 14 | |
+| `Object.getPrototypeOf(x)` | 16 | NativeError constructors, primitives, `new Number(42)` |
+| `Object.isFrozen(x)` | 7 | 5 primitive literals, `{}` ×2, `this` |
+| `Object.freeze(x)` / `preventExtensions(x)` | 5 + 5 | primitive literals (incl. `null`, `undefined`) |
+| `Object.keys(x)` / `getOwnPropertyNames(x)` | 5 + 5 | primitive literals |
+| `Object.prototype.<m>` reads, other | rest | |
+
+**Not built, by measurement:**
+- `new Object()`: replacing it by `{}` in four of the files leaves each one
+  legacy (`objectlit-empty`, `vardecl-var-kind`), so lowering `new Object` alone
+  moves no file; the blocker is the empty-object home (lane C, #7280/#7292).
+- `Object.getPrototypeOf` (16), `Object.keys` / `getOwnPropertyNames` (10):
+  every row needs either ToObject of a primitive (a fresh array / a wrapper
+  prototype) or a constructor's `[[Prototype]]` identity, i.e. legacy's
+  type-directed arms, not a fixed answer. A later lever can route them to
+  legacy's native helpers on a dynamic operand once the operand classes that
+  helper answers wrongly (primitives, per #7189) are separated.
+- `Object(v)` as a call: no file in the population uses it as its sole
+  blocker.
+
+**Built:** the six integrity statics, where the answer is fixed at compile
+time. Expected IR-only gain ≈ 53 files (isSealed 23, isExtensible 20,
+isFrozen 4, freeze 3, preventExtensions 3) before other blockers; measured
+below.
+
+### Implementation Plan
+
+**Module.** `src/ir/object-integrity.ts`, the home of the one existing fold of
+this family (#3776, `isPristineEs5IntrinsicIsFrozenCall`: `Object.isFrozen` of
+an ES5 intrinsic is `false` while the source names no integrity mutator). That
+fold becomes one parameterised arm keyed by the static's name:
+
+- `INTEGRITY_STATICS`: `isFrozen` / `isSealed` / `isExtensible` are `test`
+  rows with two answers, `intrinsic` (pristine realm: extensible, not sealed,
+  not frozen) and `primitive` (§20.1.2.12–14: a non-Object is frozen and
+  sealed, not extensible); `freeze` / `seal` / `preventExtensions` are
+  `mutator` rows (a non-Object operand is returned unchanged).
+- `objectIntegrityCallFold(call, realm)` → `{ answer }` | `{ operand }` |
+  `undefined`. One operand and the ambient `Object`. *(Rewritten in review
+  rounds 1 and 2.)* **Trust boundary:** the fold assumes the integrity statics
+  and the pristine intrinsics are not changed through any path the source does
+  not expose syntactically — the assumption #3776's isFrozen fold already
+  makes. It guarantees no more than that the source shows none of the routes
+  below; each one refuses the fold:
+  - a runtime-eval site that may run (`eval`, `Function`, `new Function`): the
+    boundary plan's `providerMayExecute`, passed in as the realm's
+    `dynamicCodeMayRun`;
+  - an occurrence of the identifier `Object` other than `Object.<identifier>`
+    read as a value or called, or the operand of an integrity *test*
+    (`Object.isFrozen(Object)`, which reads it and nothing else). So an
+    assignment, compound-assignment or destructuring target, an update or
+    `delete` operand (also through parentheses / `as` / `!`), a computed
+    access, and any other value use (`var o = Object`, `f(Object)`,
+    `(Object).x`) refuse;
+  - a member named `Object` (`this.Object`, `$262.global["Object"]`), the
+    identifier `globalThis`, or a `with` statement;
+  - a reflective route: the names `getPrototypeOf`, `setPrototypeOf`,
+    `__proto__` or `Reflect`, and any `.constructor` except one used only as
+    an identity (`x.constructor !== C`) or for its `name`
+    (`x.constructor.name`), the two reads assert.js's `assert.throws` makes.
+    This also covers `[].constructor.constructor("…")`, `Function` reached
+    without spelling it. A name counts as an identifier, a string literal or
+    a template literal without substitutions (``({})[`constructor`]``). A
+    **computed** key (`var k = "constr" + "uctor"; ({})[k]`) is outside the
+    trust boundary: refusing every computed key removes all 57 files, because
+    the harness itself (assert.js) reads computed keys;
+  - for an intrinsic operand only: any mention of an integrity mutator.
+
+  Operand
+  classes: an ES5 intrinsic or `X.prototype` (only while the source names no
+  mutator, as before); a primitive literal (boolean, number, string), or
+  `null` / the unshadowed `undefined` for a test. A mutator's result is its
+  operand, so a nullish operand (no IR value without the consumer's hint) and
+  an intrinsic (it mutates) stay legacy.
+- The selector's `isPhase1Expr` call arm and from-ast's `lowerMethodCall` call
+  this one function where they called the isFrozen fold: an answer is admitted
+  and emitted as a branded boolean constant, a mutator's operand is walked /
+  lowered as the expression itself. Refusal happens at select; from-ast never
+  sees a call the selector refused.
+- Legacy's module-init adapter (`call-builtin-static.ts`) keeps calling
+  `isPristineEs5IntrinsicIsFrozenCall`, now the `isFrozen` × intrinsic row of
+  the same classifier, so its decision and its bytes are unchanged.
+
+**Reused:** the intrinsic tables and the source mutation scan of
+`object-integrity.ts`, `isUnshadowedUndefined` (`shared/ambient-intrinsics.ts`),
+the existing fold call sites. No runtime, no host import, no target branch:
+every answer is a constant or a literal.
+
+**Duplicate removed:** the isFrozen-only fold and its isFrozen-only
+reassignment check become rows of one table; the selector and from-ast keep one
+call site each, as before (no new arm beside them).
+
+### Acceptance
+
+- **Gain** measured base vs head on standalone and gc: the 265 ES5 files that
+  name an integrity static, plus 200 random other ES5 files (seeded `shuf`).
+- **Zero** IR-only files lost, units newly legacy, new post-claim errors, and
+  pass → fail flips on the changed files.
+- Every binary without a newly claimed unit is byte-identical; the playground
+  is identical on both lanes.
+- **Tests** (`tests/issue-7106-lever-o.test.ts`, both lanes): each static on
+  each admitted operand class, claimed and checked against node's answer for
+  the same body; refused rows (a mutated intrinsic, a nullish mutator operand,
+  a dynamic operand, a reassigned `Object.isSealed`, gOPD, `Object` as a value)
+  stay legacy and run correctly.
+- **Code quality:** one table-driven arm in the existing module; selector and
+  from-ast call sites unchanged in number; no new module, import edge or budget
+  grant; net `src/ir` growth stated.
+
+### Measured (2026-11-07, as built)
+
+Base `cb64e11d5f` (origin/main), head = this branch, niced workers. A/B
+population: the 265 ES5 files whose source names an integrity static, plus 200
+random other ES5 files (`shuf --random-source=<(yes 7106)`); 465 files, both
+lanes. Pass/fail is `runTest262File` (sloppy run plus strict rerun).
+
+This is a body-level measurement, not a label bound: the head compiles every
+file with the lever in place, so a refusal the `Object` label hid behind it in
+the same unit still counts against the file.
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, base → head | 43 → 100 (**+57**) | 43 → 100 (**+57**) |
+| …of them in the random sample | 0 | 0 |
+| IR-only files lost | 0 | 0 |
+| units newly legacy | 0 | 0 |
+| units newly claimed | 57 (each a `<module-init>`) | 57 |
+| new post-claim errors | 0 | 0 |
+| binaries changed | 57, exactly the newly IR-only files | 57, the same files |
+| binaries byte-identical | 408 (the whole random sample included) | 408 |
+| pass → fail on the changed files | 0 (57/57 pass on both) | 0 (57/57 pass on both) |
+
+By static: `isSealed` 25, `isExtensible` 21, `isFrozen` 5, `freeze` 3,
+`preventExtensions` 3. The 57 sit above the census estimate (≈53) because the
+census population covered only the overlay map's unsampled files.
+
+**Non-Object operands.** ES5 throws a TypeError for a primitive operand of all
+six statics; ES2015 (and test262, node and legacy) answers it instead. The fold
+answers as ES2015, which is what every changed file asserts.
+
+Playground: 26 binaries (13 examples × both lanes) identical. A refactor after
+the first A/B run was re-measured on all 465 files: every binary and every
+legacy-unit list identical to the first head.
+
+**Code.** `src/ir/object-integrity.ts` +85 net (the table, the operand classes,
+the per-file facts); the
+selector and from-ast call sites +3 / +1 lines, under the issue's existing
+function grants; no new module, import edge or grant. Gates pass bare: loc and
+func (also against `cb64e11d5f`), coercion, oracle, dead exports, typecheck;
+equivalence gate no new regression. Tests: `issue-7106-lever-o` 61/61 on both
+lanes. `issue-3776`'s "shadowed bindings" case fails on base too (2/10, the
+`const Object = …` receiver), unchanged here.
+
+**Not done here.** The fresh-context adversarial review is the lead's to run.
+`getPrototypeOf` / `keys` / `getOwnPropertyNames` / `new Object` stay
+refused (see the census); a mutator with a `null` / `undefined` operand stays
+legacy (4 test262 files), as does a test of a non-literal primitive or of a
+dynamic object.
+
+### Review round 1 (#7188, 2026-11-08)
+
+Changes requested: one regression against main, one unsound rule, one nit.
+
+1. **Fixed — a mutator in dynamic code.** `function setup(){ eval("Object.preventExtensions(JSON)") } setup(); Object.isExtensible(JSON)`
+   answered `true` (node and main: `false`); `eval("Object.seal(Date)")` the
+   same. The fold now refuses whenever a runtime-eval site may run, read from
+   the existing boundary inventory (`IrRuntimeEvalBoundaryPlan.providerMayExecute`,
+   built once per program in `codegen/index.ts`). It reaches the selector as
+   the `runtimeEvalMayExecute` selection option and from-ast as the resolver
+   method of the same name, and enters `objectIntegrityCallFold` as the
+   realm's `dynamicCodeMayRun`; unset means refuse. Test262 bodies keep the
+   fold because the runner's uncalled `$262.evalScript` shim is elided before
+   the plan is built (measured: no site in any of the 57 files).
+2. **Fixed — blocklist replaced by an allowlist** (rule in the Implementation
+   Plan above). Every probe — `Object["pre"+"ventExtensions"](x)`,
+   `delete Object.isFrozen`, `Object.defineProperty(Object, "isSealed", …)`,
+   `Object["isExtensible"] = …`, `var o = Object; o.isFrozen = …`,
+   `(Object).isFrozen = …`, `globalThis.Object = …`, `this.Object = …`,
+   `with ({ Object: … })` — is refused by the fold (a direct test of the
+   admission) and stays legacy. Legacy answers the first as node does; on the
+   other eight it answers wrongly exactly as main does (same outcome on base),
+   which the test pins. `(Object as any).isFrozen = f` is TypeScript-only and
+   is covered by the parenthesised row (`as` / `!` / parentheses are unwrapped
+   before the write test). Legacy's own isFrozen adapter keeps #3776's rule so
+   its bytes do not move.
+3. **Fixed — hint.** A mutator's literal operand is lowered with its own type
+   (`f64`, `string` or the boolean brand), carried by the fold as the literal's
+   family.
+
+The first allowlist cut lost one file main claims,
+`isFrozen/15.2.3.12-3-2.js` (`Object.isFrozen(Object)`): its operand is a
+value use of `Object`. The operand of an integrity *test* only reads it, so it
+is the one admitted non-member occurrence.
+
+**Re-measured** (base `6d723c6949` = the origin/main merged into the branch,
+same 465 files, both lanes): +57 IR-only per lane (43 → 100), the same 57
+files as before, so the review fixes cost no gain; 0 lost, 0 units newly
+legacy, 0 new post-claim errors, 57/57 changed binaries pass on base and head,
+408 byte-identical. Tests: `issue-7106-lever-o` 111/111 (new rows for every probe, the
+direct admission checks among them). `linear-tests` (the CI job's exact
+command) passes locally, 243/243.
+
+### Review round 2 (#7188, 2026-11-08)
+
+1. **Fixed — reflective routes to `Object`.** `Object.prototype.constructor.isFrozen = …`,
+   `({}).constructor.isSealed = …`, `Object.getPrototypeOf({}).constructor.isExtensible = …`,
+   `delete Object.prototype.constructor.isExtensible`, the same write in a
+   getter, `({}).__proto__.constructor…`, `Reflect.set(Object, …)` and
+   `[].constructor.constructor("…")()` now refuse the fold (rule and trust
+   boundary in the Implementation Plan). Legacy answers each of them wrongly,
+   exactly as on main. A literal "any `.constructor`" refusal also removed
+   all 57 files: assert.js's `assert.throws` reads `thrown.constructor` (an
+   identity compare and `.name`). Those two reads are admitted; any other use
+   of a `.constructor` value refuses.
+2. **Fixed — duplicated helpers.** The write test is `isStoreTarget`
+   (`shared/binding-writes.ts`) plus a `delete`-operand check; the local
+   `isAssignmentOperator` is gone (the `FirstAssignment`–`LastAssignment`
+   range).
+
+**Re-measured** (base `ad7789a495` = the origin/main merged into the branch,
+same 465 files, both lanes): +57 IR-only per lane (43 → 100), the same 57
+files; 0 lost, 0 units newly legacy, 0 new post-claim errors, 57/57 pass on
+base and head, 408 byte-identical, playground 26/26 identical. Tests:
+`issue-7106-lever-o` 144/144; `linear-tests` (CI's command) 243/243. Gates
+pass bare, also against origin/main.
+
+### Review round 3 (#7188, 2026-11-08)
+
+Approved with two fixes:
+
+1. **Fixed — template-literal keys.** `propertyNameText` reads a template
+   literal without substitutions as a name, so ``({})[`constructor`].isFrozen = f``
+   refuses the fold. The same helper feeds the mutator scan, so legacy's
+   #3776 isFrozen adapter now also refuses ``Object[`freeze`]`` — the one
+   legacy change, and only more conservative. Refusing every *computed* key
+   was measured and dropped all 57 files (assert.js reads computed keys), so
+   computed keys are stated outside the trust boundary, and a test pins that
+   the fold still admits one.
+2. **Fixed — duplicated wrapper check.** `isExpressionWrapper` is the one
+   predicate for parentheses / `as` / `<T>` / `satisfies` / `!`, used by
+   `unwrapExpression` and `unwrapExpressionParent`.
+
+**Re-checked** (base `ad7789a495`): the 57 files plus 25 random files from
+the other 408, both lanes. +57 IR-only; every binary is byte-identical to
+round 2's head, and the 25 are identical to base; no new post-claim error
+(the 2 in `intl402/DateTimeFormat/test-option-date-time-components.js` are
+also on base). Tests: `issue-7106-lever-o` 149/149. Gates pass bare.
+
+## ES5 lever P — primitive wrappers and statics (2026-11-08, root; claim on #6583)
+
+The `claim-issue.mjs --allocate` scan refused ("open-PR id scan DEGRADED",
+exit 6), so per the brief this section lives here, not in its own issue.
+
+### Census (origin/main `4d5478b37c`, standalone, body-level)
+
+Method: the body-bounds rewrite (`__ir_stub(…)` under a local-only selector
+flag that lowers to a dynamic `undefined`) over the 1,431 ES5 files carrying a
+`new String/Number/Boolean` or a `String.*`/`Number.*`/`Boolean.*` member
+chain, minus files already IR-only. **141** files become IR-only with every
+site stubbed. Split by sub-shape (each stubbed alone):
+
+| sub-shape | files IR-only alone | example |
+|---|---|---|
+| `String.prototype.<m>.call(r, …)` (`pcall`; all 41 are `trim`) | **37** | `String/prototype/trim/15.5.4.20-1-3.js` |
+| `new X(v)` as a value (`new`) | 30 | `String/15.5.5.5.2-1-1.js` |
+| `X.prototype…` other than `.call` (`Number.prototype.toString()`) | 14 | `Number/prototype/toString/…` |
+| static calls (`Number.hasOwnProperty`, `String.fromCharCode`) | 8 | |
+| static reads (`Number.NaN`, `±_INFINITY`) | 0 alone; 39 need `new` + `Number.prototype` + the reads together | |
+| `new` + `pcall` together | 71 (= 30 + 37 + 4) | |
+
+### Scope of this slice: `String.prototype.<m>.call(<primitive>, …)` (P1)
+
+`String.prototype.m.call(r, …a)` with `r` a proven string, number or boolean
+is `ToString(r).m(…a)` (§22.1.3: every ES5 String method starts with
+RequireObjectCoercible + ToString on `this`; a primitive is never nullish).
+The IR already lowers both halves: `String(v)` of a primitive
+(`lowerPrimitiveToString`) and a string-method call from the one surface
+(`string-method-surface.ts` → `lowerStringMethodCall`). The arm composes them;
+no runtime, provider or host import is added.
+
+- **Module.** The borrow shape becomes one matcher keyed by constructor:
+  `matchPrototypeBorrowCall(expr, "Array" | "String")` in
+  `src/ir/array-prototype-borrow-call.ts`. `matchArrayPrototypeBorrowCall`
+  keeps its wrapper-name gate on top of it.
+- **Selection** (`select.ts`, beside the Array borrow): the ambient `String`
+  (`selectorSeesAmbientStringBinding`), a receiver whose proven family is
+  string, number or boolean, and the method's plan through the existing
+  `stringMethodSelection` (now taking the argument list), so a method is
+  claimed exactly when the backend has a row. A nullish, dynamic, object or
+  wrapper receiver refuses at selection (`expr-string-borrow-receiver`).
+- **Lowering** (`from-ast.ts`): the receiver through the `String(v)` arm's
+  primitive conversion, then `lowerStringMethodCall` with the remaining
+  arguments.
+- **Duplicate removed.** The Array-only borrow walk becomes the shared,
+  constructor-keyed matcher; the `String(v)` primitive conversion is factored
+  out of `tryLowerAmbientStringToStringCall` and reused, not copied.
+- **Acceptance.**
+  - The `trim.call` files with primitive receivers become IR-only on
+    standalone; 0 pass→fail, 0 files lost, 0 units newly legacy, 0 post-claim
+    errors on the census set plus 200 random ES5 files, both lanes; gc and
+    playground bytes identical where nothing new is claimed.
+  - `tests/issue-7106-lever-p.test.ts`: claimed rows (string, number,
+    boolean, `-0`, `1e21` receivers; `trim`, `charAt`, `indexOf`, `slice`)
+    equal JS on both lanes; refused rows (`undefined`/`null`/object/wrapper
+    receiver, a method without a row, `.apply`) stay legacy and correct.
+  - Code quality: no second borrow matcher and no second primitive-ToString;
+    the new select and from-ast arms are each one function next to their
+    Array-borrow sibling, with no growth grant beyond the two arms.
+
+### Not in this slice, and why
+
+- **`new X(v)` as a value (30 files).** Measured by admitting the wrapper and
+  boxing it into the dynamic carrier: the dynamic runtime answers wrong for a
+  wrapper in three places the census files use — an index read
+  (`new String("abc")[1]` is `undefined`), a loose `==` against a string
+  (`false`), and a prototype method call (`(new Number(1)).toFixed()` throws
+  "not a function"). Claiming the value is only exact once each use is
+  certified (lever V's use-site pattern for a wrapper-holding script var) or
+  those dynamic ops learn the wrapper; both are their own slice.
+- **`Number.prototype` as a value and the static reads (39 + 14 files).** They
+  need the intrinsic-singleton value provider of #7294; no IR row reads a
+  builtin prototype object today.
+- **Static calls (8 files).** `Number.hasOwnProperty(…)` on the constructor
+  object needs the same singleton; `String.fromCharCode` (2) is a follow-up
+  row on the string surface.
+
+### Measured (2026-11-08, as built)
+
+Base `4d5478b37c` (origin/main; main's later commits touch no `src/`), head
+this branch, one niced worker per pass. Population: the 1,431 census files plus
+200 random ES5 files (`.tmp/rnd200.txt`), 1,603 distinct, 1,589 compiling on
+both sides, compiled as the runner does (original harness, `allowJs`).
+Pass/fail is `runTest262File` (sloppy run plus strict rerun) on every changed
+file, both trees.
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, base → head | 241 → 277 (**+36**) | 241 → 277 (**+36**) |
+| …of them in the random sample | 0 | 0 |
+| IR-only files lost | 0 | 0 |
+| units newly legacy | 0 | 0 |
+| new post-claim errors | 0 | 0 |
+| binaries changed | 36, each a newly claimed `<module-init>` | 36, the same files |
+| binaries byte-identical | 1,553 | 1,553 |
+| pass → fail on the changed files | 0 (36/36 pass on both) | 0 (36/36 pass on both) |
+| playground (13 programs) | identical | identical |
+
+The 36 are `String/prototype/trim/15.5.4.20-1-{3,4,7}` and `15.5.4.20-2-*`
+(33). The other trim borrows stay legacy by design or behind another arm: an
+object, array or nullish receiver (`.call({})`, `.call([1])`,
+`.call(undefined)`, refused as `expr-string-borrow-receiver`; the stubbed
+census counted one of them as its 37th), or a RegExp / Error constructor or
+another body shape elsewhere in the file.
+
+**Found and fixed in validation: a patched `String.prototype`.** Legacy looks
+the borrowed method up on the live prototype, so
+`String.prototype.trim = f; String.prototype.trim.call(" a ")` calls `f`. The
+first cut lowered the surface row regardless (a pass→fail outside the census
+population). The borrow now refuses when the program may patch
+`String.prototype` (`expr-string-borrow-patched-prototype`), asking the shared
+`sourceMayPatchPrototype`, whose intrinsic set gains `String`; its other
+callers ask only `Array` / `Object`, so nothing else moves. The 36 gained
+binaries are byte-identical before and after the fix. The ordinary method form
+(`" a ".trim()` after the same patch) is already claimed on main and answers the
+intrinsic; that is a pre-existing gap for its own issue, not this slice.
+
+**Trust boundary (review, 2026-11-08).** The borrow trusts the realm's
+`String.prototype.<m>` and `Function.prototype.call` exactly as legacy does: it
+is claimed only when the source shows no route that could replace what the
+call reaches. Refused at selection (`expr-string-borrow-patched-prototype`), all
+from one cached walk in `src/shared/intrinsic-prototype-writes.ts`:
+
+- `String.prototype` or `Function.prototype` used other than as the object of
+  a plain member read (`sourceMayPatchPrototype`): a store, `delete`,
+  `Object.defineProperty`, an alias or any other escape;
+- a store, `delete` or `Object.defineProperty` of any member or binding named
+  `call` or `String` (`sourceWritesMemberNamed`): `x.call = f`,
+  `String.prototype.trim.call = f`, `globalThis.String = v`, `String = v`;
+- a reflective name anywhere (`sourceNamesReflectiveRoute`): `getPrototypeOf`,
+  `setPrototypeOf`, `__proto__`, `Reflect`, `constructor` (except the two
+  read shapes assert.js uses, an identity compare and `.constructor.name`),
+  and any `with` statement.
+
+A bare mention of `globalThis` is not refused: the test262 runtime shim reads
+`globalThis.<name>` and stores `global: globalThis` in every test, so that rule
+would refuse all 36 files. A patch through the escaped global object still has
+to write a member named `String` (or `call`), which the name rule refuses; a
+computed key (`o["Str" + "ing"] = v`) is outside the boundary, as it is for
+legacy and for lever O. Legacy answers every listed route the same way (it
+does not model them either), so these refusals keep parity, not fix a
+regression. Re-measured on the 36 gained files plus 30 random ES5 files, both
+lanes: all 36 still claim, 66/66 binaries byte-identical to `c75028d573`.
+
+**Follow-up: one reflective-route helper.** Lever O (#7188,
+`src/ir/object-integrity.ts`) keeps the same `REFLECTIVE_NAMES` list and an
+`isObservedConstructor` twin for `Object`'s statics. Once both levers are on
+main, lever O's facts should read `sourceNamesReflectiveRoute` (and the shared
+`isObservedConstructor`) from `src/shared/intrinsic-prototype-writes.ts`,
+removing its copy.
+
+**Next sub-shapes, by measured yield** (census above, files IR-only alone):
+`new X(v)` as a value (30; needs certified wrapper uses or wrapper-aware
+dynamic ops), `X.prototype` other than `.call` (14) and the static reads (39
+together with `new` and `Number.prototype`; both need #7294's intrinsic
+singletons), static calls (8; `String.fromCharCode` is 2 of them, a surface
+row).
+
+### Review round 2 (#7178, 2026-11-07) and main `a484c365fe`
+
+Approved, with two nits, fixed in `93eec5fe24`:
+
+1. `isPhase1VarDeclarationList` computes `isScriptVarList(list)` itself; the
+   parameter (one caller passed a literal `true`) is gone.
+2. `isModuleInitVarList` returns `boolean`, not a type guard that is false for
+   some declaration lists; `lowerForStatement` checks the initializer itself.
+
+Main `a484c365fe` (with #7292, module-init array literals) is merged in
+(`444bb4f67f`). Re-measured on it, one niced worker: base = main, head =
+lever L; standalone on the 790 `for (var` files plus 200 of the random
+sample (926 compile on both sides), gc on the 200 sample files plus every
+changed file (211):
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, main → L | 11 → 27 (**+16**, the same 16) | 11 → 27 (+16) |
+| lost / units newly legacy / new post-claim errors | 0 / 0 / 0 | 0 / 0 / 0 |
+| binaries changed | 16, each a newly claimed `<module-init>` | 16 |
+| pass → fail on the 16 | 0 (16/16 pass on both) | 0 |
+| playground (26 binaries) | identical | identical |
+
+#7292 does not move the leading blocker: `vardecl-module-storage-unrepresentable`
+is still the sole `<module-init>` refusal in 229 files of the census, led by
+`var __expected = [...]` (220 files, a string-element array) and
+`var __executed = /…/.exec(…)` (212, a RegExp match result), then `obj = {…}`
+(125), `print = …` and `$262 = …` (103 each).
+
+Equivalence gate on the merged lever L: no new regressions (4,850 passing,
+20 failing, all in the 22-row known-failures baseline; 2 baseline rows now
+pass).
+## `<module-init>` lever L2 — the rest of the script-`var` path (plan, 2026-11-07)
+
+Stacked on lever L (`claude/7106-lever-l`, #7178). Three shapes from lever L's
+blocker table, all writes to the same `__mod_<name>` script-`var` slots.
+
+### Census (lever L head `65552ecb58`, standalone, unmasked)
+
+Population: lever L's 1,130 files plus every other ES5 file whose top-level
+code (outside functions) has one of the shapes, found by a parse-only scan
+(81 prefix updates, 369 nested `var` statements, 21 nested `for (var` heads;
+361 not yet in lever L's census), 1,491 files.
+
+| shape | refusal | carriers | sole blocker | sole except a literal home (lane C) |
+| --- | --- | --- | --- | --- |
+| (a) `++i` / `--i` | `expr-prefix-op-++` / `---` | 30 | 5 | 3 |
+| (b) `var` statement in top-level control flow | `vardecl-var-kind` | 161 | 40 | 22 |
+| (c) `for (var` head nested in a block | `for-init-var-kind` | 12 | 3 | 3 |
+| (b) and (c) together | | 173 | 43 | 25 |
+| all three | | 203 | 48 | 28 |
+
+"Sole" means `<module-init>` has no other refusal and no other unit is legacy;
+the masking caveat of lever L applies (a refused statement hides what is
+behind it). All three are taken: (b) carries the payoff, and (a) and (c) are
+small but fall out of the same two edits.
+
+### Implementation Plan
+
+1. **(b) + (c): one predicate.** `isModuleInitVarList`
+   (`src/shared/var-declaration-lists.ts`) becomes structural: the list of a
+   `var` statement or of a `for (;;)` `var` head whose ancestors up to the
+   source file are all statement containers (block, `if`, loops, label,
+   `try`/`catch`, `switch`). It refuses a list inside a function, a `with` body
+   (a name there may resolve to the object), a `for-in`/`for-of` head, and a
+   `catch` clause whose parameter it re-declares (Annex B.3.5: that `var`
+   writes the parameter). `moduleInitVarLists(statement)` lists the modelled
+   lists of one top-level statement and replaces the single-list
+   `moduleInitVarList`; its consumers (`collectIrSafeModuleVarDeclarationLists`,
+   `moduleInitBindings`, from-ast's `moduleInitContainsNestedVar`) take the
+   plural, and the last one tests `isModuleInitVarList(node)` instead of
+   comparing with the one modelled list.
+   - Nothing else changes in selection or lowering: a nested `var` statement
+     already reaches `isPhase1VarDecl` → `isPhase1VarDeclarationList` and
+     `lowerVarDecl`'s module arm, and a nested head already reaches lever L's
+     `for` arm. A nested declaration is a write at its position, because the
+     prologue seeds the slot (`emitModuleVarUndefinedSeeds` walks the same
+     region) and a re-executed `var x;` is a no-op.
+   - The resolver (`isModuleBindingDeclaration`) and the ordinal enumerator
+     (`moduleInitVarBindings`) number "every declaration that is not a
+     top-level statement's own", so a nested statement's names join the leaves
+     and head names.
+   - Legacy observation: `isHoistedScriptVar` (lever L's
+     `isScriptForHeadVar`, widened) lets `registerVarDeclListGlobals`, which the
+     hoisting walk already calls for every nested list, hand each such
+     declaration's slot to the Program ABI.
+2. **(a): no new arm.** `isPhase1ForUpdateExpr` admits `++i`/`--i` beside
+   `i++`/`i--` through the same branch (`identifierUpdateRefusal`); the update
+   value is discarded, and `lowerForUpdateExpr` already lowers both through
+   `lowerIncrementDecrement`. Statement-position prefix updates are already
+   admitted. A prefix update in value position (`x = ++i`) stays refused, as
+   the postfix one does.
+
+**Removed duplicates:** the single-list `moduleInitVarList` and its
+`unlabelled` walk; the "top-level `for` head" special case in the codegen
+helper; the postfix-only branch of the update arm.
+
+### Acceptance
+
+- Measured as lever L: both lanes, base = lever L head, on the 1,491 files.
+  Zero IR-only files lost, zero pass → fail, zero new post-claim errors on the
+  population; every binary without a newly claimed unit byte-identical;
+  playground identical.
+- Tests: `tests/issue-7106-lever-l2.test.ts`, both lanes: claimed nested
+  statements (loop, `while`, `do`, `if`, `try`, `switch`), nested heads,
+  prefix updates, reads before and after, redeclarations; refused: `with`
+  bodies, a catch-parameter re-declaration.
+- Code quality: one structural predicate; no new selector or lowering arm; no
+  budget grant.
+
+### Lever L2 measured (2026-11-07)
+
+Base: lever L at `4cf965aa1f` (review round 1 included), head `145ccae225`, one
+niced worker, both lanes. Population: the 1,491 files of the census above
+(1,431 compile on both sides; the rest are runner-skipped or compile errors on
+both, unchanged).
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, base → head | 44 → 55 (**+11**) | 44 → 55 (**+11**) |
+| IR-only files lost | 0 | 0 |
+| binaries changed | 11, each a newly claimed `<module-init>` | 11, the same files |
+| binaries byte-identical | 1,420 (the whole random sample included) | 1,420 |
+| units newly legacy | 0 | 0 |
+| new post-claim errors (on these files) | 0 | 0 |
+| pass → fail on the changed files | 0 (11/11 pass on both) | 0 (11/11 pass on both) |
+| playground (26 binaries) | identical | identical |
+
+The 11: `Math/ceil/S15.8.2.6_A7`, `Math/floor/S15.8.2.9_A7`,
+`Math/round/S15.8.2.15_A6`, `statements/function/S13.2.1_A8_T1`,
+`statements/try/S12.14_A1`, `_A2`, `_A11_T3`,
+`statements/variable/S12.2_A6_T1`, `_A6_T2`, `_A7`, `_A12`.
+
+**Why 11, not the census's 48.** A refused statement hid the refusals behind
+it. Over the 203 files that carried an L2 refusal, the arms `<module-init>`
+now reports are led by `vardecl-module-storage-unrepresentable` (62 files,
+17 as the sole arm: lane C's literal homes), `expr-ident-not-in-scope` (43),
+`expr-new-ctor-unknown` (25), `throw-module-scalar-unboxed` (21, lever T),
+`expr-module-extern-call-brand` (19), `expr-new-module-binding-callee` (18).
+
+**Skipped:** a prefix update in value position (`if (++x !== 1)`,
+`S11.4.4_*` / `S11.4.5_*`, 18 files still carry it). The postfix one is
+refused in value position too (#4459's discard gate), so there is no postfix
+lowering to reuse; it is a value-position update lever of its own. The census
+"prefix" count (30) was mostly these.
+
+**Known exposures, outside this population:** each claims and then withdraws,
+and each has a statement twin that does the same (or worse) on main:
+- `try { throw 1; } catch (e) { var q = 3; }`: "throw val not in slice 9"
+  (main twin `var q; try { throw 1; } catch (e) { q = 3; }`; lever T's area);
+- `for (…) { var ch = 'a'; acc += ch; }`: "typed string += requires …
+  encoding evidence" (main twin `var ch; for (…) { ch = 'a'; acc += ch; }`
+  is a hard compile error on main);
+- `if (false) { var a = 5; } a === undefined` reads `0` from an `f64` slot,
+  as legacy does (#4489's residual), so the claim keeps legacy's wrong answer.
+
+**Code.** One structural predicate, `isModuleInitVarList`, plus
+`moduleInitVarLists`, in `src/shared/var-declaration-lists.ts`; the
+single-list `moduleInitVarList` and its label walk are gone; the update arm
+admits prefix through the postfix branch. `src/ir` net 0 (+56/−56);
+`src/shared` +36; codegen +2. No new selector or lowering arm, no grant.
+Gates pass bare: loc, func (also against origin/main `5ef8f0aae5`),
+coercion, oracle, dead exports, typecheck, import cycles, standalone arms,
+IR layering, flat dir, IR fallbacks; compiler boundaries as on main.
+Tests: lever-l2, lever-l, var-pattern-heads, for-head-destructuring,
+script-var, uninitialized-var: 263/263.
+
+### L2 review round 1 (#7179, 2026-11-07) and main `a484c365fe`
+
+Changes requested (plus the CI equivalence failure in
+`issue-7252-module-binding-class-instance`, "declared inside a block"). Fixed
+in `b98ab0ea6a`, after merging lever L's round 2 and main (`99d7787d06`).
+
+1. **Fixed — a reference home behind a nested `var` (pass → fail).** A string
+   or class-instance (#7252) home reads as a written value, which holds only
+   when the declaration runs before every later read. A nested declaration
+   may never run (`if (false)`, `while (false)`, `for (; false;)`, a missed
+   `switch` case, `L: { break L; var … }`, a nested head, an unreached
+   `catch`), and the read then answered something other than `undefined`.
+   - The same root as the equivalence failure: L2 claimed a `{ var c = new C(); }`
+     whose class-instance slot may be null. The claim agreed with legacy (both
+     trap on the null slot) but broke #7252's own rule that every IR read sees
+     a written slot. It is answer (a), unsound, fixed at selection.
+   - Fix: `scriptVarReferenceKind` binds no reference kind unless the
+     declaration's list is top-level (`isTopLevelVarList`), so such a binding
+     is refused as `vardecl-module-storage-unrepresentable`. Typed (f64/i32)
+     homes are unchanged: their `0`/`false` read matches legacy and is wrong on
+     main too (out of scope).
+   - **Cost: none measured.** The same 11 files still become IR-only.
+   - Tests: every repro, the template-literal variant, a zero-iteration loop,
+     an unreached `catch` and the #7252 case are in
+     `tests/issue-7106-lever-l2.test.ts` (stay legacy, run correctly).
+2. **Fixed.** The unreachable postfix branch in `isPhase1ForUpdateExpr` is gone.
+3. **Fixed.** One helper, `isTopLevelStatementDeclaration`
+   (`src/shared/var-declaration-lists.ts`), replaces the three copies (ordinal
+   enumerator, resolver, codegen predicate).
+4. **Scope, stated.** The prefix-update change also admits `for (…; ++i)` in
+   every function, not only in `<module-init>`. Its lowering is postfix's
+   (`lowerIncrementDecrement`, the update's value is discarded). The census
+   covered the 22 ES5 files with a prefix `for` update: no binary changed
+   outside the 11 module-init claims. The evidence for function units is the
+   full equivalence gate (below).
+5. **Fixed.** `catchParameterIsRedeclared` matches a pattern parameter's leaf
+   names; a same-named `var` there is an early error (B.3.5 exempts only an
+   identifier parameter), which its doc states.
+
+**Re-measured on main `a484c365fe`**, one niced worker; base = lever L
+(merged with main), head = L2. Standalone on the 446 L2-shape files, the 22
+prefix-update files and 200 random-sample files (597 compile on both sides);
+gc on the 200 sample files plus every changed file (202):
+
+| measure | standalone | gc |
+| --- | --- | --- |
+| IR-only files, L → L2 | 14 → 25 (**+11**, the same 11) | 11 → 22 (+11) |
+| lost / units newly legacy / new post-claim errors | 0 / 0 / 0 | 0 / 0 / 0 |
+| binaries changed | 11, each a newly claimed `<module-init>` | 11 |
+| pass → fail on the 11 | 0 (11/11 pass on main, L and L2) | 0 |
+| playground, main → L2 (26 binaries) | identical | identical |
+
+On top of main + #7292, L and L2 together make **27** more ES5 files IR-only
+on each lane (16 + 11).
+
+**Gates**, bare: loc, func (also against main), coercion, oracle, dead
+exports, typecheck, import cycles, standalone arms, IR layering, flat dir.
+**Equivalence gate** on L2 (and earlier on the merged lever L): no new
+regressions, 4,850 passing, 20 failing, all in the known-failures baseline.
+**Tests**: lever-l2 (60), and with lever-l, var-pattern-heads,
+for-head-destructuring, script-var, script-var-reference-homes and the
+#7252/#7253/var-hoisting/binding-null-guard equivalence files: all pass.
+
+## ES5 lever SR — String receivers and arguments (plan, 2026-11-08)
+
+This folds the two census-only sections "ES5 lever P2" (branch
+`claude/7106-lever-p2`) and "ES5 lever S (string-method argument proofs)"
+(branch `claude/7106-lever-s-args`) into one lever. Neither half cleared the
+bar alone: P2 reached 13 files, S at most 19.
+
+### Census (lever P head `8af326da35`, standalone and gc)
+
+Population: the 518 ES5 files that call a String.prototype method, compiled as
+the runner does, with every refused top-level statement reporting its arm.
+**30** files have `<module-init>` as their only legacy unit and only
+argument-surface refusals, or argument refusals beside a fresh `new String(v)`
+receiver. A substitution probe stood in for the census stub: each blocked
+argument or receiver was rewritten to a form the IR already claims, and the
+file recompiled. **23** of the 30 then become IR-only on both lanes; nothing
+else in those files is refused.
+
+| shape | files | claims after the substitution |
+| --- | --- | --- |
+| fresh `new String(v)` receiver with a hoisted-`undefined` `var x` or an empty IIFE argument (`S15.5.4.{4,5,6,7,8,12,13,15}_A1_T6`, `{4,5,6}_A1_T9`) | 11 | 11 |
+| zero-argument `indexOf()`, `lastIndexOf()`, `search()` (`A1_T4`, `A1.1_T1`) | 4 | 4 |
+| `search(undefined)` on a primitive (`S15.5.4.12_A1_T7`) | 1 | 1 |
+| nullish argument to `concat` (`S15.5.4.6_A1_T7`, `_T8`) | 2 | 2 |
+| empty IIFE argument (`slice`/`substring` `_A1_T14`) | 2 | 2 |
+| string literal in a number role (`charAt("x")`, `slice("e")`, `substring("e")`) | 3 | 3 |
+| IIFE receiver `function(){return "…"}().m(null)` (`concat` `_T5`, `match` `_T5`, `search` `_T5`) | 3 | 0 (the IIFE receiver is refused; out of scope) |
+| `"lego".concat()` with no argument | 1 | skipped (see Scope) |
+| strict IIFE closure (`10.4.3-1-102-s`, `-102gs`), `replace` callback | 3 | out of scope |
+
+**Target: 23 files on each lane.**
+
+### Scope and spec
+
+Each argument conversion is the method's own, per ES2024 §22.1.3 (ES5 §15.5.4):
+
+- **Hoisted-`undefined` `var` read** (`var x;` read before or after its
+  declaration, never written): the value is `undefined`, so it converts as the
+  literal does.
+  - The proof is name-based and whole-file, like
+    `bindingIsUniqueAndNeverWritten`:
+    - every binding site of the name is an initializer-less `var` declarator;
+    - nothing writes it (no store, `delete`, `defineProperty` or member write
+      of that name, so no `this.x = v` either);
+    - no `with`, no `eval` or `Function` identifier (direct or indirect), no
+      reflective route.
+  - (Review round 1) The read must sit inside the function or script that
+    declares one of those declarators, so a read cannot fall through to an
+    undeclared global. `arguments` is never proven. A script-level declarator
+    is a global-object property, so it declines for a name the host already
+    defines (`GLOBAL_VALUE_NAMES`: `NaN`, `Array`, `console`, …) and when
+    `this` or `globalThis` escapes (`this[k] = v`, `Object.assign(this, …)`).
+  - The read has no side effect, so not evaluating it is exact.
+- **Empty IIFE argument** (`function(){}()`, no parameters, no arguments, an
+  empty body, not a generator or async): the value is `undefined` and the call
+  has no observable effect.
+- **String literal in a number role** (`position`/`length`): ToNumber of the
+  literal is a compile-time constant (`Number(text)`, StringToNumber), fed to
+  the role's existing ToIntegerOrInfinity path as an `f64` constant. NaN
+  reaches the same `i32.trunc_sat` and `lastIndexOf` NaN rule as a runtime
+  number.
+- **Zero-argument `indexOf()` / `lastIndexOf()`:** searchString is
+  ToString(undefined) = `"undefined"` (§22.1.3.9 step 3). The `search`
+  parameter of these two rows gets the omitted default `"undefined"`. An
+  explicit `undefined` already converts to the same text.
+- **`concat(v)` with one argument:** ToString(this) followed by ToString(v),
+  where `null` gives `"null"` and `undefined` / `void 0` give `"undefined"`. A
+  new row over the existing `__str_concat` helper, one `search`-role
+  (ToString) parameter, no omitted default. `concat()` with no argument is out
+  of scope: a nullish argument must not take the empty default, and one file
+  does not pay for the extra parameter rule.
+- **`search(p)` with a static pattern** (none, `undefined`, `null`, or a
+  string literal without RegExp SyntaxCharacters; review round 1 dropped
+  `true`/`false`, whose `@@search` lookup reads `Boolean.prototype`):
+  - ES2024 §22.1.3.23:
+    - for a nullish pattern, GetMethod is skipped and the RegExp is created
+      from the pattern;
+    - for a string literal, the GetMethod reads `String.prototype[@@search]`,
+      which is guarded below;
+    - `RegExpCreate(p)` uses source `""` for `undefined` (the empty regexp
+      matches at 0) and ToString(p) otherwise;
+    - with no syntax characters it matches exactly the literal text, so
+      `search` is `indexOf(text, 0)`.
+  - New argument role `pattern`, row over `__str_indexOf` with one user
+    argument (extra arguments are refused) and a hidden zero position.
+  - Trust boundary: refused when the source may patch `RegExp.prototype`,
+    `String.prototype` or `Object.prototype` (a string pattern's `@@search`
+    lookup reaches `Object.prototype`), or names a reflective route. `RegExp`
+    joins the patchable intrinsics. (Review round 1) The guard is a property
+    of the row (`readsRegExpProtocol`), checked once per call, so `search()`
+    with no argument is guarded too.
+- **`match(null)`:** returns an array; out of scope.
+- **Fresh `new String(v)` receiver** (exactly one argument `v`, a proven
+  string, number or boolean, on the ambient `String`):
+  - `new String(v).m(…)` is String.prototype.m with `this` = a fresh wrapper.
+    Every row's method starts with RequireObjectCoercible + ToString(this),
+    and ToString(wrapper) = ToPrimitive(wrapper, string) =
+    `String.prototype.toString` of its [[StringData]] = ToString(v).
+  - That is lever P's borrow with receiver `v`, behind lever P's trust boundary
+    (`String.prototype` / `Function.prototype` patches, members or bindings
+    named `call` or `String` written, reflective routes).
+  - The wrapper is consumed only as `this` of a method that converts it, so
+    its identity is never observable. A wrapper anywhere else (stored, compared,
+    passed or returned) is not this shape and stays refused.
+  - Evaluation order is kept: `v`, then the arguments, then the call. ToString
+    of a primitive has no effect.
+
+### Design
+
+- **`src/ir/string-method-surface.ts`** (the one surface table): the rows
+  (`concat`, `search`, the `"undefined"` default on `indexOf`/`lastIndexOf`),
+  the `pattern` role, the `empty`/`"undefined"` omitted defaults, the user
+  arity cap for `search`, and the static argument classification. That last
+  one gains the empty IIFE, the always-`undefined` `var` (via the shared proof)
+  and the string literal's ToNumber. No per-method arm: every addition is a row
+  or a role.
+- **`src/shared/always-undefined-binding.ts`** (new, pure AST): the
+  never-written, initializer-less `var` proof. Selector and builder ask the
+  same function, so they cannot disagree.
+- **`src/ir/array-prototype-borrow-call.ts`:** `ambientStringPrototypeBorrow`
+  also matches `new String(v).m(…)` and returns the same `PrototypeBorrowCall`
+  (receiver `v`). Lever P's selection and lowering then apply unchanged.
+- **`select.ts`:**
+  - `stringMethodArgumentProven` reads the extended static classification and
+    the number-role literal;
+  - the `pattern` role is proven only for a static pattern, behind its trust
+    boundary;
+  - a static argument is not walked by `isPhase1Expr`, because lowering never
+    lowers it. The same fact (`isUnevaluatedStringMethodArgument`) is
+    applied at the two other walks that would otherwise see it: the local call
+    graph adds no edge for it, and the throw-value module-scalar walk skips
+    it, since it is never evaluated.
+- **`from-ast.ts`:** `lowerStringMethodArgument` lowers a number-role string
+  literal as its `f64` ToNumber through the existing numeric path, and the
+  `pattern` role as its static text. `omittedStringMethodArgument` gains the
+  two textual defaults.
+- **Reused:**
+  - lever P's borrow selection, lowering and trust boundary;
+  - `staticStringMethodArgument`, `stringMethodPlan`, `__str_indexOf` and
+    `__str_concat`;
+  - the omitted-argument machinery and the numeric position path;
+  - `sourceMayPatchPrototype`, `sourceNamesReflectiveRoute` and
+    `sourceWritesMemberNamed`.
+- **Duplicate removed:** none of the new cases gets its own matcher or
+  conversion. The wrapper receiver rides the borrow; zero arguments and
+  nullish arguments ride the omitted/static machinery.
+
+### Acceptance
+
+- The 23 files claim on both lanes. A/B over the 518 String-method files plus
+  200 random ES5 files, both lanes:
+  - 0 files lost;
+  - 0 units newly legacy;
+  - 0 new post-claim errors;
+  - 0 pass→fail on the changed files;
+  - every binary without a newly claimed unit byte-identical.
+- `tests/issue-7106-lever-sr.test.ts`, both lanes:
+  - claimed rows checked against JS: each conversion, a wrapper receiver of a
+    string, a number and a boolean, the `search` patterns;
+  - refused rows, which stay legacy and correct:
+    - a written or initialized `x`;
+    - a non-empty IIFE;
+    - a `search` pattern with syntax characters;
+    - an extra `search` argument;
+    - a wrapper of an object, of `null`, or with no argument (a stored,
+      compared or passed wrapper is not the matched shape at all);
+    - a patched `String.prototype` / `RegExp.prototype`.
+- The equivalence gate, and the source gates run bare.
+- **Code quality:**
+  - every new case is a row, role or default of the one surface table, or the
+    one shared proof;
+  - no per-method arm, no consumer whitelist;
+  - the wrapper receiver adds no lowering of its own;
+  - no growth grant beyond what the gates require (stated here, dated, if
+    any).
+
+### Result (measured 2026-11-08, base lever P `8af326da35`)
+
+- **Claims:** the 23 target files are IR-only on both lanes; the other 7 of
+  the census 30 stay legacy as scoped (IIFE receivers, `concat()`, the strict
+  closures, the `replace` callback).
+- **A/B**, 706 files (the 518 String-method files ∪ the 200 random ES5 files;
+  14 negative/raw/module files are not compiled), per lane:
+
+  | lane | IR-only base → head | gain | lost | units newly legacy | new post-claim errors | binaries changed | changed without a new claim |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | standalone | 100 → 123 | 23 | 0 | 0 | 0 | 23 | 0 |
+  | gc | 100 → 123 | 23 | 0 | 0 | 0 | 23 | 0 |
+
+  None of the gains falls in the random sample: the lever is specific to
+  String-method files. 669 binaries per lane are byte-identical, and the 13
+  playground examples are byte-identical on both lanes.
+- **Runner pass/fail** on the 23 changed files, base and head, both lanes: 23
+  pass on each side; 0 pass→fail. Legacy already passed them, so the gain is
+  IR ownership, not conformance.
+- **Pre-existing gap, not this lever's:** a direct call on a primitive
+  (`"a".trim()`, now also `"a".concat(null)`) ignores a patched
+  `String.prototype` method on both the legacy and the IR path, measured on the
+  base and the head alike. The borrow, the wrapper receiver and the `search`
+  pattern are behind the trust boundary; the direct surface never was.
+- **Grant:** `buildLocalCallGraph` +2 for the unevaluated-argument call edge, which also
+  restates lever P's +7 against main's refreshed ceiling.
+- **Gates:**
+  - equivalence gate: 0 new regressions (4850 passing);
+  - linear tests: 243/243;
+  - loc and func budgets, at the fork point and against `origin/main`:
+    green;
+  - coercion, oracle-ratchet, dead-exports and typecheck: green.
+
+### Review round 1 (fresh-context adversarial review, 2026-11-08)
+
+| # | finding | verdict |
+| --- | --- | --- |
+| 1 | `search()` with no argument skipped the patch guard | fixed: `readsRegExpProtocol` row flag, checked once in `stringMethodSelection` |
+| 2 | the `var` proof was not tied to scope; `arguments`, `NaN`/`Infinity` | fixed: the read must lie in a declaring scope; `arguments` and host-global names decline |
+| 3 | proof weaker than `bindingIsUniqueAndNeverWritten` | fixed: `eval`/`Function` identifiers, reflective routes, and an escaping `this`/`globalThis` decline |
+| 4 | `@@search` reads `Object.prototype` / `Boolean.prototype`; constructor aliases | fixed: `Object` in the guard, boolean patterns refused, and any escape of a patchable constructor (`var R = RegExp`) counts as may-patch; a constructor used only as a borrowed array method's callback (assert.js `Array.prototype.map.call(a, String)`) stays inert |
+| 5 | `isBindingName` duplicated codegen's binding-site test | fixed: one `isBindingSiteName` in `shared/binding-writes.ts`, used by both; codegen's heritage check now also counts `import X =` binding sites, which only makes it decline more |
+| 6 | four walks, three predicates for an unevaluated argument | fixed: one `isUnevaluatedStringMethodArgument`, keyed on the parent call (a borrow over a primitive or a direct call on a proven string, with a plan); `isEmptyFunctionCall` moved next to the `var` proof |
+| 7 | `arity` on the plan; `undefined → ""` encoded twice | fixed: `arity` is a row field; an `undefined` pattern takes the omitted default only |
+| 8 | `const t = s.substring(1)` borrow reaching the "borrow has no plan" invariant | rebutted: no such receiver passes selection; every spelling tried (unannotated, annotated, `as string`, `!`, parenthesised, module `const`, wrapper) is refused at `expr-string-borrow-receiver` on lever P and on SR, with 0 post-claim errors |
+| 9 | the wrapper matcher matched any method name | fixed: only names with a surface row (`isStringSurfaceMethod`) |
+| 10 | tests | fixed: refusal reason asserted; guarded rows for 1–4 (legacy's own answer is wrong on them, measured, so they assert the refusal and are not compared); `lastIndexOf()`, `search(true)`, a static-argument `.call` borrow and a receiver-before-argument evaluation-order row added |
+| 11 | nits | fixed: `/` is not a SyntaxCharacter; stale doc; module header; `prototypeOwner` reads a set |
+
+**Result after round 1** (same 706 files, base lever P `8af326da35`): per lane
+IR-only 100 → 123, gain 23, 0 lost, 0 units newly legacy, 0 post-claim
+errors, 669 binaries byte-identical, every changed binary a newly claimed
+file. Runner pass/fail on the 23: 23/23 pass on both lanes, 0 pass→fail.
+Playground examples byte-identical on both lanes.
+
+### Review round 2 (fresh-context re-review, 2026-11-08)
+
+| # | finding | verdict |
+| --- | --- | --- |
+| N1 | `globalThis["RegExp"]`, `this.RegExp`, `self.RegExp`, `this.String` slipped the prototype guards (`"abc".search("b")` → 1 after `globalThis["RegExp"].prototype.exec = …`) | fixed: any member or literal-keyed element access named like a patchable constructor is a reference to it (`referencedName`), for `X.prototype` owners and for constructor escapes alike; the same rule makes `self`, `window`, `global` and `$262.global` global-object references |
+| N2 | a parameter initializer read a body `var` as proven (`function f(a = "x".concat(v)) { var v; }`) | fixed: a function's proving scope is its body; checked on the proof directly, since the IR refuses that function on its parameters first |
+| N3 | `GLOBAL_VALUE_NAMES` lacks `print`, `$262`, `self`, `window`, `global`, `Iterator`, `Float16Array`, `Temporal` | fixed: a `HOST_GLOBAL_NAMES` supplement beside the checker's table; the realm catalog has no global-object entry, so `realmStringKeys` cannot answer it |
+| N4 | `Function("RegExp.prototype.exec = …")()` passed both guards | fixed: one `sourceRunsDynamicCode` fact (`eval` / `Function` by any name route, except a `prototype` read or an operand) in `intrinsic-prototype-writes.ts`, used by the `var` proof, `regExpProtocolMayBePatched` and lever P's borrow guard |
+| N6 | tests | fixed: one guarded row per N1, N3, N4 (both forms), each asserting its refusal arm; the N2 proof row |
+| nits | | fixed: the array-callback exception is `String`-only; every refused and guarded row asserts its arm (`JS2WASM_IR_SHAPE_DIAG` compile); one `isProvenStringReceiver` serves isPhase1Expr and the unevaluated-argument predicate; #8's invariant is stated at the throw |
+
+**Result after round 2** (same 706 files, base main `248841a4fe` with lever P,
+standalone lane; the gc rerun was cut for the wrap-up, and round 1 measured the
+two lanes identical): IR-only 101 → 124, gain 23, 0 lost, 0 units newly
+legacy, 0 post-claim errors, 669 binaries byte-identical, every changed binary
+a newly claimed file. The 23 targets claim and run on both lanes.
+
+### Not covered
+
+- **N5, runtime-built keys** (pre-existing): a key computed at run time
+  (`/a/["con" + "structor"]`, `o[k]` for a built `k`) reaches a prototype
+  past every reflective check, which reads only literal names.
+- **Legacy miscompiles of the guarded rows** (pre-existing): on both lanes
+  legacy ignores a patched `RegExp.prototype.exec`, `Object.prototype[@@search]`,
+  an aliased or member-reached constructor patch, and a computed global write,
+  so the guarded rows assert the refusal and are not compared against JS.
