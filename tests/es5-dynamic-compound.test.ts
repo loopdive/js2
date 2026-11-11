@@ -47,3 +47,26 @@ it("keeps dynamic exponentiation outside this ES5 admission", () => {
   for (const rhs of ["number", "dynamic", "undefined"] as const)
     expect(compoundWriteAdmissible(ts.SyntaxKind.AsteriskAsteriskEqualsToken, "dynamic", rhs)).toBe(false);
 });
+
+// The selector asks the builder's operand rule, so an RHS with no numeric carrier
+// is refused at selection instead of claimed and withdrawn.
+for (const [op, rhs] of [
+  ["-=", '"2"'],
+  ["*=", "true"],
+  ["-=", "null"],
+] as const)
+  it(`refuses script dynamic ${op} ${rhs} at selection`, async () => {
+    const result = await compile(`var y; y = 1; y ${op} ${rhs};`, {
+      fileName: "compound-refusal.js",
+      allowJs: true,
+      target: "standalone",
+      trackIrOutcomes: true,
+      deferTopLevelInit: true,
+    });
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    expect(result.irPostClaimErrors).toEqual([]);
+    const init = result.irOutcomes?.find((o) => o.displayName === "<module-init>");
+    expect(init?.stage, JSON.stringify(init)).toBe("select");
+    expect(init?.detail).toContain("rejected by IR selection");
+    expect(init?.irBodyEmitted).toBe(false);
+  });

@@ -114,6 +114,8 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
+  # 2026-11-11 (PR 7130 review): +11, isSelectableNumberCompound asks the builder's compoundWriteAdmissible about a dynamic script var's proven RHS family (binaryOperandFamily), and the operand-admissibility import
+  - src/ir/select.ts
   # 2026-11-08 (merge of origin/main): the `regexp-match` home's doc line and the classifier `certifiedScriptVarUse` now takes (+3); its kind, write and use arms joined lever V's dispatch in src/ir/module-binding-certified-homes.ts. 2026-11-07 (#7106 levers R2 + S2): the admission lives in src/ir/regexp-match-uses.ts
   - src/ir/module-bindings.ts
   # 2026-11-06 (#7106 lever R1): the constructor's static tail is exported unchanged as compileStandaloneStaticRegExp for the IR's extern.regex wrapper, plus standaloneStaticRegExpCompiles, the selection predicate over the same compiler

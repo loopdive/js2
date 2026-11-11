@@ -243,6 +243,7 @@ import {
   type AdditiveLane,
   nativeI32OperandsAdmissible,
   type OperandFamily,
+  compoundWriteAdmissible,
 } from "./analysis/operand-admissibility.js";
 import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
@@ -9720,6 +9721,17 @@ function isSelectableNumberCompound(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  // A dynamic script var takes the builder's own operand rule (`lowerCompoundAssignment`)
+  // for an RHS whose lowered family selection proves; an unproven one is the builder's to judge.
+  const rhsFamily = binaryOperandFamily(expr.right, scope, localClasses);
+  if (
+    ts.isIdentifier(expr.left) &&
+    moduleBinding(expr.left)?.valueKind.kind === "dynamic" &&
+    rhsFamily !== "unknown" &&
+    !compoundWriteAdmissible(expr.operatorToken.kind, "dynamic", rhsFamily)
+  ) {
+    return shapeNo("compound-dynamic-module-operand", expr.right);
+  }
   if (expr.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken) {
     return exactNumericExponentiationAdmissible(expr, scope, localClasses);
   }
