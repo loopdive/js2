@@ -6,7 +6,7 @@
  */
 import { ts } from "../ts-api.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
-import { bindingHasMixedAssignmentCarrier } from "./analysis/mixed-assignment-carrier.js";
+import { bindingHasCrossDomainAssignment } from "./analysis/mixed-assignment-carrier.js";
 import { paramReadIsJsDefaultGuess } from "./js-default-param-type-guess.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
@@ -38,7 +38,7 @@ export function expressionHasWidenedStaticType(ctx: CodegenContext, expr: ts.Exp
   if (ts.isIdentifier(expr)) {
     const declaration = ctx.oracle.variableDeclarationOf(expr);
     if (declaration) {
-      if (bindingHasMixedAssignmentCarrier(ctx, declaration)) return true;
+      if (bindingHasCrossDomainAssignment(ctx, declaration)) return true;
       if (!declaration.type && declaration.initializer) {
         return expressionHasWidenedStaticType(ctx, declaration.initializer, seen);
       }
