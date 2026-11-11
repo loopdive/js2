@@ -18,12 +18,10 @@ export { resolvePlatformCapabilityImport } from "./platform-capability-adapter.j
 
 import { marshalExports, type MarshalExportSource } from "./init-marshal-registry.js";
 
-type ExportsSource = MarshalExportSource | undefined;
-
 export function wrapConsoleForHost(
   capability: Function,
   intent: { type: string; variant?: string; name?: string },
-  exportsSource: ExportsSource,
+  exportsSource: MarshalExportSource | undefined,
   primitiveToHost: (value: any, exports: Record<string, Function> | undefined) => unknown,
   miss: unknown,
   fromHost?: (value: unknown, exports: Record<string, Function>) => unknown,

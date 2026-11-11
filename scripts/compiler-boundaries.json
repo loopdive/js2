@@ -5133,14 +5133,6 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/declarations/widened-property-return.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "5386-alias-property-writes",
-      "nextBoundary": "Separate AST-based alias evidence from physical return-carrier selection."
-    },
-    {
       "path": "src/codegen/declarations/with-body-var-hoisting.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8022,6 +8014,14 @@
     },
     {
       "path": "src/codegen/native-construct.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/native-string-memory-reader.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -14485,6 +14485,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/native-string-memory.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/process-capability.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -16838,6 +16843,11 @@
     },
     {
       "path": "src/shared/contracts/string-surrogate.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/init-marshal-helpers.ts",
       "state": "clean",
       "layer": "foundation"
     },
