@@ -57,7 +57,11 @@ interface IdentifierWriteSite {
 }
 
 interface WriteIndex {
-  /** A `with` statement or a direct `eval` may write any name under the root. */
+  /**
+   * A direct `eval` may write any name under the root. A `with` body needs no
+   * flag: its writes are identifier writes in the index, and they resolve to
+   * no declaration, which a resolving query counts as a write.
+   */
   readonly dynamicScope: boolean;
   readonly byName: ReadonlyMap<string, readonly IdentifierWriteSite[]>;
 }
@@ -81,7 +85,6 @@ function writeIndexOf(root: ts.Node): WriteIndex {
   let dynamicScope = false;
   const byName = new Map<string, IdentifierWriteSite[]>();
   const visit = (node: ts.Node): void => {
-    if (ts.isWithStatement(node)) dynamicScope = true;
     if (ts.isCallExpression(node)) {
       const callee = skipOuterExpressions(node.expression);
       if (ts.isIdentifier(callee) && callee.text === "eval") dynamicScope = true;
@@ -105,9 +108,10 @@ function writeIndexOf(root: ts.Node): WriteIndex {
  * as written. (#7283) A function declaration's binding is checked the same way.
  *
  * (#7306) The writes are `identifierWritesOf`'s: assignments, updates,
- * for-in/of heads and repeated `var` initializers; `with` and direct `eval`
- * fail closed. With `resolve`, a same-name write counts only when it resolves
- * to this binding (or to nothing); without it, every same-name write counts.
+ * for-in/of heads and repeated `var` initializers; a direct `eval` fails
+ * closed. With `resolve`, a same-name write counts only when it resolves to
+ * this binding or to nothing (a write inside `with`); without it, every
+ * same-name write counts.
  */
 export function localIsRewritten(
   declaration: ts.VariableDeclaration | ts.FunctionDeclaration,
@@ -164,7 +168,7 @@ export function collectLatticeParamFacts(
 ): LatticeParamFacts | undefined {
   if (!fn.body || fn.parameters.length === 0) return undefined;
   const writes = writeIndexOf(fn.body);
-  if (writes.dynamicScope) return undefined; // `with` / direct `eval` may write any parameter
+  if (writes.dynamicScope) return undefined; // a direct `eval` may write any parameter
   const facts = new Map<ts.ParameterDeclaration, "number" | "string">();
   for (let i = 0; i < fn.parameters.length; i++) {
     const astParam = fn.parameters[i]!;

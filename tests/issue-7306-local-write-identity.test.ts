@@ -5,6 +5,7 @@ import { collectLatticeParamFacts, localIsRewritten } from "../src/ir/lattice-pa
 import { selectStaticPredicateCall } from "../src/ir/static-predicates/selection.js";
 import { localValueDeclaration } from "../src/ir/module-bindings.js";
 import { irVal } from "../src/ir/index.js";
+import { compile } from "../src/index.js";
 
 function fixture(body: string) {
   const file = "/issue7306.js";
@@ -159,3 +160,29 @@ for (const [body, fact] of [
     const facts = collectLatticeParamFacts(fn, [{ name: "p", type: irVal({ kind: "f64" }) }]);
     expect(facts?.get(fn.parameters[0]!)).toBe(fact);
   });
+
+// A `with` body is not a dynamic scope for the whole index: its writes are
+// identifier writes that resolve to nothing, so only the names it writes count.
+it("a with body writing another name leaves the binding unwritten", () => {
+  const { declaration, resolve } = fixture("let x=1; with(o) { y=2; }");
+  expect(localIsRewritten(declaration, resolve)).toBe(false);
+});
+
+it("a with body writing the binding's name still rewrites it", () => {
+  const { declaration, resolve } = fixture("let x=1; with(o) { x=2; }");
+  expect(localIsRewritten(declaration, resolve)).toBe(true);
+  expect(localIsRewritten(declaration)).toBe(true);
+});
+
+it("a with statement in an unrelated function keeps top-level calls on the IR", async () => {
+  const result = await compile(
+    "function f(a) { return a + 1; } function g(b) { return f(b) * 2; } " +
+      "function h(o) { with (o) { return 1; } } export function test() { return g(1); }",
+    { fileName: "p.js", allowJs: true, skipSemanticDiagnostics: true, trackIrOutcomes: true, target: "standalone" },
+  );
+  expect(result.irPostClaimErrors ?? []).toEqual([]);
+  for (const name of ["f", "g", "test"])
+    expect(result.irOutcomes?.find((o) => o.displayName === name)?.irBodyEmitted, name).toBe(true);
+  const { instance } = await WebAssembly.instantiate(result.binary, {});
+  expect((instance.exports.test as () => number)()).toBe(4);
+});
