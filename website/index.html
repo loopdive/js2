@@ -4718,8 +4718,11 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           message.setAttribute("role", "status");
           message.textContent = "IR conformance is unmeasured. No completed IR measurement is available.";
           document.getElementById("conformance-donut-slot").replaceChildren(message);
-          document.getElementById("compat-pass-rate").textContent = "Unmeasured";
-          document.getElementById("compat-pass-rate-label").textContent = message.textContent;
+          // The headline stat is optional markup, as it is for the regular view's hydration.
+          const rate = document.getElementById("compat-pass-rate");
+          if (rate) rate.textContent = "Unmeasured";
+          const rateLabel = document.getElementById("compat-pass-rate-label");
+          if (rateLabel) rateLabel.textContent = message.textContent;
           window.__conformanceHeadlineHydrated = true;
           const mode = "standalone";
           showIrProvenance(false, mode);
@@ -5472,6 +5475,8 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           "https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-standalone-current.json",
         ];
         const donutStyle = "--t262-bg: var(--bg, #060a14)";
+        // The IR view has no other lane to fall back on: a missing artifact is unmeasured.
+        const UNAVAILABLE_LABEL = IR_SELECTED ? "Unmeasured" : "Unavailable";
         const renderDonut = (summary, captionMain = "ECMAScript", captionSub = "conformance") => {
           const pass = Number(summary?.pass ?? 0);
           const fail = Number(summary?.fail ?? 0);
@@ -5502,7 +5507,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           donutSlot.innerHTML = `
             <div class="conformance-unavailable" role="status" aria-live="polite">
               <div>
-                <div class="conformance-unavailable-value">Unavailable</div>
+                <div class="conformance-unavailable-value">${UNAVAILABLE_LABEL}</div>
                 <div class="conformance-unavailable-title">${captionMain}</div>
                 <div class="conformance-unavailable-title">${captionSub}</div>
                 <div class="conformance-unavailable-copy">${detail}</div>
@@ -5547,7 +5552,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         const updateHeadlineUnavailable = (captionMain, captionSub, detail) => {
           if (!rateEl || !rateLabelEl) return;
           window.__conformanceHeadlineHydrated = true;
-          rateEl.textContent = "Unavailable";
+          rateEl.textContent = UNAVAILABLE_LABEL;
           rateLabelEl.textContent = `${captionMain} ${captionSub}: ${detail}`;
         };
         const hasUsableSummary = (summary) => {
@@ -5769,7 +5774,9 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           if (!hasUsableSummary(summary)) {
             return {
               summary: null,
-              reason: `Standalone test262 data is not available for ${strictOnly ? "strict " : ""}${scope} scope yet.`,
+              reason: IR_SELECTED
+                ? `IR test262 data is unmeasured for ${strictOnly ? "strict " : ""}${scope} scope.`
+                : `Standalone test262 data is not available for ${strictOnly ? "strict " : ""}${scope} scope yet.`,
             };
           }
           if (summaryHasStaleResults(summary)) {
@@ -6013,6 +6020,12 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           // js-host slider for one frame.
           syncEditionTimelineSrc();
           editionTimeline.setAttribute("value", "overall");
+          // The IR view has no other lane's buckets to build a slider from, so
+          // without them the timeline publishes no scope. The measured overall
+          // figure must not wait on it; the slider itself reports the editions
+          // as unmeasured.
+          if (IR_SELECTED && standaloneData?.report && !standaloneData.editionBuckets?.size)
+            applyScopeFromDetail({ scope: "overall" });
 
           // #106 toggle removed (2026-05-24): the "Include TC39 proposals" scope
           // is now implicit via the edition-timeline slider (overall+proposal).

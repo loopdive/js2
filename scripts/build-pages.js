@@ -481,6 +481,14 @@ const measuredIrData = (data, target) => {
     );
   return data.compilerPathVerified === false && ["unknown", "mixed"].includes(data.executionCompilerPath);
 };
+// The category and per-file edition maps classify test files by frontmatter,
+// so one measured lane's copy serves both; every other artifact is one lane's.
+const irArtifactTarget = (relativePath) =>
+  /test262-(category|file)-editions\.json$/.test(relativePath)
+    ? undefined
+    : relativePath.includes("standalone")
+      ? "standalone"
+      : "gc";
 for (const relativePath of [
   "test262-ir-status.json",
   "test262-standalone-ir-status.json",
@@ -527,7 +535,7 @@ for (const relativePath of [
     data.compilerPath !== "ir" ||
     (unavailable
       ? data.compilerPathVerified !== false || typeof data.reason !== "string" || !data.reason
-      : !measuredIrData(data, relativePath.includes("standalone") ? "standalone" : "gc"))
+      : !measuredIrData(data, irArtifactTarget(relativePath)))
   ) {
     throw new Error(`IR Test262 artifact lacks explicit path provenance: ${source}`);
   }

@@ -2173,6 +2173,21 @@ jobs:
           node scripts/build-test262-report.mjs --input ir-measurement/results.jsonl \
             --output ir-measurement/test262-standalone-ir-report.json --compiler-path ir \
             --target standalone --baseline-sha "${{ github.sha }}" --max-unclassified-root-causes "$failure_ceiling" "${proposals[@]}"
+      - name: Classify the IR results by ES edition
+        # The regular lane's own generators, over the IR rows: an output named
+        # `test262-editions.json` also writes the category and per-file edition
+        # maps beside it. Raw (unlabelled) output stays out of the artifact; the
+        # step below publishes it under the IR measurement's identity. A failure
+        # leaves the editions unmeasured rather than failing the measurement.
+        run: |
+          mkdir -p ir-editions-raw/runs
+          node --experimental-strip-types scripts/generate-editions.ts \
+            --results ir-measurement/results.jsonl \
+            --output ir-editions-raw/test262-editions.json \
+            --host-free --no-feature-examples \
+            && node scripts/append-run-history.mjs --runs-dir ir-editions-raw/runs \
+              --standalone-editions ir-editions-raw/test262-editions.json --sha "${{ github.sha }}" \
+            || echo "::warning::IR edition buckets failed; the IR view will show editions as unmeasured"
       - name: Record separate status and run history
         env:
           RUN_ID: ${{ github.run_id }}
@@ -2204,6 +2219,19 @@ jobs:
           if (report.measurementState === 'measured') {
             writeFileSync('ir-measurement/ir/test262-standalone-categories.json', JSON.stringify({ ...run, categories }, null, 2));
             writeFileSync('ir-measurement/ir/runs/standalone-index.json', JSON.stringify({ ...run, runs: [run] }, null, 2));
+            // Edition artifacts are optional: an absent one is unmeasured, never borrowed from the regular lane.
+            const raw = name => { try { return JSON.parse(readFileSync(`ir-editions-raw/${name}`, 'utf8')); } catch { return undefined; } };
+            const editions = raw('test262-editions.json');
+            if (Array.isArray(editions) && editions.length > 0) {
+              writeFileSync('ir-measurement/ir/test262-standalone-editions.json', JSON.stringify({ ...run, editions }, null, 2));
+              const snapshot = raw('runs/standalone-editions-index.json')?.at(-1);
+              if (snapshot) writeFileSync('ir-measurement/ir/runs/standalone-editions-index.json',
+                JSON.stringify({ ...run, runs: [{ ...snapshot, timestamp: report.timestamp }] }, null, 2));
+              for (const map of ['test262-category-editions.json', 'test262-file-editions.json']) {
+                const data = raw(map);
+                if (data) writeFileSync(`ir-measurement/ir/${map}`, JSON.stringify({ ...run, data }));
+              }
+            }
           }
           // IR_MEASUREMENT_ARTIFACTS_END
           NODE

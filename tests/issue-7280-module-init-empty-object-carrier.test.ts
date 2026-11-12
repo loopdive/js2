@@ -132,11 +132,12 @@ if (delete obj["a"] !== true) throw "del";
 if (obj.a !== undefined) throw "gone";`,
     irOn: [],
   },
-  "an Object.defineProperty target keeps its legacy storage (S3)": {
+  // (#7335) A U1 define on a carrier whose every use is served lowers through #7128's applier.
+  "a U1 Object.defineProperty on the carrier (#7335)": {
     source: `var obj = {};
 Object.defineProperty(obj, "length", { value: 3 });
 if (obj.length !== 3) throw "len";`,
-    irOn: [],
+    irOn: ["standalone"],
   },
 };
 

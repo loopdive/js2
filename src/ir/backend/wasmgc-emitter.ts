@@ -366,7 +366,9 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   }
 
   emitDowncast(target: { typeIdx: number } | IrType, out: Instr[]): void {
-    out.push({ op: "ref.cast", typeIdx: refTargetTypeIdx(target) });
+    // A nullable IrType target keeps null: `ref.cast null`.
+    const nullable = !("typeIdx" in target) && asVal(target)?.kind === "ref_null";
+    out.push({ op: nullable ? "ref.cast_null" : "ref.cast", typeIdx: refTargetTypeIdx(target) });
   }
 
   emitFromExternref(target: { typeIdx: number } | IrType, out: Instr[]): void {

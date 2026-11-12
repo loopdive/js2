@@ -23,6 +23,7 @@
  * the match array or null, including g/y `lastIndex` semantics read from the
  * recovered struct at run time. No host import: standalone only.
  */
+import { STANDALONE_REGEXP_CARRIER_EXEC_HELPER } from "../ir/regexp-runtime-contract.js";
 import type { ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -35,8 +36,6 @@ import {
   ensureStandaloneRegExpStruct,
 } from "./regexp-standalone.js";
 import { addFuncType } from "./registry/types.js";
-
-export const STANDALONE_REGEXP_CARRIER_EXEC_HELPER = "__regexp_exec_carrier";
 
 const EXTERNREF: ValType = { kind: "externref" };
 

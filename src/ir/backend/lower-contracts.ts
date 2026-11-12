@@ -46,6 +46,8 @@ export interface IrLowerResolver {
   /** Exact post-call carrier adaptation for a provider with a legacy ABI. */
   callResultAdapter?(ref: IrFuncRef): "native-string-from-externref" | undefined;
   resolveGlobal(ref: IrGlobalRef): number;
+  /** (#7106 lever S2) The ValType of a module-defined global `resolveGlobal` names; absent for an import. */
+  resolveGlobalType?(ref: IrGlobalRef): ValType | undefined;
   resolveType(ref: IrTypeRef): number;
   internFuncType(type: FuncTypeDef): number;
   /**

@@ -228,6 +228,39 @@ test("report builder carries actual requested-attempt counters through full and 
     const categories = JSON.parse(readFileSync(join(directory, "test262-standalone-ir-categories.json"), "utf8"));
     assert.equal(categories.measurementState, "measured");
     assert.equal(categories.compileErrorCases, 1);
+    // The IR view's strict-mode figure reads this, exactly as the regular view does.
+    assert.equal(data.strict_summary.total, 1);
+    assert.equal(data.strict_summary.pass, 0);
+    assert.equal(data.strict_summary.compile_error, 1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the edition history generator the IR measurement reuses emits one unlabelled snapshot", () => {
+  const directory = mkdtempSync(join(tmpdir(), "test262-ir-editions-"));
+  try {
+    const editions = join(directory, "test262-editions.json");
+    writeFileSync(editions, JSON.stringify([{ edition: "ES5", pass: 1, fail: 1, ce: 0, skip: 0, total: 2, pct: 50 }]));
+    const child = spawnSync(
+      process.execPath,
+      [
+        join(root, "scripts/append-run-history.mjs"),
+        "--runs-dir",
+        join(directory, "runs"),
+        "--standalone-editions",
+        editions,
+        "--sha",
+        "0123456789abcdef",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(child.status, 0, child.stderr);
+    const history = JSON.parse(readFileSync(join(directory, "runs/standalone-editions-index.json"), "utf8"));
+    // Bare arrays: the IR measurement job wraps them in its own identity before publishing.
+    assert.equal(history.length, 1);
+    assert.equal(history[0].gitHash, "01234567");
+    assert.deepEqual(history[0].editions, [{ edition: "ES5", pass: 1, total: 2 }]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

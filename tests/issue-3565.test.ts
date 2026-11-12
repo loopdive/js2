@@ -73,7 +73,7 @@ describe("#3565 — restore IR designed demote-to-legacy contracts", () => {
     expect(r.success).toBe(true);
     expect(hardIrErrors(r)).toHaveLength(0);
     const pc = (r.irPostClaimErrors ?? []).map((e: any) => e.message);
-    expect(pc.some((m: string) => m.includes("compound assign RHS must be f64"))).toBe(true);
+    expect(pc.some((m: string) => m.includes("compound assign RHS has no numeric carrier"))).toBe(true);
     const { instance } = await WebAssembly.instantiate(r.binary, {});
     (instance.exports as any).__module_init?.();
     expect((instance.exports as any).test()).toBe(3);

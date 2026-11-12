@@ -365,7 +365,12 @@ class T262ConformanceTrend extends HTMLElement {
     // carry no rank and never contribute.
     const selectedRank = T262_EDITION_SCOPE_RANK.get(t262NormalizeEditionLabel(scope));
     const extract = isOverallScope
-      ? (run) => ({ pass: run?.pass, total: run?.total, timestampRaw: run?.timestamp })
+      ? // An IR history row is its report's metadata, so its counts sit under `summary`.
+        (run) => ({
+          pass: run?.pass ?? run?.summary?.pass,
+          total: run?.total ?? run?.summary?.total,
+          timestampRaw: run?.timestamp,
+        })
       : (run) => {
           if (typeof selectedRank !== "number" || !Array.isArray(run?.editions)) return null;
           let pass = 0;
