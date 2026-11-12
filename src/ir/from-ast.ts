@@ -333,11 +333,10 @@ import {
   admittedEmptyLiteralIsOpenCarrier,
   admittedOwnPropertyCallMethod,
 } from "./select.js";
-import { openCarrierDefinePlan, type DataDescriptorField } from "./empty-object-literal.js";
 import type { OwnPropertyMethod } from "./dynamic-home-open-object.js";
-import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
+import { objectStaticCallPlan, type ObjectStaticCapability, type ObjectStaticDefinition } from "./object-statics.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
-import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
+import { emitNewPlainObject, emitObjectStaticCall } from "./open-object-carrier.js";
 import {
   isStatementDynamicModuleCall,
   localValueDeclaration,
@@ -624,7 +623,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
   supportsBackendCapability?(
-    capability: "number-to-string" | "native-regexp" | IrAmbientGlobalFunctionCapability,
+    capability: "number-to-string" | "native-regexp" | IrAmbientGlobalFunctionCapability | ObjectStaticCapability,
   ): boolean;
   /**
    * (#7253) The host-free provider legacy calls for a direct ambient
@@ -7897,7 +7896,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // (`tryCompileStoredObjectBuiltinCall`, legacy's `Array.isArray` arm).
   const alias = certifiedAliasCall(expr, (name) => cx.scope.has(name));
   if (alias !== undefined && cx.resolver?.stringIsExternref?.() !== true) {
-    const carriers = lowerAliasCarrierOperands(expr.arguments, alias.method, cx);
+    const carriers = expr.arguments.map((argument) => lowerCarrierOperand(argument, alias.method, cx));
     if (alias.form === "uncurried") return cx.builder.emitDynOwnProperty(carriers[0]!, carriers[1]!, alias.method);
     const result = alias.result === "boolean" ? irBool() : irDynamic();
     const value = cx.builder.emitCall(irRuntimeFuncRef(alias.provider), carriers, result);
@@ -8267,7 +8266,7 @@ function lowerDynamicDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId 
   const key =
     keyName !== undefined
       ? cx.builder.emitBox(cx.builder.emitStringConst(keyName), irDynamic(JS_TAG_IDS.String))
-      : lowerAliasCarrierOperands([keyExpr!], "delete", cx)[0]!;
+      : lowerCarrierOperand(keyExpr!, "delete", cx);
   const result = cx.builder.emitCall(irRuntimeFuncRef(symbol), [receiver, key], irVal({ kind: "i32", boolean: true }));
   if (result === null) {
     // invariant (producer-promise): a runtime helper declared non-void returned no SSA value — #4502.
@@ -8292,28 +8291,27 @@ function lowerDroppedDelete(expression: ts.Expression, cx: LowerCtx): boolean {
 }
 
 /**
- * (#7106 S1g / propertyHelper) Lower the operands of a certified Object alias
- * call as dynamic carriers, boxing a concrete operand; demotes (pre-claim
- * parity: the selector admits only boxable operands) when one cannot box.
+ * (#7106 S1g / propertyHelper, #7338) Lower one operand of a certified Object
+ * alias call or `Object` static as a dynamic carrier, boxing a concrete operand;
+ * demotes (pre-claim parity: the selector admits only boxable operands) when it
+ * cannot box.
  */
-function lowerAliasCarrierOperands(args: readonly ts.Expression[], aliasName: string, cx: LowerCtx): IrValueId[] {
-  const carriers: IrValueId[] = [];
-  for (const argument of args) {
-    let value = lowerExpr(argument, cx, irDynamic());
-    const actual = cx.builder.typeOf(value);
-    if (actual.kind !== "dynamic") {
-      const boxed = boxConcreteToDynamic(value, actual, argument, cx);
-      if (boxed === null) {
-        demoteToLegacy(
-          "operand-coercion-unsupported",
-          `ir/from-ast: ${aliasName} alias operand of ${describeIrType(actual)} has no dynamic carrier in ${cx.funcName}`,
-        );
-      }
-      value = boxed;
-    }
-    carriers.push(value);
+function lowerCarrierOperand(argument: ts.Expression, callName: string, cx: LowerCtx): IrValueId {
+  const value = lowerExpr(argument, cx, irDynamic());
+  const actual = cx.builder.typeOf(value);
+  if (actual.kind === "dynamic") return value;
+  // (#7338) A #7128 open-carrier local is the raw `$Object`.
+  const boxed =
+    asVal(actual)?.kind === "externref"
+      ? cx.builder.emitBox(value, irDynamic())
+      : boxConcreteToDynamic(value, actual, argument, cx);
+  if (boxed === null) {
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: ${callName} operand of ${describeIrType(actual)} has no dynamic carrier in ${cx.funcName}`,
+    );
   }
-  return carriers;
+  return boxed;
 }
 
 /**
@@ -8323,8 +8321,8 @@ function lowerAliasCarrierOperands(args: readonly ts.Expression[], aliasName: st
  */
 function lowerOwnPropertyMethodCall(expr: ts.CallExpression, method: OwnPropertyMethod, cx: LowerCtx): IrValueId {
   const receiver = (expr.expression as ts.PropertyAccessExpression).expression;
-  const [object, key] = lowerAliasCarrierOperands([receiver, expr.arguments[0]!], method, cx);
-  return cx.builder.emitDynOwnProperty(object!, key!, method);
+  const object = lowerCarrierOperand(receiver, method, cx);
+  return cx.builder.emitDynOwnProperty(object, lowerCarrierOperand(expr.arguments[0]!, method, cx), method);
 }
 
 /**
@@ -9316,8 +9314,8 @@ function tryLowerNativeMapMethodCall(
  * codegen. Keeping the target symbolic means import indices remain
  * allocator-owned, while `coerce.to_externref` preserves one
  * representation-neutral IR shape for structural target/key/descriptor values.
- * (#7128 S1) A lane without the host helper is the native one, where the
- * selector admits only a U1 define on an open carrier.
+ * (#7338) A lane without the host helper is the native one, whose defines the
+ * statics table lowered before this arm.
  */
 function lowerObjectDefinePropertyCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
   if (expr.arguments.length !== 3 || expr.arguments.some(ts.isSpreadElement)) {
@@ -9328,7 +9326,13 @@ function lowerObjectDefinePropertyCall(expr: ts.CallExpression, cx: LowerCtx): I
     );
   }
   const target = cx.resolver?.objectDefinePropertyTarget?.();
-  if (!target) return lowerOpenCarrierDefineProperty(expr, cx);
+  if (!target) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: Object.defineProperty is not an admitted Object static (${cx.funcName})`,
+    );
+  }
   const args = expr.arguments.map((arg, index) => {
     const value = lowerExpr(arg, cx, irVal({ kind: "externref" }));
     const type = cx.builder.typeOf(value);
@@ -9355,54 +9359,43 @@ function lowerObjectDefinePropertyCall(expr: ts.CallExpression, cx: LowerCtx): I
 }
 
 /**
- * #7128 S1 — a selector-certified U1 define on an open-carrier `$Object`:
- * each descriptor field value is boxed into its dynamic carrier, the rest is
- * `emitOpenCarrierDefine`.
+ * (#7338) An admitted `Object.<static>(…)` (`object-statics.ts`), behind the
+ * selector's plan: every value as a carrier, then `emitObjectStaticCall`. Null
+ * when the plan does not admit the call, which leaves it to the other arms.
  */
-function lowerOpenCarrierDefineProperty(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
-  const plan = openCarrierDefinePlan(expr);
-  let object = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
-  // (#7335) A dynamic-home open object is read from its `dynamic` slot, whose carrier is that externref.
-  if (cx.builder.typeOf(object).kind === "dynamic") object = cx.builder.emitCoerceToExternref(object);
-  if (plan === null || asVal(cx.builder.typeOf(object))?.kind !== "externref") {
+function tryLowerObjectStaticCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
+  const plan = objectStaticCallPlan(expr, {
+    isAmbientBinding: (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
+    dynamicCodeMayRun: cx.resolver?.runtimeEvalMayExecute?.() !== false,
+    supportsBackendCapability: (capability) => cx.resolver?.supportsBackendCapability?.(capability) === true,
+    isLibOnlyBinding: (node) => cx.resolver?.isLibOnlyBinding?.(node) === true,
+  });
+  if (plan === undefined) return null;
+  if (plan.kind === "refused") {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "build",
-      `ir/from-ast: Object.defineProperty is not a certified open-carrier define (${cx.funcName})`,
+      `ir/from-ast: Object static refused (${plan.refusal}) after selection admitted it (${cx.funcName})`,
     );
   }
-  return emitOpenCarrierDefine(cx.builder, object, plan.key, lowerDataDescriptorFields(plan.fields, cx));
-}
-
-/** Each literal descriptor field value, boxed onto its dynamic carrier (#7128 S1, #7276). */
-function lowerDataDescriptorFields(
-  fields: readonly DataDescriptorField[],
-  cx: LowerCtx,
-): { readonly name: string; readonly value: IrValueId }[] {
-  return fields.map(({ name, initializer }) => {
-    const value = lowerExpr(initializer, cx, IR_F64);
-    const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), initializer, cx);
-    if (boxed === null) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "build",
-        `ir/from-ast: descriptor field "${name}" has no dynamic box (${cx.funcName})`,
-      );
-    }
-    return { name, value: boxed };
+  const carrier = (operand: ts.Expression) => lowerCarrierOperand(operand, plan.call.name, cx);
+  const operands = plan.call.operands.map((operand) =>
+    operand.kind === "object" ? emitNewPlainObject(cx.builder, irVal({ kind: "externref" })) : carrier(operand.expr),
+  );
+  const lowerDefinition = ({ key, fields }: ObjectStaticDefinition) => ({
+    key: typeof key === "string" ? key : carrier(key),
+    fields: fields.map(({ name, initializer }) => ({ name, value: carrier(initializer) })),
   });
-}
-
-/** (#7276) `Object.create({}, { <literal data descriptors> })`, behind the selector's plan. */
-function tryLowerObjectCreateDescriptorMapCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
-  return lowerObjectCreateDescriptorMapCall(expr, {
-    builder: cx.builder,
-    admission: {
-      supportsBackendCapability: (capability) => cx.resolver?.supportsBackendCapability?.(capability) === true,
-      isLibOnlyBinding: (node) => cx.resolver?.isLibOnlyBinding?.(node) === true,
-    },
-    lowerFields: (fields) => lowerDataDescriptorFields(fields, cx),
+  // A single descriptor's key and values are evaluated here, with the operands
+  // (every argument is evaluated before the static's step 1). A map's keys are
+  // static and its values constants, lowered at their define: #7276's order.
+  const definitions = plan.call.definitions.map((definition) => {
+    if (typeof definition.key === "string") return () => lowerDefinition(definition);
+    const evaluated = lowerDefinition(definition);
+    return () => evaluated;
   });
+  const answer = emitObjectStaticCall(cx.builder, plan.call, operands, definitions);
+  return cx.builder.typeOf(answer).kind === "dynamic" ? answer : cx.builder.emitBox(answer, irDynamic());
 }
 
 /**
@@ -9468,8 +9461,8 @@ function lowerMethodCallWithSourcePlan(
   if (functionObjects.isPreparedFunctionObjectAccess(expr.expression, cx.topLevelFunctionValues)) {
     return functionObjects.lowerFunctionObjectMemberCall(expr, expr.expression, functionObjectLoweringHost(cx));
   }
-  const objectCreate = tryLowerObjectCreateDescriptorMapCall(expr, cx);
-  if (objectCreate !== null) return objectCreate;
+  const objectStatic = tryLowerObjectStaticCall(expr, cx);
+  if (objectStatic !== null) return objectStatic;
   const globalFunction = tryLowerAmbientGlobalFunctionCall(expr, cx); // (#7267) `JSON.parse(s);`
   if (globalFunction !== null) return globalFunction;
   const closureInvocation = cx.resolver?.sourceClosureInvocation?.(expr);

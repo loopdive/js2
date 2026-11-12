@@ -12,6 +12,7 @@
  *     later `o.k` can read; an IR `object.new` could serve neither.
  */
 
+import { isUnshadowedUndefined } from "../shared/ambient-intrinsics.js";
 import { ts } from "../ts-api.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 
@@ -75,7 +76,8 @@ export function emptyObjectLiteralBinding(
  * #7128 S1 — is `reference` an open-carrier use?
  *
  *   - U1: the target of an `Object.defineProperty` STATEMENT (its result would
- *     alias the carrier) with an `openCarrierDefinePlan`;
+ *     alias the carrier) that `isLiteralDefine` says the lane lowers with a
+ *     literal key and descriptor ({@link isLiteralDefineShape});
  *   - U2: a named read `o.k` whose key `Object.prototype` does not own and
  *     whose consumer is `isProvenReadConsumer`'s strict comparison. The IR reader
  *     (`__dyn_member_get`) answers undefined for an inherited key, where legacy
@@ -88,16 +90,11 @@ export function emptyObjectLiteralBinding(
  */
 export function isOpenCarrierUse(
   reference: ts.Identifier,
-  isAmbientDefineProperty: (call: ts.CallExpression) => boolean,
+  isLiteralDefine: (call: ts.CallExpression) => boolean,
 ): boolean {
   const parent = reference.parent;
   if (ts.isCallExpression(parent)) {
-    return (
-      parent.arguments[0] === reference &&
-      ts.isExpressionStatement(parent.parent) &&
-      isAmbientDefineProperty(parent) &&
-      openCarrierDefinePlan(parent) !== null
-    );
+    return parent.arguments[0] === reference && ts.isExpressionStatement(parent.parent) && isLiteralDefine(parent);
   }
   return (
     ts.isPropertyAccessExpression(parent) &&
@@ -169,30 +166,25 @@ export interface DataDescriptorField {
   readonly initializer: ts.Expression;
 }
 
-/** A U1 define: its static property key and the descriptor fields in source order. */
-export interface OpenCarrierDefinePlan {
-  readonly key: string;
-  readonly fields: readonly DataDescriptorField[];
-}
-
 /**
- * The U1 plan of `Object.defineProperty(target, key, descriptor)`, or null.
- * The key is a string or numeric literal (the scanner already canonicalised the
- * numeric text, so it is the ToPropertyKey string); the descriptor is
+ * The U1 shape of `Object.defineProperty(target, key, descriptor)`: the key is
+ * a string or numeric literal and the descriptor is
  * {@link literalDataDescriptorFields}.
  */
-export function openCarrierDefinePlan(call: ts.CallExpression): OpenCarrierDefinePlan | null {
+export function isLiteralDefineShape(call: ts.CallExpression): boolean {
   const [, key, descriptor] = call.arguments;
-  if (call.arguments.length !== 3 || !(ts.isStringLiteral(key!) || ts.isNumericLiteral(key!))) return null;
-  const fields = literalDataDescriptorFields(descriptor!);
-  return fields === null ? null : { key: key.text, fields };
+  return (
+    call.arguments.length === 3 &&
+    (ts.isStringLiteral(key!) || ts.isNumericLiteral(key!)) &&
+    literalDataDescriptorFields(descriptor!) !== null
+  );
 }
 
 /**
  * The properties of an object literal whose every member is a
  * `name: initializer` assignment with a distinct identifier or string-literal
  * name, in source order; else null. Shared by the descriptor parser below and
- * the #7276 `Object.create` descriptor map (`ir/object-create-call.ts`).
+ * the `Object` statics table (`ir/object-statics.ts`).
  */
 export function staticNamedProperties(literal: ts.Expression): readonly DataDescriptorField[] | null {
   if (!ts.isObjectLiteralExpression(literal)) return null;
@@ -209,16 +201,39 @@ export function staticNamedProperties(literal: ts.Expression): readonly DataDesc
 }
 
 /**
- * The fields of an inline data descriptor whose values are number, string or
- * boolean literals; null for any other descriptor. Source order is then
- * unobservable, as no getter runs.
+ * An inline data descriptor's fields in source order, else null: an accessor
+ * (`get` / `set`), a field no descriptor has, a method or a spread.
+ */
+export function dataDescriptorFields(descriptor: ts.Expression): readonly DataDescriptorField[] | null {
+  const fields = staticNamedProperties(descriptor);
+  return fields?.every(({ name }) => DATA_DESCRIPTOR_FIELDS.has(name)) === true ? fields : null;
+}
+
+/**
+ * {@link dataDescriptorFields} whose values are number, string or boolean
+ * literals; null for any other descriptor.
  */
 export function literalDataDescriptorFields(descriptor: ts.Expression): readonly DataDescriptorField[] | null {
-  const fields = staticNamedProperties(descriptor);
-  const literal = fields?.every(
-    ({ name, initializer }) => DATA_DESCRIPTOR_FIELDS.has(name) && isPrimitiveLiteral(initializer),
-  );
-  return literal === true ? fields : null;
+  const fields = dataDescriptorFields(descriptor);
+  return fields?.every(({ initializer }) => isPrimitiveLiteral(initializer)) === true ? fields : null;
+}
+
+/**
+ * {@link dataDescriptorFields} whose values are constants: a primitive
+ * literal, a signed number, `null` or the global `undefined`. Evaluating one
+ * has no effect and reads no state, so when it runs is unobservable.
+ */
+export function constantDataDescriptorFields(descriptor: ts.Expression): readonly DataDescriptorField[] | null {
+  const fields = dataDescriptorFields(descriptor);
+  return fields?.every(({ initializer }) => isConstant(initializer)) === true ? fields : null;
+}
+
+function isConstant(expr: ts.Expression): boolean {
+  const signed =
+    ts.isPrefixUnaryExpression(expr) &&
+    (expr.operator === ts.SyntaxKind.MinusToken || expr.operator === ts.SyntaxKind.PlusToken) &&
+    ts.isNumericLiteral(expr.operand);
+  return signed || isPrimitiveLiteral(expr) || expr.kind === ts.SyntaxKind.NullKeyword || isUnshadowedUndefined(expr);
 }
 
 function isPrimitiveLiteral(expr: ts.Expression): boolean {

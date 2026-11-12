@@ -23,7 +23,6 @@
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
 import { isStoredStaticAliasProvider, storedStaticAliasProviderImport } from "./stored-static-alias-providers.js";
-import type { StoredStaticAliasProvider } from "./uncurried-object-alias.js";
 import {
   nativeConsoleOutputAvailable,
   ensureIrNativeConsoleProvider,
@@ -9467,8 +9466,8 @@ function preregisterDynamicSupport(
   const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
   // (#7106 propertyHelper) a dynamic delete calls its strictness's wrapper.
   const dynDeleteStrictness = new Set<boolean>();
-  // (#7106 propertyHelper, #7272) the stored-static aliases' object-runtime providers.
-  const storedStaticProviders = new Set<StoredStaticAliasProvider>();
+  // (#7106 propertyHelper, #7272, #7338) the stored-static aliases' and `Object` statics' object-runtime providers.
+  const storedStaticProviders = new Set<Parameters<typeof storedStaticAliasProviderImport>[0]>();
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {

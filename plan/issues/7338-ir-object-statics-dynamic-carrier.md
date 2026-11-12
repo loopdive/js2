@@ -324,6 +324,113 @@ descriptor values; primitive and inline-literal targets. Expected gain: +19
 `isSealed`). Not measured by this issue's stub; measure with the same method
 before starting, and drop any row that gains nothing.
 
+## S1 + S2 result (2026-11-11)
+
+Both slices landed together. Measured by real compile (no stubs) over the
+2,600-file set plus the 157 files that were already IR-only on main and use a
+table static, a stored alias or propertyHelper (2,757 files).
+
+| | files |
+|---|---|
+| gained (IR-only now, not on main) | **38** (22 use only S1's statics, 16 need S2's) |
+| lost | 0 |
+| post-claim errors | 0 |
+
+33 of the 38 are among the 59 the stub predicted; 5 are beyond it. Two of the
+27 files the stub assigned to S1 + S2 stay legacy:
+`Object/create/15.2.3.5-1-2.js` (`Object.create(null)`, refused as `proto`)
+and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
+`untrusted`).
+
+### What the code does
+
+- `src/ir/object-statics.ts`: the table (`defineProperty`,
+  `defineProperties`, `getOwnPropertyDescriptor`, `getOwnPropertyNames`,
+  `create`) and the one plan, `objectStaticCallPlan`. The selector and
+  from-ast both call it. A refusal is a selection refusal,
+  `expr-object-static-<shape|arity|untrusted|proto|descriptor|in-key>`; an
+  operand that is no carrier is `expr-object-static-operand`.
+- `src/ir/open-object-carrier.ts`: `emitObjectStaticCall` lowers every row.
+  `src/ir/from-ast.ts` holds one hook (`tryLowerObjectStaticCall`).
+- Folded in: the two `Object` rows of `STORED_STATICS`
+  (`uncurried-object-alias.ts`) read the table; #7128 / #7335's U1 define is
+  the `defineProperty` row (`isOpenCarrierDefine`, `openCarrierDefinePlan` and
+  from-ast's define arm are gone); `src/ir/object-create-call.ts` is deleted,
+  its screens are the `create` row's.
+- The move-only scan's three copies of the "every argument is a carrier or a
+  boxable concrete" loop (stored alias, function-object member call, and the
+  new statics) are one `scanCarrierArguments` call each.
+- `select.ts` 62 added / 63 removed, `from-ast.ts` 48 added / 50 removed.
+
+### Differences from the plan
+
+1. **Literal maps are applied key by key** through `__obj_define_from_desc`,
+   not through `__defineProperties`, and **their values must be constants**
+   (a primitive literal, a signed number, `null`, the global `undefined`).
+   Each key's values are lowered at its define, the order #7276 fixed; with
+   constants that order is unobservable, and it is what keeps the JS
+   environment's bytes (item 3). A map with any other value is refused as
+   `descriptor`. `__defineProperties` comes with S3's dynamic maps.
+2. **The first operand is tested at run time.** `defineProperty`,
+   `defineProperties` and `create` throw a TypeError unless the carrier holds
+   an object or a function; `getOwnPropertyDescriptor` and
+   `getOwnPropertyNames` throw for `undefined` and `null` (ToObject). No
+   helper checks. Legacy throws only for an operand the checker types as
+   primitive, so `Object.defineProperty(o, …)` on a script `var` that is still
+   `undefined` is silently applied by legacy and throws in the IR, as the spec
+   says. The stored alias form (`__getOwnPropertyDescriptor(o, k)`) keeps its
+   own lowering, without the check, as legacy's alias arm has none.
+3. **The lane is a new capability, `native-object-statics`**: host-free,
+   non-fast standalone. A JS environment under the native-first policy
+   projects exactly like standalone, so no existing capability could keep the
+   table off it; `IrBackendTargetProfile` now carries `nativeRegimeInJs` for
+   this one question. On that environment the plan admits only what main
+   admitted there, #7276's `Object.create({}, { <literal data descriptors> })`
+   (`jsEnvironmentCreate`), with a lowering that emits the same bytes, and the
+   move-only scan and the call-graph walk do not see it, as before.
+4. **`Object.create`'s prototype is `{}`, a primitive literal or `undefined`
+   only** (the last two throw). `__object_create` reads a null prototype as
+   `%Object.prototype%`, and no carrier is known to be non-null. A prototype
+   held in a variable is refused as `proto` until a slice adds the null arm.
+5. **Trust is lever O's `objectStaticsPristine` fact** plus "no dynamic code
+   may run", not the `sourceWritesMemberNamed` / `sourceNamesReflectiveRoute`
+   pair the plan named. It is the same question lever O already answers for
+   the integrity statics, so there is one scan. It is stricter than the plan:
+   any bare `Object` in the source refuses (137 files in the set).
+6. **#7335's `isServedUse` was not widened.** A table call's operand is still
+   not a served use, so `o.hasOwnProperty(k)` stays refused beside it. That
+   belongs with the own-property follow-on below.
+7. **Two existing selector gaps had to close**, because the table now lets
+   module-init through to them (both failed after the claim on main too):
+   - a member store into a dynamic module binding from a nested closure,
+     which `dyn.member_set` cannot lower without its writer's strictness, is
+     refused in `moduleExternPropertyWriteIsProven`;
+   - a dynamic module home initialised with a non-empty object literal
+     (`var o = { "": 1 }`), which has no box, is refused as
+     `vardecl-module-value-flow`.
+8. **`__object_create` is registered through the stored-static provider
+   table** (`stored-static-alias-providers.ts`): a module whose only
+   object-runtime call is `Object.create(undefined)` otherwise had no
+   provider for it.
+
+### What blocks the touched files now
+
+Of the 2,600, 2,562 are still not IR-only. By file count (`sole` = the only
+reason left):
+
+| files | sole | reason |
+|---|---|---|
+| 1,290 | 64 | `expr-object-static-descriptor`: 717 an accessor in `defineProperty`, 118 an accessor in a map, the rest a descriptor or map that is not an inline data literal |
+| 730 | 0 | `expr-ident-not-in-scope(Function)`, with the propertyHelper include |
+| 721 | 0 | `harness:propertyHelper.js` |
+| 658 | 43 | `expr-module-scalar-method(.hasOwnProperty)` |
+| 561 | 3 | `vardecl-let-closure` |
+| 345 | 1 | `expr-object-static-operand`: a target or value that is no carrier (an array, a function, a struct-typed object) |
+| 333 | 89 | `expr-ident-not-in-scope(Object)`: `Object.prototype` 127, `preventExtensions` 76, bare `Object` 55, `isExtensible` 51, `freeze` 44, `getPrototypeOf` 40, `isFrozen` 40 |
+| 301 | 0 | `vardecl-module-storage-unrepresentable[empty-array]` |
+| 219 | 0 | `expr-new-module-binding-callee` |
+| 200 | 30 | `forin-receiver-not-dynamic-externref` |
+
 ## Trust boundary
 
 A row is admitted only when the call provably reaches the realm's own static.

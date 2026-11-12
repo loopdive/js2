@@ -20,6 +20,7 @@
 
 import { ts } from "../ts-api.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
+import { objectStaticArity, objectStaticProvider } from "./object-statics.js";
 
 export type UncurriedObjectAliasMethod = "hasOwnProperty" | "propertyIsEnumerable";
 
@@ -53,6 +54,17 @@ interface CertifiedAliasLowering {
   readonly capability: CertifiedAliasCapability;
 }
 
+/** A stored `Object` static, lowered as the statics table's row of that name. */
+function storedObjectStatic(method: "getOwnPropertyDescriptor" | "getOwnPropertyNames") {
+  return {
+    receiver: "Object",
+    arity: objectStaticArity(method),
+    result: "dynamic",
+    capability: "native-own-property-introspection",
+    provider: objectStaticProvider(method),
+  } as const;
+}
+
 /** Each stored static: the namespace it reads, its arity, and its native lowering. */
 const STORED_STATICS: Readonly<
   Record<
@@ -64,23 +76,11 @@ const STORED_STATICS: Readonly<
     }
   >
 > = {
-  getOwnPropertyDescriptor: {
-    receiver: "Object",
-    arity: 2,
-    result: "dynamic",
-    capability: "native-own-property-introspection",
-    provider: "__getOwnPropertyDescriptor",
-  },
-  // (#7283) `var __getOwnPropertyNames = Object.getOwnPropertyNames;`: the
-  // object runtime's own-key list, exactly legacy's
-  // `emitStoredObjectIntrospectionCall`. The result is a dynamic array value.
-  getOwnPropertyNames: {
-    receiver: "Object",
-    arity: 1,
-    result: "dynamic",
-    capability: "native-own-property-introspection",
-    provider: "__getOwnPropertyNames",
-  },
+  // (#7338) The two `Object` rows are the statics table's: one helper and
+  // arity for the stored form and the direct call. (#7283) The names list is
+  // the object runtime's own-key list, a dynamic array value.
+  getOwnPropertyDescriptor: storedObjectStatic("getOwnPropertyDescriptor"),
+  getOwnPropertyNames: storedObjectStatic("getOwnPropertyNames"),
   isArray: {
     receiver: "Array",
     arity: 1,

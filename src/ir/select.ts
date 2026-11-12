@@ -97,12 +97,7 @@ import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
-import {
-  emptyObjectLiteralBinding,
-  isOpenCarrierUse,
-  openCarrierDefinePlan,
-  type EmptyObjectLiteralBinding,
-} from "./empty-object-literal.js";
+import { emptyObjectLiteralBinding, isOpenCarrierUse, type EmptyObjectLiteralBinding } from "./empty-object-literal.js";
 import * as dynamicHome from "./dynamic-home-open-object.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
@@ -121,7 +116,7 @@ import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program
 import { lowersAsPreparedComponent } from "./prepared-component-ownership.js";
 import { admitAmbientGlobalFunctionCall } from "./ambient-global-function-call.js";
 import { admittedBuiltinProtoMember, type BuiltinProtoMemberLane } from "./builtin-proto-member.js";
-import { objectCreateDescriptorMap, unitInKeysAreOwnOnly } from "./object-create-call.js";
+import * as objectStatics from "./object-statics.js";
 import {
   isAffineThreeDeepElementAccess,
   unwrapTypeErasedExpression,
@@ -921,7 +916,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "planned-closure-direct-call"
       | "native-dynamic-loose-equality"
       | "dynamic-method-call-wrapper"
-      | "native-global-function-call",
+      | "native-global-function-call"
+      | "native-object-statics",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -3473,6 +3469,14 @@ function dynamicUsesAreMoveOnly(
     return access.expression;
   };
 
+  // (#7338) The values an `Object` static on the table's lane, or a stored descriptor alias, crosses as carriers.
+  const objectStaticScanValues = (e: ts.Expression) =>
+    ts.isCallExpression(e) && !dynNames.has("Object")
+      ? objectStatics.scannedValues(selectorObjectStaticPlan(e))
+      : undefined;
+  const carrierStaticValues = (e: ts.CallExpression): readonly ts.Expression[] | undefined =>
+    certifiedAliasCall(e, (name) => dynNames.has(name))?.result === "dynamic" ? e.arguments : objectStaticScanValues(e);
+
   const isDynShaped = (e: ts.Expression): boolean => {
     e = unwrap(e);
     if (e.kind === ts.SyntaxKind.ThisKeyword) return subjectHasAmbientThis();
@@ -3481,9 +3485,8 @@ function dynamicUsesAreMoveOnly(
     if (ts.isIdentifier(e)) return dynNames.has(e.text) || isAmbientIntrinsicValue(e);
     // (#7106 S3a) `new <dynamic param>(…)` constructs a dynamic value.
     if (dynamicConstructCallee(e) !== null) return true;
-    // (#7106 propertyHelper) the stored descriptor alias yields a carrier.
-    if (ts.isCallExpression(e) && certifiedAliasCall(e, (name) => dynNames.has(name))?.result === "dynamic")
-      return true;
+    // (#7106 propertyHelper, #7338) the stored descriptor alias and an `Object` static yield a carrier.
+    if (ts.isCallExpression(e) && carrierStaticValues(e) !== undefined) return true;
     if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
       return calleeReturnKind(e.expression.text, typeMap) === "dynamic";
     }
@@ -3647,8 +3650,6 @@ function dynamicUsesAreMoveOnly(
       return expectDyn && currentDynamicRuntimeBuildable && scanCarrierArguments(e.arguments ?? []);
     }
     if (ts.isCallExpression(e)) {
-      // (#7128 S1) A U1 define: literal key and descriptor, result dropped.
-      if (isOpenCarrierDefine(e)) return !expectDyn;
       // (#7106 S1b) `JSON.stringify(<dynamic>)` → `dyn.json_stringify`: a
       // concrete string result; a concrete operand is boxed first.
       const jsonStringifyArg = dynNames.has("JSON") ? null : ambientJsonStringifyCall(e);
@@ -3759,19 +3760,10 @@ function dynamicUsesAreMoveOnly(
         }
         return true;
       }
-      // (#7106 propertyHelper) `__getOwnPropertyDescriptor(obj, name)`: a
-      // dynamic result; each operand is a carrier or a boxable concrete.
-      if (alias?.result === "dynamic") {
-        if (!expectDyn || !currentDynamicRuntimeBuildable) return false;
-        for (const argument of e.arguments) {
-          if (isDynShaped(argument)) {
-            if (!scanExpr(argument, true)) return false;
-            continue;
-          }
-          const concrete = unwrap(argument);
-          if (!concreteOperandBoxesOntoCarrier(concrete) || !scanExpr(concrete, false)) return false;
-        }
-        return true;
+      // (#7106 propertyHelper, #7338) A stored descriptor alias or an `Object` static: a dynamic result over carriers.
+      const staticValues = carrierStaticValues(e);
+      if (staticValues !== undefined) {
+        return expectDyn && currentDynamicRuntimeBuildable && scanCarrierArguments(staticValues);
       }
       // (#7106 item 1) `assert._isSameValue(b[i], a[i])`: a member call on a
       // stable top-level function object → a DYNAMIC result; every argument is
@@ -3783,15 +3775,7 @@ function dynamicUsesAreMoveOnly(
           const key = unwrap(e.expression.argumentExpression);
           if (!scanExpr(key, isDynShaped(key))) return false;
         }
-        for (const argument of e.arguments) {
-          if (isDynShaped(argument)) {
-            if (!scanExpr(argument, true)) return false;
-          } else {
-            const concrete = unwrap(argument);
-            if (!concreteOperandBoxesOntoCarrier(concrete) || !scanExpr(concrete, false)) return false;
-          }
-        }
-        return true;
+        return scanCarrierArguments(e.arguments);
       }
       // Direct call to a (possibly) top-level function. A dyn-NAMED callee
       // (`x()` where x is dynamic) is calling a dynamic value — slice 3.
@@ -4218,7 +4202,7 @@ function dynamicUsesAreMoveOnly(
       }
       // (#7283) …and a member call on a stable function object
       // (`assert.sameValue(d, undefined, msg)`); other dyn-shaped calls keep theirs.
-      if (functionObjectMemberCallee(e) !== null) return scanExpr(e, true);
+      if (functionObjectMemberCallee(e) !== null || objectStaticScanValues(e)) return scanExpr(e, true);
       // (#7305) A call through a dynamic value: callee and arguments are `__apply_closure` carriers.
       if (ts.isCallExpression(e) && dynamicValueCallTarget(e)) {
         return scanExpr(e.expression, true) && scanCarrierArguments(e.arguments);
@@ -7352,13 +7336,14 @@ function isPhase1VarDeclarationList(
     }
     if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
       return shapeNo("vardecl-init-expr", d.initializer);
-    // The IR has no dynamic `null` value for a dynamic module home (#7287 review B3).
+    const initializer = unwrapPhase1Parens(d.initializer);
+    // A dynamic module home holds no `null` (#7287 review B3), and no object literal but the open carrier `{}` (#7338).
     if (
       directModuleBinding?.valueKind.kind === "dynamic" &&
-      binaryOperandFamily(d.initializer, initializerScope, localClasses) === "nullish"
+      (binaryOperandFamily(d.initializer, initializerScope, localClasses) === "nullish" ||
+        (ts.isObjectLiteralExpression(initializer) && !admittedOpenCarrierLiterals.has(initializer)))
     )
       return shapeNo("vardecl-module-value-flow", d.initializer);
-    const initializer = unwrapPhase1Parens(d.initializer);
     const objectMethodValue = isConst ? directObjectMethodValueProjection(d, initializer, initializerScope) : null;
     const returnedCallable = objectMethodValue ? null : directReturnedCallableSignature(initializer, initializerScope);
     const callableAlias =
@@ -8238,6 +8223,8 @@ function expressionIsModuleExternAccessChain(expr: ts.Expression): boolean {
 }
 
 function moduleExternPropertyWriteIsProven(left: ts.PropertyAccessExpression, right: ts.Expression): boolean {
+  // (#7338) A store into a dynamic module binding is `dyn.member_set`, which is told its writer's code strictness.
+  if (moduleBinding(left.expression)?.valueKind.kind === "dynamic") return dynamicHome.writerKnowsItsStrictness(left);
   if (!expressionIsModuleExternAccessChain(left.expression)) return true;
   return currentModuleBindingResolver?.externValueIsPassable(right) === true;
 }
@@ -9016,13 +9003,18 @@ function isAmbientIntrinsicValue(expr: ts.Identifier): boolean {
   );
 }
 
-/** (#7276) The shared `Object.create` plan, on the selector's lane and binding facts. */
-function selectorObjectCreateDescriptorMap(expr: ts.CallExpression) {
-  const resolver = currentModuleBindingResolver;
-  return objectCreateDescriptorMap(expr, {
+/** (#7128 S1) A U1 define: the statics table lowers it, and its key and descriptor are literals. */
+const isLiteralObjectDefine = (call: ts.CallExpression): boolean =>
+  objectStatics.isLiteralDefine(selectorObjectStaticPlan(call));
+
+/** (#7338) The shared `Object` statics plan, on the selector's lane and program facts. */
+function selectorObjectStaticPlan(expr: ts.CallExpression): objectStatics.ObjectStaticPlan | undefined {
+  return objectStatics.objectStaticCallPlan(expr, {
+    isAmbientBinding: selectorSeesAmbientBinding,
+    isLibOnlyBinding: (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true,
+    dynamicCodeMayRun: currentSelectionOptions?.runtimeEvalMayExecute !== false,
     supportsBackendCapability: (capability) =>
       currentSelectionOptions?.supportsBackendCapability?.(capability) === true,
-    isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding(node) === true,
   });
 }
 
@@ -12926,14 +12918,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           (arg) => !ts.isSpreadElement(arg) && expressionIsProvenNumber(arg) && isPhase1Expr(arg, scope, localClasses),
         );
       }
-      // (#7276) `Object.create({}, { <literal data descriptors> })`: literal operands only.
-      if (selectorObjectCreateDescriptorMap(expr) !== null) return true;
+      const objectStatic = scope.has("Object") ? undefined : isPhase1ObjectStatic(expr, scope, localClasses);
+      if (objectStatic !== undefined) return objectStatic;
       // ES5 Object.defineProperty — an exact ambient static call is a
       // symbolic host-helper operation, not an instance method on a value
       // named `Object`. Reject shadowed bindings and host-free targets before
       // walking the three ordinary Phase-1 arguments.
       if (isAmbientObjectDefineProperty(expr) && !scope.has("Object")) {
-        if (isOpenCarrierDefine(expr)) return true;
         if (currentSelectionOptions?.supportsBackendCapability?.("host-object-define-property") === false) {
           return capabilityNo("call-resolution-unsupported", "expr-object-define-property-target", expr);
         }
@@ -13682,7 +13673,7 @@ function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node
   if (
     isOpenObjectBinding === undefined ||
     owner !== currentSelectionSubject ||
-    !binding.references.every((reference) => isOpenCarrierUse(reference, isAmbientObjectDefineProperty)) ||
+    !binding.references.every((reference) => isOpenCarrierUse(reference, isLiteralObjectDefine)) ||
     !isOpenObjectBinding(binding.decl)
   ) {
     return false;
@@ -13708,7 +13699,7 @@ function isDynamicHomeOpenCarrier(literal: ts.ObjectLiteralExpression): boolean 
     !ts.isVariableDeclaration(decl) ||
     decl.initializer !== literal ||
     !isDynamicHomeOpenCarrierDeclaration(decl) ||
-    !unitInKeysAreOwnOnly(literal)
+    !objectStatics.unitInKeysAreOwnOnly(literal)
   ) {
     return false;
   }
@@ -13727,17 +13718,26 @@ function isDynamicHomeOpenCarrierDeclaration(decl: ts.VariableDeclaration): bool
 }
 
 /**
- * (#7128 S1) A U1 define on an admitted open-carrier binding, in the current
- * subject's own body; (#7335) or a U1 define on a #7280 dynamic-home carrier
- * whose every use is served (`dynamic-home-open-object.ts`), from any unit,
- * since that binding holds the one `$Object` throughout.
+ * (#7338) `Object.<static>(…)` through the statics table, or undefined for any other call. Every value it evaluates
+ * crosses as a carrier: a #7128 open-carrier local of this subject, the global `undefined`, `null`, a dynamic module
+ * binding or parameter, another static's result, or a concrete that boxes.
  */
-function isOpenCarrierDefine(call: ts.CallExpression): boolean {
-  const target = call.arguments[0];
-  if (target === undefined || !ts.isIdentifier(target)) return false;
-  if (currentOpenCarrierNames.has(target.text) && enclosingProjectionOwner(call) === currentSelectionSubject)
-    return true;
-  return isOpenCarrierUse(target, isAmbientObjectDefineProperty) && dynamicHome.isReference(target, DYNAMIC_HOME_QUERY);
+function isPhase1ObjectStatic(expr: ts.CallExpression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>) {
+  const plan = selectorObjectStaticPlan(expr);
+  if (plan?.kind === "refused") return shapeNo(`expr-object-static-${plan.refusal}`, expr);
+  return objectStatics.admittedValues(plan)?.every((operand) => {
+    const value = unwrapPhase1Parens(operand);
+    if (isUnshadowedUndefinedIdentifier(value, scope) || value.kind === ts.SyntaxKind.NullKeyword) return true;
+    const openCarrier = ts.isIdentifier(value) && currentOpenCarrierNames.has(value.text);
+    if (!openCarrier && !isPhase1Expr(value, scope, localClasses)) return false;
+    const carried = openCarrier
+      ? enclosingProjectionOwner(value) === currentSelectionSubject
+      : moduleBinding(value)?.valueKind.kind === "dynamic" ||
+        (ts.isIdentifier(value) && currentDynamicParamNames.has(value.text)) ||
+        (ts.isCallExpression(value) && selectorObjectStaticPlan(value)?.kind === "call") ||
+        concreteOperandBoxesOntoCarrier(value);
+    return carried || shapeNo("expr-object-static-operand", value);
+  });
 }
 
 /**
@@ -13776,7 +13776,7 @@ const DYNAMIC_HOME_QUERY: dynamicHome.DynamicHomeQuery = {
     return currentModuleBindingResolver;
   },
   isCarrier: (decl) => isDynamicHomeOpenCarrierDeclaration(decl),
-  isAmbientDefineProperty: (call) => isAmbientObjectDefineProperty(call),
+  isLiteralDefine: (call) => isLiteralObjectDefine(call),
 };
 
 /** `Object.defineProperty(…)` on the ambient `Object`. */
@@ -14340,10 +14340,10 @@ export function buildLocalCallGraph(
             return;
           }
           if (
-            isAmbientObjectDefineProperty(node) &&
-            node.arguments.length === 3 &&
-            (currentSelectionOptions?.supportsBackendCapability?.("host-object-define-property") !== false ||
-              isOpenCarrierDefine(node))
+            objectStatics.scannedValues(selectorObjectStaticPlan(node)) ||
+            (isAmbientObjectDefineProperty(node) &&
+              node.arguments.length === 3 &&
+              currentSelectionOptions?.supportsBackendCapability?.("host-object-define-property") !== false)
           ) {
             for (const a of node.arguments) visit(a);
             return;
