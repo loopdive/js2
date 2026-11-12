@@ -3,7 +3,13 @@
 // Representation-neutral runtime helpers used by IR dynamic operations.
 
 import type { Instr, ValType } from "../ir/types.js";
-import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureAnyToExternHelper } from "./any-helpers.js";
+import {
+  ensureAnyFromExternHelper,
+  ensureAnyHelpers,
+  ensureAnyToExternHelper,
+  ensureExternStrictEqHelper,
+} from "./any-helpers.js";
+import { ensureExternLooseEqHelper } from "./helpers/loose-equality-to-primitive.js";
 import type { CodegenContext } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -611,6 +617,16 @@ function ensureDynamicMemberCallSupport(ctx: CodegenContext, carrier: ValType): 
     [ext],
     [{ op: "local.get", index: 0 }, ...(arg === undefined ? [] : [{ op: "call", funcIdx: arg } satisfies Instr])],
   );
+}
+
+/**
+ * The externref-carrier providers of `dyn.eq`: `__extern_strict_eq` for
+ * `===` / `!==`, `__extern_loose_eq` for `==` / `!=` (#2949 S5.2, #7194).
+ * Registered before Phase 3 so no emit can shift a function index.
+ */
+export function ensureIrDynamicEqualityRuntime(ctx: CodegenContext): void {
+  ensureExternStrictEqHelper(ctx);
+  ensureExternLooseEqHelper(ctx);
 }
 
 export function ensureIrDynamicRuntime(ctx: CodegenContext, needs: ReadonlySet<IrDynamicRuntimeNeed>): void {

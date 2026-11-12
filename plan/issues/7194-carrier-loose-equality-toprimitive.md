@@ -16,8 +16,7 @@ goal: ir-full-coverage
 parent: 7106
 related: [7193, 7178, 7113, 7144, 7340, 7341, 7338, 7280]
 import-cycles-allow:
-  - largestSccSize: 732 # 2026-11-12 (#7194 S1): the loose-equality provider and its ToPrimitive reduction move out of any-helpers.ts into helpers/loose-equality-to-primitive.ts, which uses the object runtime and the any-helper family and is called by any of their callers
-  - ir->codegen: 85 # 2026-11-12 (#7194 S1): integration.ts imports ensureExternLooseEqHelper from that module instead of any-helpers.ts (the provider moved; any-helpers.ts would otherwise grow past its LOC ceiling)
+  - largestSccSize: 732 # 2026-11-12 (#7194 S1): the loose-equality provider and its ToPrimitive reduction move out of any-helpers.ts into helpers/loose-equality-to-primitive.ts, which uses the object runtime and the any-helper family and is reached from dyn-ops.ts and binary-ops-typed-dispatch.ts
 ---
 
 # Carrier loose `==` / `!=` skips ToPrimitive on object operands
@@ -404,9 +403,12 @@ S2 and S3 are still open; the issue stays `in-progress`.
   moved out of `any-helpers.ts`. Adding the prelude inside `any-helpers.ts`
   put that file 52 lines over its LOC ceiling, and the plan rules out a LOC
   grant. The rule and the one function that applies it are one concern.
-  Cost: two import-cycle grants in the frontmatter. The module joins the
-  codegen SCC (+1). `integration.ts` imports the provider from it rather
-  than from `any-helpers.ts` (`ir->codegen` +1).
+  Cost: one import-cycle grant in the frontmatter, because the module joins
+  the codegen SCC (+1). `integration.ts` gains no codegen import (the
+  `check:ir-layering` ratchet). It registers both `dyn.eq` providers through
+  `ensureIrDynamicEqualityRuntime` in `dyn-ops.ts`, the module that already
+  owns the IR dynamic-op runtime, at the same point and in the same order as
+  before.
 - **Lane test `hostFreeEnvironment(ctx)`, not `ctx.standalone || ctx.wasi`.**
   Since #6979 `ctx.standalone` is the native *regime*, and it is `true` in the
   default JavaScript environment. The prototype's gate would have reduced
