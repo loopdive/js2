@@ -99,8 +99,10 @@ import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
 import {
   emptyObjectLiteralBinding,
+  isEmptyObjectExpression,
   isOpenCarrierUse,
   openCarrierDefinePlan,
+  type EmptyObjectExpression,
   type EmptyObjectLiteralBinding,
 } from "./empty-object-literal.js";
 import * as dynamicHome from "./dynamic-home-open-object.js";
@@ -238,6 +240,8 @@ import {
   isStrictEqualityOperator,
   isTypedBinaryOperator,
   mayBeElementRead,
+  nullComparedOperand,
+  nullComparisonFolds,
   wrapperComparisonIsIdentity,
   type AdditiveLane,
   nativeI32OperandsAdmissible,
@@ -4405,6 +4409,8 @@ function isPhase1MutableMemberTarget(
   localClasses: ReadonlySet<string>,
 ): boolean {
   if (target.questionDotToken !== undefined) return false;
+  // The read-modify-write lowerings take an object, class or vec receiver, never the carrier.
+  if (readsScriptVarCarrier(target.expression)) return shapeNo("member-compound-carrier-receiver", target);
   if (ts.isPropertyAccessExpression(target)) {
     if (!ts.isIdentifier(target.name) && !ts.isPrivateIdentifier(target.name)) return false;
     // (#3522 W1-C) `super.x += e` / `super.x++` are OUT of this slice, and are
@@ -9540,6 +9546,11 @@ function selectorPrimitiveWrapperOrGenericBinary(
   } else if (isEquality && left === "reference" && right === "reference") {
     return capabilityNo("operand-coercion-unsupported", "expr-equality-reference-operands", expr);
   }
+  // `tryFoldNullCompare` folds a carrier against `null` only where `nullComparisonFolds` says.
+  const nullCompared = nullComparedOperand(expr);
+  if (nullCompared !== null && readsScriptVarCarrier(nullCompared) && !nullComparisonFolds(binOp, "dynamic")) {
+    return capabilityNo("operand-coercion-unsupported", "expr-carrier-loose-null", expr);
+  }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
   const carrierOperand = left === "dynamic" || right === "dynamic";
   if (binOp === ts.SyntaxKind.PlusToken && carrierOperand && !carrierValueConsumed(expr)) {
@@ -9775,6 +9786,17 @@ function readsDynamicScriptVar(expression: ts.Expression): boolean {
     e.operatorToken.kind === ts.SyntaxKind.PlusToken &&
     (readsDynamicScriptVar(e.left) || readsDynamicScriptVar(e.right))
   );
+}
+
+/**
+ * A dynamic script var or a member read off one: from-ast reads it as the
+ * dynamic carrier (`dyn.member_get` on the slot's value), whatever the checker
+ * types it.
+ */
+function readsScriptVarCarrier(expression: ts.Expression): boolean {
+  const e = unwrapPhase1Parens(expression);
+  if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) return readsScriptVarCarrier(e.expression);
+  return ts.isIdentifier(e) && moduleBinding(e)?.valueKind.kind === "dynamic";
 }
 
 /** `<id> <op>= e` as a statement, for the body and the non-tail walks (`arm` prefixes the refusal). */
@@ -12018,6 +12040,7 @@ function phase1NewExpression(
       return capabilityNo("date-constructor-unsupported", "expr-new-date-snapshot-shape", expr);
     }
   }
+  if (ctorName === "Object" && isAmbientConstructor) return phase1NewObject(expr);
   if (!isLocalClass && !isKnownExternClass(ctorName)) {
     return capabilityNo("constructor-resolution-unsupported", "expr-new-ctor-unknown", expr.expression);
   }
@@ -12032,6 +12055,13 @@ function phase1NewExpression(
     if (!isPhase1Expr(arg, scope, localClasses)) return shapeNo("expr-new-arg", arg);
   }
   return true;
+}
+
+/** (#7341 S1) `new Object()` on the realm's `Object`: only as a `{}` the dynamic-home admission takes. */
+function phase1NewObject(expr: ts.NewExpression): boolean {
+  if (!isEmptyObjectExpression(expr, selectorSeesAmbientBinding)) return shapeNo("expr-new-object-argument", expr);
+  if (!ts.isVariableDeclaration(expr.parent)) return shapeNo("expr-new-object-position", expr);
+  return isDynamicHomeOpenCarrier(expr) || shapeNo("expr-new-object-home", expr);
 }
 
 /** Preserve the existing exact global-eval source proof at the call gate. */
@@ -13610,7 +13640,7 @@ function isPhase1ObjectLiteral(
   // #4471 — an empty literal lowers to a ZERO-FIELD object shape, which is a
   // legal struct but can serve NO field access, so only an INERT one is
   // claimable; #7128 S1 adds the open carrier. See `empty-object-literal.ts`.
-  if (expr.properties.length === 0) {
+  if (isEmptyObjectExpression(expr, selectorSeesAmbientBinding)) {
     const owner = enclosingProjectionOwner(expr);
     const binding = emptyObjectLiteralBinding(expr, owner);
     if (binding !== undefined && (binding.references.length === 0 || isOpenCarrierBinding(binding, owner))) {
@@ -13710,12 +13740,12 @@ function isPhase1ObjectLiteral(
   return true;
 }
 
-/** (#7128 S1) Was this empty literal admitted as an open carrier (rather than as an inert one)? */
-export function admittedEmptyLiteralIsOpenCarrier(expr: ts.ObjectLiteralExpression): boolean {
-  return admittedOpenCarrierLiterals.has(expr);
+/** (#7128 S1) Was this empty object value admitted as an open carrier (rather than as an inert one)? */
+export function admittedEmptyObjectIsOpenCarrier(expr: EmptyObjectExpression): boolean {
+  return admittedOpenCarrierValues.has(expr);
 }
 
-const admittedOpenCarrierLiterals = new WeakSet<ts.ObjectLiteralExpression>();
+const admittedOpenCarrierValues = new WeakSet<EmptyObjectExpression>();
 
 /**
  * #7128 S1 — admit an open-carrier binding (`empty-object-literal.ts`) of the
@@ -13736,7 +13766,7 @@ function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node
     return false;
   }
   currentOpenCarrierNames.add(binding.name.text);
-  admittedOpenCarrierLiterals.add(binding.literal);
+  admittedOpenCarrierValues.add(binding.literal);
   return true;
 }
 
@@ -13748,19 +13778,20 @@ function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node
  * (standalone). Every use then reads it as the carrier through the ordinary
  * dynamic arms. An `in` that may reach an inherited
  * `%Object.prototype%` key keeps the unit legacy (`unitInKeysAreOwnOnly`, as for
- * `Object.create`). The lowering is the open-carrier literal's.
+ * `Object.create`). The lowering is the open-carrier literal's. (#7341) `new
+ * Object()` is the same value and takes this admission unchanged.
  */
-function isDynamicHomeOpenCarrier(literal: ts.ObjectLiteralExpression): boolean {
-  const decl = literal.parent;
+function isDynamicHomeOpenCarrier(value: EmptyObjectExpression): boolean {
+  const decl = value.parent;
   if (
     !ts.isVariableDeclaration(decl) ||
-    decl.initializer !== literal ||
+    decl.initializer !== value ||
     !isDynamicHomeOpenCarrierDeclaration(decl) ||
-    !unitInKeysAreOwnOnly(literal)
+    !unitInKeysAreOwnOnly(value)
   ) {
     return false;
   }
-  admittedOpenCarrierLiterals.add(literal);
+  admittedOpenCarrierValues.add(value);
   return true;
 }
 
@@ -14113,6 +14144,35 @@ export function assessModuleInit(
   return { stmtCount: population.length, reason: null };
 }
 
+/**
+ * A `new` the IR lowers itself or dispatches with a stable signature, so no
+ * call edge: an admitted function-style constructor (#3521), a holey `Array`,
+ * a local class or known extern class (`<Class>_new`, #1169d/#1169i), an
+ * ambient primitive wrapper, `new <parameter>` (#7106 S3a `dyn.construct`), a
+ * self-guarded constructor value (#7106 S3c), and (#7341) an empty `new
+ * Object()`. The per-function arms decide whether each is claimable.
+ */
+function isLoweredConstruction(node: ts.NewExpression, localClasses: ReadonlySet<string>): boolean {
+  if (
+    currentSelectionOptions?.resolveFnctorAdmission?.(node) !== undefined ||
+    currentSelectionOptions?.isHoleyArrayConstructor?.(node) === true ||
+    isEmptyObjectExpression(node, selectorSeesAmbientBinding)
+  ) {
+    return true;
+  }
+  const callee = node.expression;
+  if (!ts.isIdentifier(callee)) return false;
+  return (
+    localClasses.has(callee.text) ||
+    (isKnownExternClass(callee.text) &&
+      (currentModuleBindingResolver === null || currentModuleBindingResolver.isAmbientBinding(callee))) ||
+    (selectorSeesAmbientWrapperConstructor(callee) &&
+      currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") === true) ||
+    enclosingFunctionParameterNames(node).has(callee.text) ||
+    selfGuardedConstructorValueUse(callee)
+  );
+}
+
 export function buildLocalCallGraph(
   decls: ReadonlyMap<string, ts.FunctionDeclaration>,
   localClasses: ReadonlySet<string>,
@@ -14157,72 +14217,12 @@ export function buildLocalCallGraph(
     // parameters and locals are local, not edges.
     const visit = (node: ts.Node): void => {
       if (node !== fn && isFunctionLike(node) && !isLiftedClosure(node)) return;
-      // Slice 4 (#1169d): `new <className>(...)` is NOT a function-style
-      // call; it dispatches to a legacy-compiled constructor with a
-      // stable signature. Walk into the args (which may contain real
-      // calls), but don't mark the outer as having an external call.
+      // A construction the IR lowers is not a call edge; its arguments are still walked for nested calls.
       if (ts.isNewExpression(node)) {
         // The exact Promise-delay resolver owns every call nested below this
         // construction (Promise executor, timer callback, and resolve call).
-        // Treat it as one certified leaf instead of reporting setTimeout /
-        // resolve as external identifier calls.  Uncertified `new Promise`
-        // shapes retain the ordinary graph behavior below.
         if (currentSelectionOptions?.promiseDelays?.resolve(node)) return;
-        // #3521 — an admitted function-style constructor is also a certified
-        // leaf for the local call graph.  Only the exact resolver may suppress
-        // the ordinary unknown-constructor rejection; its arguments still
-        // need the normal nested-call walk.
-        if (currentSelectionOptions?.resolveFnctorAdmission?.(node) !== undefined) {
-          if (node.arguments) {
-            for (const argument of node.arguments) visit(argument);
-          }
-          return;
-        }
-        if (currentSelectionOptions?.isHoleyArrayConstructor?.(node) === true) {
-          if (node.arguments) {
-            for (const argument of node.arguments) visit(argument);
-          }
-          return;
-        }
-        if (
-          ts.isIdentifier(node.expression) &&
-          (localClasses.has(node.expression.text) ||
-            (isKnownExternClass(node.expression.text) &&
-              (currentModuleBindingResolver === null ||
-                currentModuleBindingResolver.isAmbientBinding(node.expression))) ||
-            (selectorSeesAmbientWrapperConstructor(node.expression) &&
-              currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") === true))
-        ) {
-          // Slice 4: local class — `<Class>_new` has a stable signature.
-          // Slice 10 (#1169i): known extern class — `<Class>_new` is
-          // registered as a host import by the legacy
-          // `collectUsedExternImports` pass with a stable signature too.
-          // Either case → not external; walk into args for nested calls.
-          if (node.arguments) {
-            for (const a of node.arguments) visit(a);
-          }
-          return;
-        }
-        // (#7106 S3a) `new <parameter>(…)` is a dynamic construct lowering
-        // (`dyn.construct`), not a call edge; the selector's per-function
-        // arms decide whether the parameter is dynamic-typed.
-        if (ts.isIdentifier(node.expression) && enclosingFunctionParameterNames(node).has(node.expression.text)) {
-          if (node.arguments) {
-            for (const a of node.arguments) visit(a);
-          }
-          return;
-        }
-        // (#7106 S3c) …and so is `new F(…)` of a self-guarded constructor value.
-        if (ts.isIdentifier(node.expression) && selfGuardedConstructorValueUse(node.expression)) {
-          if (node.arguments) {
-            for (const a of node.arguments) visit(a);
-          }
-          return;
-        }
-        // Unknown constructor → external. Fall through to default
-        // ts.forEachChild walking + the CallExpression branch below
-        // doesn't reach here, so we mark it explicitly.
-        markExternal(callerName, node);
+        if (!isLoweredConstruction(node, localClasses)) markExternal(callerName, node);
         if (node.arguments) {
           for (const a of node.arguments) visit(a);
         }

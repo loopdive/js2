@@ -15,6 +15,25 @@
 import { ts } from "../ts-api.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 
+/** An empty object value in either spelling. */
+export type EmptyObjectExpression = ts.ObjectLiteralExpression | ts.NewExpression;
+
+/**
+ * `{}`, or (#7341) `new Object()` / `new Object` on the realm's `Object`: the
+ * same fresh ordinary object (§20.1.1.1 step 3 without a value), which legacy
+ * builds with the same `__new_plain_object` call.
+ */
+export function isEmptyObjectExpression(expr: ts.Expression, isAmbient: (id: ts.Identifier) => boolean): boolean {
+  if (ts.isObjectLiteralExpression(expr)) return expr.properties.length === 0;
+  return (
+    ts.isNewExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Object" &&
+    (expr.arguments?.length ?? 0) === 0 &&
+    isAmbient(expr.expression)
+  );
+}
+
 export interface EmptyObjectLiteralBinding {
   readonly literal: ts.ObjectLiteralExpression;
   readonly decl: ts.VariableDeclaration;

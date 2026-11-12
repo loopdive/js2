@@ -330,14 +330,14 @@ import {
   irClosureSignatureFromFunctionTypeNode,
   peelAssignmentChain,
   IR_MATH_METHOD_TABLE,
-  admittedEmptyLiteralIsOpenCarrier,
+  admittedEmptyObjectIsOpenCarrier,
   admittedOwnPropertyCallMethod,
 } from "./select.js";
 import { openCarrierDefinePlan, type DataDescriptorField } from "./empty-object-literal.js";
 import type { OwnPropertyMethod } from "./dynamic-home-open-object.js";
 import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
-import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
+import { emitNewPlainObject, emitOpenCarrierDefine, emitOpenCarrierObject } from "./open-object-carrier.js";
 import {
   isStatementDynamicModuleCall,
   localValueDeclaration,
@@ -6664,10 +6664,7 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx, hint
   // carrier: legacy's raw-externref `$Object`, which the U2 read arm serves.
   // An open-carrier literal stored into a dynamic-carrier slot crosses onto
   // the carrier: a property of the slot, not of the admitting arm (#7280 S1).
-  if (expr.properties.length === 0 && admittedEmptyLiteralIsOpenCarrier(expr)) {
-    const object = emitNewPlainObject(cx.builder, irVal({ kind: "externref" }));
-    return hint?.kind === "dynamic" ? cx.builder.emitBox(object, irDynamic()) : object;
-  }
+  if (admittedEmptyObjectIsOpenCarrier(expr)) return emitOpenCarrierObject(cx.builder, hint?.kind === "dynamic");
   if (
     expr.properties.some((property) => ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property))
   ) {
@@ -8441,6 +8438,8 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
     return withNodeSourceSite(cx, expr, () => lowerNewExpression(expr, cx));
   const promiseDelay = tryLowerPromiseDelayConstruction(expr, cx.promiseDelays, () => makePromiseDelayLoweringHost(cx));
   if (promiseDelay !== undefined) return promiseDelay;
+  // (#7341) `new Object()` is admitted only as a dynamic-home script var's initializer: its slot is the carrier.
+  if (admittedEmptyObjectIsOpenCarrier(expr)) return emitOpenCarrierObject(cx.builder, true);
   const primitiveWrapper = lowerPrimitiveWrapperConstruction(expr, cx);
   if (primitiveWrapper !== null) return primitiveWrapper;
   // (#4461) `new Map()` on a lane whose `Map` carrier is the native `$Map`

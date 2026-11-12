@@ -9,7 +9,7 @@
 
 import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
-import { irVal, type IrType, type IrValueId } from "./nodes.js";
+import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
 import { emitThrowTypeErrorIf } from "./throw-type-error.js";
 
 /** A fresh open-hash `$Object` from `__new_plain_object`, typed `type`. */
@@ -18,6 +18,16 @@ export function emitNewPlainObject(builder: IrFunctionBuilder, type: IrType): Ir
   // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (object === null) throw new Error("ir/open-object-carrier: __new_plain_object produced no value");
   return object;
+}
+
+/**
+ * The open carrier an admitted empty object value builds (`{}` or `new
+ * Object()`): a fresh `$Object`, boxed when its slot is the dynamic carrier
+ * (#7280 S1) rather than the raw-externref binding of #7128.
+ */
+export function emitOpenCarrierObject(builder: IrFunctionBuilder, onDynamicCarrier: boolean): IrValueId {
+  const object = emitNewPlainObject(builder, irVal({ kind: "externref" }));
+  return onDynamicCarrier ? builder.emitBox(object, irDynamic()) : object;
 }
 
 /**

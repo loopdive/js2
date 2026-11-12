@@ -1,7 +1,8 @@
 ---
 id: 7341
 title: "IR: `new Object()` in a script var is the open `$Object` carrier that `{}` already is"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-11-12
 updated: 2026-11-12
@@ -339,3 +340,86 @@ Code quality:
   #7340, each its own lever.
 - `Object(v)` called without `new`.
 - A run-time ToObject helper shared by legacy and the IR.
+
+## S1 implementation (2026-11-12)
+
+S1 is done on branch `claude/7341-ir-new-object`; S2 and S3 remain.
+
+What changed:
+
+- `empty-object-literal.ts`: `isEmptyObjectExpression(expr, isAmbient)` is the
+  one recognizer. It answers `{}`, and `new Object()` / `new Object` on the
+  realm's `Object`. `isPhase1ObjectLiteral`'s empty test, `phase1NewObject` and
+  the call-graph `new` arm all call it.
+- `open-object-carrier.ts`: `emitOpenCarrierObject(builder, onDynamicCarrier)`
+  replaces the two inline lines of `lowerObjectLiteral`. The `new` hook in
+  `lowerNewExpression` is its second caller, always boxed, because the only
+  position S1 admits is a dynamic-home slot.
+- `select.ts`: `phase1NewObject` names the three refusals
+  (`expr-new-object-argument`, `-position`, `-home`) and otherwise asks
+  `isDynamicHomeOpenCarrier`, unchanged apart from taking either spelling. The
+  admitted set is now `admittedEmptyObjectIsOpenCarrier`.
+- `buildLocalCallGraph`: the five "a construction is a lowering, not a call
+  edge" cases plus the new one are one predicate, `isLoweredConstruction`,
+  with a single argument walk (five walk copies before, one after).
+- `select.ts` net line change 0, `from-ast.ts` −1; no loc or func grant.
+
+Not done: `dynamic-home-open-object.ts` (#7335's define and own-property arms)
+still recognizes only the `{}` spelling. A `new Object()` var with
+`Object.defineProperty(o, …)` or `o.hasOwnProperty(k)` stays legacy, refused
+at select. No measured file needs it.
+
+### Deviation: two consumer gaps refused at select
+
+`var o = {}` is admitted only while legacy keeps the binding open, and legacy
+widens it into a struct as soon as the program stores `o.p = v`. Legacy never
+widens a `new Object()` var, so S1 reaches consumers the `{}` spelling reaches
+only through an element store (`o["p"] = 1`). Two of these were claimed by the
+selector and then withdrawn by from-ast on main. Both are now refused at
+select, for both spellings:
+
+| shape | main | now |
+|---|---|---|
+| `o.p++`, `o.p += 1`, `o["p"]++` on a dynamic script var | from-ast: "compound property/element write on dynamic" | `member-compound-carrier-receiver` (`isPhase1MutableMemberTarget`) |
+| `o == null`, `null != o`, `o.p != null` | from-ast: "bare 'null' in non-reference context" | `expr-carrier-loose-null` |
+
+The second refusal asks the shared `nullComparisonFolds(op, "dynamic")`, the
+same predicate `tryFoldNullCompare` consults. A strict `o === null` still
+folds and is still claimed. `nullComparedOperand` moved from
+`select-planned-closure-operands.ts` into `analysis/operand-admissibility.ts`,
+next to `nullComparisonFolds`, so both selector arms share it.
+`readsScriptVarCarrier` says which operands from-ast reads as the carrier: a
+dynamic script var, or a member read off one. A follow-up could lower the
+loose case instead (a Null-or-Undefined tag test). It was not done here,
+because widening `nullComparisonFolds` also admits it in planned closures,
+which would change the JS environment's binaries.
+
+One sibling test row changed: #7335's "parenthesized loose equality"
+(`(o) == null` on a `{}` carrier) is now refused by the loose-null arm before
+the own-property probe. It is still refused at select and still matches
+legacy; only the expected detail changed.
+
+Still open, as planned (#7194): `o == 1` on the carrier is claimed and traps.
+This is the same for `{}` on main. No measured file reaches it.
+
+### Measurements
+
+Base: `origin/main` `d9dd218bbf`, exported into the scratchpad. Head: this
+branch. Census tool: `scratchpad/os7338/census.mts`, standalone, with
+`JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`.
+
+- Population: the 873-file set plus the seeded 300-file IR-only sample, 1,173
+  files.
+- Result: **23 gained** (exactly the 23 S1 prototype files), **0 lost**,
+  **0 post-claim errors** on both trees, no compile-error difference.
+- 298 of the 300 sample files are IR-only on both trees. Routing changed in
+  23 files, the gained ones.
+- Verdicts (`scripts/run-test262-paths.mts --standalone`, the 23 gained files
+  plus the 300-file sample) are identical on both trees: 321 pass, 2 fail. All
+  23 gained files pass. The 2 failures are eval tests
+  (`language/line-terminators/S7.3_A7_T5.js`, `_T6.js`) that need the QuickJS
+  provider, which is not built in this container.
+- JS environment (default target), byte-identical: 363 of 363 binaries match.
+  The inputs were the 13 playground examples, every third file of the 873,
+  the 45 `new Object` files and the 30 sources of
+  `tests/issue-7341-new-object-open-carrier.test.ts`.

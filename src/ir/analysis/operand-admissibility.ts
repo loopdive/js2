@@ -486,6 +486,15 @@ export function nativeI32OperandsAdmissible(
   return binaryOperandsAdmissible(op, family(expr.left), family(expr.right));
 }
 
+/** The operand an equality compares with a direct `null` literal (`null === null`: none to type). */
+export function nullComparedOperand(expr: ts.BinaryExpression): ts.Expression | null {
+  if (!isEqualityOperator(expr.operatorToken.kind)) return null;
+  const leftNull = expr.left.kind === ts.SyntaxKind.NullKeyword;
+  const rightNull = expr.right.kind === ts.SyntaxKind.NullKeyword;
+  if (leftNull === rightNull) return null;
+  return leftNull ? expr.right : expr.left;
+}
+
 /**
  * `tryFoldNullCompare`: an equality against the `null` literal is lowered for
  * a dynamic or externref operand only when STRICT (one tag / `ref.is_null`
