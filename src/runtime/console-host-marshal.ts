@@ -16,12 +16,12 @@
  */
 export { resolvePlatformCapabilityImport } from "./platform-capability-adapter.js";
 
-type ExportsSource = { getExports(): Record<string, Function> | undefined } | undefined;
+import { marshalExports, type MarshalExportSource } from "./init-marshal-registry.js";
 
 export function wrapConsoleForHost(
   capability: Function,
   intent: { type: string; variant?: string; name?: string },
-  exportsSource: ExportsSource,
+  exportsSource: MarshalExportSource | undefined,
   primitiveToHost: (value: any, exports: Record<string, Function> | undefined) => unknown,
   miss: unknown,
   fromHost?: (value: unknown, exports: Record<string, Function>) => unknown,
@@ -39,7 +39,7 @@ export function wrapConsoleForHost(
     return capability;
   }
   return function consoleWithHostPrimitives(value: unknown) {
-    const primitive = primitiveToHost(value, exportsSource?.getExports());
+    const primitive = primitiveToHost(value, marshalExports(exportsSource));
     return capability(primitive === miss ? value : primitive);
   };
 }

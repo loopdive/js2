@@ -196,13 +196,10 @@ import {
 } from "../ir/promise-delay-lowering.js";
 import {
   makeIrArrayElementFamilyClassifier,
-  makeIrArrayExpressionPredicate,
-  makeIrDeclaredPrimitiveExpressionClassifier,
+  makeIrCheckerSelectionOptions,
   makeIrLocalClassExpressionResolver,
   capabilityExternBindingOptions,
   makeIrModuleBindingResolver,
-  makeIrPrimitiveExpressionClassifier,
-  makeIrRegExpExpressionPredicate,
   type IrModuleBindingDeclaration,
   type IrModuleBindingResolver,
   type IrScriptVarHome,
@@ -226,7 +223,11 @@ import {
   removeMultiIrAttemptedCallableUnits,
 } from "./multi-prepared-callable-orchestration.js";
 import { createCodegenContext } from "./context/create-context.js";
-import { expressionHasWidenedPropertyType, markIndexedPropertyStale } from "./strict-eq-stale-type.js";
+import {
+  expressionHasWidenedStaticType,
+  functionReturnsWidenedValue,
+  markIndexedPropertyStale,
+} from "./strict-eq-stale-type.js";
 import { bindingHoldsStandaloneClassProto } from "./class-proto-object.js"; // (#7053)
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
@@ -884,6 +885,8 @@ installObjectModelPorts(() => ({
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
   irNativeI32SlotRead,
+  expressionHasWidenedStaticType, // (#7337) IR resolver seam
+  bindingHasMixedAssignmentCarrier,
   hasExportModifier,
   hasDeclareModifier,
   hasAsyncModifier,
@@ -3126,12 +3129,8 @@ function planIrOverlay(
           },
           identityContext,
         );
-  const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
-  const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
-  const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
   const numberConversion = irNumberConversionPlan(ast.checker, ast.sourceFile); // (#7106 module-init lever B)
   const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker, ctx.oracle);
-  const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
     hostExternSurface && options.resolveModuleBindings !== false
       ? makeIrAmbientClassCallResolver(ast.checker)
@@ -3325,12 +3324,9 @@ function planIrOverlay(
       ...(calendarResolvers.hostDateSnapshot ? { hostDateSnapshots: calendarResolvers.hostDateSnapshot } : {}),
       ...(resolvePromiseDelay ? { promiseDelays: resolvePromiseDelay } : {}),
       ...(resolveModuleBinding ? { resolveModuleBinding } : {}),
-      classifyPrimitiveExpression,
-      classifyDeclaredPrimitiveExpression,
+      ...makeIrCheckerSelectionOptions(ast.checker),
       jsonParseFoldsAtCompileTime: (call) => jsonParseTextFoldsAtCompileTime(ctx, call), // (#7267)
-      isArrayExpression,
       classifyArrayElementFamily,
-      isRegExpExpression,
       nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
@@ -3506,7 +3502,9 @@ function planIrOverlay(
           ? ({ kind: "val", val: { kind: "externref" } } as IrType)
           : isVoidReturn
             ? null
-            : resolvePositionType(effectiveReturnNode, entry?.returnType, ctx, classShapeSidecar);
+            : functionReturnsWidenedValue(ctx, declaration)
+              ? irDynamic()
+              : resolvePositionType(effectiveReturnNode, entry?.returnType, ctx, classShapeSidecar);
       const params: IrType[] = [];
       for (let i = 0; i < declaration.parameters.length; i++) {
         const p = declaration.parameters[i]!;
@@ -14424,7 +14422,7 @@ function hoistVarDecl(
       forInTargetForcesExternref ||
       transferredArrayLikeResult ||
       bindingHoldsStandaloneClassProto(ctx, decl) || // (#7053)
-      (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
+      (!!decl.initializer && !decl.type && expressionHasWidenedStaticType(ctx, decl.initializer));
     const usageF64 = hardForcesExternref
       ? null
       : mixedAssignmentCarrier
@@ -15188,7 +15186,7 @@ function walkStmtForLetConst(
           realmStructuralCarrier ||
           (mixedAssignmentCarrier && !mixedCarrierProvenF64) ||
           bindingHoldsStandaloneClassProto(ctx, decl) || // (#7053)
-          (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
+          (!!decl.initializer && !decl.type && expressionHasWidenedStaticType(ctx, decl.initializer));
         // (#4616) Empty-array (or Array<any>) initializer: use the SAME
         // usage-based vec inference `compileVariableStatement` applies
         // (`inferArrayVecType`, mirroring the var hoister above). Without it

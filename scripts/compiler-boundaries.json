@@ -29,9 +29,10 @@
         "src/shared/contracts/ir-preparation-errors.ts",
         "src/shared/contracts/ir-counted-string-site-id.ts",
         "src/shared/contracts/string-surrogate.ts",
-        "src/shared/contracts/linear-memory-layout.ts"
+        "src/shared/contracts/linear-memory-layout.ts",
+        "src/shared/contracts/f64-value-markers.ts"
       ],
-      "minModules": 10
+      "minModules": 11
     },
     {
       "id": "wasm-model",
@@ -5133,14 +5134,6 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/declarations/widened-property-return.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "5386-alias-property-writes",
-      "nextBoundary": "Separate AST-based alias evidence from physical return-carrier selection."
-    },
-    {
       "path": "src/codegen/declarations/with-body-var-hoisting.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8022,6 +8015,14 @@
     },
     {
       "path": "src/codegen/native-construct.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/native-string-memory-reader.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -14485,6 +14486,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/native-string-memory.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/process-capability.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -14644,6 +14650,11 @@
     },
     {
       "path": "src/shared/contracts/linear-memory-layout.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/f64-value-markers.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -16842,6 +16853,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/init-marshal-helpers.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/ir/core/global-binding-keys.ts",
       "state": "clean",
       "layer": "ir-core"
@@ -17262,6 +17278,22 @@
       "path": "src/runtime/wasmgc/promise/promise-layout.ts",
       "state": "clean",
       "layer": "native-runtime"
+    },
+    {
+      "path": "src/shared/array-index-key.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/shared/transparent-expressions.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     }
   ]
 }
