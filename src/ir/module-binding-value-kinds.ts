@@ -49,7 +49,15 @@ export type IrModuleBindingValueKind =
   // (#7252) A script `var` that only ever holds instances of ONE top-level
   // class: legacy stores it in a `(ref null $Class)` slot (`scriptVarHome`'s
   // `class-instance` home), and the IR reads it as that class's `class` value.
-  | { readonly kind: "class-instance"; readonly classDeclaration: ts.ClassDeclaration };
+  | { readonly kind: "class-instance"; readonly classDeclaration: ts.ClassDeclaration }
+  // (#7292) A script `var` whose one write is a string array literal: legacy
+  // stores it in the native-string vec slot (`scriptVarHome`'s `vec` home), and
+  // the IR reads it as that vec. A number vec is not admitted: its unproven
+  // element read answers `NaN` where JS answers `undefined`.
+  | { readonly kind: "vec"; readonly element: "string" }
+  // (#7106 lever S2) A script `var` legacy stores in #1914's `exec` match-result
+  // slot (`(ref null $__regexp_match_vec)`); the IR reads it as a dynamic value.
+  | { readonly kind: "regexp-match" };
 
 export interface IrModuleCapabilityExternCertification {
   readonly capability: IrModuleExternCapability;
@@ -116,9 +124,12 @@ export function isIrModuleMapValueKind(valueKind: IrModuleBindingValueKind): boo
   return valueKind.kind === "native-map" || (valueKind.kind === "extern" && valueKind.className === "Map");
 }
 
-/** (#7252) A class instance: its uses are the class arms', neither scalar nor extern-like. */
-export function isIrModuleClassInstanceValueKind(valueKind: IrModuleBindingValueKind): boolean {
-  return valueKind.kind === "class-instance";
+/**
+ * A typed struct handle — (#7252) a class instance or (#7292) a vec: its uses
+ * are the class or vec arms', neither scalar nor extern-like.
+ */
+export function isIrModuleStructValueKind(valueKind: IrModuleBindingValueKind): boolean {
+  return valueKind.kind === "class-instance" || valueKind.kind === "vec";
 }
 
 /**
@@ -162,11 +173,15 @@ export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind
  *   - `typed`: an `f64` or `i32` slot; only a `number` / `boolean` checker type
  *     binds (an `i32` slot also holds a `Symbol`, which stays refused);
  *   - (#7252) `class-instance`: a `(ref null $Class)` slot of a user class
- *     struct; only a binding every write of which constructs that class binds.
- * Any other slot (a vector, an object struct, `$Map`, `externref` in fast
- * mode) is no home: no value kind's storage is exactly that carrier.
+ *     struct; only a binding every write of which constructs that class binds;
+ *   - (#7292) `vec`: the native-string vec slot; only a binding whose one write
+ *     is a string array literal binds;
+ *   - (#7106 lever S2) `regexp-match`: #1914's `exec` match-result slot, bound
+ *     only when the IR's one write is the declaration's `.exec(…)` initializer.
+ * Any other slot (another vector, an object struct, `$Map`, `externref` in
+ * fast mode) is no home: no value kind's storage is exactly that carrier.
  */
-export type IrScriptVarHome = "dynamic" | "string" | "typed" | "class-instance";
+export type IrScriptVarHome = "dynamic" | "string" | "typed" | "class-instance" | "vec" | "regexp-match";
 
 /**
  * (#7106 lever L2) The home a script `var` keeps given where it is declared. A

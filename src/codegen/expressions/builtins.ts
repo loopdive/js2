@@ -32,7 +32,7 @@ import { emitThrowRangeError, emitThrowTypeError } from "./helpers.js";
 import { isStaticNaN, tryStaticToNumber } from "./misc.js";
 import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
 import { objectCoercionPreservesDate } from "../object-ctor-primitive-receiver.js";
-import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
+import { expressionHasWidenedStaticType } from "../strict-eq-stale-type.js";
 
 // ── Builtins ─────────────────────────────────────────────────────────
 
@@ -94,7 +94,7 @@ function compileConsoleCall(
     const argType = ctx.checker.getTypeAtLocation(arg);
     // An alias write can invalidate the checker type; match the collector
     // and preserve the runtime value through the externref console import.
-    const stale = expressionHasWidenedPropertyType(ctx, arg);
+    const stale = expressionHasWidenedStaticType(ctx, arg);
 
     if (!stale && isStringType(argType)) {
       compileExpression(ctx, fctx, arg);

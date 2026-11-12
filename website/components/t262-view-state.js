@@ -154,7 +154,14 @@
   const fetchData = async (href, field) => {
     const response = await global.fetch(dataUrl(href));
     if (!response.ok) throw new Error("Conformance data unavailable");
-    const target = new URL(href, global.location.href).pathname.includes("standalone") ? "standalone" : "gc";
+    const pathname = new URL(href, global.location.href).pathname;
+    // The category and per-file edition maps classify test files by frontmatter,
+    // so one measured lane's copy serves both; every other artifact is one lane's.
+    const target = /test262-(category|file)-editions\.json$/.test(pathname)
+      ? undefined
+      : pathname.includes("standalone")
+        ? "standalone"
+        : "gc";
     return readData(await response.json(), field, target);
   };
 
