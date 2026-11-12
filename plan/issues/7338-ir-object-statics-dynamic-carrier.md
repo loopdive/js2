@@ -340,9 +340,9 @@ Both slices landed together. Measured by real compile (no stubs) over the
 2,600-file set plus the 157 files that were already IR-only on main and use a
 table static, a stored alias or propertyHelper (2,757 files), standalone,
 original harness, `JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`,
-against main. Last measured after review round 2, with the branch merged
-with main `d9dd218bbf` and that commit's `src/` as the base (the same numbers
-as against `af39ceaf08` before the merge).
+against main. Last measured after review round 3, with the branch merged
+with main `34ce67984a` and that commit's `src/` as the base (the same numbers
+as against `af39ceaf08` and `d9dd218bbf` before).
 
 | | files |
 |---|---|
@@ -433,7 +433,7 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
   boxable concrete" loop are one `scanCarrierArguments` call each.
 - Size: `object-statics.ts` 191 lines, `descriptor-literal.ts` 124,
   `object-create-call.ts` 180 → 110, `empty-object-literal.ts` 197.
-  Net against main `d9dd218bbf`: `select.ts` +86, `from-ast.ts` +23,
+  Net against main `34ce67984a`: `select.ts` +86, `from-ast.ts` +23,
   `integration.ts` +3, granted above. Round 3 folded #7210's
   `readsDynamicScriptVar` and the three copies of the carrier-home rule into
   `lowersToCarrier` / `holdsCarrier` (−6 against round 2's +92).
@@ -508,14 +508,14 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
 
 ### Review probes (PR #7212)
 
-The reviewer's 231 probe programs (rounds 1 and 2): post-claim errors
-7 on this branch against 14 on main, every one of them also failing
-on main and none involving a table call: two `+`-proof gaps on a written
-parameter, two function-type parity mismatches (a stored
-`__getOwnPropertyNames` alias, a written numeric parameter), a loose `null`
-compare beside a string `+`, and two `throw <value>` helpers. One unit main
-lowered is refused: the `function Object() {}` shape of item 5. JS-environment
-bytes are identical to main's on all 231.
+The reviewer's 293 probe programs (rounds 1 to 3): post-claim errors 9 on
+this branch against 24 on main, every one of them also failing on main and
+none involving a table call: two `+`-proof gaps on a written parameter, two
+function-type parity mismatches (a stored `__getOwnPropertyNames` alias, a
+written numeric parameter), a loose `null` compare beside a string `+`, two
+`throw <value>` helpers and two `this.n++` / `this.n += 2` class-field
+updates. One unit main lowered is refused: the `function Object() {}` shape
+of item 5. JS-environment bytes are identical to main's on all 293.
 
 ### What blocks the touched files now
 

@@ -10,7 +10,15 @@ import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
 import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
 import { irUnitFuncRef, irRuntimeFuncRef } from "../src/ir/callable-bindings.js";
 import type { IrDirectCallLoweringPlan } from "../src/ir/ast-lowering-plans.js";
-import { forEachInstrDeep, irVal, irVec, type IrFunction, type IrInstr, type IrType } from "../src/ir/nodes.js";
+import {
+  forEachInstrDeep,
+  irDynamic,
+  irVal,
+  irVec,
+  type IrFunction,
+  type IrInstr,
+  type IrType,
+} from "../src/ir/nodes.js";
 import { IR_ASYNC_PROMISE_ALL_NATIVE_FN } from "../src/ir/async-semantic-runtime.js";
 
 type Vec = Extract<IrType, { kind: "vec" }>;
@@ -145,7 +153,7 @@ describe("source-bound logical vectors without physical resolution", () => {
     expect(f.physical).not.toHaveBeenCalled();
   });
 
-  it("retains receiver → length → effectful argument → growth → returned length exactly once", () => {
+  it("retains receiver → effectful argument → length → growth → returned length exactly once", () => {
     const f = fixture(
       "function values(): number[] { return [20]; } function next(): number { return 22; } function f(): number { return values().push(next()); }",
     );
@@ -155,9 +163,10 @@ describe("source-bound logical vectors without physical resolution", () => {
     const calls = rows.filter((row) => row.kind === "call");
     expect(calls.map((row) => row.target.name)).toEqual(["values", "next", "__ir_vec_elem_set_f64"]);
     const length = rows.find((row) => row.kind === "vec.len")!;
-    expect(rows.indexOf(calls[0]!)).toBeLessThan(rows.indexOf(length));
-    expect(rows.indexOf(length)).toBeLessThan(rows.indexOf(calls[1]!));
-    expect(rows.indexOf(calls[1]!)).toBeLessThan(rows.indexOf(calls[2]!));
+    // Arguments are evaluated before the call; `push` reads the length after them.
+    expect(rows.indexOf(calls[0]!)).toBeLessThan(rows.indexOf(calls[1]!));
+    expect(rows.indexOf(calls[1]!)).toBeLessThan(rows.indexOf(length));
+    expect(rows.indexOf(length)).toBeLessThan(rows.indexOf(calls[2]!));
     expect(rows.at(-1)).toMatchObject({ kind: "binary", op: "f64.add" });
     expect(rows.some((row) => row.kind === "vec.set" || row.kind === "vec.set_length")).toBe(false);
     expect(f.physical).not.toHaveBeenCalled();
@@ -200,13 +209,44 @@ describe("source-bound logical vectors without physical resolution", () => {
       const rows = instructions(f.lower({ returnTypeOverride: element }));
       expect(rows.filter((row) => row.kind === "unary" && row.op === "i32.trunc_sat_f64_s")).toHaveLength(1);
       expect(rows.filter((row) => row.kind === "binary" && row.op === "i32.lt_u")).toHaveLength(1);
-      expect(rows.filter((row) => row.kind === "if")).toHaveLength(1);
       expect(rows.filter((row) => row.kind === "vec.get")).toHaveLength(1);
-      expect(rows.filter((row) => row.kind === "const")).toMatchObject([
+      // (#7106) The truncated index survives when it is exact: an i32 `if` on
+      // the `f64.eq` keeps it, with nothing in the hot arm. The cold arm keeps
+      // the saturated index for an integer key below 2^32 - 1 and gives -1 for
+      // any other key, which the unsigned bounds check rejects. The bounds
+      // check is the second `if`.
+      const truncated = rows.find((row) => row.kind === "unary" && row.op === "i32.trunc_sat_f64_s")!;
+      const ifs = rows.filter((row): row is Extract<IrInstr, { kind: "if" }> => row.kind === "if");
+      expect(ifs).toHaveLength(2);
+      const keyIndex = ifs.find((row) => row.thenValue === truncated.result)!;
+      expect(keyIndex).toMatchObject({ then: [], resultType: irVal({ kind: "i32" }) });
+      expect(rows.find((row) => row.result === keyIndex.cond)).toMatchObject({ kind: "binary", op: "f64.eq" });
+      const cold = keyIndex.else.at(-1) as Extract<IrInstr, { kind: "select" }>;
+      expect(cold).toMatchObject({ kind: "select", whenTrue: truncated.result, result: keyIndex.elseValue });
+      expect(keyIndex.else.find((row) => row.result === cold.whenFalse)).toMatchObject({
+        kind: "const",
+        value: { kind: "i32", value: -1 },
+      });
+      expect(keyIndex.else.filter((row) => row.kind === "unary" && row.op === "f64.trunc")).toHaveLength(1);
+      // The read's own constant is the OOB carrier, in the bounds check's else arm.
+      expect(rows.filter((row) => row.kind === "const" && !keyIndex.else.includes(row))).toMatchObject([
         element === f64 ? { value: { kind: "f64", value: NaN } } : { value: { kind: "null" } },
       ]);
       expect(f.physical).not.toHaveBeenCalled();
     });
+
+  it("hands a dynamic consumer undefined for an out-of-range or marker read (#7106)", () => {
+    const f = fixture("function f(values: number[], index: number): any { return values[index]; }");
+    f.bind("values");
+    const rows = instructions(f.lower({ returnTypeOverride: irDynamic() }));
+    // Bounds test, then the marker test, then the boxed element or `undefined`.
+    expect(rows.filter((row) => row.kind === "binary" && row.op === "i32.lt_u")).toHaveLength(1);
+    expect(rows.filter((row) => row.kind === "unary" && row.op === "i64.reinterpret_f64")).toHaveLength(1);
+    expect(rows.filter((row) => row.kind === "box")).toHaveLength(1);
+    expect(rows.filter((row) => row.kind === "dyn.undefined")).toHaveLength(2);
+    expect(rows.filter((row) => row.kind === "vec.get")).toHaveLength(1);
+    expect(f.physical).not.toHaveBeenCalled();
+  });
 
   it("retains the proven counted-loop fast read without unchecked fallback elsewhere", () => {
     const f = fixture(

@@ -112,6 +112,8 @@ import {
   runtimeEvalOwnsGlobalEval,
   irNativeBufferProvider, // (#7274) native ArrayBuffer / DataView providers
   nativeBufferProvidersAvailable,
+  expressionHasWidenedStaticType, // (#7337) binding-carrier queries shared with legacy
+  bindingHasMixedAssignmentCarrier,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonParseText, emitJsonStringifyValue, JSON_PARSE_TEXT_FN } from "../codegen/json-codec-native.js";
@@ -348,10 +350,8 @@ export { exactPreparedUnitCallableBindingId } from "./prepared-callable-resoluti
 import { prepareIrVectorSupport } from "./prepared-vector-support.js";
 import { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
 import {
-  makeIrArrayExpressionPredicate,
-  makeIrDeclaredPrimitiveExpressionClassifier,
+  makeIrCheckerSelectionOptions,
   makeIrModuleBindingResolver,
-  makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
   capabilityExternBindingOptions,
   abiPinnedCapability,
@@ -2584,11 +2584,7 @@ export function compileIrPathFunctions(
     moduleBindingOptions,
     moduleBindingIdentityContext,
   );
-  const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ctx.checker);
-  const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker);
-  const isArrayExpression = makeIrArrayExpressionPredicate(ctx.checker);
   const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ctx.checker, ctx.oracle);
-  const isRegExpExpression = makeIrRegExpExpressionPredicate(ctx.checker);
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const declarationsByName = collectIntegrationFunctionDeclarations(integrationSourceFiles);
   const { implicitParamUsesNumericVecAbi, effectiveOverride } = makeMultiSourceOverrideResolvers({
@@ -2613,12 +2609,9 @@ export function compileIrPathFunctions(
       ...(resolveHostVoidCallback ? { hostVoidCallbacks: resolveHostVoidCallback } : {}),
       ...(supportsDateSnapshots ? { hostDateSnapshots: makeIrHostDateSnapshotResolver(ctx.checker) } : {}),
       resolveModuleBinding: moduleBindingResolver,
-      classifyPrimitiveExpression,
-      classifyDeclaredPrimitiveExpression,
+      ...makeIrCheckerSelectionOptions(ctx.checker),
       jsonParseFoldsAtCompileTime: (call: ts.CallExpression) => jsonParseTextFoldsAtCompileTime(ctx, call),
-      isArrayExpression,
       classifyArrayElementFamily,
-      isRegExpExpression,
       nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
@@ -7557,12 +7550,14 @@ function makeFromAstResolver(
     builtinProtoMember: (builtin: string, member: string, anchor: ts.Node) =>
       builtinProtoMemberProvided(ctx, builtin, member, anchor), // (#7294)
     isAmbientStringBinding,
+    localNeedsDynamicCarrier: (declaration) => bindingHasMixedAssignmentCarrier(ctx, declaration),
     // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
     // predicates as the legacy `collectConsoleImports` registration scan
     // (string → bool → number → externref, in that order), so the import
     // name the IR resolves (`console_<m>_<variant>`) is registered by
     // construction.
     consoleArgVariant(arg: ts.Expression) {
+      if (expressionHasWidenedStaticType(ctx, arg)) return "externref";
       const argType = ctx.checker.getTypeAtLocation(arg);
       if (isStringType(argType)) return "string";
       if (isBooleanType(argType)) return "bool";

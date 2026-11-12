@@ -102,7 +102,7 @@ import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec
 import { fillArraySetLengthRefusal } from "./array/array-set-length-coercion.js"; // (#6771 S10a)
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { canonicalNumericKeyGuard } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
-import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
+import { SPARSE_INDEX_CEILING } from "../shared/array-index-key.js";
 import { growHighArrayIndexLength, markNumericLikeNamedKey } from "./vec-overlay-high-index.js";
 import { holeTestInstrs } from "./array-holes.js";
 import { buildVecLengthHoleFill } from "./vec-length-hole-fill.js";
