@@ -143,7 +143,7 @@ export function mayBeElementRead(expr: ts.Expression, leafReadsElement: (id: ts.
 }
 
 /** A literal `void 0`: the value `undefined`, whatever the scope binds. */
-export function isVoidZero(expr: ts.Expression): boolean {
+function isVoidZero(expr: ts.Expression): boolean {
   return ts.isVoidExpression(expr) && ts.isNumericLiteral(expr.expression) && Number(expr.expression.text) === 0;
 }
 

@@ -58,9 +58,13 @@ for (const [op, rhs] of [
   ["<<=", "fs()"],
   ["-=", '"a" + "b"'],
   ["<<=", '"a" + "b"'],
+  ["-=", '(0, "2")'],
+  ["-=", '"ab".charAt(0)'],
+  ["<<=", '"ab".charAt(0)'],
+  ["-=", "String(n)"],
 ] as const)
   it(`refuses script dynamic ${op} ${rhs} at selection`, async () => {
-    const result = await compile(`function fs() { return "2"; } var y; y = 1; y ${op} ${rhs};`, {
+    const result = await compile(`function fs() { return "2"; } var n; n = 3; var y; y = 1; y ${op} ${rhs};`, {
       fileName: "compound-refusal.js",
       allowJs: true,
       target: "standalone",

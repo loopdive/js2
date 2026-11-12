@@ -237,7 +237,6 @@ import {
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   isTypedBinaryOperator,
-  isVoidZero,
   mayBeElementRead,
   wrapperComparisonIsIdentity,
   type AdditiveLane,
@@ -9609,7 +9608,13 @@ function binaryOperandFamily(
     if (returned !== "unknown") return returned;
   }
   if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
-  if (isUnshadowedUndefinedIdentifier(candidate, scope) || isVoidZero(candidate)) return "undefined";
+  // Unary `-` / `+` lower to the ToNumber result, whatever the operand.
+  if (
+    ts.isPrefixUnaryExpression(candidate) &&
+    (candidate.operator === ts.SyntaxKind.MinusToken || candidate.operator === ts.SyntaxKind.PlusToken)
+  )
+    return "number";
+  if (isUnshadowedUndefinedIdentifier(candidate, scope) || ts.isVoidExpression(candidate)) return "undefined";
   if (nativeStaticRegExp(candidate)) return "regexp";
   const proven = provenIrFamily(operand, scope);
   return proven === "unknown" && obviousSelectorValueFamily(operand, scope) === "reference" ? "reference" : proven;
@@ -9735,13 +9740,20 @@ function isSelectableNumberCompound(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
-  // A dynamic script var takes the builder's own operand rule (`lowerCompoundAssignment`)
-  // for an RHS whose lowered family selection proves; an unproven one is the builder's to judge.
-  const rhsFamily = binaryOperandFamily(expr.right, scope, localClasses);
+  // A dynamic script var takes the builder's own operand rule (`lowerCompoundAssignment`).
+  // The family is the selector's mirror of the lowered RHS, and "unknown" is refused:
+  // the builder throws on any RHS it cannot carry, so claiming one we cannot name
+  // risks a withdrawal after the claim. One shape binaryOperandFamily leaves unknown
+  // is admitted: a read of a dynamic script var, alone or as a `+` operand, which
+  // from-ast lowers to the dynamic carrier (`emitGlobalGet` of the slot; the dynamic
+  // `+` keeps it). binaryOperandFamily itself cannot answer "dynamic" for the read:
+  // the generic binary arm would then judge `n + 1` and refuse it.
+  const rhsFamily = readsDynamicScriptVar(expr.right)
+    ? "dynamic"
+    : binaryOperandFamily(expr.right, scope, localClasses);
   if (
     ts.isIdentifier(expr.left) &&
     moduleBinding(expr.left)?.valueKind.kind === "dynamic" &&
-    rhsFamily !== "unknown" &&
     !compoundWriteAdmissible(expr.operatorToken.kind, "dynamic", rhsFamily)
   ) {
     return shapeNo("compound-dynamic-module-operand", expr.right);
@@ -9752,6 +9764,17 @@ function isSelectableNumberCompound(
   if (!isNumberCompoundAssignOperator(expr.operatorToken.kind)) return false;
   // (#7106 S5) A carrier leaf's read is no number, whatever the checker says.
   return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
+}
+
+/** A dynamic script var's read, or a `+` with one as an operand: the carrier from-ast lowers it to. */
+function readsDynamicScriptVar(expression: ts.Expression): boolean {
+  const e = unwrapPhase1Parens(expression);
+  if (ts.isIdentifier(e)) return moduleBinding(e)?.valueKind.kind === "dynamic";
+  return (
+    ts.isBinaryExpression(e) &&
+    e.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+    (readsDynamicScriptVar(e.left) || readsDynamicScriptVar(e.right))
+  );
 }
 
 /** `<id> <op>= e` as a statement, for the body and the non-tail walks (`arm` prefixes the refusal). */
