@@ -3,8 +3,8 @@
 // #7106 lever T — the ES5 `if (x !== 1) throw new Test262Error('#1: ' + x)`
 // shape over a script var. The selector judges the thrown value by its own
 // family (`throwOperandAdmissible`) and a module `+` by #7066's additive rule,
-// so `<module-init>` is claimed; a compound write the builder cannot lower on
-// a dynamic script var is refused at selection instead of withdrawn.
+// so `<module-init>` is claimed; what the builder cannot lower is refused at
+// selection instead of withdrawn.
 
 import { describe, expect, it } from "vitest";
 
@@ -42,6 +42,9 @@ const CLAIMED: Record<string, string> = {
   negativeZero: `var x = -0;\n${check("'#' + x", "#0")}`,
   exponent: `var x = 1e21;\n${check("'#' + x", "#1e+21")}`,
   booleanMessage: `var x = true;\n${check("'#' + x", "#true")}`,
+  // `lowerCompoundAssignment` writes a dynamic module slot (#7130).
+  dynamicCompound: "var y;\ny = 1;\ny *= -1;\nif (y !== -1) { throw new Test262Error('#1: ' + y); }",
+  dynamicAppend: "var y;\ny = 1;\ny += 1;\nif (y !== 2) { throw new Test262Error('#1: ' + y); }",
 };
 
 const REFUSED: Record<string, string> = {
@@ -49,9 +52,6 @@ const REFUSED: Record<string, string> = {
   thrownNumber: "var x = 1;\ntry { throw x; } catch (e) { if (e !== 1) { throw new Test262Error('e'); } }",
   // A boolean beside a number is no concatenation.
   booleanPlusNumber: "var x = true;\nif (x + 1 !== 2) { throw new Test262Error('#1'); }",
-  // `lowerCompoundAssignment` writes no dynamic module slot yet (#7130).
-  dynamicCompound: "var y;\ny = 1;\ny *= -1;\nif (y !== -1) { throw new Test262Error('#1: ' + y); }",
-  dynamicAppend: "var y;\ny = 1;\ny += 1;\nif (y !== 2) { throw new Test262Error('#1: ' + y); }",
   // A void local call has no value to combine (S13.2.1_A9_T1).
   voidCallOperand:
     "var x;\nfunction f() { x = 1; return; }\n" +

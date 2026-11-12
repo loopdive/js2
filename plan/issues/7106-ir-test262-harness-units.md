@@ -67,6 +67,10 @@ import-cycles-allow:
 # self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
 # stands down when runtime eval may share the realm.
 func-budget-allow:
+  # 2026-11-11 (ES5 value-position compounds, PR 7130 merged with main): +2, `<id> <op>= e` in value position is admitted through isSelectableNumberCompound and the for-update storage check, beside main's plain-assignment arm
+  - src/ir/select.ts::isPhase1Expr
+  # 2026-11-11 (ES5 value-position compounds, PR 7130 merged with main): +1, a numeric compound other than += proves a number
+  - src/ir/select-planned-closure-operands.ts::plannedClosureOperandRefusal
   # 2026-11-07 (#7106 lever S2, review round 1): `resolveGlobalType`, the slot ValType `emitModuleSlotAdapter` derives a module slot's read/write adapter from (+3)
   - src/ir/integration.ts::makeResolver
   # 2026-11-06 (#7106 lever R1): extern.regex joins its sibling extern ops' provider dependency arm
@@ -110,6 +114,8 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
+  # 2026-11-12 (PR 7130 reviews, rounds 1-3): +48. isSelectableNumberCompound refuses a dynamic script var's compound when compoundWriteAdmissible rejects the RHS family, unknown included, with one why-commented admission (a dynamic script-var read, alone or under `+`, via readsDynamicScriptVar); binaryOperandFamily answers `+` (additiveResultFamily), a local call (resolved return), unary `-`/`+` (number) and any `void` (undefined) as irOperandFamily sees them after lowering
+  - src/ir/select.ts
   # 2026-11-08 (merge of origin/main): the `regexp-match` home's doc line and the classifier `certifiedScriptVarUse` now takes (+3); its kind, write and use arms joined lever V's dispatch in src/ir/module-binding-certified-homes.ts. 2026-11-07 (#7106 levers R2 + S2): the admission lives in src/ir/regexp-match-uses.ts
   - src/ir/module-bindings.ts
   # 2026-11-06 (#7106 lever R1): the constructor's static tail is exported unchanged as compileStandaloneStaticRegExp for the IR's extern.regex wrapper, plus standaloneStaticRegExpCompiles, the selection predicate over the same compiler
