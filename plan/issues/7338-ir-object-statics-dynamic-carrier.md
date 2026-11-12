@@ -14,11 +14,11 @@ area: ir
 goal: ir-full-coverage
 related: [7106, 7128, 7280, 7335, 7189]
 loc-budget-allow:
-  # 2026-11-12 (#7338, PR #7212 review rounds 1-2), +41 net: one `lowersToCarrier` predicate and its readers
+  # 2026-11-12 (#7338, PR #7212 review rounds 1-2), +92 net: one `lowersToCarrier` predicate and its readers
   # (operand family, module-binding writes, member read-modify-writes), the strict-only `null` compare and the
   # written-parameter refusal, so no carrier use is claimed and then demoted; the JS environment's create hook.
   - src/ir/select.ts
-  # 2026-11-12 (#7338, PR #7212 review round 1), +25 net: from-ast's carrier test reads the same plan, and the JS
+  # 2026-11-12 (#7338, PR #7212 review round 1), +23 net: from-ast's carrier test reads the same plan, and the JS
   # environment's `Object.create` hook stays beside the table hook.
   - src/ir/from-ast.ts
   # 2026-11-12 (#7338, review nit), +3 net: the provider type is imported by name instead of `Parameters<…>[0]`.
@@ -340,7 +340,9 @@ Both slices landed together. Measured by real compile (no stubs) over the
 2,600-file set plus the 157 files that were already IR-only on main and use a
 table static, a stored alias or propertyHelper (2,757 files), standalone,
 original harness, `JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`,
-against a detached `af39ceaf08` (main has had no `src/` change since).
+against main. Last measured after review round 2, with the branch merged
+with main `d9dd218bbf` and that commit's `src/` as the base (the same numbers
+as against `af39ceaf08` before the merge).
 
 | | files |
 |---|---|
@@ -424,7 +426,10 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
   boxable concrete" loop are one `scanCarrierArguments` call each.
 - Size: `object-statics.ts` 191 lines, `descriptor-literal.ts` 124,
   `object-create-call.ts` 180 → 110, `empty-object-literal.ts` 197.
-  `select.ts` +41, `from-ast.ts` +25 and `integration.ts` +3 net: granted above.
+  Net against main: `select.ts` +92, `from-ast.ts` +23, `integration.ts` +3,
+  granted above. Folding the carrier tests into `lowersToCarrier` (round 2)
+  replaced `isDynamicCarrierValue` but added the read-modify-write and
+  module-write readers, so the round-2 net is not smaller than round 1's.
 
 ### Differences from the plan
 
