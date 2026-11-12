@@ -135,6 +135,59 @@ describe("URL-gated website IR data selection", () => {
     assert.throws(() => view.state.dataUrl("https://raw.githubusercontent.com/legacy/report.json"));
   });
 
+  it("routes every per-edition and strict-mode source of the standalone view to an IR artifact", () => {
+    const view = page("?ir=1");
+    const results = "https://website.test/project/benchmarks/results";
+    // Edition bars, per-edition headline, edition trend, the report's edition
+    // filters, and the report that carries `strict_summary`.
+    for (const [regular, ir] of [
+      ["test262-standalone-editions.json", "ir/test262-standalone-editions.json"],
+      ["runs/standalone-editions-index.json", "ir/runs/standalone-editions-index.json"],
+      ["runs/standalone-index.json", "ir/runs/standalone-index.json"],
+      ["test262-category-editions.json", "ir/test262-category-editions.json"],
+      ["test262-file-editions.json", "ir/test262-file-editions.json"],
+      ["test262-standalone-report.json", "test262-standalone-ir-report.json"],
+    ])
+      assert.equal(view.state.dataUrl(`./benchmarks/results/${regular}`), `${results}/${ir}`);
+  });
+
+  it("reads lane-neutral edition maps from the standalone measurement but keeps editions lane-bound", async () => {
+    const view = page("?ir=1");
+    const envelope = {
+      compilerPath: "ir",
+      requestedCompilerPath: "ir",
+      measurementState: "measured",
+      compilerPathVerified: false,
+      executionCompilerPath: "unknown",
+      mode: { target: "standalone" },
+      attemptedCases: 1,
+      completedCases: 1,
+      skippedCases: 0,
+      compileErrorCases: 1,
+      compileTimeoutCases: 0,
+      verifiedExecutionCases: 0,
+      unverifiedExecutionCases: 1,
+      editions: [{ edition: "ES5", pass: 0, total: 1 }],
+      data: { editions: ["ES5"], files: {} },
+    };
+    view.window.fetch = async (href) => {
+      view.requests.push(href);
+      return { ok: true, json: async () => envelope };
+    };
+    const base = "./benchmarks/results";
+    assert.equal(await view.state.fetchData(`${base}/test262-file-editions.json`, "data"), envelope.data);
+    assert.equal(await view.state.fetchData(`${base}/test262-category-editions.json`, "data"), envelope.data);
+    assert.equal(await view.state.fetchData(`${base}/test262-standalone-editions.json`, "editions"), envelope.editions);
+    await assert.rejects(view.state.fetchData(`${base}/test262-editions.json`, "editions"));
+    // An absent artifact is an error for the caller to show as unmeasured, never a regular-lane request.
+    view.window.fetch = async (href) => {
+      view.requests.push(href);
+      return { ok: false, json: async () => ({}) };
+    };
+    await assert.rejects(view.state.fetchData(`${base}/test262-standalone-editions.json`, "editions"));
+    assert.ok(view.requests.every((href) => href.includes("/results/ir/")));
+  });
+
   it("refuses unlabelled, request-only, unknown-execution and incomplete IR envelopes", () => {
     const view = page("?ir=1");
     for (const payload of [
@@ -305,4 +358,18 @@ it("keeps historical measurement detail out of IR without removing source links"
   assert.equal(link.href, "./benchmarks/feature-report.html?feature=language%2Ffunctions");
   assert.equal(link.textContent, "View test results (2/3) →");
   assert.equal(details.querySelector(".feat-test262-paths"), sources);
+});
+
+it("words a missing IR edition or strict figure as unmeasured on the shared render path", () => {
+  const html = readFileSync(resolve(import.meta.dirname, "../website/index.html"), "utf8");
+  assert.match(html, /const UNAVAILABLE_LABEL = IR_SELECTED \? "Unmeasured" : "Unavailable";/);
+  assert.match(html, /<div class="conformance-unavailable-value">\$\{UNAVAILABLE_LABEL\}<\/div>/);
+  assert.match(html, /rateEl\.textContent = UNAVAILABLE_LABEL;/);
+  assert.match(html, /IR test262 data is unmeasured for \$\{strictOnly \? "strict " : ""\}\$\{scope\} scope\./);
+});
+
+it("draws the IR overall history from report-shaped rows", () => {
+  const trend = readFileSync(resolve(import.meta.dirname, "../website/components/t262-conformance-trend.js"), "utf8");
+  assert.match(trend, /pass: run\?\.pass \?\? run\?\.summary\?\.pass,/);
+  assert.match(trend, /total: run\?\.total \?\? run\?\.summary\?\.total,/);
 });
