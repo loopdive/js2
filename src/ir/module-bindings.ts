@@ -22,6 +22,7 @@ import {
   type IrUnitId,
 } from "./identity.js";
 import type { IrClassShape } from "./nodes.js";
+import type { IrSelectionOptions } from "./select.js";
 import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
@@ -408,7 +409,7 @@ export function projectIrLocalClassExpressionResolverToLegacy(
  * classification lets local classes with methods such as `indexOf` retain
  * ordinary class dispatch while real arrays reject before claim.
  */
-export function makeIrArrayExpressionPredicate(checker: ts.TypeChecker): (expr: ts.Expression) => boolean {
+function makeIrArrayExpressionPredicate(checker: ts.TypeChecker): (expr: ts.Expression) => boolean {
   return (expr) => {
     try {
       const type = checker.getTypeAtLocation(unwrapParens(expr));
@@ -423,6 +424,22 @@ export function makeIrArrayExpressionPredicate(checker: ts.TypeChecker): (expr: 
       return checker.isArrayType(type) || checker.isTupleType(type);
     } catch {
       return false;
+    }
+  };
+}
+
+/**
+ * (#7106) Build a checker-backed reader of an unwrapped key's number literal
+ * type (`const k = 0.5; a[k]` → 0.5), the selector's reader for
+ * `staticElementKey`, which says why only a refusal may rest on it.
+ */
+function makeIrNumberLiteralTypeValue(checker: ts.TypeChecker): (expr: ts.Expression) => number | undefined {
+  return (expr) => {
+    try {
+      const type = checker.getTypeAtLocation(expr);
+      return type.isNumberLiteral() ? type.value : undefined;
+    } catch {
+      return undefined;
     }
   };
 }
@@ -469,11 +486,12 @@ export function makeIrRegExpExpressionPredicate(checker: ts.TypeChecker): (expr:
  * declaration-file ones: `"some"` (the default) is the ambient test;
  * `"every"` (#7118) is the stricter lib-only test — a script's
  * `function Number() {}` merges with the lib's `declare var Number`, so
- * "some" calls it ambient and "every" does not.
+ * "some" calls it ambient and "every" does not. `"no-user"` (#7106) also
+ * accepts a symbol with no declaration at all, the intrinsic `undefined`.
  */
 export function makeIrAmbientBindingPredicate(
   checker: ts.TypeChecker,
-  quantifier: "some" | "every" = "some",
+  quantifier: "some" | "every" | "no-user" = "some",
 ): (node: ts.Identifier) => boolean {
   return (node) => {
     try {
@@ -483,7 +501,8 @@ export function makeIrAmbientBindingPredicate(
         (declaration): declaration is ts.Declaration => declaration !== undefined,
       );
       const isLib = (declaration: ts.Declaration): boolean => declaration.getSourceFile().isDeclarationFile;
-      return quantifier === "some" ? declarations.some(isLib) : declarations.length > 0 && declarations.every(isLib);
+      if (quantifier === "some") return declarations.some(isLib);
+      return (quantifier === "no-user" || declarations.length > 0) && declarations.every(isLib);
     } catch {
       return false;
     }
@@ -598,6 +617,32 @@ export function makeIrPrimitiveExpressionClassifier(
   };
 
   return (expr) => classifyExpression(expr, new Set());
+}
+
+/**
+ * (#7106) The checker-backed selection options every IR selection planner
+ * passes (`codegen/index.ts`, `ir/integration.ts`, the linear backend, the
+ * fallback gate): one factory, so the planners cannot drift apart.
+ */
+export function makeIrCheckerSelectionOptions(
+  checker: ts.TypeChecker,
+): Pick<
+  IrSelectionOptions,
+  | "classifyPrimitiveExpression"
+  | "classifyDeclaredPrimitiveExpression"
+  | "isArrayExpression"
+  | "isRegExpExpression"
+  | "numberLiteralTypeValue"
+  | "isGlobalBinding"
+> {
+  return {
+    classifyPrimitiveExpression: makeIrPrimitiveExpressionClassifier(checker),
+    classifyDeclaredPrimitiveExpression: makeIrDeclaredPrimitiveExpressionClassifier(checker),
+    isArrayExpression: makeIrArrayExpressionPredicate(checker),
+    isRegExpExpression: makeIrRegExpExpressionPredicate(checker),
+    numberLiteralTypeValue: makeIrNumberLiteralTypeValue(checker),
+    isGlobalBinding: makeIrAmbientBindingPredicate(checker, "no-user"),
+  };
 }
 
 export type IrModuleBindingValueKind = bindingValue.IrModuleBindingValueKind;

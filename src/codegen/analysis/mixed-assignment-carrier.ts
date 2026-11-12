@@ -277,6 +277,19 @@ function nullableSingleObjectAssignment(ctx: CodegenContext, value: ts.Expressio
  * body use the narrowly bounded name fallback described above.
  */
 export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  return mixedAssignmentCarrier(ctx, decl, false);
+}
+
+/**
+ * (#7337) Whether the binding's checker type is stale: some write is PROVEN to
+ * cross domains. An unresolvable write widens the carrier but is no evidence
+ * against the checker type (#4122), so arithmetic keeps its typed path.
+ */
+export function bindingHasCrossDomainAssignment(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  return mixedAssignmentCarrier(ctx, decl, true);
+}
+
+function mixedAssignmentCarrier(ctx: CodegenContext, decl: ts.VariableDeclaration, provenOnly: boolean): boolean {
   if (!ts.isIdentifier(decl.name)) return false;
   if (!decl.initializer) return false;
 
@@ -340,7 +353,7 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
         ? "object"
         : rawTag;
     const unresolvable = assignedTag === "mixed";
-    if (unresolvable ? !provenNumeric : carrierDomain(assignedTag) !== initialDomain) {
+    if (unresolvable ? !provenNumeric && !provenOnly : carrierDomain(assignedTag) !== initialDomain) {
       mixed = true;
       break;
     }
