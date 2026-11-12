@@ -26,12 +26,8 @@ import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
 import { ts } from "../ts-api.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
 import type { IrFunctionBuilder } from "./builder.js";
-import {
-  descriptorMapDefinitions,
-  isPrimitiveLiteral,
-  unitInKeysAreOwnOnly,
-  type DescriptorDefinition,
-} from "./empty-object-literal.js";
+import { descriptorMapDefinitions, isPrimitiveLiteral, type DescriptorDefinition } from "./descriptor-literal.js";
+import { unitInKeysAreOwnOnly } from "./empty-object-literal.js";
 import { irDynamic, irVal, type IrValueId } from "./nodes.js";
 import {
   emitNewPlainObject,

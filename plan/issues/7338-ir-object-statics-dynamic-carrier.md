@@ -14,14 +14,14 @@ area: ir
 goal: ir-full-coverage
 related: [7106, 7128, 7280, 7335, 7189]
 loc-budget-allow:
-  # 2026-11-12 (#7338, PR review B1/B2): select.ts learns that a static's result is the carrier
-  # (`isDynamicCarrierValue`, `lowersToCarrier`, the strict-only nullish compare, the reassigned-parameter
-  # refusal) so no use of one is claimed and then demoted, and keeps the JS environment's create beside the table.
+  # 2026-11-12 (#7338, PR #7212 review rounds 1-2), +41 net: one `lowersToCarrier` predicate and its readers
+  # (operand family, module-binding writes, member read-modify-writes), the strict-only `null` compare and the
+  # written-parameter refusal, so no carrier use is claimed and then demoted; the JS environment's create hook.
   - src/ir/select.ts
-  # 2026-11-12 (#7338, PR review B1/B2): from-ast's carrier test reads the same plan, and the JS environment's
-  # `Object.create` hook is restored beside the table hook.
+  # 2026-11-12 (#7338, PR #7212 review round 1), +25 net: from-ast's carrier test reads the same plan, and the JS
+  # environment's `Object.create` hook stays beside the table hook.
   - src/ir/from-ast.ts
-  # 2026-11-12 (#7338, review nit): the provider type is imported by name instead of `Parameters<…>[0]`.
+  # 2026-11-12 (#7338, review nit), +3 net: the provider type is imported by name instead of `Parameters<…>[0]`.
   - src/ir/integration.ts
 ---
 
@@ -353,8 +353,9 @@ Unit routing changed in exactly those 39 files; each passes under
 `scripts/run-test262-paths.mts --standalone` on both trees, and a seeded
 300-file sample of the set gives the same verdicts on both. JS-environment
 (default target) binaries are byte-identical on both trees for 932 inputs (the
-13 playground examples and every third file of the set) and for the 124
-probe programs of the PR review.
+13 playground examples and every third file of the set) and for the 231
+probe programs of the PR review. (Re-measured after review round 2; the
+numbers did not move.)
 
 33 of the 39 are among the 59 the stub predicted; 6 are beyond it. Two of the
 27 files the stub assigned to S1 + S2 stay legacy:
@@ -374,10 +375,11 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
   refusal is a selection refusal,
   `expr-object-static-<shape|arity|untrusted|proto|descriptor|in-key>`, and an
   operand that is no carrier is `expr-object-static-operand`.
-- `src/ir/empty-object-literal.ts` holds the descriptor parsing: one
+- `src/ir/descriptor-literal.ts` parses inline descriptor literals: one
   `dataDescriptorFields(descriptor, admitsValue)`, the keyed definition, the
-  descriptor map, `definesLiteralsOnly` (#7128's U1 test, now a question over
-  the plan's definitions, not a name check) and `unitInKeysAreOwnOnly`.
+  descriptor map and `definesLiteralsOnly` (#7128's U1 test, a question over
+  the plan's definitions). `empty-object-literal.ts` keeps the open-carrier
+  binding and `unitInKeysAreOwnOnly`.
 - `src/ir/open-object-carrier.ts`: `emitObjectStaticCall` lowers every row
   over carrier values, all evaluated first, in source order (every argument
   is evaluated before a static's step 1). `emitObjectRuntimeCall` is the one
@@ -386,16 +388,33 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
   plan refuses reaching it is an `IrInvariantError`. Every operand crosses
   through one `lowerCarrierOperand`, which the stored aliases, the dynamic
   delete key and #7335's own-property call share.
-- **A static's result is the carrier wherever it is used.** The selector's
-  operand-family helper (`binaryOperandFamily`, through
-  `isDynamicCarrierValue`) and from-ast's (`expressionProducesDynamic`) both
-  read the plan, so `+`, the equalities and a script `var`'s initialiser see
-  the carrier the call answers. A carrier compared loosely with `null` /
-  `undefined` is refused at select (from-ast folds only the strict compare),
-  as is a carrier stored into a script `var` whose global is not the carrier.
+- **What lowers to the carrier is one selector predicate**, `lowersToCarrier`,
+  the selector's twin of from-ast's `expressionProducesDynamic` (which reads
+  the same plan): a dynamic module binding, a local initialised with an
+  admitted static's result, such a result, a member read on any of these, or
+  a `+` / conditional over them. Its readers:
+  - the operand family (`binaryOperandFamily`), so `+`, the relationals and
+    the equalities judge the carrier the value is. A carrier compared with
+    `null` is admitted only strictly (`tryFoldNullCompare` is the only fold;
+    a loose one types `null` as f64); with `undefined` it is the carrier
+    equality;
+  - module-binding writes (`moduleBindingTakes`, and the `var` initialiser):
+    a carrier goes only into a dynamic home;
+  - member read-modify-writes (`isPhase1MutableMemberTarget`, shared by
+    `o.p += v` and `++` / `--`): `lowerPropertyCompound` and the element
+    compound take object / class / vec receivers only, so a carrier's member
+    is refused (`member-compound-dynamic-receiver`). The move-only scan's
+    `++` / `--` arm refuses the same for a dynamic parameter's member, which
+    it judges itself.
+  A dynamic parameter is left to the move-only scan, which judges each of its
+  uses; folding it into the predicate refused shapes main lowers correctly
+  (`d !== isTrue(d)` in #7283's verifyProperty chain, lever O's integrity
+  rows).
 - `src/ir/object-create-call.ts` stays: it is the JS environment's #7276
   `Object.create({}, { <literal data descriptors> })`, unchanged in output,
-  called beside the table hook on both sides and off the table's lane only.
+  asked before the table on both sides and admitted off the table's lane only.
+  Its emit sequence repeats the `create` row's; that is accepted debt, retired
+  with `nativeRegimeInJs` (item 3).
 - Folded in: the two `Object` rows of `STORED_STATICS`
   (`uncurried-object-alias.ts`) read the table's arity and helper; #7128 /
   #7335's U1 define is any table call that only defines literal keys with
@@ -403,9 +422,9 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
   from-ast's define arm are gone).
 - The move-only scan's three copies of the "every argument is a carrier or a
   boxable concrete" loop are one `scanCarrierArguments` call each.
-- Size: `object-statics.ts` 191 lines, `object-create-call.ts` 180 → 110.
-  `select.ts` +79, `from-ast.ts` +23 and `integration.ts` +3 net: granted
-  above, for the PR review's B1/B2 fixes.
+- Size: `object-statics.ts` 191 lines, `descriptor-literal.ts` 124,
+  `object-create-call.ts` 180 → 110, `empty-object-literal.ts` 197.
+  `select.ts` +41, `from-ast.ts` +25 and `integration.ts` +3 net: granted above.
 
 ### Differences from the plan
 
@@ -413,19 +432,26 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
    not through `__defineProperties`. A map's values may be any carrier
    values: they are evaluated with the other arguments, before the first
    define, which is the spec's order. `__defineProperties` comes with S3's
-   dynamic maps.
+   dynamic maps. Exercised on claimed units: a map value that throws (a
+   member read on `undefined`) leaves every earlier key undefined, for
+   `defineProperties` and `create`. A map value with a side effect that a
+   unit could claim does not exist yet: a call, `i++` or an assignment as a
+   value is refused at select before it reaches a static.
 2. **The first value is tested only where the helper does not test it.**
-   `__getOwnPropertyDescriptor` throws for `undefined` / `null` itself, so its
-   row has no test. `__getOwnPropertyNames` answers a nullish value, so its
-   row tests ToObject; `__obj_define_from_desc` and `__object_create` take any
-   first value, and a define on an empty map calls no helper, so
-   `defineProperty`, `defineProperties` and `create` test for an Object. A
-   fresh `{}` is never tested. Legacy throws only for an operand the checker
-   types as primitive, so `Object.defineProperty(o, …)` on a script `var`
-   that is still `undefined` is silently applied by legacy and throws in the
-   IR, as the spec says. The stored alias `__getOwnPropertyNames(null)` keeps
-   legacy's answer (no throw): the alias lowering is the JS environment's too,
-   and adding the test there would move its bytes.
+   Verified by removing each test and running the TypeError rows: without its
+   test `Object.getOwnPropertyNames(null)` returns, `Object.defineProperty(5,
+   …)` and `Object.create('x')` complete, and a define on an empty map calls
+   no helper at all; `__getOwnPropertyDescriptor` throws for `undefined` /
+   `null` itself (its stored alias throws with no IR test). So
+   `getOwnPropertyNames` tests ToObject, `defineProperty`, `defineProperties`
+   and `create` test for an Object, and `getOwnPropertyDescriptor` tests
+   nothing. A fresh `{}` is never tested. Legacy throws only for an operand
+   the checker types as primitive, so `Object.defineProperty(o, …)` on a
+   script `var` that is still `undefined` is silently applied by legacy and
+   throws in the IR, as the spec says. The stored alias
+   `__getOwnPropertyNames(null)` keeps legacy's answer (no throw): the alias
+   lowering is the JS environment's too, and adding the test there would move
+   its bytes.
 3. **The lane is a new capability, `native-object-statics`**: host-free,
    non-fast standalone. A JS environment under the native-first policy
    projects exactly like standalone, so no existing capability could keep the
@@ -453,13 +479,15 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
      (`moduleExternPropertyWriteIsProven`);
    - a dynamic module home initialised with a non-empty object literal
      (`vardecl-module-value-flow`);
-   - a carrier stored into a script `var` whose global is not the carrier,
-     including a member read on a dynamic home (`var r = o.p`, which failed
-     after the claim on main too);
-   - a reassigned parameter as a static's value (`n = n + 1;
-     Object.defineProperty(n, …)`): from-ast cannot prove that `+`, with or
-     without the static (the same gap fails `function f(n) { n = n + 1;
-     return n; }` on main), so the static refuses the operand
+   - the `lowersToCarrier` readers above. They also refuse shapes that
+     failed after the claim on main with no static in them: `var r = o.p`,
+     `var r = o.p + 1`, `r = o.p`, `o.p == null` on a dynamic home, and
+     `d.value++` on a dynamic parameter or a stored-alias result;
+   - a parameter written anywhere in its function as a static's value
+     (`n = n + 1; Object.defineProperty(n, …)`): the lattice's write index
+     (`localIsRewritten`, now also over parameters) gives it no fact, so
+     from-ast cannot prove the write's `+` (the same gap fails `function f(n)
+     { n = n + 1; return n; }` on main). The static refuses the operand
      (`expr-object-static-operand`) rather than claim the function.
 8. **`__object_create` is registered through the object-runtime provider
    table** (`stored-static-alias-providers.ts`, `objectRuntimeProviderImport`):
@@ -468,11 +496,14 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
 
 ### Review probes (PR #7212)
 
-The reviewer's 153 probe programs (8 case files): 0 post-claim errors caused
-by this change. Two remain, both failing identically on main and neither
-touching a table call: `function f(n) { n = n + 1; return n; }` (the `+`
-proof gap above) and a stored `__getOwnPropertyNames` alias inside a
-function (a function-type parity mismatch in the alias path).
+The reviewer's 231 probe programs (rounds 1 and 2): post-claim errors
+7 on this branch against 14 on main, every one of them also failing
+on main and none involving a table call: two `+`-proof gaps on a written
+parameter, two function-type parity mismatches (a stored
+`__getOwnPropertyNames` alias, a written numeric parameter), a loose `null`
+compare beside a string `+`, and two `throw <value>` helpers. One unit main
+lowered is refused: the `function Object() {}` shape of item 5. JS-environment
+bytes are identical to main's on all 231.
 
 ### What blocks the touched files now
 

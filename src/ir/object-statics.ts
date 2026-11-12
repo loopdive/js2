@@ -25,9 +25,9 @@ import {
   descriptorMapDefinitions,
   isPrimitiveLiteral,
   keyedDescriptorDefinition,
-  unitInKeysAreOwnOnly,
   type DescriptorDefinition,
-} from "./empty-object-literal.js";
+} from "./descriptor-literal.js";
+import { unitInKeysAreOwnOnly } from "./empty-object-literal.js";
 import { objectStaticsArePristine, type IrObjectIntegrityRealm } from "./object-integrity.js";
 
 /** The object-runtime helpers the rows call: `externref` operands, an `externref` result. */

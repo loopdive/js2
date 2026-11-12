@@ -172,6 +172,16 @@ const VALUE_USES: Record<string, string> = {
   "reassigned parameter as the target": `function f(n) { n = n + 1; Object.defineProperty(n, 'x', { value: 1 }); } try { f(1); throw "no"; } catch (e) { if (!(e instanceof TypeError)) { throw "type"; } }`,
   "descriptor field plus one, compared": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (Object.getOwnPropertyDescriptor(o, 'p').value + 1 !== 2) { throw "x"; }`,
   "home read into a script var": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); var r = o.p; if (r !== 1) { throw "x"; }`,
+  // A carrier's member under `++` / `--` (#7212 review R1): no read-modify-write lowers on the carrier.
+  "postfix ++ on a descriptor field": `function f(o) { var d = Object.getOwnPropertyDescriptor(o, 'p'); d.value++; return d.value; } var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (f(o) !== 2) { throw "x"; }`,
+  "prefix ++ on a created field": `function f() { var o = Object.create({}, { a: { value: 1, writable: true } }); ++o.a; return o.a; } if (f() !== 2) { throw "x"; }`,
+  "postfix -- on a created field": `function f() { var o = Object.create({}, { a: { value: 1, writable: true } }); o.a--; return o.a; } if (f() !== 0) { throw "x"; }`,
+  "prefix -- on a descriptor field": `function f(o) { var d = Object.getOwnPropertyDescriptor(o, 'p'); --d.value; return d.value; } var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (f(o) !== 0) { throw "x"; }`,
+  "postfix ++ on a dynamic parameter's field": `function f(d) { d.value++; return d.value; } var o = {}; o.value = 1; if (f(o) !== 2) { throw "x"; }`,
+  // A dynamic home's member read is the carrier too (#7212 review S1).
+  "home read compared loosely with null": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (o.p == null) { throw "x"; }`,
+  "home read assigned to a numeric script var": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); var r = 0; r = o.p; if (r !== 1) { throw "x"; }`,
+  "descriptor field assigned to a numeric script var": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); var r = 0; r = Object.getOwnPropertyDescriptor(o, 'p').value; if (r !== 1) { throw "x"; }`,
 };
 
 describe("#7338 — Object statics through the dynamic carrier", () => {
@@ -195,6 +205,20 @@ describe("#7338 — Object statics through the dynamic carrier", () => {
     expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
     expect(await run(ir, "standalone")).toBe("ok");
   });
+
+  // A map value that throws: every argument is evaluated before the first define, so nothing is defined.
+  for (const [name, source] of Object.entries({
+    "defineProperties defines nothing": `var u; var o = {}; try { Object.defineProperties(o, { a: { value: 1 }, b: { value: u.x } }); } catch (e) {} if (Object.getOwnPropertyDescriptor(o, 'a') !== undefined) { throw "x"; }`,
+    "create throws the value's TypeError": `var u; var ok = false; try { Object.create({}, { a: { value: u.x } }); } catch (e) { ok = e instanceof TypeError; } if (!ok) { throw "x"; }`,
+  })) {
+    it(`claims <module-init> and evaluates a throwing map value first: ${name}`, async () => {
+      expect(node(source)).toBe("ok");
+      const ir = await build(source, "standalone");
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
+      expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
+      expect(await run(ir, "standalone")).toBe("ok");
+    });
+  }
 
   for (const [name, source] of Object.entries(CLAIMED)) {
     it(`claims <module-init> and runs as JS on both lanes: ${name}`, async () => {

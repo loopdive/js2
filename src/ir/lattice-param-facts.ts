@@ -125,9 +125,12 @@ const writtenNamesByFunction = new WeakMap<ts.Node, ReadonlySet<string>>();
  * its function (nested functions included, the same over-approximation as
  * above)? A destructured declaration counts as written: its leaves are not
  * tracked by name here. (#7283) A function declaration's binding is checked
- * the same way: `f = …` anywhere in its scope rebinds it.
+ * the same way: `f = …` anywhere in its scope rebinds it, and (#7338) so is a
+ * parameter, whose scope is its own function.
  */
-export function localIsRewritten(declaration: ts.VariableDeclaration | ts.FunctionDeclaration): boolean {
+export function localIsRewritten(
+  declaration: ts.VariableDeclaration | ts.FunctionDeclaration | ts.ParameterDeclaration,
+): boolean {
   const scope = ts.findAncestor(declaration.parent, (node) => ts.isFunctionLike(node) || ts.isSourceFile(node))!;
   let written = writtenNamesByFunction.get(scope);
   if (written === undefined) {

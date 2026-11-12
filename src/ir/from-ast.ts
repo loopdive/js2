@@ -334,7 +334,7 @@ import {
   admittedOwnPropertyCallMethod,
 } from "./select.js";
 import type { OwnPropertyMethod } from "./dynamic-home-open-object.js";
-import type { DescriptorDefinition } from "./empty-object-literal.js";
+import type { DescriptorDefinition } from "./descriptor-literal.js";
 import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
 import { objectStaticCallPlan, type ObjectStaticCapability, type ObjectStaticPlan } from "./object-statics.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";

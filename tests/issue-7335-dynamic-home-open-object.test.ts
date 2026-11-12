@@ -95,7 +95,8 @@ const CLAIMED: Record<string, string> = {
 const REFUSED: Record<string, { readonly source: string; readonly detail: string }> = {
   "inherited method read": {
     source: `var o = {}; if (o.hasOwnProperty !== Object.prototype.hasOwnProperty) { throw "inherited"; }`,
-    detail: "expr-module-scalar-method",
+    // (#7338) The home's member read is the carrier, judged against a method value first.
+    detail: "operand-coercion-unsupported",
   },
   "parenthesized inherited read": {
     source: `var o = {}; if ((o).toString === undefined) { throw "inherited"; }`,
