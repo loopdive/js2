@@ -237,12 +237,12 @@ import {
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   isTypedBinaryOperator,
-  isVoidZero,
   mayBeElementRead,
   wrapperComparisonIsIdentity,
   type AdditiveLane,
   nativeI32OperandsAdmissible,
   type OperandFamily,
+  compoundWriteAdmissible,
 } from "./analysis/operand-admissibility.js";
 import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
@@ -5840,7 +5840,8 @@ function recordForInitLeaks(stmt: ts.ForStatement, scope: Set<string>): void {
  * Phase-1 expressions plus `i++` / `++i` / `i--` / `--i` on identifiers in
  * scope (which the body-statement layer accepts as an
  * ExpressionStatement but `isPhase1Expr` does not — an update is a
- * mutation, not a pure expression).
+ * mutation, not a pure expression). It also checks the mutation scope and
+ * storage of a compound value; a postfix update only when its value is discarded.
  */
 function isPhase1ForUpdateExpr(
   expr: ts.Expression,
@@ -9581,9 +9582,10 @@ function selectorPrimitiveWrapperOrGenericBinary(
 
 /**
  * A non-wrapper binary operand's family, as `irOperandFamily` names it once
- * lowered: a carrier `+` is `dynamic`, `null` `nullish`, the global `undefined`
- * `undefined`; then {@link provenIrFamily}'s answer, or `reference` for an
- * object, a closure or a local class value.
+ * lowered: a carrier `+` is `dynamic`, another `+` its additive result family,
+ * a local function's call its resolved return family, `null` `nullish`, the
+ * global `undefined` `undefined`; then {@link provenIrFamily}'s answer, or
+ * `reference` for an object, a closure or a local class value.
  */
 function binaryOperandFamily(
   operand: ts.Expression,
@@ -9592,8 +9594,27 @@ function binaryOperandFamily(
 ): OperandFamily {
   const candidate = unwrapPhase1Parens(operand);
   if (isCarrierAddition(candidate, (side) => selectorCarrierValue(side, scope, localClasses))) return "dynamic";
+  if (ts.isBinaryExpression(candidate) && candidate.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const family = (side: ts.Expression) => binaryOperandFamily(side, scope, localClasses);
+    return additiveResultFamily(candidate, family(candidate.left), family(candidate.right), additiveLane());
+  }
+  // A local function's call lowers to its resolved return representation.
+  if (
+    ts.isCallExpression(candidate) &&
+    ts.isIdentifier(candidate.expression) &&
+    !scope.has(candidate.expression.text)
+  ) {
+    const returned = resolvedKindFamily(calleeReturnKind(candidate.expression.text, currentClaimTypeMap));
+    if (returned !== "unknown") return returned;
+  }
   if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
-  if (isUnshadowedUndefinedIdentifier(candidate, scope) || isVoidZero(candidate)) return "undefined";
+  // Unary `-` / `+` lower to the ToNumber result, whatever the operand.
+  if (
+    ts.isPrefixUnaryExpression(candidate) &&
+    (candidate.operator === ts.SyntaxKind.MinusToken || candidate.operator === ts.SyntaxKind.PlusToken)
+  )
+    return "number";
+  if (isUnshadowedUndefinedIdentifier(candidate, scope) || ts.isVoidExpression(candidate)) return "undefined";
   if (nativeStaticRegExp(candidate)) return "regexp";
   const proven = provenIrFamily(operand, scope);
   return proven === "unknown" && obviousSelectorValueFamily(operand, scope) === "reference" ? "reference" : proven;
@@ -9719,16 +9740,41 @@ function isSelectableNumberCompound(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  // A dynamic script var takes the builder's own operand rule (`lowerCompoundAssignment`).
+  // The family is the selector's mirror of the lowered RHS, and "unknown" is refused:
+  // the builder throws on any RHS it cannot carry, so claiming one we cannot name
+  // risks a withdrawal after the claim. One shape binaryOperandFamily leaves unknown
+  // is admitted: a read of a dynamic script var, alone or as a `+` operand, which
+  // from-ast lowers to the dynamic carrier (`emitGlobalGet` of the slot; the dynamic
+  // `+` keeps it). binaryOperandFamily itself cannot answer "dynamic" for the read:
+  // the generic binary arm would then judge `n + 1` and refuse it.
+  const rhsFamily = readsDynamicScriptVar(expr.right)
+    ? "dynamic"
+    : binaryOperandFamily(expr.right, scope, localClasses);
+  if (
+    ts.isIdentifier(expr.left) &&
+    moduleBinding(expr.left)?.valueKind.kind === "dynamic" &&
+    !compoundWriteAdmissible(expr.operatorToken.kind, "dynamic", rhsFamily)
+  ) {
+    return shapeNo("compound-dynamic-module-operand", expr.right);
+  }
   if (expr.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken) {
     return exactNumericExponentiationAdmissible(expr, scope, localClasses);
   }
   if (!isNumberCompoundAssignOperator(expr.operatorToken.kind)) return false;
-  // (#7106 lever T) `lowerCompoundAssignment` writes no dynamic script var yet; #7130 lowers it.
-  if (ts.isIdentifier(expr.left) && moduleBinding(expr.left)?.valueKind.kind === "dynamic") {
-    return shapeNo("compound-dynamic-module", expr);
-  }
   // (#7106 S5) A carrier leaf's read is no number, whatever the checker says.
   return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
+}
+
+/** A dynamic script var's read, or a `+` with one as an operand: the carrier from-ast lowers it to. */
+function readsDynamicScriptVar(expression: ts.Expression): boolean {
+  const e = unwrapPhase1Parens(expression);
+  if (ts.isIdentifier(e)) return moduleBinding(e)?.valueKind.kind === "dynamic";
+  return (
+    ts.isBinaryExpression(e) &&
+    e.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+    (readsDynamicScriptVar(e.left) || readsDynamicScriptVar(e.right))
+  );
 }
 
 /** `<id> <op>= e` as a statement, for the body and the non-tail walks (`arm` prefixes the refusal). */
@@ -12371,6 +12417,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isBinaryExpression(expr)) {
     const binOp = expr.operatorToken.kind;
+    if (isNumberCompoundAssignOperator(binOp) && ts.isIdentifier(expr.left))
+      return isSelectableNumberCompound(expr, scope, localClasses) && isPhase1ForUpdateExpr(expr, scope, localClasses);
     if (binOp === ts.SyntaxKind.EqualsToken) {
       if (ts.isIdentifier(expr.left)) return isPhase1ForUpdateExpr(expr, scope, localClasses);
       if (ts.isPropertyAccessExpression(expr.left) || ts.isElementAccessExpression(expr.left))
