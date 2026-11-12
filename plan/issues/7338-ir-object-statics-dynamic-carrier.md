@@ -336,6 +336,17 @@ table static, a stored alias or propertyHelper (2,757 files).
 | lost | 0 |
 | post-claim errors | 0 |
 
+Re-measured 2026-11-12 on the branch merged with `origin/main` (`44774688e1`,
+no `src/` change since `af39ceaf08`) against a detached `af39ceaf08`, same
+2,757 files, standalone, original harness, `JS2WASM_IR_SHAPE_DIAG=1
+JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`: IR-only 157 → 195, the same 38 gained,
+0 lost, 0 new compile errors, 0 post-claim errors on either tree. Unit routing
+changed in exactly those 38 files; all 38 pass under
+`scripts/run-test262-paths.mts --standalone` on both trees, and a seeded
+300-file sample of the set gives the same 288 pass / 12 fail rows on both.
+JS-environment (default target) binaries are byte-identical on both trees for
+932 inputs: the 13 playground examples and every third file of the set.
+
 33 of the 38 are among the 59 the stub predicted; 5 are beyond it. Two of the
 27 files the stub assigned to S1 + S2 stay legacy:
 `Object/create/15.2.3.5-1-2.js` (`Object.create(null)`, refused as `proto`)
@@ -351,7 +362,11 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
   `expr-object-static-<shape|arity|untrusted|proto|descriptor|in-key>`; an
   operand that is no carrier is `expr-object-static-operand`.
 - `src/ir/open-object-carrier.ts`: `emitObjectStaticCall` lowers every row.
-  `src/ir/from-ast.ts` holds one hook (`tryLowerObjectStaticCall`).
+  `src/ir/from-ast.ts` holds one hook (`tryLowerObjectStaticCall`); a call the
+  plan refuses reaching it is an `IrInvariantError`, never a fall-through.
+  Every operand crosses through one `lowerCarrierOperand`, the helper the
+  stored aliases, the dynamic delete key and #7335's own-property call now
+  share (it replaced the array-in, array-out `lowerAliasCarrierOperands`).
 - Folded in: the two `Object` rows of `STORED_STATICS`
   (`uncurried-object-alias.ts`) read the table; #7128 / #7335's U1 define is
   the `defineProperty` row (`isOpenCarrierDefine`, `openCarrierDefinePlan` and
@@ -360,7 +375,11 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
 - The move-only scan's three copies of the "every argument is a carrier or a
   boxable concrete" loop (stored alias, function-object member call, and the
   new statics) are one `scanCarrierArguments` call each.
-- `select.ts` 62 added / 63 removed, `from-ast.ts` 48 added / 50 removed.
+- `select.ts` 65 added / 65 removed (net 0), `from-ast.ts` 66 added / 73
+  removed (net −7). `object-statics.ts` is 363 lines, not the ≈150 the plan
+  guessed: it also carries `unitInKeysAreOwnOnly` and the JS environment's
+  `Object.create` admission, both moved from the deleted
+  `object-create-call.ts` (180 lines). No loc/func budget grant was needed.
 
 ### Differences from the plan
 
