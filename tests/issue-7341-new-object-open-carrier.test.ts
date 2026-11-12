@@ -84,6 +84,9 @@ const CLAIMED: Record<string, string> = {
   "written by a top-level function": `var o = new Object(); function g() { o.p = 5; } g(); if (o.p !== 5) { throw "g"; }`,
   "passed to a function that reads it": `var o = new Object(); function f(a) { return a.k; } o.k = 3; if (f(o) !== 3) { throw "f"; }`,
   "strict script code": `"use strict"; var o = new Object(); o.x = 1; if (o.x !== 1) { throw "x"; }`,
+  // #7335's arms recognise the `new Object()` spelling too.
+  "a define, then an own read": `var o = new Object(); Object.defineProperty(o, "p", { value: 3 }); if (o.p !== 3) { throw "p"; }`,
+  "an own-property test": `var o = new Object(); o.p = 1; if (!o.hasOwnProperty("p") || o.hasOwnProperty("toString")) { throw "own"; }`,
 };
 
 /** A construction the plan declines: the unit is refused at select, with the arm named. */
@@ -116,17 +119,17 @@ const REFUSED: Record<string, { readonly source: string; readonly unit: string; 
   "an assignment after the declaration": {
     source: `var o; o = new Object(); o.p = 1; if (o.p !== 1) { throw "p"; }`,
     unit: "<module-init>",
-    detail: "expr-new-object-position",
+    detail: "expr-new-object-home",
   },
   "an equality operand": {
     source: `if (null === new Object()) { throw "n"; }`,
     unit: "<module-init>",
-    detail: "expr-new-object-position",
+    detail: "expr-new-object-home",
   },
   "a call argument": {
     source: `function f(a) { return typeof a; } if (f(new Object()) !== "object") { throw "f"; }`,
     unit: "<module-init>",
-    detail: "expr-new-object-position",
+    detail: "expr-new-object-home",
   },
 };
 
@@ -146,6 +149,37 @@ const VALUE_USES: Record<string, string> = {
   "a member compound-assigned": `var o = new Object(); o.p = 1; o.p += 1; if (o.p !== 2) { throw "c"; }`,
   "an element incremented": `var o = new Object(); o["p"] = 1; o["p"]++; if (o.p !== 2) { throw "e"; }`,
   "a second construction assigned": `var o = new Object(); o.p = 1; o = new Object(); if (o.p !== undefined) { throw "fresh"; }`,
+  "the var as a switch discriminant": `var o = new Object(); switch (o) { case 1: throw "x"; default: }`,
+  "a member as a switch discriminant": `var o = new Object(); o.k = 2; switch (o.k) { case 2: break; default: throw "k"; }`,
+  "a void member strictly compared with undefined": `var o = new Object(); o.p = 1; if (void o.p !== undefined) { throw "v"; }`,
+  "a void member loosely compared with undefined": `var o = new Object(); o.p = 1; if (void o.p != undefined) { throw "v"; }`,
+};
+
+/**
+ * A program-declared or program-written `Object` is not the realm's: the
+ * construction keeps main's route (legacy), and the selector never takes it as
+ * an empty object.
+ */
+const USER_OBJECT: Record<string, string> = {
+  "a script function declaration": `function Object() { G = 1; } var G = 0; var o = new Object(); if (G !== 1) { throw "builtin"; }`,
+  "an assignment to the global": `var G = 0; Object = function () { G = 1; }; var o = new Object(); if (G !== 1) { throw "builtin"; }`,
+  "an assignment after the construction": `var o = new Object(); o.p = 1; if (o.p !== 1) { throw "p"; } Object = function () {};`,
+};
+
+/**
+ * PENDING #7194: the carrier's loose equality skips ToPrimitive of the object
+ * operand, so these are claimed and answer wrong today (the same for `{}` on
+ * main). #7194 S1 fixes the runtime rule; these rows pin today's answer so the
+ * fix flips them visibly, and must then accept only the JS answer or a select
+ * refusal, never a trap.
+ */
+const PENDING_7194: Record<string, { readonly source: string; readonly today: Verdict }> = {
+  "== 1": { source: `var o = new Object(); if (o == 1) { throw "n"; }`, today: "trap" },
+  "== true": { source: `var o = new Object(); if (o == true) { throw "b"; }`, today: "trap" },
+  '== "[object Object]"': {
+    source: `var o = new Object(); if (o == "[object Object]") {} else { throw "s"; }`,
+    today: "threw",
+  },
 };
 
 describe("#7341 S1 — `new Object()` as the open-object carrier", () => {
@@ -184,13 +218,26 @@ describe("#7341 S1 — `new Object()` as the open-object carrier", () => {
     });
   }
 
-  it("leaves a shadowed Object to the program's own binding", async () => {
-    const source = `var Object = function () { this.k = 1; }; var o = new Object(); if (o.k !== 1) { throw "k"; }`;
-    const ir = await build(source, "standalone");
-    expect(ir.irPostClaimErrors ?? []).toEqual([]);
-    expect(outcome(ir, "<module-init>")?.detail ?? "").not.toContain("expr-new-object");
-    expect(await run(ir, "standalone")).toBe(await run(await build(source, "standalone", false), "standalone"));
-  });
+  for (const [name, source] of Object.entries(USER_OBJECT)) {
+    it(`leaves a program's own Object on legacy: ${name}`, async () => {
+      const ir = await build(source, "standalone");
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
+      const row = outcome(ir, "<module-init>");
+      expect(row).toMatchObject({ stage: "select", irBodyEmitted: false });
+      expect(row?.detail ?? "").not.toContain("expr-new-object");
+      expect(await run(ir, "standalone")).toBe(await run(await build(source, "standalone", false), "standalone"));
+    });
+  }
+
+  for (const [name, { source, today }] of Object.entries(PENDING_7194)) {
+    it(`pending #7194 — a loose equality with a primitive, today's answer: ${name}`, async () => {
+      expect(node(source)).toBe("ok");
+      const ir = await build(source, "standalone");
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
+      expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
+      expect(await run(ir, "standalone")).toBe(today);
+    });
+  }
 
   it("an IR function shares the object a legacy <module-init> built", async () => {
     const source = `var o = new Object(); function g() { o.p = 5; } with ({}) { g(); } if (o.p !== 5) { throw "g"; }`;

@@ -13,7 +13,7 @@
 // prove before lowering (`plannedClosureOperandFamily`). A family the selector
 // cannot name is `unknown`, which every predicate refuses.
 
-import { skipOuterExpressions } from "../../shared/binding-writes.js";
+import { outermostParenthesized, skipOuterExpressions, stripParens } from "../../shared/binding-writes.js";
 import { ts } from "../../ts-api.js";
 
 /**
@@ -484,6 +484,22 @@ export function nativeI32OperandsAdmissible(
         ? "number"
         : "unknown";
   return binaryOperandsAdmissible(op, family(expr.left), family(expr.right));
+}
+
+/** `void e` other than `void 0`, as an equality operand against the global `undefined`. */
+export function voidValueComparedWithUndefined(
+  expr: ts.VoidExpression,
+  isShadowed: (name: string) => boolean,
+): boolean {
+  const operand = outermostParenthesized(expr);
+  const parent = operand.parent;
+  if (isUndefinedCompareOperand(expr, isShadowed) || !ts.isBinaryExpression(parent)) return false;
+  const other = stripParens(parent.left === operand ? parent.right : parent.left);
+  return (
+    isEqualityOperator(parent.operatorToken.kind) &&
+    ts.isIdentifier(other) &&
+    isUndefinedCompareOperand(other, isShadowed)
+  );
 }
 
 /** The operand an equality compares with a direct `null` literal (`null === null`: none to type). */

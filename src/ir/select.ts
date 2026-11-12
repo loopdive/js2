@@ -101,8 +101,10 @@ import {
   emptyObjectLiteralBinding,
   isEmptyObjectExpression,
   isOpenCarrierUse,
+  isRealmObjectConstruction,
   openCarrierDefinePlan,
   type EmptyObjectExpression,
+  type OpenCarrierHome,
   type EmptyObjectLiteralBinding,
 } from "./empty-object-literal.js";
 import * as dynamicHome from "./dynamic-home-open-object.js";
@@ -243,6 +245,7 @@ import {
   mayBeElementRead,
   nullComparedOperand,
   nullComparisonFolds,
+  voidValueComparedWithUndefined,
   wrapperComparisonIsIdentity,
   type AdditiveLane,
   nativeI32OperandsAdmissible,
@@ -4420,7 +4423,7 @@ function isPhase1MutableMemberTarget(
 ): boolean {
   if (target.questionDotToken !== undefined) return false;
   // The read-modify-write lowerings take an object, class or vec receiver, never the carrier.
-  if (readsScriptVarCarrier(target.expression)) return shapeNo("member-compound-carrier-receiver", target);
+  if (readsScriptVarCarrier(target.expression, "member")) return shapeNo("member-compound-carrier-receiver", target);
   if (ts.isPropertyAccessExpression(target)) {
     if (!ts.isIdentifier(target.name) && !ts.isPrivateIdentifier(target.name)) return false;
     // (#3522 W1-C) `super.x += e` / `super.x++` are OUT of this slice, and are
@@ -5632,6 +5635,8 @@ function isPhase1SwitchStatement(
 ): boolean {
   return withProjectionEvidenceScope(() => {
     if (!isPhase1Expr(stmt.expression, scope, localClasses)) return shapeNo("switch-disc", stmt.expression);
+    // The dispatch ladder takes an i32 / f64 (or string) discriminant, never the carrier.
+    if (readsScriptVarCarrier(stmt.expression, "member")) return shapeNo("switch-disc-carrier", stmt.expression);
     let defaults = 0;
     // #2952 slice 6b — a clause test is a numeric OR a string literal. The two
     // families are mutually exclusive within one switch: §14.12.9 dispatch is
@@ -9069,7 +9074,7 @@ function selectorObjectCreateDescriptorMap(expr: ts.CallExpression) {
 /** (#7294) The lane's answers the builtin-prototype member admission reads. */
 function selectorBuiltinProtoMemberLane(): BuiltinProtoMemberLane {
   return {
-    isLibOnlyBinding: (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true,
+    isLibOnlyBinding: selectorSeesLibOnlyBinding,
     builtinProtoMember: currentSelectionOptions?.builtinProtoMember,
   };
 }
@@ -9206,7 +9211,7 @@ function hostRegExpUnavailable(): boolean {
  * `RegExp.prototype.toString`). A property read (`/a/.source`) or a binding has no lowering for it yet.
  */
 function nativeStaticRegExp(expr: ts.Expression): boolean {
-  const pair = staticRegExpPair(expr, (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true);
+  const pair = staticRegExpPair(expr, selectorSeesLibOnlyBinding);
   const consumer = outermostParenthesized(expr).parent;
   const methodReceiver =
     ts.isPropertyAccessExpression(consumer) &&
@@ -9581,9 +9586,8 @@ function selectorPrimitiveWrapperOrGenericBinary(
   }
   // `tryFoldNullCompare` folds a carrier against `null` only where `nullComparisonFolds` says.
   const nullCompared = nullComparedOperand(expr);
-  if (nullCompared !== null && readsScriptVarCarrier(nullCompared) && !nullComparisonFolds(binOp, "dynamic")) {
+  if (nullCompared && readsScriptVarCarrier(nullCompared, "member") && !nullComparisonFolds(binOp, "dynamic"))
     return capabilityNo("operand-coercion-unsupported", "expr-carrier-loose-null", expr);
-  }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
   const carrierOperand = left === "dynamic" || right === "dynamic";
   if (binOp === ts.SyntaxKind.PlusToken && carrierOperand && !carrierValueConsumed(expr)) {
@@ -9792,12 +9796,12 @@ function isSelectableNumberCompound(
   // from-ast lowers to the dynamic carrier (`emitGlobalGet` of the slot; the dynamic
   // `+` keeps it). binaryOperandFamily itself cannot answer "dynamic" for the read:
   // the generic binary arm would then judge `n + 1` and refuse it.
-  const rhsFamily = readsDynamicScriptVar(expr.right)
+  const rhsFamily = readsScriptVarCarrier(expr.right, "addition")
     ? "dynamic"
     : binaryOperandFamily(expr.right, scope, localClasses);
   if (
     ts.isIdentifier(expr.left) &&
-    moduleBinding(expr.left)?.valueKind.kind === "dynamic" &&
+    isDynamicScriptVarRead(expr.left) &&
     !compoundWriteAdmissible(expr.operatorToken.kind, "dynamic", rhsFamily)
   ) {
     return shapeNo("compound-dynamic-module-operand", expr.right);
@@ -9810,26 +9814,29 @@ function isSelectableNumberCompound(
   return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
 }
 
-/** A dynamic script var's read, or a `+` with one as an operand: the carrier from-ast lowers it to. */
-function readsDynamicScriptVar(expression: ts.Expression): boolean {
-  const e = unwrapPhase1Parens(expression);
-  if (ts.isIdentifier(e)) return moduleBinding(e)?.valueKind.kind === "dynamic";
-  return (
-    ts.isBinaryExpression(e) &&
-    e.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-    (readsDynamicScriptVar(e.left) || readsDynamicScriptVar(e.right))
-  );
+/** `void e`: from-ast compares its f64 NaN sentinel with `undefined` only when spelled `void 0`. */
+function isPhase1VoidExpression(
+  expr: ts.VoidExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (voidValueComparedWithUndefined(expr, (name) => scope.has(name)))
+    return capabilityNo("operand-coercion-unsupported", "expr-void-undefined-compare", expr);
+  return isPhase1Expr(expr.expression, scope, localClasses);
 }
 
-/**
- * A dynamic script var or a member read off one: from-ast reads it as the
- * dynamic carrier (`dyn.member_get` on the slot's value), whatever the checker
- * types it.
- */
-function readsScriptVarCarrier(expression: ts.Expression): boolean {
+/** A read of a dynamic script var: from-ast loads the slot's carrier, whatever the checker types it. */
+function isDynamicScriptVarRead(expression: ts.Expression): boolean {
+  return moduleBinding(expression)?.valueKind.kind === "dynamic";
+}
+
+/** A dynamic script var's carrier, through a `+` operand (`via` "addition") or a member read ("member"). */
+function readsScriptVarCarrier(expression: ts.Expression, via: "addition" | "member"): boolean {
   const e = unwrapPhase1Parens(expression);
-  if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) return readsScriptVarCarrier(e.expression);
-  return ts.isIdentifier(e) && moduleBinding(e)?.valueKind.kind === "dynamic";
+  const next = (operand: ts.Expression) => readsScriptVarCarrier(operand, via);
+  if (via === "addition") return isDynamicScriptVarRead(e) || isCarrierAddition(e, next);
+  const member = ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e);
+  return isDynamicScriptVarRead(e) || (member && next(e.expression));
 }
 
 /** `<id> <op>= e` as a statement, for the body and the non-tail walks (`arm` prefixes the refusal). */
@@ -11695,8 +11702,7 @@ const laneFormatsNumbers = (): boolean =>
 function moduleAdditionVerdict(expr: ts.BinaryExpression): "admit" | "refuse" | "families" {
   if (expr.operatorToken.kind !== ts.SyntaxKind.PlusToken) return "families";
   if (checkerProvesBinaryOperands(expr) === true) return "admit";
-  const readsDynamic = (e: ts.Expression) => moduleBinding(e)?.valueKind.kind === "dynamic";
-  return !currentSubjectIsModuleInit && (readsDynamic(expr.left) || readsDynamic(expr.right)) ? "refuse" : "families";
+  return !currentSubjectIsModuleInit && [expr.left, expr.right].some(isDynamicScriptVarRead) ? "refuse" : "families";
 }
 
 /** (#7066) An array-pattern leaf the selector resolves reads an element (`patternLeafReadsElement`). */
@@ -12073,7 +12079,11 @@ function phase1NewExpression(
       return capabilityNo("date-constructor-unsupported", "expr-new-date-snapshot-shape", expr);
     }
   }
-  if (ctorName === "Object" && isAmbientConstructor) return phase1NewObject(expr);
+  // (#7341 S1) `new Object()` on the realm's `Object`: only as a `{}` the dynamic-home admission takes.
+  if (isRealmObjectConstruction(expr, selectorSeesLibOnlyBinding)) {
+    if ((expr.arguments?.length ?? 0) !== 0) return shapeNo("expr-new-object-argument", expr);
+    return isDynamicHomeOpenCarrier(expr) || shapeNo("expr-new-object-home", expr);
+  }
   if (!isLocalClass && !isKnownExternClass(ctorName)) {
     return capabilityNo("constructor-resolution-unsupported", "expr-new-ctor-unknown", expr.expression);
   }
@@ -12090,11 +12100,9 @@ function phase1NewExpression(
   return true;
 }
 
-/** (#7341 S1) `new Object()` on the realm's `Object`: only as a `{}` the dynamic-home admission takes. */
-function phase1NewObject(expr: ts.NewExpression): boolean {
-  if (!isEmptyObjectExpression(expr, selectorSeesAmbientBinding)) return shapeNo("expr-new-object-argument", expr);
-  if (!ts.isVariableDeclaration(expr.parent)) return shapeNo("expr-new-object-position", expr);
-  return isDynamicHomeOpenCarrier(expr) || shapeNo("expr-new-object-home", expr);
+/** The module-binding resolver's lib-only test (`isUnshadowedLibBinding`'s first half). */
+function selectorSeesLibOnlyBinding(node: ts.Identifier): boolean {
+  return currentModuleBindingResolver?.isLibOnlyBinding(node) === true;
 }
 
 /** Preserve the existing exact global-eval source proof at the call gate. */
@@ -13576,9 +13584,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   if (ts.isDeleteExpression(expr)) return shapeNo("expr-delete-no-ir-lowering", expr);
   // Slice 11 (#1169n) — `void <expr>`: lower expr for side effects, push
   // `f64 NaN` (the undefined sentinel the IR uses in f64-typed contexts).
-  if (ts.isVoidExpression(expr)) {
-    return isPhase1Expr(expr.expression, scope, localClasses);
-  }
+  if (ts.isVoidExpression(expr)) return isPhase1VoidExpression(expr, scope, localClasses);
   // (#2856) Unhandled expression KIND — closures (Arrow/FunctionExpression),
   // await, spread outside the accepted sites, etc. The node kind discriminates.
   return shapeNo("expr-unhandled", expr);
@@ -13671,7 +13677,7 @@ function isPhase1ObjectLiteral(
   // #4471 — an empty literal lowers to a ZERO-FIELD object shape, which is a
   // legal struct but can serve NO field access, so only an INERT one is
   // claimable; #7128 S1 adds the open carrier. See `empty-object-literal.ts`.
-  if (isEmptyObjectExpression(expr, selectorSeesAmbientBinding)) {
+  if (expr.properties.length === 0) {
     const owner = enclosingProjectionOwner(expr);
     const binding = emptyObjectLiteralBinding(expr, owner);
     if (binding !== undefined && (binding.references.length === 0 || isOpenCarrierBinding(binding, owner))) {
@@ -13771,12 +13777,12 @@ function isPhase1ObjectLiteral(
   return true;
 }
 
-/** (#7128 S1) Was this empty object value admitted as an open carrier (rather than as an inert one)? */
-export function admittedEmptyObjectIsOpenCarrier(expr: EmptyObjectExpression): boolean {
-  return admittedOpenCarrierValues.has(expr);
+/** (#7128 S1) Where this empty object value was admitted as an open carrier (undefined: inert, or not admitted). */
+export function admittedOpenCarrierHome(expr: EmptyObjectExpression): OpenCarrierHome | undefined {
+  return admittedOpenCarrierValues.get(expr);
 }
 
-const admittedOpenCarrierValues = new WeakSet<EmptyObjectExpression>();
+const admittedOpenCarrierValues = new WeakMap<EmptyObjectExpression, OpenCarrierHome>();
 
 /**
  * #7128 S1 — admit an open-carrier binding (`empty-object-literal.ts`) of the
@@ -13797,7 +13803,7 @@ function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node
     return false;
   }
   currentOpenCarrierNames.add(binding.name.text);
-  admittedOpenCarrierValues.add(binding.literal);
+  admittedOpenCarrierValues.set(binding.value, "binding");
   return true;
 }
 
@@ -13809,8 +13815,7 @@ function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node
  * (standalone). Every use then reads it as the carrier through the ordinary
  * dynamic arms. An `in` that may reach an inherited
  * `%Object.prototype%` key keeps the unit legacy (`unitInKeysAreOwnOnly`, as for
- * `Object.create`). The lowering is the open-carrier literal's. (#7341) `new
- * Object()` is the same value and takes this admission unchanged.
+ * `Object.create`). The lowering is the open-carrier literal's; (#7341) `new Object()` takes it unchanged.
  */
 function isDynamicHomeOpenCarrier(value: EmptyObjectExpression): boolean {
   const decl = value.parent;
@@ -13822,7 +13827,7 @@ function isDynamicHomeOpenCarrier(value: EmptyObjectExpression): boolean {
   ) {
     return false;
   }
-  admittedOpenCarrierValues.add(value);
+  admittedOpenCarrierValues.set(value, "dynamic-home");
   return true;
 }
 
@@ -13887,6 +13892,7 @@ const DYNAMIC_HOME_QUERY: dynamicHome.DynamicHomeQuery = {
   },
   isCarrier: (decl) => isDynamicHomeOpenCarrierDeclaration(decl),
   isAmbientDefineProperty: (call) => isAmbientObjectDefineProperty(call),
+  isLibOnlyBinding: selectorSeesLibOnlyBinding,
 };
 
 /** `Object.defineProperty(…)` on the ambient `Object`. */
@@ -14176,31 +14182,23 @@ export function assessModuleInit(
 }
 
 /**
- * A `new` the IR lowers itself or dispatches with a stable signature, so no
- * call edge: an admitted function-style constructor (#3521), a holey `Array`,
- * a local class or known extern class (`<Class>_new`, #1169d/#1169i), an
- * ambient primitive wrapper, `new <parameter>` (#7106 S3a `dyn.construct`), a
- * self-guarded constructor value (#7106 S3c), and (#7341) an empty `new
- * Object()`. The per-function arms decide whether each is claimable.
+ * A `new` the IR lowers or dispatches with a stable signature, so no call edge: #3521, #1169d/i, #7106 S3a/c,
+ * #7341. The per-function arms decide whether each is claimable.
  */
 function isLoweredConstruction(node: ts.NewExpression, localClasses: ReadonlySet<string>): boolean {
-  if (
+  const callee = node.expression;
+  return (
     currentSelectionOptions?.resolveFnctorAdmission?.(node) !== undefined ||
     currentSelectionOptions?.isHoleyArrayConstructor?.(node) === true ||
-    isEmptyObjectExpression(node, selectorSeesAmbientBinding)
-  ) {
-    return true;
-  }
-  const callee = node.expression;
-  if (!ts.isIdentifier(callee)) return false;
-  return (
-    localClasses.has(callee.text) ||
-    (isKnownExternClass(callee.text) &&
-      (currentModuleBindingResolver === null || currentModuleBindingResolver.isAmbientBinding(callee))) ||
-    (selectorSeesAmbientWrapperConstructor(callee) &&
-      currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") === true) ||
-    enclosingFunctionParameterNames(node).has(callee.text) ||
-    selfGuardedConstructorValueUse(callee)
+    isEmptyObjectExpression(node, selectorSeesLibOnlyBinding) ||
+    (ts.isIdentifier(callee) &&
+      (localClasses.has(callee.text) ||
+        (isKnownExternClass(callee.text) &&
+          (currentModuleBindingResolver === null || currentModuleBindingResolver.isAmbientBinding(callee))) ||
+        (selectorSeesAmbientWrapperConstructor(callee) &&
+          currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") === true) ||
+        enclosingFunctionParameterNames(node).has(callee.text) ||
+        selfGuardedConstructorValueUse(callee)))
   );
 }
 

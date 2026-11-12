@@ -8,6 +8,7 @@
  */
 
 import type { IrFunctionBuilder } from "./builder.js";
+import type { OpenCarrierHome } from "./empty-object-literal.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
 import { emitThrowTypeErrorIf } from "./throw-type-error.js";
@@ -22,12 +23,12 @@ export function emitNewPlainObject(builder: IrFunctionBuilder, type: IrType): Ir
 
 /**
  * The open carrier an admitted empty object value builds (`{}` or `new
- * Object()`): a fresh `$Object`, boxed when its slot is the dynamic carrier
- * (#7280 S1) rather than the raw-externref binding of #7128.
+ * Object()`): a fresh `$Object`, boxed onto the dynamic carrier in #7280's
+ * dynamic-home slot, raw in #7128's externref binding.
  */
-export function emitOpenCarrierObject(builder: IrFunctionBuilder, onDynamicCarrier: boolean): IrValueId {
+export function emitOpenCarrierObject(builder: IrFunctionBuilder, home: OpenCarrierHome): IrValueId {
   const object = emitNewPlainObject(builder, irVal({ kind: "externref" }));
-  return onDynamicCarrier ? builder.emitBox(object, irDynamic()) : object;
+  return home === "dynamic-home" ? builder.emitBox(object, irDynamic()) : object;
 }
 
 /**

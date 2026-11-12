@@ -341,85 +341,156 @@ Code quality:
 - `Object(v)` called without `new`.
 - A run-time ToObject helper shared by legacy and the IR.
 
-## S1 implementation (2026-11-12)
+## S1 implementation (2026-11-12, revised after review of PR #7214)
 
-S1 is done on branch `claude/7341-ir-new-object`; S2 and S3 remain.
+S1 is done on branch `claude/7341-ir-new-object`. S2 and S3 remain.
 
 What changed:
 
-- `empty-object-literal.ts`: `isEmptyObjectExpression(expr, isAmbient)` is the
-  one recognizer. It answers `{}`, and `new Object()` / `new Object` on the
-  realm's `Object`. `isPhase1ObjectLiteral`'s empty test, `phase1NewObject` and
-  the call-graph `new` arm all call it.
-- `open-object-carrier.ts`: `emitOpenCarrierObject(builder, onDynamicCarrier)`
-  replaces the two inline lines of `lowerObjectLiteral`. The `new` hook in
-  `lowerNewExpression` is its second caller, always boxed, because the only
-  position S1 admits is a dynamic-home slot.
-- `select.ts`: `phase1NewObject` names the three refusals
-  (`expr-new-object-argument`, `-position`, `-home`) and otherwise asks
-  `isDynamicHomeOpenCarrier`, unchanged apart from taking either spelling. The
-  admitted set is now `admittedEmptyObjectIsOpenCarrier`.
+- `empty-object-literal.ts` owns the recognizer:
+  - `isRealmObjectConstruction(expr, isLibOnlyBinding)` decides that `new Object(…)` reaches the realm's
+    `Object`. That requires `isUnshadowedLibBinding` (a script's
+    `function Object() {}` merges with the lib declaration, so the checker
+    alone answers wrongly), plus no write of the name anywhere in the file
+    (`sourceWritesMemberNamed`: `Object = f`, `this.Object = f`), no escaping
+    global object and no dynamic code.
+  - `isEmptyObjectExpression` answers `{}`, or a zero-argument realm
+    construction.
+  - Callers: the call-graph `new` arm and #7335's
+    `dynamic-home-open-object.ts`, which no longer tests
+    `isObjectLiteralExpression` itself. `isPhase1ObjectLiteral` keeps its own
+    `properties.length === 0` test: its value is already a literal.
+- `open-object-carrier.ts`: `emitOpenCarrierObject(builder, home)` is the one
+  emitter. Both callers (`lowerObjectLiteral` and the hook in
+  `lowerNewExpression`) read the admission. `admittedOpenCarrierHome` returns
+  `"binding"` (#7128, raw externref) or `"dynamic-home"` (#7280, boxed) instead
+  of a membership bit. So neither spelling trusts the hint any more.
+- `select.ts`:
+  - `phase1NewExpression` sends a realm construction to `phase1NewObject`. That
+    function checks only the argument count (`expr-new-object-argument`), then
+    asks `isDynamicHomeOpenCarrier`; everything that function refuses is
+    `expr-new-object-home`.
+  - The plan's third reason, `expr-new-object-position`, is not emitted. Its
+    test was a copy of `isDynamicHomeOpenCarrier`'s first check; S3 can bring
+    it back as the reason of the equality-operand arm.
+  - A program-declared or program-written `Object` keeps main's route
+    (`expr-new-ctor-unknown`).
 - `buildLocalCallGraph`: the five "a construction is a lowering, not a call
-  edge" cases plus the new one are one predicate, `isLoweredConstruction`,
-  with a single argument walk (five walk copies before, one after).
-- `select.ts` net line change 0, `from-ast.ts` −1; no loc or func grant.
+  edge" cases plus the new one are one predicate, `isLoweredConstruction`, with
+  a single argument walk.
+  - Bucket shift: a zero-argument realm `new Object()` is no longer an
+    `external-call(new Object)` rejection. When it is not admitted, its unit is
+    refused as `expr-new-object-home` instead.
+  - The playground corpus (`pnpm run check:ir-fallbacks`) has no
+    `new Object()`. Its buckets are unchanged: no unintended, module-level or
+    post-claim delta, same deferred counts as main.
+  - The test262 shift is in the measurements below.
+- #7335's define and own-property arms now serve a `new Object()` var too.
+  `Object.defineProperty(o, …)` and `o.hasOwnProperty(k)` are claimed.
 
-Not done: `dynamic-home-open-object.ts` (#7335's define and own-property arms)
-still recognizes only the `{}` spelling. A `new Object()` var with
-`Object.defineProperty(o, …)` or `o.hasOwnProperty(k)` stays legacy, refused
-at select. No measured file needs it.
+### Consumers refused at select (deviation from the plan)
 
-### Deviation: two consumer gaps refused at select
-
-`var o = {}` is admitted only while legacy keeps the binding open, and legacy
-widens it into a struct as soon as the program stores `o.p = v`. Legacy never
-widens a `new Object()` var, so S1 reaches consumers the `{}` spelling reaches
-only through an element store (`o["p"] = 1`). Two of these were claimed by the
-selector and then withdrawn by from-ast on main. Both are now refused at
-select, for both spellings:
+Legacy never widens a `new Object()` var into a struct, so S1 reaches consumers
+the `{}` spelling reaches only after an element store. The selector claimed
+each of these on main and from-ast then withdrew it. All are now refused at
+select. The rules are generic, for any dynamic carrier or any `void`, not just
+for `new Object()`.
 
 | shape | main | now |
 |---|---|---|
-| `o.p++`, `o.p += 1`, `o["p"]++` on a dynamic script var | from-ast: "compound property/element write on dynamic" | `member-compound-carrier-receiver` (`isPhase1MutableMemberTarget`) |
-| `o == null`, `null != o`, `o.p != null` | from-ast: "bare 'null' in non-reference context" | `expr-carrier-loose-null` |
+| `o.p++`, `o.p += 1`, `o["p"]++` on a carrier | from-ast: "compound property/element write on dynamic" | `member-compound-carrier-receiver` (`isPhase1MutableMemberTarget`) |
+| `o == null`, `null != o`, `o.p != null` | from-ast: "bare 'null' in non-reference context" | `expr-carrier-loose-null` (`nullComparisonFolds(op, "dynamic")`) |
+| `switch (o)`, `switch (o.k)` on a carrier | from-ast: "switch disc must lower to i32/f64" | `switch-disc-carrier` (`isPhase1SwitchStatement`) |
+| `void e !== undefined`, `void e != undefined` (any `e` but `0`) | from-ast: "undefined-compare on f64 not in IR scope" / "matching operand types" | `expr-void-undefined-compare` (the `void` arm, `isPhase1VoidExpression`; predicate `voidValueComparedWithUndefined` in `analysis/operand-admissibility.ts`) |
 
-The second refusal asks the shared `nullComparisonFolds(op, "dynamic")`, the
-same predicate `tryFoldNullCompare` consults. A strict `o === null` still
-folds and is still claimed. `nullComparedOperand` moved from
-`select-planned-closure-operands.ts` into `analysis/operand-admissibility.ts`,
-next to `nullComparisonFolds`, so both selector arms share it.
-`readsScriptVarCarrier` says which operands from-ast reads as the carrier: a
-dynamic script var, or a member read off one. A follow-up could lower the
-loose case instead (a Null-or-Undefined tag test). It was not done here,
-because widening `nullComparisonFolds` also admits it in planned closures,
-which would change the JS environment's binaries.
+On ordinary code these rules only flip claims that main withdrew after the
+claim. The void rule also covers non-carrier operands
+(`var n = 1; void n !== undefined`, `void f() !== undefined`), which main
+withdrew the same way. See the measurements for the census delta.
+
+Shared helpers:
+
+- `nullComparedOperand` moved into `analysis/operand-admissibility.ts`, next to
+  `nullComparisonFolds`.
+- Its users are the planned-closure arm, the generic binary arm and
+  `tryFoldNullCompare` in from-ast, which had its own inline copy.
+
+Carrier-read helpers (`select.ts`):
+
+- `isDynamicScriptVarRead` is the one leaf, a read of a dynamic script var.
+  It replaces four spellings of `moduleBinding(e)?.valueKind.kind === "dynamic"`.
+- `readsScriptVarCarrier(e, via)` follows either `+` operands (`"addition"`,
+  the compound-RHS rule) or member reads (`"member"`, the refusals above).
+
+Fold plan with PR #7212, which lands first:
+
+- #7212's `lowersToCarrier` is a superset of `readsScriptVarCarrier`. It has
+  the same member-chain walk, plus static results, carrier locals,
+  conditionals and a carrier `+`.
+- #7212's `member-compound-dynamic-receiver` refusal sits in the same spot of
+  `isPhase1MutableMemberTarget`, with the wider predicate.
+- #7212 also adds a loose-null refusal in the generic binary arm
+  (`nullishCompare ? !nullComparisonFolds(binOp, "dynamic")`, reason
+  `expr-binary-operand-families`).
+- Once #7212 is on main, this branch merges main. It then deletes
+  `readsScriptVarCarrier` and `member-compound-carrier-receiver` in favour of
+  #7212's, and keeps one loose-null arm with one detail code. The
+  `nullComparedOperand` guard of this branch is the shape that stays.
 
 One sibling test row changed: #7335's "parenthesized loose equality"
 (`(o) == null` on a `{}` carrier) is now refused by the loose-null arm before
-the own-property probe. It is still refused at select and still matches
-legacy; only the expected detail changed.
+the own-property probe. Only its expected detail changed.
 
-Still open, as planned (#7194): `o == 1` on the carrier is claimed and traps.
-This is the same for `{}` on main. No measured file reaches it.
+### Still open
 
-### Measurements
+- **Pending #7194** (loose equality of the carrier with a primitive skips
+  ToPrimitive). These inputs are claimed and answer wrong today, exactly as
+  `{}` does on main:
+  - `var o = new Object(); o == 1` traps (illegal cast);
+  - `o == true` traps;
+  - `o == "[object Object]"` answers false.
 
-Base: `origin/main` `d9dd218bbf`, exported into the scratchpad. Head: this
-branch. Census tool: `scratchpad/os7338/census.mts`, standalone, with
-`JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`.
+  `tests/issue-7341-new-object-open-carrier.test.ts` pins today's answers
+  ("PENDING_7194") so the #7194 fix flips them visibly. After that fix they
+  must accept only the JS answer or a select refusal. No measured file reaches
+  them.
+- Found while probing, not caused here and not fixed: `typeof void x` on a
+  dynamic script var answers wrong in the IR (same on main).
 
-- Population: the 873-file set plus the seeded 300-file IR-only sample, 1,173
-  files.
-- Result: **23 gained** (exactly the 23 S1 prototype files), **0 lost**,
-  **0 post-claim errors** on both trees, no compile-error difference.
-- 298 of the 300 sample files are IR-only on both trees. Routing changed in
-  23 files, the gained ones.
-- Verdicts (`scripts/run-test262-paths.mts --standalone`, the 23 gained files
-  plus the 300-file sample) are identical on both trees: 321 pass, 2 fail. All
-  23 gained files pass. The 2 failures are eval tests
+### Measurements (re-run after the review fixes)
+
+Base: `origin/main` `34ce67984a`, exported into the scratchpad. Head: this
+branch after merging that main. Census tool: `scratchpad/os7338/census.mts`,
+standalone, with `JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`.
+
+- **Population:** the 873-file set plus the seeded 300-file IR-only sample,
+  1,173 files.
+- **Census result:**
+  - **23 gained**, exactly the 23 S1 prototype files. **0 lost**.
+  - **0 post-claim errors** on both trees, and no compile-error difference.
+  - Routing changed only in the 23 gained files. After the final size cuts
+    (no loc or func grant: `select.ts` is 2 lines under main) the head census
+    was re-run and routed every file identically.
+  - 298 of the 300 sample files are IR-only on both trees.
+- **Refusal labels (test262 census):**
+  - Units refused around `new Object` now name the arm: 16 are
+    `expr-new-object-argument` and 14 are `expr-new-object-home`.
+  - On main the same units carried other labels, `expr-new-ctor-unknown`
+    among them.
+  - The `external-call` code count is unchanged (215 on both trees). With
+    `MODULE_INIT_ALL_REJECTS`, the shape label is reported first.
+  - The void rule labels 3 files (`language/expressions/void/S11.4.2_A4_T1..3`).
+    All three are legacy on both trees.
+- **Gains from routing #7335's arms through the recognizer:** none in this
+  population. No file in it needs them.
+- **Verdicts:** `scripts/run-test262-paths.mts --standalone` over the 23 gained
+  files plus the 300-file sample gives identical results on both trees: 321
+  pass, 2 fail. All 23 gained files pass. The 2 failures are eval tests
   (`language/line-terminators/S7.3_A7_T5.js`, `_T6.js`) that need the QuickJS
   provider, which is not built in this container.
-- JS environment (default target), byte-identical: 363 of 363 binaries match.
-  The inputs were the 13 playground examples, every third file of the 873,
-  the 45 `new Object` files and the 30 sources of
-  `tests/issue-7341-new-object-open-carrier.test.ts`.
+- **JS environment (default target), byte-identical:**
+  - 391 of 391 binaries match. The inputs were the 13 playground examples,
+    every third file of the 873, the 45 `new Object` files, the 42 sources of
+    `tests/issue-7341-new-object-open-carrier.test.ts` and 16 switch / void
+    probes.
+  - The 182 cases of the PR #7214 review also match, 182 of 182.
