@@ -14,7 +14,7 @@ area: ir
 goal: ir-full-coverage
 related: [7106, 7128, 7280, 7335, 7189]
 loc-budget-allow:
-  # 2026-11-12 (#7338, PR #7212 review rounds 1-2), +92 net: one `lowersToCarrier` predicate and its readers
+  # 2026-11-12 (#7338, PR #7212 review rounds 1-3), +86 net: one `lowersToCarrier` predicate and its readers
   # (operand family, module-binding writes, member read-modify-writes), the strict-only `null` compare and the
   # written-parameter refusal, so no carrier use is claimed and then demoted; the JS environment's create hook.
   - src/ir/select.ts
@@ -398,10 +398,17 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
   - the operand family (`binaryOperandFamily`), so `+`, the relationals and
     the equalities judge the carrier the value is. A carrier compared with
     `null` is admitted only strictly (`tryFoldNullCompare` is the only fold;
-    a loose one types `null` as f64); with `undefined` it is the carrier
-    equality;
-  - module-binding writes (`moduleBindingTakes`, and the `var` initialiser):
-    a carrier goes only into a dynamic home;
+    a loose one types `null` as f64; its own guard, `expr-carrier-loose-null`);
+    with the global `undefined` it is the carrier equality. `void <expr>` is
+    not that identifier: from-ast's carrier equality has no `void` arm, so a
+    carrier against `void 0` goes through the family rule and is refused;
+  - writes: a carrier's only home is a dynamic module binding (`holdsCarrier`,
+    one definition). Its callers: module-binding `=` (`moduleBindingTakes`),
+    the `var` initialiser, the identifier compound (`y -= <carrier>` on a
+    numeric `y` is refused as `compound-carrier-operand`; a dynamic `y` keeps
+    #7210's `compoundWriteAdmissible`, which now reads the carrier through the
+    operand family, so #7210's `readsDynamicScriptVar` is gone) and the
+    carrier `+`'s consumer (`carrierValueConsumed`);
   - member read-modify-writes (`isPhase1MutableMemberTarget`, shared by
     `o.p += v` and `++` / `--`): `lowerPropertyCompound` and the element
     compound take object / class / vec receivers only, so a carrier's member
@@ -426,10 +433,10 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
   boxable concrete" loop are one `scanCarrierArguments` call each.
 - Size: `object-statics.ts` 191 lines, `descriptor-literal.ts` 124,
   `object-create-call.ts` 180 → 110, `empty-object-literal.ts` 197.
-  Net against main: `select.ts` +92, `from-ast.ts` +23, `integration.ts` +3,
-  granted above. Folding the carrier tests into `lowersToCarrier` (round 2)
-  replaced `isDynamicCarrierValue` but added the read-modify-write and
-  module-write readers, so the round-2 net is not smaller than round 1's.
+  Net against main `d9dd218bbf`: `select.ts` +86, `from-ast.ts` +23,
+  `integration.ts` +3, granted above. Round 3 folded #7210's
+  `readsDynamicScriptVar` and the three copies of the carrier-home rule into
+  `lowersToCarrier` / `holdsCarrier` (−6 against round 2's +92).
 
 ### Differences from the plan
 

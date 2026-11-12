@@ -178,6 +178,17 @@ const VALUE_USES: Record<string, string> = {
   "postfix -- on a created field": `function f() { var o = Object.create({}, { a: { value: 1, writable: true } }); o.a--; return o.a; } if (f() !== 0) { throw "x"; }`,
   "prefix -- on a descriptor field": `function f(o) { var d = Object.getOwnPropertyDescriptor(o, 'p'); --d.value; return d.value; } var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (f(o) !== 0) { throw "x"; }`,
   "postfix ++ on a dynamic parameter's field": `function f(d) { d.value++; return d.value; } var o = {}; o.value = 1; if (f(o) !== 2) { throw "x"; }`,
+  // A carrier into a numeric compound, and a carrier against `void` (#7212 review round 3).
+  "numeric var -= a descriptor field": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y -= Object.getOwnPropertyDescriptor(o, 'p').value; if (y !== 6) { throw "x"; }`,
+  "numeric var *= a descriptor field": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y *= Object.getOwnPropertyDescriptor(o, 'p').value; if (y !== 40) { throw "x"; }`,
+  "numeric var <<= a descriptor field": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 1; y <<= Object.getOwnPropertyDescriptor(o, 'p').value; if (y !== 16) { throw "x"; }`,
+  "numeric var += a descriptor field": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y += Object.getOwnPropertyDescriptor(o, 'p').value; if (y !== 14) { throw "x"; }`,
+  "numeric var -= a home read": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y -= o.p; if (y !== 6) { throw "x"; }`,
+  "numeric var += a home read": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y += o.p; if (y !== 14) { throw "x"; }`,
+  "descriptor field != void 0": `var o = {}; Object.defineProperty(o, 'a', { value: null }); if (Object.getOwnPropertyDescriptor(o, 'a').value != void 0) { throw "x"; }`,
+  "void 0 == descriptor field": `var o = {}; Object.defineProperty(o, 'a', { value: 1 }); if (void 0 == Object.getOwnPropertyDescriptor(o, 'a').value) { throw "x"; }`,
+  "descriptor field == void f()": `function f() { return 1; } var o = {}; Object.defineProperty(o, 'a', { value: 1 }); if (Object.getOwnPropertyDescriptor(o, 'a').value == void f()) { throw "x"; }`,
+  "void f() != descriptor field": `function f() { return 1; } var o = {}; Object.defineProperty(o, 'a', { value: null }); if (void f() != Object.getOwnPropertyDescriptor(o, 'a').value) { throw "x"; }`,
   // A dynamic home's member read is the carrier too (#7212 review S1).
   "home read compared loosely with null": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (o.p == null) { throw "x"; }`,
   "home read assigned to a numeric script var": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); var r = 0; r = o.p; if (r !== 1) { throw "x"; }`,

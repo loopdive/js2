@@ -7354,10 +7354,11 @@ function isPhase1VarDeclarationList(
     // A dynamic module home holds no `null` (#7287 review B3), and no object literal but the open carrier `{}`;
     // a carrier value has no other module home (#7338).
     if (
-      directModuleBinding?.valueKind.kind === "dynamic"
+      directModuleBinding !== undefined &&
+      (holdsCarrier(d.name)
         ? binaryOperandFamily(d.initializer, initializerScope, localClasses) === "nullish" ||
           (ts.isObjectLiteralExpression(initializer) && !admittedOpenCarrierLiterals.has(initializer))
-        : directModuleBinding !== undefined && lowersToCarrier(initializer)
+        : lowersToCarrier(initializer))
     )
       return shapeNo("vardecl-module-value-flow", d.initializer);
     const objectMethodValue = isConst ? directObjectMethodValueProjection(d, initializer, initializerScope) : null;
@@ -9056,10 +9057,14 @@ function lowersToCarrier(expression: ts.Expression): boolean {
   return isCarrierAddition(e, lowersToCarrier);
 }
 
-/** A write of `value` to module binding `id` is lowerable: the resolver's kind match, and a carrier only into a dynamic home (#7338). */
+/** (#7338) `id` is a carrier's only home: a dynamic module binding. A carrier written anywhere else has no lowering. */
+function holdsCarrier(id: ts.Identifier): boolean {
+  return moduleBinding(id)?.valueKind.kind === "dynamic";
+}
+
+/** A write of `value` to module binding `id` is lowerable: the resolver's kind match, and a carrier only into its home. */
 function moduleBindingTakes(id: ts.Identifier, value: ts.Expression): boolean {
-  const binding = currentModuleBindingResolver?.(id, value);
-  return binding !== undefined && (binding.valueKind.kind === "dynamic" || !lowersToCarrier(value));
+  return currentModuleBindingResolver?.(id, value) !== undefined && (holdsCarrier(id) || !lowersToCarrier(value));
 }
 
 /** (#7276) The JS environment's `Object.create` plan, on the selector's lane and binding facts. */
@@ -9610,15 +9615,20 @@ function selectorPrimitiveWrapperOrGenericBinary(
       left !== "unknown" &&
       right !== "unknown" &&
       !isSlotFreeI32IdentityLowered(expr));
-  // A carrier compared with `undefined` is the carrier equality (`tryLowerDynamicEq`); with
-  // `null` it has only `tryFoldNullCompare`'s strict fold (a loose one types `null` as f64).
-  const voidCompare = isEquality && carrierOperand && (left === "undefined" || right === "undefined");
-  const nullCompare = isEquality && carrierOperand && (left === "nullish" || right === "nullish");
-  if (
-    nullCompare
-      ? !nullComparisonFolds(binOp, "dynamic")
-      : !voidCompare && judged && !provenBinaryOperandsAdmissible(expr, left, right, additiveLane())
-  ) {
+  // (#7338) A carrier compared with `null` has only `tryFoldNullCompare`'s strict fold: a loose
+  // compare types `null` as f64.
+  const nullCompare = isEquality && (left === "nullish" || right === "nullish");
+  if (nullCompare && [expr.left, expr.right].some(lowersToCarrier) && !nullComparisonFolds(binOp, "dynamic")) {
+    return capabilityNo("operand-coercion-unsupported", "expr-carrier-loose-null", expr);
+  }
+  // A carrier compared with `null` (strictly) or with the global `undefined` never reaches
+  // `lowerBinary`'s family rule: the fold, or the carrier equality (`tryLowerDynamicEq`), lowers it.
+  const foldedCompare =
+    isEquality &&
+    carrierOperand &&
+    (nullCompare ||
+      [expr.left, expr.right].some((side) => isUnshadowedUndefinedIdentifier(unwrapPhase1Parens(side), scope)));
+  if (!foldedCompare && judged && !provenBinaryOperandsAdmissible(expr, left, right, additiveLane())) {
     return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
   }
   // (#7282) A boolean ToNumber'd beside the carrier needs carrier supports a
@@ -9709,7 +9719,7 @@ function carrierValueConsumed(expr: ts.Expression): boolean {
   if (ts.isNewExpression(parent)) return parent.expression !== node && dynamicConstructCallee(parent) !== null;
   // (#7338) …or a dynamic module home that stores it whole.
   if (ts.isVariableDeclaration(parent) && parent.initializer === node && ts.isIdentifier(parent.name)) {
-    return moduleBinding(parent.name)?.valueKind.kind === "dynamic";
+    return holdsCarrier(parent.name);
   }
   return ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken;
 }
@@ -9805,20 +9815,15 @@ function isSelectableNumberCompound(
   // A dynamic script var takes the builder's own operand rule (`lowerCompoundAssignment`).
   // The family is the selector's mirror of the lowered RHS, and "unknown" is refused:
   // the builder throws on any RHS it cannot carry, so claiming one we cannot name
-  // risks a withdrawal after the claim. One shape binaryOperandFamily leaves unknown
-  // is admitted: a read of a dynamic script var, alone or as a `+` operand, which
-  // from-ast lowers to the dynamic carrier (`emitGlobalGet` of the slot; the dynamic
-  // `+` keeps it). binaryOperandFamily itself cannot answer "dynamic" for the read:
-  // the generic binary arm would then judge `n + 1` and refuse it.
-  const rhsFamily = readsDynamicScriptVar(expr.right)
-    ? "dynamic"
-    : binaryOperandFamily(expr.right, scope, localClasses);
-  if (
-    ts.isIdentifier(expr.left) &&
-    moduleBinding(expr.left)?.valueKind.kind === "dynamic" &&
-    !compoundWriteAdmissible(expr.operatorToken.kind, "dynamic", rhsFamily)
-  ) {
-    return shapeNo("compound-dynamic-module-operand", expr.right);
+  // risks a withdrawal after the claim.
+  if (ts.isIdentifier(expr.left) && holdsCarrier(expr.left)) {
+    const rhsFamily = binaryOperandFamily(expr.right, scope, localClasses);
+    if (!compoundWriteAdmissible(expr.operatorToken.kind, "dynamic", rhsFamily)) {
+      return shapeNo("compound-dynamic-module-operand", expr.right);
+    }
+  } else if (lowersToCarrier(expr.right)) {
+    // (#7338) …any other target takes no carrier: the numeric compound needs a number.
+    return shapeNo("compound-carrier-operand", expr.right);
   }
   if (expr.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken) {
     return exactNumericExponentiationAdmissible(expr, scope, localClasses);
@@ -9826,17 +9831,6 @@ function isSelectableNumberCompound(
   if (!isNumberCompoundAssignOperator(expr.operatorToken.kind)) return false;
   // (#7106 S5) A carrier leaf's read is no number, whatever the checker says.
   return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
-}
-
-/** A dynamic script var's read, or a `+` with one as an operand: the carrier from-ast lowers it to. */
-function readsDynamicScriptVar(expression: ts.Expression): boolean {
-  const e = unwrapPhase1Parens(expression);
-  if (ts.isIdentifier(e)) return moduleBinding(e)?.valueKind.kind === "dynamic";
-  return (
-    ts.isBinaryExpression(e) &&
-    e.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-    (readsDynamicScriptVar(e.left) || readsDynamicScriptVar(e.right))
-  );
 }
 
 /** `<id> <op>= e` as a statement, for the body and the non-tail walks (`arm` prefixes the refusal). */
