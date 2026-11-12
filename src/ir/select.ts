@@ -97,7 +97,13 @@ import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
-import { emptyObjectLiteralBinding, isOpenCarrierUse, type EmptyObjectLiteralBinding } from "./empty-object-literal.js";
+import {
+  emptyObjectLiteralBinding,
+  isOpenCarrierUse,
+  openCarrierDefinePlan,
+  type EmptyObjectLiteralBinding,
+} from "./empty-object-literal.js";
+import * as dynamicHome from "./dynamic-home-open-object.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
@@ -158,15 +164,15 @@ import { nativeBufferOperationParts, type IrNativeBufferSurfacePlan } from "./na
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
-import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
+import { objectIntegrityCallFold } from "./object-integrity.js";
 import {
-  isIrModuleClassInstanceValueKind,
+  isIrModuleStructValueKind,
   isIrModuleMapValueKind,
   isIrModuleNativeBufferValueKind,
   isIrModuleReferenceValueKind,
   isStatementDynamicModuleCall,
 } from "./module-bindings.js";
-import { outermostParenthesized } from "../shared/binding-writes.js";
+import { isStoreTarget, outermostParenthesized } from "../shared/binding-writes.js";
 import { firstConstBindingWrite } from "./const-binding-writes.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
@@ -181,11 +187,14 @@ import type { IrFnctorAdmission, IrFnctorSelectionAdmissionResolver, LatticeType
 import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
-import { staticRegExpPair } from "../shared/regexp-static.js";
+import { matchRegExpCarrierCall, staticRegExpPair } from "../shared/regexp-static.js";
+import { regExpMatchReadValueAdmitted, regExpMatchUseAdmitted } from "./regexp-match-uses.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
   staticStringMethodArgument,
+  staticStringNumber,
+  staticStringPattern,
   stringMethodPlan,
   type StringArgumentRole,
   type StringMethodPlan,
@@ -209,6 +218,7 @@ import { programPatchesDestructuringRealm } from "./realm-keys.js";
 import {
   sourceMayPatchPrototype,
   sourceNamesReflectiveRoute,
+  sourceRunsDynamicCode,
   sourceWritesMemberNamed,
 } from "../shared/intrinsic-prototype-writes.js";
 import { collectBindingPatternNames } from "./analysis/ast-scope.js";
@@ -219,6 +229,7 @@ import {
   isCarrierAddition,
   additiveResultFamily,
   provenBinaryOperandsAdmissible,
+  throwOperandAdmissible,
   booleanReadBesideCarrier,
   isComparisonResultOperator,
   isEqualityOperator,
@@ -226,12 +237,12 @@ import {
   isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   isTypedBinaryOperator,
-  isVoidZero,
   mayBeElementRead,
   wrapperComparisonIsIdentity,
   type AdditiveLane,
   nativeI32OperandsAdmissible,
   type OperandFamily,
+  compoundWriteAdmissible,
 } from "./analysis/operand-admissibility.js";
 import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
@@ -330,7 +341,7 @@ function expressionStatementCatchAllNo(arm: string, expr: ts.Expression): false 
   return shapeNo(inner === null ? arm : `${arm}(${inner})`, expr);
 }
 
-/** (#7003) Selector-owned hooks for `./closure-signature-flow.ts`. */
+/** (#7003) Selector-owned hooks for `./closure-signature-flow.ts`; `resolveValue` also gives `localIsRewritten` binding identity (#7306). */
 const closureSignatureFlowHooks = {
   slotSignature: (node: ts.FunctionTypeNode) => irClosureSignatureFromFunctionTypeNode(node),
   get resolveValue() {
@@ -648,6 +659,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly classifyDeclaredPrimitiveExpression?: (
     expr: ts.Expression,
   ) => IrDeclaredPrimitiveExpressionFamily | undefined;
+  /** (#7267) Does legacy fold this `JSON.parse(text)` at compile time? */
+  readonly jsonParseFoldsAtCompileTime?: (call: ts.CallExpression) => boolean;
   /**
    * Checker-backed proof that an expression is an Array or tuple. Used to
    * keep Array prototype methods without IR producers out of the claimed set
@@ -754,6 +767,12 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly builtinProtoCompanionSeeded?: boolean;
   /** (#7294) `<builtin>.prototype.<member>`'s kind when its support function answers it on this lane. */
   readonly builtinProtoMember?: (builtin: string, member: string, anchor: ts.Node) => "method" | "getter" | undefined;
+  /**
+   * (#7106 lever O) The program has a runtime-eval site that may run (the
+   * boundary plan's `providerMayExecute`). Undefined ⇒ true: no fold that
+   * assumes a pristine realm.
+   */
+  readonly runtimeEvalMayExecute?: boolean;
   /**
    * #2952 slice 5 — certify that this exact `for (head in receiver)` source
    * expression uses the non-fast dynamic externref carrier. The callback is
@@ -3128,16 +3147,22 @@ function calleeHasAnyDynamicParam(calleeName: string, typeMap: TypeMap | undefin
   return false;
 }
 
-/** Resolve whether local function `calleeName`'s return is dynamic. */
-function calleeReturnIsDynamic(calleeName: string, typeMap: TypeMap | undefined): boolean {
-  return calleeReturnKind(calleeName, typeMap) === "dynamic";
-}
-
-/** The resolved return of a local function declaration the scan may call directly. */
+/** Local function `calleeName`'s resolved return kind; `null` for no local function or a generator. */
 function calleeReturnKind(calleeName: string, typeMap: TypeMap | undefined): ResolvedKind {
   const decl = currentDynScanDecls?.get(calleeName);
   if (!decl || decl.asteriskToken) return null;
   return resolveReturnType(decl, typeMap?.get(calleeName)?.returnType);
+}
+
+/** (#7106 lever T) A call to a local `void` function has no value to combine (from-ast: "returned void"). */
+function isVoidLocalCall(expr: ts.Expression, scope: ReadonlySet<string>, typeMap: TypeMap | undefined): boolean {
+  const call = unwrapPhase1Parens(expr);
+  return (
+    ts.isCallExpression(call) &&
+    ts.isIdentifier(call.expression) &&
+    !scope.has(call.expression.text) &&
+    calleeReturnKind(call.expression.text, typeMap) === "void"
+  );
 }
 
 /**
@@ -3460,7 +3485,7 @@ function dynamicUsesAreMoveOnly(
     if (ts.isCallExpression(e) && certifiedAliasCall(e, (name) => dynNames.has(name))?.result === "dynamic")
       return true;
     if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
-      return calleeReturnIsDynamic(e.expression.text, typeMap);
+      return calleeReturnKind(e.expression.text, typeMap) === "dynamic";
     }
     if (
       ts.isCallExpression(e) &&
@@ -3486,6 +3511,8 @@ function dynamicUsesAreMoveOnly(
     ) {
       return false;
     }
+    // (#7267) `JSON.parse(<string>)` answers the codec's value graph on the carrier.
+    if (ts.isCallExpression(e) && selectorAmbientGlobalFunctionCall(e)?.result === "dynamic") return true;
     if (
       currentDynamicRuntimeBuildable &&
       ts.isCallExpression(e) &&
@@ -3630,6 +3657,11 @@ function dynamicUsesAreMoveOnly(
         if (isDynShaped(jsonStringifyArg)) return currentDynamicRuntimeBuildable && scanExpr(jsonStringifyArg, true);
         return currentDynamicRuntimeBuildable && scanExpr(jsonStringifyArg, false);
       }
+      // (#7267) `JSON.parse(<string>)`: a dynamic result over one concrete string operand.
+      const globalFunction = selectorAmbientGlobalFunctionCall(e);
+      if (globalFunction?.result === "dynamic") {
+        return expectDyn && globalFunction.arguments.every((argument) => scanExpr(argument, false));
+      }
       // (#7106 S1c) `Object.prototype.toString.call(<dynamic>)` → `dyn.object_tag`.
       const objectTagArg = dynNames.has("Object") ? null : ambientObjectToStringTagCall(e);
       if (objectTagArg !== null) {
@@ -3766,7 +3798,7 @@ function dynamicUsesAreMoveOnly(
       if (ts.isIdentifier(e.expression)) {
         if (dynNames.has(e.expression.text)) return false;
         const calleeName = e.expression.text;
-        if (calleeReturnIsDynamic(calleeName, typeMap) !== expectDyn) return false;
+        if ((calleeReturnKind(calleeName, typeMap) === "dynamic") !== expectDyn) return false;
         return scanDirectCallArgs(e, calleeName);
       }
       // Method-shaped / other callees: no dynamic involvement allowed.
@@ -4871,12 +4903,8 @@ function isPhase1StatementListInScope(
         if (lhs.questionDotToken !== undefined) {
           return shapeNo("nontail-elemstore-optional", lhs);
         }
-        if (
-          (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text)) &&
-          !stableDynamicStoreReceiverHasAdmittedRoot(lhs.expression)
-        ) {
-          return shapeNo("nontail-elemstore-recv", lhs.expression);
-        }
+        const receiverRefusal = elementStoreReceiverRefusal(lhs.expression, scope);
+        if (receiverRefusal) return shapeNo(`nontail-elemstore-${receiverRefusal}`, lhs.expression);
         if (ts.isStringLiteralLike(lhs.argumentExpression) && !preflightClassPropertyWrite(lhs, scope)) return false;
         if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses))
           return shapeNo("nontail-elemstore-idx", lhs.argumentExpression);
@@ -4892,18 +4920,7 @@ function isPhase1StatementListInScope(
         ts.isIdentifier(s.expression.left) &&
         isSelectableNumberCompound(s.expression, scope, localClasses)
       ) {
-        if (isUnrepresentableModuleBinding(s.expression.left)) {
-          return shapeNo("nontail-module-storage-unrepresentable", s.expression);
-        }
-        if (currentModuleBindingResolver?.(s.expression.left) && !currentSubjectIsModuleInit) {
-          return shapeNo("nontail-module-compound", s.expression);
-        }
-        if (!scope.has(s.expression.left.text)) return shapeNo("nontail-compound-scope", s.expression.left);
-        if (projectionBindingMutationIsUnsupported(s.expression.left.text, s.expression)) return false;
-        if (!isPhase1Expr(s.expression.right, scope, localClasses)) {
-          return shapeNo("nontail-compound-rhs", s.expression.right);
-        }
-        clearProjectionBinding(s.expression.left.text);
+        if (!isPhase1IdentifierCompound(s.expression, s.expression.left, scope, localClasses, "nontail")) return false;
         continue;
       }
       // (#2856) Catch-all for ExpressionStatements outside the accepted set:
@@ -5102,23 +5119,46 @@ function isPhase1ThrowStatement(
   if (expressionTouchesModuleMapGetAlias(stmt.expression)) {
     return shapeNo("throw-module-map-get-alias", stmt.expression);
   }
-  if (throwValueReadsUnboxedModuleScalar(stmt.expression)) {
-    return shapeNo("throw-module-scalar-unboxed", stmt.expression);
+  // (#7106 lever T) `throwOperandAdmissible` judges a thrown value that reads a scalar module binding by its
+  // family (`thrownValueFamily`). Its `+` is judged by `checkerProvesBinaryOperands` in `isPhase1Expr`; this arm
+  // only names the result family. A top-level throw is withdrawn by integration after the claim outside WASI.
+  const thrown = unwrapPhase1Parens(stmt.expression);
+  if (expressionTouchesScalarModuleBinding(thrown, scope)) {
+    const family = thrownValueFamily(thrown, scope);
+    if (family === "nullish") return shapeNo("throw-module-nullish", stmt.expression);
+    if (!throwOperandAdmissible(family)) return shapeNo("throw-module-scalar-unboxed", stmt.expression);
+    if (ts.isSourceFile(stmt.parent)) return shapeNo("throw-module-top-level", stmt.expression);
   }
   return isPhase1Expr(stmt.expression, scope, localClasses);
 }
 
 /**
- * True when a thrown value may carry an unboxed f64/boolean module read. A
- * `new` throws an object, so only an argument can (#7281): in
- * `new Test262Error('Actual: ' + x)` the read of `x` is a string concat. The
- * family here is flow-insensitive; the argument's `+` is still proven by the
- * checker in `isPhase1Expr` (`isModuleStringConcat`), so do not admit on it alone.
+ * The operand family of a thrown value that reads a scalar module binding. A
+ * `new` throws an object (`reference`) unless an argument passes the unboxed
+ * scalar itself (`argumentPassesUnboxedScalar`), which makes it `unknown`.
  */
-function throwValueReadsUnboxedModuleScalar(expr: ts.Expression): boolean {
-  const candidate = unwrapPhase1Parens(expr);
-  if (ts.isNewExpression(candidate)) return candidate.arguments?.some(throwValueReadsUnboxedModuleScalar) ?? false;
-  return expressionTouchesScalarModuleBinding(candidate) && obviousModuleValueFamily(candidate) !== "string";
+function thrownValueFamily(thrown: ts.Expression, scope: ReadonlySet<string>): OperandFamily {
+  const value = unwrapPhase1Parens(thrown);
+  if (!ts.isNewExpression(value)) return OBVIOUS_OPERAND_FAMILIES[obviousModuleValueFamily(value) ?? "unknown"];
+  return value.arguments?.some((argument) => argumentPassesUnboxedScalar(argument, scope)) ? "unknown" : "reference";
+}
+
+/**
+ * (#7281) A `new` argument passes an unboxed module scalar: a spread of one, an
+ * argument whose obvious family is a number, boolean or null, or a nested `new`
+ * with such an argument. `new Test262Error(x)` passes it;
+ * `new Test262Error('Actual: ' + x)` passes a string, and a `+` whose family the
+ * slots cannot name is left to the checker's proof in `isPhase1Expr`.
+ */
+function argumentPassesUnboxedScalar(argument: ts.Expression, scope: ReadonlySet<string>): boolean {
+  if (!expressionTouchesScalarModuleBinding(argument, scope)) return false;
+  const value = unwrapPhase1Parens(argument);
+  if (ts.isSpreadElement(value)) return true;
+  if (ts.isNewExpression(value)) {
+    return value.arguments?.some((nested) => argumentPassesUnboxedScalar(nested, scope)) ?? false;
+  }
+  const family = obviousModuleValueFamily(value);
+  return family === "f64" || family === "boolean" || family === "nullish";
 }
 
 /**
@@ -5800,7 +5840,8 @@ function recordForInitLeaks(stmt: ts.ForStatement, scope: Set<string>): void {
  * Phase-1 expressions plus `i++` / `++i` / `i--` / `--i` on identifiers in
  * scope (which the body-statement layer accepts as an
  * ExpressionStatement but `isPhase1Expr` does not — an update is a
- * mutation, not a pure expression).
+ * mutation, not a pure expression). It also checks the mutation scope and
+ * storage of a compound value; a postfix update only when its value is discarded.
  */
 function isPhase1ForUpdateExpr(
   expr: ts.Expression,
@@ -6176,12 +6217,8 @@ function isPhase1MemberAssignment(
     if (lhs.questionDotToken !== undefined) {
       return shapeNo("body-elemstore-optional", lhs);
     }
-    if (
-      (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text)) &&
-      !stableDynamicStoreReceiverHasAdmittedRoot(lhs.expression)
-    ) {
-      return shapeNo("body-elemstore-recv", lhs.expression);
-    }
+    const receiverRefusal = elementStoreReceiverRefusal(lhs.expression, scope);
+    if (receiverRefusal) return shapeNo(`body-elemstore-${receiverRefusal}`, lhs.expression);
     if (ts.isStringLiteralLike(lhs.argumentExpression) && !preflightClassPropertyWrite(lhs, scope)) return false;
     if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses)) return false;
     return isPhase1Expr(expr.right, scope, localClasses);
@@ -6274,17 +6311,7 @@ function isPhase1BodyStatement(
       // Compound assignment `<id> <op>= <expr>` — desugars to
       // `<id> = <id> <op> <expr>`. Same scope check applies.
       if (ts.isIdentifier(stmt.expression.left) && isSelectableNumberCompound(stmt.expression, scope, localClasses)) {
-        if (isUnrepresentableModuleBinding(stmt.expression.left)) {
-          return shapeNo("body-module-storage-unrepresentable", stmt.expression);
-        }
-        if (currentModuleBindingResolver?.(stmt.expression.left) && !currentSubjectIsModuleInit) {
-          return shapeNo("body-module-compound", stmt.expression);
-        }
-        if (!scope.has(stmt.expression.left.text)) return false;
-        if (projectionBindingMutationIsUnsupported(stmt.expression.left.text, stmt.expression)) return false;
-        if (!isPhase1Expr(stmt.expression.right, scope, localClasses)) return false;
-        clearProjectionBinding(stmt.expression.left.text);
-        return true;
+        return isPhase1IdentifierCompound(stmt.expression, stmt.expression.left, scope, localClasses, "body");
       }
     }
     // Slice 12 (#1280): postfix `i++` / `i--` / prefix `++i` / `--i`
@@ -8084,12 +8111,16 @@ function trackedModuleAliasHasName(name: string): boolean {
   return false;
 }
 
-/** True when any value position refers to a checker-owned module binding. */
-function expressionTouchesModuleBinding(expr: ts.Expression): boolean {
+/** Whether any identifier in `expr`, outside the subtrees `skips` names, satisfies `matches`. */
+function expressionTouchesIdentifier(
+  expr: ts.Expression,
+  matches: (node: ts.Identifier) => boolean,
+  skips?: (node: ts.Node) => boolean,
+): boolean {
   let touched = false;
   const visit = (node: ts.Node): void => {
-    if (touched) return;
-    if (ts.isIdentifier(node) && moduleBinding(node)) {
+    if (touched || skips?.(node) === true) return;
+    if (ts.isIdentifier(node) && matches(node)) {
       touched = true;
       return;
     }
@@ -8097,42 +8128,33 @@ function expressionTouchesModuleBinding(expr: ts.Expression): boolean {
   };
   visit(expr);
   return touched;
+}
+
+/** True when any value position refers to a checker-owned module binding. */
+function expressionTouchesModuleBinding(expr: ts.Expression): boolean {
+  return expressionTouchesIdentifier(expr, (node) => moduleBinding(node) !== undefined);
 }
 
 function expressionTouchesBooleanModuleBinding(expr: ts.Expression): boolean {
-  let touched = false;
-  const visit = (node: ts.Node): void => {
-    if (touched) return;
-    if (ts.isIdentifier(node) && (isDirectBooleanModuleBinding(node) || moduleScalarAliasFamily(node) === "boolean")) {
-      touched = true;
-      return;
-    }
-    forEachChild(node, visit);
-  };
-  visit(expr);
-  return touched;
+  return expressionTouchesIdentifier(
+    expr,
+    (node) => isDirectBooleanModuleBinding(node) || moduleScalarAliasFamily(node) === "boolean",
+  );
 }
 
 /** True when an expression contains an f64/boolean module-storage read. */
-function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
-  let touched = false;
-  const visit = (node: ts.Node): void => {
-    if (touched) return;
-    if (ts.isIdentifier(node)) {
+function expressionTouchesScalarModuleBinding(expr: ts.Expression, scope: ReadonlySet<string>): boolean {
+  return expressionTouchesIdentifier(
+    expr,
+    (node) => {
       const binding = moduleBinding(node);
       const scalarBinding =
-        binding &&
-        !isIrModuleReferenceValueKind(binding.valueKind) &&
-        !isIrModuleClassInstanceValueKind(binding.valueKind);
-      if (scalarBinding || moduleScalarAliasFamily(node) !== undefined) {
-        touched = true;
-        return;
-      }
-    }
-    forEachChild(node, visit);
-  };
-  visit(expr);
-  return touched;
+        binding && !isIrModuleReferenceValueKind(binding.valueKind) && !isIrModuleStructValueKind(binding.valueKind);
+      return scalarBinding || moduleScalarAliasFamily(node) !== undefined;
+    },
+    // (#7106 lever SR) A static argument of a planned string method is never read.
+    (node) => isUnevaluatedStringMethodArgument(node, scope),
+  );
 }
 
 function expressionTouchesTrackedModuleValue(expr: ts.Expression): boolean {
@@ -8340,24 +8362,12 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
 }
 
 /**
- * A proven string `+` applies ToString to its scalar side, so mixed operand
- * families are no mismatch (#7281). The slot family is flow-insensitive, so the
- * checker must also prove the `+` at this site: `typeof x !== 'number'`
- * narrows `x` to `never`, which from-ast's `+` gate refuses.
- */
-function isModuleStringConcat(expr: ts.BinaryExpression): boolean {
-  return (
-    expr.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-    obviousModuleValueFamily(expr) === "string" &&
-    checkerProvesBinaryOperands(expr) === true
-  );
-}
-
-/**
  * from-ast's typing gate for `expr` over the checker's flow-sensitive operand
  * families; `undefined` when the checker cannot classify a side as a primitive.
- * `isModuleStringConcat` admits only on `true`; the element-read backstop
- * refuses only on `false` (a proven mismatch).
+ * `moduleAdditionVerdict` admits only on `true`; the element-read backstop
+ * refuses only on `false` (a proven mismatch). The slot family is
+ * flow-insensitive: `typeof x !== 'number'` narrows `x` to `never`, which this
+ * proof refuses (#7281).
  */
 function checkerProvesBinaryOperands(expr: ts.BinaryExpression): boolean | undefined {
   const classify = currentSelectionOptions?.classifyPrimitiveExpression;
@@ -8395,6 +8405,7 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
     return trackedModuleInfluenceIsBoolean(candidate.whenTrue) && trackedModuleInfluenceIsBoolean(candidate.whenFalse);
   }
   if (ts.isCallExpression(candidate)) {
+    if (dynamicHomeOwnPropertyMethod(candidate) !== undefined) return true; // (#7335) an i32 boolean test
     if (expressionIsModuleBindingRootedCall(candidate)) return false;
     return currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "boolean";
   }
@@ -8513,6 +8524,24 @@ function moduleExternConsumerIsProven(expr: ts.Expression, scope: ReadonlySet<st
     );
   }
   return false;
+}
+
+/**
+ * (#2856 C2) Why an element store's receiver is refused, if it is: it must be
+ * a plain in-scope identifier or a stable dynamic root (`recv`). (#7292, #7106
+ * lever S2) A module binding answers for its own use site, so a slot that
+ * refuses a store (a script-var vec, `regexp-match`) is not one.
+ */
+function elementStoreReceiverRefusal(
+  receiver: ts.Expression,
+  scope: ReadonlySet<string>,
+): "recv" | "module-storage-unrepresentable" | undefined {
+  const shaped =
+    (ts.isIdentifier(receiver) && scope.has(receiver.text)) || stableDynamicStoreReceiverHasAdmittedRoot(receiver);
+  if (!shaped) return "recv";
+  return ts.isIdentifier(receiver) && isUnrepresentableModuleBinding(receiver)
+    ? "module-storage-unrepresentable"
+    : undefined;
 }
 
 /** A real module lexical whose legacy storage has no sound IR representation. */
@@ -8825,7 +8854,7 @@ function mixedConditionalCarrierLocal(identifier: ts.Identifier): boolean {
   return (
     ts.isConditionalExpression(initializer) &&
     currentProvenMixedConditionals.has(initializer) &&
-    !localIsRewritten(declaration)
+    !localIsRewritten(declaration, closureSignatureFlowHooks.resolveValue)
   );
 }
 
@@ -9006,6 +9035,17 @@ function selectorBuiltinProtoMemberLane(): BuiltinProtoMemberLane {
   };
 }
 
+/** (#7253 / #7267) The shared ambient-call admission, on the selector's lane and binding facts. */
+function selectorAmbientGlobalFunctionCall(expr: ts.CallExpression) {
+  const resolver = currentModuleBindingResolver;
+  return admitAmbientGlobalFunctionCall(expr, {
+    classify: currentSelectionOptions?.classifyDeclaredPrimitiveExpression,
+    supportsBackendCapability: currentSelectionOptions?.supportsBackendCapability,
+    isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding(node) === true,
+    foldsAtCompileTime: (call) => currentSelectionOptions?.jsonParseFoldsAtCompileTime?.(call) !== false,
+  });
+}
+
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
   return (
     currentSelectionOptions?.isAmbientBinding?.(node) === true ||
@@ -9122,24 +9162,59 @@ function hostRegExpUnavailable(): boolean {
 
 /**
  * (#7106 lever R) A static construction (`staticRegExpPair`) a `native-regexp` lane builds in-module, where the IR
- * consumes it: the receiver of `.test(…)`, a discarded statement (which still throws an invalid pair's SyntaxError),
- * or (R3) an operand of `+`, which the `+` rule admits only beside a string (its `RegExp.prototype.toString`). A
- * property read (`/a/.source`) or a binding has no lowering for it yet.
+ * consumes it: the receiver of `.test(…)` / `.exec(…)` (R1/R2), a discarded statement (which still throws an invalid
+ * pair's SyntaxError), or (R3) an operand of `+`, which the `+` rule admits only beside a string (its
+ * `RegExp.prototype.toString`). A property read (`/a/.source`) or a binding has no lowering for it yet.
  */
 function nativeStaticRegExp(expr: ts.Expression): boolean {
   const pair = staticRegExpPair(expr, (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true);
   const consumer = outermostParenthesized(expr).parent;
-  const testReceiver =
+  const methodReceiver =
     ts.isPropertyAccessExpression(consumer) &&
-    consumer.name.text === "test" &&
     ts.isCallExpression(consumer.parent) &&
-    consumer.parent.expression === consumer;
+    consumer.parent.expression === consumer &&
+    matchRegExpCarrierCall(consumer.parent) !== undefined;
   const additionOperand = ts.isBinaryExpression(consumer) && consumer.operatorToken.kind === ts.SyntaxKind.PlusToken;
   return (
     pair !== undefined &&
-    (testReceiver || additionOperand || ts.isExpressionStatement(consumer)) &&
+    (methodReceiver || additionOperand || ts.isExpressionStatement(consumer)) &&
     currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
     currentSelectionOptions.nativeRegExpCompiles?.(pair.pattern, pair.flags) === true
+  );
+}
+
+/** (#7106 levers R2, S2) A read of a match result: an `.exec` call's, or a `regexp-match` slot's. */
+function isRegExpMatchRead(expr: ts.Expression): expr is ts.PropertyAccessExpression | ts.ElementAccessExpression {
+  if (!ts.isPropertyAccessExpression(expr) && !ts.isElementAccessExpression(expr)) return false;
+  const receiver = unwrapPhase1Parens(expr.expression);
+  if (ts.isIdentifier(receiver)) return currentModuleBindingResolver?.(receiver)?.valueKind.kind === "regexp-match";
+  const call = ts.isCallExpression(receiver) ? matchRegExpCarrierCall(receiver) : undefined;
+  return call?.method === "exec" && currentSelectionOptions?.isRegExpExpression?.(call.receiver) === true;
+}
+
+/** A function-object member call (`assert.sameValue(…)`), whose lowering boxes every argument. */
+function isFunctionObjectMemberCall(call: ts.CallExpression): boolean {
+  const callee = call.expression;
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    isFunctionObjectReceiver(callee.expression, currentSelectionOptions?.functionObjectValues)
+  );
+}
+
+/**
+ * (#7106 lever S2) `call` (an `.exec`) initializes a `regexp-match` script
+ * slot, whose every use the module-binding resolver checks. Any other `var`
+ * (a function local) would be a dynamic local whose uses nothing checks.
+ */
+function initializesRegExpMatchSlot(call: ts.CallExpression): boolean {
+  const value = outermostParenthesized(call);
+  const declaration = value.parent;
+  return (
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer === value &&
+    ts.isIdentifier(declaration.name) &&
+    currentModuleBindingResolver?.(declaration.name, call)?.valueKind.kind === "regexp-match"
   );
 }
 
@@ -9182,26 +9257,30 @@ function stringPrototypeBorrowSelection(
   localClasses: ReadonlySet<string>,
 ): boolean {
   // The surface row is the realm's own method reached as spelled, legacy's own
-  // trust: a source that may replace the method, `.call` or `String`, or that
-  // names a route to a prototype it does not spell, keeps legacy's lookup.
+  // trust: a source that may replace the method, `.call` or `String`, that
+  // names a route to a prototype it does not spell, or that runs code it does
+  // not spell, keeps legacy's lookup.
   const source = expr.getSourceFile();
   if (
     sourceMayPatchPrototype(source, "String") ||
     sourceMayPatchPrototype(source, "Function") ||
     sourceNamesReflectiveRoute(source) ||
+    sourceRunsDynamicCode(source) ||
     sourceWritesMemberNamed(source, "call") ||
     sourceWritesMemberNamed(source, "String")
   ) {
     return capabilityNo("string-method-unsupported", "expr-string-borrow-patched-prototype", expr);
   }
-  const family = provenIrFamily(borrow.receiver, scope);
-  if (family !== "string" && family !== "number" && family !== "boolean") {
+  if (!BORROW_RECEIVER_FAMILIES.has(provenIrFamily(borrow.receiver, scope))) {
     return capabilityNo("string-method-unsupported", "expr-string-borrow-receiver", borrow.receiver);
   }
   const plan = stringMethodSelection(expr, borrow.method, borrow.args, scope);
   if (plan === false) return false;
   if (plan.literalArguments) return capabilityNo("string-method-unsupported", "expr-string-borrow-literal-plan", expr);
-  return [borrow.receiver, ...borrow.args].every((operand) => isPhase1Expr(operand, scope, localClasses));
+  return (
+    isPhase1Expr(borrow.receiver, scope, localClasses) &&
+    borrow.args.every((arg) => isUnevaluatedStringMethodArgument(arg, scope) || isPhase1Expr(arg, scope, localClasses))
+  );
 }
 
 /**
@@ -9463,7 +9542,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
   }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
   const carrierOperand = left === "dynamic" || right === "dynamic";
-  if (binOp === ts.SyntaxKind.PlusToken && carrierOperand && !carrierAdditionConsumed(expr)) {
+  if (binOp === ts.SyntaxKind.PlusToken && carrierOperand && !carrierValueConsumed(expr)) {
     return capabilityNo("operand-coercion-unsupported", "expr-wrapper-carrier-position", expr);
   }
   // An unbounded Boolean element can have an unknown IR family here, while
@@ -9503,9 +9582,10 @@ function selectorPrimitiveWrapperOrGenericBinary(
 
 /**
  * A non-wrapper binary operand's family, as `irOperandFamily` names it once
- * lowered: a carrier `+` is `dynamic`, `null` `nullish`, the global `undefined`
- * `undefined`; then {@link provenIrFamily}'s answer, or `reference` for an
- * object, a closure or a local class value.
+ * lowered: a carrier `+` is `dynamic`, another `+` its additive result family,
+ * a local function's call its resolved return family, `null` `nullish`, the
+ * global `undefined` `undefined`; then {@link provenIrFamily}'s answer, or
+ * `reference` for an object, a closure or a local class value.
  */
 function binaryOperandFamily(
   operand: ts.Expression,
@@ -9514,8 +9594,27 @@ function binaryOperandFamily(
 ): OperandFamily {
   const candidate = unwrapPhase1Parens(operand);
   if (isCarrierAddition(candidate, (side) => selectorCarrierValue(side, scope, localClasses))) return "dynamic";
+  if (ts.isBinaryExpression(candidate) && candidate.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const family = (side: ts.Expression) => binaryOperandFamily(side, scope, localClasses);
+    return additiveResultFamily(candidate, family(candidate.left), family(candidate.right), additiveLane());
+  }
+  // A local function's call lowers to its resolved return representation.
+  if (
+    ts.isCallExpression(candidate) &&
+    ts.isIdentifier(candidate.expression) &&
+    !scope.has(candidate.expression.text)
+  ) {
+    const returned = resolvedKindFamily(calleeReturnKind(candidate.expression.text, currentClaimTypeMap));
+    if (returned !== "unknown") return returned;
+  }
   if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
-  if (isUnshadowedUndefinedIdentifier(candidate, scope) || isVoidZero(candidate)) return "undefined";
+  // Unary `-` / `+` lower to the ToNumber result, whatever the operand.
+  if (
+    ts.isPrefixUnaryExpression(candidate) &&
+    (candidate.operator === ts.SyntaxKind.MinusToken || candidate.operator === ts.SyntaxKind.PlusToken)
+  )
+    return "number";
+  if (isUnshadowedUndefinedIdentifier(candidate, scope) || ts.isVoidExpression(candidate)) return "undefined";
   if (nativeStaticRegExp(candidate)) return "regexp";
   const proven = provenIrFamily(operand, scope);
   return proven === "unknown" && obviousSelectorValueFamily(operand, scope) === "reference" ? "reference" : proven;
@@ -9539,17 +9638,68 @@ function selectorCarrierValue(
 }
 
 /**
- * Whether the consumer of a carrier `+` reads the carrier: a typed operator (S0
- * judges it), `typeof`, `!`, or a dynamic construct's argument. Anywhere else
- * it would be typed as the checker's string or number (#7034 round 2).
+ * Whether the consumer of a carrier value (a carrier `+`, #7292's script-var
+ * vec read) reads the carrier: a typed operator (S0 judges it), `typeof`, `!`,
+ * or a dynamic construct's argument. Anywhere else it would be typed as the
+ * checker's string or number (#7034 round 2).
  */
-function carrierAdditionConsumed(expr: ts.BinaryExpression): boolean {
+function carrierValueConsumed(expr: ts.Expression): boolean {
   const node = outermostParenthesized(expr);
   const parent = node.parent;
   if (ts.isBinaryExpression(parent)) return isTypedBinaryOperator(parent.operatorToken.kind);
   if (ts.isTypeOfExpression(parent)) return true;
   if (ts.isNewExpression(parent)) return parent.expression !== node && dynamicConstructCallee(parent) !== null;
   return ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken;
+}
+
+/**
+ * (#7292) A script-var vec's element read or expando read: from-ast reads the
+ * boxed vec through the dynamic reader, so it is the carrier, whatever type
+ * the checker gives it. `.length` stays the vec's f64.
+ */
+function isScriptVarVecCarrierRead(
+  expr: ts.Expression,
+): expr is ts.ElementAccessExpression | ts.PropertyAccessExpression {
+  const candidate = unwrapPhase1Parens(expr);
+  const isRead =
+    ts.isElementAccessExpression(candidate) ||
+    (ts.isPropertyAccessExpression(candidate) && candidate.name.text !== "length");
+  return isRead && !isStoreTarget(candidate) && moduleBinding(candidate.expression)?.valueKind.kind === "vec";
+}
+
+/**
+ * (#7292) A script-var vec carrier read is admitted where from-ast lowers it:
+ * the dynamic reader is buildable, an element key is a Number (the index the
+ * reader boxes), and the consumer takes the carrier — what reads any carrier
+ * (`carrierValueConsumed`), or an argument the callee takes as one: a
+ * function object's member call (`assert.sameValue`), which boxes every
+ * argument, or a top-level function's parameter resolved dynamic.
+ */
+function phase1ScriptVarVecReadAdmitted(expr: ts.Expression, scope: ReadonlySet<string>): boolean {
+  if (!isScriptVarVecCarrierRead(expr)) return true;
+  const read = unwrapPhase1Parens(expr) as ts.ElementAccessExpression | ts.PropertyAccessExpression;
+  if (!currentDynMemberReadBuildable)
+    return capabilityNo("operand-coercion-unsupported", "expr-vec-carrier-read", read);
+  if (ts.isElementAccessExpression(read) && provenIrFamily(read.argumentExpression, scope) !== "number") {
+    return capabilityNo("operand-coercion-unsupported", "expr-vec-index-family", read.argumentExpression);
+  }
+  const node = outermostParenthesized(read);
+  const call = node.parent;
+  if (!ts.isCallExpression(call) || call.expression === node) {
+    return (
+      carrierValueConsumed(node) || capabilityNo("operand-coercion-unsupported", "expr-vec-carrier-position", read)
+    );
+  }
+  const callee = unwrapPhase1Parens(call.expression);
+  const takesCarrier =
+    (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
+    ts.isIdentifier(callee.expression)
+      ? isFunctionObjectReceiver(callee.expression, currentSelectionOptions?.functionObjectValues)
+      : ts.isIdentifier(callee) &&
+        !scope.has(callee.text) &&
+        currentDynScanDecls?.has(callee.text) === true &&
+        calleeParamResolvedKind(callee.text, call.arguments.indexOf(node), currentClaimTypeMap) === "dynamic";
+  return takesCarrier || capabilityNo("operand-coercion-unsupported", "expr-vec-carrier-argument", read);
 }
 
 /** The leaf of a destructuring declaration that takes the literal plan, read through `expression`. */
@@ -9590,12 +9740,59 @@ function isSelectableNumberCompound(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  // A dynamic script var takes the builder's own operand rule (`lowerCompoundAssignment`).
+  // The family is the selector's mirror of the lowered RHS, and "unknown" is refused:
+  // the builder throws on any RHS it cannot carry, so claiming one we cannot name
+  // risks a withdrawal after the claim. One shape binaryOperandFamily leaves unknown
+  // is admitted: a read of a dynamic script var, alone or as a `+` operand, which
+  // from-ast lowers to the dynamic carrier (`emitGlobalGet` of the slot; the dynamic
+  // `+` keeps it). binaryOperandFamily itself cannot answer "dynamic" for the read:
+  // the generic binary arm would then judge `n + 1` and refuse it.
+  const rhsFamily = readsDynamicScriptVar(expr.right)
+    ? "dynamic"
+    : binaryOperandFamily(expr.right, scope, localClasses);
+  if (
+    ts.isIdentifier(expr.left) &&
+    moduleBinding(expr.left)?.valueKind.kind === "dynamic" &&
+    !compoundWriteAdmissible(expr.operatorToken.kind, "dynamic", rhsFamily)
+  ) {
+    return shapeNo("compound-dynamic-module-operand", expr.right);
+  }
   if (expr.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken) {
     return exactNumericExponentiationAdmissible(expr, scope, localClasses);
   }
   if (!isNumberCompoundAssignOperator(expr.operatorToken.kind)) return false;
   // (#7106 S5) A carrier leaf's read is no number, whatever the checker says.
   return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
+}
+
+/** A dynamic script var's read, or a `+` with one as an operand: the carrier from-ast lowers it to. */
+function readsDynamicScriptVar(expression: ts.Expression): boolean {
+  const e = unwrapPhase1Parens(expression);
+  if (ts.isIdentifier(e)) return moduleBinding(e)?.valueKind.kind === "dynamic";
+  return (
+    ts.isBinaryExpression(e) &&
+    e.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+    (readsDynamicScriptVar(e.left) || readsDynamicScriptVar(e.right))
+  );
+}
+
+/** `<id> <op>= e` as a statement, for the body and the non-tail walks (`arm` prefixes the refusal). */
+function isPhase1IdentifierCompound(
+  expr: ts.BinaryExpression,
+  left: ts.Identifier,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+  arm: "body" | "nontail",
+): boolean {
+  if (isUnrepresentableModuleBinding(left)) return shapeNo(`${arm}-module-storage-unrepresentable`, expr);
+  if (currentModuleBindingResolver?.(left) && !currentSubjectIsModuleInit)
+    return shapeNo(`${arm}-module-compound`, expr);
+  if (!scope.has(left.text)) return shapeNo(`${arm}-compound-scope`, left);
+  if (projectionBindingMutationIsUnsupported(left.text, expr)) return false;
+  if (!isPhase1Expr(expr.right, scope, localClasses)) return shapeNo(`${arm}-compound-rhs`, expr.right);
+  clearProjectionBinding(left.text);
+  return true;
 }
 
 /**
@@ -9756,23 +9953,98 @@ function stringMethodSelection(
   args: readonly ts.Expression[],
   scope: ReadonlySet<string>,
 ): StringMethodPlan | false {
-  const backend = currentSelectionOptions?.backendTargetProfile?.backend ?? "wasmgc";
-  const plan = args.some(ts.isSpreadElement) ? null : stringMethodPlan(backend, method, args.length);
+  const plan = args.some(ts.isSpreadElement) ? null : stringMethodPlan(stringSurfaceBackend(), method, args.length);
   if (plan === null) return capabilityNo("string-method-unsupported", "expr-string-method-surface", expr);
+  if (plan.readsRegExpProtocol && regExpProtocolMayBePatched(expr.getSourceFile())) {
+    return capabilityNo("string-method-unsupported", "expr-string-method-regexp-protocol", expr);
+  }
   const unproven = args.find((arg, i) => !stringMethodArgumentProven(plan.parameters[i]!.role, arg, scope));
   if (unproven !== undefined) return capabilityNo("string-method-unsupported", "expr-string-method-argument", unproven);
   return plan;
 }
 
+function stringSurfaceBackend(): IrBackendKind {
+  return currentSelectionOptions?.backendTargetProfile?.backend ?? "wasmgc";
+}
+
 /**
- * A literal with static conversions (`undefined`, `null`, `true`, `false`)
- * stands for any role: the builder folds its ToNumber for a position or a
- * length, its ToString for a search or a fill (#7313), and an `undefined`
- * that has an omitted value takes it.
+ * (#7106 lever SR) RegExpCreate and the `@@search` lookup read the `RegExp`,
+ * `String` and `Object` prototypes (§22.1.3.23), which the source may replace,
+ * by name, by a reflective route, or in code it does not spell.
+ */
+function regExpProtocolMayBePatched(source: ts.SourceFile): boolean {
+  return (
+    sourceMayPatchPrototype(source, "RegExp") ||
+    sourceMayPatchPrototype(source, "String") ||
+    sourceMayPatchPrototype(source, "Object") ||
+    sourceNamesReflectiveRoute(source) ||
+    sourceRunsDynamicCode(source)
+  );
+}
+
+/**
+ * Whether `arg` is proven for its role. A static argument
+ * ({@link staticStringMethodArgument}) stands for any role but `pattern`:
+ * the builder folds its ToNumber for a position or a length and its ToString
+ * for a search or a fill (#7313), and an `undefined` that has an omitted
+ * value takes it. A string literal in a number role folds its ToNumber. A
+ * `pattern` is `undefined` or a static text ({@link staticStringPattern}).
  */
 function stringMethodArgumentProven(role: StringArgumentRole, arg: ts.Expression, scope: ReadonlySet<string>): boolean {
-  if (staticStringMethodArgument(arg, (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope))) return true;
-  return role === "search" || role === "fill" ? expressionIsClassifiedString(arg) : expressionIsProvenNumber(arg);
+  const literal = staticStringMethodArgument(arg, undefinedArgument(scope));
+  if (role === "pattern") return literal === "undefined" || staticStringPattern(arg) !== undefined;
+  if (literal !== undefined) return true;
+  if (role === "search" || role === "fill") return expressionIsClassifiedString(arg);
+  return expressionIsProvenNumber(arg) || staticStringNumber(arg) !== undefined;
+}
+
+/** The selector's view of a global `undefined` argument (`staticStringMethodArgument`'s predicate). */
+function undefinedArgument(scope: ReadonlySet<string>): (identifier: ts.Identifier) => boolean {
+  return (identifier) => isUnshadowedUndefinedIdentifier(identifier, scope);
+}
+
+/** The receiver families a `String.prototype` borrow converts with ToString (#7106 lever P). */
+const BORROW_RECEIVER_FAMILIES: ReadonlySet<OperandFamily> = new Set<OperandFamily>(["string", "number", "boolean"]);
+
+/**
+ * (#7106 lever SR) `node` is a static argument ({@link staticStringMethodArgument})
+ * of a string-method call the surface plans: a `String.prototype` borrow
+ * (`String.prototype.m.call(v, x)`, `new String(v).m(x)`) over a primitive,
+ * or a direct call on a proven string. Lowering converts it at compile time
+ * and never evaluates it, so a walk over what the call evaluates skips it.
+ */
+function isUnevaluatedStringMethodArgument(node: ts.Node, scope: ReadonlySet<string>): boolean {
+  const call = node.parent;
+  if (!ts.isExpression(node) || !ts.isCallExpression(call)) return false;
+  if (staticStringMethodArgument(node, undefinedArgument(scope)) === undefined) return false;
+  const planned = provenReceiverStringMethodCall(call, scope);
+  return (
+    planned !== undefined &&
+    planned.args.includes(node) &&
+    stringMethodPlan(stringSurfaceBackend(), planned.method, planned.args.length) !== null
+  );
+}
+
+/** The method and source arguments of a string-method call whose receiver is proven, borrowed or direct. */
+function provenReceiverStringMethodCall(
+  call: ts.CallExpression,
+  scope: ReadonlySet<string>,
+): { readonly method: string; readonly args: readonly ts.Expression[] } | undefined {
+  const borrow = ambientStringPrototypeBorrow(call, scope, selectorSeesAmbientStringBinding);
+  if (borrow !== undefined) {
+    return BORROW_RECEIVER_FAMILIES.has(provenIrFamily(borrow.receiver, scope)) ? borrow : undefined;
+  }
+  if (!ts.isPropertyAccessExpression(call.expression) || !isProvenStringReceiver(call.expression.expression)) {
+    return undefined;
+  }
+  return { method: call.expression.name.text, args: call.arguments };
+}
+
+/** A direct string-method receiver the selector plans on: classified or proven a string. */
+function isProvenStringReceiver(receiver: ts.Expression): boolean {
+  return (
+    currentSelectionOptions?.classifyPrimitiveExpression?.(receiver) === "string" || expressionIsProvenString(receiver)
+  );
 }
 
 function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
@@ -11359,6 +11631,19 @@ function templateSubstitutionFamily(
 const laneFormatsNumbers = (): boolean =>
   currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true;
 
+/**
+ * (#7106 lever T) A module operand's `+`: `admit` when the builder proves it at the use site (no family agreement
+ * needed); `refuse` a function's unproven `+` over a dynamic script var, since from-ast adds that var as the carrier
+ * only where it is in scope (`<module-init>`) and a function reads it through `resolveModuleBinding`, which
+ * `addsAsCarrier` does not consult; otherwise the family checks decide.
+ */
+function moduleAdditionVerdict(expr: ts.BinaryExpression): "admit" | "refuse" | "families" {
+  if (expr.operatorToken.kind !== ts.SyntaxKind.PlusToken) return "families";
+  if (checkerProvesBinaryOperands(expr) === true) return "admit";
+  const readsDynamic = (e: ts.Expression) => moduleBinding(e)?.valueKind.kind === "dynamic";
+  return !currentSubjectIsModuleInit && (readsDynamic(expr.left) || readsDynamic(expr.right)) ? "refuse" : "families";
+}
+
 /** (#7066) An array-pattern leaf the selector resolves reads an element (`patternLeafReadsElement`). */
 const selectorLeafReadsElement = patternLeafReadsElement((id) =>
   currentModuleBindingResolver?.localValueDeclaration(id),
@@ -11805,14 +12090,14 @@ function isPhase1StaticPredicateCall(
     isAmbientNamespace: (receiver) => !scope.has(receiver.text) && selectorSeesAmbientBinding(receiver),
     isGlobalUndefined: (operand) => isUnshadowedUndefinedIdentifier(operand, scope),
     localDeclaration: closureLocalDeclaration,
+    valueDeclaration: closureSignatureFlowHooks.resolveValue,
     family: (expression) => provenIrFamily(expression, scope),
     additiveLane: additiveLane(),
     isStringMethodCall: (call) =>
       ts.isPropertyAccessExpression(call.expression) &&
       currentSelectionOptions?.classifyPrimitiveExpression?.(call.expression.expression) === "string",
     declaredSlotFamily: (type) => resolvedKindFamily(resolveReturnTypeNode(type)),
-    // A top-level function's parameter takes the verdict its own claim resolves its signature with; any
-    // other callee the source declares (a local, a module `const h = (b) => …`) is not resolved here.
+    // Top-level calls use their claimed parameter signature; other source-declared callees stay unresolved.
     argumentSlotFamily: (call, index) => {
       if (!ts.isIdentifier(call.expression)) return undefined;
       const name = call.expression.text;
@@ -11845,6 +12130,7 @@ function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): 
   }
   // An unannotated local: its family is its initializer's, which the caller traces.
   if (ts.isIdentifier(expression) && unannotatedLocal(expression) !== undefined) return "unknown";
+  if (isScriptVarVecCarrierRead(expression)) return "dynamic";
   if (moduleBinding(expression) !== undefined) {
     const slot = obviousModuleValueFamily(expression);
     return slot === "f64" ? "number" : slot === "boolean" ? "boolean" : "unknown";
@@ -11934,11 +12220,20 @@ function phase1NativeBufferVerdict(
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   const nativeBuffer = phase1NativeBufferVerdict(expr, scope, localClasses);
   if (nativeBuffer !== undefined) return nativeBuffer;
+  if (!phase1ScriptVarVecReadAdmitted(expr, scope)) return false;
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
     !moduleExternConsumerIsProven(expr, scope)
   ) {
     return shapeNo("expr-module-extern-consumer", expr);
+  }
+  // (#7106 levers R2, S2) A match result's served field goes only where its dynamic value lowers.
+  if (
+    currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
+    isRegExpMatchRead(expr) &&
+    !regExpMatchReadValueAdmitted(expr, isFunctionObjectMemberCall)
+  ) {
+    return capabilityNo("operand-coercion-unsupported", "expr-regexp-match-read", expr);
   }
   if (ts.isParenthesizedExpression(expr)) return isPhase1Expr(expr.expression, scope, localClasses);
   // (#3583) Type-erased assertion wrappers emit nothing; `lowerExpr` unwraps the identical operand shape.
@@ -12122,6 +12417,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isBinaryExpression(expr)) {
     const binOp = expr.operatorToken.kind;
+    if (isNumberCompoundAssignOperator(binOp) && ts.isIdentifier(expr.left))
+      return isSelectableNumberCompound(expr, scope, localClasses) && isPhase1ForUpdateExpr(expr, scope, localClasses);
     if (binOp === ts.SyntaxKind.EqualsToken) {
       if (ts.isIdentifier(expr.left)) return isPhase1ForUpdateExpr(expr, scope, localClasses);
       if (ts.isPropertyAccessExpression(expr.left) || ts.isElementAccessExpression(expr.left))
@@ -12140,6 +12437,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       if (selectorValuePositionComma(expr, scope, localClasses)) return true;
       return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
     }
+    const voidOperand = [expr.left, expr.right].find((side) => isVoidLocalCall(side, scope, currentClaimTypeMap));
+    if (voidOperand) return shapeNo("expr-void-call-operand", voidOperand);
     if (!nativeI32OperandsAdmissible(expr, currentSelectionOptions)) {
       return capabilityNo("operand-coercion-unsupported", "expr-native-i32-operand", expr);
     }
@@ -12157,6 +12456,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (leftTracksModule || rightTracksModule) {
       const leftFamily = obviousModuleValueFamily(expr.left);
       const rightFamily = obviousModuleValueFamily(expr.right);
+      const addition = moduleAdditionVerdict(expr);
+      if (addition === "refuse") return shapeNo("expr-module-dynamic-addition", expr);
       const isEquality = isEqualityOperator(binOp);
       const nullishEquality =
         isEquality &&
@@ -12164,7 +12465,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           rightFamily === "nullish" ||
           leftFamily === undefined ||
           rightFamily === undefined);
-      if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality && !isModuleStringConcat(expr)) {
+      if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality && addition !== "admit") {
         return shapeNo("expr-module-value-representation-mismatch", expr);
       }
       const booleanModuleOperand =
@@ -12172,6 +12473,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         (rightTracksModule && (rightFamily === "boolean" || expressionTouchesBooleanModuleBinding(expr.right)));
       if (
         booleanModuleOperand &&
+        addition !== "admit" &&
         !isComparisonResultOperator(binOp) &&
         binOp !== ts.SyntaxKind.AmpersandAmpersandToken &&
         binOp !== ts.SyntaxKind.BarBarToken
@@ -12550,10 +12852,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
       }
-      if (
-        isPristineEs5IntrinsicIsFrozenCall(expr, (node) => selectorSeesAmbientBinding(node) && !scope.has(node.text))
-      ) {
-        return true;
+      // (#7106 lever O) An integrity static with a fixed answer: a constant, or a mutator's own literal operand.
+      const integrityFold = objectIntegrityCallFold(expr, {
+        isAmbientBinding: (node) => selectorSeesAmbientBinding(node) && !scope.has(node.text),
+        dynamicCodeMayRun: currentSelectionOptions?.runtimeEvalMayExecute !== false,
+      });
+      if (integrityFold !== undefined) {
+        return integrityFold.kind === "answer" || isPhase1Expr(integrityFold.operand, scope, localClasses);
       }
       // #3793 — exact retained function-object wrappers such as Acorn's
       // `parse(...) { return Parser.parse(...) }`. The checker resolver proves
@@ -12574,44 +12879,42 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           return true;
         }
       }
+      // #3791, #7106 lever R — a host-free method on a RegExp value. Only
+      // `.test(subject)` / `.exec(subject)` lower, through the in-module
+      // carrier helper: an exact stable top-level carrier passes its real
+      // legacy externref global (that binding is not a general IR module
+      // value, so it bypasses the receiver walk), any other receiver must be
+      // an IR value, and an `.exec` result only where `regExpMatchUseAdmitted`
+      // places it. (#7014) Every other method (`(/a/g).toString()`), a
+      // non-string subject and all other shapes keep the target-capability
+      // refusal; claimed, they hit from-ast's capability-violation assert.
       if (
-        (expr.expression.name.text === "test" || expr.expression.name.text === "exec") &&
         currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
         hostRegExpUnavailable()
       ) {
-        // #3791, #7106 lever R — host-free `.test(subject)` calls the in-module
-        // carrier helper. An exact stable top-level carrier passes its real
-        // legacy externref global (that binding is not a general IR module
-        // value, so it bypasses the receiver walk); any other receiver must be
-        // an IR value. `.exec`, non-string subjects and all other shapes keep
-        // the established target-capability refusal.
-        const receiver = expr.expression.expression;
+        const call = matchRegExpCarrierCall(expr);
         if (
-          expr.expression.name.text === "test" &&
+          call !== undefined &&
           currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
-          expr.arguments.length === 1 &&
-          !ts.isSpreadElement(expr.arguments[0]!) &&
-          (expressionIsProvenString(expr.arguments[0]!) ||
-            currentSelectionOptions?.classifyPrimitiveExpression?.(expr.arguments[0]!) === "string") &&
-          (currentModuleBindingResolver?.staticRegExpTestPlan(receiver) !== undefined ||
-            isPhase1Expr(receiver, scope, localClasses))
+          (expressionIsProvenString(call.subject) ||
+            currentSelectionOptions?.classifyPrimitiveExpression?.(call.subject) === "string") &&
+          (call.method === "test" ||
+            regExpMatchUseAdmitted(expr, currentSelectionOptions?.classifyPrimitiveExpression) ||
+            initializesRegExpMatchSlot(expr)) &&
+          (currentModuleBindingResolver?.staticRegExpTestPlan(call.receiver) !== undefined ||
+            isPhase1Expr(call.receiver, scope, localClasses))
         ) {
-          return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
+          return isPhase1Expr(call.subject, scope, localClasses);
         }
-        return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
-      }
-      // (#7014) Every OTHER host-free RegExp method (`(/a/g).toString()`) keeps
-      // that refusal; claimed, it hit from-ast's capability-violation assert.
-      if (
-        currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
-        hostRegExpUnavailable()
-      ) {
         return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
       }
       if (currentSelectionOptions?.preparedAsyncDateNowCall?.(expr) === true) return true;
       // (#7106 S1b) `JSON.stringify(v)`: one argument, native codec lanes only.
       const jsonStringifyArg = scope.has("JSON") ? null : ambientJsonStringifyCall(expr);
       if (jsonStringifyArg !== null) return isPhase1Expr(jsonStringifyArg, scope, localClasses);
+      // (#7267) `JSON.parse(text)` of a typed string: the shared #7253 admission.
+      const globalFunction = selectorAmbientGlobalFunctionCall(expr);
+      if (globalFunction) return globalFunction.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
       // (#7106 S1c) `Object.prototype.toString.call(v)`: standalone classifier lanes only.
       const objectTagArg = scope.has("Object") ? null : ambientObjectToStringTagCall(expr);
       if (objectTagArg !== null) return isPhase1Expr(objectTagArg, scope, localClasses);
@@ -12695,7 +12998,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         (scalarReceiverFamily === "f64" ? "number" : scalarReceiverFamily === "boolean" ? "boolean" : undefined);
       const provenReceiverFamily = currentSelectionOptions?.classifyPrimitiveExpression?.(builtinReceiver);
       const isNumberReceiver = provenReceiverFamily === "number" || expressionIsProvenNumber(builtinReceiver);
-      const isStringReceiver = provenReceiverFamily === "string" || expressionIsProvenString(builtinReceiver);
+      const isStringReceiver = isProvenStringReceiver(builtinReceiver);
       // (#7106 compareArray.format) A method call ON a borrow result
       // (`Array.prototype.map.call(…).join(", ")`): the receiver is the dynamic
       // carrier, whatever the checker types the borrow, so it takes the generic
@@ -12795,7 +13098,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return true;
       }
-      if (expressionTouchesScalarModuleBinding(expr.expression.expression)) {
+      if (admitDynamicHomeOwnPropertyCall(expr)) return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
+      if (expressionTouchesScalarModuleBinding(expr.expression.expression, scope)) {
         if (!isExactF64ScalarToStringCall(expr)) {
           return shapeNo("expr-module-scalar-method", expr);
         }
@@ -12900,6 +13204,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         // out of scope — methods on classes have known signatures and
         // expanding spread would blur them. Reject for now.
         if (ts.isSpreadElement(arg)) return false;
+        // (#7106 lever SR) A static argument of a planned string method is never lowered.
+        if (isUnevaluatedStringMethodArgument(arg, scope)) continue;
         if (!isPhase1Expr(arg, scope, localClasses)) return false;
       }
       return true;
@@ -13035,7 +13341,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         return shapeNo("expr-module-extern-template", span.expression);
       }
       if (
-        expressionTouchesScalarModuleBinding(span.expression) &&
+        expressionTouchesScalarModuleBinding(span.expression, scope) &&
         obviousModuleValueFamily(span.expression) !== substitutionFamily
       ) {
         return shapeNo("expr-module-scalar-template", span.expression);
@@ -13449,10 +13755,7 @@ function isDynamicHomeOpenCarrier(literal: ts.ObjectLiteralExpression): boolean 
   if (
     !ts.isVariableDeclaration(decl) ||
     decl.initializer !== literal ||
-    !ts.isIdentifier(decl.name) ||
-    !isModuleInitVarList(decl.parent) ||
-    currentModuleBindingResolver?.(decl.name)?.valueKind.kind !== "dynamic" ||
-    currentSelectionOptions?.isOpenObjectBinding?.(decl) !== true ||
+    !isDynamicHomeOpenCarrierDeclaration(decl) ||
     !unitInKeysAreOwnOnly(literal)
   ) {
     return false;
@@ -13461,16 +13764,68 @@ function isDynamicHomeOpenCarrier(literal: ts.ObjectLiteralExpression): boolean 
   return true;
 }
 
-/** (#7128 S1) A U1 define on an admitted open-carrier binding, in the current subject's own body. */
-function isOpenCarrierDefine(call: ts.CallExpression): boolean {
-  const target = call.arguments[0];
+/** (#7280 S1) The declaration half of {@link isDynamicHomeOpenCarrier}; (#7335) its define and own-property arms ask it too. */
+function isDynamicHomeOpenCarrierDeclaration(decl: ts.VariableDeclaration): boolean {
   return (
-    target !== undefined &&
-    ts.isIdentifier(target) &&
-    currentOpenCarrierNames.has(target.text) &&
-    enclosingProjectionOwner(call) === currentSelectionSubject
+    ts.isIdentifier(decl.name) &&
+    isModuleInitVarList(decl.parent) &&
+    currentModuleBindingResolver?.(decl.name)?.valueKind.kind === "dynamic" &&
+    currentSelectionOptions?.isOpenObjectBinding?.(decl) === true
   );
 }
+
+/**
+ * (#7128 S1) A U1 define on an admitted open-carrier binding, in the current
+ * subject's own body; (#7335) or a U1 define on a #7280 dynamic-home carrier
+ * whose every use is served (`dynamic-home-open-object.ts`), from any unit,
+ * since that binding holds the one `$Object` throughout.
+ */
+function isOpenCarrierDefine(call: ts.CallExpression): boolean {
+  const target = call.arguments[0];
+  if (target === undefined || !ts.isIdentifier(target)) return false;
+  if (currentOpenCarrierNames.has(target.text) && enclosingProjectionOwner(call) === currentSelectionSubject)
+    return true;
+  return isOpenCarrierUse(target, isAmbientObjectDefineProperty) && dynamicHome.isReference(target, DYNAMIC_HOME_QUERY);
+}
+
+/**
+ * (#7335) The method of `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on
+ * a dynamic-home open object, where the lane builds the own-property provider
+ * the certified uncurried aliases lower to (#7106 S1g).
+ */
+function dynamicHomeOwnPropertyMethod(call: ts.CallExpression): dynamicHome.OwnPropertyMethod | undefined {
+  if (
+    !currentDynamicRuntimeBuildable ||
+    currentSelectionOptions?.supportsBackendCapability?.("native-own-property-test") !== true
+  ) {
+    return undefined;
+  }
+  return dynamicHome.ownPropertyMethod(call, DYNAMIC_HOME_QUERY);
+}
+
+/** (#7335) Admit a {@link dynamicHomeOwnPropertyMethod} call, recording its method for the lowering. */
+function admitDynamicHomeOwnPropertyCall(call: ts.CallExpression): boolean {
+  const method = dynamicHomeOwnPropertyMethod(call);
+  if (method === undefined) return false;
+  admittedOwnPropertyCalls.set(call, method);
+  return true;
+}
+
+const admittedOwnPropertyCalls = new WeakMap<ts.CallExpression, dynamicHome.OwnPropertyMethod>();
+
+/** (#7335) The own-property method of a certified `o.<method>(k)` call on a dynamic-home open object. */
+export function admittedOwnPropertyCallMethod(call: ts.CallExpression): dynamicHome.OwnPropertyMethod | undefined {
+  return admittedOwnPropertyCalls.get(call);
+}
+
+/** (#7335) The selector state a #7280 dynamic-home carrier's uses are judged against, read live. */
+const DYNAMIC_HOME_QUERY: dynamicHome.DynamicHomeQuery = {
+  get resolve() {
+    return currentModuleBindingResolver;
+  },
+  isCarrier: (decl) => isDynamicHomeOpenCarrierDeclaration(decl),
+  isAmbientDefineProperty: (call) => isAmbientObjectDefineProperty(call),
+};
 
 /** `Object.defineProperty(…)` on the ambient `Object`. */
 function isAmbientObjectDefineProperty(call: ts.CallExpression): boolean {
@@ -13874,6 +14229,8 @@ export function buildLocalCallGraph(
         return;
       }
       if (ts.isCallExpression(node)) {
+        // (#7106 lever SR) An unevaluated empty IIFE is no call edge; selection re-asks with its scope.
+        if (isUnevaluatedStringMethodArgument(node, NO_LOCALS)) return;
         if (
           !certifiedImportedHofCall(node, currentSelectionOptions?.importedFunctions) &&
           visitProgramCallableUse(currentSelectionOptions?.resolveProgramCallableUse, node, visit, () =>
@@ -13905,13 +14262,9 @@ export function buildLocalCallGraph(
             return;
           }
           // (#7253) …and the host-free global functions.
-          const globalFunctionArgs = admitAmbientGlobalFunctionCall(
-            node,
-            (callee) => currentModuleBindingResolver?.isLibOnlyBinding(callee) === true,
-            currentSelectionOptions,
-          );
-          if (globalFunctionArgs !== null) {
-            for (const argument of globalFunctionArgs) visit(argument);
+          const globalFunction = selectorAmbientGlobalFunctionCall(node);
+          if (globalFunction !== null) {
+            for (const argument of globalFunction.arguments) visit(argument);
             return;
           }
           const imported = certifyImportedIrCall(node, currentSelectionOptions?.importedFunctions);
@@ -13934,7 +14287,10 @@ export function buildLocalCallGraph(
             // Variable-backed callables use checker-resolved declaration
             // identity so a block-local alias cannot hide an ambient or
             // top-level call with the same text elsewhere in the function.
-          } else if (decls.has(callee) && !localIsRewritten(decls.get(callee)!)) {
+          } else if (
+            decls.has(callee) &&
+            !localIsRewritten(decls.get(callee)!, closureSignatureFlowHooks.resolveValue)
+          ) {
             // (#7283) A function whose binding is reassigned (`f = …`) has no
             // stable direct-call target: from-ast plans no direct call to it,
             // so a call to it is external, not a graph edge.

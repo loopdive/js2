@@ -11,7 +11,7 @@ import {
   numericAnyOperand,
 } from "./native-addition.js";
 export { emitAnyAdd, emitAnyAddFromExternTemps, emitNativeStringSlotPlus } from "./native-addition.js";
-import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
+import { expressionHasWidenedStaticType } from "./strict-eq-stale-type.js";
 import { isInertUndefinedLiteral } from "./void-undefined-operand.js"; // (#6604)
 import { ts } from "../ts-api.js";
 import {
@@ -654,7 +654,7 @@ export function compileBinaryExpression(
     [expr.left, expr.right].some(
       (operand) =>
         (ts.isIdentifier(operand) && fctx.rawArgumentsParamNames?.has(operand.text)) ||
-        expressionHasWidenedPropertyType(ctx, operand),
+        expressionHasWidenedStaticType(ctx, operand),
     )
   ) {
     return emitAnyAdd(ctx, fctx, expr);

@@ -1,0 +1,32 @@
+{
+  "baselineSha256": "4543c75489723cbeebd0555219e78e63f0781e2029514e41c59258c33b43b928",
+  "candidateSha256": "8e4120a2dfafae754b6d10613bf8d570a3ded5549e0ec8eebeafe4e0643cfab8",
+  "rowsPerArm": 90,
+  "exactEquality": true,
+  "kinds": [
+    {
+      "kind": "provider",
+      "count": 33
+    },
+    {
+      "kind": "provider-controls",
+      "count": 1
+    },
+    {
+      "kind": "provider-trap",
+      "count": 8
+    },
+    {
+      "kind": "semantic",
+      "count": 23
+    },
+    {
+      "kind": "semantic-control",
+      "count": 2
+    },
+    {
+      "kind": "semantic-preparation",
+      "count": 23
+    }
+  ]
+}

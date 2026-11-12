@@ -225,7 +225,11 @@ import {
   removeMultiIrAttemptedCallableUnits,
 } from "./multi-prepared-callable-orchestration.js";
 import { createCodegenContext } from "./context/create-context.js";
-import { expressionHasWidenedPropertyType, markIndexedPropertyStale } from "./strict-eq-stale-type.js";
+import {
+  expressionHasWidenedStaticType,
+  functionReturnsWidenedValue,
+  markIndexedPropertyStale,
+} from "./strict-eq-stale-type.js";
 import { bindingHoldsStandaloneClassProto } from "./class-proto-object.js"; // (#7053)
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
@@ -617,6 +621,7 @@ import {
   standaloneStaticRegExpCompiles,
 } from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
+import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
 import { zeroArgCallPadInstrs } from "./zero-arg-method-pad.js";
@@ -693,6 +698,7 @@ import {
   nativeStringType,
   nativeStringTypeNullable,
   stringConstantExternrefInstrs,
+  jsonParseTextFoldsAtCompileTime,
 } from "./native-strings.js";
 import { isAnyStringSlot } from "./native-strings-shared.js";
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
@@ -879,6 +885,8 @@ installObjectModelPorts(() => ({
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
   irNativeI32SlotRead,
+  expressionHasWidenedStaticType, // (#7337) IR resolver seam
+  bindingHasMixedAssignmentCarrier,
   hasExportModifier,
   hasDeclareModifier,
   hasAsyncModifier,
@@ -3290,6 +3298,7 @@ function planIrOverlay(
       ...(nativeBufferSurface ? { nativeBufferSurface } : {}),
       dynMemberReadBuildable: true,
       builtinProtoCompanionSeeded: ctx.protoMemberDirty, // (#7127)
+      runtimeEvalMayExecute: ctx.runtimeEvalBoundaryPlan?.providerMayExecute !== false, // (#7106 lever O)
       builtinProtoMember: (builtin, member, anchor) => builtinProtoMemberProvided(ctx, builtin, member, anchor), // (#7294)
       ...functionValueSelectionOptions(),
       dynamicRuntimeBuildable: !ctx.fast,
@@ -3316,6 +3325,7 @@ function planIrOverlay(
       ...(resolveModuleBinding ? { resolveModuleBinding } : {}),
       classifyPrimitiveExpression,
       classifyDeclaredPrimitiveExpression,
+      jsonParseFoldsAtCompileTime: (call) => jsonParseTextFoldsAtCompileTime(ctx, call), // (#7267)
       isArrayExpression,
       classifyArrayElementFamily,
       isRegExpExpression,
@@ -3494,7 +3504,9 @@ function planIrOverlay(
           ? ({ kind: "val", val: { kind: "externref" } } as IrType)
           : isVoidReturn
             ? null
-            : resolvePositionType(effectiveReturnNode, entry?.returnType, ctx, classShapeSidecar);
+            : functionReturnsWidenedValue(ctx, declaration)
+              ? irDynamic()
+              : resolvePositionType(effectiveReturnNode, entry?.returnType, ctx, classShapeSidecar);
       const params: IrType[] = [];
       for (let i = 0; i < declaration.parameters.length; i++) {
         const p = declaration.parameters[i]!;
@@ -4270,6 +4282,10 @@ export function scriptVarHome(
       return ctx.fast ? undefined : "dynamic";
     case "ref_null":
       if (type.typeIdx === ctx.anyStrTypeIdx) return "string";
+      // (#7106 lever S2) #1914's `exec` match-result struct, read as a dynamic value through `externref`.
+      if (type.typeIdx === ctx.structMap.get(REGEXP_MATCH_VEC_STRUCT)) return ctx.fast ? undefined : "regexp-match";
+      // (#7292) The vec of a native-string array literal.
+      if (type.typeIdx === ctx.vecTypeMap.get(`ref_${ctx.anyStrTypeIdx}`)) return "vec";
       // (#7252) The struct legacy allocated for a user class.
       return [...ctx.classSet].some((n) => ctx.structMap.get(n) === type.typeIdx) ? "class-instance" : undefined;
     case "f64":
@@ -13514,7 +13530,7 @@ function hoistVarDecl(
       forInTargetForcesExternref ||
       transferredArrayLikeResult ||
       bindingHoldsStandaloneClassProto(ctx, decl) || // (#7053)
-      (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
+      (!!decl.initializer && !decl.type && expressionHasWidenedStaticType(ctx, decl.initializer));
     const usageF64 = hardForcesExternref
       ? null
       : mixedAssignmentCarrier
@@ -14201,7 +14217,7 @@ function walkStmtForLetConst(
           realmStructuralCarrier ||
           (mixedAssignmentCarrier && !mixedCarrierProvenF64) ||
           bindingHoldsStandaloneClassProto(ctx, decl) || // (#7053)
-          (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
+          (!!decl.initializer && !decl.type && expressionHasWidenedStaticType(ctx, decl.initializer));
         // (#4616) Empty-array (or Array<any>) initializer: use the SAME
         // usage-based vec inference `compileVariableStatement` applies
         // (`inferArrayVecType`, mirroring the var hoister above). Without it
@@ -14499,6 +14515,9 @@ export {
   IR_DYN_INSTANCEOF_HELPER,
   irDynamicInstanceOfAtLegacyParity,
 } from "./ir-dynamic-instanceof.js";
+// (#7106 levers R1, R2) the `.test` / `.exec` carrier helpers (ir/integration.ts).
+export { ensureStandaloneRegExpCarrierExecHelper } from "./regexp-exec-carrier.js";
+export { ensureStandaloneRegExpCarrierTestHelper } from "./regexp-standalone.js";
 export { linkRuntimeEvalGlobalEval, runtimeEvalOwnsGlobalEval } from "./expressions/runtime-eval-provider.js"; // (#7106 A2c) ir/integration.ts
 // (#7274) the IR's native ArrayBuffer adapters (ir/integration.ts).
 export { irNativeBufferProvider, nativeBufferProvidersAvailable } from "./buffers/ir-native-buffer.js";
