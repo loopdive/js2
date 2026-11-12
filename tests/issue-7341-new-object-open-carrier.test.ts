@@ -182,6 +182,27 @@ const PENDING_7194: Record<string, { readonly source: string; readonly today: Ve
   },
 };
 
+/**
+ * A `void` of a non-carrier operand compared with `undefined` keeps main's route: the
+ * function is claimed and withdrawn by from-ast as on main, its callers stay IR, and the
+ * JS environment's bytes are main's (PR #7214 review round 2). Only a carrier operand is
+ * refused at select.
+ */
+const NON_CARRIER_VOID: Record<string, { readonly source: string; readonly unit: string }> = {
+  "a local in a function": {
+    source: `function f() { var a = 1; return void a === undefined; } if (!f()) { throw "x"; }`,
+    unit: "f",
+  },
+  "a parameter": {
+    source: `function g(a) { if (void a !== undefined) return 1; return 0; } if (g(3) !== 0) { throw "x"; }`,
+    unit: "g",
+  },
+  "a computed local": {
+    source: `function h(a) { var b = a + 1; return void b === undefined ? 1 : 0; } if (h(1) !== 1) { throw "x"; }`,
+    unit: "h",
+  },
+};
+
 describe("#7341 S1 — `new Object()` as the open-object carrier", () => {
   for (const [name, source] of Object.entries(CLAIMED)) {
     it(`claims every unit and runs as JS: ${name}`, async () => {
@@ -226,6 +247,16 @@ describe("#7341 S1 — `new Object()` as the open-object carrier", () => {
       expect(row).toMatchObject({ stage: "select", irBodyEmitted: false });
       expect(row?.detail ?? "").not.toContain("expr-new-object");
       expect(await run(ir, "standalone")).toBe(await run(await build(source, "standalone", false), "standalone"));
+    });
+  }
+
+  for (const [name, { source, unit }] of Object.entries(NON_CARRIER_VOID)) {
+    it(`keeps main's route for a non-carrier void: ${name}`, async () => {
+      expect(node(source)).toBe("ok");
+      const ir = await build(source, "standalone");
+      expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
+      expect(outcome(ir, unit)?.detail ?? "").not.toContain("expr-void-undefined-compare");
+      expect(await run(ir, "standalone")).toBe("ok");
     });
   }
 

@@ -356,9 +356,11 @@ What changed:
     global object and no dynamic code.
   - `isEmptyObjectExpression` answers `{}`, or a zero-argument realm
     construction.
-  - Callers: the call-graph `new` arm and #7335's
+  - It is a type guard. Callers: the call-graph `new` arm and #7335's
     `dynamic-home-open-object.ts`, which no longer tests
-    `isObjectLiteralExpression` itself. `isPhase1ObjectLiteral` keeps its own
+    `isObjectLiteralExpression` itself and no longer casts.
+  - `emptyObjectBinding` / `EmptyObjectBinding` (formerly
+    `emptyObjectLiteralBinding`) take either spelling. `isPhase1ObjectLiteral` keeps its own
     `properties.length === 0` test: its value is already a literal.
 - `open-object-carrier.ts`: `emitOpenCarrierObject(builder, home)` is the one
   emitter. Both callers (`lowerObjectLiteral` and the hook in
@@ -366,9 +368,10 @@ What changed:
   `"binding"` (#7128, raw externref) or `"dynamic-home"` (#7280, boxed) instead
   of a membership bit. So neither spelling trusts the hint any more.
 - `select.ts`:
-  - `phase1NewExpression` sends a realm construction to `phase1NewObject`. That
-    function checks only the argument count (`expr-new-object-argument`), then
-    asks `isDynamicHomeOpenCarrier`; everything that function refuses is
+  - `phase1NewExpression` takes a realm construction itself. It checks only the
+    argument count (`expr-new-object-argument`, via the shared
+    `hasNoConstructorArguments` that `isEmptyObjectExpression` also uses), then
+    asks `isDynamicHomeOpenCarrier`. Everything that refuses is
     `expr-new-object-home`.
   - The plan's third reason, `expr-new-object-position`, is not emitted. Its
     test was a copy of `isDynamicHomeOpenCarrier`'s first check; S3 can bring
@@ -401,12 +404,17 @@ for `new Object()`.
 | `o.p++`, `o.p += 1`, `o["p"]++` on a carrier | from-ast: "compound property/element write on dynamic" | `member-compound-carrier-receiver` (`isPhase1MutableMemberTarget`) |
 | `o == null`, `null != o`, `o.p != null` | from-ast: "bare 'null' in non-reference context" | `expr-carrier-loose-null` (`nullComparisonFolds(op, "dynamic")`) |
 | `switch (o)`, `switch (o.k)` on a carrier | from-ast: "switch disc must lower to i32/f64" | `switch-disc-carrier` (`isPhase1SwitchStatement`) |
-| `void e !== undefined`, `void e != undefined` (any `e` but `0`) | from-ast: "undefined-compare on f64 not in IR scope" / "matching operand types" | `expr-void-undefined-compare` (the `void` arm, `isPhase1VoidExpression`; predicate `voidValueComparedWithUndefined` in `analysis/operand-admissibility.ts`) |
+| `void o.p !== undefined`, `void o != undefined` (a carrier operand) | from-ast: "undefined-compare on f64 not in IR scope" / "matching operand types" | `expr-void-undefined-compare` (the `void` arm, `isPhase1VoidExpression`; predicate `voidValueComparedWithUndefined` in `analysis/operand-admissibility.ts`) |
 
 On ordinary code these rules only flip claims that main withdrew after the
-claim. The void rule also covers non-carrier operands
-(`var n = 1; void n !== undefined`, `void f() !== undefined`), which main
-withdrew the same way. See the measurements for the census delta.
+claim.
+
+The void rule applies only to a carrier operand. The round-1 version refused
+every `void e` against `undefined`. On main, a function holding
+`void a === undefined` was claimed and then withdrawn, and its callers stayed
+IR. Refusing that function at select pushed its callers to legacy as well
+(`call-graph-closure`), which changed JS-environment binaries. Non-carrier
+operands now keep main's route; test rows `NON_CARRIER_VOID` pin it.
 
 Shared helpers:
 
@@ -418,7 +426,12 @@ Shared helpers:
 Carrier-read helpers (`select.ts`):
 
 - `isDynamicScriptVarRead` is the one leaf, a read of a dynamic script var.
-  It replaces four spellings of `moduleBinding(e)?.valueKind.kind === "dynamic"`.
+  It replaces the spellings of `moduleBinding(e)?.valueKind.kind === "dynamic"`
+  this branch touched.
+  - Follow-up, left alone because they predate this branch: the inline
+    `valueKind.kind === "dynamic"` tests on other binding values in
+    `select.ts` (`moduleBinding?.`, `directModuleBinding?.`, `binding.`,
+    `currentModuleBindingResolver?.(…)?.`; six sites).
 - `readsScriptVarCarrier(e, via)` follows either `+` operands (`"addition"`,
   the compound-RHS rule) or member reads (`"member"`, the refusals above).
 
@@ -457,6 +470,27 @@ the own-property probe. Only its expected detail changed.
 - Found while probing, not caused here and not fixed: `typeof void x` on a
   dynamic script var answers wrong in the IR (same on main).
 
+### Still open (step B, after PR #7212 is on main)
+
+Mixed carrier expressions that are still claimed and then withdrawn. Each one
+needs #7212's recursive `lowersToCarrier`:
+
+- `switch (o.k + 1)`
+- `switch ((0, o.k))`
+- `void o.p == null`
+- `void o.p === o.q`
+- `void o.p !== void 0`
+- `o.p == void 0`
+
+Planned with them:
+
+- `readsScriptVarCarrier`'s two modes are replaced by `lowersToCarrier`.
+- The two loose-null refusals become #7212's `expr-carrier-loose-null`
+  (keyed on `lowersToCarrier`, plus `compound-carrier-operand`); this branch's
+  refusals are dropped in its favour.
+- `member-compound-carrier-receiver` gives way to #7212's
+  `member-compound-dynamic-receiver`.
+
 ### Measurements (re-run after the review fixes)
 
 Base: `origin/main` `34ce67984a`, exported into the scratchpad. Head: this
@@ -470,7 +504,8 @@ standalone, with `JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`.
   - **0 post-claim errors** on both trees, and no compile-error difference.
   - Routing changed only in the 23 gained files. After the final size cuts
     (no loc or func grant: `select.ts` is 2 lines under main) the head census
-    was re-run and routed every file identically.
+    was re-run and routed every file identically. It was re-run once more
+    after review round 2 (void rule scoped to carrier operands): same result.
   - 298 of the 300 sample files are IR-only on both trees.
 - **Refusal labels (test262 census):**
   - Units refused around `new Object` now name the arm: 16 are
@@ -479,8 +514,9 @@ standalone, with `JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`.
     among them.
   - The `external-call` code count is unchanged (215 on both trees). With
     `MODULE_INIT_ALL_REJECTS`, the shape label is reported first.
-  - The void rule labels 3 files (`language/expressions/void/S11.4.2_A4_T1..3`).
-    All three are legacy on both trees.
+  - The void rule (carrier operands only) labels 3 files
+    (`language/expressions/void/S11.4.2_A4_T1..3`, a `void` of a dynamic
+    script var). All three are legacy on both trees.
 - **Gains from routing #7335's arms through the recognizer:** none in this
   population. No file in it needs them.
 - **Verdicts:** `scripts/run-test262-paths.mts --standalone` over the 23 gained
@@ -493,4 +529,6 @@ standalone, with `JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`.
     every third file of the 873, the 45 `new Object` files, the 42 sources of
     `tests/issue-7341-new-object-open-carrier.test.ts` and 16 switch / void
     probes.
-  - The 182 cases of the PR #7214 review also match, 182 of 182.
+  - The PR #7214 review cases match too, 276 of 276. These are rounds 1 and 2,
+    including the three non-carrier `void` repros of round 2. No unit that main
+    claims is lost in those cases.

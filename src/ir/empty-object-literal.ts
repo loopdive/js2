@@ -58,14 +58,19 @@ export function isRealmObjectConstruction(
 export function isEmptyObjectExpression(
   expr: ts.Expression,
   isLibOnlyBinding: (node: ts.Identifier) => boolean,
-): boolean {
+): expr is EmptyObjectExpression {
   if (ts.isObjectLiteralExpression(expr)) return expr.properties.length === 0;
   return (
-    ts.isNewExpression(expr) && (expr.arguments?.length ?? 0) === 0 && isRealmObjectConstruction(expr, isLibOnlyBinding)
+    ts.isNewExpression(expr) && hasNoConstructorArguments(expr) && isRealmObjectConstruction(expr, isLibOnlyBinding)
   );
 }
 
-export interface EmptyObjectLiteralBinding {
+/** `new C()` or `new C`: no argument. */
+export function hasNoConstructorArguments(expr: ts.NewExpression): boolean {
+  return (expr.arguments?.length ?? 0) === 0;
+}
+
+export interface EmptyObjectBinding {
   readonly value: EmptyObjectExpression;
   readonly decl: ts.VariableDeclaration;
   readonly name: ts.Identifier;
@@ -101,10 +106,10 @@ export interface EmptyObjectLiteralBinding {
  * or a shadowing binding all count. That over-approximates, which is the safe
  * direction — it can only refuse to claim.
  */
-export function emptyObjectLiteralBinding(
+export function emptyObjectBinding(
   expr: EmptyObjectExpression,
   owner: ts.Node | undefined,
-): EmptyObjectLiteralBinding | undefined {
+): EmptyObjectBinding | undefined {
   const decl = expr.parent;
   if (owner === undefined || !ts.isVariableDeclaration(decl) || decl.initializer !== expr) return undefined;
   if (decl.type !== undefined || !ts.isIdentifier(decl.name)) return undefined;

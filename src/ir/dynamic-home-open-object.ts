@@ -23,7 +23,7 @@ import {
 } from "../shared/intrinsic-prototype-writes.js";
 import { ts } from "../ts-api.js";
 import {
-  emptyObjectLiteralBinding,
+  emptyObjectBinding,
   isEmptyObjectExpression,
   isOpenCarrierUse,
   type EmptyObjectExpression,
@@ -43,12 +43,13 @@ export interface DynamicHomeQuery {
 /** `id` reads a #7280 dynamic-home carrier whose every use is served. */
 export function isReference(id: ts.Identifier, query: DynamicHomeQuery): boolean {
   const declaration = query.resolve?.(id)?.declaration;
+  if (declaration === undefined || !ts.isVariableDeclaration(declaration) || !isScriptVar(declaration)) return false;
+  const value = declaration.initializer;
   return (
-    declaration !== undefined &&
-    ts.isVariableDeclaration(declaration) &&
-    isScriptEmptyObjectVar(declaration, query) &&
+    value !== undefined &&
+    isEmptyObjectExpression(value, query.isLibOnlyBinding) &&
     query.isCarrier(declaration) &&
-    everyUseIsServed(declaration, query)
+    everyUseIsServed(declaration, value, query)
   );
 }
 
@@ -63,14 +64,12 @@ export function ownPropertyMethod(call: ts.CallExpression, query: DynamicHomeQue
   return ts.isIdentifier(receiver) && isReference(receiver, query) ? method : undefined;
 }
 
-/** A top-level `var <id> = {}` (or `new Object()`) of a script: unannotated, a plain identifier. */
-function isScriptEmptyObjectVar(decl: ts.VariableDeclaration, query: DynamicHomeQuery): boolean {
+/** A top-level `var <id>` of a script: unannotated, a plain identifier. */
+function isScriptVar(decl: ts.VariableDeclaration): boolean {
   const list = decl.parent;
   return (
     decl.type === undefined &&
     ts.isIdentifier(decl.name) &&
-    decl.initializer !== undefined &&
-    isEmptyObjectExpression(decl.initializer, query.isLibOnlyBinding) &&
     ts.isVariableDeclarationList(list) &&
     (list.flags & ts.NodeFlags.BlockScoped) === 0 &&
     ts.isVariableStatement(list.parent) &&
@@ -90,12 +89,16 @@ const servedByDeclaration = new WeakMap<ts.VariableDeclaration, boolean>();
  *   - no patch of `Object.prototype` and no reflective route to a prototype
  *     (`Object.setPrototypeOf(o, …)`, `__proto__`, `Reflect`).
  */
-function everyUseIsServed(decl: ts.VariableDeclaration, query: DynamicHomeQuery): boolean {
+function everyUseIsServed(
+  decl: ts.VariableDeclaration,
+  value: EmptyObjectExpression,
+  query: DynamicHomeQuery,
+): boolean {
   let served = servedByDeclaration.get(decl);
   if (served === undefined) {
     const name = decl.name as ts.Identifier;
     const file = decl.getSourceFile();
-    const binding = emptyObjectLiteralBinding(decl.initializer as EmptyObjectExpression, file);
+    const binding = emptyObjectBinding(value, file);
     served =
       bindingIsUniqueAndNeverWritten(name, decl) &&
       !sourceWritesMemberNamed(file, name.text) &&

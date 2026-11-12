@@ -98,14 +98,15 @@ import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-calle
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
 import {
-  emptyObjectLiteralBinding,
+  emptyObjectBinding,
   isEmptyObjectExpression,
+  hasNoConstructorArguments,
   isOpenCarrierUse,
   isRealmObjectConstruction,
   openCarrierDefinePlan,
   type EmptyObjectExpression,
   type OpenCarrierHome,
-  type EmptyObjectLiteralBinding,
+  type EmptyObjectBinding,
 } from "./empty-object-literal.js";
 import * as dynamicHome from "./dynamic-home-open-object.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
@@ -9063,11 +9064,10 @@ function isAmbientIntrinsicValue(expr: ts.Identifier): boolean {
 
 /** (#7276) The shared `Object.create` plan, on the selector's lane and binding facts. */
 function selectorObjectCreateDescriptorMap(expr: ts.CallExpression) {
-  const resolver = currentModuleBindingResolver;
   return objectCreateDescriptorMap(expr, {
     supportsBackendCapability: (capability) =>
       currentSelectionOptions?.supportsBackendCapability?.(capability) === true,
-    isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding(node) === true,
+    isLibOnlyBinding: selectorSeesLibOnlyBinding,
   });
 }
 
@@ -9081,11 +9081,10 @@ function selectorBuiltinProtoMemberLane(): BuiltinProtoMemberLane {
 
 /** (#7253 / #7267) The shared ambient-call admission, on the selector's lane and binding facts. */
 function selectorAmbientGlobalFunctionCall(expr: ts.CallExpression) {
-  const resolver = currentModuleBindingResolver;
   return admitAmbientGlobalFunctionCall(expr, {
     classify: currentSelectionOptions?.classifyDeclaredPrimitiveExpression,
     supportsBackendCapability: currentSelectionOptions?.supportsBackendCapability,
-    isLibOnlyBinding: (node) => resolver?.isLibOnlyBinding(node) === true,
+    isLibOnlyBinding: selectorSeesLibOnlyBinding,
     foldsAtCompileTime: (call) => currentSelectionOptions?.jsonParseFoldsAtCompileTime?.(call) !== false,
   });
 }
@@ -9814,13 +9813,14 @@ function isSelectableNumberCompound(
   return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
 }
 
-/** `void e`: from-ast compares its f64 NaN sentinel with `undefined` only when spelled `void 0`. */
+/** `void <carrier>` vs `undefined` has no lowering (only `void 0` does); other operands keep main's route. */
 function isPhase1VoidExpression(
   expr: ts.VoidExpression,
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
-  if (voidValueComparedWithUndefined(expr, (name) => scope.has(name)))
+  const carrierOperand = readsScriptVarCarrier(expr.expression, "member");
+  if (carrierOperand && voidValueComparedWithUndefined(expr, (name) => scope.has(name)))
     return capabilityNo("operand-coercion-unsupported", "expr-void-undefined-compare", expr);
   return isPhase1Expr(expr.expression, scope, localClasses);
 }
@@ -12081,7 +12081,7 @@ function phase1NewExpression(
   }
   // (#7341 S1) `new Object()` on the realm's `Object`: only as a `{}` the dynamic-home admission takes.
   if (isRealmObjectConstruction(expr, selectorSeesLibOnlyBinding)) {
-    if ((expr.arguments?.length ?? 0) !== 0) return shapeNo("expr-new-object-argument", expr);
+    if (!hasNoConstructorArguments(expr)) return shapeNo("expr-new-object-argument", expr);
     return isDynamicHomeOpenCarrier(expr) || shapeNo("expr-new-object-home", expr);
   }
   if (!isLocalClass && !isKnownExternClass(ctorName)) {
@@ -13679,7 +13679,7 @@ function isPhase1ObjectLiteral(
   // claimable; #7128 S1 adds the open carrier. See `empty-object-literal.ts`.
   if (expr.properties.length === 0) {
     const owner = enclosingProjectionOwner(expr);
-    const binding = emptyObjectLiteralBinding(expr, owner);
+    const binding = emptyObjectBinding(expr, owner);
     if (binding !== undefined && (binding.references.length === 0 || isOpenCarrierBinding(binding, owner))) {
       return true;
     }
@@ -13792,7 +13792,7 @@ const admittedOpenCarrierValues = new WeakMap<EmptyObjectExpression, OpenCarrier
  * binding is recorded for the define arm and the move-only scan, and its
  * literal for the lowering.
  */
-function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node | undefined): boolean {
+function isOpenCarrierBinding(binding: EmptyObjectBinding, owner: ts.Node | undefined): boolean {
   const isOpenObjectBinding = currentSelectionOptions?.isOpenObjectBinding;
   if (
     isOpenObjectBinding === undefined ||
@@ -14190,7 +14190,6 @@ function isLoweredConstruction(node: ts.NewExpression, localClasses: ReadonlySet
   return (
     currentSelectionOptions?.resolveFnctorAdmission?.(node) !== undefined ||
     currentSelectionOptions?.isHoleyArrayConstructor?.(node) === true ||
-    isEmptyObjectExpression(node, selectorSeesLibOnlyBinding) ||
     (ts.isIdentifier(callee) &&
       (localClasses.has(callee.text) ||
         (isKnownExternClass(callee.text) &&
@@ -14198,7 +14197,8 @@ function isLoweredConstruction(node: ts.NewExpression, localClasses: ReadonlySet
         (selectorSeesAmbientWrapperConstructor(callee) &&
           currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") === true) ||
         enclosingFunctionParameterNames(node).has(callee.text) ||
-        selfGuardedConstructorValueUse(callee)))
+        selfGuardedConstructorValueUse(callee))) ||
+    isEmptyObjectExpression(node, selectorSeesLibOnlyBinding)
   );
 }
 
