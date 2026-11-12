@@ -48,6 +48,7 @@
  * recover that absence at the `in` site.
  */
 import type { ts } from "../../ts-api.js";
+import { arrayIndexOfKey, MAX_I32_INDEX } from "../../shared/array-index-key.js";
 import type { vecStaticIndexPresenceInstrs } from "./array-length-holes.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -69,9 +70,6 @@ export interface ArrayCarrierInDependencies {
   readonly flushLateImportShifts: typeof flushLateImportShifts;
   readonly vecStaticIndexPresenceInstrs: typeof vecStaticIndexPresenceInstrs;
 }
-
-/** Largest array index (§6.1.7: an integer index below 2^32 − 1). */
-const MAX_ARRAY_INDEX = 2 ** 32 - 2;
 
 /** A fresh boolean-branded i32 result (consumers may annotate the object). */
 function booleanResult(): InnerResult {
@@ -117,12 +115,6 @@ function arrayCarriersStaticallyDense(ctx: CodegenContext): boolean {
   );
 }
 
-/** The canonical array index a property key names, or `undefined`. */
-function canonicalArrayIndex(key: string): number | undefined {
-  const n = Number(key);
-  return Number.isInteger(n) && n >= 0 && n <= MAX_ARRAY_INDEX && String(n) === key ? n : undefined;
-}
-
 /**
  * Compile `expr` (`key in arr`) whose receiver's static type is a plain array
  * carrier. `constantKey` is the key's ToPropertyKey string when it is known at
@@ -152,7 +144,7 @@ export function compileArrayCarrierIn(
     fctx.body.push({ op: "i32.const", value: 1 });
     return booleanResult();
   }
-  const index = canonicalArrayIndex(constantKey);
+  const index = arrayIndexOfKey(constantKey);
   if (index === undefined) return undefined;
   return emitConstantIndexIn(ctx, fctx, expr, index, deps);
 }
@@ -180,7 +172,7 @@ function emitConstantIndexIn(
   }
   if (emitStaticHolePresence(ctx, fctx, recv, index, deps)) return booleanResult();
   if (dense && (recv.kind === "ref" || recv.kind === "ref_null") && deps.isVecBaseSubtype(ctx, recv.typeIdx)) {
-    if (index > 0x7fffffff) {
+    if (index > MAX_I32_INDEX) {
       // `length` is a non-negative i32, so it can never exceed this index.
       fctx.body.push({ op: "drop" }, { op: "i32.const", value: 0 });
     } else {

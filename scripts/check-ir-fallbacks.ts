@@ -64,12 +64,7 @@ import type { IrObservedOutcome } from "../src/ir/outcomes.js";
 import { makeIrHostDateSnapshotResolver } from "../src/ir/host-date.js";
 import { makeIrHostGlobalResolver, makeIrHostVoidCallbackResolver } from "../src/ir/host-extern.js";
 import { makeIrPromiseDelayResolver } from "../src/ir/promise-delay.js";
-import {
-  makeIrArrayExpressionPredicate,
-  makeIrDeclaredPrimitiveExpressionClassifier,
-  makeIrIdentityModuleBindingResolver,
-  makeIrPrimitiveExpressionClassifier,
-} from "../src/ir/module-bindings.js";
+import { makeIrCheckerSelectionOptions, makeIrIdentityModuleBindingResolver } from "../src/ir/module-bindings.js";
 import {
   makeIrIdentityImportedFunctionResolver,
   projectIrIdentityImportedFunctionResolverToLegacy,
@@ -246,9 +241,7 @@ export function planIrFallbackGateEntry(graph: IrFallbackPlanningGraph): IrSelec
         },
         identityContext,
       ),
-      classifyPrimitiveExpression: makeIrPrimitiveExpressionClassifier(checker),
-      classifyDeclaredPrimitiveExpression: makeIrDeclaredPrimitiveExpressionClassifier(checker),
-      isArrayExpression: makeIrArrayExpressionPredicate(checker),
+      ...makeIrCheckerSelectionOptions(checker),
       supportsSymbolicMathHelpers: true,
       supportsLiteralStringReplace: true,
       supportsStringArrayLiterals: true,
