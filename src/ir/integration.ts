@@ -68,12 +68,12 @@ import { nativeBufferSurfaceCapability } from "./capability.js";
 import {
   ensureAnyHelpers,
   ensureAnyValueType,
-  ensureExternLooseEqHelper,
   ensureExternStrictEqHelper,
   resolveIrDynamicCarrierType,
   undefinedAnyValueInstrs,
   undefinedExternInstrs,
 } from "../codegen/any-helpers.js"; // (#2949) boxed-any carrier for IrType.dynamic; (#7104) dyn.undefined
+import { ensureExternLooseEqHelper } from "../codegen/helpers/loose-equality-to-primitive.js"; // (#7194)
 import { ensureDynMemberGet, ensureDynMemberSet, ensureDynMemberSetSloppy } from "../codegen/dyn-read.js"; // (#3053 U1) / (#3795)
 import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {

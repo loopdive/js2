@@ -1,7 +1,8 @@
 ---
 id: 7194
 title: "Carrier loose ==/!= skips ToPrimitive on object operands (standalone and WASI IR, standalone legacy)"
-status: ready
+status: in-progress
+assignee: ttraenkler/opus-dev
 sprint: current
 created: 2026-10-29
 updated: 2026-11-12
@@ -14,6 +15,9 @@ area: ir
 goal: ir-full-coverage
 parent: 7106
 related: [7193, 7178, 7113, 7144, 7340, 7341, 7338, 7280]
+import-cycles-allow:
+  - largestSccSize: 732 # 2026-11-12 (#7194 S1): the loose-equality provider and its ToPrimitive reduction move out of any-helpers.ts into helpers/loose-equality-to-primitive.ts, which uses the object runtime and the any-helper family and is called by any of their callers
+  - ir->codegen: 85 # 2026-11-12 (#7194 S1): integration.ts imports ensureExternLooseEqHelper from that module instead of any-helpers.ts (the provider moved; any-helpers.ts would otherwise grow past its LOC ceiling)
 ---
 
 # Carrier loose `==` / `!=` skips ToPrimitive on object operands
@@ -385,6 +389,127 @@ Code quality:
 - `binary-ops-typed-dispatch.ts` ends smaller than it starts.
 - No change in `src/ir/select.ts` or `src/ir/from-ast.ts`.
 - No loc or func budget grant; `check:dead-exports` clean after S2.
+
+## S1 — done (2026-11-12, branch `claude/7194-loose-equality-toprimitive`)
+
+S2 and S3 are still open; the issue stays `in-progress`.
+
+### What changed, and why it differs from the plan
+
+- **One module, `src/codegen/helpers/loose-equality-to-primitive.ts`.** It is
+  in `helpers/`, next to `loose-eq-object-identity.ts`, because a new
+  top-level `src/codegen` file trips the flat-directory budget. It holds the
+  reduction emitter (`looseEqualityToPrimitiveInstrs`, the steps 11–12 rule
+  for S3 to reuse) **and the provider `ensureExternLooseEqHelper` itself**,
+  moved out of `any-helpers.ts`. Adding the prelude inside `any-helpers.ts`
+  put that file 52 lines over its LOC ceiling, and the plan rules out a LOC
+  grant. The rule and the one function that applies it are one concern.
+  Cost: two import-cycle grants in the frontmatter. The module joins the
+  codegen SCC (+1). `integration.ts` imports the provider from it rather
+  than from `any-helpers.ts` (`ir->codegen` +1).
+- **Lane test `hostFreeEnvironment(ctx)`, not `ctx.standalone || ctx.wasi`.**
+  Since #6979 `ctx.standalone` is the native *regime*, and it is `true` in the
+  default JavaScript environment. The prototype's gate would have reduced
+  objects there too: a new body, and different default-target bytes.
+  `hostFreeEnvironment` answers the environment question (standalone and WASI
+  only).
+- **Hint through the coercion engine.** `runtimeToPrimitiveInstrs` gained a
+  `"default-symbol"` hint: the explicit string `"default"` of #6774 S19, which
+  keeps a Symbol `@@toPrimitive` result for the comparison. Its `"default"`
+  stays the null hint. This keeps the ToPrimitive call in the one coercion
+  entry point (`check:coercion-sites` is net-neutral).
+- **Nullish test** = `ref.is_null` or `__typeof_undefined`. That covers the
+  undefined singleton, which is not a null ref.
+- **Duplicate 2 removed.** `emitPreparedNativeMapGetEqualityFromStack` now
+  emits `externLooseEqInstrs`:
+  - on a host-free lane, a call of the provider (before this change, a
+    standalone `map.get(k) == 1` holding an object trapped);
+  - in a JavaScript environment, the same inline two-classifier sequence as
+    before, so that lane's bytes do not move.
+
+  That sequence and the provider's JavaScript-environment body come from one
+  function (`unreducedLooseEqInstrs`). The #3585 test pinned the old inline
+  contract (a direct `__any_eq` call in the guest on standalone). It now pins
+  the `__extern_loose_eq` call, which is the point of the removal. No inline
+  `__any_from_extern` ×2 + `__any_eq` remains in `binary-ops-typed-dispatch.ts`,
+  and the file is 13 lines shorter.
+- **Index discipline (the plan's audit item).** The provider is registered
+  during IR pre-registration, before Phase 3 owns any body. It also registers
+  when a legacy call site prepares it. Every runtime function the body calls
+  is registered before the first index is read: the object runtime, the three
+  `__typeof_*` classifiers, `__extern_strict_eq`, `__any_from_extern` and
+  `__any_eq`.
+
+  On a host-free lane none of these is an import. `ensureLateImport` routes
+  the classifiers to `addUnionImports`' natives, and `ensureObjectRuntime`
+  defines `__to_primitive`. So no late-import shift can happen. The
+  ensure-then-read order is kept anyway, so a future import provider stays
+  correct. The JavaScript-environment path registers exactly what it did
+  before.
+
+### Measured (standalone unless named; base `origin/main` `aba1b90ffc`)
+
+- Matrix, 786 cells, routing compiled for every cell on both trees:
+  - routing is identical in all 786 cells;
+  - the 625 IR-claimed equality cells go from 144 trap / 33 wrong / 448
+    correct to **0 trap / 2 wrong / 623 correct**;
+  - the 2 wrong cells are the reified-struct `f(o, o)` cells
+    (`valueOf` / `toString` object literal), as predicted;
+  - no cell regressed;
+  - the 57 cells that are not IR-claimed and the 104 other-operator cells are
+    unchanged.
+- ES5: the 133 loose-equality files are 128 pass / 5 fail on both trees (the
+  same 5 files). A seeded 300-file sample (seed 7194) of the 1,505 IR-only
+  files (census 2026-11-11) is 298 / 2 on both. The failures are the
+  eval-engine and line-terminator rows. No verdict changed.
+- JavaScript environment (default target): 146 inputs compile to identical
+  binaries on both trees. The inputs are the 13 playground `.ts` examples,
+  the 133 ES5 files, a `Map.get` loose-equality module and a two-function
+  `any == 2` module.
+- Standalone size:
+  - a test262-harness module grows by 110–113 bytes (the provider's
+    prelude);
+  - the `Map.get` module grows by 816 bytes.
+  - A tiny module whose only dynamic operation is `c == 2` grows from 56,865
+    to 93,863 bytes, because the provider now registers the object runtime
+    (`__to_primitive`). Legacy already pays that cost: on main the same
+    module compiled with `experimentalIR: false` is 92,671 bytes.
+- WASI (first measurement): an object literal, an array, the wrappers, `{}`,
+  a Date and a throwing `valueOf` now answer as node. Three residuals are in
+  WASI's runtime, not in equality:
+  - **A function operand still traps.** WASI's `__to_primitive` has no
+    function arm (#7153: vec arm only), so the function comes back
+    unreduced.
+  - **`"" + date` differs from `date.toString()`.** So `d == d.toString()` is
+    `false`.
+  - **A TS object literal read back from a `Map` still traps.**
+- Pre-existing on every lane and untouched: a Symbol compared with a number
+  traps inside `__any_eq` (`Symbol() == 1`).
+- **For S3: the plan's "`__any_eq` reached without the helper" risk is
+  real.** With `experimentalIR: false`, a two-parameter
+  `function both(c, d) { return c == d; }` traps on main for `both({}, 2)`
+  (measured). Legacy `any == any` goes through `emitLooseEq`
+  (`coercion-engine.ts`) straight to `__any_eq`. One-carrier legacy cells
+  are correct. `tests/issue-7194-loose-equality-to-primitive.test.ts` covers
+  only the one-carrier cells on legacy for that reason.
+- Tests: `tests/issue-7194-loose-equality-to-primitive.test.ts` (9 rows):
+  - the matrix as one module against node: standalone IR (every cell);
+    standalone legacy (the one-carrier cells); WASI IR (every cell except a
+    function operand);
+  - ToPrimitive exactly when the spec says: no call against null, undefined
+    or another object; a throwing `valueOf` in both operand orders;
+    `toString` after an object-returning `valueOf`; the TypeError when both
+    methods return objects; `@@toPrimitive` with the `"default"` hint; a
+    Symbol result; a Date; identity of two arrays;
+  - the `<module-init>` script var;
+  - the standalone `Map.get` path;
+  - the JavaScript environment's unreduced provider body.
+
+  Five of the rows fail on main.
+- Equivalence gate, run as 8 shards one after another: no new regression
+  in any shard. The full single-fork run timed out at 30 minutes on this
+  box. In shard mode the gate does not check the passing floor or the file
+  count.
 
 ## Risks and unverified assumptions
 
