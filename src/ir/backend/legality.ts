@@ -58,7 +58,9 @@ export interface IrBackendTargetProfile {
   /**
    * (#7338) A JS environment under the native-first policy, projected as
    * standalone. Read only by a capability measured on the host-free target
-   * alone, so that the JS environment's output does not move with it.
+   * alone, so that the JS environment's output does not move with it. Retired
+   * with that capability's split: when the JS environment adopts the statics
+   * table and `object-create-call.ts` folds into it.
    */
   readonly nativeRegimeInJs?: true;
 }

@@ -10,7 +10,7 @@
 
 import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
-import { irVal, type IrType, type IrValueId } from "./nodes.js";
+import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
 import type { ObjectStaticCall } from "./object-statics.js";
 import {
   emitThrowTypeErrorIf,
@@ -38,11 +38,6 @@ export interface ObjectStaticDefinitionValues {
   readonly fields: readonly DescriptorFieldValue[];
 }
 
-/** A `dynamic` carrier as the raw `externref` the object runtime takes; a fresh `{}` already is one. */
-function asExternref(builder: IrFunctionBuilder, value: IrValueId): IrValueId {
-  return builder.typeOf(value).kind === "dynamic" ? builder.emitCoerceToExternref(value) : value;
-}
-
 /**
  * `Object.defineProperty(object, key, { <fields> })` through the native
  * applier, over a fresh `$Object` descriptor with one `__extern_set` per field
@@ -50,7 +45,7 @@ function asExternref(builder: IrFunctionBuilder, value: IrValueId): IrValueId {
  * rejection, which §20.1.2.4 turns into a TypeError — the message legacy's
  * rejection throw uses.
  */
-function emitDefineFromDescriptor(
+export function emitOpenCarrierDefine(
   builder: IrFunctionBuilder,
   object: IrValueId,
   { key, fields }: ObjectStaticDefinitionValues,
@@ -81,37 +76,50 @@ function emitDefineFromDescriptor(
 }
 
 /**
- * #7338 — an admitted `Object.<static>(…)` (`object-statics.ts`). Each operand
- * is a `dynamic` carrier, or the raw `$Object` of an inline `{}`:
- *   - the static's demand of a carried first operand (an Object, or not
- *     nullish); a fresh `{}` is an Object by construction;
- *   - the row's helper over the operands, when it has one;
- *   - each definition, produced when it is applied, on the object the static
- *     answers: the helper's result, or the first operand of a static that only
- *     defines.
- * Answers that object: a raw `externref`, or the first operand as it came.
+ * One object-runtime helper over carrier operands, typed `result`: the call
+ * every `Object` static with a helper makes, and propertyHelper's stored
+ * aliases of a static (`__getOwnPropertyDescriptor(o, k)`, `__isArray(x)`).
+ */
+export function emitObjectRuntimeCall(
+  builder: IrFunctionBuilder,
+  provider: string,
+  operands: readonly IrValueId[],
+  result: IrType,
+): IrValueId {
+  const value = builder.emitCall(irRuntimeFuncRef(provider), [...operands], result);
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+  if (value === null) throw new Error(`ir/open-object-carrier: ${provider} produced no value`);
+  return value;
+}
+
+/**
+ * #7338 — an admitted `Object.<static>(…)` (`object-statics.ts`) over its
+ * values, each a `dynamic` carrier, and its definitions, all evaluated before
+ * (every argument is, before the static's first step):
+ *   - the row's demand on the first value (an Object, or not nullish),
+ *     where its helper does not make it;
+ *   - the row's helper over the values, when it has one;
+ *   - each definition, on the object the static answers: the helper's
+ *     result, or the first value of a static that only defines.
+ * Answers that object as a `dynamic` carrier.
  */
 export function emitObjectStaticCall(
   builder: IrFunctionBuilder,
-  call: Pick<ObjectStaticCall, "name" | "provider" | "first">,
+  call: Pick<ObjectStaticCall, "name" | "provider" | "requires">,
   operands: readonly IrValueId[],
-  definitions: readonly (() => ObjectStaticDefinitionValues)[],
+  definitions: readonly ObjectStaticDefinitionValues[],
 ): IrValueId {
   const first = operands[0]!;
-  if (builder.typeOf(first).kind === "dynamic") {
-    if (call.first === "object") {
-      emitThrowTypeErrorUnlessObject(builder, first, `Object.${call.name} called on non-object`);
-    } else {
-      emitThrowTypeErrorIfNullish(builder, first, "Cannot convert undefined or null to object");
-    }
+  if (call.requires === "object") {
+    emitThrowTypeErrorUnlessObject(builder, first, `Object.${call.name} called on non-object`);
+  } else if (call.requires === "coercible") {
+    emitThrowTypeErrorIfNullish(builder, first, "Cannot convert undefined or null to object");
   }
-  const externs = operands.map((operand) => asExternref(builder, operand));
   const answer =
-    call.provider === undefined
-      ? externs[0]!
-      : builder.emitCall(irRuntimeFuncRef(call.provider), externs, irVal({ kind: "externref" }));
-  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-  if (answer === null) throw new Error(`ir/open-object-carrier: ${call.provider} produced no value`);
-  for (const definition of definitions) emitDefineFromDescriptor(builder, answer, definition());
-  return call.provider === undefined ? first : answer;
+    call.provider === undefined ? first : emitObjectRuntimeCall(builder, call.provider, operands, irDynamic());
+  if (definitions.length > 0) {
+    const object = builder.emitCoerceToExternref(answer);
+    for (const definition of definitions) emitOpenCarrierDefine(builder, object, definition);
+  }
+  return answer;
 }

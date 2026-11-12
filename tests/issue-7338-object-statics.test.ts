@@ -97,6 +97,7 @@ const CLAIMED: Record<string, string> = {
   "create with a literal map": `var o = Object.create({}, { a: { value: 7 }, b: { value: "s", enumerable: true } }); if (o.a !== 7 || o.b !== "s" || typeof o !== "object") { throw "create"; }`,
   "create from an empty prototype": `var o = Object.create({}); Object.defineProperty(o, "p", { value: 1 }); if (o.p !== 1) { throw "create"; }`,
   "create from a primitive throws": `${THROWS("Object.create(true);")} ${THROWS("Object.create(undefined);")}`,
+  "create on a fresh prototype answers an Object": `var o = Object.create({}, { a: { value: 1 } }); if (typeof o !== "object" || o.a !== 1) { throw "fresh"; }`,
   // The only object-runtime call in the module: the table registers its own helper.
   "create is the module's one runtime call": `try { Object.create(undefined); } catch (e) {}`,
 };
@@ -113,11 +114,6 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   },
   "map with an array-index key": {
     source: `var o = {}; Object.defineProperties(o, { b: { value: 1 }, 0: { value: 2 } }); if (o[0] !== 2) { throw "index"; }`,
-    detail: "expr-object-static-descriptor",
-  },
-  // A map's values are lowered at their define, so one that reads state would see the earlier defines.
-  "map with a value that is not a constant": {
-    source: `var o = {}; Object.defineProperty(o, "a", { value: 1, configurable: true }); Object.defineProperties(o, { a: { value: 2 }, b: { value: o.a } }); if (o.a !== 2 || o.b !== 1) { throw "order"; }`,
     detail: "expr-object-static-descriptor",
   },
   "map with an accessor": {
@@ -159,7 +155,47 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   },
 };
 
+/**
+ * A static's result used as a value, or a value beside one (#7212 review B1): each is either
+ * lowered whole or refused at select, never claimed and then demoted; it answers as node does,
+ * or, where a unit stays legacy, as legacy does.
+ */
+const VALUE_USES: Record<string, string> = {
+  "descriptor field plus one, script var": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); var r = Object.getOwnPropertyDescriptor(o, 'p').value + 1; if (r !== 2) { throw "x"; }`,
+  "descriptor field plus one, returned": `function f(o) { return Object.getOwnPropertyDescriptor(o, 'p').value + 1; } var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (f(o) !== 2) { throw "x"; }`,
+  "created field plus one": `function f() { return Object.create({}, { a: { value: 1 } }).a + 1; } if (f() !== 2) { throw "x"; }`,
+  "defined target's field plus one": `function f(o) { return Object.defineProperty(o, 'p', { value: 1 }).p + 1; } if (f({}) !== 2) { throw "x"; }`,
+  "descriptor compared loosely with null": `var o = {}; if (Object.getOwnPropertyDescriptor(o, 'p') != null) { throw "x"; }`,
+  "stored descriptor compared loosely with null": `var o = {}; var d = Object.getOwnPropertyDescriptor(o, 'p'); if (d != null) { throw "x"; }`,
+  "created object compared loosely with null": `function f() { return Object.create({}) == null; } if (f()) { throw "x"; }`,
+  "defined target's field into a script var": `var o = {}; var r = Object.defineProperty(o, 'p', { value: 1 }).p; if (r !== 1) { throw "x"; }`,
+  "reassigned parameter as the target": `function f(n) { n = n + 1; Object.defineProperty(n, 'x', { value: 1 }); } try { f(1); throw "no"; } catch (e) { if (!(e instanceof TypeError)) { throw "type"; } }`,
+  "descriptor field plus one, compared": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (Object.getOwnPropertyDescriptor(o, 'p').value + 1 !== 2) { throw "x"; }`,
+  "home read into a script var": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); var r = o.p; if (r !== 1) { throw "x"; }`,
+};
+
 describe("#7338 — Object statics through the dynamic carrier", () => {
+  for (const [name, source] of Object.entries(VALUE_USES)) {
+    it(`claims whole or refuses at select, and answers as node does: ${name}`, async () => {
+      const ir = await build(source, "standalone");
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
+      for (const row of ir.irOutcomes ?? []) {
+        if (!row.irBodyEmitted && row.kind !== "non-executable") expect(row.stage, JSON.stringify(row)).toBe("select");
+      }
+      const legacy = await run(await build(source, "standalone", false), "standalone");
+      expect([node(source), legacy]).toContain(await run(ir, "standalone"));
+    });
+  }
+
+  it("evaluates a map's values before its first define, as the spec does (legacy gc does not)", async () => {
+    const source = `var o = {}; Object.defineProperty(o, "a", { value: 1, configurable: true }); Object.defineProperties(o, { a: { value: 2 }, b: { value: o.a } }); if (o.a !== 2 || o.b !== 1) { throw "order"; }`;
+    expect(node(source)).toBe("ok");
+    const ir = await build(source, "standalone");
+    expect(ir.irPostClaimErrors ?? []).toEqual([]);
+    expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
+    expect(await run(ir, "standalone")).toBe("ok");
+  });
+
   for (const [name, source] of Object.entries(CLAIMED)) {
     it(`claims <module-init> and runs as JS on both lanes: ${name}`, async () => {
       expect(node(source)).toBe("ok");

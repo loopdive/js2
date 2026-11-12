@@ -103,7 +103,8 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   },
   "parenthesized loose equality": {
     source: `var o = {}; if ((o) == null) { throw "null"; }`,
-    detail: "expr-module-scalar-method",
+    // (#7338) The carrier is judged first: from-ast folds only a strict `null` compare.
+    detail: "operand-coercion-unsupported",
   },
   alias: {
     source: `var o = {}; var p = o; if (p.toString === undefined) { throw "alias"; }`,

@@ -15,7 +15,7 @@ import type { ValType } from "./types.js";
 import type { ObjectStaticProvider } from "./object-statics.js";
 import type { StoredStaticAliasProvider } from "./uncurried-object-alias.js";
 
-type ObjectRuntimeProvider = StoredStaticAliasProvider | ObjectStaticProvider;
+export type ObjectRuntimeProvider = StoredStaticAliasProvider | ObjectStaticProvider;
 
 const PROVIDER_IMPORTS: Readonly<
   Record<ObjectRuntimeProvider, { readonly params: readonly ValType[]; readonly results: readonly ValType[] }>
@@ -30,12 +30,12 @@ const PROVIDER_IMPORTS: Readonly<
 };
 
 /** `symbol` names one of these providers. */
-export function isStoredStaticAliasProvider(symbol: string): symbol is ObjectRuntimeProvider {
+export function isObjectRuntimeProvider(symbol: string): symbol is ObjectRuntimeProvider {
   return Object.hasOwn(PROVIDER_IMPORTS, symbol);
 }
 
 /** `symbol`'s import signature, as legacy registers it. */
-export function storedStaticAliasProviderImport(symbol: ObjectRuntimeProvider): {
+export function objectRuntimeProviderImport(symbol: ObjectRuntimeProvider): {
   readonly params: readonly ValType[];
   readonly results: readonly ValType[];
 } {

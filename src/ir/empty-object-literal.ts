@@ -12,7 +12,6 @@
  *     later `o.k` can read; an IR `object.new` could serve neither.
  */
 
-import { isUnshadowedUndefined } from "../shared/ambient-intrinsics.js";
 import { ts } from "../ts-api.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 
@@ -76,8 +75,8 @@ export function emptyObjectLiteralBinding(
  * #7128 S1 — is `reference` an open-carrier use?
  *
  *   - U1: the target of an `Object.defineProperty` STATEMENT (its result would
- *     alias the carrier) that `isLiteralDefine` says the lane lowers with a
- *     literal key and descriptor ({@link isLiteralDefineShape});
+ *     alias the carrier) that `isLiteralDefine` says the lane lowers with
+ *     literal keys and descriptors ({@link definesLiteralsOnly});
  *   - U2: a named read `o.k` whose key `Object.prototype` does not own and
  *     whose consumer is `isProvenReadConsumer`'s strict comparison. The IR reader
  *     (`__dyn_member_get`) answers undefined for an inherited key, where legacy
@@ -166,27 +165,19 @@ export interface DataDescriptorField {
   readonly initializer: ts.Expression;
 }
 
-/**
- * The U1 shape of `Object.defineProperty(target, key, descriptor)`: the key is
- * a string or numeric literal and the descriptor is
- * {@link literalDataDescriptorFields}.
- */
-export function isLiteralDefineShape(call: ts.CallExpression): boolean {
-  const [, key, descriptor] = call.arguments;
-  return (
-    call.arguments.length === 3 &&
-    (ts.isStringLiteral(key!) || ts.isNumericLiteral(key!)) &&
-    literalDataDescriptorFields(descriptor!) !== null
-  );
+/** One key a define applies, with its inline data descriptor's fields in source order. */
+export interface DescriptorDefinition {
+  /** A literal key's ToPropertyKey string, else the key's own expression. */
+  readonly key: string | ts.Expression;
+  readonly fields: readonly DataDescriptorField[];
 }
 
 /**
  * The properties of an object literal whose every member is a
  * `name: initializer` assignment with a distinct identifier or string-literal
- * name, in source order; else null. Shared by the descriptor parser below and
- * the `Object` statics table (`ir/object-statics.ts`).
+ * name, in source order; else null.
  */
-export function staticNamedProperties(literal: ts.Expression): readonly DataDescriptorField[] | null {
+function staticNamedProperties(literal: ts.Expression): readonly DataDescriptorField[] | null {
   if (!ts.isObjectLiteralExpression(literal)) return null;
   const properties: DataDescriptorField[] = [];
   for (const property of literal.properties) {
@@ -201,46 +192,119 @@ export function staticNamedProperties(literal: ts.Expression): readonly DataDesc
 }
 
 /**
- * An inline data descriptor's fields in source order, else null: an accessor
- * (`get` / `set`), a field no descriptor has, a method or a spread.
+ * An inline data descriptor's fields in source order, every value admitted by
+ * `admitsValue`; else null: an accessor (`get` / `set`), a field no
+ * descriptor has, a method or a spread.
  */
-export function dataDescriptorFields(descriptor: ts.Expression): readonly DataDescriptorField[] | null {
+function dataDescriptorFields(
+  descriptor: ts.Expression,
+  admitsValue: (value: ts.Expression) => boolean,
+): readonly DataDescriptorField[] | null {
   const fields = staticNamedProperties(descriptor);
-  return fields?.every(({ name }) => DATA_DESCRIPTOR_FIELDS.has(name)) === true ? fields : null;
+  const admitted = fields?.every(
+    ({ name, initializer }) => DATA_DESCRIPTOR_FIELDS.has(name) && admitsValue(initializer),
+  );
+  return admitted === true ? fields : null;
 }
 
 /**
- * {@link dataDescriptorFields} whose values are number, string or boolean
- * literals; null for any other descriptor.
+ * `Object.defineProperty`'s key and descriptor as one definition, else null.
+ * A string or numeric literal key is its text: the scanner has canonicalised
+ * the numeric text, so it is the ToPropertyKey string.
  */
-export function literalDataDescriptorFields(descriptor: ts.Expression): readonly DataDescriptorField[] | null {
-  const fields = dataDescriptorFields(descriptor);
-  return fields?.every(({ initializer }) => isPrimitiveLiteral(initializer)) === true ? fields : null;
+export function keyedDescriptorDefinition(key: ts.Expression, descriptor: ts.Expression): DescriptorDefinition | null {
+  const fields = dataDescriptorFields(descriptor, () => true);
+  if (fields === null) return null;
+  return {
+    key: ts.isStringLiteral(key) || ts.isNumericLiteral(key) ? key.text : key,
+    fields,
+  };
 }
+
+const CANONICAL_ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;
 
 /**
- * {@link dataDescriptorFields} whose values are constants: a primitive
- * literal, a signed number, `null` or the global `undefined`. Evaluating one
- * has no effect and reads no state, so when it runs is unobservable.
+ * A literal descriptor map's definitions in source order, every value
+ * admitted by `admitsValue`; else null. A canonical array-index key is
+ * refused because §20.1.2.3.1 defines in [[OwnPropertyKeys]] order (indices
+ * first), and `__proto__` because it sets the map's prototype and defines no
+ * key.
  */
-export function constantDataDescriptorFields(descriptor: ts.Expression): readonly DataDescriptorField[] | null {
-  const fields = dataDescriptorFields(descriptor);
-  return fields?.every(({ initializer }) => isConstant(initializer)) === true ? fields : null;
+export function descriptorMapDefinitions(
+  map: ts.Expression,
+  admitsValue: (value: ts.Expression) => boolean,
+): readonly DescriptorDefinition[] | null {
+  const entries = staticNamedProperties(map);
+  if (entries === null) return null;
+  const definitions: DescriptorDefinition[] = [];
+  for (const { name: key, initializer } of entries) {
+    if (key === "__proto__" || CANONICAL_ARRAY_INDEX.test(key)) return null;
+    const fields = dataDescriptorFields(initializer, admitsValue);
+    if (fields === null) return null;
+    definitions.push({ key, fields });
+  }
+  return definitions;
 }
 
-function isConstant(expr: ts.Expression): boolean {
-  const signed =
-    ts.isPrefixUnaryExpression(expr) &&
-    (expr.operator === ts.SyntaxKind.MinusToken || expr.operator === ts.SyntaxKind.PlusToken) &&
-    ts.isNumericLiteral(expr.operand);
-  return signed || isPrimitiveLiteral(expr) || expr.kind === ts.SyntaxKind.NullKeyword || isUnshadowedUndefined(expr);
-}
-
-function isPrimitiveLiteral(expr: ts.Expression): boolean {
+/** A number, string or boolean literal. */
+export function isPrimitiveLiteral(expr: ts.Expression): boolean {
   return (
     ts.isNumericLiteral(expr) ||
     ts.isStringLiteral(expr) ||
     expr.kind === ts.SyntaxKind.TrueKeyword ||
     expr.kind === ts.SyntaxKind.FalseKeyword
   );
+}
+
+/**
+ * #7128's U1 define: every key is a literal and every descriptor value a
+ * primitive literal, so it installs known keys that hold no callable.
+ */
+export function definesLiteralsOnly(definitions: readonly DescriptorDefinition[]): boolean {
+  return (
+    definitions.length > 0 &&
+    definitions.every(
+      ({ key, fields }) =>
+        typeof key === "string" && fields.every(({ initializer }) => isPrimitiveLiteral(initializer)),
+    )
+  );
+}
+
+const inKeysByUnit = new WeakMap<ts.Node, boolean>();
+
+/**
+ * Every `in` under the enclosing unit of `expr` (its function, or the source
+ * file for `<module-init>`), nested functions included, has a string-literal
+ * key that `%Object.prototype%` does not own: an own-key probe, which the
+ * native `in` answers for a fresh open `$Object` exactly as legacy does. The
+ * IR's native `in` (`__extern_has`) does not reach that object's implicit
+ * `%Object.prototype%` terminal, while legacy's fixed-name helper answers it
+ * for exactly the receivers it knows to be one (#7142 review). Read wherever
+ * the IR builds such an object: the #7280 carrier, `Object.create`'s result.
+ */
+export function unitInKeysAreOwnOnly(expr: ts.Node): boolean {
+  let unit: ts.Node = expr.getSourceFile();
+  for (let node: ts.Node | undefined = expr.parent; node; node = node.parent) {
+    if (ts.isFunctionLike(node)) {
+      unit = node;
+      break;
+    }
+  }
+  let answer = inKeysByUnit.get(unit);
+  if (answer === undefined) {
+    answer = true;
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.InKeyword &&
+        !(ts.isStringLiteral(node.left) && !OBJECT_PROTOTYPE_KEYS.has(node.left.text))
+      ) {
+        answer = false;
+      }
+      if (answer) ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(unit, visit);
+    inKeysByUnit.set(unit, answer);
+  }
+  return answer;
 }

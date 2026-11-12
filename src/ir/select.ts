@@ -97,7 +97,13 @@ import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
-import { emptyObjectLiteralBinding, isOpenCarrierUse, type EmptyObjectLiteralBinding } from "./empty-object-literal.js";
+import {
+  emptyObjectLiteralBinding,
+  isOpenCarrierUse,
+  unitInKeysAreOwnOnly,
+  type EmptyObjectLiteralBinding,
+} from "./empty-object-literal.js";
+import { objectCreateDescriptorMap } from "./object-create-call.js";
 import * as dynamicHome from "./dynamic-home-open-object.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
@@ -167,7 +173,7 @@ import {
   isIrModuleReferenceValueKind,
   isStatementDynamicModuleCall,
 } from "./module-bindings.js";
-import { isStoreTarget, outermostParenthesized } from "../shared/binding-writes.js";
+import { isStoreTarget, occurrenceIsWriteTarget, outermostParenthesized } from "../shared/binding-writes.js";
 import { firstConstBindingWrite } from "./const-binding-writes.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
@@ -224,6 +230,7 @@ import {
   isCarrierAddition,
   additiveResultFamily,
   provenBinaryOperandsAdmissible,
+  nullComparisonFolds,
   throwOperandAdmissible,
   booleanReadBesideCarrier,
   isComparisonResultOperator,
@@ -3472,7 +3479,7 @@ function dynamicUsesAreMoveOnly(
   // (#7338) The values an `Object` static on the table's lane, or a stored descriptor alias, crosses as carriers.
   const objectStaticScanValues = (e: ts.Expression) =>
     ts.isCallExpression(e) && !dynNames.has("Object")
-      ? objectStatics.scannedValues(selectorObjectStaticPlan(e))
+      ? objectStatics.admittedValues(selectorObjectStaticPlan(e))
       : undefined;
   const carrierStaticValues = (e: ts.CallExpression): readonly ts.Expression[] | undefined =>
     certifiedAliasCall(e, (name) => dynNames.has(name))?.result === "dynamic" ? e.arguments : objectStaticScanValues(e);
@@ -7337,11 +7344,13 @@ function isPhase1VarDeclarationList(
     if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
       return shapeNo("vardecl-init-expr", d.initializer);
     const initializer = unwrapPhase1Parens(d.initializer);
-    // A dynamic module home holds no `null` (#7287 review B3), and no object literal but the open carrier `{}` (#7338).
+    // A dynamic module home holds no `null` (#7287 review B3), and no object literal but the open carrier `{}`;
+    // a carrier value has no other module home (#7338).
     if (
-      directModuleBinding?.valueKind.kind === "dynamic" &&
-      (binaryOperandFamily(d.initializer, initializerScope, localClasses) === "nullish" ||
-        (ts.isObjectLiteralExpression(initializer) && !admittedOpenCarrierLiterals.has(initializer)))
+      directModuleBinding?.valueKind.kind === "dynamic"
+        ? binaryOperandFamily(d.initializer, initializerScope, localClasses) === "nullish" ||
+          (ts.isObjectLiteralExpression(initializer) && !admittedOpenCarrierLiterals.has(initializer))
+        : directModuleBinding !== undefined && lowersToCarrier(initializer)
     )
       return shapeNo("vardecl-module-value-flow", d.initializer);
     const objectMethodValue = isConst ? directObjectMethodValueProjection(d, initializer, initializerScope) : null;
@@ -9011,10 +9020,41 @@ const isLiteralObjectDefine = (call: ts.CallExpression): boolean =>
 function selectorObjectStaticPlan(expr: ts.CallExpression): objectStatics.ObjectStaticPlan | undefined {
   return objectStatics.objectStaticCallPlan(expr, {
     isAmbientBinding: selectorSeesAmbientBinding,
-    isLibOnlyBinding: (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true,
     dynamicCodeMayRun: currentSelectionOptions?.runtimeEvalMayExecute !== false,
     supportsBackendCapability: (capability) =>
       currentSelectionOptions?.supportsBackendCapability?.(capability) === true,
+  });
+}
+
+/**
+ * (#7338) A value from-ast holds on the dynamic carrier, whatever the checker
+ * types it: a dynamic module binding, or an admitted `Object` static's result
+ * or a member read on one.
+ */
+/**
+ * What from-ast lowers to the carrier: {@link isDynamicCarrierValue}, a member
+ * read on a dynamic module binding, or a `+` over either.
+ */
+function lowersToCarrier(expression: ts.Expression): boolean {
+  let e = unwrapPhase1Parens(expression);
+  if (isDynamicCarrierValue(e) || isCarrierAddition(e, lowersToCarrier)) return true;
+  while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) e = unwrapPhase1Parens(e.expression);
+  return moduleBinding(e)?.valueKind.kind === "dynamic";
+}
+
+function isDynamicCarrierValue(expression: ts.Expression): boolean {
+  let e = unwrapPhase1Parens(expression);
+  if (moduleBinding(e)?.valueKind.kind === "dynamic") return true;
+  while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) e = unwrapPhase1Parens(e.expression);
+  return ts.isCallExpression(e) && selectorObjectStaticPlan(e)?.kind === "call";
+}
+
+/** (#7276) The JS environment's `Object.create` plan, on the selector's lane and binding facts. */
+function selectorObjectCreateDescriptorMap(expr: ts.CallExpression) {
+  return objectCreateDescriptorMap(expr, {
+    supportsBackendCapability: (capability) =>
+      currentSelectionOptions?.supportsBackendCapability?.(capability) === true,
+    isLibOnlyBinding: (node) => currentModuleBindingResolver?.isLibOnlyBinding(node) === true,
   });
 }
 
@@ -9557,7 +9597,15 @@ function selectorPrimitiveWrapperOrGenericBinary(
       left !== "unknown" &&
       right !== "unknown" &&
       !isSlotFreeI32IdentityLowered(expr));
-  if (judged && !provenBinaryOperandsAdmissible(expr, left, right, additiveLane())) {
+  // A carrier compared with `null` / `undefined` never reaches `lowerBinary`: from-ast
+  // folds it, strictly only (`tryFoldNullCompare`, `tryLowerUndefinedCompare`).
+  const nullishCompare =
+    isEquality && carrierOperand && [left, right].some((family) => family === "nullish" || family === "undefined");
+  if (
+    nullishCompare
+      ? !nullComparisonFolds(binOp, "dynamic")
+      : judged && !provenBinaryOperandsAdmissible(expr, left, right, additiveLane())
+  ) {
     return capabilityNo("operand-coercion-unsupported", "expr-binary-operand-families", expr);
   }
   // (#7282) A boolean ToNumber'd beside the carrier needs carrier supports a
@@ -9583,7 +9631,11 @@ function binaryOperandFamily(
   localClasses: ReadonlySet<string>,
 ): OperandFamily {
   const candidate = unwrapPhase1Parens(operand);
-  if (isCarrierAddition(candidate, (side) => selectorCarrierValue(side, scope, localClasses))) return "dynamic";
+  if (
+    isDynamicCarrierValue(candidate) ||
+    isCarrierAddition(candidate, (side) => selectorCarrierValue(side, scope, localClasses))
+  )
+    return "dynamic";
   if (candidate.kind === ts.SyntaxKind.NullKeyword) return "nullish";
   if (isUnshadowedUndefinedIdentifier(candidate, scope) || isVoidZero(candidate)) return "undefined";
   if (nativeStaticRegExp(candidate)) return "regexp";
@@ -9603,6 +9655,7 @@ function selectorCarrierValue(
 ): boolean {
   const e = unwrapPhase1Parens(expression);
   return (
+    isDynamicCarrierValue(e) ||
     selectorPrimitiveWrapperConstruction(e, scope, localClasses) !== null ||
     isCarrierAddition(e, (side) => selectorCarrierValue(side, scope, localClasses))
   );
@@ -12918,7 +12971,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           (arg) => !ts.isSpreadElement(arg) && expressionIsProvenNumber(arg) && isPhase1Expr(arg, scope, localClasses),
         );
       }
-      const objectStatic = scope.has("Object") ? undefined : isPhase1ObjectStatic(expr, scope, localClasses);
+      const objectStatic = isPhase1ObjectStatic(expr, scope, localClasses);
       if (objectStatic !== undefined) return objectStatic;
       // ES5 Object.defineProperty — an exact ambient static call is a
       // symbolic host-helper operation, not an instance method on a value
@@ -13699,7 +13752,7 @@ function isDynamicHomeOpenCarrier(literal: ts.ObjectLiteralExpression): boolean 
     !ts.isVariableDeclaration(decl) ||
     decl.initializer !== literal ||
     !isDynamicHomeOpenCarrierDeclaration(decl) ||
-    !objectStatics.unitInKeysAreOwnOnly(literal)
+    !unitInKeysAreOwnOnly(literal)
   ) {
     return false;
   }
@@ -13720,10 +13773,16 @@ function isDynamicHomeOpenCarrierDeclaration(decl: ts.VariableDeclaration): bool
 /**
  * (#7338) `Object.<static>(…)` through the statics table, or undefined for any other call. Every value it evaluates
  * crosses as a carrier: a #7128 open-carrier local of this subject, the global `undefined`, `null`, a dynamic module
- * binding or parameter, another static's result, or a concrete that boxes.
+ * binding or parameter, another static's result, or a concrete that boxes. Beside it, the JS environment's #7276
+ * `Object.create({}, { <literal data descriptors> })`, whose operands are literals.
  */
-function isPhase1ObjectStatic(expr: ts.CallExpression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>) {
-  const plan = selectorObjectStaticPlan(expr);
+function isPhase1ObjectStatic(
+  expr: ts.CallExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  if (selectorObjectCreateDescriptorMap(expr) !== null) return true;
+  const plan = scope.has("Object") ? undefined : selectorObjectStaticPlan(expr);
   if (plan?.kind === "refused") return shapeNo(`expr-object-static-${plan.refusal}`, expr);
   return objectStatics.admittedValues(plan)?.every((operand) => {
     const value = unwrapPhase1Parens(operand);
@@ -13732,12 +13791,32 @@ function isPhase1ObjectStatic(expr: ts.CallExpression, scope: ReadonlySet<string
     if (!openCarrier && !isPhase1Expr(value, scope, localClasses)) return false;
     const carried = openCarrier
       ? enclosingProjectionOwner(value) === currentSelectionSubject
-      : moduleBinding(value)?.valueKind.kind === "dynamic" ||
+      : isDynamicCarrierValue(value) ||
         (ts.isIdentifier(value) && currentDynamicParamNames.has(value.text)) ||
-        (ts.isCallExpression(value) && selectorObjectStaticPlan(value)?.kind === "call") ||
-        concreteOperandBoxesOntoCarrier(value);
+        (concreteOperandBoxesOntoCarrier(value) && !isReassignedParameter(value));
     return carried || shapeNo("expr-object-static-operand", value);
   });
+}
+
+/**
+ * A parameter its function assigns. Its family is the assignment's, which
+ * from-ast proves on its own terms: `n = n + 1` on an unannotated `n` demotes
+ * after the claim whether or not a static reads `n` (the `+` arm's gap), so a
+ * static refuses it rather than claim the function that holds it.
+ */
+function isReassignedParameter(value: ts.Expression): boolean {
+  if (!ts.isIdentifier(value)) return false;
+  const owner = ts.findAncestor(value, ts.isFunctionLike);
+  if (!owner?.parameters.some((parameter) => ts.isIdentifier(parameter.name) && parameter.name.text === value.text)) {
+    return false;
+  }
+  let written = false;
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text === value.text && occurrenceIsWriteTarget(node)) written = true;
+    if (!written) ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(owner, visit);
+  return written;
 }
 
 /**
@@ -14340,7 +14419,7 @@ export function buildLocalCallGraph(
             return;
           }
           if (
-            objectStatics.scannedValues(selectorObjectStaticPlan(node)) ||
+            objectStatics.admittedValues(selectorObjectStaticPlan(node)) ||
             (isAmbientObjectDefineProperty(node) &&
               node.arguments.length === 3 &&
               currentSelectionOptions?.supportsBackendCapability?.("host-object-define-property") !== false)

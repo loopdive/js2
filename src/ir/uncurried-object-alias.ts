@@ -20,7 +20,7 @@
 
 import { ts } from "../ts-api.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
-import { objectStaticArity, objectStaticProvider } from "./object-statics.js";
+import { storedObjectStaticRow } from "./object-statics.js";
 
 export type UncurriedObjectAliasMethod = "hasOwnProperty" | "propertyIsEnumerable";
 
@@ -58,10 +58,9 @@ interface CertifiedAliasLowering {
 function storedObjectStatic(method: "getOwnPropertyDescriptor" | "getOwnPropertyNames") {
   return {
     receiver: "Object",
-    arity: objectStaticArity(method),
     result: "dynamic",
     capability: "native-own-property-introspection",
-    provider: objectStaticProvider(method),
+    ...storedObjectStaticRow(method),
   } as const;
 }
 
