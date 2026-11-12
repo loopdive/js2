@@ -3,140 +3,183 @@
 import ts from "typescript";
 
 import { irBool } from "./boolean-brand.js";
+import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
 import type { IrFunctionBuilder } from "./builder.js";
-import type { IrFromAstResolver } from "./from-ast.js";
+import type { IrBackendTargetCapability } from "./backend/legality.js";
 import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
-import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
+import { asVal, irDynamic, irVal, type IrFuncRef, type IrType, type IrValueId } from "./nodes.js";
 import { lowersAsPreparedComponent } from "./prepared-component-ownership.js";
-import type { IrSelectionOptions } from "./select.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
 
 const F64: IrType = irVal({ kind: "f64" });
+const ANYREF: IrType = irVal({ kind: "anyref" });
 
 /**
  * (#7253) Direct calls of the ES5 / Annex B global functions whose host-free
  * lowering is one call to a fixed-signature native provider (or, for `isNaN`,
- * one `f64.ne`). Each operand position names the ONE primitive family it
- * accepts — a string for the parsed / transformed text, a number for
+ * one `f64.ne`); (#7267) and `JSON.parse(text)`, whose provider is the native
+ * codec's `__json_parse_text`. Each operand position names the ONE primitive
+ * family it accepts — a string for the parsed / transformed text, a number for
  * `parseInt`'s radix and `isNaN`'s operand — so the IR never performs a
  * ToString / ToNumber of its own: any other operand keeps the legacy call,
  * which owns those coercions (and the `stringToNumber` dynamic-carrier arm).
  */
-export type IrAmbientGlobalFunctionName = "parseInt" | "parseFloat" | "escape" | "unescape" | "isNaN";
+export type IrAmbientGlobalFunctionName = "parseInt" | "parseFloat" | "escape" | "unescape" | "isNaN" | "JSON.parse";
 
 type OperandFamily = "string" | "number";
 type ClassifyDeclared = (expr: ts.Expression) => IrDeclaredPrimitiveExpressionFamily | undefined;
 
-const OPERAND_FAMILIES: ReadonlyMap<IrAmbientGlobalFunctionName, readonly OperandFamily[]> = new Map([
-  ["parseInt", ["string", "number"]],
-  ["parseFloat", ["string"]],
-  ["escape", ["string"]],
-  ["unescape", ["string"]],
-  ["isNaN", ["number"]],
+/** The lane capabilities a provider row names (both sides' capability query takes them). */
+export type IrAmbientGlobalFunctionCapability = Extract<
+  IrBackendTargetCapability,
+  "native-global-function-call" | "native-json-codec" | "native-dynamic-member-read"
+>;
+
+/**
+ * Where a row's call may be lowered (the unit the call's nearest function-like
+ * ancestor names; none for top-level code):
+ *   - `any`;
+ *   - `es-module-top-level-function` (#7114): never a unit that
+ *     `lowersAsPreparedComponent` (an ES module unit other than a top-level
+ *     function declaration), whose Program ABI has no identity for the
+ *     `__escape` / `__unescape` runtime callables nor for `dyn.string_carrier`
+ *     (measured: `late-preparation-unsupported`). Scripts — every test262
+ *     body — are unaffected;
+ *   - `plain-unit` (#7267): that, and in a script never a class member (also a
+ *     prepared component: "has no resolvable Program ABI binding") nor a
+ *     closure nested in another function (a capturing closure whose body reads
+ *     the dynamic result loses its captured-struct type from the published
+ *     module once the dynamic runtime is registered: "… closure-support:
+ *     captured-subtype … no longer has its allocator object", a hard compile
+ *     error).
+ */
+type UnitScope = "any" | "es-module-top-level-function" | "plain-unit";
+
+interface AmbientGlobalFunctionPlan {
+  readonly operands: readonly OperandFamily[];
+  /** The lane capabilities that name the provider's host-free lanes (all must hold). */
+  readonly capabilities: readonly IrAmbientGlobalFunctionCapability[];
+  readonly scope: UnitScope;
+  /**
+   * Legacy folds a static text at compile time with the host's parser; the
+   * admission refuses those calls so the fold stays legacy's (the runtime
+   * codec's number scan is not exact — #7267 review).
+   */
+  readonly staticTextFolded?: true;
+  /** What the call answers: a concrete scalar / string, or (`JSON.parse`) the dynamic carrier. */
+  readonly result: "number" | "boolean" | "string" | "dynamic";
+}
+
+const GLOBAL_FUNCTION: readonly IrAmbientGlobalFunctionCapability[] = ["native-global-function-call"];
+
+const PLANS: ReadonlyMap<IrAmbientGlobalFunctionName, AmbientGlobalFunctionPlan> = new Map([
+  ["parseInt", { operands: ["string", "number"], capabilities: GLOBAL_FUNCTION, scope: "any", result: "number" }],
+  ["parseFloat", { operands: ["string"], capabilities: GLOBAL_FUNCTION, scope: "any", result: "number" }],
+  [
+    "escape",
+    { operands: ["string"], capabilities: GLOBAL_FUNCTION, scope: "es-module-top-level-function", result: "string" },
+  ],
+  [
+    "unescape",
+    { operands: ["string"], capabilities: GLOBAL_FUNCTION, scope: "es-module-top-level-function", result: "string" },
+  ],
+  ["isNaN", { operands: ["number"], capabilities: GLOBAL_FUNCTION, scope: "any", result: "boolean" }],
+  // No reviver: a second argument keeps legacy's reviver codec. The value graph
+  // is read back through the carrier's member read, which WASI's IR read does
+  // not answer for it (measured: `JSON.parse('{"a":3}').a` is NaN on WASI).
+  [
+    "JSON.parse",
+    {
+      operands: ["string"],
+      capabilities: ["native-json-codec", "native-dynamic-member-read"],
+      scope: "plain-unit",
+      staticTextFolded: true,
+      result: "dynamic",
+    },
+  ],
 ]);
+
+/** Does `scope` admit a call at `expr`? See {@link UnitScope}. */
+function unitScopeAdmits(scope: UnitScope, expr: ts.CallExpression): boolean {
+  if (scope === "any") return true;
+  if (lowersAsPreparedComponent(expr)) return false;
+  if (scope === "es-module-top-level-function" || ts.isExternalModule(expr.getSourceFile())) return true;
+  const unit = ts.findAncestor(expr.parent, ts.isFunctionLike);
+  if (unit === undefined || (ts.isFunctionDeclaration(unit) && ts.isSourceFile(unit.parent))) return true;
+  return !ts.isClassElement(unit) && ts.findAncestor(unit.parent, ts.isFunctionLike) === undefined;
+}
 
 interface IrAmbientGlobalFunctionCall {
   readonly name: IrAmbientGlobalFunctionName;
-  readonly callee: ts.Identifier;
+  readonly plan: AmbientGlobalFunctionPlan;
+  /** The global the callee resolves through: the function itself, or `JSON` of `JSON.parse`. */
+  readonly root: ts.Identifier;
   /** The SUPPLIED arguments with their families (a missing `parseInt` radix is the provider's NaN sentinel). */
   readonly operands: readonly { readonly argument: ts.Expression; readonly family: OperandFamily }[];
 }
 
+/** What both sides ask of their lane and binding resolver. */
+export interface IrAmbientGlobalFunctionAdmission {
+  readonly classify: ClassifyDeclared | undefined;
+  readonly supportsBackendCapability: ((capability: IrAmbientGlobalFunctionCapability) => boolean) | undefined;
+  /** The lib-only ("every") binding test — a script `function JSON() {}` merges with the lib's. */
+  readonly isLibOnlyBinding: (node: ts.Identifier) => boolean;
+  /** Legacy's own compile-time fold test for a `staticTextFolded` row's call. */
+  readonly foldsAtCompileTime: (call: ts.CallExpression) => boolean;
+}
+
+/** `parseInt` or `JSON.parse`: the callee's table name and the global it resolves through. */
+function calleeOf(callee: ts.Expression): { readonly name: string; readonly root: ts.Identifier } | null {
+  if (ts.isIdentifier(callee)) return { name: callee.text, root: callee };
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return null;
+  return { name: `${callee.expression.text}.${callee.name.text}`, root: callee.expression };
+}
+
 /**
- * The admission both sides read: the call shape, no script declaration of the
- * name, and every operand checker-classified as its position's family. The
- * lib-only binding and lane proofs are the caller's.
+ * The admission both sides read: the call shape, every operand
+ * checker-classified as its position's family, the plan's lane capability and
+ * the unshadowed lib global. The selector adds only the module-init rule.
  */
 function ambientGlobalFunctionCall(
   expr: ts.CallExpression,
-  classify: ClassifyDeclared,
+  admission: IrAmbientGlobalFunctionAdmission,
 ): IrAmbientGlobalFunctionCall | null {
-  const callee = expr.expression;
-  if (!ts.isIdentifier(callee) || expr.questionDotToken || expr.typeArguments?.length) return null;
-  const name = callee.text as IrAmbientGlobalFunctionName;
-  const families = OPERAND_FAMILIES.get(name);
-  if (families === undefined || expr.arguments.length < 1 || expr.arguments.length > families.length) return null;
-  if (scriptDeclaresName(expr.getSourceFile(), name)) return null;
-  const operands = expr.arguments.map((argument, index) => ({ argument, family: families[index]! }));
-  return operands.every(({ argument, family }) => classify(argument) === family) ? { name, callee, operands } : null;
+  const { classify } = admission;
+  if (classify === undefined || expr.questionDotToken || expr.typeArguments?.length) return null;
+  const callee = calleeOf(expr.expression);
+  const plan = callee === null ? undefined : PLANS.get(callee.name as IrAmbientGlobalFunctionName);
+  if (callee === null || plan === undefined) return null;
+  if (expr.arguments.length < 1 || expr.arguments.length > plan.operands.length) return null;
+  if (!plan.capabilities.every((capability) => admission.supportsBackendCapability?.(capability) === true)) return null;
+  const operands = expr.arguments.map((argument, index) => ({ argument, family: plan.operands[index]! }));
+  if (!operands.every(({ argument, family }) => classify(argument) === family)) return null;
+  if (!isUnshadowedLibBinding(callee.root, admission.isLibOnlyBinding)) return null;
+  if (plan.staticTextFolded && admission.foldsAtCompileTime(expr)) return null;
+  return { name: callee.name as IrAmbientGlobalFunctionName, plan, root: callee.root, operands };
 }
 
-const SCRIPT_DECLARED_NAMES = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
-
-/**
- * Does a script declare `name` anywhere? A script's `var unescape = …` does not
- * merge with the lib's `declare function unescape` — the checker resolves the
- * call to the lib symbol alone — so no binding predicate can see it.
- * Conservative: any declaration of the name in the file, at any depth,
- * refuses. ES modules scope their bindings, so the checker answers there.
- */
-function scriptDeclaresName(sourceFile: ts.SourceFile, name: string): boolean {
-  if (ts.isExternalModule(sourceFile)) return false;
-  let names = SCRIPT_DECLARED_NAMES.get(sourceFile);
-  if (names === undefined) {
-    const declared = new Set<string>();
-    const visit = (node: ts.Node): void => {
-      if (
-        (ts.isVariableDeclaration(node) ||
-          ts.isParameter(node) ||
-          ts.isBindingElement(node) ||
-          ts.isFunctionDeclaration(node) ||
-          ts.isFunctionExpression(node) ||
-          ts.isClassDeclaration(node) ||
-          ts.isClassExpression(node)) &&
-        node.name !== undefined &&
-        ts.isIdentifier(node.name)
-      ) {
-        declared.add(node.name.text);
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sourceFile);
-    names = declared;
-    SCRIPT_DECLARED_NAMES.set(sourceFile, names);
-  }
-  return names.has(name);
+/** An admitted call as the selector sees it: a lowering, not a call edge. */
+export interface IrAdmittedAmbientGlobalFunctionCall {
+  readonly arguments: readonly ts.Expression[];
+  readonly result: AmbientGlobalFunctionPlan["result"];
 }
 
-/**
- * The selector's admission: the shared one, a lib-only ambient binding and the
- * `native-global-function-call` lane capability. The arguments, else null — a
- * lowering, not a call edge.
- *
- * Lib-only, not merely "has a lib declaration": in a script a source
- * `function unescape() {}` merges with the lib's `declare function`, and the
- * call must keep binding to the source function (#7118's `function Number`).
- *
- * In an ES module `escape` / `unescape` are admitted only from a top-level
- * function declaration. Every other unit there (`<module-init>`, class
- * members, closures) lowers as a prepared component, whose Program ABI has no
- * identity for the `__escape` / `__unescape` runtime callables nor for
- * `dyn.string_carrier` (measured: `late-preparation-unsupported`). Scripts —
- * every test262 body — are unaffected.
- */
+/** The selector's admission: the shared one, and the row's {@link UnitScope}. */
 export function admitAmbientGlobalFunctionCall(
   expr: ts.CallExpression,
-  isLibOnlyBinding: (node: ts.Identifier) => boolean,
-  options: Pick<IrSelectionOptions, "supportsBackendCapability" | "classifyDeclaredPrimitiveExpression"> | undefined,
-): readonly ts.Expression[] | null {
-  const classify = options?.classifyDeclaredPrimitiveExpression;
-  if (classify === undefined || options?.supportsBackendCapability?.("native-global-function-call") !== true) {
-    return null;
-  }
-  const call = ambientGlobalFunctionCall(expr, classify);
-  if (call === null || !isLibOnlyBinding(call.callee)) return null;
-  const escapeFamily = call.name === "escape" || call.name === "unescape";
-  if (escapeFamily && lowersAsPreparedComponent(expr)) return null;
-  return expr.arguments;
+  admission: IrAmbientGlobalFunctionAdmission,
+): IrAdmittedAmbientGlobalFunctionCall | null {
+  const call = ambientGlobalFunctionCall(expr, admission);
+  if (call === null || !unitScopeAdmits(call.plan.scope, expr)) return null;
+  return { arguments: expr.arguments, result: call.plan.result };
 }
 
 /** What the lowering needs from from-ast (no import of the lowerer itself). */
 export interface AmbientGlobalFunctionLoweringHost {
   readonly builder: IrFunctionBuilder;
-  readonly resolver:
-    | Pick<IrFromAstResolver, "isLibOnlyBinding" | "supportsBackendCapability" | "ambientGlobalFunctionTarget">
-    | undefined;
-  readonly classify: ClassifyDeclared;
+  readonly admission: IrAmbientGlobalFunctionAdmission;
+  /** The provider the resolver names, or null where the lane registered none. */
+  readonly target: (name: Exclude<IrAmbientGlobalFunctionName, "isNaN">) => IrFuncRef | null;
   readonly lowerOperand: (argument: ts.Expression, family: OperandFamily) => IrValueId;
   /** Withdraws the unit (throws). */
   readonly refuseOperand: (name: string, index: number, type: IrType) => never;
@@ -148,17 +191,18 @@ export interface AmbientGlobalFunctionLoweringHost {
  * `parseFloat(s)` → the native scanner (a missing radix is the provider's NaN
  * sentinel, exactly legacy's call site), `escape(s)` / `unescape(s)` →
  * `__escape` / `__unescape` (their externref result recovers the native
- * string carrier), `isNaN(n)` → `n != n`. Null when the call is not admitted
- * on this lane, which leaves it to the other call arms.
+ * string carrier), `JSON.parse(s)` → `__json_parse_text` (its anyref value
+ * graph crosses onto the externref carrier with `extern.convert_any`, exactly
+ * legacy's call site), `isNaN(n)` → `n != n`. Null when the call is not
+ * admitted on this lane, which leaves it to the other call arms.
  */
 export function lowerAmbientGlobalFunctionCall(
   expr: ts.CallExpression,
   host: AmbientGlobalFunctionLoweringHost,
 ): IrValueId | null {
-  const { builder, resolver } = host;
-  if (resolver?.supportsBackendCapability?.("native-global-function-call") !== true) return null;
-  const call = ambientGlobalFunctionCall(expr, host.classify);
-  if (call === null || resolver.isLibOnlyBinding?.(call.callee) !== true) return null;
+  const { builder } = host;
+  const call = ambientGlobalFunctionCall(expr, host.admission);
+  if (call === null) return null;
   const lowerOperands = (): IrValueId[] =>
     call.operands.map(({ argument, family }, index) => {
       const value = host.lowerOperand(argument, family);
@@ -170,13 +214,17 @@ export function lowerAmbientGlobalFunctionCall(
     const [n] = lowerOperands() as [IrValueId];
     return builder.emitBinary("f64.ne", n, n, irBool());
   }
-  const target = resolver.ambientGlobalFunctionTarget?.(call.name) ?? null;
+  const target = host.target(call.name);
   if (target === null) return null;
   const [text, radix] = lowerOperands() as [IrValueId, IrValueId | undefined];
   const textRef = coerceIrValueToExternref(builder, text);
-  const parse = call.name === "parseInt" || call.name === "parseFloat";
   const args =
     call.name === "parseInt" ? [textRef, radix ?? builder.emitConst({ kind: "f64", value: NaN }, F64)] : [textRef];
-  const result = builder.emitCall(target, args, parse ? F64 : irDynamic())!; // non-void result type
-  return parse ? result : builder.emitDynStringCarrier(result);
+  const resultType = call.plan.result === "number" ? F64 : call.plan.result === "dynamic" ? ANYREF : irDynamic();
+  const result = builder.emitCall(target, args, resultType);
+  if (result === null) throw new Error(`ir/ambient-global-function-call: ${call.name} provider returned no value`);
+  // The externref result recovers the native string carrier; the anyref value graph crosses onto the carrier.
+  if (call.plan.result === "string") return builder.emitDynStringCarrier(result);
+  if (call.plan.result === "dynamic") return builder.emitBox(builder.emitCoerceToExternref(result), irDynamic());
+  return result;
 }

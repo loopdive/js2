@@ -1290,13 +1290,11 @@ function compileInlinedEvalStatements(
     if (ts.isExpressionStatement(last)) {
       for (let i = 0; i < lastIdx; i++) compileStatement(ctx, fctx, stmts[i]!);
       const t = compileExpression(ctx, fctx, last.expression);
-      if (t === null) {
-        // Unreachable (e.g. the expression compiled to a throw).
-        return null;
-      }
-      if (t.kind !== "externref") {
-        coerceType(ctx, fctx, t, { kind: "externref" });
-      }
+      // (#7106) `null` is a VOID value (a void Wasm callee), not unreachability, so
+      // the eval yields undefined. Returning `null` made the eval call's own
+      // compileExpression roll the splice back, dropping the call entirely.
+      if (t === null) emitUndefined(ctx, fctx);
+      else if (t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
       return { kind: "externref" };
     }
 

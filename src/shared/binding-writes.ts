@@ -114,6 +114,29 @@ export function hasDynamicScope(root: ts.Node): boolean {
   return found;
 }
 
+/**
+ * `node` is the name a declaration binds: a variable, parameter, binding
+ * element, function, class or import binding (`x` in `var x`, `function x() {}`,
+ * `import { x } from …`). A `catch (x)` binding is a variable declaration.
+ */
+export function isBindingSiteName(node: ts.Identifier): boolean {
+  const parent = node.parent;
+  return (
+    (ts.isVariableDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isBindingElement(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isImportSpecifier(parent) ||
+      ts.isNamespaceImport(parent) ||
+      ts.isImportClause(parent) ||
+      ts.isImportEqualsDeclaration(parent)) &&
+    (parent as { readonly name?: ts.Node }).name === node
+  );
+}
+
 /** Parentheses and TS type wrappers (`as`, `!`, `satisfies`, `<T>x`) — transparent around a target or a source. */
 export function skipOuterExpressions(expr: ts.Expression): ts.Expression {
   while (
@@ -389,4 +412,124 @@ export function isLexicalBindingWrite(identifier: ts.Identifier): boolean {
 export function varDeclaratorWrittenNames(node: ts.Node): ts.Identifier[] {
   if (!ts.isVariableDeclaration(node)) return [];
   return [...new Set(identifierWritesOf(node).map((write) => write.target))];
+}
+
+/**
+ * True when this identifier occurrence is an ASSIGNMENT TARGET in any spelling.
+ *
+ * (#5195 r3 review round 2, F1) The first cut recognised only
+ * `BinaryExpression.left` and a `++`/`--` operand, so every destructuring and
+ * loop-head spelling of a write read as "never written":
+ * `for (X of [Base]) {}`, `[X] = [Base]`, `({X} = o)`, `({q: X} = o)`,
+ * `(X) = Base`, `[a, ...X] = o`, `({...X} = o)`. A heritage bound that way was
+ * "proven" a non-constructor and threw on a working program.
+ *
+ * So the target test walks UP through every wrapper a destructuring pattern can
+ * put between the identifier and the assignment — parentheses, array/object
+ * literal patterns, spreads, shorthand and keyed property assignments — and
+ * then asks whether the thing it arrived at sits in a write position.
+ */
+export function occurrenceIsWriteTarget(id: ts.Node): boolean {
+  let current: ts.Node = id;
+  let parent: ts.Node | undefined = current.parent;
+  while (parent !== undefined) {
+    if (ts.isParenthesizedExpression(parent)) {
+      current = parent;
+      parent = current.parent;
+      continue;
+    }
+    if (ts.isArrayLiteralExpression(parent) || ts.isObjectLiteralExpression(parent)) {
+      current = parent;
+      parent = current.parent;
+      continue;
+    }
+    if (ts.isSpreadElement(parent) || ts.isSpreadAssignment(parent)) {
+      current = parent;
+      parent = current.parent;
+      continue;
+    }
+    if (ts.isShorthandPropertyAssignment(parent) || ts.isPropertyAssignment(parent)) {
+      // `({X} = o)` / `({q: X} = o)` — and, conservatively, the read spellings
+      // `({X})` / `({q: X})` too, which only costs a decline.
+      current = parent;
+      parent = current.parent;
+      continue;
+    }
+    // A binding element (`var {X = d} = o`) is a declaration site, handled by
+    // the binding count; treat the whole shape as a write to stay conservative.
+    if (ts.isBindingElement(parent)) return true;
+    break;
+  }
+  if (parent === undefined) return false;
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.left === current &&
+    parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    return true;
+  }
+  if ((ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.initializer === current) return true;
+  if (
+    (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+    (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return true;
+  }
+  if (ts.isDeleteExpression(parent)) return true;
+  return false;
+}
+
+/**
+ * True when `name` has EXACTLY ONE binding site in this file — `declaration` —
+ * and is never assigned to. Only then does the declaration's initializer prove
+ * anything about the value the heritage clause reads.
+ *
+ * Deliberately whole-file and name-based rather than scope-aware: a same-named
+ * binding or write anywhere in the module makes this answer false, which
+ * DECLINES the check. Over-declining costs a row; under-declining throws on a
+ * working program (`let X = () => {}; X = A; class D extends X {}`).
+ *
+ * A file containing `eval` or a `with` statement declines outright: either can
+ * rebind the name in a way no source scan can see. (#7335) Moved here from
+ * `codegen/class-heritage-check.ts` so the IR asks the same question.
+ */
+export function bindingIsUniqueAndNeverWritten(id: ts.Identifier, declaration: ts.Declaration): boolean {
+  const name = id.text;
+  let bindings = 0;
+  let ownBinding = false;
+  let written = false;
+  const visit = (node: ts.Node): void => {
+    if (written) return;
+    if (ts.isWithStatement(node)) {
+      written = true;
+      return;
+    }
+    if (ts.isIdentifier(node)) {
+      if (node.text === "eval") {
+        written = true;
+        return;
+      }
+      if (node.text === name) {
+        const parent: ts.Node | undefined = node.parent;
+        if (parent !== undefined) {
+          const isBindingSite = isBindingSiteName(node);
+          const isPropertyName =
+            (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+            (ts.isPropertyAssignment(parent) && parent.name === node) ||
+            (ts.isQualifiedName(parent) && parent.right === node);
+          if (isBindingSite) {
+            bindings += 1;
+            if (parent === declaration) ownBinding = true;
+          } else if (!isPropertyName && occurrenceIsWriteTarget(node)) {
+            written = true;
+            return;
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(id.getSourceFile());
+  return !written && bindings === 1 && ownBinding;
 }
