@@ -13,6 +13,12 @@ task_type: bugfix
 area: ir
 goal: ir-full-coverage
 related: [7283, 7106]
+loc-budget-allow:
+  # 2026-11-11 (PR 7171 review): +3, the #7283 call-graph edge passes the resolver to localIsRewritten and prettier wraps the condition
+  - src/ir/select.ts
+func-budget-allow:
+  # 2026-11-11 (PR 7171 review): +3, the same wrapped localIsRewritten call in the call-graph edge
+  - src/ir/select.ts::buildLocalCallGraph
 ---
 
 # IR: `localIsRewritten` matches written names by text
