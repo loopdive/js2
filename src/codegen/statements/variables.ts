@@ -2,7 +2,7 @@
 /**
  * Variable declaration statement lowering.
  */
-import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
+import { expressionHasWidenedStaticType } from "../strict-eq-stale-type.js";
 import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import { isNullablePrimitiveType, isStringType, isVoidType } from "../../checker/type-mapper.js";
@@ -794,7 +794,7 @@ export function usageInferredLocalType(ctx: CodegenContext, decl: ts.VariableDec
 }
 
 function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.VariableDeclaration): ValType {
-  if (decl?.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer)) {
+  if (decl?.initializer && !decl.type && expressionHasWidenedStaticType(ctx, decl.initializer)) {
     return { kind: "externref" };
   }
   // (#7053) `C.prototype` is typed as the INSTANCE `C`, but standalone it is a

@@ -109,6 +109,8 @@ import {
   runtimeEvalOwnsGlobalEval,
   irNativeBufferProvider, // (#7274) native ArrayBuffer / DataView providers
   nativeBufferProvidersAvailable,
+  expressionHasWidenedStaticType, // (#7337) binding-carrier queries shared with legacy
+  bindingHasMixedAssignmentCarrier,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonParseText, emitJsonStringifyValue, JSON_PARSE_TEXT_FN } from "../codegen/json-codec-native.js";
@@ -7554,12 +7556,14 @@ function makeFromAstResolver(
     builtinProtoMember: (builtin: string, member: string, anchor: ts.Node) =>
       builtinProtoMemberProvided(ctx, builtin, member, anchor), // (#7294)
     isAmbientStringBinding,
+    localNeedsDynamicCarrier: (declaration) => bindingHasMixedAssignmentCarrier(ctx, declaration),
     // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
     // predicates as the legacy `collectConsoleImports` registration scan
     // (string → bool → number → externref, in that order), so the import
     // name the IR resolves (`console_<m>_<variant>`) is registered by
     // construction.
     consoleArgVariant(arg: ts.Expression) {
+      if (expressionHasWidenedStaticType(ctx, arg)) return "externref";
       const argType = ctx.checker.getTypeAtLocation(arg);
       if (isStringType(argType)) return "string";
       if (isBooleanType(argType)) return "bool";
