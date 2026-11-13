@@ -36,7 +36,8 @@ export interface DynamicHomeQuery {
   readonly resolve: ((id: ts.Identifier) => IrLegacyModuleBindingIdentity | undefined) | null;
   /** #7280's declaration half: the dynamic module slot holds legacy's open `$Object`. */
   readonly isCarrier: (decl: ts.VariableDeclaration) => boolean;
-  readonly isAmbientDefineProperty: (call: ts.CallExpression) => boolean;
+  /** #7128's U1 define: `Object.defineProperty` with a literal key and descriptor, as the lane lowers it. */
+  readonly isLiteralDefine: (call: ts.CallExpression) => boolean;
   readonly isLibOnlyBinding: (node: ts.Identifier) => boolean;
 }
 
@@ -142,7 +143,7 @@ function isServedUse(reference: ts.Identifier, query: DynamicHomeQuery): boolean
     if (!isStoreTarget(parent) && !ts.isDeleteExpression(user)) return true;
     return isPlainAssignmentTarget(parent) && writerKnowsItsStrictness(parent);
   }
-  if (use === reference && isOpenCarrierUse(reference, query.isAmbientDefineProperty)) return true;
+  if (use === reference && isOpenCarrierUse(reference, query.isLiteralDefine)) return true;
   if (ts.isBinaryExpression(parent)) {
     const op = parent.operatorToken.kind;
     return op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
@@ -198,7 +199,7 @@ function isPlainAssignmentTarget(target: ts.Expression): boolean {
 }
 
 /** The write sits in `<module-init>` or a top-level function, the code whose strictness lowering is told. */
-function writerKnowsItsStrictness(node: ts.Node): boolean {
+export function writerKnowsItsStrictness(node: ts.Node): boolean {
   const owner = ts.findAncestor(node.parent, ts.isFunctionLike);
   return owner === undefined || (ts.isFunctionDeclaration(owner) && ts.isSourceFile(owner.parent));
 }

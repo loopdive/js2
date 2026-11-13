@@ -486,20 +486,17 @@ export function nativeI32OperandsAdmissible(
   return binaryOperandsAdmissible(op, family(expr.left), family(expr.right));
 }
 
-/** `void e` other than `void 0`, as an equality operand against the global `undefined`. */
-export function voidValueComparedWithUndefined(
+/** The equality `void e` is an operand of: its other operand, and whether it is loose. */
+export function voidEquality(
   expr: ts.VoidExpression,
-  isShadowed: (name: string) => boolean,
-): boolean {
+): { readonly other: ts.Expression; readonly loose: boolean } | undefined {
   const operand = outermostParenthesized(expr);
   const parent = operand.parent;
-  if (isUndefinedCompareOperand(expr, isShadowed) || !ts.isBinaryExpression(parent)) return false;
-  const other = stripParens(parent.left === operand ? parent.right : parent.left);
-  return (
-    isEqualityOperator(parent.operatorToken.kind) &&
-    ts.isIdentifier(other) &&
-    isUndefinedCompareOperand(other, isShadowed)
-  );
+  if (!ts.isBinaryExpression(parent) || !isEqualityOperator(parent.operatorToken.kind)) return undefined;
+  return {
+    other: stripParens(parent.left === operand ? parent.right : parent.left),
+    loose: !isStrictEqualityOperator(parent.operatorToken.kind),
+  };
 }
 
 /** The operand an equality compares with a direct `null` literal (`null === null`: none to type). */

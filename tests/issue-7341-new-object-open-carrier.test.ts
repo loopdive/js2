@@ -87,6 +87,10 @@ const CLAIMED: Record<string, string> = {
   // #7335's arms recognise the `new Object()` spelling too.
   "a define, then an own read": `var o = new Object(); Object.defineProperty(o, "p", { value: 3 }); if (o.p !== 3) { throw "p"; }`,
   "an own-property test": `var o = new Object(); o.p = 1; if (!o.hasOwnProperty("p") || o.hasOwnProperty("toString")) { throw "own"; }`,
+  // Loose equality with a primitive takes ToPrimitive of the object (#7194, on main).
+  "== 1": `var o = new Object(); if (o == 1) { throw "n"; }`,
+  "== true": `var o = new Object(); if (o == true) { throw "b"; }`,
+  '== "[object Object]"': `var o = new Object(); if (o == "[object Object]") {} else { throw "s"; }`,
 };
 
 /** A construction the plan declines: the unit is refused at select, with the arm named. */
@@ -153,6 +157,13 @@ const VALUE_USES: Record<string, string> = {
   "a member as a switch discriminant": `var o = new Object(); o.k = 2; switch (o.k) { case 2: break; default: throw "k"; }`,
   "a void member strictly compared with undefined": `var o = new Object(); o.p = 1; if (void o.p !== undefined) { throw "v"; }`,
   "a void member loosely compared with undefined": `var o = new Object(); o.p = 1; if (void o.p != undefined) { throw "v"; }`,
+  // Mixed carrier expressions (PR #7214 review R2-S1): the carrier flows through `+`, a comma, or a `void`.
+  "a member plus one as a switch discriminant": `var o = new Object(); o.k = 1; switch (o.k + 1) { case 2: break; default: throw "k"; }`,
+  "a comma expression as a switch discriminant": `var o = new Object(); o.k = 2; switch ((0, o.k)) { case 2: break; default: throw "k"; }`,
+  "a void member loosely compared with null": `var o = new Object(); o.p = 1; if (void o.p == null) {} else { throw "v"; }`,
+  "a void member strictly compared with a member": `var o = new Object(); o.p = 1; if (void o.p === o.q) {} else { throw "v"; }`,
+  "a void member compared with void 0": `var o = new Object(); o.p = 1; if (void o.p !== void 0) { throw "v"; }`,
+  "a member loosely compared with void 0": `var o = new Object(); if (o.p == void 0) {} else { throw "v"; }`,
 };
 
 /**
@@ -164,22 +175,6 @@ const USER_OBJECT: Record<string, string> = {
   "a script function declaration": `function Object() { G = 1; } var G = 0; var o = new Object(); if (G !== 1) { throw "builtin"; }`,
   "an assignment to the global": `var G = 0; Object = function () { G = 1; }; var o = new Object(); if (G !== 1) { throw "builtin"; }`,
   "an assignment after the construction": `var o = new Object(); o.p = 1; if (o.p !== 1) { throw "p"; } Object = function () {};`,
-};
-
-/**
- * PENDING #7194: the carrier's loose equality skips ToPrimitive of the object
- * operand, so these are claimed and answer wrong today (the same for `{}` on
- * main). #7194 S1 fixes the runtime rule; these rows pin today's answer so the
- * fix flips them visibly, and must then accept only the JS answer or a select
- * refusal, never a trap.
- */
-const PENDING_7194: Record<string, { readonly source: string; readonly today: Verdict }> = {
-  "== 1": { source: `var o = new Object(); if (o == 1) { throw "n"; }`, today: "trap" },
-  "== true": { source: `var o = new Object(); if (o == true) { throw "b"; }`, today: "trap" },
-  '== "[object Object]"': {
-    source: `var o = new Object(); if (o == "[object Object]") {} else { throw "s"; }`,
-    today: "threw",
-  },
 };
 
 /**
@@ -255,18 +250,8 @@ describe("#7341 S1 — `new Object()` as the open-object carrier", () => {
       expect(node(source)).toBe("ok");
       const ir = await build(source, "standalone");
       expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
-      expect(outcome(ir, unit)?.detail ?? "").not.toContain("expr-void-undefined-compare");
+      expect(outcome(ir, unit)?.detail ?? "").not.toContain("expr-void-carrier-compare");
       expect(await run(ir, "standalone")).toBe("ok");
-    });
-  }
-
-  for (const [name, { source, today }] of Object.entries(PENDING_7194)) {
-    it(`pending #7194 — a loose equality with a primitive, today's answer: ${name}`, async () => {
-      expect(node(source)).toBe("ok");
-      const ir = await build(source, "standalone");
-      expect(ir.irPostClaimErrors ?? []).toEqual([]);
-      expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
-      expect(await run(ir, "standalone")).toBe(today);
     });
   }
 

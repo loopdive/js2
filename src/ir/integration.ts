@@ -22,8 +22,11 @@
 // `shiftLateImportIndices` pass is a no-op for every body produced here.
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
-import { isStoredStaticAliasProvider, storedStaticAliasProviderImport } from "./stored-static-alias-providers.js";
-import type { StoredStaticAliasProvider } from "./uncurried-object-alias.js";
+import {
+  isObjectRuntimeProvider,
+  objectRuntimeProviderImport,
+  type ObjectRuntimeProvider,
+} from "./stored-static-alias-providers.js";
 import {
   nativeConsoleOutputAvailable,
   ensureIrNativeConsoleProvider,
@@ -68,8 +71,6 @@ import { nativeBufferSurfaceCapability } from "./capability.js";
 import {
   ensureAnyHelpers,
   ensureAnyValueType,
-  ensureExternLooseEqHelper,
-  ensureExternStrictEqHelper,
   resolveIrDynamicCarrierType,
   undefinedAnyValueInstrs,
   undefinedExternInstrs,
@@ -77,6 +78,7 @@ import {
 import { ensureDynMemberGet, ensureDynMemberSet, ensureDynMemberSetSloppy } from "../codegen/dyn-read.js"; // (#3053 U1) / (#3795)
 import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
+  ensureIrDynamicEqualityRuntime,
   ensureIrDynamicRuntime,
   irDynamicRuntimeNeedForSymbol,
   observeIrFunctionObjectCallProviders,
@@ -9462,8 +9464,8 @@ function preregisterDynamicSupport(
   const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
   // (#7106 propertyHelper) a dynamic delete calls its strictness's wrapper.
   const dynDeleteStrictness = new Set<boolean>();
-  // (#7106 propertyHelper, #7272) the stored-static aliases' object-runtime providers.
-  const storedStaticProviders = new Set<StoredStaticAliasProvider>();
+  // (#7106 propertyHelper, #7272, #7338) the stored-static aliases' and `Object` statics' object-runtime providers.
+  const storedStaticProviders = new Set<ObjectRuntimeProvider>();
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9547,7 +9549,7 @@ function preregisterDynamicSupport(
             if (methodWrapper !== undefined) dynamicMethodCallWrappers.set(symbol, methodWrapper);
             const borrowWrapper = parseIrArrayPrototypeBorrowHelperName(symbol);
             if (borrowWrapper !== undefined) arrayPrototypeBorrowWrappers.set(symbol, borrowWrapper);
-            if (isStoredStaticAliasProvider(symbol)) storedStaticProviders.add(symbol);
+            if (isObjectRuntimeProvider(symbol)) storedStaticProviders.add(symbol);
             if (isIrNativeBufferRuntimeSymbol(symbol)) nativeBufferAdapters.add(symbol); // (#7274)
             switch (symbol) {
               case "__extern_set_strict":
@@ -9709,7 +9711,7 @@ function preregisterDynamicSupport(
   }
   if (storedStaticProviders.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     for (const symbol of storedStaticProviders) {
-      const { params, results } = storedStaticAliasProviderImport(symbol);
+      const { params, results } = objectRuntimeProviderImport(symbol);
       ensureLateImport(ctx, symbol, [...params], [...results]);
     }
     flushLateImportShifts(ctx, null);
@@ -9847,10 +9849,7 @@ function preregisterDynamicSupport(
     // Register the selected family up-front so no emit can trigger a shift
     // (#329/#2078), exactly like `addUnionImports` above. Both are idempotent;
     // only fired when a host module actually carries a dyn.eq.
-    if (usesEq) {
-      ensureExternStrictEqHelper(ctx);
-      ensureExternLooseEqHelper(ctx);
-    }
+    if (usesEq) ensureIrDynamicEqualityRuntime(ctx);
   }
   // #3053 U1 — a `dyn.member_get` present in any IR body needs the unified
   // reader primitive `__dyn_member_get` (#3053 U0) REGISTERED up-front so the

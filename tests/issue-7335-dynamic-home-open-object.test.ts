@@ -138,7 +138,7 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   },
   "element read": {
     source: `var o = {}; ${DEFINE} var k = 'p'; if (o[k] !== 1) { throw "elem"; }`,
-    detail: "call-resolution-unsupported",
+    detail: "expr-module-extern-consumer",
   },
   "ToPropertyKey-running key": {
     source: `var o = {}; ${DEFINE} if (!o.hasOwnProperty({ toString: function () { return 'p'; } })) { throw "key"; }`,
@@ -146,15 +146,15 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   },
   "shadowing parameter": {
     source: `var o = {}; ${DEFINE} function f(o) { return o.p; } if (f({ p: 2 }) !== 2) { throw "shadow"; }`,
-    detail: "call-resolution-unsupported",
+    detail: "expr-module-scalar-method",
   },
   "element destructuring target": {
     source: `"use strict"; var o = {}; Object.defineProperty(o, 'b', { value: 1 }); ${STRICT_THROW("[o.b] = [11];")}`,
-    detail: "call-resolution-unsupported",
+    detail: "body-exprstmt-other",
   },
   "member write in a nested closure": {
     source: `"use strict"; var o = {}; Object.defineProperty(o, 'b', { writable: false }); var threw = false; (function () { try { o.b = 11; } catch (e) { threw = e instanceof TypeError; } })(); if (!threw) { throw "strict"; }`,
-    detail: "call-resolution-unsupported",
+    detail: "expr-call-callee-nonident",
   },
   "replaced hasOwnProperty": {
     source: `var o = {}; Object.prototype.hasOwnProperty = function () { return true; }; if (!o.hasOwnProperty('zz')) { throw "override"; }`,
@@ -163,7 +163,7 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   // Round-2 review: a call argument lets other code install an own method under a computed key.
   "own hasOwnProperty under a computed key": {
     source: `var o = {}; Object.defineProperty(o, "has" + "OwnProperty", { value: function () { return true; } }); function f() { return o.hasOwnProperty("z"); } if (!f()) { throw "x"; }`,
-    detail: "call-resolution-unsupported",
+    detail: "closure-return-type",
   },
   "Object.assign from parsed JSON": {
     source: `var o = {}; Object.assign(o, JSON.parse('{"hasOwnProperty": 1}')); if (typeof o.hasOwnProperty !== "number") { throw "x"; }`,
@@ -176,7 +176,7 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   // Round-3 review: a method call hands `o` to arbitrary code as `this`.
   "method call on the binding": {
     source: `var o = {}; Object.defineProperty(o, "p", { value: 1 }); o.m = function () { this["has" + "OwnProperty"] = function () { return true; }; }; o.m(); function f() { return o.hasOwnProperty("z"); } if (!f()) { throw "x"; }`,
-    detail: "call-resolution-unsupported",
+    detail: "closure-return-type",
   },
 };
 
@@ -201,16 +201,14 @@ describe("#7335 — standalone dynamic-home open object", () => {
     expect(await run(ir, "standalone")).toBe(node(source));
   });
 
-  it("a define before the declaration runs matches legacy (both miss the spec's TypeError)", async () => {
-    // Node throws TypeError from `Object.defineProperty(undefined, …)`; legacy and the IR
-    // both apply the define to the undefined slot without throwing. Not a regression of
-    // this slice, and not a trap.
+  it("a define before the declaration runs throws the spec's TypeError (legacy misses it)", async () => {
+    // (#7338) The statics table tests the carrier, so the IR throws as node does from
+    // `Object.defineProperty(undefined, …)`; legacy applies the define to the undefined slot.
     const source = `function f() { Object.defineProperty(o, 'q', { value: 2 }); } ${STRICT_THROW("f();")} var o = {};`;
     const ir = await build(source, "standalone");
     expect(ir.irPostClaimErrors ?? []).toEqual([]);
-    const legacy = await run(await build(source, "standalone", false), "standalone");
-    expect(legacy).not.toBe("trap");
-    expect(await run(ir, "standalone")).toBe(legacy);
+    expect(await run(await build(source, "standalone", false), "standalone")).toBe("threw");
+    expect(await run(ir, "standalone")).toBe(node(source));
   });
 
   for (const [name, { source, detail }] of Object.entries(REFUSED)) {

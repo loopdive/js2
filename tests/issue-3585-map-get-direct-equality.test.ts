@@ -292,7 +292,7 @@ describe("#3585 standalone Map.get direct equality", () => {
       watFunctionBody(compiled.wat, "mixedSeedStringAndNullish"),
       compiled.functionImports,
     );
-    expectNativeEqualityHelper(targets, "__any_eq");
+    expectNativeEqualityHelper(targets, "__extern_loose_eq"); // (#7194) the one loose-equality provider
     expectNativeEqualityHelper(targets, "__extern_strict_eq");
   });
 
@@ -304,7 +304,7 @@ describe("#3585 standalone Map.get direct equality", () => {
       watFunctionBody(compiled.wat, "mixedSeedStringBothOrders"),
       compiled.functionImports,
     );
-    expectNativeEqualityHelper(targets, "__any_eq");
+    expectNativeEqualityHelper(targets, "__extern_loose_eq"); // (#7194)
     expectNativeEqualityHelper(targets, "__extern_strict_eq");
   });
 
