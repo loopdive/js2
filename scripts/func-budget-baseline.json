@@ -1,11 +1,10 @@
 {
-  "generated": "2026-11-05",
+  "generated": "2026-11-13",
   "threshold": 300,
   "functions": {
     "src/codegen-linear/index.ts::compileBinaryExpression": 417,
     "src/codegen-linear/index.ts::compileStatement": 333,
     "src/codegen-linear/runtime.ts::addArrayRuntime": 514,
-    "src/codegen-linear/runtime.ts::addLinearIrStringRuntime": 387,
     "src/codegen-linear/runtime.ts::addMapRuntime": 357,
     "src/codegen-linear/runtime.ts::addNumericMapRuntime": 346,
     "src/codegen-linear/runtime.ts::addStringRuntime": 1025,
