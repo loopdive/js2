@@ -261,6 +261,233 @@ consequence; the 34-file S0 sample has zero legacy units from
 - Each PR gets a fresh-context adversarial review before release, with the
   verdict recorded in the PR body.
 
+## S0 results (2026-11-13)
+
+### Method
+
+- **Tree:** main `68b95c2869`, standalone, original harness.
+- **Settings:** `JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`.
+- **Tool:** the census script from #7338. It records per-unit code and detail, the claimed units, and post-claim errors.
+- **Sample:** 34 files: the four named above, plus 30 drawn from the 899 by a seeded shuffle (mulberry32, seed 7342).
+- **Chain walk:** done on an 8-file subset, then confirmed with all stubs stacked on all 34 files. The subset is:
+  - the four named files;
+  - `15.2.3.6-4-547-2.js` and `S15.5.4.15_A10.js`;
+  - `harness/propertyhelper-verifywritable-not-writable.js`;
+  - `harness/propertyhelper-verifyconfigurable-configurable-object.js`.
+- **Harness-only check:** a synthetic file that includes only `propertyHelper.js`, with a one-line body, isolates the harness's own `<module-init>`.
+- **Stubs:** local and uncommitted. Each answered "yes" at one select site, for one unit, matched by source text. A class of identical refusals within one unit (for example six `names[i] === "…"` reads) counts as one step.
+- **Exploratory runs:** where a chain passed six steps, one extra run admitted every `move-only` and external-call refusal of that unit at once, to reach from-ast. Those rows are marked "exploratory".
+- **Line numbers:** `test262/harness/propertyHelper.js` in the repo's test262 checkout.
+
+### Baseline: first refusal per unit (34 files)
+
+The table at the top of this issue is out of date on current main. **R1 and R2 no longer refuse.** `isWritable` is IR on all 34 files, and `verifyProperty` now first refuses at line 106.
+
+| unit | IR / legacy | first refusal (count) |
+| --- | --- | --- |
+| `verifyProperty` | 0 / 34 | `expr-binary-operand-families`: `desc.enumerable !== isEnumerable(obj, name)` (l.106) |
+| `isWritable` | 34 / 0 | none |
+| `verifyCallableProperty` | 0 / 34 | `expr-logical-value-family` (l.228) |
+| `verifyAccessorProperty` | 0 / 34 | `param-type-unresolved(desc)` |
+| `verifyEqualTo` | 0 / 34 | `param-dynamic-carrier-diverges-from-legacy` on `value` (28); `move-only[dyn]` on `obj[name]` (6, l.388) |
+| `verifyNotWritable` | 31 / 3 | `move-only[dyn]` on `name` (2); `param-dynamic-carrier-diverges-from-legacy` on `obj` (1) |
+| `verifyWritable` | 27 / 7 | `move-only[dyn]` on `name` (7) |
+| `verifyPrimordialCallableProperty` | 0 / 34 | `param-dynamic-carrier-diverges-from-legacy` on `options` |
+| `verifyPrimordialAccessorProperty` | 0 / 34 | `param-dynamic-carrier-diverges-from-legacy` on `desc` |
+| `verifyConfigurable`, `verifyNotConfigurable` | 33 / 1 | `move-only[dyn]` on `name` |
+| `<module-init>` | 0 / 34 | `expr-ident-not-in-scope(Function)` ×4 (l.31–34) and `expr-ident-not-in-scope(verifyProperty)` (l.469 `var verifyPrimordialProperty = verifyProperty`). Lines 27–30 and 35 do not refuse. |
+
+No post-claim errors in the baseline. R9 (`call-graph-closure`) does not occur in the sample.
+
+### Chains, per unit
+
+**`verifyProperty`: longer than 6.** Exploratory end: from-ast fails.
+
+| step | refusal | construct (line) |
+| --- | --- | --- |
+| 1 | `expr-binary-operand-families` | `desc.enumerable !== isEnumerable(obj, name)` (106) |
+| 2 | `move-only[dyn]` | `assert.notSameValue(desc, null, …)` (68) |
+| 3 | `move-only[concrete]` | `names[i] === "value"` and its five siblings (83–) |
+| 4 | `move-only[concrete]` | `label + "… should be " + String(desc.value)` (97–) |
+| 5 | `move-only[concrete]` | `desc.enumerable !== undefined` and the siblings (104–) |
+| 6 | `move-only[dyn]` | `__join(failures, '; ')` (128) |
+| expl. | `external-call` | `__join(failures, '; ')`, the only external callee |
+| expl. | from-ast | `empty array 'failures' escapes before its element type is closed` (`var failures = []`, l.93, passed to `__push` / `__join`) |
+
+The exploratory run admitted 25 distinct `move-only` sites in six classes, then the `__join` call edge.
+
+**`verifyCallableProperty`: longer than 6.** Exploratory end: from-ast fails.
+
+| step | refusal | construct (line) |
+| --- | --- | --- |
+| 1 | `expr-logical-value-family` | `options && options.verifyProperty \|\| verifyProperty` (228) |
+| 2 | `expr-ident-not-in-scope` | `verifyProperty` as a value (228) |
+| 3 | `expr-local-call-target` | `propertyVerifier(…)` (249, 263, 275) |
+| 4 | `move-only[dyn]` | the same logical expression (228) |
+| 5 | `move-only[concrete]` | `desc = { writable: true, … }` (239) |
+| 6 | `move-only[concrete]` | `desc.value = value` (246) |
+| expl. | `external-call` | the three `propertyVerifier(…)` calls |
+| expl. | from-ast | `identifier "verifyProperty" is not in scope in verifyCallableProperty`: a top-level function used as a value has no lowering |
+
+**`verifyAccessorProperty`: longer than 6.** Not run to from-ast.
+
+| step | refusal | construct (line) |
+| --- | --- | --- |
+| 1 | `param-type-unresolved(desc)` | JSDoc `{object}` plus nested `@param [desc.*]` tags (see R4) |
+| 2 | `expr-logical-value-family` | `checkGet \|\| checkSet` (308), then l.312 |
+| 3 | `expr-ident-not-in-scope` | `verifyProperty` as a value (312) |
+| 4 | `expr-ident-not-in-scope` | `verifyCallableProperty` as a value (313) |
+| 5 | `expr-local-call-target` | `callabilityVerifier(…)`, `propertyVerifier(…)` |
+| 6 | `objectlit-empty` | the `{}` argument of `callabilityVerifier(originalDesc, "get", …, {}, …)` (347) |
+
+**`verifyEqualTo`: 1 step, then the signature parity check (S4).**
+
+| step | refusal | construct |
+| --- | --- | --- |
+| 1 | `param-dynamic-carrier-diverges-from-legacy` | `value`: legacy slot `f64` (28 files) |
+| end | post-claim | `function typeIdx parity mismatch … keeping legacy body`: the IR signature is all-externref, legacy's has `f64` for `value` (28/28) |
+
+In the 6 files where `value` is externref, the only refusal is `move-only[dyn]` on `obj[name]` (l.388). Once that is admitted, the unit is claimed and builds (6/6). The `move-only` scan refuses something from-ast can lower.
+
+**`verifyNotWritable` (3 legacy files):**
+
+- `name` (2 files): `move-only[dyn]` on `name`, then claimed and built.
+- `obj` (`15.2.3.10-3-8.js`, legacy slot `ref $__Date`): `param-dynamic-carrier-diverges-from-legacy`, then `move-only[dyn]` on `verifyProp` (l.411), then post-claim parity mismatch.
+
+**`verifyWritable` (7) and `verifyConfigurable` / `verifyNotConfigurable` (1):** `move-only[dyn]` on `name`, then claimed and built.
+
+**`verifyPrimordialCallableProperty`: longer than 6.**
+
+| step | refusal | construct (line) |
+| --- | --- | --- |
+| 1 | `param-dynamic-carrier-diverges-from-legacy` | `options`: legacy slot `ref_null $__anon_1` |
+| 2 | `vardecl-module-binding-alias` | `var resolvedOptions = { verifyProperty: … : verifyPrimordialProperty }` (479) |
+| 3 | `expr-module-value-conditional-mismatch` | `options && … !== undefined ? options.verifyProperty : verifyPrimordialProperty` |
+| 4 | `move-only[concrete]` | the `resolvedOptions` object literal |
+| 5 | `move-only[concrete]` | `options.label !== undefined` (484) |
+| 6 | `move-only[stmt]` | `return verifyCallableProperty(…)` (487). Still refused after every expression-level `move-only` and external call was admitted; the callee is a legacy unit. |
+
+**`verifyPrimordialAccessorProperty`: longer than 6.** The same shape:
+
+1. `desc` diverges (`ref $__anon_2`);
+2. `options` diverges;
+3. `vardecl-module-binding-alias` (498);
+4. `expr-module-value-conditional-mismatch`;
+5. `verifyPrimordialCallableProperty` as a value;
+6. `move-only[concrete]` on the object literal.
+
+It then ends at `move-only[stmt]` `return verifyAccessorProperty(…)` (509).
+
+**`<module-init>` (harness part): 2 steps, then from-ast fails.**
+
+| step | refusal | construct (line) |
+| --- | --- | --- |
+| 1 | `expr-ident-not-in-scope(Function)` | `Function.prototype.call.bind(…)` (31–34) |
+| 2 | `expr-ident-not-in-scope(verifyProperty)` | `var verifyPrimordialProperty = verifyProperty` (469) |
+| end | from-ast | `identifier "Function" is not in scope in <module-init>` (synthetic harness-only file) |
+
+In the 34 real files, the test bodies keep `<module-init>` legacy after these steps: `Object`, `Object.defineProperty`, `String`, `Test262Error`, closures and IIFEs.
+
+### R4: `verifyAccessorProperty(desc)`
+
+This is not a lattice `union`. Measured:
+
+- The TypeMap entry is `{"kind":"dynamic"}`.
+- `effectiveIrParamTypeNode` returns a `JSDocTypeLiteral`. TypeScript builds it from `@param {object} desc` plus the nested `@param [desc.enumerable]`, `[desc.configurable]`, `[desc.get]`, `[desc.set]` tags.
+- `resolveParamType` accepts only a `TypeLiteral`, a `TypeReference` or an `ArrayType`, so the result is `null`.
+- `jsDocParamLowersAsExternref` answers `false`: legacy registers `desc` as `ref $__anon_2`, a struct built from that JSDoc literal.
+- The divergence probe answers `true`.
+
+So R4 is the same signature problem as R5–R8. The only difference is that the JSDoc type literal is not recognised. S3's premise ("a union of object shapes") is wrong.
+
+### R5–R8: legacy slots and where they come from
+
+| parameter | legacy slot (files) | origin |
+| --- | --- | --- |
+| `verifyEqualTo(value)` | `f64` (28), externref (6) | All 28 `f64` files have **no call site** of `verifyEqualTo`. The synthetic harness-only file gets `f64` too. So this is not call-site inference, and where the `f64` comes from was not traced. The 6 externref files each call it from the test body with a call result as `value`. |
+| `verifyPrimordialCallableProperty(options)` | `ref_null $__anon_1` (34) | `@type {typeof verifyCallableProperty}`: legacy lowers the JSDoc object type of `options`. No call site in any sample file. |
+| `verifyPrimordialAccessorProperty(desc)` (and `options`) | `ref $__anon_2` (34) | `@type {typeof verifyAccessorProperty}`, the same mechanism. No call site. |
+| `verifyNotWritable(obj)` | `ref $__Date` (1) | The test body calls it with a `new Date(0)` var. |
+| `verifyAccessorProperty(desc)` | `ref $__anon_2` (34) | Its own JSDoc literal. Its only caller is `verifyPrimordialAccessorProperty`. |
+
+`fnctor=false` everywhere: no fnctor-instance slot is involved.
+
+### Every caller claimed (Option A vs B)
+
+Caller units are counted as claimed if they were IR in the baseline, or are harness units.
+
+| function | files with every caller claimed / 34 | of which: no caller at all |
+| --- | --- | --- |
+| `verifyEqualTo` | 28 | 28 |
+| `verifyNotWritable` | 31 | 31 |
+| `verifyPrimordialCallableProperty` | 34 | 34 |
+| `verifyPrimordialAccessorProperty` | 34 | 34 |
+| `verifyAccessorProperty` | 34 | 0 (its only caller is the harness's `verifyPrimordialAccessorProperty`) |
+
+Every file where a test-body caller exists (6 for `verifyEqualTo`, 3 for `verifyNotWritable`) has that caller in a legacy `<module-init>`.
+
+So Option B's condition holds in every file where the function is uncalled, or called only from the harness. There, the legacy signature is a default or JSDoc artifact with no caller to stay compatible with. Where a test body calls the function, B needs `<module-init>` to be IR first.
+
+### Label overlap (census 2026-11-11, no re-run)
+
+The census attributes `expr-ident-not-in-scope(Function)` to `<module-init>` without the harness label, but it is lines 31–34 of this harness, present in all 899 files. It is counted as harness here.
+
+- Files whose only legacy reasons are `harness:propertyHelper.js` plus that `Function` label: **12**.
+- The same plus only the #7338/#7339 labels (`expr-ident-not-in-scope(Object)`, `expr-object-define-property-target`, `expr-module-scalar-method(.hasOwnProperty)`, `expr-array-method-not-lowerable(.hasOwnProperty)`): **229**. This is the real yield once those land, against the 631 of the greedy step.
+- Top 15 other co-reasons in the 899:
+
+| count | reason |
+| --- | --- |
+| 175 | `vardecl-module-storage-unrepresentable[empty-array]` |
+| 154 | `vardecl-let-closure` |
+| 89 | `body-exprstmt-other(expr-call-callee-nonident)[IIFE]` |
+| 83 | `harness:assert.js` |
+| 72 | `harness:fnGlobalObject.js` |
+| 72 | `expr-call-callee-nonident[Function()]` |
+| 50 | `harness:sta.js` |
+| 43 | `move-only[concrete] {fn}` |
+| 39 | `objectlit-ordinary-to-primitive-mixed` |
+| 33 | `expr-new-module-binding-callee` |
+| 33 | `expr-call-callee-nonident[IIFE]` |
+| 32 | `expr-ident-not-in-scope(global)` |
+| 32 | `vardecl-module-storage-unrepresentable[object-literal]` |
+| 31 | `expr-local-call-target` |
+| 28 | `vardecl-module-storage-unrepresentable[array-literal]` |
+
+- The census also shows two sub-populations the random sample did not hit: 83 files with `late-preparation-unsupported` (runtime-eval boundary) and 39 with `constructor-resolution-unsupported`. Two of them were compiled on `68b95c2869`. There every harness function refuses differently: `expr-new-ctor-unknown(Test262Error)`, and `expr-ident-not-in-scope(assert)` in `verifyProperty`. Those files depend on `assert.js` / `sta.js` first.
+
+### What this means for S1–S4
+
+- **S1 is smaller than planned.** R1 and R2 are gone on main. What remains:
+  - the call-bind aliases at lines 31–34;
+  - `__join` / `__push` with an empty array (`verifyProperty`'s from-ast end);
+  - `var verifyPrimordialProperty = verifyProperty` (l.469).
+
+  From-ast must lower `Function.prototype.call.bind(…)` too, not just the selector.
+- **A new cross-cutting slice is needed: "a top-level function used as a value".** It shows up in four units: `verifyCallableProperty`'s and `verifyAccessorProperty`'s logical defaults, `<module-init>` l.469, and the `resolvedOptions` object literals. The calls through the resulting locals (`expr-local-call-target`) belong to the same slice. It underlies S2. S2 alone (extending `dynamicLogicalValueOperands`) unblocks one step of one unit.
+- **The `move-only` scan is the longest tail.** `verifyProperty` needs 25 sites in six classes:
+  - strict compare of a dynamic member read with a literal or `undefined`;
+  - string concatenation with `String(dynamic)`;
+  - a dynamic argument to `assert.*`.
+
+  In `verifyEqualTo`, `verifyWritable`, `verifyNotWritable` and `verifyConfigurable`, admitting `move-only[dyn]` on a parameter or `obj[name]` gave a unit that from-ast built. So the scan is stricter than the lowering there. This needs its own issue; it is not in S1–S4.
+- **S3 needs re-scoping.** It is not a union. It is a JSDoc type literal (`{object}` plus nested property tags) over a legacy struct slot. That makes it the same signature-ownership question as S4, plus recognising `JSDocTypeLiteral` as "object".
+- **S4: the numbers favour Option B.** In the sampled files the divergent slots are not call-site inference:
+  - for the Primordial pair and `verifyAccessorProperty`, they are the JSDoc `@type {typeof …}` / `{object}` literals;
+  - for `verifyEqualTo` without a call site, they are a default `f64`.
+
+  In those files no caller exists outside the harness. Option A would have to adopt struct slots (`$__anon_1`, `$__anon_2`, `$__Date`) the IR has no body operations for.
+- **Chains longer than three steps:** `verifyProperty`, `verifyCallableProperty`, `verifyAccessorProperty` and both Primordial units. Per the S0 rule, each needs its own follow-up issue, or the slices are re-cut by refusal class (function values; the `move-only` classes) rather than by unit.
+
+### Not measured
+
+- Chains past six steps by single-site stubs. The exploratory runs admitted whole classes at once.
+- `verifyAccessorProperty` and the Primordial units past their last select refusal; their from-ast outcome is unknown.
+- Where legacy's `f64` for an uncalled `verifyEqualTo(value)` comes from.
+- The 83-file runtime-eval and 39-file `Test262Error` sub-populations beyond two files.
+- Verdicts (pass/fail) of any stubbed build.
+- The default (JavaScript-environment) target.
+
 ## Notes
 
 - 2026-11-13: filed from the 2026-11-11 census. The census file does not keep
