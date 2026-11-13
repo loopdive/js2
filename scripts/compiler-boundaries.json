@@ -13265,6 +13265,14 @@
       "nextBoundary": "Frontend source-shape certifier for the #7335 dynamic-home open object (a script `var o = {}` on the dynamic module slot); move with the empty-object-literal arms when the frontend inventory is split from ir-core."
     },
     {
+      "path": "src/ir/dynamic-home-uses.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7340",
+      "nextBoundary": "Frontend uses scan shared by the #7335 open object and the #7340 primitive wrapper on the dynamic module home; move with dynamic-home-open-object.ts when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/ir/empty-object-literal.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

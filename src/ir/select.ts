@@ -893,8 +893,6 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * externref slot with no widened struct? Absent → no open-carrier literal.
    */
   readonly isOpenObjectBinding?: (decl: ts.VariableDeclaration) => boolean;
-  /** (#7340) The lane runs #7280's dynamic-home carrier arms (raw standalone). Absent → it does not. */
-  readonly dynamicHomeCarrierLane?: boolean;
   /**
    * The backend that builds the selection (`IrBackendTargetProfile.backend`):
    * a string method is claimed only where its plan exists. Absent: WasmGC.

@@ -13,6 +13,7 @@
  */
 
 import { ts } from "../ts-api.js";
+import { referencesNamed } from "./dynamic-home-uses.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 
 export interface EmptyObjectLiteralBinding {
@@ -58,17 +59,7 @@ export function emptyObjectLiteralBinding(
   const decl = expr.parent;
   if (owner === undefined || !ts.isVariableDeclaration(decl) || decl.initializer !== expr) return undefined;
   if (decl.type !== undefined || !ts.isIdentifier(decl.name)) return undefined;
-  const name = decl.name;
-  const references: ts.Identifier[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node)) {
-      if (node.text === name.text && node !== name) references.push(node);
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(owner, visit);
-  return { literal: expr, decl, name, references };
+  return { literal: expr, decl, name: decl.name, references: referencesNamed(decl.name, owner) };
 }
 
 /**

@@ -158,16 +158,6 @@ export function undefinedCompareOperandAdmissible(other: OperandFamily): boolean
   return other !== "undefined";
 }
 
-/**
- * (#4208 S4, #7340) The argument of `new String` / `new Number` / `new Boolean`
- * (`wrapper-construction.ts`), judged by the selector over the family it
- * proves and by from-ast over the family it lowered: the wrapper's own
- * primitive family.
- */
-export function wrapperArgumentAdmissible(own: "string" | "number" | "boolean", family: OperandFamily): boolean {
-  return family === own;
-}
-
 /** The dynamic carrier boxes exactly these families (`boxConcreteToDynamic`). */
 export function boxableIntoDynamic(family: OperandFamily): boolean {
   return family === "number" || family === "boolean" || family === "string" || family === "dynamic";

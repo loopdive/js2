@@ -19,12 +19,19 @@
 
 import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
 import { hasDynamicScope, isStoreTarget, outermostParenthesized, stripParens } from "../shared/binding-writes.js";
-import { sourceRunsDynamicCode, sourceWritesMemberNamed } from "../shared/intrinsic-prototype-writes.js";
+import {
+  sourceMayPatchPrototype,
+  sourceNamesReflectiveRoute,
+  sourceRunsDynamicCode,
+  sourceWritesMemberNamed,
+} from "../shared/intrinsic-prototype-writes.js";
 import { ts } from "../ts-api.js";
-import { type OperandFamily, wrapperArgumentAdmissible } from "./analysis/operand-admissibility.js";
+import type { OperandFamily } from "./analysis/operand-admissibility.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
+import { isServedUse, referencesNamed, type ServedUsePolicy } from "./dynamic-home-uses.js";
 import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
+import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 import type { IrSelectionOptions } from "./select.js";
 
 /** One constructor: its name and the primitive family it wraps. */
@@ -77,15 +84,13 @@ export function wrapperConstruction(
   return { expr, row, argument: single };
 }
 
-/** The construction's argument, when `wrapperArgumentAdmissible` admits it under the selector's `familyOf`. */
+/** The construction's argument, when the selector's `familyOf` proves it the row's own family. */
 export function admissibleArgument(
   construction: WrapperConstruction | undefined,
   familyOf: (argument: ts.Expression) => OperandFamily,
 ): ts.Expression | undefined {
   const argument = construction?.argument;
-  return argument !== undefined && wrapperArgumentAdmissible(construction!.row.family, familyOf(argument))
-    ? argument
-    : undefined;
+  return argument !== undefined && familyOf(argument) === construction!.row.family ? argument : undefined;
 }
 
 /** The IR hint the argument is lowered under: its row's own representation. */
@@ -140,7 +145,7 @@ export function storedWrapperConstruction(
 }
 
 /** The selector's lane options a store-position construction needs. */
-type WrapperStoreLane = Pick<IrSelectionOptions, "dynamicHomeCarrierLane" | "supportsBackendCapability"> | undefined;
+type WrapperStoreLane = Pick<IrSelectionOptions, "isOpenObjectBinding" | "supportsBackendCapability"> | undefined;
 
 /** The selector's module-binding resolver: the store target's slot kind, and the constructor's lib-only identity. */
 interface WrapperStoreResolver {
@@ -152,10 +157,10 @@ interface WrapperStoreResolver {
  * The selector's refusal of a store-position construction, or `undefined` to
  * admit it; `argumentFamily` is the selector's proven family of the argument.
  * The argument itself still has to be a Phase-1 expression. Asks, in order:
- * the lane (#7280's dynamic-home carrier arms run there — a
- * String wrapper in a carrier is read through the native member read, which
- * WASI lacks, #7177), the store target's slot, the constructor's identity,
- * the argument rule, and every use of the stored-to name.
+ * the lane (#7280's dynamic-home carrier arms run where the lane supplies
+ * `isOpenObjectBinding`; a carrier is read through the native member read,
+ * which WASI lacks, #7177), the store target's slot, the realm, the argument
+ * rule, and every use of the stored-to name.
  */
 export function wrapperStoreRefusal(
   stored: StoredWrapper,
@@ -165,88 +170,100 @@ export function wrapperStoreRefusal(
 ): string | undefined {
   const supports = lane?.supportsBackendCapability;
   if (
-    lane?.dynamicHomeCarrierLane !== true ||
+    lane?.isOpenObjectBinding === undefined ||
     supports?.("primitive-wrapper-to-primitive") !== true ||
     supports?.("native-dynamic-member-read") !== true
   ) {
     return "expr-new-wrapper-lane";
   }
   if (resolver === null || resolver(stored.target)?.valueKind.kind !== "dynamic") return "expr-new-wrapper-home";
-  const callee = stored.expr.expression as ts.Identifier;
-  if (!realmConstructorUnrebound(callee, (node) => resolver.isLibOnlyBinding(node))) return "expr-new-wrapper-realm";
+  if (!realmIsUnpatched(stored, (node) => resolver.isLibOnlyBinding(node))) return "expr-new-wrapper-realm";
   if (admissibleArgument(stored, argumentFamily) === undefined) return "expr-new-wrapper-argument";
-  return everyUseIsServed(stored.target) ? undefined : "expr-new-wrapper-use";
+  return everyUseIsServed(stored) ? undefined : "expr-new-wrapper-use";
 }
 
 /**
- * The constructor is the realm's, in every way the program could rebind it:
- * only lib declarations and none in the file (a script's `function String`,
- * a parameter), never written (`String = f`, `this.String = f`), and no
- * `eval`, `Function` or `with` that could do either unseen.
+ * The constructor and the wrapper's prototype chain are the realm's, in every
+ * way the program could change them: the constructor has only lib
+ * declarations and none in the file (a script's `function String`, a
+ * parameter) and is never written (`String = f`, `this.String = f`); neither
+ * its prototype nor `Object.prototype` is patched, and no reflective route
+ * reaches a prototype; no `eval`, `Function` or `with` could do any of it
+ * unseen.
  */
-function realmConstructorUnrebound(callee: ts.Identifier, isLibOnlyBinding: (node: ts.Identifier) => boolean): boolean {
+function realmIsUnpatched(stored: StoredWrapper, isLibOnlyBinding: (node: ts.Identifier) => boolean): boolean {
+  const callee = stored.expr.expression as ts.Identifier;
   const file = callee.getSourceFile();
   return (
     isUnshadowedLibBinding(callee, isLibOnlyBinding) &&
     !sourceWritesMemberNamed(file, callee.text) &&
+    !sourceMayPatchPrototype(file, stored.row.name) &&
+    !sourceMayPatchPrototype(file, "Object") &&
+    !sourceNamesReflectiveRoute(file) &&
     !sourceRunsDynamicCode(file) &&
     !hasDynamicScope(file)
   );
 }
 
 /**
- * Every reference to the stored-to name, anywhere in the file, is a use the
- * dynamic arms answer correctly for a wrapper (measured against node,
- * `tests/issue-7340.test.ts`). Name-based: a same-named binding elsewhere is
- * judged too, which can only refuse more.
+ * Every reference to the stored-to name, anywhere in the file, comes after
+ * the construction and is served by {@link wrapperPolicy} (measured against
+ * node, `tests/issue-7340.test.ts`). Name-based (`referencesNamed`): a
+ * same-named binding elsewhere is judged too, which can only refuse more. A
+ * use before the store (`var r = w + 1; var w = new Number(5)`) reads
+ * `undefined`, which the claimed lowering does not expect.
  */
-function everyUseIsServed(target: ts.Identifier): boolean {
-  let served = true;
-  const visit = (node: ts.Node): void => {
-    if (!served) return;
-    if (ts.isIdentifier(node)) {
-      if (node.text === target.text && !isNameNotReference(node)) served = isServedUse(node);
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(target.getSourceFile());
-  return served;
-}
-
-/** A property name or a declaration's own name: not a read of the binding. */
-function isNameNotReference(node: ts.Identifier): boolean {
-  const parent = node.parent;
-  return (
-    (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
-    (ts.isPropertyAssignment(parent) && parent.name === node) ||
-    (ts.isVariableDeclaration(parent) && parent.name === node)
+function everyUseIsServed(stored: StoredWrapper): boolean {
+  const policy = wrapperPolicy(stored);
+  return referencesNamed(stored.target, stored.target.getSourceFile()).every(
+    (reference) => isDeclarationName(reference) || (reference.pos >= stored.expr.end && isServedUse(reference, policy)),
   );
 }
 
+/** `var w` (another declaration of the name): a store at most, never a read. */
+function isDeclarationName(reference: ts.Identifier): boolean {
+  return ts.isVariableDeclaration(reference.parent) && reference.parent.name === reference;
+}
+
 /**
- * One reference, judged on its outermost parenthesized form. Served: a store
- * into the name; an operand of a binary operator other than a loose
- * comparison with `null`; an operand of a prefix operator or `typeof`; a
- * condition; the receiver of a named member read that is not called and whose
- * value is not stored into a binding. Not served — each either answers wrong,
- * or is claimed and then withdrawn, or hands the object to code no scan sees
- * (measured, `tests/issue-7340.test.ts`): an element read (`s[0]` of a String
- * wrapper answers wrong), `void`, a loose `== null`, a `switch` discriminant,
- * an alias, a call argument, a return value, a literal element, a template
- * substitution, and a `for…in` / `in` / `instanceof` / `delete` operand.
+ * The wrapper's allow-list for the shared scan (`isServedUse`). Served: a
+ * store into the name; an operand of a binary operator other than a
+ * relational one, except a loose comparison with `null`; a Number or Boolean
+ * wrapper's relational operand against a numeric literal; an operand of a
+ * prefix operator or `typeof`; a condition; and a plain member store. Not served — each either answers wrong, or is claimed and then
+ * withdrawn, or hands the object to code no scan sees (measured,
+ * `tests/issue-7340.test.ts`):
+ *   - every member read. The dynamic member read answers only own properties
+ *     the program stored: not a String wrapper's own `length`, not a member
+ *     inherited from `String.prototype`, `Number.prototype`,
+ *     `Boolean.prototype` or `Object.prototype`; and the realm catalog lists
+ *     no keys for the first three to screen by;
+ *   - any other relational operand. The dynamic relational (main's #2949
+ *     S5.P producer, numeric-abstract) compares as strings only when both
+ *     operands are strings before ToPrimitive, and its ToNumber does not
+ *     convert a string: `new String("a") < "b"` and `new Number(1) < "9"`
+ *     both answer wrong;
+ *   - an element read, `void`, a loose `== null`, a `switch` discriminant, an
+ *     alias, a call argument, a return value, a literal element, a template
+ *     substitution, and a `for…in` / `in` / `instanceof` / `delete` operand.
  */
-function isServedUse(reference: ts.Identifier): boolean {
-  const use = outermostParenthesized(reference);
-  const parent = use.parent;
-  if (isStoreTarget(use)) return true;
-  if (ts.isBinaryExpression(parent))
-    return SERVED_BINARY_OPERATORS.has(parent.operatorToken.kind) && !isLooseNullTest(parent);
-  if (ts.isPrefixUnaryExpression(parent)) return true;
-  if (ts.isTypeOfExpression(parent)) return true;
-  if (isConditionOf(use, parent)) return true;
-  if (ts.isPropertyAccessExpression(parent) && parent.expression === use) return isServedMemberRead(parent);
-  return false;
+function wrapperPolicy(stored: StoredWrapper): ServedUsePolicy {
+  const numericRelational = stored.row.family !== "string";
+  return {
+    unreadableKeys: OBJECT_PROTOTYPE_KEYS,
+    servesMemberCall: () => false,
+    servesMemberRead: () => false,
+    servesReference: (use) => {
+      const parent = use.parent;
+      if (isStoreTarget(use)) return true;
+      if (ts.isBinaryExpression(parent)) {
+        const op = parent.operatorToken.kind;
+        if (RELATIONAL_OPERATORS.has(op)) return numericRelational && againstNumericLiteral(use, parent);
+        return SERVED_BINARY_OPERATORS.has(op) && !isLooseNullTest(parent);
+      }
+      return ts.isPrefixUnaryExpression(parent) || ts.isTypeOfExpression(parent) || isConditionOf(use, parent);
+    },
+  };
 }
 
 const SERVED_BINARY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
@@ -255,10 +272,6 @@ const SERVED_BINARY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.AsteriskToken,
   ts.SyntaxKind.SlashToken,
   ts.SyntaxKind.PercentToken,
-  ts.SyntaxKind.LessThanToken,
-  ts.SyntaxKind.LessThanEqualsToken,
-  ts.SyntaxKind.GreaterThanToken,
-  ts.SyntaxKind.GreaterThanEqualsToken,
   ts.SyntaxKind.AmpersandToken,
   ts.SyntaxKind.BarToken,
   ts.SyntaxKind.CaretToken,
@@ -270,6 +283,19 @@ const SERVED_BINARY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.EqualsEqualsEqualsToken,
   ts.SyntaxKind.ExclamationEqualsEqualsToken,
 ]);
+
+const RELATIONAL_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.LessThanToken,
+  ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanToken,
+  ts.SyntaxKind.GreaterThanEqualsToken,
+]);
+
+/** The other operand of `comparison` is a numeric literal, so the numeric-abstract compare is exact. */
+function againstNumericLiteral(use: ts.Expression, comparison: ts.BinaryExpression): boolean {
+  const other = stripParens(comparison.left === use ? comparison.right : comparison.left);
+  return ts.isNumericLiteral(other);
+}
 
 /** `w == null` / `w != null`: from-ast folds the `null` operand before the carrier compare (#7212's case). */
 function isLooseNullTest(comparison: ts.BinaryExpression): boolean {
@@ -285,22 +311,6 @@ function isConditionOf(use: ts.Expression, parent: ts.Node): boolean {
       parent.expression === use) ||
     (ts.isForStatement(parent) && parent.condition === use) ||
     (ts.isConditionalExpression(parent) && parent.condition === use)
-  );
-}
-
-/** A member read of the wrapper that is not a call's callee, a `delete` operand, or a binding's stored value. */
-function isServedMemberRead(member: ts.PropertyAccessExpression): boolean {
-  const node = outermostParenthesized(member);
-  const consumer = node.parent;
-  if (ts.isCallExpression(consumer) && consumer.expression === node) return false;
-  if (ts.isTaggedTemplateExpression(consumer) || ts.isDeleteExpression(consumer)) return false;
-  if (isStoreTarget(node)) return true;
-  if (ts.isVariableDeclaration(consumer) && consumer.initializer === node) return false;
-  return !(
-    ts.isBinaryExpression(consumer) &&
-    consumer.right === node &&
-    consumer.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-    consumer.operatorToken.kind <= ts.SyntaxKind.LastAssignment
   );
 }
 

@@ -7,6 +7,11 @@
 // Now the construction is claimed when every use of the var is one the dynamic
 // arms answer correctly; any other use keeps the unit legacy, refused at select
 // — never claimed and then withdrawn. Each row is checked against node.
+//
+// Programs compile bare, without the test262 harness: with the harness linked
+// in, a wrong String-wrapper `.length` read answered correctly by accident
+// (review of PR #7221), so a harnessed run is no evidence for a claimed row.
+import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 
 import { compile } from "../src/index.js";
@@ -33,8 +38,8 @@ function harnessed(body: string): string {
   return assembleOriginalHarness(source, parseMeta(source) as never).primary.source;
 }
 
-async function compileScript(body: string, target: "standalone" | "wasi" = "standalone"): Promise<Result> {
-  return compile(harnessed(body), scriptOptions(target));
+async function compileScript(source: string, target: "standalone" | "wasi" = "standalone"): Promise<Result> {
+  return compile(source, scriptOptions(target));
 }
 
 /**
@@ -49,7 +54,7 @@ async function compileWithArms(body: string): Promise<Result> {
   vi.resetModules();
   try {
     const { compile: compileDiag } = await import("../src/index.js");
-    return await compileDiag(harnessed(body), scriptOptions("standalone"));
+    return await compileDiag(body, scriptOptions("standalone"));
   } finally {
     flags.forEach((flag, i) => {
       if (previous[i] === undefined) Reflect.deleteProperty(process.env, flag);
@@ -70,50 +75,52 @@ async function runsClean(result: Result): Promise<void> {
   expect(() => (instance.exports.__module_init as () => void)()).not.toThrow();
 }
 
-/** node runs the same body against a throwing `Test262Error`. */
+/** node runs the body in a fresh realm: a row that patches a prototype must not leak into the next. */
 function nodeRunsClean(body: string): void {
-  expect(() => new Function("Test262Error", body)(Error)).not.toThrow();
+  expect(() => runInNewContext(body, {})).not.toThrow();
+}
+
+/** The post-claim errors of `<module-init>`, the unit this lever claims. */
+function moduleInitPostClaimErrors(result: Result) {
+  return (result.irPostClaimErrors ?? []).filter((error) => error.func === "<module-init>");
 }
 
 const ROWS: Record<string, { readonly make: string; readonly checks: string }> = {
   String: {
     make: 'new String("abc")',
     checks: `
-      if (typeof w !== "object") throw new Test262Error("typeof " + typeof w);
-      if (w !== w) throw new Test262Error("identity");
-      if (w === "abc") throw new Test262Error("=== primitive");
-      if (w != "abc") throw new Test262Error("!= " + w);
-      if (!(w == "abc")) throw new Test262Error("==");
-      if (w + "d" !== "abcd") throw new Test262Error("+ " + (w + "d"));
-      if (w.length !== 3) throw new Test262Error("length");
-      if (w.constructor !== String) throw new Test262Error("constructor");
-      if (!w) throw new Test262Error("truthy");
-      if (w - 1 === w - 1) throw new Test262Error("NaN");`,
+      if (typeof w !== "object") throw "typeof";
+      if (w !== w) throw "identity";
+      if (w === "abc") throw "=== primitive";
+      if (w != "abc") throw "!=";
+      if (!(w == "abc")) throw "==";
+      if (w + "d" !== "abcd") throw "+";
+      if (!w) throw "truthy";
+      if (w - 1 === w - 1) throw "NaN";`,
   },
   Number: {
     make: "new Number(1)",
     checks: `
-      if (typeof w !== "object") throw new Test262Error("typeof");
-      if (w === 1) throw new Test262Error("=== primitive");
-      if (w != 1) throw new Test262Error("!=");
-      if (w + 1 !== 2) throw new Test262Error("+");
-      if (w * 3 !== 3 || -w !== -1 || w % 2 !== 1 || (w & 3) !== 1) throw new Test262Error("arith");
-      if (!(w < 2) || !(w >= 1)) throw new Test262Error("relational");
-      if (w.constructor !== Number) throw new Test262Error("constructor");
+      if (typeof w !== "object") throw "typeof";
+      if (w === 1) throw "=== primitive";
+      if (w != 1) throw "!=";
+      if (w + 1 !== 2) throw "+";
+      if (w * 3 !== 3 || -w !== -1 || w % 2 !== 1 || (w & 3) !== 1) throw "arith";
+      if (!(w < 2) || !(w >= 1)) throw "relational";
       w++;
-      if (w !== 2) throw new Test262Error("w++ is the number 2: " + w);`,
+      if (w !== 2) throw "w++ is the number 2";`,
   },
   "Boolean(false)": {
     make: "new Boolean(false)",
     checks: `
-      if (!w) throw new Test262Error("a Boolean(false) object is truthy");
+      if (!w) throw "a Boolean(false) object is truthy";
       var r = 0; if (w) r = 1;
-      if (r !== 1) throw new Test262Error("if");
-      if (typeof w !== "object") throw new Test262Error("typeof");
-      if (w != false) throw new Test262Error("!= false");
-      if (w + 1 !== 1) throw new Test262Error("+");
+      if (r !== 1) throw "if";
+      if (typeof w !== "object") throw "typeof";
+      if (w != false) throw "!= false";
+      if (w + 1 !== 1) throw "+";
       w--;
-      if (w !== -1) throw new Test262Error("w-- " + w);`,
+      if (w !== -1) throw "w--";`,
   },
 };
 
@@ -122,19 +129,33 @@ describe("#7340 — a stored wrapper is claimed and answers as node", () => {
     const body = `var w = ${make};${checks}`;
     it(`node agrees: ${name}`, () => nodeRunsClean(body));
 
-    it(`standalone: ${name} stored in a script var lowers on the IR and passes`, async () => {
-      const result = await compileScript(body);
-      expect(moduleInit(result)?.irBodyEmitted).toBe(true);
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-      await runsClean(result);
-    }, 60_000);
+    for (const [shape, source] of [
+      ["bare", body],
+      ["harnessed", harnessed(body)],
+    ] as const) {
+      it(`standalone, ${shape}: ${name} stored in a script var lowers on the IR and passes`, async () => {
+        const result = await compileScript(source);
+        expect(moduleInit(result)?.irBodyEmitted).toBe(true);
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
+        await runsClean(result);
+      }, 60_000);
+    }
   }
 
   it("standalone: a plain `=` store after `var w;` lowers on the IR", async () => {
-    const body = `var w; w = new Number(5); if (w - 5 !== 0) throw new Test262Error("x");`;
+    const body = `var w; w = new Number(5); if (w - 5 !== 0) throw "x";`;
     nodeRunsClean(body);
     const result = await compileScript(body);
     expect(moduleInit(result)?.irBodyEmitted).toBe(true);
+    await runsClean(result);
+  }, 60_000);
+
+  it("standalone: a top-level function reads the var through an operator", async () => {
+    const body = `var w = new Number(2); function f() { return w * 3; } if (f() !== 6) throw "x";`;
+    nodeRunsClean(body);
+    const result = await compileScript(body);
+    expect(moduleInit(result)?.irBodyEmitted).toBe(true);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
     await runsClean(result);
   }, 60_000);
 });
@@ -142,90 +163,130 @@ describe("#7340 — a stored wrapper is claimed and answers as node", () => {
 describe("#7340 — every other position is refused at select, never withdrawn", () => {
   // Each row: the reason the store is refused with, and a body whose only
   // difference from an admitted one is that position. Each still passes (legacy).
-  // `legacyAsNode: false`: legacy's own answer differs from node's, as on main (a
-  // source `function String` is not the constructor legacy calls) — the row
-  // pins only that the IR refuses.
-  const rows: Record<string, { readonly reason: string; readonly body: string; readonly legacyAsNode?: boolean }> = {
+  // `runsClean: false`: the program fails the same way on main, so the row pins
+  // only that this lever refuses `<module-init>`. Either legacy's own answer
+  // differs from node's (a source `function String` is not the constructor
+  // legacy calls), or a top-level function main already claims on its own
+  // answers wrong (`f` reads the dynamic var; recorded in the issue).
+  const rows: Record<string, { readonly reason: string; readonly body: string; readonly runsClean?: boolean }> = {
+    "a String wrapper's own `length` (answered wrong)": {
+      reason: "expr-new-wrapper-use",
+      body: `var s = new String("abc"); if (s.length !== 3) throw "x";`,
+    },
+    "an inherited method read (answered wrong)": {
+      reason: "expr-new-wrapper-use",
+      body: `var s = new String("abc"); if (typeof s.valueOf !== "function") throw "x";`,
+    },
+    "an Object.prototype method read (answered wrong)": {
+      reason: "expr-new-wrapper-use",
+      body: `var b = new Boolean(true); if (typeof b.hasOwnProperty !== "function") throw "x";`,
+    },
+    "a missing member read": {
+      reason: "expr-new-wrapper-use",
+      body: `var n = new Number(1); if (n.zz !== undefined) throw "x";`,
+    },
+    "a Number wrapper's relational operand against a string (answered wrong)": {
+      reason: "expr-new-wrapper-use",
+      body: `var n = new Number(1); if (!(n < "9")) throw "x";`,
+    },
+    "a String wrapper's relational operand (compared numerically)": {
+      reason: "expr-new-wrapper-use",
+      body: `var s = new String("a"); if (!(s < "b")) throw "x";`,
+    },
+    "a String wrapper's relational operand, inside a function": {
+      reason: "expr-new-wrapper-use",
+      body: `var s = new String("10"); function f() { return s < "9"; } if (!f()) throw "x";`,
+      runsClean: false,
+    },
+    "a use before the store (post-claim error)": {
+      reason: "expr-new-wrapper-use",
+      body: `var r = n + 1; var n = new Number(5); if (r === r) throw "x";`,
+    },
+    "a function returning a member value": {
+      reason: "expr-new-wrapper-use",
+      body: `var s = new String("abc"); function f() { return s.length; } if (f() !== 3) throw "x";`,
+      runsClean: false,
+    },
     "element read (answers wrong for a String wrapper)": {
       reason: "expr-new-wrapper-use",
-      body: `var w = new String("abc"); if (w[0] !== "a") throw new Test262Error("x");`,
+      body: `var w = new String("abc"); if (w[0] !== "a") throw "x";`,
     },
     "void operand (withdrawn: undefined compare on f64)": {
       reason: "expr-new-wrapper-use",
-      body: `var w = new Boolean(true); if (void w !== undefined) throw new Test262Error("x");`,
+      body: `var w = new Boolean(true); if (void w !== undefined) throw "x";`,
     },
     "loose == null (withdrawn: bare null)": {
       reason: "expr-new-wrapper-use",
-      body: `var w = new Number(1); if (w == null) throw new Test262Error("x");`,
+      body: `var w = new Number(1); if (w == null) throw "x";`,
     },
     "switch discriminant (withdrawn)": {
       reason: "expr-new-wrapper-use",
-      body: `var w = new Number(1); switch (w) { case 1: throw new Test262Error("x"); }`,
-    },
-    "member value stored into a binding (withdrawn: typed global)": {
-      reason: "expr-new-wrapper-use",
-      body: `var w = new String("abc"); var n = w.length; if (n !== 3) throw new Test262Error("x");`,
+      body: `var w = new Number(1); switch (w) { case 1: throw "x"; }`,
     },
     "method call": {
       reason: "expr-new-wrapper-use",
-      body: `var w = new Number(1); if (w.toString() !== "1") throw new Test262Error("x");`,
+      body: `var w = new Number(1); if (w.toString() !== "1") throw "x";`,
     },
     "call argument": {
       reason: "expr-new-wrapper-use",
-      body: `function f(x) { return x + ""; } var w = new Number(1); if (f(w) !== "1") throw new Test262Error("x");`,
+      body: `function f(x) { return x + ""; } var w = new Number(1); if (f(w) !== "1") throw "x";`,
     },
     alias: {
       reason: "expr-new-wrapper-use",
-      body: `var w = new Number(1); var t = w; if (t - 1 !== 0) throw new Test262Error("x");`,
+      body: `var w = new Number(1); var t = w; if (t - 1 !== 0) throw "x";`,
     },
     "template substitution": {
       reason: "expr-new-wrapper-use",
-      body: 'var w = new Number(1); if (`${w}` !== "1") throw new Test262Error("x");',
+      body: 'var w = new Number(1); if (`${w}` !== "1") throw "x";',
     },
     "for-in, in, instanceof, delete": {
       reason: "expr-new-wrapper-use",
       body: `var w = new String("ab"); var n = 0; for (var k in w) n++;
-        if (n !== 2 || !("length" in w) || !(w instanceof String) || !delete w.x) throw new Test262Error("x");`,
+        if (n !== 2 || !("length" in w) || !(w instanceof String) || !delete w.x) throw "x";`,
     },
     "a user `function String` in the file": {
       reason: "expr-new-wrapper-realm",
-      body: `var w = new String("abc"); if (w.v !== "abc") throw new Test262Error("x"); function String(v) { this.v = v; }`,
-      legacyAsNode: false,
+      body: `var w = new String("abc"); if (w.v !== "abc") throw "x"; function String(v) { this.v = v; }`,
+      runsClean: false,
     },
     "`String` reassigned": {
       reason: "expr-new-wrapper-realm",
-      body: `var keep = String; String = keep; var w = new String("abc"); if (w + "" !== "abc") throw new Test262Error("x");`,
+      body: `var keep = String; String = keep; var w = new String("abc"); if (w + "" !== "abc") throw "x";`,
     },
     "a parameter named `Number` anywhere in the file": {
       reason: "expr-new-wrapper-realm",
-      body: `function g(Number) { return Number; } var w = new Number(1); if (w - 1 !== 0) throw new Test262Error("x");`,
+      body: `function g(Number) { return Number; } var w = new Number(1); if (w - 1 !== 0) throw "x";`,
+    },
+    "`Number.prototype.valueOf` patched": {
+      reason: "expr-new-wrapper-realm",
+      body: `Number.prototype.valueOf = function () { return 7; }; var w = new Number(1); if (w + 1 !== 8) throw "x";`,
     },
     "eval in the file": {
       reason: "expr-new-wrapper-realm",
-      body: `eval("1"); var w = new Number(1); if (w - 1 !== 0) throw new Test262Error("x");`,
+      body: `eval("1"); var w = new Number(1); if (w - 1 !== 0) throw "x";`,
     },
     "an argument of another family (S2)": {
       reason: "expr-new-wrapper-argument",
-      body: `var w = new String(1); if (w + "" !== "1") throw new Test262Error("x");`,
+      body: `var w = new String(1); if (w + "" !== "1") throw "x";`,
     },
     "two arguments": {
       reason: "expr-new-wrapper-argument",
-      body: `var w = new Number(1, 2); if (w - 1 !== 0) throw new Test262Error("x");`,
+      body: `var w = new Number(1, 2); if (w - 1 !== 0) throw "x";`,
     },
     "`new String(null)`": {
       reason: "expr-new-wrapper-argument",
-      body: `var w = new String(null); if (w + "" !== "null") throw new Test262Error("x");`,
+      body: `var w = new String(null); if (w + "" !== "null") throw "x";`,
     },
     "a function-local var": {
       reason: "expr-new-wrapper-home",
-      body: `function f() { var w = new Number(1); return w - 1; } if (f() !== 0) throw new Test262Error("x");`,
+      body: `function f() { var w = new Number(1); return w - 1; } if (f() !== 0) throw "x";`,
     },
   };
 
   // Not a store: the lever does not apply, and the selector keeps main's arm
   // (#7106 pins `expr-new-ctor-unknown` for an operand `new String()`).
   it("a construction outside store position keeps main's refusal", async () => {
-    const body = `var r = [new Number(1)]; if (r[0] - 1 !== 0) throw new Test262Error("x");`;
+    const body = `var r = [new Number(1)]; if (r[0] - 1 !== 0) throw "x";`;
     nodeRunsClean(body);
     const result = await compileWithArms(body);
     const details = (result.irOutcomes ?? []).map((o) => o.detail ?? "").join("\n");
@@ -234,39 +295,41 @@ describe("#7340 — every other position is refused at select, never withdrawn",
     await runsClean(result);
   }, 60_000);
 
-  for (const [name, { reason, body, legacyAsNode = true }] of Object.entries(rows)) {
-    it(`${name}: refused (${reason}) and still passes`, async () => {
-      nodeRunsClean(body);
+  for (const [name, { reason, body, runsClean: clean = true }] of Object.entries(rows)) {
+    it(`${name}: refused (${reason})`, async () => {
+      if (clean) nodeRunsClean(body);
       const result = await compileWithArms(body);
       const refusals = (result.irOutcomes ?? []).filter((o) => !o.irBodyEmitted && o.stage === "select");
       expect(refusals.map((o) => o.detail).join("\n")).toMatch(new RegExp(`(^|@|\\n)${reason}:NewExpression`));
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-      if (legacyAsNode) await runsClean(result);
+      expect(moduleInitPostClaimErrors(result)).toEqual([]);
+      if (clean) await runsClean(result);
     }, 60_000);
   }
 });
 
 describe("#7340 — the lane", () => {
   it("wasi: the store is refused at select (no dynamic-home carrier lane)", async () => {
-    const result = await compileScript(`var w = new Number(1); if (w - 1 !== 0) throw new Test262Error("x");`, "wasi");
+    const result = await compileScript(`var w = new Number(1); if (w - 1 !== 0) throw "x";`, "wasi");
     const init = moduleInit(result);
     expect(init?.irBodyEmitted).not.toBe(true);
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   }, 60_000);
 
-  it("a lane without native-dynamic-member-read refuses the store", () => {
+  it("a lane without native-dynamic-member-read, or without the open-object option, refuses the store", () => {
     const file = ts.createSourceFile("t.js", "var w = new Number(1);", ts.ScriptTarget.ES2020, true);
     const statement = file.statements[0] as ts.VariableStatement;
     const expr = statement.declarationList.declarations[0]!.initializer as ts.NewExpression;
     const stored = storedWrapperConstruction(expr, { isAmbient: () => true, isAmbientString: () => true })!;
     const resolver = Object.assign(() => ({ valueKind: { kind: "dynamic" } }), { isLibOnlyBinding: () => true });
-    const lane = (member: boolean) => ({
-      dynamicHomeCarrierLane: true,
+    const lane = (member: boolean, openObject: boolean) => ({
+      ...(openObject ? { isOpenObjectBinding: () => true } : {}),
       supportsBackendCapability: (capability: string) =>
         capability === "primitive-wrapper-to-primitive" || (member && capability === "native-dynamic-member-read"),
     });
-    const refusal = (member: boolean) => wrapperStoreRefusal(stored, lane(member) as never, resolver, () => "number");
-    expect(refusal(false)).toBe("expr-new-wrapper-lane");
-    expect(refusal(true)).toBeUndefined();
+    const refusal = (member: boolean, openObject: boolean) =>
+      wrapperStoreRefusal(stored, lane(member, openObject) as never, resolver, () => "number");
+    expect(refusal(false, true)).toBe("expr-new-wrapper-lane");
+    expect(refusal(true, false)).toBe("expr-new-wrapper-lane");
+    expect(refusal(true, true)).toBeUndefined();
   });
 });

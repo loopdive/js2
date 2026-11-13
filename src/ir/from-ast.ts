@@ -77,7 +77,6 @@ import {
   isNumericReaderOperator,
   isStrictEqualityOperator,
   isToNumericOperator,
-  wrapperArgumentAdmissible,
   wrapperComparisonIsIdentity,
   isUndefinedCompareOperand,
   isGlobalUndefinedIdentifier,
@@ -8665,7 +8664,7 @@ function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx)
     );
   }
   const value = lowerExpr(argument, cx, wrapperArgumentHint(row));
-  if (!wrapperArgumentAdmissible(row.family, irOperandFamily(cx.builder.typeOf(value), argument))) {
+  if (irOperandFamily(cx.builder.typeOf(value), argument) !== row.family) {
     demoteToLegacy(
       "unknown-class-construction",
       `ir/from-ast: new ${row.name} argument is not ${row.family} in ${cx.funcName}`,
