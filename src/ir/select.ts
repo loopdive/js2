@@ -907,7 +907,6 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
     capability:
       | "host-date-snapshot"
       | "host-regexp-constructor"
-      | "host-object-define-property"
       | "standalone-function-prototype-call"
       | "native-regexp"
       | "native-function-methods"
@@ -2889,9 +2888,8 @@ function resolveReturnType(
   // (#7129) A class method carries no lattice entry, but legacy registers its
   // slot from the checker's inferred return. When every value return is the
   // same bare literal and control cannot fall out, that inference is exactly
-  // the widened `number` / `string`. Host-free lanes only (standalone, WASI,
-  // the native regime in a JS environment): the host-assisted lane keeps its
-  // legacy output byte-identical, as the sibling admissions do.
+  // the widened `number` / `string`. Gated off the `jsHostExterns` selection
+  // surface, as the sibling admissions are.
   if (
     ts.isMethodDeclaration(fn) &&
     fn.body &&
@@ -13009,19 +13007,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       // (#7276) `Object.create({}, { <literal data descriptors> })`: literal operands only.
       if (selectorObjectCreateDescriptorMap(expr) !== null) return true;
-      // ES5 Object.defineProperty — an exact ambient static call is a
-      // symbolic host-helper operation, not an instance method on a value
-      // named `Object`. Reject shadowed bindings and host-free targets before
-      // walking the three ordinary Phase-1 arguments.
+      // ES5 Object.defineProperty — an exact ambient static call, not an
+      // instance method on a value named `Object`. Only a certified U1 define
+      // on an open carrier has an IR lowering (#7128 S1).
       if (isAmbientObjectDefineProperty(expr) && !scope.has("Object")) {
         if (isOpenCarrierDefine(expr)) return true;
-        if (currentSelectionOptions?.supportsBackendCapability?.("host-object-define-property") === false) {
-          return capabilityNo("call-resolution-unsupported", "expr-object-define-property-target", expr);
-        }
-        if (expr.arguments.length !== 3 || expr.arguments.some(ts.isSpreadElement)) {
-          return shapeNo("expr-object-define-property-shape", expr);
-        }
-        return expr.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
+        return capabilityNo("call-resolution-unsupported", "expr-object-define-property-target", expr);
       }
       const builtinReceiver = expr.expression.expression;
       const checkerReceiverFamily = currentSelectionOptions?.classifyDeclaredPrimitiveExpression?.(builtinReceiver);
@@ -14421,12 +14412,7 @@ export function buildLocalCallGraph(
             for (const a of node.arguments) visit(a);
             return;
           }
-          if (
-            isAmbientObjectDefineProperty(node) &&
-            node.arguments.length === 3 &&
-            (currentSelectionOptions?.supportsBackendCapability?.("host-object-define-property") !== false ||
-              isOpenCarrierDefine(node))
-          ) {
+          if (isAmbientObjectDefineProperty(node) && node.arguments.length === 3 && isOpenCarrierDefine(node)) {
             for (const a of node.arguments) visit(a);
             return;
           }

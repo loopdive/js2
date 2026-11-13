@@ -373,17 +373,9 @@ describe("#5150 ES2015 standalone buffers wave 1", () => {
     }, 240_000);
   }
 
-  // (#6979 S7-f / #7262) On the default (native) target these two rows trap with
-  // `illegal cast in __module_init*`; both fail identically on upstream/main
-  // ed76cef7a0 once the QuickJS eval adapter is built (without it the runner
-  // fails earlier, which hid the second one). The second row traps only under
-  // QuickJS: on the interpreter engine that CI's root-test gates pin it passes,
-  // on main 68b95c2869 and on the S7 chain alike.
-  const quickJsEngine = (process.env.JS2WASM_EVAL_ENGINE ?? "quickjs") === "quickjs";
-  const TRAPS_7262: ReadonlySet<string> = new Set([
-    "built-ins/Atomics/notify/null-bufferdata-throws.js",
-    ...(quickJsEngine ? ["built-ins/TypedArray/out-of-bounds-behaves-like-detached.js"] : []),
-  ]);
+  // (#6979 S7-f / #7262) On the default (native) target this row traps with
+  // `illegal cast in __module_init*`, identically on main under both eval engines.
+  const TRAPS_7262: ReadonlySet<string> = new Set(["built-ins/Atomics/notify/null-bufferdata-throws.js"]);
   for (const row of HOST_ATOMICS_ROWS) {
     (TRAPS_7262.has(row) ? it.fails : it)(
       `host: ${row}`,

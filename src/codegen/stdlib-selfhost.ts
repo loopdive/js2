@@ -557,9 +557,6 @@ function lowerAndRegister(ctx: CodegenContext, name: string, ir: IrFunction): nu
     ensureExnTag(): number {
       return ensureExnTag(ctx);
     },
-    standardizedExceptions(): boolean {
-      return true;
-    },
     resolveString(): ValType {
       if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
         return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };

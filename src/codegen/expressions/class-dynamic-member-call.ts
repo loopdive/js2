@@ -39,8 +39,7 @@
  *
  * Scope: standalone only, and only for a class hierarchy that actually has a
  * runtime-keyed member — every other receiver keeps its existing lowering, so a
- * module without one compiles to identical bytes. The host lane keeps its own
- * `__extern_method_call_<n>` bridge (`dynamic-element-host-call.ts`).
+ * module without one compiles to identical bytes.
  */
 
 import type { Instr, ValType } from "../../ir/types.js";

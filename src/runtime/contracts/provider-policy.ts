@@ -6,10 +6,8 @@ export type RuntimeBackend = "wasmgc" | "linear";
 
 /**
  * (#3526 F1-S1) The exact, already-resolved number-boundary provider policy of
- * ONE preparation caller. `target` alone cannot answer this: ordinary
- * host-assisted GC, GC native-first, and host-assisted GC with explicit native
- * strings all map to `target: "host"` while the existing box/unbox decision
- * additionally depends on `nativeStrings` and `semanticProviders`. Callers
+ * ONE preparation caller. `target` alone cannot answer this: the box/unbox
+ * decision additionally depends on `nativeStrings`. Callers
  * resolve their truth table BEFORE freeze; nothing below reads a live codegen
  * context.
  */

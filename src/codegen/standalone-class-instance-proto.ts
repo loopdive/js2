@@ -28,24 +28,22 @@
  * assert.sameValue(Object.getPrototypeOf(result), construct.prototype);
  * ```
  *
- * ## The shape, and why it is the standalone TWIN of `class-instance-proto.ts`
+ * ## The shape
  *
- * `class-instance-proto.ts` (#5347) answers exactly this question for the JS
- * host, and explicitly declines the standalone lane ("standalone answers
- * prototypes through its own native `__getPrototypeOf` and its #802 arms") —
- * which was true only for the classes #802 marks as dynamically re-prototyped.
- * This file is that same dispatcher for the native lane, with three differences
- * that follow from the lane, not from taste:
+ * The retired JS-host dispatcher (#5347, deleted in #6979 S7) answered this
+ * question for the host only; the native `__getPrototypeOf` and its #802 arms
+ * covered only the classes #802 marks as dynamically re-prototyped. This file
+ * is the dispatcher for the native lane, with three properties that follow from
+ * the lane:
  *
  *  1. **The prototype singleton is an `$Object`, not a `$ClassName` struct**
- *     (#3976 `emitStandaloneClassProtoObject`). So the host lane's "decline the
- *     prototype singleton, it reuses the class struct type" arm is unnecessary
- *     here: `ref.test $C` cannot match it. Only the CLASS OBJECT singleton
- *     shares the instance's struct type (#3976) and must be declined —
- *     `Object.getPrototypeOf(C)` is `%Function.prototype%`, never `C.prototype`.
+ *     (#3976 `emitStandaloneClassProtoObject`). So there is no need to decline
+ *     the prototype singleton: `ref.test $C` cannot match it. Only the CLASS
+ *     OBJECT singleton shares the instance's struct type (#3976) and must be
+ *     declined — `Object.getPrototypeOf(C)` is `%Function.prototype%`, never
+ *     `C.prototype`.
  *  2. **Materialisation is a call to `__class_proto_build_<C>`**, the lazy
- *     builder `mintStandaloneClassProtoBuilders` already mints, instead of an
- *     inline defaulted `struct.new`.
+ *     builder `mintStandaloneClassProtoBuilders` already mints.
  *  3. It is PREPENDED into `__getPrototypeOf` rather than exported: no host
  *     asks.
  *

@@ -1,16 +1,15 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // (#6464, #5383 S13) `Object.create(<value>.prototype)` under `--target
-// standalone` must produce a real compiled instance, exactly as the JS-host
-// lane's #5239 mechanism does.
+// standalone` must produce a real compiled instance, as the retired JS-host
+// #5239 mechanism did.
 //
 // ## The gap
 //
-// `object-create-class-instance.ts` opens with
-// `if (ctx.wasi || the regime flag || noJsHost(ctx)) return;` — #5239 was built
-// as an EXPORT the JS runtime's `__object_create` calls back into, so it has no
-// meaning without a JS host and was gated off. Nothing replaced it, so the
-// standalone lane still falls through to the native `__object_create`, which
+// #5239 was built as an EXPORT the JS runtime's `__object_create` called back
+// into, so it had no meaning without a JS host and was gated off there (and
+// deleted with the host lane in #6979 S7). Nothing replaced it, so the
+// standalone lane fell through to the native `__object_create`, which
 // returns a plain `$Object` with a `$proto` link to the class's prototype
 // object.
 //

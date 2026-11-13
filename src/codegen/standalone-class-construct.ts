@@ -15,8 +15,8 @@
 // `result = __call_fn_method_<N>(self, callee, …)` — a CLOSURE dispatch. But a
 // class value in standalone is not a closure: it is the class-object singleton,
 // an `extern.convert_any`'d `$ClassName` STRUCT with the same type and the same
-// `__tag` as an instance (#3976, `class-object-of.ts`). The module-local
-// closure dispatcher misses, `result` is null, and the driver returns the bare
+// `__tag` as an instance (#3976). The module-local closure dispatcher misses,
+// `result` is null, and the driver returns the bare
 // `Object.create(proto)` — an object with none of the constructor's own fields.
 //
 // The same hole exists on the wasm→wasm boundary: `__js2wasm_link_construct`

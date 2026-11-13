@@ -498,7 +498,14 @@ What is left, and why:
   for the pending `js-string` accelerator (#6978 keep-list).
 - `__defineProperty_`: these resolve to the native object runtime
   (OBJECT_RUNTIME_HELPER_NAMES).
-- `__call_`: the WASI-only branch of the IR Promise-delay lowering.
+- `__call_`: two sites, neither a WASI branch.
+  - The host-executor arm of the IR Promise-delay lowering. It is unreachable:
+    `supportsHostPromiseDelay` is always false, so no plan takes that
+    projection. Deleting it needs a new source-map donor for
+    `tests/issue-3525-prepared-source-map-data.test.ts`; that is a follow-up.
+  - The `setupArrayCallback` bridge lookup (`array-methods.ts`). It is live as a
+    refusal: `[1, 2].forEach("x" as any)` reaches it and fails to compile with
+    "Missing __call_1_f64 import for forEach" on every target.
 - `__array_` / `__js_array_`: two sites.
   - The Promise combinator host fallthrough (`emitIterableArg`).
   - The node-builtin named-import call (`tryCompileNodeBuiltinMemberCall`).

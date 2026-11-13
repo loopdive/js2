@@ -107,8 +107,7 @@ import {
   runtimeEvalOwnsGlobalEval,
   irNativeBufferProvider, // (#7274) native ArrayBuffer / DataView providers
   nativeBufferProvidersAvailable,
-  expressionHasWidenedStaticType, // (#7337) binding-carrier queries shared with legacy
-  bindingHasMixedAssignmentCarrier,
+  bindingHasMixedAssignmentCarrier, // (#7337) binding-carrier query shared with legacy
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonParseText, emitJsonStringifyValue, JSON_PARSE_TEXT_FN } from "../codegen/json-codec-native.js";
@@ -232,7 +231,6 @@ import {
   programAbiStringConstantRef,
 } from "../codegen/program-abi-import-planning.js";
 // (#2856) Console-variant parity with the legacy collectConsoleImports scan.
-import { isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -557,7 +555,6 @@ import { attachIrStringCarrier } from "./string-carrier.js";
 import { attachIrStringConstStorage, attachIrStringLengthProvider, attachIrStringSupport } from "./string-support.js";
 import { attachIrPhysicalRefTypeRefs } from "./physical-ref-support.js";
 import {
-  IR_ASYNC_CLOCK_SNAPSHOT_FN,
   IR_ASYNC_CONSOLE_LOG_STRING_FN,
   IR_ASYNC_NUMBER_TO_STRING_FN,
   IR_ASYNC_PROMISE_ALL_NATIVE_FN,
@@ -1166,15 +1163,14 @@ function prepareClosureTransaction(input: {
  *
  * These are the EXACT facts the two from-ast arms used to read through the
  * `hasHostNumberBox` / `hasNativeNumberUnbox` resolver predicates, consulted
- * once, here, before freeze. `target` alone cannot answer the question:
- * ordinary host-assisted GC, GC native-first, and host-assisted GC with
- * explicit native strings all resolve to `target: "host"` and disagree about
- * both arms. Native `__box_number` presence must NOT widen the box policy —
+ * once, here, before freeze. `target` alone cannot answer the question: the
+ * arms depend on `nativeStrings`, not on the target. Native `__box_number`
+ * presence must NOT widen the box policy —
  * the current arm is host-only by policy, not by helper availability.
  */
 export type IrProgramRuntimePolicyContext = Pick<
   CodegenContext,
-  "nativeStrings" | "wasi" | "strictNoHostImports" | "targetProfile" | "requiresStandaloneDomInteractionCapability"
+  "nativeStrings" | "wasi" | "targetProfile" | "requiresStandaloneDomInteractionCapability"
 >;
 
 function integrationNumberBoundaryPolicy(ctx: IrProgramRuntimePolicyContext): NumberBoundaryPolicy {
@@ -4830,7 +4826,7 @@ export function compileIrPathFunctions(
   );
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
-  if (!runGlobalPreparation(() => preregisterHostDateSnapshotSupport(ctx, healthyForLower))) {
+  if (!runGlobalPreparation(() => preregisterStandaloneClockSupport(ctx, healthyForLower))) {
     return finishReport();
   }
   recordOwnerPreparationFailures(failures, failedOwners, preregisterIteratorSupport(ctx, healthyForLower));
@@ -7241,9 +7237,6 @@ function makeFromAstResolver(
       const plan = moduleBindingResolver.staticNumericArrayPlan(expression);
       return plan ? resolveStaticNumericArrayGlobal(ctx, plan, expected) : null;
     },
-    objectDefinePropertyTarget() {
-      return null;
-    },
     functionPrototypeCallTarget() {
       if (functionPrototypeCall.call !== "native") return null;
       return ensureFunctionPrototypeCallHelper(ctx) === undefined
@@ -7382,11 +7375,6 @@ function makeFromAstResolver(
       if (!g || !g.className) return undefined;
       return { importName: `global_${name}`, className: g.className };
     },
-    // (#2856) Mode flag for the capability invariant assert at the from-ast
-    // host-extern arms.
-    jsHostExterns(): boolean {
-      return false;
-    },
     // (#7091) The platform-extern lane's per-class admission — the SAME
     // predicate the selector was handed in `planIrOverlay`.
     platformExternClass(className: string): boolean {
@@ -7524,19 +7512,6 @@ function makeFromAstResolver(
       builtinProtoMemberProvided(ctx, builtin, member, anchor), // (#7294)
     isAmbientStringBinding,
     localNeedsDynamicCarrier: (declaration) => bindingHasMixedAssignmentCarrier(ctx, declaration),
-    // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
-    // predicates as the legacy `collectConsoleImports` registration scan
-    // (string → bool → number → externref, in that order), so the import
-    // name the IR resolves (`console_<m>_<variant>`) is registered by
-    // construction.
-    consoleArgVariant(arg: ts.Expression) {
-      if (expressionHasWidenedStaticType(ctx, arg)) return "externref";
-      const argType = ctx.checker.getTypeAtLocation(arg);
-      if (isStringType(argType)) return "string";
-      if (isBooleanType(argType)) return "bool";
-      if (isNumberType(argType)) return "number";
-      return "externref";
-    },
     // (#2856) Chain-walking extern-member resolution + use-site result
     // branding. Mirrors the legacy `resolveExtern` (collectUsedExternImports)
     // and `compileExternPropertyGetFromStack` walks: start at the receiver's
@@ -7710,12 +7685,6 @@ function resolveAndObserveCallableProvider(
     index = preparedMathProviderIndex(ctx, provider.implementation.symbol);
   } else if (ref.binding.kind === "intrinsic" && isFmodIntrinsic(symbol)) {
     index = ensureFmodIntrinsic(ctx, symbol);
-  } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CLOCK_SNAPSHOT_FN) {
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "resolve",
-      "standalone async clock snapshot escaped its constant runtime projection",
-    );
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_NUMBER_TO_STRING_FN) {
     index = ctx.nativeStrings
       ? ensureIrNativeNumberToString(ctx, fuseNativeNumberFormatCarriers)
@@ -8446,9 +8415,6 @@ function makeResolver(
       }
       return ctx.exnTagIdx;
     },
-    standardizedExceptions(): boolean {
-      return true;
-    },
     // -------------------------------------------------------------------
     // Async / Promise dispatch (#1373b Slice 1).
     //
@@ -8583,90 +8549,61 @@ function preregisterCallableProviders(
   return failures;
 }
 
-interface HostDateImportSpec {
-  readonly name: string;
-  readonly params: readonly ValType[];
-  readonly results: readonly ValType[];
-}
+/** The `env.__date_now` ABI a synthetic Date snapshot calls: `() -> f64`. */
+const DATE_NOW_IMPORT = "__date_now";
 
-const HOST_DATE_IMPORTS = new Map<string, HostDateImportSpec>([
-  ["__date_now", { name: "__date_now", params: [], results: [{ kind: "f64" }] }],
-]);
-
-function exactHostDateImport(ctx: CodegenContext, spec: HostDateImportSpec): boolean {
-  const idx = ctx.funcMap.get(spec.name);
+function exactDateNowImport(ctx: CodegenContext): boolean {
+  const idx = ctx.funcMap.get(DATE_NOW_IMPORT);
   if (idx === undefined || idx < 0 || idx >= ctx.numImportFuncs) return false;
   let functionIndex = 0;
   for (const imported of ctx.mod.imports) {
     if (imported.desc.kind !== "func") continue;
     if (functionIndex++ !== idx) continue;
-    if (imported.module !== "env" || imported.name !== spec.name) return false;
+    if (imported.module !== "env" || imported.name !== DATE_NOW_IMPORT) return false;
     const type = ctx.mod.types[imported.desc.typeIdx];
-    if (
-      type?.kind !== "func" ||
-      type.params.length !== spec.params.length ||
-      type.results.length !== spec.results.length
-    ) {
-      return false;
-    }
     return (
-      type.params.every((param, i) => param.kind === spec.params[i]!.kind) &&
-      type.results.every((result, i) => result.kind === spec.results[i]!.kind)
+      type?.kind === "func" && type.params.length === 0 && type.results.length === 1 && type.results[0]!.kind === "f64"
     );
   }
   return false;
 }
 
-/** Register only the synthetic host-Date symbols present in built IR. */
-function preregisterHostDateSnapshotSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
-  const needed = new Set<string>();
-  for (const entry of fns) {
-    for (const block of entry.fn.blocks) {
-      for (const instr of block.instrs) {
-        forEachInstrDeep(instr, (nested) => {
-          if (
-            nested.kind === "call" &&
-            nested.target.binding.kind === "import" &&
-            nested.target.binding.module === "env" &&
-            nested.target.binding.field === "__date_now"
-          ) {
-            needed.add("__date_now");
-          }
-        });
-      }
+function callsDateNow(fn: IrFunction): boolean {
+  let found = false;
+  for (const block of fn.blocks) {
+    for (const instr of block.instrs) {
+      forEachInstrDeep(instr, (nested) => {
+        if (
+          nested.kind === "call" &&
+          nested.target.binding.kind === "import" &&
+          nested.target.binding.module === "env" &&
+          nested.target.binding.field === DATE_NOW_IMPORT
+        ) {
+          found = true;
+        }
+      });
     }
   }
-  if (needed.size === 0) return;
-  const exactStandaloneClock =
-    !ctx.wasi && ctx.requiresStandaloneClockCapability === true && ctx.targetProfile.environment === "none";
-  if (!exactStandaloneClock) {
-    throw new Error("ir/integration: synthetic Date snapshots require the JS host");
-  }
+  return found;
+}
 
-  let added = false;
-  for (const name of needed) {
-    const spec = HOST_DATE_IMPORTS.get(name);
-    if (!spec) throw new Error(`ir/integration: unsupported synthetic Date import ${name}`);
-    if (!ctx.funcMap.has(name)) added = true;
-    if (exactStandaloneClock && spec.name === "__date_now") {
-      ensureStandaloneClockCapabilityImport(ctx);
-    } else {
-      ensureLateImport(ctx, spec.name, [...spec.params], [...spec.results]);
-    }
+/**
+ * (#6979) Register the standalone clock capability import that a synthetic
+ * Date snapshot (`env.__date_now`) in built IR calls. Only an exact standalone
+ * clock capability supplies it; there is no host Date import any more.
+ */
+function preregisterStandaloneClockSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
+  if (!fns.some((entry) => callsDateNow(entry.fn))) return;
+  if (ctx.wasi || ctx.requiresStandaloneClockCapability !== true || ctx.targetProfile.environment !== "none") {
+    throw new Error("ir/integration: a synthetic Date snapshot needs the standalone clock capability");
   }
+  const added = !ctx.funcMap.has(DATE_NOW_IMPORT);
+  ensureStandaloneClockCapabilityImport(ctx);
   if (added) flushLateImportShifts(ctx, null);
-
-  // `ensureLateImport` intentionally treats an occupied funcMap name as a
-  // lookup. Refuse user-defined or wrong-signature occupants rather than
-  // resolving them as the ambient Date ABI.
-  for (const name of needed) {
-    const spec = HOST_DATE_IMPORTS.get(name)!;
-    if (
-      !exactHostDateImport(ctx, spec) ||
-      (exactStandaloneClock && spec.name === "__date_now" && standaloneClockCapabilityImport(ctx) === undefined)
-    ) {
-      throw new Error(`ir/integration: ${name} is not the exact env host-Date import`);
-    }
+  // Refuse a user-defined or wrong-signature occupant of the name rather than
+  // resolving it as the clock ABI.
+  if (!exactDateNowImport(ctx) || standaloneClockCapabilityImport(ctx) === undefined) {
+    throw new Error(`ir/integration: ${DATE_NOW_IMPORT} is not the exact standalone clock import`);
   }
 }
 
