@@ -172,6 +172,16 @@ const ORIGINAL_DECLARATIONS = {
       retained: true,
     },
     {
+      name: "i32FlavourVecs",
+      sha256: "f7b71e7a6fa19084a4a2be75339906c9fbf464a4dd7c62a2760a5f5eb6f8c0a8",
+      retained: true,
+    },
+    {
+      name: "disambiguateI32VecKey",
+      sha256: "c01b115e382689f0a7e7c15fe12420fa43ae3a2a0596b2c0843d35d7e655929d",
+      retained: true,
+    },
+    {
       name: "getOrRegisterVecType",
       sha256: "04ce4c10ec816b7a13ca4224a4848f4b4546314a3ed6c62209bce0bdfe80d1b9",
       retained: false,
@@ -262,13 +272,18 @@ const ORIGINAL_DECLARATIONS = {
       retained: true,
     },
     {
+      name: "getOrRegisterSabType",
+      sha256: "ee9c643017fa1342eaaa571b3a970714dc01f3610a65b496dde75215d56ea2d1",
+      retained: true,
+    },
+    {
       name: "getOrRegisterTemplateVecType",
       sha256: "c6612aa945819bf098b0ac1f220a62e5daa13189d00d3d1d70d759653d5e39a4",
       retained: true,
     },
     {
       name: "getOrRegisterRefCellType",
-      sha256: "0976446f07ccdc56f52edf370d3dd0d29b0ed782ed1e55f9779e38a20c71fe44",
+      sha256: "567d5fdf39403ea0e640e21aaa0017e9cf8b48eacfbc89e9167aa21f530ab942",
       retained: true,
     },
     {
@@ -298,7 +313,7 @@ const ADAPTER_SHAPES = [
   ["donor", "ensureVecElemSet", "781a2474556a4b472851f6c92325d560549d2572272e08e713e5e44fa5940df2"],
   ["registry", "getOrRegisterArrayType", "ef19d0d5b623d517dff2b5e517dcae50ca866a6215133b35ae8722ab460d8b22"],
   ["registry", "getOrRegisterVecBaseType", "8da164e7abf6ca79052b8d96e4e30149440d9b6d853c3aae464048511015319f"],
-  ["registry", "getOrRegisterVecType", "c5a11ee88d8c7c7d341146708fbf5d9b212f05a0501af93381cb74f2e6282f47"],
+  ["registry", "getOrRegisterVecType", "5a88ad02771b893b7f15aa1bacf3d36ce34d09e5db02c822541f2e409b2dfb08"],
 ] as const;
 
 const layoutForwardPath = "./fixtures/issue-3518-vector-registry-layout-forward.json";
@@ -595,7 +610,7 @@ describe("independently authenticated string/Error extraction in the vector regi
 describe("independently authenticated prepared registry addition", () => {
   it("inverts the exact ordered addition before checking the unchanged historical registry", () => {
     const restored = inversePreparedRegistry(read("registry"));
-    expect(sha(restored)).toBe("8e30d0c98c75cb4feb3924050fe02a6e911eb0e9b459391ba2598fcd96b19979");
+    expect(sha(restored)).toBe("5babe5828bd5a54964630abba6a1eafdb1a6af744b1a384b33b52f31a189f4da");
     verifyLayoutInverse();
   });
   const importMutations: [string, (source: string) => string][] = [
@@ -698,7 +713,7 @@ describe("complete donor/registry preservation", () => {
         const declaration = declarations.find((s) => name(s) === receipt.name)!;
         expect(sha(declaration.getFullText(sf)), receipt.name).toBe(receipt.sha256);
       }
-    expect(ORIGINAL_DECLARATIONS[key].filter((r) => r.retained)).toHaveLength(key === "donor" ? 8 : 27);
+    expect(ORIGINAL_DECLARATIONS[key].filter((r) => r.retained)).toHaveLength(key === "donor" ? 8 : 30);
   });
   it.each(ADAPTER_SHAPES)("preserves %s %s allocation/cache/publication control flow", (key, name, expected) => {
     expect(sha(normalizedFunction(read(key), name))).toBe(expected);

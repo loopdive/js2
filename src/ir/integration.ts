@@ -22,6 +22,8 @@
 // `shiftLateImportIndices` pass is a no-op for every body produced here.
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
+import { isStoredStaticAliasProvider, storedStaticAliasProviderImport } from "./stored-static-alias-providers.js";
+import type { StoredStaticAliasProvider } from "./uncurried-object-alias.js";
 import {
   nativeConsoleOutputAvailable,
   ensureIrNativeConsoleProvider,
@@ -47,6 +49,7 @@ import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from 
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
 import { irPlatformExternClassPredicate } from "./host-extern.js"; // (#7091)
 import { irBool } from "./boolean-brand.js";
+import { isStringMethodHelper, stringMethodPlan as planStringMethod } from "./string-method-surface.js";
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
 import { irTypeKey } from "./type-key.js";
 export { irTypeKey } from "./type-key.js";
@@ -56,13 +59,15 @@ import {
 } from "../codegen/standalone-clock-capability.js";
 import { makeCalendarIrSelectionSupport } from "./calendar-selection-support.js";
 import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "./dom-capability.js";
+import { makeIrNativeBufferSurfacePlan, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
+import { isIrNativeBufferRuntimeSymbol } from "../shared/contracts/native-buffer-adapters.js";
 import { irBackendCapabilityQuery, projectIrBackendTargetProfile } from "./backend/legality.js";
+import type { StringBuilderLowering } from "../backend/wasmgc/lowering/wasm-string-builder.js";
+import { nativeBufferSurfaceCapability } from "./capability.js";
 
 import {
   ensureAnyHelpers,
   ensureAnyValueType,
-  ensureExternLooseEqHelper,
-  ensureExternStrictEqHelper,
   resolveIrDynamicCarrierType,
   undefinedAnyValueInstrs,
   undefinedExternInstrs,
@@ -70,6 +75,7 @@ import {
 import { ensureDynMemberGet, ensureDynMemberSet, ensureDynMemberSetSloppy } from "../codegen/dyn-read.js"; // (#3053 U1) / (#3795)
 import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
+  ensureIrDynamicEqualityRuntime,
   ensureIrDynamicRuntime,
   irDynamicRuntimeNeedForSymbol,
   observeIrFunctionObjectCallProviders,
@@ -85,6 +91,8 @@ import {
   TYPED_ARRAY_NAMES,
   scriptVarHome,
   ensureIrDynamicDeleteHelper, // (#7106 propertyHelper) dynamic delete wrappers
+  ensureStandaloneRegExpCarrierExecHelper, // (#7106 levers R1, R2) the `.test` / `.exec` carrier helpers
+  ensureStandaloneRegExpCarrierTestHelper,
   IR_DYN_DELETE_SLOPPY_HELPER,
   IR_DYN_DELETE_STRICT_HELPER,
   irDeleteSiteIsStrict,
@@ -96,9 +104,15 @@ import {
   moduleInitPrologueMayEmit,
   retireModuleInitPrologueHelper,
   irNativeI32SlotRead,
+  linkRuntimeEvalGlobalEval, // (#7106 A2c)
+  runtimeEvalOwnsGlobalEval,
+  irNativeBufferProvider, // (#7274) native ArrayBuffer / DataView providers
+  nativeBufferProvidersAvailable,
+  expressionHasWidenedStaticType, // (#7337) binding-carrier queries shared with legacy
+  bindingHasMixedAssignmentCarrier,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
-import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
+import { emitJsonParseText, emitJsonStringifyValue, JSON_PARSE_TEXT_FN } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
 import {
@@ -128,13 +142,18 @@ import {
   IR_GLOBAL_OBJECT_HELPER,
   irDynamicConstructCalleeIsPlain,
   irDynamicConstructHelperName,
+  irFunctionCodeStrictness,
   irFunctionThisStrictness,
   irInstanceOfFunctionHelperName,
   irSelfGuardedConstructorValue,
 } from "../codegen/ir-dynamic-construct.js";
 import { reserveModuleInitChunkHelperName } from "../shared/module-init-chunk-plan.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
-import { builtinNamespaceConstantValue } from "../codegen/builtin-value-read.js"; // (#7106 module-init lever A)
+import {
+  builtinNamespaceConstantValue, // (#7106 module-init lever A)
+  builtinProtoMemberProvided, // (#7294)
+  ensureBuiltinProtoMemberFunc, // (#7294)
+} from "../codegen/builtin-value-read.js";
 import { ensureIrNumberFromValueHelper } from "../codegen/helpers/ir-number-from-value.js"; // (#7106 module-init lever B)
 import { IR_NUMBER_FROM_VALUE_FEATURE, IR_NUMBER_FROM_VALUE_NATIVE_FN } from "./runtime/number-conversion-callable.js";
 import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-number-conversion.js"; // (#7106 module-init lever B)
@@ -176,9 +195,16 @@ import {
   VEC_ELEM_SET_PREFIX,
   VEC_NEW_SIZED_PREFIX,
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
+import { parseBuiltinProtoMemberSymbol } from "../shared/ambient-intrinsics.js"; // (#7294)
 import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
-import { ensureNativeStringHelpers, STANDALONE_STDOUT_APPEND_FN } from "../codegen/native-strings.js";
+import {
+  ambientGlobalFunctionProviderSymbol,
+  jsonParseTextFoldsAtCompileTime,
+  ensureNativeStringHelpers,
+  nativeStringBuilderTypes,
+  STANDALONE_STDOUT_APPEND_FN,
+} from "../codegen/native-strings.js";
 import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
 import {
   nativeStringLiteralMaterialization,
@@ -186,8 +212,13 @@ import {
   type NativeStringLiteralMaterialization,
   type StringEncoding,
 } from "../codegen/native-string-literals.js";
-import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
-import { ensureStandaloneRegExpCarrierTestHelper } from "../codegen/regexp-standalone.js";
+import type { RegExpCarrierMethod } from "../shared/regexp-static.js";
+import { STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER } from "./regexp-runtime-contract.js";
+import {
+  ensureIrRegExpLiteralHelper,
+  ensureStandaloneRegExpCarrierToStringHelper,
+  standaloneStaticRegExpCompiles,
+} from "../codegen/regexp-standalone.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../codegen/registry/imports.js";
 import { emitWasiErrorConstructor } from "../codegen/registry/error-types.js";
 import {
@@ -241,7 +272,6 @@ import {
   IR_STRING_COMPARE_FN,
   lowerFunctionAstToIr,
   lowerImplicitConstructorAstToIr,
-  STRING_METHOD_TABLE,
   type AstToIrOptions,
   type IrFromAstResolver,
   type LoweredFunctionResult,
@@ -316,11 +346,12 @@ export { exactPreparedUnitCallableBindingId } from "./prepared-callable-resoluti
 import { prepareIrVectorSupport } from "./prepared-vector-support.js";
 import { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
 import {
-  makeIrArrayExpressionPredicate,
-  makeIrDeclaredPrimitiveExpressionClassifier,
+  makeIrCheckerSelectionOptions,
   makeIrModuleBindingResolver,
-  makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
+  capabilityExternBindingOptions,
+  abiPinnedCapability,
+  isIrModuleNativeBufferValueKind,
   type IrLegacyModuleBindingIdentity,
   type IrLegacyModuleBindingResolver,
   type IrFnctorArrayMethodPlan,
@@ -353,6 +384,7 @@ import {
   forEachInstrDeep, // (#2949 slice 3) deep instr walk for preregisterDynamicSupport
   irDynamic,
   irVal,
+  irVec,
   irTypeEquals,
   mapNestedBuffers,
   type IrClassMemberKind,
@@ -472,6 +504,7 @@ import {
   IR_NUMBER_TO_FIXED_FN,
   IR_NUMBER_TO_STRING_FN,
 } from "./number-to-string-provider.js";
+import { classInstanceBindingStorage, exactClassStructTypeIdx } from "./class-instance-storage.js";
 import {
   classifyIrFailure,
   IrInvariantError,
@@ -551,6 +584,7 @@ import {
   IR_STRING_REPEAT_FN,
 } from "./string-runtime.js";
 import { readEnv } from "../env.js";
+import { IN_HAS_PROPERTY } from "../shared/contracts/in-operator-helper.js";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -2395,7 +2429,12 @@ export function compileIrPathFunctions(
     ctx.targetProfile.environment === "none"
       ? makeIrStandaloneDomCapabilityPlan(ctx.checker, sourceFile)
       : undefined;
+  const nativeBufferSurface = planIrNativeBufferSurface(ctx, sourceFile); // (#7274)
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
+  // (#7106 lever R) A host-free lane constructs an `extern.regex` in-module.
+  const regExpProvider = supportsBackendCapability("native-regexp")
+    ? (pattern: string, flags: string) => irRuntimeFuncRef(ensureIrRegExpLiteralHelper(ctx, pattern, flags))
+    : undefined;
   const { supportsDateSnapshots, resolveHostVoidCallback, backendCapabilitySelectionOptions } =
     makeCalendarIrSelectionSupport(ctx, jsHostExterns, standaloneDomCapability, supportsBackendCapability);
   const moduleBindingOptions = {
@@ -2405,7 +2444,7 @@ export function compileIrPathFunctions(
     allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
     // (#4461) Native `$Map` storage must agree with the selector-side option.
     allowNativeMapStorage: ctx.nativeStrings,
-    resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
+    ...capabilityExternBindingOptions(standaloneDomCapability, nativeBufferSurface),
     stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
     // (#7105) Must agree with the selector-side option: a script `var` the
     // selector admitted is written here through the same slot classifier.
@@ -2541,11 +2580,7 @@ export function compileIrPathFunctions(
     moduleBindingOptions,
     moduleBindingIdentityContext,
   );
-  const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ctx.checker);
-  const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker);
-  const isArrayExpression = makeIrArrayExpressionPredicate(ctx.checker);
   const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ctx.checker, ctx.oracle);
-  const isRegExpExpression = makeIrRegExpExpressionPredicate(ctx.checker);
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const declarationsByName = collectIntegrationFunctionDeclarations(integrationSourceFiles);
   const { implicitParamUsesNumericVecAbi, effectiveOverride } = makeMultiSourceOverrideResolvers({
@@ -2566,20 +2601,21 @@ export function compileIrPathFunctions(
       experimentalIR: true,
       jsHostExterns,
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
+      ...(nativeBufferSurface ? { nativeBufferSurface } : {}),
       ...(resolveHostVoidCallback ? { hostVoidCallbacks: resolveHostVoidCallback } : {}),
       ...(supportsDateSnapshots ? { hostDateSnapshots: makeIrHostDateSnapshotResolver(ctx.checker) } : {}),
       resolveModuleBinding: moduleBindingResolver,
-      classifyPrimitiveExpression,
-      classifyDeclaredPrimitiveExpression,
-      isArrayExpression,
+      ...makeIrCheckerSelectionOptions(ctx.checker),
+      jsonParseFoldsAtCompileTime: (call: ts.CallExpression) => jsonParseTextFoldsAtCompileTime(ctx, call),
       classifyArrayElementFamily,
-      isRegExpExpression,
+      nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
       preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
+      functionCodeStrictness: (fn) => irFunctionCodeStrictness(ctx, fn), // (#7260)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
       // (#7106 compareArray.format)
       arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
@@ -2587,9 +2623,8 @@ export function compileIrPathFunctions(
       supportsHoleyArrayFilter: ctx.standalone,
       implicitParamUsesNumericVecAbi,
       supportsSymbolicMathHelpers: true,
-      // (#4462) Same two host-free capabilities the production planning site
-      // (codegen/index.ts) supplies — this compatibility path must not offer a
-      // narrower table, or a direct caller would demote where production claims.
+      // (#4462) Same two host-free capabilities the production planning site (codegen/index.ts) supplies — this
+      // compatibility path must not offer a narrower table, or a direct caller would demote where production claims.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
@@ -2610,7 +2645,7 @@ export function compileIrPathFunctions(
           }
         : {}),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
-      supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
+      supportsGlobalEval: (call) => runtimeEvalOwnsGlobalEval(ctx, call),
       ...backendCapabilitySelectionOptions,
     });
   const integrationPopulation =
@@ -3202,12 +3237,14 @@ export function compileIrPathFunctions(
   // -------------------------------------------------------------------------
   const fromAstResolver = makeFromAstResolver(
     ctx,
+    classShapes,
     moduleBindingResolver,
     loweringPlans?.postWasmStartTdzSafeBindingsByOwnerUnitId,
     standaloneDomCapability,
     loweringPlans?.fnctorParameterPreselection,
     loweringPlans?.fnctorParameterPreselectionIsCurrent,
     preparedNumberCall,
+    nativeBufferSurface,
   );
   // (#7001) The verifier's string-result rule needs the lane's string carrier.
   const verifyOptions = {
@@ -3282,6 +3319,7 @@ export function compileIrPathFunctions(
           funcName: name,
           ownerUnitId,
           ...(ambientThisStrict === undefined ? {} : { ambientThisStrict }),
+          functionCodeStrict: irFunctionCodeStrictness(ctx, stmt), // (#7260)
           directCalls: directCallsFor(stmt, ownerUnitId),
           fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
           fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
@@ -3906,7 +3944,8 @@ export function compileIrPathFunctions(
           }
         }
       }
-      const moduleBindings = buildModuleBindingsMap(ctx, population, moduleBindingResolver);
+      const moduleInitClassShapes = moduleInitInput.classShapes ?? classShapes;
+      const moduleBindings = buildModuleBindingsMap(ctx, population, moduleBindingResolver, moduleInitClassShapes);
       const synthetic = makeModuleInitSynthetic(population);
       for (const statement of population) directCallsFor(statement, moduleInitUnitId);
       const sourceLoweringPlans = moduleInitInput.loweringPlans ?? loweringPlans;
@@ -3919,6 +3958,7 @@ export function compileIrPathFunctions(
         fnctorNativeStringBoundaries: sourceLoweringPlans?.fnctorNativeStringBoundaries,
         returnTypeOverride: null,
         moduleInitUnit: true,
+        functionCodeStrict: irFunctionCodeStrictness(ctx, moduleInitSourceFile),
         moduleBindings,
         calleeTypes,
         ...projectFunctionValueLoweringPlans(sourceLoweringPlans),
@@ -3926,7 +3966,7 @@ export function compileIrPathFunctions(
         hostDateSnapshots: sourceLoweringPlans?.hostDateSnapshots,
         hostDateGetters: sourceLoweringPlans?.hostDateGetters,
         identityContext: moduleBindingIdentityContext,
-        classShapes: moduleInitInput.classShapes ?? classShapes,
+        classShapes: moduleInitClassShapes,
         resolver: fromAstResolver,
         allocRegistry,
         checker: ctx.checker,
@@ -4785,7 +4825,7 @@ export function compileIrPathFunctions(
     !runGlobalPreparation(
       () =>
         (healthyForLower = healthyForLower.map((entry) => {
-          const fn = attachIrExternSupport(entry.fn);
+          const fn = attachIrExternSupport(entry.fn, regExpProvider);
           return fn === entry.fn ? entry : { ...entry, fn };
         })),
     )
@@ -6078,10 +6118,16 @@ function withoutVoidReturn(ctx: CodegenContext, body: Instr[], typeIdx: number):
   return isVoid && body.length > 1 && body.at(-1)?.op === "return" ? body.slice(0, -1) : body;
 }
 
+/** The module-defined global at absolute index `absIdx`, if any. */
+function moduleGlobalDef(ctx: CodegenContext, absIdx: number | undefined): GlobalDef | undefined {
+  return absIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, absIdx)];
+}
+
 /** Resolve a checker-owned module declaration to its exact structural/legacy slot pair. */
 function resolveModuleBindingGlobal(
   ctx: CodegenContext,
   identity: IrModuleBindingIdentity,
+  classShapes: ReadonlyMap<string, IrClassShape> | undefined,
   postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
 ): ModuleBindingGlobal {
   const declaration = identity.declaration;
@@ -6114,7 +6160,7 @@ function resolveModuleBindingGlobal(
         `module-init: supported binding '${name}' is absent from the compatibility module-global registry`,
       );
     }
-    global = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    global = moduleGlobalDef(ctx, globalIdx);
   }
   if (!global || global.name !== globalName) {
     throw new IrInvariantError(
@@ -6163,7 +6209,12 @@ function resolveModuleBindingGlobal(
       break;
     case "extern":
     case "capability-extern":
-      if (!ctx.externClasses.has(identity.valueKind.className)) {
+      // (#7274) A native-buffer slot holds the lane's own byte vec, which no
+      // extern-class registration describes.
+      if (
+        !isIrModuleNativeBufferValueKind(identity.valueKind) &&
+        !ctx.externClasses.has(identity.valueKind.className)
+      ) {
         throw new IrInvariantError(
           "unknown-type-ref",
           "build",
@@ -6218,19 +6269,45 @@ function resolveModuleBindingGlobal(
       type = { kind: "string" };
       break;
     }
+    case "class-instance":
+      ({ type, storageType } = classInstanceBindingStorage(ctx, name, identity.valueKind, classShapes));
+      break;
+    case "regexp-match":
+      // (#7106 lever S2) The #1914 match-result slot `scriptVarHome` named this
+      // binding's home, read and written as a dynamic value through
+      // `emitModuleSlotAdapter`: the storage is that slot by definition.
+      type = irDynamic();
+      storageType = global.type;
+      break;
+    case "vec": {
+      // (#7292) The vec legacy's string array literal registered: the same
+      // registry key (`resolveVecForElementImpl`), so the struct is shared.
+      const vec = resolveVecForElementImpl(ctx, { kind: "ref", typeIdx: ctx.anyStrTypeIdx });
+      if (vec === null) {
+        throw new IrInvariantError(
+          "unknown-type-ref",
+          "build",
+          `module-init: vec binding '${name}' has no registered vec`,
+        );
+      }
+      // Read only after the declaration wrote it (`vecUseSupported`), so non-null, as a class instance is.
+      type = irVec({ kind: "string" }, false);
+      storageType = { kind: "ref_null", typeIdx: vec.vecStructTypeIdx };
+      break;
+    }
   }
   const storageMatches =
     global.type.kind === storageType.kind &&
     ((global.type.kind !== "ref" && global.type.kind !== "ref_null") ||
       (storageType.kind === global.type.kind && storageType.typeIdx === global.type.typeIdx));
-  if (!storageMatches && identity.valueKind.kind === "dynamic") {
+  if (!storageMatches && (identity.valueKind.kind === "dynamic" || identity.valueKind.kind === "class-instance")) {
     // (#7014) `const a: any = x` (x a number const) is NARROWED to f64 by the
     // #4178 const-chain trace; #5289 (163eb5bc5c) assumed the dynamic carrier.
     // A contradicted admission, not a corrupt ABI: demote the module-init.
     throw new IrUnsupportedError(
       "module-init-legacy-coupling",
       "build",
-      `module-init: dynamic binding ${globalName} uses narrowed legacy ${global.type.kind} storage`,
+      `module-init: ${identity.valueKind.kind} binding ${globalName} uses narrowed legacy ${global.type.kind} storage`,
     );
   }
   if (!storageMatches) {
@@ -6254,7 +6331,7 @@ function resolveModuleBindingGlobal(
     }
   } else {
     const tdzGlobalIdx = ctx.tdzGlobals.get(name);
-    tdzGlobal = tdzGlobalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, tdzGlobalIdx)];
+    tdzGlobal = moduleGlobalDef(ctx, tdzGlobalIdx);
   }
   if (tdzGlobal && tdzGlobal.name !== expectedTdzGlobalName) {
     throw new IrInvariantError(
@@ -6264,7 +6341,7 @@ function resolveModuleBindingGlobal(
     );
   }
   const tdzGlobalName = tdzGlobal ? expectedTdzGlobalName : null;
-  const capability = identity.valueKind.kind === "capability-extern" ? identity.valueKind.capability : undefined;
+  const capability = abiPinnedCapability(identity.valueKind);
   const globalRef = irSourceGlobalRef(identity.globalBindingId, globalName, capability);
   const tdzGlobalRef = tdzGlobal ? irSourceGlobalRef(identity.tdzBindingId, expectedTdzGlobalName) : null;
   planProgramAbiGlobal(ctx, {
@@ -6309,6 +6386,7 @@ function buildModuleBindingsMap(
   ctx: CodegenContext,
   population: readonly ts.Statement[],
   resolveModuleBinding: IrModuleBindingResolver,
+  classShapes: ReadonlyMap<string, IrClassShape> | undefined,
 ): Map<string, ModuleBindingGlobal> {
   const map = new Map<string, ModuleBindingGlobal>();
   for (const stmt of population) {
@@ -6337,7 +6415,7 @@ function buildModuleBindingsMap(
         );
       }
       const observed = ctx.programAbiGlobals?.moduleBinding(entry.declaration);
-      const binding = resolveModuleBindingGlobal(ctx, inspected.identity);
+      const binding = resolveModuleBindingGlobal(ctx, inspected.identity, classShapes);
       // The lowering map must consume the allocator object authenticated for
       // this exact declaration.  A name-compatible global, or a global already
       // owned by another binding, would let a rebuilt/foreign storage census
@@ -6689,7 +6767,7 @@ function resolveStandaloneRegExpTestGlobal(ctx: CodegenContext, plan: IrStaticRe
     global = observed.value;
   } else {
     const globalIdx = ctx.moduleGlobals.get(name);
-    global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    global = moduleGlobalDef(ctx, globalIdx);
   }
   if (!global || global.name !== globalName || global.type.kind !== "externref") {
     throw new IrInvariantError(
@@ -6745,7 +6823,7 @@ function resolveRetainedFunctionMethod(
     receiverGlobalDef = observed.value;
   } else {
     const globalIdx = ctx.moduleGlobals.get(plan.receiverName);
-    receiverGlobalDef = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    receiverGlobalDef = moduleGlobalDef(ctx, globalIdx);
   }
   if (
     !receiverGlobalDef ||
@@ -6830,7 +6908,7 @@ function resolveFnctorArrayMethod(
     receiverGlobalDef = observed.value;
   } else {
     const globalIdx = ctx.moduleGlobals.get(plan.receiverName);
-    receiverGlobalDef = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    receiverGlobalDef = moduleGlobalDef(ctx, globalIdx);
   }
   if (
     !receiverGlobalDef ||
@@ -6911,7 +6989,7 @@ function resolveStaticNumericArrayGlobal(
     global = observed.value;
   } else {
     const globalIdx = ctx.moduleGlobals.get(name);
-    global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    global = moduleGlobalDef(ctx, globalIdx);
   }
   const nameOf = (i: number) => ctx.typeIdxToStructName.get(i);
   if (!global || global.name !== globalName || !staticNumericArrayGlobalMatches(global.type, expected, nameOf)) {
@@ -7040,16 +7118,46 @@ function sameValType(a: ValType, b: ValType): boolean {
   return true;
 }
 
+/**
+ * (#7106 levers R1, R2) Legacy's builder of a carrier method's helper
+ * (`REGEXP_CARRIER_METHODS`). A function, not a table: both builders arrive
+ * through the `codegen/index.ts` facade, inside the import cycle.
+ */
+function ensureRegExpCarrierHelper(ctx: CodegenContext, method: RegExpCarrierMethod): number | undefined {
+  return method === "test"
+    ? ensureStandaloneRegExpCarrierTestHelper(ctx)
+    : ensureStandaloneRegExpCarrierExecHelper(ctx);
+}
+
+/**
+ * (#7274) The source's native ArrayBuffer plan, present only where its
+ * capability row claims. The one constructor for both planning sites (here
+ * and the codegen driver), so the plan's presence is the only gate selection
+ * and lowering consult.
+ */
+export function planIrNativeBufferSurface(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+): IrNativeBufferSurfacePlan | undefined {
+  const jsHost = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }).allowHostImports;
+  return nativeBufferSurfaceCapability(jsHost, nativeBufferProvidersAvailable(ctx)) === "claim"
+    ? makeIrNativeBufferSurfacePlan(ctx.checker, sourceFile)
+    : undefined;
+}
+
 function makeFromAstResolver(
   ctx: CodegenContext,
+  classShapes: ReadonlyMap<string, IrClassShape> | undefined,
   moduleBindingResolver?: IrModuleBindingResolver,
   postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
   standaloneDomCapability?: IrStandaloneDomCapabilityPlan,
   fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
   fnctorParameterPreselectionIsCurrent?: () => boolean,
   preparedNumberCall?: (call: ts.CallExpression) => boolean, // (#7106 module-init lever B)
+  nativeBufferSurface?: IrNativeBufferSurfacePlan, // (#7274)
 ): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
+  const isRegExpExpression = makeIrRegExpExpressionPredicate(ctx.checker);
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   // (#3526 F3-S3) Resolved once, pre-freeze: the arm below projects this value.
   const functionPrototypeCall = integrationFunctionPrototypeCallPolicy(ctx);
@@ -7058,12 +7166,9 @@ function makeFromAstResolver(
     // (#7106) A reserved chunk name also keeps the late user-function inliner off it.
     moduleInitChunkName: (preferred) => reserveModuleInitChunkHelperName(ctx, preferred),
     supportsBackendCapability,
-    hostIndirectEvalTarget() {
-      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings) return null;
-      const functionIndex = ctx.funcMap.get("__extern_eval");
-      const exactIndex = exactCallableImportIndex(ctx, "env", "__extern_eval");
-      if (functionIndex === undefined || exactIndex === undefined || functionIndex !== exactIndex) return null;
-      return irImportFuncRef("env", "__extern_eval");
+    globalEvalTarget(call) {
+      const callee = linkRuntimeEvalGlobalEval(ctx, call);
+      return callee === undefined ? null : irRuntimeFuncRef(callee);
     },
     isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
     ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
@@ -7095,7 +7200,7 @@ function makeFromAstResolver(
     },
     fnctorArrayMethodPlan(call: ts.CallExpression) {
       if (
-        !supportsBackendCapability("standalone-native-regexp-test-carrier") ||
+        !supportsBackendCapability("native-function-methods") ||
         !supportsBackendCapability("legacy-numeric-array-global") ||
         !moduleBindingResolver
       ) {
@@ -7106,7 +7211,7 @@ function makeFromAstResolver(
     },
     retainedFunctionMethodPlan(call: ts.CallExpression) {
       if (
-        !supportsBackendCapability("standalone-native-regexp-test-carrier") ||
+        !supportsBackendCapability("native-function-methods") ||
         !supportsBackendCapability("legacy-numeric-array-global") ||
         !moduleBindingResolver
       ) {
@@ -7115,15 +7220,22 @@ function makeFromAstResolver(
       const plan = moduleBindingResolver.retainedFunctionMethodPlan(call);
       return plan ? resolveRetainedFunctionMethod(ctx, plan) : null;
     },
-    standaloneRegExpTestPlan(receiver: ts.Expression) {
-      if (!supportsBackendCapability("standalone-native-regexp-test-carrier") || !moduleBindingResolver) return null;
-      const plan = moduleBindingResolver.staticRegExpTestPlan(receiver);
-      if (!plan) return null;
-      ensureStandaloneRegExpCarrierTestHelper(ctx);
-      return {
-        receiverGlobal: resolveStandaloneRegExpTestGlobal(ctx, plan),
-        funcName: STANDALONE_REGEXP_CARRIER_TEST_HELPER,
-      };
+    isNativeRegExpReceiver(receiver: ts.Expression) {
+      return (
+        supportsBackendCapability("native-regexp") &&
+        (moduleBindingResolver?.staticRegExpTestPlan(receiver) !== undefined || isRegExpExpression(receiver))
+      );
+    },
+    nativeRegExpMethodPlan(receiver: ts.Expression, method: RegExpCarrierMethod) {
+      if (ensureRegExpCarrierHelper(ctx, method) === undefined) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/integration: the native-regexp lane has no ${method} carrier helper`,
+        );
+      }
+      const stable = moduleBindingResolver?.staticRegExpTestPlan(receiver);
+      return stable ? { receiverGlobal: resolveStandaloneRegExpTestGlobal(ctx, stable) } : {};
     },
     classStaticFieldStorage: (owner, field) => resolveIrClassStaticFieldStorage(ctx, owner, field), // (#7233)
     staticNumericArrayRead(expression: ts.Expression, expected: IrType) {
@@ -7153,6 +7265,12 @@ function makeFromAstResolver(
     dynamicCarrierIsExternref() {
       return !ctx.fast;
     },
+    jsonParseFoldsAtCompileTime: (call) => jsonParseTextFoldsAtCompileTime(ctx, call),
+    ambientGlobalFunctionTarget(name) {
+      if (name === "JSON.parse") return irRuntimeFuncRef(JSON_PARSE_TEXT_FN); // (#7267) pre-registered at finalize
+      const symbol = ambientGlobalFunctionProviderSymbol(ctx, name); // (#7253)
+      return symbol === null ? null : irRuntimeFuncRef(symbol);
+    },
     dynamicMethodCallWrapper(method: string, arity: number) {
       return irTemplateWrapperLane(ctx) && irWrapperSymbolIsNameable(method, arity);
     },
@@ -7171,85 +7289,15 @@ function makeFromAstResolver(
         fnctorParameterPreselectionIsCurrent?.() === true
       );
     },
-    // (#2955 slice 5) No raw `nativeStrings()` here anymore — from-ast's
-    // interface no longer carries the mode discriminator; every mode
-    // decision flows through the named capability/rep/strategy queries.
-    // (#2955 slice 2) The WHOLE string-prototype-method mode decision table,
-    // relocated here from from-ast's `lowerStringMethodCall` so the front-end
-    // reads no `nativeStrings` at that site. Byte-inert by construction: the
-    // returned plan reproduces exactly the decisions the old inline reads
-    // made — same demotes (null), same target names, same index reps, same
-    // pad strategy — so the emitted IR per mode is unchanged. The demote
-    // half MUST stay a build-time answer (there is no lower-time demote
-    // channel), which is why this is a resolver callback and not an
-    // abstract-instr lowering case; promoting the rep half into a true
-    // `str.method` instr is #2955's follow-up slice.
+    // The WasmGC plan is the surface's (`string-method-surface.ts`); the
+    // proven-ASCII case helper only picks a name, it never admits or refuses.
     stringMethodPlan(method: string, argCount: number, receiverEncoding: StringEncoding | undefined) {
-      const native = ctx.nativeStrings;
-      // (#3156) charCodeAt — BOTH modes lower to a guarded defined helper
-      // `(recv, i32 idx) -> f64` (src/codegen/char-code-at-helpers.ts;
-      // materialized on demand by resolveFunc below). NOT the bare
-      // `wasm:js-string charCodeAt` builtin: that one traps out-of-range
-      // (#2003) and its bare funcMap name is shadowable by a user function
-      // named `charCodeAt` (#1072). An omitted position pads i32 0.
-      if (method === "charCodeAt") {
-        return {
-          funcName: native ? "__str_charCodeAt" : "__jsstr_charCodeAt",
-          indexArgRep: "i32" as const,
-          padOmitted: "charcode-zero" as const,
-        };
-      }
-      // #4576 — the native search helpers already own the exact one-argument
-      // JS defaults: pass an explicit i32 zero for the omitted position. Keep
-      // two-argument calls on legacy until the plan models indexOf's boxed host
-      // fromIndex independently from the native helper's i32 representation.
-      if (native && argCount === 1 && (method === "indexOf" || method === "includes")) {
-        return {
-          funcName: `__str_${method}`,
-          indexArgRep: "i32" as const,
-          padOmitted: "search-zero" as const,
-          resultRep: method === "indexOf" ? ("i32-number" as const) : undefined,
-        };
-      }
-      // #2002 — the native string backend lowers the position arg via its
-      // own __str_* helpers (src/codegen/string-ops.ts); defer to the legacy
-      // native path rather than re-implement position handling in the IR.
-      if (
-        native &&
-        (method === "indexOf" || method === "includes" || method === "startsWith" || method === "endsWith")
-      ) {
-        return null;
-      }
-      const sig = STRING_METHOD_TABLE[method];
-      if (!sig) return null;
-      const omitted = argCount < sig.hostArgs.length;
-      // Both substring helpers take i32 indices and enforce JS clamp/swap semantics.
-      if (method === "substring") {
-        return native
-          ? {
-              funcName: "__str_substring",
-              indexArgRep: "i32" as const,
-              padOmitted: "native-substring" as const,
-            }
-          : {
-              funcName: JSSTR_SUBSTRING_FN,
-              indexArgRep: "i32" as const,
-              padOmitted: "native-substring" as const,
-            };
-      }
-      // #1248 — native mode only lowers fully-specified call sites, except
-      // `slice(start)` whose implicit end defaults to recv.length.
-      if (native && omitted && !(method === "slice" && argCount === 1)) return null;
-      const provenAsciiCaseHelper =
-        native &&
+      const plan = planStringMethod("wasmgc", method, argCount);
+      const ascii =
+        plan?.asciiHelper !== undefined &&
         receiverEncoding === "ascii" &&
-        readEnv("JS2WASM_NATIVE_PROVEN_ASCII_CASE") !== "0" &&
-        (method === "toUpperCase" || method === "toLowerCase");
-      return {
-        funcName: native ? `__str_${method}${provenAsciiCaseHelper ? "_ascii" : ""}` : `string_${method}`,
-        indexArgRep: (native ? "i32" : "f64") as "i32" | "f64",
-        padOmitted: (native ? "native-slice-len" : "host") as "native-slice-len" | "host",
-      };
+        readEnv("JS2WASM_NATIVE_PROVEN_ASCII_CASE") !== "0";
+      return plan && ascii ? { ...plan, helper: plan.asciiHelper! } : plan;
     },
     preferLegacyFlatSubstringCharCodeAt(receiver: ts.Expression) {
       let current = receiver;
@@ -7370,6 +7418,9 @@ function makeFromAstResolver(
     standaloneDomOperation(node: ts.Node) {
       return standaloneDomCapability?.operation(node);
     },
+    nativeBufferOperation(node: ts.Node) {
+      return nativeBufferSurface?.operation(node);
+    },
     // (#4461) The three host-free capabilities the native-`$Map` arms consult.
     // They live here, on the lower/integration side, for the same #2955 reason
     // the box/unbox predicates do: from-ast reads no mode flags of its own.
@@ -7478,7 +7529,7 @@ function makeFromAstResolver(
     resolveModuleBinding(node: ts.Identifier, writeValue?: ts.Expression) {
       const identity = moduleBindingResolver?.(node, writeValue);
       return identity
-        ? resolveModuleBindingGlobal(ctx, identity, postWasmStartTdzSafeBindingsByOwnerUnitId)
+        ? resolveModuleBindingGlobal(ctx, identity, classShapes, postWasmStartTdzSafeBindingsByOwnerUnitId)
         : undefined;
     },
     isDirectModuleBinding(node: ts.Identifier): boolean {
@@ -7491,13 +7542,18 @@ function makeFromAstResolver(
       return moduleBindingResolver?.isLibOnlyBinding(node) === true;
     },
     builtinProtoCompanionSeeded: () => ctx.protoMemberDirty, // (#7127)
+    runtimeEvalMayExecute: () => ctx.runtimeEvalBoundaryPlan?.providerMayExecute !== false, // (#7106 lever O)
+    builtinProtoMember: (builtin: string, member: string, anchor: ts.Node) =>
+      builtinProtoMemberProvided(ctx, builtin, member, anchor), // (#7294)
     isAmbientStringBinding,
+    localNeedsDynamicCarrier: (declaration) => bindingHasMixedAssignmentCarrier(ctx, declaration),
     // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
     // predicates as the legacy `collectConsoleImports` registration scan
     // (string → bool → number → externref, in that order), so the import
     // name the IR resolves (`console_<m>_<variant>`) is registered by
     // construction.
     consoleArgVariant(arg: ts.Expression) {
+      if (expressionHasWidenedStaticType(ctx, arg)) return "externref";
       const argType = ctx.checker.getTypeAtLocation(arg);
       if (isStringType(argType)) return "string";
       if (isBooleanType(argType)) return "bool";
@@ -7587,8 +7643,11 @@ function makeFromAstResolver(
  * Best-effort by design: a symbol the lane did not register simply stays
  * unobserved, and the component fails the same way it would have.
  */
-function observeNativeRuntimeProvider(ctx: CodegenContext, symbol: string): void {
-  const index = ctx.funcMap.get(symbol);
+/**
+ * Register `symbol`'s provider. (#7274) A compiler-owned adapter passes its
+ * exact handle: a same-name source declaration also lives in `ctx.funcMap`.
+ */
+function observeNativeRuntimeProvider(ctx: CodegenContext, symbol: string, index = ctx.funcMap.get(symbol)): void {
   if (index === undefined) return;
   ctx.programAbiCallableProviders?.observe(irRuntimeFuncRef(symbol), index);
 }
@@ -7654,6 +7713,7 @@ function resolveAndObserveCallableProvider(
 
   let index: number | null | undefined;
   const { symbol } = ref.binding;
+  const builtinProtoMember = ref.binding.kind === "runtime" ? parseBuiltinProtoMemberSymbol(symbol) : undefined; // (#7294)
   if (ref.binding.kind === "intrinsic" && isIntrinsicId(symbol)) {
     const provider = runtimeProviders?.get(symbol);
     if (!provider || provider.implementation.kind !== "self-hosted") {
@@ -7723,6 +7783,9 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNativePromiseAllProvider(ctx);
   } else if (ref.binding.kind === "runtime" && IR_NATIVE_CONSOLE_SYMBOLS.has(symbol)) {
     index = ensureIrNativeConsoleProvider(ctx, symbol);
+  } else if (builtinProtoMember !== undefined) {
+    const { role, builtin, member } = builtinProtoMember;
+    index = ensureBuiltinProtoMemberFunc(ctx, role, builtin, member) ?? null;
   } else if (ref.binding.kind === "runtime" && symbol === "__hof_holey_array_filter") {
     index = ensureHoleyArrayFilter(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
@@ -7916,7 +7979,7 @@ function resolveAndObserveCallableProvider(
       ensureNativeStringHelpers(ctx);
       index = nativeStrHelperHandle(ctx, "__str_charAt_cp");
     }
-  } else if (ref.binding.kind === "intrinsic" && (symbol === "__str_indexOf" || symbol === "__str_includes")) {
+  } else if (ref.binding.kind === "intrinsic" && isStringMethodHelper(symbol)) {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);
       index = nativeStrHelperHandle(ctx, symbol);
@@ -7930,6 +7993,8 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNumberToFixedProvider(ctx, fuseNativeNumberFormatCarriers);
   } else if (ref.binding.kind === "intrinsic" && parseIrDateSnapshotGetter(symbol) !== undefined) {
     index = ensureDateCivilHelper(ctx);
+  } else if (ref.binding.kind === "runtime" && symbol === STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER) {
+    index = ensureStandaloneRegExpCarrierToStringHelper(ctx);
   } else if (ref.binding.kind === "runtime" && symbol === "__str_replaceAll") {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);
@@ -8042,6 +8107,27 @@ function resolvePreparedImportCallable(
   );
 }
 
+/**
+ * (#7291) The builder replaces the owned-append concat, so it follows that
+ * provider's frozen arm: only the native helpers own a builder's buffer.
+ */
+function nativeStringBuilderLowering(
+  ctx: CodegenContext,
+  preparedRuntimeManifest: PreparedIrRuntimeManifest | undefined,
+): StringBuilderLowering | undefined {
+  if (preparedStringConcatProvider(preparedRuntimeManifest, "owned-append")?.arm !== "native") return undefined;
+  ensureNativeStringHelpers(ctx);
+  const flatten = nativeStrHelperHandle(ctx, "__str_flatten");
+  const nextCap = nativeStrHelperHandle(ctx, "__str_buf_next_cap");
+  if (flatten === undefined || nextCap === undefined) {
+    throw new Error("ir/integration: native string builder helpers not registered");
+  }
+  return {
+    types: nativeStringBuilderTypes(ctx),
+    helpers: { flatten, nextCap },
+  };
+}
+
 function makeResolver(
   ctx: CodegenContext,
   unionRegistry: UnionStructRegistry,
@@ -8129,6 +8215,9 @@ function makeResolver(
       return preparedScopeLookup
         ? preparedScopeLookup.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding))
         : ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding));
+    },
+    resolveGlobalType(ref: IrGlobalRef): ValType | undefined {
+      return moduleGlobalDef(ctx, resolver.resolveGlobal(ref))?.type;
     },
     resolveType(ref: IrTypeRef): number {
       if (readEnv("JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE") === "type") {
@@ -8356,6 +8445,7 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: string_charAt import not registered");
       return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: idx }];
     },
+    resolveStringBuilderLowering: () => nativeStringBuilderLowering(ctx, preparedRuntimeManifest),
     emitStringCharCodeAt(_inputEncoding, provider): readonly Instr[] {
       if (provider) {
         return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
@@ -8985,7 +9075,7 @@ function preregisterInOperatorSupport(ctx: CodegenContext, fns: readonly BuiltFn
           if (
             instr.kind === "call" &&
             instr.target.binding.kind === "runtime" &&
-            instr.target.binding.symbol === "__extern_has"
+            (instr.target.binding.symbol === "__extern_has" || instr.target.binding.symbol === IN_HAS_PROPERTY)
           ) {
             used = true;
           }
@@ -9276,6 +9366,16 @@ function buildTemplateWrapperFamily(
   flushLateImportShifts(ctx, null);
 }
 
+/** (#7274) Mint the native ArrayBuffer / DataView providers the bodies call, before Phase 3 bakes a funcIdx. */
+function reserveNativeBufferAdapters(ctx: CodegenContext, symbols: ReadonlySet<string>): void {
+  if (symbols.size === 0) return;
+  for (const symbol of [...symbols].sort()) {
+    const handle = irNativeBufferProvider(ctx, symbol);
+    if (handle !== undefined) observeNativeRuntimeProvider(ctx, symbol, handle);
+  }
+  flushLateImportShifts(ctx, null);
+}
+
 function preregisterDynamicSupport(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
@@ -9322,6 +9422,7 @@ function preregisterDynamicSupport(
   // Both are REAL Wasm functions on this lane, so they are reserved here —
   // before any Phase-3 body bakes a funcIdx — exactly like the union family.
   let usesNativeMapAdapters = false;
+  const nativeBufferAdapters = new Set<string>();
   let usesNativeExternIsUndefined = false;
   // (#7104) `dyn.undefined` on the host externref carrier needs the
   // `__get_undefined` import reserved BEFORE Phase 3 bakes funcIdxs.
@@ -9334,6 +9435,8 @@ function preregisterDynamicSupport(
   let usesDynJsonStringify = false;
   // (#7106 S1c) `dyn.object_tag` calls the standalone runtime classifier.
   let usesDynObjectTag = false;
+  // (#7267) `JSON.parse(text)` calls the native codec's parse entry.
+  let usesJsonParseText = false;
   // (#7106 module-init lever B) `js.number.from-value` calls the template-built provider.
   let usesNumberFromValue = false;
   // (#7106 S3a) `dyn.construct` calls the per-arity construct driver wrapper.
@@ -9358,8 +9461,8 @@ function preregisterDynamicSupport(
   const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
   // (#7106 propertyHelper) a dynamic delete calls its strictness's wrapper.
   const dynDeleteStrictness = new Set<boolean>();
-  // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor` alias.
-  let usesOwnPropertyDescriptor = false;
+  // (#7106 propertyHelper, #7272) the stored-static aliases' object-runtime providers.
+  const storedStaticProviders = new Set<StoredStaticAliasProvider>();
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9443,6 +9546,8 @@ function preregisterDynamicSupport(
             if (methodWrapper !== undefined) dynamicMethodCallWrappers.set(symbol, methodWrapper);
             const borrowWrapper = parseIrArrayPrototypeBorrowHelperName(symbol);
             if (borrowWrapper !== undefined) arrayPrototypeBorrowWrappers.set(symbol, borrowWrapper);
+            if (isStoredStaticAliasProvider(symbol)) storedStaticProviders.add(symbol);
+            if (isIrNativeBufferRuntimeSymbol(symbol)) nativeBufferAdapters.add(symbol); // (#7274)
             switch (symbol) {
               case "__extern_set_strict":
                 usesFunctionMemberStrictSet = true;
@@ -9455,8 +9560,8 @@ function preregisterDynamicSupport(
               case "__unbox_number":
                 usesRuntimeUnboxNumber = true;
                 break;
-              case "__getOwnPropertyDescriptor":
-                usesOwnPropertyDescriptor = true;
+              case JSON_PARSE_TEXT_FN:
+                usesJsonParseText = true;
                 break;
               // (#4461) native `$Map` module-binding storage.
               case IR_DYN_DELETE_STRICT_HELPER:
@@ -9601,15 +9706,11 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
   }
-  if (usesOwnPropertyDescriptor && (ctx.standalone || ctx.wasi) && !ctx.fast) {
-    // (#7106 propertyHelper) exactly legacy's registration for the stored
-    // alias (`call-object-builtins.ts`): `(externref, externref) -> externref`.
-    ensureLateImport(
-      ctx,
-      "__getOwnPropertyDescriptor",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
+  if (storedStaticProviders.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    for (const symbol of storedStaticProviders) {
+      const { params, results } = storedStaticAliasProviderImport(symbol);
+      ensureLateImport(ctx, symbol, [...params], [...results]);
+    }
     flushLateImportShifts(ctx, null);
   }
   if (dynConstructArities.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
@@ -9654,6 +9755,11 @@ function preregisterDynamicSupport(
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, "__json_stringify_root");
   }
+  if (usesJsonParseText && ctx.nativeStrings && !ctx.fast) {
+    emitJsonParseText(ctx);
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, JSON_PARSE_TEXT_FN);
+  }
   if (usesDynToString && !ctx.fast) {
     if (ctx.nativeStrings) {
       // Native lanes: `__extern_toString` is a DEFINED function of the object
@@ -9673,12 +9779,14 @@ function preregisterDynamicSupport(
     ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, null);
   }
+  reserveNativeBufferAdapters(ctx, nativeBufferAdapters);
   if (usesNativeMapAdapters) {
-    ensureIrNativeMapAdapters(ctx);
+    const mapAdapters = ensureIrNativeMapAdapters(ctx);
     flushLateImportShifts(ctx, null);
-    observeNativeRuntimeProvider(ctx, IR_NATIVE_MAP_NEW_FN);
-    observeNativeRuntimeProvider(ctx, IR_NATIVE_MAP_GET_NUM_FN);
-    observeNativeRuntimeProvider(ctx, IR_NATIVE_MAP_SET_NUM_FN);
+    for (const symbol of [IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_SET_NUM_FN]) {
+      const handle = mapAdapters.get(symbol);
+      if (handle !== undefined) observeNativeRuntimeProvider(ctx, symbol, handle);
+    }
     // A native-map `.get` result reaching an `f64` return unboxes through the
     // native `__unbox_number`, so its provider is discovered here too.
     observeNativeRuntimeProvider(ctx, "__unbox_number");
@@ -9738,10 +9846,7 @@ function preregisterDynamicSupport(
     // Register the selected family up-front so no emit can trigger a shift
     // (#329/#2078), exactly like `addUnionImports` above. Both are idempotent;
     // only fired when a host module actually carries a dyn.eq.
-    if (usesEq) {
-      ensureExternStrictEqHelper(ctx);
-      ensureExternLooseEqHelper(ctx);
-    }
+    if (usesEq) ensureIrDynamicEqualityRuntime(ctx);
   }
   // #3053 U1 — a `dyn.member_get` present in any IR body needs the unified
   // reader primitive `__dyn_member_get` (#3053 U0) REGISTERED up-front so the
@@ -10845,8 +10950,7 @@ class ClassRegistry {
     if (this.ctx.classExternrefBackedSet.has(shape.className)) return null;
 
     const classLayout = this.ctx.programAbiTypes?.layoutForClass(classId);
-    const structTypeIdx =
-      classLayout?.typeIdx ?? (this.ctx.programAbiTypes ? undefined : this.ctx.structMap.get(shape.className));
+    const structTypeIdx = exactClassStructTypeIdx(this.ctx, classId, shape.className);
     if (structTypeIdx === undefined) return null;
     const layoutFields =
       classLayout?.type.fields ?? (this.ctx.programAbiTypes ? undefined : this.ctx.structFields.get(shape.className));

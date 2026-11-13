@@ -464,7 +464,12 @@ class TrendChart extends HTMLElement {
 
     // Lines + gradient fills
     let paths = "";
-    for (let si = 0; si < seriesDef.length; si++) {
+    // A `background: true` series is painted first, underneath the others,
+    // without changing its index (seriesDef[0] still owns the dots + peak).
+    const drawOrder = seriesDef
+      .map((_, si) => si)
+      .sort((a, b) => !!seriesDef[b].background - !!seriesDef[a].background);
+    for (const si of drawOrder) {
       const s = seriesDef[si];
       const color = s.color || "#fff";
       const width = s.lineWidth ?? (si === 0 ? 2 : 1.5);

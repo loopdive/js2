@@ -45,6 +45,7 @@
  * a wrong "yes" would miscompile, so every uncertain use rejects.
  */
 import { forEachChild, ts } from "../ts-api.js";
+import { isFunctionScopeBoundary } from "./analysis/ast-scope.js";
 
 /** How a spread operand's elements are recovered at lowering time. */
 export type SpreadSourceShape =
@@ -58,18 +59,6 @@ export type SpreadSourceShape =
    * string-backend gates still see through the spread.
    */
   | { readonly kind: "fixed-const-vec"; readonly length: number; readonly elements: readonly ts.Expression[] };
-
-function isFunctionScopeBoundary(node: ts.Node): boolean {
-  return (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isConstructorDeclaration(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    ts.isSetAccessorDeclaration(node)
-  );
-}
 
 /** Nearest enclosing function-like node (or the SourceFile at module level). */
 function enclosingFunctionScope(node: ts.Node): ts.Node | undefined {

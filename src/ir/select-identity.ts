@@ -701,6 +701,7 @@ function assessIdentityModuleInit(
   claimed: ReadonlyMap<IrUnitId, IrIdentityFunctionClaim>,
   uniqueFunctions: ReadonlyMap<string, ts.FunctionDeclaration>,
   localClasses: ReadonlySet<string>,
+  helperTypes: TypeMap | undefined,
 ): IrIdentityModuleInitAssessment | undefined {
   const moduleInitId = identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
   const inventoryModuleInits = identityContext.inventory.terminalUnits.filter(
@@ -741,7 +742,7 @@ function assessIdentityModuleInit(
   for (const [name, candidates] of functionsByName) {
     if (candidates.length === 1 && claimed.has(candidates[0]!.unit.unitId)) claimedNames.add(name);
   }
-  const assessment = assessModuleInit(sourceFile, claimedNames, uniqueFunctions, localClasses);
+  const assessment = assessModuleInit(sourceFile, claimedNames, uniqueFunctions, localClasses, helperTypes);
   return {
     unitId: moduleInitId,
     displayName: terminal.displayName,
@@ -1356,17 +1357,17 @@ export function planIrCompilationByIdentity(
           if (trackFallbacks) reasons.set(unit.unitId, "class-projection-unsupported");
           continue;
         }
-        // (#7241) A flat `extends <lib interface>` shape (legacy root struct)
-        // admits its own `super`-free instance methods; the constructor and
-        // accessors stay legacy.
-        const libInterfaceRootMethod =
+        // (#7241 / #7244) A flat root-struct heritage shape (`extends <lib
+        // interface>` or `extends <compiled function>`) admits its own
+        // `super`-free instance methods; the constructor and accessors stay legacy.
+        const rootStructHeritageMethod =
           !nestedClass &&
           ts.isMethodDeclaration(member) &&
-          (exactClassShape ?? options.projectedClassShapes?.get(className))?.libInterfaceRoot === true &&
+          (exactClassShape ?? options.projectedClassShapes?.get(className))?.rootStructHeritage === true &&
           !referencesSuper(member);
         const claimableUnderParent = isStaticMethod
           ? !referencesSuper(member)
-          : parentIsLocal || libInterfaceRootMethod;
+          : parentIsLocal || rootStructHeritageMethod;
         if (hasParent && !claimableUnderParent) {
           if (trackFallbacks) reasons.set(unit.unitId, "class-method");
           continue;
@@ -1507,6 +1508,7 @@ export function planIrCompilationByIdentity(
     claimed,
     uniqueFunctions,
     localClasses,
+    helperTypes,
   );
 
   const fallbacks = trackFallbacks

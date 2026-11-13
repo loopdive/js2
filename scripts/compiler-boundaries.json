@@ -29,9 +29,10 @@
         "src/shared/contracts/ir-preparation-errors.ts",
         "src/shared/contracts/ir-counted-string-site-id.ts",
         "src/shared/contracts/string-surrogate.ts",
-        "src/shared/contracts/linear-memory-layout.ts"
+        "src/shared/contracts/linear-memory-layout.ts",
+        "src/shared/contracts/f64-value-markers.ts"
       ],
-      "minModules": 10
+      "minModules": 11
     },
     {
       "id": "wasm-model",
@@ -2290,7 +2291,17 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/native-buffer-adapters.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-unit-inventory.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/in-operator-helper.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -2860,6 +2871,11 @@
     },
     {
       "path": "src/codegen-linear/runtime.ts",
+      "state": "unmigrated",
+      "layer": "legacy-linear"
+    },
+    {
+      "path": "src/codegen-linear/runtime/array-allocation.ts",
       "state": "unmigrated",
       "layer": "legacy-linear"
     },
@@ -4806,12 +4822,12 @@
       "nextBoundary": "The JS best-effort class-shape rule of buildIrClassShapes (#7233); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
     },
     {
-      "path": "src/codegen/classes/ir-lib-interface-root-heritage.ts",
+      "path": "src/codegen/classes/ir-root-struct-heritage.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "The lib-interface root-heritage read-back of buildIrClassShapes (#7241); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
+      "nextBoundary": "The root-struct heritage read-back of buildIrClassShapes (#7241 lib interface, #7244 compiled function); move beside ir-class-shapes.ts when class-shape projection leaves codegen/index.ts."
     },
     {
       "path": "src/codegen/classes/missing-super-return.ts",
@@ -5116,14 +5132,6 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
-      "path": "src/codegen/declarations/widened-property-return.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "5386-alias-property-writes",
-      "nextBoundary": "Separate AST-based alias evidence from physical return-carrier selection."
     },
     {
       "path": "src/codegen/declarations/with-body-var-hoisting.ts",
@@ -5724,6 +5732,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/eval-script.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7106",
+      "nextBoundary": "Eval-source analysis (parse, early errors, provider-owned declarations) shared by legacy and the IR selector; moves to the front end with the rest of the eval-source analysis once it no longer needs CodegenContext."
     },
     {
       "path": "src/codegen/expressions/eval-source.ts",
@@ -7999,6 +8015,14 @@
     },
     {
       "path": "src/codegen/native-construct.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/native-string-memory-reader.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -10702,6 +10726,30 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/buffers/array-buffer-native.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/buffers/data-view-native.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/buffers/ir-native-buffer.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/ta-dyn-proto-methods.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -11899,6 +11947,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/analysis/string-builder-presize.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Checker-based frontend analysis shared by legacy codegen and IR selection; separate pure IR contracts from frontend inventory."
+    },
+    {
       "path": "src/ir/analysis/dominance.ts",
       "state": "clean",
       "layer": "ir-analysis"
@@ -12364,6 +12420,22 @@
       "nextBoundary": "Pure TypeScript-AST fold shared by the selector and from-ast (#7106 S1b); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/ambient-global-function-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "TypeScript-AST shape plus builder lowering of the ambient parse/escape/isNaN calls shared by the selector and from-ast (#7253); moves with the frontend inventory split."
+    },
+    {
+      "path": "src/ir/builtin-proto-member.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "TypeScript-AST admission plus builder lowering of `<Builtin>.prototype.<m>` value reads and their own-property descriptors, shared by the selector and from-ast (#7294); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/numeric-slot-coercion.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12460,6 +12532,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/class-instance-storage.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
       "path": "src/ir/class-method-names.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12541,6 +12621,30 @@
     },
     {
       "path": "src/ir/dom-capability.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/native-buffer-surface.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/native-buffer-operands.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/native-buffer-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -12764,6 +12868,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/shared/always-undefined-binding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106",
+      "nextBoundary": "Pure-AST proof that a script var is declared without a value and never written, shared by the IR selector and builder; becomes a frontend fact when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/shared/ambient-intrinsics.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12980,6 +13092,14 @@
       "nextBoundary": "Generic string operation orchestration uses an injected emitter and only type-imports the clean semantic IR nodes and the still-unmigrated string emitter contract; establish a complete generic lowering contract closure before activation."
     },
     {
+      "path": "src/ir/lowering/string-builder.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Builder-slot lowering uses an injected emitter and only type-imports the clean semantic IR nodes, the still-unmigrated string emitter contract and the backend-wasmgc builder slot shapes; establish a complete generic lowering contract closure before activation."
+    },
+    {
       "path": "src/ir/lower.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13002,6 +13122,46 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/module-binding-vec.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7292",
+      "nextBoundary": "Script-var string-array admission (#7292), the class-instance twin: separate the source-shape certification from the IR value kind when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/module-binding-certified-homes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7292",
+      "nextBoundary": "The resolver's dispatch over the write-certified script-var homes (#7252 class instance, #7292 string vec, #7106 lever S2 match result): moves with their certifiers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/module-binding-script-var.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7292",
+      "nextBoundary": "The source facts every write-certified script-var home shares (#7252, #7274, #7292): its writes and whether a use follows the declaration. Moves with the frontend inventory when it is split from ir-core."
+    },
+    {
+      "path": "src/ir/module-binding-class-instance.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/regexp-match-uses.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape admission for the uses of a RegExp match result (an `.exec` call or a `regexp-match` script var, #7106 levers R2/S2); move with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/module-binding-value-kinds.ts",
@@ -13092,12 +13252,28 @@
       "nextBoundary": "JavaScript producer emits canonical boxing and runtime callable bindings; separate runtime-provider preparation from pure IR contracts."
     },
     {
+      "path": "src/ir/dynamic-home-open-object.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7335",
+      "nextBoundary": "Frontend source-shape certifier for the #7335 dynamic-home open object (a script `var o = {}` on the dynamic module slot); move with the empty-object-literal arms when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/ir/empty-object-literal.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "7128",
       "nextBoundary": "Frontend source-shape certifier for the empty-object-literal arms (#4471 inert, #7128 S1 open carrier); move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/object-create-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7276",
+      "nextBoundary": "TypeScript-AST plan plus builder lowering of `Object.create({}, { <literal data descriptors> })`, shared by the selector and from-ast (#7276); moves with the frontend inventory split."
     },
     {
       "path": "src/ir/binding-pattern-plan.ts",
@@ -13124,12 +13300,36 @@
       "nextBoundary": "Frontend source-shape classifier for the top-level `var` lists the module initializer models and the bindings they declare (#7106 S5); move with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
+      "path": "src/shared/var-declaration-lists.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Frontend source-shape predicates: the `var`-kind list test (shared by IR and codegen analyses) and the top-level `var` lists (statement and `for` head) the module initializer models (#7106 lever L), shared by the IR and legacy's module-global registration; moves with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/string-method-surface.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "The one `String.prototype` method plan read by the selector, the builder and both backend resolvers (#7106); its static-argument classifier is source shape, so it moves with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/ir/binding-pattern-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "7106",
       "nextBoundary": "The one walker that lowers a destructuring plan into IR values (#7106); takes its AST-facing operations from the builder host, so it splits with from-ast's lowering seams."
+    },
+    {
+      "path": "src/shared/regexp-static.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106",
+      "nextBoundary": "Pure-AST static RegExp construction reader (a literal, or `new RegExp` over string literals) shared by legacy's `parseRegExpLiteral` and the IR selector and builder (#7106 lever R); becomes clean once src/ts-api.ts leaves migration debt."
     },
     {
       "path": "src/shared/named-evaluation.ts",
@@ -13860,6 +14060,14 @@
       "nextBoundary": "Frontend source-shape certifier for the uncurried Object.prototype predicate aliases; move with the other source-admission helpers when the frontend inventory is split from ir-core."
     },
     {
+      "path": "src/ir/stored-static-alias-providers.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Import signatures of the object-runtime providers the stored-static aliases lower to (#7272); move next to the provider registry when the backend runtime-provider inventory is split from the integration bridge."
+    },
+    {
       "path": "src/ir/update-retyped-bindings.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -14286,6 +14494,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/native-string-memory.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/process-capability.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -14445,6 +14658,11 @@
     },
     {
       "path": "src/shared/contracts/linear-memory-layout.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/f64-value-markers.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -16643,6 +16861,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/init-marshal-helpers.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/ir/core/global-binding-keys.ts",
       "state": "clean",
       "layer": "ir-core"
@@ -16719,6 +16942,11 @@
     },
     {
       "path": "src/ir/runtime/verify.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/string-builder-verification.ts",
       "state": "clean",
       "layer": "ir-runtime"
     },
@@ -16833,6 +17061,11 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/backend/wasmgc/lowering/wasm-string-builder.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
       "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
       "state": "clean",
       "layer": "ir-analysis"
@@ -16910,6 +17143,22 @@
     },
     {
       "path": "src/codegen/helpers/loose-eq-object-identity.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/loose-equality-to-primitive.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/module-object-liveness.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -17053,6 +17302,22 @@
       "path": "src/runtime/wasmgc/promise/promise-layout.ts",
       "state": "clean",
       "layer": "native-runtime"
+    },
+    {
+      "path": "src/shared/array-index-key.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/shared/transparent-expressions.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     }
   ]
 }

@@ -1823,6 +1823,21 @@ export interface IrSlotDef {
   readonly index: number;
   readonly name: string;
   readonly type: ValType;
+  /**
+   * (#7291) A `let s = ""` owned-append builder: its writes are only the
+   * empty initializer and `s + rhs` owned appends (the verifier holds the
+   * producer to that), so a backend may keep it as buffer locals.
+   */
+  readonly stringBuilder?: IrStringBuilderRole;
+}
+
+export interface IrStringBuilderRole {
+  /**
+   * (#1761) The loop appends at most `unitsPerIter` units on each of
+   * `ceil(bound)` iterations; the f64 `boundSlot` holds the bound, written
+   * before the builder, so the buffer is sized once and never grows.
+   */
+  readonly presize?: { readonly boundSlot: number; readonly unitsPerIter: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -2544,6 +2559,21 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
       void _exhaustive;
       return [];
     }
+  }
+}
+
+/** The SSA values a block's terminator consumes. */
+export function collectTerminatorUses(block: IrBlock): readonly IrValueId[] {
+  const t = block.terminator;
+  switch (t.kind) {
+    case "return":
+      return t.values;
+    case "br":
+      return t.branch.args;
+    case "br_if":
+      return [t.condition, ...t.ifTrue.args, ...t.ifFalse.args];
+    case "unreachable":
+      return [];
   }
 }
 

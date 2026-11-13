@@ -100,9 +100,11 @@ host implementation without changing the representation contract.
 Accelerator note: a selected accelerator may route a family (strings, RegExp,
 Date, Intl) through host imports classified `host-accelerator`; the native
 provider stays the fallback, and an accelerator is a compile error outside a
-JS environment. The retired `host-assisted` profile (one release, removed in
-S7) is the only configuration in which these cells still lower through
-`legacy-semantic` host imports.
+JS environment. The retired `host-assisted` profile (removed in #6979 S7-a;
+js2wasm 0.71.0 was the last release that accepted it) was the last
+configuration in which these cells lowered through `legacy-semantic` host
+imports; no current configuration selects them, and S7-b deletes the
+emitters.
 
 ## Migration order
 

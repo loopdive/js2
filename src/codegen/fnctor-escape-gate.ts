@@ -1590,8 +1590,8 @@ export function analyzeFnctorEscapeGate(
    */
   standalone?: boolean,
   compilePath: FnctorCompilePath = "single",
-  /** (#7106 S3c) Refuse self-guarded constructors (`selfGuardedConstructorsLeaveFnctor`). */
-  refuseSelfGuarded: boolean = standalone === true,
+  /** (#7106 S3c) Refuse this self-guarded constructor (`selfGuardedConstructorLeavesFnctor`). */
+  leavesFnctor: (decl: ts.FunctionDeclaration) => boolean = () => standalone === true,
 ): FnctorEscapeGateResult {
   const sites = new Map<ts.NewExpression, FnctorGateClass>();
   const siteCtorName = new Map<ts.NewExpression, string>();
@@ -1675,7 +1675,7 @@ export function analyzeFnctorEscapeGate(
     }
     const decl = fnctorDeclFromSymbol(ctorSym, checker);
     // (#7106 S3c) A self-guarded constructor stays an ordinary function value (`isSelfGuardedConstructor`).
-    if (refuseSelfGuarded && decl && isSelfGuardedConstructor(decl)) refuse(ctorSym.name, "self-guarded-constructor");
+    if (decl && isSelfGuardedConstructor(decl) && leavesFnctor(decl)) refuse(ctorSym.name, "self-guarded-constructor");
     else if (decl) ctorDeclByName.set(ctorSym.name, decl);
   }
 

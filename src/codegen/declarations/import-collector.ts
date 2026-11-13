@@ -14,7 +14,7 @@ import {
   isStringType,
 } from "../../checker/type-mapper.js";
 import { forEachChild, ts } from "../../ts-api.js";
-import { exactIndirectEvalStatement } from "../../eval-call-shape.js";
+import { exactGlobalEvalStatement } from "../../eval-call-shape.js";
 import { ensureWrapperTypes } from "../any-helpers.js";
 import { asyncGenDrivableUnderCarrier, asyncGenStem } from "../async-frame.js";
 import { unwrapTransparentExpression } from "../object-descriptor-analysis.js";
@@ -59,7 +59,7 @@ import { emitNativeUriDecode, emitNativeUriEncode } from "../uri-encoding-native
 import type { ValType } from "../../ir/types.js";
 import { type CodegenContext, hostFreeEnvironment } from "../context/types.js";
 import { registerImportCollectorDelegates } from "../registry/import-collector-delegates.js";
-import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
+import { expressionHasWidenedStaticType } from "../strict-eq-stale-type.js";
 import { isConsoleValueIdentifier } from "../standalone-console-object.js";
 import { collectorReceiverType } from "../builtin-subclass-receiver.js"; // (#6651 C5) inherited builtin members
 import { hostDateParseLane } from "../helpers/host-date-parse.js";
@@ -291,10 +291,9 @@ function needsHostIndirectEvalImport(ctx: CodegenContext, node: ts.Node): boolea
   if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings || !ts.isCallExpression(node)) {
     return false;
   }
-  const shape = exactIndirectEvalStatement(node);
-  return (
-    !!shape && collectorSeesAmbientEval(ctx, shape.evalIdentifier) && collectorProvesHostEvalString(ctx, shape.source)
-  );
+  const shape = exactGlobalEvalStatement(node);
+  if (!shape || shape.direct) return false;
+  return collectorSeesAmbientEval(ctx, shape.evalIdentifier) && collectorProvesHostEvalString(ctx, shape.source);
 }
 
 /**
@@ -446,7 +445,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       const needed = state.consoleNeededByMethod.get(method)!;
       for (const arg of node.arguments) {
         const argType = ctx.checker.getTypeAtLocation(arg);
-        if (expressionHasWidenedPropertyType(ctx, arg)) {
+        if (expressionHasWidenedStaticType(ctx, arg)) {
           needed.add("externref");
         } else if (isStringType(argType)) {
           needed.add("string");

@@ -114,6 +114,7 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
+import { objectProtoNameMissInstrs, registerInHelperNatives } from "./object-proto-name-in.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
@@ -193,7 +194,7 @@ import {
 import { captureVecOrClosureReadBinding, buildVecOrClosurePropSetMissArm, reserveVecPropHelpers } from "./vec-props.js";
 import { ensureSymbolCarrier } from "./symbol-native.js";
 import { ensureVecElemSet } from "./vec-elem-set.js";
-import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
+import { SPARSE_INDEX_CEILING } from "../shared/array-index-key.js";
 // (#4160) prototype-index store — reserve + registration-time consult builders
 // (all resolve to `undefined` unless `ctx.standalone && ctx.protoIndexDirty`).
 import {
@@ -4143,6 +4144,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         blockType: { kind: "empty" },
         then: [{ op: "i32.const", value: 1 }, { op: "return" }],
       },
+      ...objectProtoNameMissInstrs(registerInHelperNatives(ctx, registerNative, strFlattenIdx, strEqualsIdx)),
       { op: "local.get", index: 2 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       {
@@ -4176,9 +4178,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               ],
             },
           ] satisfies Instr[])),
-      // The compiler selected this helper only for one of the fixed
-      // Object.prototype names. Non-`$Object`/non-fnctor receivers retain the
-      // prior permissive constant rather than gaining a new runtime miss.
+      // Any other receiver keeps the permissive implicit-terminal answer (see #7304 for its gaps).
       { op: "i32.const", value: 1 },
     ];
   }

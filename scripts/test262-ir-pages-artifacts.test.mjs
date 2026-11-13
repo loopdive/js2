@@ -113,6 +113,21 @@ test("contradictory aggregate verification is rejected", () =>
 test("unknown execution cannot supply IR numbers", () =>
   check({ "test262-ir-report.json": { ...measured, executionCompilerPath: "unknown" } }, true));
 test("unlabelled arrays are rejected", () => check({ "ir/test262-editions.json": [] }, true));
+test("IR standalone editions, their history and the edition maps deploy under the standalone identity", () =>
+  check({
+    "ir/test262-standalone-editions.json": { ...standalone, editions: [{ edition: "ES5", pass: 1, total: 1 }] },
+    "ir/runs/standalone-editions-index.json": { ...standalone, runs: [] },
+    // Frontmatter maps are lane-neutral: the standalone measurement's copy is the IR copy.
+    "ir/test262-category-editions.json": { ...standalone, data: {} },
+    "ir/test262-file-editions.json": { ...standalone, data: { editions: [], files: {} } },
+  }));
+test("raw generator output cannot occupy an IR edition destination", () => {
+  check({ "ir/test262-standalone-editions.json": [{ edition: "ES5", pass: 1, total: 1 }] }, true);
+  check({ "ir/runs/standalone-editions-index.json": [{ timestamp: "t", editions: [] }] }, true);
+  check({ "ir/test262-file-editions.json": { editions: [], files: {} } }, true);
+});
+test("a host edition envelope cannot occupy the IR standalone destination", () =>
+  check({ "ir/test262-standalone-editions.json": { ...measured, editions: [] } }, true));
 test("an unavailable status must explain its reason", () =>
   check({ "test262-ir-status.json": { ...unavailable, reason: "" } }, true));
 
@@ -173,6 +188,26 @@ test("IR view displays an all-compile-error measurement without claiming executi
 test("IR view rejects a swapped runtime even when query parameters mention standalone", async () => {
   await assert.rejects(view("?ir=1", standalone).fetchData("./benchmarks/results/test262-report.json?note=standalone"));
 });
+test("IR view reads standalone editions and the lane-neutral edition maps from the standalone measurement", async () => {
+  const editions = [{ edition: "ES5", pass: 1, total: 3 }];
+  assert.equal(
+    await view("?ir=1", { ...allCompileErrors, editions }).fetchData(
+      "./benchmarks/results/test262-standalone-editions.json",
+      "editions",
+    ),
+    editions,
+  );
+  const data = { editions: ["ES5"], files: {} };
+  for (const map of ["test262-category-editions.json", "test262-file-editions.json"])
+    assert.equal(
+      await view("?ir=1", { ...allCompileErrors, data }).fetchData(`./benchmarks/results/${map}`, "data"),
+      data,
+    );
+  // A bare regular-lane array at the IR URL is refused, not rendered.
+  await assert.rejects(
+    view("?ir=1", editions).fetchData("./benchmarks/results/test262-standalone-editions.json", "editions"),
+  );
+});
 test("IR view never fetches remote legacy fallbacks", () => {
   assert.throws(() =>
     view().dataUrl("https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-current.json"),
@@ -200,7 +235,7 @@ test("IR provenance separates request, measurement, proof, source and date", () 
 test("historical Host caption keeps the actual frozen date and revision", () => {
   assert.equal(
     view("?mode=host").historicalHostLabel({ baseline_sha: "old-revision", baseline_generated_at: "2026-09-01" }),
-    "Historical JS Host · frozen results · source old-revision · 2026-09-01",
+    "Historical JS Host · retired 2026-10-12 · frozen results · source old-revision · 2026-09-01",
   );
 });
 
@@ -327,6 +362,92 @@ test("actual artifact program retains all-fail measurements and isolated history
   const categories = JSON.parse(fixture.files.get("ir-measurement/ir/test262-standalone-categories.json"));
   assert.equal(categories.categories[0].compile_error, 3);
 });
+const rawEditions = [
+  { edition: "ES5", pass: 0, fail: 0, ce: 2, skip: 0, total: 2, pct: 0 },
+  { edition: "ES2015", pass: 0, fail: 0, ce: 1, skip: 0, total: 1, pct: 0 },
+];
+function runArtifactProgram(rawFiles) {
+  const fixture = memoryFiles({
+    "ir-measurement/test262-standalone-ir-report.json": {
+      ...allCompileErrors,
+      baseline_sha: "source",
+      timestamp: "2026-11-09T00:00:00.000Z",
+      strict_summary: { pass: 0, total: 2 },
+      categories: [],
+    },
+    ...rawFiles,
+  });
+  const snippet = program(workflow, "IR_MEASUREMENT_ARTIFACTS").replace(
+    "import { readFileSync, writeFileSync } from 'node:fs';",
+    "const { readFileSync, writeFileSync } = fs;",
+  );
+  vm.runInNewContext(snippet, {
+    fs: fixture.fs,
+    process: { env: { RUN_ID: "12", RUN_ATTEMPT: "1", SOURCE_SHA: "source" } },
+  });
+  return (path) => (fixture.files.has(path) ? JSON.parse(fixture.files.get(path)) : undefined);
+}
+test("actual artifact program labels the regular generators' edition output as this IR measurement", () => {
+  const artifact = runArtifactProgram({
+    "ir-editions-raw/test262-editions.json": rawEditions,
+    "ir-editions-raw/runs/standalone-editions-index.json": [
+      {
+        timestamp: "20261109-000500",
+        gitHash: "source",
+        editions: rawEditions.map(({ edition, pass, total }) => ({ edition, pass, total })),
+      },
+    ],
+    "ir-editions-raw/test262-category-editions.json": { language: { ES5: { pass: 0, fail: 0, ce: 2, skip: 0 } } },
+    "ir-editions-raw/test262-file-editions.json": { editions: ["ES5"], files: { "language/x.js": 0 } },
+  });
+  const editions = artifact("ir-measurement/ir/test262-standalone-editions.json");
+  assert.deepEqual(editions.editions, rawEditions);
+  assert.equal(editions.compilerPath, "ir");
+  assert.equal(editions.mode.target, "standalone");
+  assert.equal(editions.baseline_sha, "source");
+  const history = artifact("ir-measurement/ir/runs/standalone-editions-index.json");
+  assert.equal(history.compilerPath, "ir");
+  assert.deepEqual(history.runs, [
+    {
+      timestamp: "2026-11-09T00:00:00.000Z",
+      gitHash: "source",
+      editions: [
+        { edition: "ES5", pass: 0, total: 2 },
+        { edition: "ES2015", pass: 0, total: 1 },
+      ],
+    },
+  ]);
+  assert.deepEqual(artifact("ir-measurement/ir/test262-category-editions.json").data.language.ES5.ce, 2);
+  assert.deepEqual(artifact("ir-measurement/ir/test262-file-editions.json").data.files, { "language/x.js": 0 });
+  // The strict figure needs no file of its own: it travels in the report.
+  assert.deepEqual(artifact("ir-measurement/test262-standalone-ir-report.json").strict_summary, { pass: 0, total: 2 });
+});
+test("actual artifact program leaves editions unmeasured when the generator produced none", () => {
+  for (const rawFiles of [{}, { "ir-editions-raw/test262-editions.json": [] }]) {
+    const artifact = runArtifactProgram(rawFiles);
+    assert.ok(artifact("ir-measurement/ir/runs/standalone-index.json"));
+    for (const file of [
+      "test262-standalone-editions.json",
+      "runs/standalone-editions-index.json",
+      "test262-category-editions.json",
+      "test262-file-editions.json",
+    ])
+      assert.equal(artifact(`ir-measurement/ir/${file}`), undefined);
+  }
+});
+test("IR merge classifies editions with the regular lane's generators, outside the artifact", () => {
+  const merge = workflow.slice(workflow.indexOf("  merge-ir-measurement:"), workflow.indexOf("\n  test262-shard:"));
+  const step = merge.slice(
+    merge.indexOf("      - name: Classify the IR results by ES edition"),
+    merge.indexOf("      - name: Record separate status and run history"),
+  );
+  assert.match(step, /scripts\/generate-editions\.ts[\s\\]+--results ir-measurement\/results\.jsonl/);
+  // The `test262-editions.json` basename is what makes the generator write the two maps beside it.
+  assert.match(step, /--output ir-editions-raw\/test262-editions\.json[\s\\]+--host-free --no-feature-examples/);
+  assert.match(step, /scripts\/append-run-history\.mjs --runs-dir ir-editions-raw\/runs/);
+  assert.match(step, /--standalone-editions ir-editions-raw\/test262-editions\.json/);
+  assert.match(merge, /name: test262-ir-standalone-measurement\n\s+path: ir-measurement\n/);
+});
 function retrieveMeasurements(artifacts, report = allCompileErrors, options = {}) {
   const fixture = memoryFiles();
   const commands = [];
@@ -372,6 +493,8 @@ function retrieveMeasurements(artifacts, report = allCompileErrors, options = {}
       `${dir}/ir/test262-standalone-categories.json`,
       JSON.stringify({ ...report, baseline_sha: "source", categories: [] }),
     );
+    for (const [file, payload] of Object.entries(options.editionFiles?.(dir) ?? {}))
+      fixture.files.set(`${dir}/ir/${file}`, JSON.stringify({ ...report, baseline_sha: "source", ...payload }));
     return "";
   };
   const snippet = program(pagesWorkflow, "IR_MEASUREMENT_FETCH")
@@ -398,6 +521,65 @@ test("Pages actual artifact bridge serves V0 all-fail IR and never mutates Git o
     result.commands.every((command) => command[1] === "api" || (command[1] === "run" && command[2] === "download")),
   );
   assert.ok(!result.files.has("benchmarks/results/test262-report.json"));
+});
+const mainArtifact = (id) => ({ id, expired: false, workflow_run: { id: 42, head_branch: "main" } });
+const publishedEditionFiles = [
+  "test262-standalone-editions.json",
+  "test262-category-editions.json",
+  "test262-file-editions.json",
+  "runs/standalone-editions-index.json",
+];
+test("Pages publishes the latest IR editions and rebuilds their history across retained runs", () => {
+  const result = retrieveMeasurements([mainArtifact(100), mainArtifact(200)], allCompileErrors, {
+    editionFiles: (dir) => ({
+      "test262-standalone-editions.json": { editions: rawEditions },
+      "test262-category-editions.json": { data: {} },
+      "test262-file-editions.json": { data: { editions: [], files: {} } },
+      "runs/standalone-editions-index.json": { runs: [{ timestamp: dir, editions: [] }] },
+    }),
+  });
+  const published = (file) => JSON.parse(result.files.get(`benchmarks/results/ir/${file}`));
+  assert.deepEqual(published("test262-standalone-editions.json").editions, rawEditions);
+  assert.equal(published("test262-standalone-editions.json").mode.target, "standalone");
+  assert.ok(published("test262-category-editions.json").data);
+  assert.ok(published("test262-file-editions.json").data.files);
+  const history = published("runs/standalone-editions-index.json");
+  assert.equal(history.compilerPath, "ir");
+  assert.deepEqual(
+    history.runs.map((run) => run.timestamp),
+    [".ir-measurement-download/200", ".ir-measurement-download/100"],
+  );
+  assert.ok(history.runs.every((run) => run.runId === "42" && run.sourceSha === "source"));
+});
+test("Pages leaves IR editions absent when the retained measurement predates them", () => {
+  const result = retrieveMeasurements([mainArtifact(100)]);
+  assert.ok(result.files.has("benchmarks/results/ir/runs/standalone-index.json"));
+  for (const file of publishedEditionFiles) assert.ok(!result.files.has(`benchmarks/results/ir/${file}`));
+});
+test("Pages refuses IR editions that belong to another source or runtime", () => {
+  for (const payload of [
+    { editions: rawEditions, baseline_sha: "other" },
+    { editions: rawEditions, mode: { target: "gc" } },
+    { baseline_sha: "source" },
+  ])
+    assert.throws(() =>
+      retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+        editionFiles: () => ({ "test262-standalone-editions.json": payload }),
+      }),
+    );
+  assert.throws(() =>
+    retrieveMeasurements([mainArtifact(100)], allCompileErrors, {
+      editionFiles: () => ({ "runs/standalone-editions-index.json": { runs: [], baseline_sha: "other" } }),
+    }),
+  );
+});
+test("Pages publishes no IR editions for an unavailable measurement", () => {
+  const result = retrieveMeasurements(
+    [mainArtifact(100)],
+    { ...allCompileErrors, measurementState: "unavailable", attemptedCases: 0 },
+    { editionFiles: () => ({ "test262-standalone-editions.json": { editions: rawEditions } }) },
+  );
+  for (const file of publishedEditionFiles) assert.ok(!result.files.has(`benchmarks/results/ir/${file}`));
 });
 test("Pages missing/expired/fork measurement stays unavailable without legacy fallback", () => {
   const result = retrieveMeasurements([

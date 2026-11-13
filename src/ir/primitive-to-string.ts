@@ -7,9 +7,10 @@
 import type { AdditiveProof } from "./analysis/operand-admissibility.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
-import { irIntrinsicFuncRef } from "./callable-bindings.js";
+import { irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
 import type { IrPrimitiveExpressionFamily } from "./module-bindings.js";
 import { irVal, type IrType, type IrValueId } from "./nodes.js";
+import { STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER } from "./regexp-runtime-contract.js";
 import { IR_NUMBER_TO_STRING_FN } from "./string-runtime.js";
 
 /**
@@ -58,13 +59,18 @@ export function lowerPrimitiveToString(
 /**
  * One side of a string `+`, converted as the family its `+` proof names — the
  * proof, not the carrier, so an unbranded boolean `i32` still prints "true".
- * Without a primitive proof (no checker) the carrier decides.
+ * Without a primitive proof (no checker) the carrier decides. (#7106 lever R3)
+ * A native RegExp carrier prints as `RegExp.prototype.toString` through the
+ * in-module carrier helper, legacy's own rendering.
  */
 export function lowerConcatOperand(
   builder: IrFunctionBuilder,
   value: IrValueId,
   proof: AdditiveProof | undefined,
 ): IrValueId | null {
+  if (proof === "regexp") {
+    return builder.emitCall(irRuntimeFuncRef(STANDALONE_REGEXP_CARRIER_TO_STRING_HELPER), [value], { kind: "string" });
+  }
   const proven = proof === "string" || proof === "number" || proof === "boolean";
   return lowerPrimitiveToString(builder, value, proven ? proof : carrierStringFamily(builder.typeOf(value)));
 }

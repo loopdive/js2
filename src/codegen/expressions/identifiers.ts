@@ -3,10 +3,7 @@
  * Identifier resolution, TDZ analysis, and instanceof handling.
  */
 import { emitHostIntlGlobal } from "../helpers/host-intl-locale.js"; // (#6986)
-import {
-  autoBindingNarrowedAcrossFunctionBoundary,
-  expressionHasWidenedPropertyType,
-} from "../strict-eq-stale-type.js";
+import { autoBindingNarrowedAcrossFunctionBoundary, expressionHasWidenedStaticType } from "../strict-eq-stale-type.js";
 import { paramReadIsJsDefaultGuess } from "../js-default-param-type-guess.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import {
@@ -1341,7 +1338,7 @@ function compileIdentifierCore(
       // its own initializer; the slot was widened for exactly that reason, so
       // re-narrowing it here would undo the widening one instruction later.
       !paramReadIsJsDefaultGuess(ctx, id) &&
-      !expressionHasWidenedPropertyType(ctx, id)
+      !expressionHasWidenedStaticType(ctx, id)
     ) {
       const narrowedType = ctx.checker.getTypeAtLocation(id);
       const narrowed = narrowTypeToUnbox(ctx, fctx, narrowedType);

@@ -420,6 +420,23 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /**
+   * (#7106) `cond ? then() : orElse()` as one {@link emitIfElse}: each callback
+   * emits its arm into that arm's own buffer (`then` first) and returns the
+   * arm's value.
+   */
+  emitIfElseValue(cond: IrValueId, then: () => IrValueId, orElse: () => IrValueId, resultType: IrType): IrValueId {
+    let thenValue!: IrValueId;
+    const thenBody = this.collectBodyInstrs(() => {
+      thenValue = then();
+    });
+    let elseValue!: IrValueId;
+    const elseBody = this.collectBodyInstrs(() => {
+      elseValue = orElse();
+    });
+    return this.emitIfElse({ cond, then: thenBody, thenValue, else: elseBody, elseValue, resultType });
+  }
+
   // --- string ops (#1169a) ------------------------------------------------
 
   emitStringConst(value: string): IrValueId {
@@ -1749,9 +1766,9 @@ export class IrFunctionBuilder {
    * the slot's stable index, usable with `slot.read` / `slot.write`.
    * `type` must be a primitive ValType (no struct refs in slice 6).
    */
-  declareSlot(name: string, type: ValType): number {
+  declareSlot(name: string, type: ValType, role: Pick<IrSlotDef, "stringBuilder"> = {}): number {
     const index = this.slotDefs.length;
-    this.slotDefs.push({ index, name, type });
+    this.slotDefs.push({ index, name, type, ...role });
     return index;
   }
 

@@ -26,8 +26,8 @@ name: Arm merge-when-ready on eligible PRs
 # transition left to fire on. The already-clean race is handled below by
 # treating "clean status" errors as success: a green PR is the sweep's to take.
 #
-# SECURITY: pull_request_target grants secrets, so this job NEVER checks out or
-# executes PR code — it only reads event metadata and calls the merge API.
+# SECURITY: pull_request_target grants secrets. Checkout is restricted to the
+# queue helper at github.workflow_sha, never PR-head code; all actions use metadata.
 # The author-trust gate (#2549 parity) arms only OWNER/MEMBER/COLLABORATOR PRs;
 # external-contributor PRs still require a deliberate maintainer act.
 #
@@ -44,7 +44,7 @@ name: Arm merge-when-ready on eligible PRs
 
 on:
   pull_request_target:
-    types: [opened, reopened, ready_for_review, labeled, unlabeled]
+    types: [opened, reopened, ready_for_review, converted_to_draft, labeled, unlabeled]
 
 permissions:
   contents: write
@@ -64,6 +64,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Only the helper from THIS trusted workflow revision; never PR-head code.
+      - name: Read trusted queue-hold helper
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/enforce-pr-queue-hold.mjs
+          sparse-checkout-cone-mode: false
+
       - name: Mint GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v3
@@ -71,7 +80,23 @@ jobs:
           app-id: ${{ secrets.ENQUEUE_APP_ID }}
           private-key: ${{ secrets.ENQUEUE_APP_PRIVATE_KEY }}
 
+      # Native auto-merge does not remove an existing entry when a hold arrives.
+      - name: Enforce current hold or draft state
+        id: hold-state
+        uses: actions/github-script@v8
+        env:
+          PR_NODE: ${{ github.event.pull_request.node_id }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          result-encoding: string
+          script: |
+            const { pathToFileURL } = await import("node:url");
+            const helper = pathToFileURL(process.env.GITHUB_WORKSPACE + "/scripts/enforce-pr-queue-hold.mjs").href;
+            const { enforceQueueHold } = await import(helper);
+            return await enforceQueueHold((query, variables) => github.graphql(query, variables), process.env.PR_NODE);
+
       - name: Arm or disarm merge-when-ready
+        if: steps.hold-state.outputs.result == 'ready'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR: ${{ github.event.pull_request.number }}

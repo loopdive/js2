@@ -10,9 +10,8 @@ import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { collectScopeLocalDeclNames } from "./scope-local-decl-names.js";
 import { registerResolvedRestParam, restPatternParamVecType } from "./resolved-rest-param.js"; // (#1058)
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
-import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
+import { expressionHasWidenedStaticType, functionReturnsWidenedValue } from "./strict-eq-stale-type.js";
 import { bindingHoldsStandaloneClassProto } from "./class-proto-object.js"; // (#7053)
-import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
 import { isCjsModuleExportsObject } from "./declarations/cjs-module-exports.js"; // (#7032)
 import { ts, forEachChild } from "../ts-api.js";
 import {
@@ -201,6 +200,7 @@ import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
+  isHoistedScriptVar,
   prepareModuleTdzGlobals,
   prepareSelfImportingModuleTdzGlobals,
   registerModuleGlobal,
@@ -1874,7 +1874,7 @@ function registerBodylessFunctionDeclaration(
     }
     const rUnwrapped = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
     const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const dynamicReturn = functionReturnsThroughWithScope(ctx, stmt) || functionReturnsWidenedProperty(ctx, stmt);
+    const dynamicReturn = functionReturnsThroughWithScope(ctx, stmt) || functionReturnsWidenedValue(ctx, stmt);
     const inferredNumericRet = dynamicReturn
       ? null
       : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params, stmt);
@@ -3056,7 +3056,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // return type if every param is numeric and the body is a pure
         // numeric kernel (catches e.g. recursive `function fib(n) {...}`).
         const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-        const dynamicReturn = functionReturnsThroughWithScope(ctx, stmt) || functionReturnsWidenedProperty(ctx, stmt);
+        const dynamicReturn = functionReturnsThroughWithScope(ctx, stmt) || functionReturnsWidenedValue(ctx, stmt);
         const preInitVarReturn = functionReturnsPreInitVarValue(ctx, stmt);
         const inferredNumericRet = dynamicReturn
           ? null
@@ -3577,7 +3577,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
-    if (decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer)) {
+    if (decl.initializer && !decl.type && expressionHasWidenedStaticType(ctx, decl.initializer)) {
       return { kind: "externref" };
     }
     if (proxyOrTransferredResultNeedsExternref(ctx, decl)) return { kind: "externref" };
@@ -3861,9 +3861,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) return;
     for (const decl of list.declarations) {
       if (ts.isIdentifier(decl.name)) {
-        const varType = moduleVarDeclType(decl);
-        const wasmType = moduleGlobalWasmType(decl, varType);
-        registerModuleGlobal(ctx, decl.name.text, wasmType);
+        const wasmType = moduleGlobalWasmType(decl, moduleVarDeclType(decl));
+        registerModuleGlobal(ctx, decl.name.text, wasmType, isHoistedScriptVar(decl) ? decl : undefined);
       } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
         registerBindingNames(decl.name);
       }

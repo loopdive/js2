@@ -400,6 +400,9 @@ function measuredRatio(lane) {
 export function npmPerfHistoryPoint(packages, generatedAt, sourceRevision = null, optimizationLevels = null) {
   const snapshots = {};
   for (const pkg of packages) {
+    // A carried-forward package was not measured at this snapshot's time.
+    // This shared reducer also serves committed-report backfill.
+    if (pkg?.refresh?.status === "stale") continue;
     const perf = pkg?.perf;
     if (!perf) continue;
     const lanes = perf.lanes ?? { jsHost: perf };
@@ -446,7 +449,11 @@ export function npmPerfHistoryPoint(packages, generatedAt, sourceRevision = null
  * rewritten on every refresh, so the artifact looked alive and the charts
  * showed a two-week hole.
  */
-export function mergeNpmPerfHistory(history, points) {
+export function mergeNpmPerfHistory(history, points, { preserveDistinctMeasurements = false } = {}) {
+  // Matrix lanes can measure the same revision at different times. Their
+  // timestamped points are distinct observations; unioning an older lane
+  // must not replace a newer snapshot or discard the other lane's history.
+  // Keep source-revision dedup as the default for existing direct callers.
   const existing = Array.isArray(history) ? history : (history?.runs ?? []);
   const merged = [];
   for (const point of [...existing, ...points]) {
@@ -454,7 +461,10 @@ export function mergeNpmPerfHistory(history, points) {
     const duplicateIndex = merged.findIndex(
       (candidate) =>
         candidate.generatedAt === point.generatedAt ||
-        (candidate.sourceRevision && point.sourceRevision && candidate.sourceRevision === point.sourceRevision),
+        (!preserveDistinctMeasurements &&
+          candidate.sourceRevision &&
+          point.sourceRevision &&
+          candidate.sourceRevision === point.sourceRevision),
     );
     if (duplicateIndex < 0) {
       merged.push(point);
@@ -465,6 +475,13 @@ export function mergeNpmPerfHistory(history, points) {
     // read out of git) must never erase the one already recorded, and must
     // never invent one of its own.
     const previous = merged[duplicateIndex];
+    // Backfill derives a point from an aggregate report, not a new measured
+    // observation. Preserve an existing point's data at that timestamp even
+    // if the older point predates sourceRevision provenance.
+    if (preserveDistinctMeasurements && point.recordedIn && !point.sourceRevision) {
+      merged[duplicateIndex] = { ...point, ...previous };
+      continue;
+    }
     merged[duplicateIndex] = {
       ...previous,
       ...point,

@@ -3,33 +3,25 @@
 Direct AOT compilation from JavaScript and TypeScript to machine code (current target WebAssembly GC).
 
 > **Status: early-stage research prototype — a tech demo, not a production-ready compiler.**
-> `js2wasm` is an experimental ahead-of-time JavaScript/TypeScript-to-WasmGC compiler under active development. It explores one specific point in the design space: full ECMAScript backwards compatibility via direct AOT compilation, with no JavaScript engine or interpreter bundled into the output. It does **not** claim production readiness, full language coverage, or stable APIs — expect rough edges, gaps, and breaking changes. Beyond the two auto-updated conformance figures below, live numbers live in **[STATUS.md](./STATUS.md)** (they change frequently and are not otherwise duplicated here).
+> `js2wasm` is an experimental ahead-of-time JavaScript/TypeScript-to-WasmGC compiler under active development. It explores one specific point in the design space: full ECMAScript backwards compatibility via direct AOT compilation, with no JavaScript engine or interpreter bundled into the output. It does **not** claim production readiness, full language coverage, or stable APIs — expect rough edges, gaps, and breaking changes. Beyond the auto-updated conformance figure below, live numbers live in **[STATUS.md](./STATUS.md)** (they change frequently and are not otherwise duplicated here).
 
 `js2wasm` compiles source code into WasmGC binaries without embedding a JavaScript interpreter or shipping a bundled runtime. That avoids the runtime tax common in the interpreter-based and engine-embedding approaches — where a JavaScript interpreter or full engine is compiled to Wasm and shipped inside every module — and keeps the output aligned with Wasm-native deployment models.
 
 `js2wasm` is a free and open-source project developed by **Loopdive GmbH** and released under the **Apache License 2.0 with LLVM Exceptions**. It is developed fully in the open, including its agentic engineering workflow: the repository contains the compiler source, the complete planning surface (`plan/`), and the agent coordination infrastructure (`.claude/`) that a small team uses to ship fixes in parallel.
 
-Conformance is tracked along the two compile paths — both figures auto-update on every merge to `main`:
-
-<!-- AUTO:conformance-start -->
-
-**test262 conformance**: 39,379 / 48,232 (81.6 %)
-
-<!-- AUTO:conformance-end -->
-
-The line above is the retired **host-assisted** JS-host profile, frozen when its CI lane was retired on 2026-10-12. Since #6708 the default `gc` target compiles with the same native semantic core as standalone (`semanticProviders: "native-first"`); a JS environment only adds the value bridge and platform APIs. The JS-environment number is therefore the regime number: it measured 42,014 on the last regime nightly (2026-10-09), and the standalone line below guards the same semantic arms on every merge. The `host-assisted` profile and its `--semantic-providers` flag were removed in #6979 (S7); js2wasm 0.71.0 was the last release that accepted them.
+Conformance is measured on the standalone path and auto-updates on every merge to `main`:
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 42,460 / 48,232 (88.0 %)
+**standalone (host-free) test262 conformance**: 42,463 / 48,232 (88.0 %)
 
 <!-- AUTO:conformance-standalone-end -->
 
-The line above is the **standalone path** (`--target standalone`/`wasi`): pure WasmGC with no JS host, measured host-free.
+The line above is the **standalone path** (`--target standalone`/`wasi`): pure WasmGC with no JS host, measured host-free. Every environment compiles with this same native semantic core (#6708). A JavaScript environment — the default `gc` target for `web`/`node`/`deno` — adds only the value adapter at the module boundary, explicit platform capabilities (console, timers, DOM, …), and named opt-in accelerators (`--host-accelerator regexp|date|…`). The separate JS-host test262 lane was retired on 2026-10-12 (#6979); its frozen history stays on the [Test262 report](https://js2wasm.loopdive.com/benchmarks/report.html) trend graph as a background series.
 
 <!-- AUTO:conformance-scope-start -->
 
-Both figures are scored against the same **48,232** official tests (47,146 ECMAScript standard + 1,086 Annex B). The 503 TC39 proposal-stage tests are excluded.
+The figure above is scored against **48,232** official tests (47,146 ECMAScript standard + 1,086 Annex B). The 503 TC39 proposal-stage tests are excluded.
 
 <!-- AUTO:conformance-scope-end -->
 
@@ -69,10 +61,10 @@ The structural observation behind the project is that this *combination* of trad
 
 What exists today:
 
-- a JS-hosted compilation path passing a substantial subset of Test262 (the figure above)
+- one native semantic core passing a substantial subset of Test262 (the figure above), the same in standalone Wasm and in a JavaScript environment
 - a public browser [Playground](https://js2wasm.loopdive.com/playground/)
 - continuous conformance and benchmark reporting on every change
-- a standalone (no-JS-host) path, scored separately from the JS-host path (see the figures above)
+- a JavaScript environment that adds a value adapter, explicit capabilities and named accelerators (`--host-accelerator`) on top of that core
 
 ## Quick start
 
@@ -90,7 +82,7 @@ npx js2wasm input.ts -o dist  # -o is an existing output DIRECTORY, not a file
 ```
 
 The compiler derives the output name from the input basename; `-o <dir>` chooses
-the directory to write into (it must already exist). The default (JS-host) build
+the directory to write into (it must already exist). The default (JavaScript-environment) build
 also emits an `input.imports.js` helper — see [Compile modes and imports](#compile-modes-and-imports).
 
 Programmatic API:
@@ -148,13 +140,16 @@ dependencies.
 
 The imports a module needs depend on the compile target:
 
-- **Default (JS-host) mode** (no `target`, or `target: "gc"`) emits runtime
+- **JavaScript environment** (the default: no `target`, or `target: "gc"`) emits runtime
   imports — a `string_constants` module plus `env.*` helpers such as
   `__box_number`, `__extern_get`, and `__throw_reference_error`. These are
   supplied by the js2wasm JS runtime, so instantiating with an empty `{}`
   throws `Import #0 "string_constants": module is not an object or function`.
   Use this mode when you run the output alongside the JS runtime that provides
-  those imports. The result carries a ready-to-pass `result.importObject` that
+  those imports. They are the value adapter and platform capabilities only:
+  ECMAScript semantics run in the same native core as standalone, and a host
+  implementation (RegExp, Date) is used only when you name it with
+  `--host-accelerator`. The result carries a ready-to-pass `result.importObject` that
   wires those host helpers for you — pass it straight to
   `WebAssembly.instantiate` with no hand-wiring:
 
@@ -261,8 +256,8 @@ GC types or carry WasmGC bugs that can cause memory leaks or poor performance.
 
 Other standalone runtimes: WasmGC support in WAMR and WasmEdge is still
 maturing, so compiled output is not guaranteed to run there yet. Browser hosts
-(Chrome 119+, Firefox 120+) and Node.js 22+ run the JS-host target without extra
-flags. `Promise.try` (Node 23+) is polyfilled by the JS-host runtime on older
+(Chrome 119+, Firefox 120+) and Node.js 22+ run the default `gc` target without extra
+flags. `Promise.try` (Node 23+) is polyfilled by the js2wasm JS runtime on older
 engines, so the declared `engines: node >=20` floor holds without a
 `Promise.try` gap (#6440).
 
@@ -271,7 +266,7 @@ output, see [docs/standalone-io.md](./docs/standalone-io.md).
 
 ## Current coverage and limitations
 
-In a JS host, `js2wasm` passes a substantial subset of Test262 — enough that a
+`js2wasm` passes a substantial subset of Test262 — enough that a
 large, useful slice of the language works — but there are real gaps, and you
 will hit them. The current pass rate lives in [STATUS.md](./STATUS.md) and the
 full [Test262 report](https://js2wasm.loopdive.com/benchmarks/report.html);
@@ -296,8 +291,6 @@ high pass rate is necessary but not sufficient for "runs real JavaScript."
 - standard-library built-ins — many are implemented, but not the full surface;
   some methods are missing or only handle the common overloads
 - `Map`, `Set`, `RegExp`, `JSON` — present but not fully spec-complete
-- standalone (no-JS-host) mode — scored separately (see the two-path figures
-  near the top)
 - getters/setters and other highly dynamic patterns — limited
 
 **Gaps** (implemented to a degree, not spec-complete — the measured pass rate

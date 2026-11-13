@@ -94,7 +94,9 @@ describe("#6996 await of a settled operand yields a microtask turn", () => {
       expect(await runNode(LOG + src)).toEqual(expected);
     });
 
-    it.fails(`gc native semantic core matches node (OPEN after #6979): ${name}`, async () => {
+    // The gc ordering was already right; these failed only because the native
+    // string reached `console_log_string` undecoded and printed "" (#7337).
+    it(`gc native semantic core matches node: ${name}`, async () => {
       expect(await runWasm(LOG + src, "gc")).toEqual(expected);
     });
 
